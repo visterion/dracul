@@ -1,4 +1,5 @@
 # Dracul
+<img width="1024" height="506" alt="image" src="https://github.com/user-attachments/assets/253c68cb-3917-4bc6-9d88-00f99e4c59ed" />
 
 > **An autonomous investment-research system. Six specialised hunters scan the market every night for documented anomalies and surface candidates for human review.**
 
