@@ -1,6 +1,5 @@
 # Dracul
-<img width="1024" height="506" alt="image" src="https://github.com/user-attachments/assets/253c68cb-3917-4bc6-9d88-00f99e4c59ed" />
-
+<img width="1456" height="720" alt="image" src="https://github.com/user-attachments/assets/7630ef1d-3d4b-4402-8420-268c4247ddb9" />
 > **An autonomous investment-research system. Six specialised hunters scan the market every night for documented anomalies and surface candidates for human review.**
 
 Dracul runs a roster of **Strigoi** — agentic hunters, each tuned to one
