@@ -1,0 +1,69 @@
+Dracul Sustainable Use License
+Copyright (c) 2026 visterion
+
+All source code in this repository is licensed under the
+Sustainable Use License as defined below.
+
+
+TERMS AND CONDITIONS
+
+1. GRANT OF LICENSE
+
+Subject to the terms and conditions of this license, the licensor hereby
+grants you a non-exclusive, royalty-free, worldwide, non-sublicensable,
+non-transferable license to use, copy, modify, and distribute the software,
+subject to the limitations in Section 2.
+
+2. LIMITATIONS
+
+   a. You may use or modify the software only for your own internal business
+      purposes or for non-commercial or personal use.
+
+   b. You may distribute the software or provide it to others only if you do
+      so free of charge for non-commercial purposes.
+
+   c. You may not alter, remove, or obscure any licensing, copyright, or
+      other notices of the licensor in the software.
+
+3. PATENTS
+
+The licensor grants you a license, under any patent claims the licensor can
+license or becomes able to license, to make, have made, use, sell, offer for
+sale, import, and have imported the software, in each case subject to the
+limitations in Section 2. If you or your company make any written claim that
+the software infringes or contributes to infringement of any patent, your
+patent license for the software granted under this section ends immediately.
+
+4. VIOLATION AND CURE
+
+If you violate any term of this license, your license is automatically
+terminated. If this is your first violation, your license is automatically
+reinstated 30 days after the violation, provided you have cured the
+violation by that date. For repeated violations, termination is permanent.
+
+5. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+6. DEFINITIONS
+
+"Software" means the Dracul source code, documentation, and any associated
+files in this repository.
+
+"Licensor" means visterion.
+
+"You" means the individual or entity exercising rights under this license.
+
+"Internal business purposes" means use by your employees and contractors for
+the benefit of your organization, where the software is not offered to third
+parties as a product or service.
+
+"Non-commercial purposes" means use for personal, educational, research, or
+charitable purposes where no fee is charged and no commercial advantage is
+sought.

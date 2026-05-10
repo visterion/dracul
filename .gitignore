@@ -1,0 +1,11 @@
+docs/
+CLAUDE.md
+AGENTS.md
+target/
+node_modules/
+dist/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+.serena/
