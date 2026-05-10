@@ -28,6 +28,48 @@ findings.
 
 ---
 
+## The Tale
+
+> *The night belongs to the patient.*
+
+When the closing bell falls silent and Wall Street goes to sleep, something else stirs. Deep in the crypt, Dracul rises from his stone sarcophagus, brushes the dust of the day from his cloak, and opens the great book in which the anomalies of the world are recorded. He strikes the iron knocker three times against the oaken door -- and his Strigoi awaken.
+
+Six shadows step into the moonlight. His brood. His specialists. Each one hungers for a different kind of blood.
+
+**Strigoi-Spin** hunts the newborns -- fresh spin-offs, freshly cut from their parents, bleeding institutional sellers who cannot hold them.
+
+**Strigoi-Insider** follows the trail of those who know more -- clusters of executives buying their own stock with their own money.
+
+**Strigoi-Echo** waits patiently for earnings reports and listens to how slowly the mortals process surprise.
+
+**Strigoi-Lazarus** digs in the graveyards of fifty-two-week lows, looking for skeletons whose bones are still sound.
+
+**Strigoi-Index** stalks the rebalancing calendars, where billions of dollars must buy at any price.
+
+**Strigoi-Merger** stands between announced deals and their closing prices, drinking from the spread.
+
+They scatter into the night. Each to his own hunting ground. Each with the patience of the immortal.
+
+While mortals sleep, they work. While mortals abandon trades after three weeks of silence, the Strigoi wait three months -- or three years if the anomaly demands it. They do not burn out. They do not lose faith. They do not feel the pull of impatience that destroys human investors.
+
+By dawn, they return. Each one carries prey -- not bodies, but knowledge. Lists of instruments where blood will flow. Theses for why the bleeding will continue. Risks they observed along the way. They place their findings in the **Vistierie** -- the treasury, where every coin is counted, every token, every call. Even immortals need discipline.
+
+Dracul reads their reports. When three Strigoi independently bring back the same name -- Sandisk, perhaps, on a February morning -- he knows: this is more than coincidence. This is a setup. Here, much blood will flow, and for a long time.
+
+He inscribes the **Verdict** in his chronicle. He does not decide whether you should hunt. He presents the case -- curated, reasoned, with risks. You, the mortal who summoned him, decide. That is the bargain.
+
+The sun climbs. The Strigoi withdraw to their coffins. Moonlight retreats.
+
+But tonight, when the bells fall silent again, they will ride out once more.
+
+They will never stop.
+
+> *The immortal know no impatience.*
+
+-- [Read the full tale](documentation/the-hunt.md)
+
+---
+
 ## Why Dracul exists
 
 Most investment software either chases generic factors (Value,
@@ -155,6 +197,7 @@ Strigoi roster, and the operations runbook live in
 | [configuration.md](documentation/configuration.md) | All `dracul.*` properties and env vars |
 | [chronicle.md](documentation/chronicle.md) | Vue 3 frontend, planned views |
 | [operations.md](documentation/operations.md) | Tenant setup, kill switch, backups |
+| [the-hunt.md](documentation/the-hunt.md) | The full tale of Dracul and his Strigoi |
 
 ---
 
