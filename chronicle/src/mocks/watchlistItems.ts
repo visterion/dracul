@@ -1,0 +1,129 @@
+import type { WatchlistItem } from '../api/types'
+
+function priceHistory(base: number, trend: number): number[] {
+  const result: number[] = []
+  let price = base * (1 - trend * 0.15)
+  for (let i = 0; i < 30; i++) {
+    price = price * (1 + (Math.random() - 0.48) * 0.02 + (trend / 30) * 0.005)
+    result.push(Math.round(price * 100) / 100)
+  }
+  return result
+}
+
+export const mockWatchlistItems: WatchlistItem[] = [
+  {
+    id: 'wl-1',
+    ticker: 'AVGO',
+    companyName: 'Broadcom Inc',
+    currentPrice: 1247.50,
+    dayChangePercent: 2.3,
+    status: 'calm',
+    addedAt: '2026-05-14',
+    tag: 'tracking',
+    verdictId: 'verdict-1',
+    alerts: [
+      { id: 'a-1', at: '14:23 today', message: 'price spike +4.2% on elevated volume', level: 'elevated' },
+      { id: 'a-2', at: 'yesterday 16:45', message: 'positive analyst note from Goldman Sachs', level: 'info' },
+      { id: 'a-3', at: '3 days ago', message: 'added to watchlist', level: 'neutral' },
+    ],
+    priceHistory30d: priceHistory(1247.50, 1),
+  },
+  {
+    id: 'wl-2',
+    ticker: 'NVDA',
+    companyName: 'NVIDIA Corp',
+    currentPrice: 143.20,
+    dayChangePercent: -1.2,
+    status: 'elevated',
+    addedAt: '2026-05-11',
+    tag: 'held',
+    verdictId: null,
+    alerts: [
+      { id: 'a-4', at: '09:45 today', message: 'volume 2.3x average on open', level: 'elevated' },
+      { id: 'a-5', at: '2 days ago', message: 'added to watchlist', level: 'neutral' },
+    ],
+    priceHistory30d: priceHistory(143.20, -1),
+  },
+  {
+    id: 'wl-3',
+    ticker: 'MELI',
+    companyName: 'MercadoLibre Inc',
+    currentPrice: 1892.40,
+    dayChangePercent: 0.8,
+    status: 'calm',
+    addedAt: '2026-05-04',
+    tag: 'held',
+    verdictId: null,
+    alerts: [],
+    priceHistory30d: priceHistory(1892.40, 0.5),
+  },
+  {
+    id: 'wl-4',
+    ticker: 'MSFT',
+    companyName: 'Microsoft Corp',
+    currentPrice: 402.10,
+    dayChangePercent: -0.3,
+    status: 'calm',
+    addedAt: '2026-04-28',
+    tag: 'tracking',
+    verdictId: null,
+    alerts: [],
+    priceHistory30d: priceHistory(402.10, -0.5),
+  },
+  {
+    id: 'wl-5',
+    ticker: 'AMD',
+    companyName: 'Advanced Micro Devices',
+    currentPrice: 167.45,
+    dayChangePercent: 3.4,
+    status: 'alert',
+    addedAt: '2026-05-13',
+    tag: 'tracking',
+    verdictId: null,
+    alerts: [
+      { id: 'a-6', at: '11:02 today', message: 'unusual options activity detected', level: 'elevated' },
+    ],
+    priceHistory30d: priceHistory(167.45, 1.5),
+  },
+  {
+    id: 'wl-6',
+    ticker: 'META',
+    companyName: 'Meta Platforms Inc',
+    currentPrice: 528.70,
+    dayChangePercent: 1.1,
+    status: 'calm',
+    addedAt: '2026-05-01',
+    tag: 'held',
+    verdictId: null,
+    alerts: [],
+    priceHistory30d: priceHistory(528.70, 0.8),
+  },
+  {
+    id: 'wl-7',
+    ticker: 'ADBE',
+    companyName: 'Adobe Inc',
+    currentPrice: 312.40,
+    dayChangePercent: -2.1,
+    status: 'elevated',
+    addedAt: '2026-05-09',
+    tag: 'tracking',
+    verdictId: null,
+    alerts: [
+      { id: 'a-7', at: 'yesterday 14:30', message: 'price declined below 30d moving average', level: 'elevated' },
+    ],
+    priceHistory30d: priceHistory(312.40, -1.2),
+  },
+  {
+    id: 'wl-8',
+    ticker: 'CRM',
+    companyName: 'Salesforce Inc',
+    currentPrice: 274.80,
+    dayChangePercent: 0.5,
+    status: 'calm',
+    addedAt: '2026-05-07',
+    tag: 'tracking',
+    verdictId: null,
+    alerts: [],
+    priceHistory30d: priceHistory(274.80, 0.3),
+  },
+]
