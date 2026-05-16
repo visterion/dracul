@@ -1,0 +1,122 @@
+/* ── Fonts ────────────────────────────────────────────────────────── */
+/*
+  Development: Google Fonts CDN (fast to iterate).
+  Production swap: replace the @import below with self-hosted font-face
+  declarations pointing to /assets/fonts/ — required for privacy + perf.
+  Self-host: https://gwfh.mranftl.com/ for Cormorant Garamond, Inter, JetBrains Mono
+*/
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ── Color: Crypt ───────────────────────────────────────────────── */
+  --crypt-black: #0A0A0F;
+  --crypt-black-elevated: #13131A;
+  --crypt-black-deep: #050507;
+
+  /* ── Color: Blood ──────────────────────────────────────────────── */
+  --blood-crimson: #A11D2C;
+  --blood-crimson-bright: #C4243A;
+  --blood-crimson-muted: #7A1622;
+
+  /* ── Color: Bone ───────────────────────────────────────────────── */
+  --bone-ivory: #F5F1E8;
+  --bone-ivory-dim: #C9C5BC;
+
+  /* ── Color: Cathedral ──────────────────────────────────────────── */
+  --cathedral-gold: #B8945C;
+  --cathedral-gold-bright: #D4AF7A;
+
+  /* ── Color: Ash ────────────────────────────────────────────────── */
+  --ash-gray: #6B6B70;
+  --ash-gray-light: #8A8A90;
+  --moonlight-silver: #C4C4CA;
+
+  /* ── Color: Semantic ───────────────────────────────────────────── */
+  --signal-positive: #4A8B5C;
+  --signal-warning: #B8945C;
+  --signal-danger: #A11D2C;
+  --signal-neutral: #6B6B70;
+
+  /* ── Typography ────────────────────────────────────────────────── */
+  --font-display: 'Cormorant Garamond', 'EB Garamond', Garamond, Georgia, serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', Consolas, monospace;
+
+  /* ── Type Scale ─────────────────────────────────────────────────── */
+  --text-display: 64px;
+  --text-h1: 48px;
+  --text-h2: 36px;
+  --text-h3: 28px;
+  --text-h4: 22px;
+  --text-body-lg: 18px;
+  --text-body: 16px;
+  --text-body-sm: 14px;
+  --text-micro: 12px;
+  --text-mono: 14px;
+
+  /* ── Spacing ────────────────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+  --space-10: 64px;
+  --space-12: 96px;
+
+  /* ── Transitions ────────────────────────────────────────────────── */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--crypt-black);
+  color: var(--bone-ivory);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern", "liga";
+}
+
+/* ── Utility: Typography ──────────────────────────────────────────── */
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* All numerical columns must use tabular figures — see DESIGN.md Part 3 */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ── Reduced Motion ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
