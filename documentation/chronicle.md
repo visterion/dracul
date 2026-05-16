@@ -26,16 +26,16 @@ Both documents are required reading before implementing any view.
 
 ## Eight views
 
-| # | View | Route | Purpose | Density |
-|---|------|-------|---------|---------|
-| 1 | Chronicle | `/` | Morning dashboard — new prey, verdicts, alerts, lessons | Medium |
+| # | View | Route | Purpose | Density | Status |
+|---|------|-------|---------|---------|--------|
+| 1 | Chronicle | `/` | Morning dashboard — new prey, verdicts, alerts, lessons | Medium | ✅ Etappe 9 |
 | 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) | ✅ Etappe 10 |
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
-| 4 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments | Medium |
-| 5 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low |
-| 6 | Vistierie | `/vistierie` | Cost dashboard, tier budgets, trends | High |
-| 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High |
-| 8 | Settings | `/settings` | Providers, budgets, agent config, notifications | Variable |
+| 4 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments | Medium | ✅ Etappe 11 |
+| 5 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
+| 6 | Vistierie | `/vistierie` | Cost dashboard, tier budgets, trends | High | stub |
+| 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | stub |
+| 8 | Settings | `/settings` | Providers, budgets, agent config, notifications | Variable | ✅ Etappe 11 |
 
 ## Application shell
 
