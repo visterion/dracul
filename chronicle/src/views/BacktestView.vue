@@ -164,7 +164,7 @@ const BACKTEST_RUNS = [
 const OVERVIEW_STATS = [
   { label: 'Hit Rate',    value: '67%',    positive: true },
   { label: 'Avg Return',  value: '+14.2%', positive: true },
-  { label: 'Sharpe',      value: '1.34',   positive: false },
+  { label: 'Sharpe',      value: '1.34',   positive: true },
   { label: 'Max Drawdown',value: '-8.1%',  positive: false },
 ]
 
@@ -195,7 +195,7 @@ const SPIN_EQUITY = [100,104,107,111,109,114,118,122,120,126,131,134,138,136,141
 const SPY_EQUITY  = [100,102,105,104,107,110,108,111,113,112,115,118,117,120,122,121,124,126,125,128,130,129,132,134,133,136,138,137]
 
 const CHART_CRIMSON = '#A11D2C' // var(--blood-crimson)
-const CHART_INDIGO  = '#4a4a8b'
+const CHART_SILVER  = '#C4C4CA' // var(--moonlight-silver)
 const CHART_MUTED   = '#6B6B70' // var(--ash-gray)
 
 const equitySeries = [
@@ -208,7 +208,7 @@ const equityOptions = {
     background: 'transparent', toolbar: { show: false }, zoom: { enabled: false },
     fontFamily: 'JetBrains Mono, IBM Plex Mono, Consolas, monospace', foreColor: CHART_MUTED,
   },
-  colors: [CHART_CRIMSON, CHART_INDIGO],
+  colors: [CHART_CRIMSON, CHART_SILVER],
   stroke: { width: 2, curve: 'smooth' as const },
   fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.2, opacityTo: 0.02 } },
   grid: { borderColor: 'rgba(255,255,255,0.04)', xaxis: { lines: { show: false } } },
@@ -385,7 +385,7 @@ function applyPreset(years: number) {
 }
 .backtest__stat-label { font-size: var(--text-micro); color: var(--ash-gray); margin-bottom: var(--space-2); }
 .backtest__stat-value { font-size: var(--text-h3); font-family: var(--font-mono); color: var(--bone-ivory); }
-.backtest__stat-value--pos { color: #4a7a4a; }
+.backtest__stat-value--pos { color: var(--signal-positive); }
 
 .backtest__trades, .backtest__comparison { margin-top: var(--space-6); }
 .backtest__chart { margin-top: var(--space-4); }
@@ -402,6 +402,6 @@ function applyPreset(years: number) {
   border-bottom: 1px solid rgba(255,255,255,0.03);
 }
 .backtest__ticker { font-family: var(--font-mono); color: var(--bone-ivory); }
-.backtest__ret--pos { color: #4a7a4a; font-family: var(--font-mono); }
+.backtest__ret--pos { color: var(--signal-positive); font-family: var(--font-mono); }
 .backtest__ret--neg { color: var(--blood-crimson); font-family: var(--font-mono); }
 </style>
