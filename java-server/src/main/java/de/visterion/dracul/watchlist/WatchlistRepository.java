@@ -2,6 +2,8 @@ package de.visterion.dracul.watchlist;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -9,6 +11,8 @@ import java.util.*;
 
 @Repository
 public class WatchlistRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(WatchlistRepository.class);
 
     private final JdbcClient jdbc;
     private final ObjectMapper mapper;
@@ -81,6 +85,7 @@ public class WatchlistRepository {
         try {
             return mapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
+            log.error("Failed to deserialize JSON: {}", json, e);
             return List.of();
         }
     }

@@ -2,14 +2,19 @@ package de.visterion.dracul.verdict;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
 public class VerdictRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(VerdictRepository.class);
 
     private final JdbcClient jdbc;
     private final ObjectMapper mapper;
@@ -41,14 +46,20 @@ public class VerdictRepository {
     }
 
     public Optional<VerdictDetail> findDetailById(String id) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
         return jdbc.sql("""
                 SELECT id, symbol, company_name, contributing_strigoi, consensus_score,
                        summary, created_at, anomaly_types, current_price, avg_confidence,
                        horizon, signals, risks, contributing_details
                 FROM verdicts
-                WHERE id::text = :id
+                WHERE id = :id
                 """)
-                .param("id", id)
+                .param("id", uuid)
                 .query((rs, rowNum) -> new VerdictDetail(
                         rs.getString("id"),
                         rs.getString("symbol"),
@@ -83,6 +94,7 @@ public class VerdictRepository {
         try {
             return mapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
+            log.error("Failed to deserialize JSON: {}", json, e);
             return List.of();
         }
     }
@@ -91,6 +103,7 @@ public class VerdictRepository {
         try {
             return mapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
+            log.error("Failed to deserialize JSON: {}", json, e);
             return List.of();
         }
     }
