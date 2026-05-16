@@ -1,5 +1,5 @@
 import type { ApiClient } from './ApiClient'
-import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail } from './types'
+import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail, WatchlistItem, Pattern, LlmProvider } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
 import { mockAlerts } from '../mocks/alerts'
@@ -7,6 +7,8 @@ import { mockPatterns } from '../mocks/patterns'
 import { mockSystemStatus } from '../mocks/status'
 import { mockVerdictDetails } from '../mocks/verdictDetails'
 import { mockStrigoiDetails } from '../mocks/strigoiDetails'
+import { mockWatchlistItems } from '../mocks/watchlistItems'
+import { mockProviders } from '../mocks/providers'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -17,7 +19,7 @@ export class MockApiClient implements ApiClient {
       prey: mockPrey,
       verdicts: mockVerdicts,
       alerts: mockAlerts,
-      pendingPatterns: mockPatterns,
+      pendingPatterns: mockPatterns.filter(p => p.status === 'PENDING'),
     }
   }
 
@@ -34,5 +36,20 @@ export class MockApiClient implements ApiClient {
   async getStrigoiDetail(name: string): Promise<StrigoiDetail | null> {
     await delay(50)
     return mockStrigoiDetails.find(s => s.name === name) ?? null
+  }
+
+  async getWatchlistItems(): Promise<WatchlistItem[]> {
+    await delay(50)
+    return mockWatchlistItems
+  }
+
+  async getPatterns(): Promise<Pattern[]> {
+    await delay(50)
+    return mockPatterns
+  }
+
+  async getProviders(): Promise<LlmProvider[]> {
+    await delay(50)
+    return mockProviders
   }
 }
