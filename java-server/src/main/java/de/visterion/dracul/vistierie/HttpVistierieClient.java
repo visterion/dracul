@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.LocalDate;
 import java.util.*;
 
 @Component
@@ -147,8 +148,8 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public List<VistierieData.DailySpend> getDashboardData() {
-        var result = new java.util.ArrayList<VistierieData.DailySpend>();
-        var today = java.time.LocalDate.now();
+        var result = new ArrayList<VistierieData.DailySpend>();
+        var today = LocalDate.now();
         for (int i = 29; i >= 0; i--) {
             result.add(new VistierieData.DailySpend(today.minusDays(i).toString(), 0.0));
         }
