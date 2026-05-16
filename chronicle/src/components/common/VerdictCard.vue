@@ -111,11 +111,17 @@ const summary = computed(() =>
 .verdict-card__link {
   font-size: var(--text-body-sm);
   color: var(--blood-crimson);
+  border: 1px solid var(--blood-crimson);
+  border-radius: 2px;
+  padding: 2px 8px;
   text-decoration: none;
-  transition: color var(--transition-fast);
+  background: transparent;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .verdict-card__link:hover {
   color: var(--blood-crimson-bright);
+  border-color: var(--blood-crimson-bright);
+  background-color: rgba(161, 29, 44, 0.08);
 }
 </style>

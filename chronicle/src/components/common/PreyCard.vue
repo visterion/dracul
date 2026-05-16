@@ -54,7 +54,7 @@ const props = defineProps<{ prey: Prey }>()
 const { relativeTime } = useRelativeTime()
 
 const borderClass = computed(() => {
-  if (props.prey.confidence > 0.75) return 'prey-card--high'
+  if (props.prey.confidence >= 0.75) return 'prey-card--high'
   if (props.prey.confidence >= 0.5) return 'prey-card--mid'
   return 'prey-card--low'
 })
