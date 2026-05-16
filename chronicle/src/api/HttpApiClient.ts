@@ -31,14 +31,20 @@ export class HttpApiClient implements ApiClient {
   }
 
   async getWatchlistItems(): Promise<WatchlistItem[]> {
-    throw new Error('Not implemented')
+    const res = await fetch(`${this.baseUrl}/api/watchlist`)
+    if (!res.ok) throw new Error(`getWatchlistItems failed: HTTP ${res.status}`)
+    return res.json() as Promise<WatchlistItem[]>
   }
 
   async getPatterns(): Promise<Pattern[]> {
-    throw new Error('Not implemented')
+    const res = await fetch(`${this.baseUrl}/api/patterns`)
+    if (!res.ok) throw new Error(`getPatterns failed: HTTP ${res.status}`)
+    return res.json() as Promise<Pattern[]>
   }
 
   async getProviders(): Promise<LlmProvider[]> {
-    throw new Error('Not implemented')
+    const res = await fetch(`${this.baseUrl}/api/providers`)
+    if (!res.ok) throw new Error(`getProviders failed: HTTP ${res.status}`)
+    return res.json() as Promise<LlmProvider[]>
   }
 }
