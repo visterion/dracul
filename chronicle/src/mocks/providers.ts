@@ -1,0 +1,40 @@
+import type { LlmProvider } from '../api/types'
+
+export const mockProviders: LlmProvider[] = [
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    status: 'connected',
+    apiKeyMasked: '··· 4f3a',
+    endpoint: null,
+    models: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'],
+    todayInputTokens: 12453,
+    todayOutputTokens: 3201,
+    todayCostUsd: 0.43,
+    callsToday: null,
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    status: 'fallback',
+    apiKeyMasked: '··· 8c12',
+    endpoint: null,
+    models: ['gpt-4o', 'gpt-4o-mini'],
+    todayInputTokens: 0,
+    todayOutputTokens: 0,
+    todayCostUsd: 0,
+    callsToday: null,
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama (Local)',
+    status: 'local',
+    apiKeyMasked: null,
+    endpoint: 'http://localhost:11434',
+    models: ['qwen2.5:14b', 'llama3.2:8b', 'nomic-embed-text'],
+    todayInputTokens: 0,
+    todayOutputTokens: 0,
+    todayCostUsd: 0,
+    callsToday: 47,
+  },
+]
