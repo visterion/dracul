@@ -1,4 +1,7 @@
-import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail, WatchlistItem, Pattern, LlmProvider } from './types'
+import type {
+  ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
+  WatchlistItem, Pattern, LlmProvider, VistierieData
+} from './types'
 
 export interface ApiClient {
   getChronicle(): Promise<ChronicleData>
@@ -8,4 +11,5 @@ export interface ApiClient {
   getWatchlistItems(): Promise<WatchlistItem[]>
   getPatterns(): Promise<Pattern[]>
   getProviders(): Promise<LlmProvider[]>
+  getVistierieData(): Promise<VistierieData>
 }
