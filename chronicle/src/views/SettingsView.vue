@@ -67,7 +67,7 @@
 
           <div class="settings__provider-row">
             <template v-if="provider.status === 'local'">
-              Today: <span>{{ provider.callsToday }} calls · $0.00 (local compute)</span>
+              Today: <span>{{ provider.callsToday ?? 0 }} calls · $0.00 (local compute)</span>
             </template>
             <template v-else-if="provider.todayInputTokens === 0">
               Today: <span>0 tokens · $0.00 — used only when Anthropic unavailable</span>
@@ -175,6 +175,7 @@ onMounted(async () => {
 .settings__nav-item--disabled {
   opacity: 0.4;
   cursor: default;
+  pointer-events: none;
 }
 
 .settings__nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
