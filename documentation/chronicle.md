@@ -137,3 +137,30 @@ pointer-events: none) with a Phase 2 badge.
 Frontend source lives in `chronicle/` at the repository root.
 Standalone Vite project — no Maven integration yet (planned for Etappe
 13 when the `dracul-app/` Spring Boot module is created).
+
+## Implementation status (Etappe 12 — Backend REST API)
+
+The Spring Boot 4 backend (`java-server/`) is fully scaffolded and all
+7 REST endpoints are live:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/chronicle` | Morning dashboard — recent prey + verdicts |
+| `GET /api/verdict/{id}` | Verdict detail with contributing prey |
+| `GET /api/patterns` | Pattern library (pending + active) |
+| `GET /api/watchlist` | Watchlist items with alerts and verdictId |
+| `GET /api/status` | Runtime status (strigoi count, cost today) |
+| `GET /api/strigoi` | Strigoi metadata list |
+| `GET /api/providers` | LLM provider list |
+
+**HttpApiClient** (`chronicle/src/api/HttpApiClient.ts`): all 7 methods
+implemented against the real backend. Switch via `VITE_MOCK=false` in
+`chronicle/.env.local` (see `.env.local.example`).
+
+**Integration tests**: 4 IT classes (`ChronicleControllerIT`,
+`VerdictControllerIT`, `PatternControllerIT`, `WatchlistControllerIT`)
+run against Testcontainers Postgres with seed data.
+
+**Frontend status** with `VITE_MOCK=false`: Views 1–5 + 8 fully wired
+to real backend data. Views 6 (Vistierie) and 7 (Backtest) remain
+intentional stubs pending their respective etappes.
