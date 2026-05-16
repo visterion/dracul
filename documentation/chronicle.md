@@ -5,13 +5,14 @@ operator's morning view and daily workspace.
 
 ## Stack
 
-- Vue 3 (Composition API)
-- Vuetify 3 (Dracul custom theme — see DESIGN.md)
-- Pinia
-- Vite
-- ApexCharts (or Chart.js) for performance charts
-- Phosphor Icons for functional iconography
-- SSE via native `EventSource` for live Daywalker updates
+- Vue 3.5 (`<script setup lang="ts">` throughout)
+- Vuetify 3.8 (Dracul dark theme — `--crypt-black` bg, `--blood-crimson` accent)
+- Pinia 2 (Setup Stores)
+- Vue Router 4 (`createWebHistory`)
+- Vite 6 + TypeScript 5 (strict mode)
+- ApexCharts / vue3-apexcharts (imported; used in Views 3, 6, 7 — stubs for now)
+- @phosphor-icons/vue for functional iconography
+- SSE via native `EventSource` for live Daywalker updates (Etappe 12)
 
 ## Design system
 
@@ -40,17 +41,41 @@ Both documents are required reading before implementing any view.
 
 Present on every view:
 
-- **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center,
-  user menu + theme toggle right.
-- **Bottom status bar (32px)**: live operational summary pushed via SSE —
-  `☾ 8 entities · 6 strigoi resting · daywalker active · $0.43 today`
+- **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center
+  (6 entries), moon-icon + avatar placeholder right.
+- **Bottom status bar (32px)**: operational summary from `useStatusStore` —
+  `☾ 6 strigoi · 2 hunting · daywalker active · $0.43 today`
+
+The status bar currently reads from Pinia (mock data). SSE integration
+(`/api/events`) comes in Etappe 12 (Daywalker).
+
+## ApiClient abstraction
+
+The frontend uses an `ApiClient` interface with two implementations:
+
+| Env | Implementation | Source |
+|-----|---------------|--------|
+| `VITE_MOCK=true` (dev) | `MockApiClient` | `src/mocks/` typed fixtures |
+| `VITE_MOCK=false` (prod) | `HttpApiClient` | `fetch` against `/api/*` |
+
+Switch via `VITE_MOCK` in `.env.development` / `.env.production`. Factory
+in `src/api/index.ts` exports `useApi()`.
+
+## Development
+
+```bash
+cd chronicle
+npm install
+npm run dev        # http://localhost:5173 (mock data)
+npm run type-check # vue-tsc --noEmit
+npm run build      # production build → dist/
+```
 
 ## Live updates
 
-The Daywalker pushes `alert.new` events via the SSE endpoint
-(`/api/events`). The Chronicle view and the Watchlist view consume this
-stream and update without page reload. The status bar also updates its
-cost and agent-status tokens in real time.
+The Daywalker will push `alert.new` events via the SSE endpoint
+(`/api/events`). The Chronicle view and the Watchlist view will consume
+this stream. This is planned for Etappe 12.
 
 ## Navigation structure
 
@@ -66,6 +91,6 @@ cost and agent-status tokens in real time.
 
 ## Module location
 
-Frontend source lives in `chronicle/` (not `dracul-frontend/` — the
-`CLAUDE.md` note supersedes the plan-level naming; confirm with code
-when the module is scaffolded).
+Frontend source lives in `chronicle/` at the repository root.
+Standalone Vite project — no Maven integration yet (planned for Etappe
+13 when the `dracul-app/` Spring Boot module is created).
