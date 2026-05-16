@@ -48,7 +48,7 @@
       </div>
 
       <!-- Active section -->
-      <div class="patterns__section-header" style="margin-top: 28px;">── active patterns ({{ activePatterns.length }})</div>
+      <div class="patterns__section-header patterns__section-header--spaced">── active patterns ({{ activePatterns.length }})</div>
 
       <div class="patterns__filter-chips">
         <button
@@ -81,7 +81,7 @@
             <span class="patterns__strigoi-chip">{{ pattern.appliesToStrigoi.replace('strigoi-', '') }}</span>
             <span class="patterns__evidence-count">evidence: {{ pattern.evidenceCount }}</span>
             <span class="patterns__activated">{{ monthsAgo(pattern.proposedAt) }}</span>
-            <button class="patterns__expand-btn">
+            <button class="patterns__expand-btn" @click.stop="toggleExpand(pattern.id)">
               {{ expandedIds.has(pattern.id) ? '▼' : '▶' }}
             </button>
           </div>
@@ -194,6 +194,7 @@ function monthsAgo(isoString: string): string {
   height: 1px;
   background: rgba(255, 255, 255, 0.06);
 }
+.patterns__section-header--spaced { margin-top: 28px; }
 
 .patterns__empty { font-size: 13px; color: var(--ash-gray); font-style: italic; }
 
