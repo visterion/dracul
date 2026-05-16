@@ -38,12 +38,12 @@
 
         <SectionHeader label="signals" />
         <ul class="vd__list vd__list--signals">
-          <li v-for="s in verdict.signals" :key="s">{{ s }}</li>
+          <li v-for="(s, i) in verdict.signals" :key="i">{{ s }}</li>
         </ul>
 
         <SectionHeader label="risks" />
         <ul class="vd__list vd__list--risks">
-          <li v-for="r in verdict.risks" :key="r">{{ r }}</li>
+          <li v-for="(r, i) in verdict.risks" :key="i">{{ r }}</li>
         </ul>
 
         <SectionHeader label="contributing strigoi" />
@@ -129,8 +129,11 @@ const verdict = ref<VerdictDetail | null>(null)
 const loading = ref(true)
 
 onMounted(async () => {
-  verdict.value = await api.getVerdictDetail(route.params.id as string)
-  loading.value = false
+  try {
+    verdict.value = await api.getVerdictDetail(route.params.id as string)
+  } finally {
+    loading.value = false
+  }
 })
 </script>
 

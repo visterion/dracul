@@ -196,10 +196,13 @@ const loading = ref(true)
 const expandedRuns = ref<Set<string>>(new Set())
 
 onMounted(async () => {
-  strigoi.value = await api.getStrigoiDetail(route.params.name as string)
-  loading.value = false
-  if (strigoi.value?.recentRuns[0]) {
-    expandedRuns.value = new Set([strigoi.value.recentRuns[0].id])
+  try {
+    strigoi.value = await api.getStrigoiDetail(route.params.name as string)
+    if (strigoi.value?.recentRuns[0]) {
+      expandedRuns.value = new Set([strigoi.value.recentRuns[0].id])
+    }
+  } finally {
+    loading.value = false
   }
 })
 
