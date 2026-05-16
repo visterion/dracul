@@ -10,7 +10,7 @@ operator's morning view and daily workspace.
 - Pinia 2 (Setup Stores)
 - Vue Router 4 (`createWebHistory`)
 - Vite 6 + TypeScript 5 (strict mode)
-- ApexCharts / vue3-apexcharts (imported; used in Views 3, 6, 7 — stubs for now)
+- ApexCharts / vue3-apexcharts (used in View 3 Strigoi Detail; stubs in Views 6, 7)
 - @phosphor-icons/vue for functional iconography
 - SSE via native `EventSource` for live Daywalker updates (Etappe 12)
 
@@ -29,8 +29,8 @@ Both documents are required reading before implementing any view.
 | # | View | Route | Purpose | Density |
 |---|------|-------|---------|---------|
 | 1 | Chronicle | `/` | Morning dashboard — new prey, verdicts, alerts, lessons | Medium |
-| 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) |
-| 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High |
+| 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) | ✅ Etappe 10 |
+| 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
 | 4 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments | Medium |
 | 5 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low |
 | 6 | Vistierie | `/vistierie` | Cost dashboard, tier budgets, trends | High |
@@ -77,13 +77,31 @@ The Daywalker will push `alert.new` events via the SSE endpoint
 (`/api/events`). The Chronicle view and the Watchlist view will consume
 this stream. This is planned for Etappe 12.
 
+## Implementation status (Etappe 10)
+
+**View 2 — Verdict Detail** (`/verdict/:id`): Fully implemented with mock data.
+Two-pane layout (3fr + 1fr sticky sidebar). Main pane: breadcrumb, symbol header,
+anomaly type badges, full prose summary, signals list (gold bullets), risks list
+(ash-gray bullets), contributing strigoi sub-cards with router-links to View 3.
+Sidebar: Decision panel (Track/Interesting/Dismiss buttons + notes textarea), Quick
+stats table (price, consensus, avg confidence, horizon, discovered), Daywalker
+status panel.
+
+**View 3 — Strigoi Detail** (`/strigoi/:name`): Fully implemented with mock data.
+Single-pane layout. Page header with bat icon, state pill (hunting/resting/paused/
+budget-hit), schedule. Three stat cards (hunts, avg prey, hit rate — green when
+≥60%). Expandable run trace timeline (newest auto-expanded, trace rows styled by
+event type). 3-column recent prey grid (reuses PreyCard). 2-column configuration
+panel. ApexCharts dual-axis line chart (hit rate % left axis, prey count right axis,
+25 weeks of data).
+
 ## Navigation structure
 
 - **Chronicle** is the home page. Most navigation starts here.
 - **Verdict Detail** and **Strigoi Detail** are deep-linked from
-  Chronicle items.
+  Chronicle items. Strigoi names in VerdictCard sublines are clickable links.
 - **Watchlist** receives items via the "Track on Watchlist" action in
-  Verdict Detail.
+  Verdict Detail (button rendered, not yet wired).
 - **Pattern Library** is reviewed periodically when the Voievod proposes
   new patterns.
 - **Vistierie** and **Backtest** are reference / diagnostic views.
