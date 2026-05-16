@@ -47,6 +47,9 @@ export interface Pattern {
   status: PatternStatus
   evidenceCount: number
   proposedAt: string
+  supportedCount?: number          // how many of evidenceCount cases supported the lesson
+  avgUpliftPercent?: number | null // null for exclusion/negative lessons
+  name?: string                    // slug for active patterns, e.g. "tech-spinoffs-outperform-industrials"
 }
 
 export interface StrigoiStatus {
@@ -139,4 +142,47 @@ export interface StrigoiDetail {
   recentPrey: Prey[]
   configuration: StrigoiConfiguration
   weeklyPerformance: WeeklyPerformance[]
+}
+
+// ── Watchlist ──────────────────────────────────────────────────
+
+export type WatchlistStatus = 'calm' | 'elevated' | 'alert'
+export type WatchlistTag = 'held' | 'tracking'
+
+export interface WatchlistAlert {
+  id: string
+  at: string
+  message: string
+  level: 'elevated' | 'info' | 'neutral'
+}
+
+export interface WatchlistItem {
+  id: string
+  ticker: string
+  companyName: string
+  currentPrice: number
+  dayChangePercent: number
+  status: WatchlistStatus
+  addedAt: string          // ISO date "2026-05-14"
+  tag: WatchlistTag
+  verdictId: string | null // links to VerdictDetail when tag === 'tracking'
+  alerts: WatchlistAlert[]
+  priceHistory30d: number[] // 30 data points for sparkline
+}
+
+// ── Settings / Providers ───────────────────────────────────────
+
+export type ProviderStatus = 'connected' | 'fallback' | 'local'
+
+export interface LlmProvider {
+  id: string
+  name: string
+  status: ProviderStatus
+  apiKeyMasked: string | null  // "··· 4f3a" or null for local
+  endpoint: string | null       // for Ollama only
+  models: string[]
+  todayInputTokens: number
+  todayOutputTokens: number
+  todayCostUsd: number
+  callsToday: number | null     // for local providers (Ollama)
 }
