@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,8 +63,8 @@ public class MockVistierieClient implements VistierieClient {
 
     @Override
     public List<VistierieData.DailySpend> getDashboardData() {
-        var result = new java.util.ArrayList<VistierieData.DailySpend>();
-        var today = java.time.LocalDate.now();
+        var result = new ArrayList<VistierieData.DailySpend>();
+        var today = LocalDate.now();
         for (int i = 29; i >= 0; i--) {
             var date = today.minusDays(i).toString();
             // generate realistic variance between 0.10 and 0.80
