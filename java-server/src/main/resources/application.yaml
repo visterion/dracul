@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    url:      ${DRACUL_DB_URL:jdbc:postgresql://localhost:5432/dracul}
+    username: ${DRACUL_DB_USER:dracul}
+    password: ${DRACUL_DB_PASSWORD:dracul}
+  flyway:
+    locations: classpath:db/migration
+
+dracul:
+  vistierie:
+    url: ${VISTIERIE_URL:http://vistierie:8090}
