@@ -1,5 +1,5 @@
 import type { ApiClient } from './ApiClient'
-import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail, WatchlistItem, Pattern, LlmProvider } from './types'
+import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail, WatchlistItem, Pattern, LlmProvider, VistierieData } from './types'
 
 export class HttpApiClient implements ApiClient {
   constructor(private readonly baseUrl: string) {}
@@ -46,5 +46,11 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/providers`)
     if (!res.ok) throw new Error(`getProviders failed: HTTP ${res.status}`)
     return res.json() as Promise<LlmProvider[]>
+  }
+
+  async getVistierieData(): Promise<VistierieData> {
+    const res = await fetch(`${this.baseUrl}/api/vistierie`)
+    if (!res.ok) throw new Error(`getVistierieData failed: HTTP ${res.status}`)
+    return res.json() as Promise<VistierieData>
   }
 }

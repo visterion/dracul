@@ -186,3 +186,31 @@ export interface LlmProvider {
   todayCostUsd: number
   callsToday: number | null     // for local providers (Ollama)
 }
+
+// ── Vistierie Dashboard ────────────────────────────────────────
+
+export interface TierBudget {
+  name: string
+  models: string
+  budgetUsd: number
+  usedUsd: number
+}
+
+export interface AgentSpend {
+  agent: string
+  totalUsd: number
+  pct: number
+}
+
+export interface DailySpend {
+  date: string
+  totalUsd: number
+}
+
+export interface VistierieData {
+  tiers: TierBudget[]
+  spendingByAgent: AgentSpend[]
+  dailySpend30d: DailySpend[]
+  monthlyTotalUsd: number
+  monthlyBudgetUsd: number
+}
