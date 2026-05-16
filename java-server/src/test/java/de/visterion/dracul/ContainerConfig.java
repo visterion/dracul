@@ -12,6 +12,7 @@ class ContainerConfig {
     @ServiceConnection
     PostgreSQLContainer<?> postgres() {
         return new PostgreSQLContainer<>("postgres:18-alpine")
+                .withPrivilegedMode(true)
                 .withReuse(true);
     }
 }
