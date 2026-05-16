@@ -26,6 +26,7 @@ export interface Verdict {
   symbol: string
   companyName: string
   contributingStrigoi: string[]
+  /** 0–1 — weighted consensus across contributing Strigoi */
   consensusScore: number
   summary: string
   createdAt: string
@@ -43,6 +44,7 @@ export interface Pattern {
   id: string
   appliesToStrigoi: string
   statement: string
+  status: PatternStatus
   evidenceCount: number
   proposedAt: string
 }
@@ -56,7 +58,7 @@ export interface StrigoiStatus {
 
 export interface SystemStatus {
   strigoi: StrigoiStatus[]
-  lastVerdictAt: string
+  lastVerdictAt?: string
   dailyCostUsd: number
   daywalkerActive: boolean
 }
