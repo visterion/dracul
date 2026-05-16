@@ -35,7 +35,7 @@ export const mockPrey: Prey[] = [
       'Earnings beat by 14% YoY with raised guidance. Post-announcement drift in semiconductor sector with this magnitude historically correlates with 60-day continued upward drift in 7 of 10 comparable cases.',
     signals: [
       'Q3 EPS +14% YoY, guidance raised for Q4',
-      'Insider buying of $2.1M in the 72 hours post-announcement',
+      'Unusual options activity: call volume 4× average in the 72 hours post-announcement',
       'Options flow suggests institutional accumulation',
     ],
     risks: [
