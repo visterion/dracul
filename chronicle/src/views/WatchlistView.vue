@@ -77,7 +77,7 @@
           <div class="watchlist__detail-ticker">{{ selectedItem.ticker }}</div>
           <div class="watchlist__detail-company">{{ selectedItem.companyName }}</div>
           <div class="watchlist__detail-subtitle">
-            {{ selectedItem.tag === 'tracking' ? `tracking verdict from ${formatDate(selectedItem.addedAt)}` : `held position since ${formatDate(selectedItem.addedAt)}` }}
+            {{ selectedItem.verdictId ? `tracking verdict from ${formatDate(selectedItem.addedAt)}` : `held position since ${formatDate(selectedItem.addedAt)}` }}
           </div>
         </div>
 
