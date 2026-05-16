@@ -9,4 +9,5 @@ public interface VistierieClient {
     Optional<StrigoiDetail> getStrigoiDetail(String name);
     double getTodayCostUsd();
     List<LlmProvider> getProviders();
+    List<VistierieData.DailySpend> getDashboardData();
 }

@@ -145,6 +145,16 @@ public class HttpVistierieClient implements VistierieClient {
         }
     }
 
+    @Override
+    public List<VistierieData.DailySpend> getDashboardData() {
+        var result = new java.util.ArrayList<VistierieData.DailySpend>();
+        var today = java.time.LocalDate.now();
+        for (int i = 29; i >= 0; i--) {
+            result.add(new VistierieData.DailySpend(today.minusDays(i).toString(), 0.0));
+        }
+        return result;
+    }
+
     private String capitalize(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);

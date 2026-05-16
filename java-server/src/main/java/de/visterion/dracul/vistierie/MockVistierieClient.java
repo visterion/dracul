@@ -60,6 +60,21 @@ public class MockVistierieClient implements VistierieClient {
         );
     }
 
+    @Override
+    public List<VistierieData.DailySpend> getDashboardData() {
+        var result = new java.util.ArrayList<VistierieData.DailySpend>();
+        var today = java.time.LocalDate.now();
+        for (int i = 29; i >= 0; i--) {
+            var date = today.minusDays(i).toString();
+            // generate realistic variance between 0.10 and 0.80
+            double base = 0.35 + 0.20 * Math.sin(i * 0.4);
+            double noise = 0.08 * Math.sin(i * 1.7 + 0.5);
+            double val = Math.round((base + noise) * 100.0) / 100.0;
+            result.add(new VistierieData.DailySpend(date, val));
+        }
+        return result;
+    }
+
     private static final List<TraceEvent> SPIN_TRACE = List.of(
             new TraceEvent("00:00", "start",    "▼ awakened (scheduled)"),
             new TraceEvent("00:00", "info",     "pre-screening 47 candidates"),
