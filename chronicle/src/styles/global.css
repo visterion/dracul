@@ -107,7 +107,7 @@ body {
 /* All numerical columns must use tabular figures — see DESIGN.md Part 3 */
 .tabular {
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
+  font-feature-settings: "kern", "liga", "tnum";
 }
 
 /* ── Reduced Motion ───────────────────────────────────────────────── */
