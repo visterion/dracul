@@ -95,6 +95,31 @@ event type). 3-column recent prey grid (reuses PreyCard). 2-column configuration
 panel. ApexCharts dual-axis line chart (hit rate % left axis, prey count right axis,
 25 weeks of data).
 
+## Implementation status (Etappe 11)
+
+**View 4 — Watchlist** (`/watchlist`): Fully implemented with mock data.
+Two-pane layout (60% list / 40% detail). Left pane: search input, filter chips
+(All/Held/Tracking/Alerts with live counts), add-to-watchlist button (stub), scrollable
+item list with ticker, price, day change, status dot (calm/elevated/alert). Right pane:
+selected item detail with Daywalker alert timeline (max 5 alerts), 30-day ApexCharts
+area sparkline, linked verdict card (when verdictId is set), ghost action buttons (stubs).
+Selected state is a local `ref<string | null>` initialized to the first item on load.
+
+**View 5 — Pattern Library** (`/patterns`): Fully implemented with mock data.
+Single-pane max-width 960px. Pending section: Voievod-proposed lesson cards with gold
+left border, evidence counts, and Approve/Reject/Defer buttons (stubs). Active section:
+filterable by Strigoi chip (derived from unique `appliesToStrigoi` values); each row
+expands to show full pattern text and Deactivate button (stub). Expand state uses the
+`ref<Set<string>>` reactivity pattern from StrigoiDetailView — new Set created on each
+toggle for correct Vue reactivity.
+
+**View 8 — Settings** (`/settings`): Fully implemented with mock data.
+Two-pane: 220px sidebar nav + scrollable content area. LLM Providers section fully
+implemented: 3 provider cards (Anthropic connected, OpenAI fallback, Ollama local) with
+API key, endpoint, models, and today's usage/cost. All other nav sections show a
+"coming in a future etappe" stub. Multi-User Settings is visually disabled (opacity 0.4,
+pointer-events: none) with a Phase 2 badge.
+
 ## Navigation structure
 
 - **Chronicle** is the home page. Most navigation starts here.
