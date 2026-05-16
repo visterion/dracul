@@ -1,15 +1,17 @@
 # Dracul
 <img width="1456" height="720" alt="image" src="https://github.com/user-attachments/assets/7630ef1d-3d4b-4402-8420-268c4247ddb9" />
 
-> **An autonomous investment-research system. Six specialised hunters scan the market every night for documented anomalies and surface candidates for human review.**
+> **An autonomous investment-research system. Six specialised hunters scan the market every night for documented anomalies; a weekly reviewer learns from their track record; a daytime guardian watches active positions.**
 
 Dracul runs a roster of **Strigoi** — agentic hunters, each tuned to one
 academically-documented anomaly (spin-offs, insider clusters,
 post-earnings drift, quality-at-52w-low, index-inclusion drift, M&A
 arbitrage). They sleep through the trading day, wake at night, scan
 their hunting grounds, and lay out what they found in the Chronicle by
-morning. The operator decides what, if anything, to do with the
-findings.
+morning. The **Voievod** reviews outcomes weekly and proposes heuristics
+that make future hunts smarter. The **Daywalker** guards active positions
+during market hours and fires alerts when something demands attention.
+The operator decides what, if anything, to do with the findings.
 
 [![docker](https://github.com/visterion/dracul/actions/workflows/docker.yml/badge.svg)](https://github.com/visterion/dracul/actions/workflows/docker.yml)
 [![test](https://github.com/visterion/dracul/actions/workflows/test.yml/badge.svg)](https://github.com/visterion/dracul/actions/workflows/test.yml)
@@ -51,19 +53,13 @@ Six shadows step into the moonlight. His brood. His specialists. Each one hunger
 
 They scatter into the night. Each to his own hunting ground. Each with the patience of the immortal.
 
-While mortals sleep, they work. While mortals abandon trades after three weeks of silence, the Strigoi wait three months -- or three years if the anomaly demands it. They do not burn out. They do not lose faith. They do not feel the pull of impatience that destroys human investors.
+By dawn, they return. Each carries prey -- not bodies, but knowledge. Lists of instruments where blood will flow. Theses for why the bleeding will continue. Risks they observed along the way.
 
-By dawn, they return. Each one carries prey -- not bodies, but knowledge. Lists of instruments where blood will flow. Theses for why the bleeding will continue. Risks they observed along the way. They place their findings in the **Vistierie** -- the treasury, where every coin is counted, every token, every call. Even immortals need discipline.
+The **Voievod** learns. Weekly, he reviews what the Strigoi found and what actually happened. He proposes heuristics. The ones that hold become part of the next hunt.
 
-Dracul reads their reports. When three Strigoi independently bring back the same name -- Sandisk, perhaps, on a February morning -- he knows: this is more than coincidence. This is a setup. Here, much blood will flow, and for a long time.
+The **Daywalker** never sleeps during market hours. While the Strigoi rest in their coffins, he watches the positions you hold, monitors the news, and speaks when something demands your attention.
 
-He inscribes the **Verdict** in his chronicle. He does not decide whether you should hunt. He presents the case -- curated, reasoned, with risks. You, the mortal who summoned him, decide. That is the bargain.
-
-The sun climbs. The Strigoi withdraw to their coffins. Moonlight retreats.
-
-But tonight, when the bells fall silent again, they will ride out once more.
-
-They will never stop.
+Dracul reads their reports. When three Strigoi independently bring back the same name -- Sandisk, perhaps, on a February morning -- he knows: this is more than coincidence. This is a setup. He inscribes the **Verdict** in his chronicle. He does not decide whether you should hunt. He presents the case -- curated, reasoned, with risks. You, the mortal who summoned him, decide. That is the bargain.
 
 > *The immortal know no impatience.*
 
@@ -99,48 +95,62 @@ before the move was obvious.
 ```
                 ┌──────────────────────────────────────┐
                 │              Vistierie               │
-                │   (agent runtime, this repo's only   │
-                │      external runtime dependency)    │
+                │  agent runtime: scheduling, routing, │
+                │  cost ledger, kill switch, audit     │
                 └──────────────┬───────────────────────┘
                                │ register agents,
                                │ tool webhooks,
                                │ tier-based routing
                                ▼
-┌────────────────────────────────────────────────────────────────┐
-│                            Dracul                               │
-│                                                                 │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
-│   │ Strigoi- │  │ Strigoi- │  │ Strigoi- │  │ Strigoi- │ ...   │
-│   │   Spin   │  │ Insider  │  │   Echo   │  │ Lazarus  │       │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘       │
-│        │             │             │             │             │
-│        ▼             ▼             ▼             ▼             │
-│   ┌────────────────────────────────────────────────────┐       │
-│   │           Hunting grounds (adapters)               │       │
-│   │   EDGAR · prices · news · earnings calendar        │       │
-│   └────────────────────────────────────────────────────┘       │
-│        │             │             │             │             │
-│        └─────────────┴──────┬──────┴─────────────┘             │
-│                             ▼                                   │
-│                    ┌─────────────────┐                          │
-│                    │  Crypt (PG)     │ append-only prey/verdict │
-│                    └────────┬────────┘                          │
-│                             ▼                                   │
-│                    ┌─────────────────┐                          │
-│                    │   Chronicle     │   Vue 3 / Vuetify 3      │
-│                    └─────────────────┘                          │
-└────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                            Dracul                              │
+│                                                               │
+│  ┌──────────────────────── nightly ──────────────────────┐   │
+│  │  Strigoi-Spin · Strigoi-Insider · Strigoi-Echo        │   │
+│  │  Strigoi-Lazarus · Strigoi-Index · Strigoi-Merger     │   │
+│  └──────────────────────────┬────────────────────────────┘   │
+│                             │ Prey                            │
+│  ┌────── weekly ──────┐     │     ┌──── market hours ──────┐  │
+│  │     Voievod        │     │     │      Daywalker         │  │
+│  │ reviews outcomes,  │     │     │  watches watchlist,    │  │
+│  │ proposes patterns  │     │     │  fires alerts          │  │
+│  └────────┬───────────┘     │     └──────────┬─────────────┘  │
+│           │ Patterns        │               │ Alerts          │
+│           ▼                 ▼               ▼                 │
+│  ┌────────────────────────────────────────────────────┐       │
+│  │           Hunting grounds (adapters)               │       │
+│  │   EDGAR · prices · news · earnings calendar        │       │
+│  └────────────────────────────────────────────────────┘       │
+│                             │                                  │
+│                             ▼                                  │
+│                   ┌──────────────────┐                         │
+│                   │   Synthesizer    │ consensus → Verdict     │
+│                   └────────┬─────────┘                         │
+│                            ▼                                   │
+│                   ┌──────────────────┐                         │
+│                   │  Crypt (PG)      │ prey · verdicts ·       │
+│                   │                  │ patterns · alerts ·     │
+│                   │                  │ watchlist               │
+│                   └────────┬─────────┘                         │
+│                            ▼                                   │
+│                   ┌──────────────────┐                         │
+│                   │    Chronicle     │  Vue 3 / Vuetify 3      │
+│                   │    (8 views)     │  SSE live updates       │
+│                   └──────────────────┘                         │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 Vistierie owns the agent runtime (scheduling, recursion, context
 shielding, cost ledger, kill switch, tier-based routing). Dracul owns
-the investment domain (Strigoi logic, market-data adapters,
-pre-screen, prey/verdict persistence, Chronicle frontend). The split
-is non-negotiable — see `CLAUDE.md`.
+the investment domain (Strigoi logic, Voievod, Daywalker, market-data
+adapters, pre-screen, prey/verdict/pattern/alert persistence, Chronicle
+frontend). The split is non-negotiable — see `CLAUDE.md`.
 
 ---
 
-## The Strigoi
+## The residents of the crypt
+
+### The six Strigoi (nightly hunters)
 
 | # | Strigoi | Anomaly | Tier | Source |
 |---|---------|---------|------|--------|
@@ -151,22 +161,36 @@ is non-negotiable — see `CLAUDE.md`.
 | 5 | **Strigoi-Index** | Index-inclusion drift | routine | S&P / Russell studies |
 | 6 | **Strigoi-Merger** | M&A arbitrage | reasoning | Mitchell & Pulvino 2001 |
 
-Each Strigoi follows the same shape: deterministic pre-screen against
+Each Strigoi follows the same pattern: deterministic pre-screen against
 its hunting ground → LLM evaluation via Vistierie at the appropriate
-tier → structured `Prey` JSON written to the Crypt. The cheap routine
-ones run on Haiku-class models; the dense reasoning ones get Sonnet.
-Switching tiers is a Vistierie routing-rule edit, never a code change.
+tier → structured `Prey` JSON written to the Crypt. Switching tiers is
+a Vistierie routing-rule edit, never a code change.
 
-When two or more Strigoi flag the same instrument independently,
-Dracul produces a **Verdict** — a synthesised summary of why the
-consensus formed and what the differing perspectives saw.
+When two or more Strigoi flag the same instrument independently, the
+Synthesizer produces a **Verdict** — a consolidated summary of why the
+consensus formed and what each perspective saw.
+
+### Voievod (weekly reviewer)
+
+Runs every Sunday. Reviews all Prey whose time-horizon has elapsed,
+compares thesis against actual price return, and proposes learned
+**Patterns** to the Pattern Library. Patterns only activate when the
+operator approves them — they then become prompt context for the next
+Strigoi run, closing the feedback loop.
+
+### Daywalker (streaming guardian)
+
+Active during US market hours. Polls prices every 5 minutes for all
+watchlist items. Reacts to news, Form-4 filings, and price spikes.
+Uses a cheap Haiku pre-filter before escalating to a full Sonnet
+assessment. Critical alerts go to Telegram immediately.
 
 ---
 
 ## Quick start
 
-> Dracul depends on a running [Vistierie](https://github.com/visterion/vistierie)
-> instance and a Postgres database. Bring those up first.
+> Requires a running [Vistierie](https://github.com/visterion/vistierie)
+> instance and a Postgres database.
 
 ```bash
 docker run --rm -p 8091:8091 \
@@ -177,11 +201,12 @@ docker run --rm -p 8091:8091 \
   -e DRACUL_VISTIERIE_TOKEN='<bearer-token-issued-by-vistierie>' \
   -e DRACUL_TOOL_WEBHOOK_TOKEN='<dracul-side-secret>' \
   -e EDGAR_USER_AGENT='Dracul research@example.com' \
+  -e TELEGRAM_BOT_TOKEN='<optional>' \
+  -e TELEGRAM_CHAT_ID='<optional>' \
   ghcr.io/visterion/dracul:main
 ```
 
-Bootstrapping the `dracul` tenant inside Vistierie, seeding the
-Strigoi roster, and the operations runbook live in
+Full setup, tenant bootstrap, and operations runbook:
 [`documentation/operations.md`](documentation/operations.md).
 
 ---
@@ -190,14 +215,14 @@ Strigoi roster, and the operations runbook live in
 
 | | |
 |---|---|
-| [strigoi.md](documentation/strigoi.md) | Strigoi roster, the per-hunter pattern, tier choices |
+| [architecture.md](documentation/architecture.md) | System overview, all modules, domain model, data flow |
+| [strigoi.md](documentation/strigoi.md) | Strigoi roster, Voievod, Daywalker — the hunt pattern and tier routing |
 | [hunting-grounds.md](documentation/hunting-grounds.md) | Market-data adapters (EDGAR, prices, news, calendar) |
-| [vistierie-integration.md](documentation/vistierie-integration.md) | How Dracul registers agents and tool webhooks with Vistierie |
-| [api.md](documentation/api.md) | REST endpoint reference |
-| [architecture.md](documentation/architecture.md) | System overview, modules, data model |
+| [vistierie-integration.md](documentation/vistierie-integration.md) | Vistierie ownership boundary, tier conventions, webhooks |
+| [api.md](documentation/api.md) | REST endpoint reference, SSE live-update stream |
 | [configuration.md](documentation/configuration.md) | All `dracul.*` properties and env vars |
-| [chronicle.md](documentation/chronicle.md) | Vue 3 frontend, planned views |
-| [operations.md](documentation/operations.md) | Tenant setup, kill switch, backups |
+| [chronicle.md](documentation/chronicle.md) | Vue 3 frontend — 8 views, design system, live updates |
+| [operations.md](documentation/operations.md) | Tenant setup, kill switch, Daywalker hours, backups |
 | [the-hunt.md](documentation/the-hunt.md) | The full tale of Dracul and his Strigoi |
 
 ---
@@ -208,11 +233,12 @@ Requires JDK 25, Node 22+, and Docker (for the Postgres testcontainer
 used in tests).
 
 ```bash
-export JAVA_HOME=/path/to/jdk-25
+export JAVA_HOME=/usr/local/lib/jdk-25.0.2+10
+export PATH=$JAVA_HOME/bin:$PATH
 cd java-server
 ./mvnw test                        # full suite
 ./mvnw -DskipTests package
-java -jar target/dracul-1.0.0.jar
+java -jar dracul-app/target/dracul-app-*.jar
 ```
 
 ---
