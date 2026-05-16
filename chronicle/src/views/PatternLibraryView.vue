@@ -1,41 +1,372 @@
 <template>
-  <div class="stub-view">
-    <div class="stub-view__header">
-      <h1 class="font-display">Pattern Library</h1>
-      <p class="stub-view__subtitle">Lessons learned by the Voievod, governing how the Strigoi hunt</p>
+  <div class="patterns">
+    <div class="patterns__header">
+      <div class="patterns__header-icon">📜</div>
+      <h1 class="patterns__title font-display">Pattern Library</h1>
+      <p class="patterns__subtitle">Lessons learned by the Voievod, governing how the Strigoi hunt</p>
     </div>
-    <div class="stub-view__placeholder">
-      <span class="stub-view__bat">🦇</span>
-      <p>The Strigoi are still returning from the night's hunt.</p>
-    </div>
+
+    <template v-if="loading">
+      <v-skeleton-loader v-for="i in 3" :key="i" type="card" class="mb-3" />
+    </template>
+
+    <template v-else>
+      <!-- Pending section -->
+      <div class="patterns__section-header">── pending review ({{ pendingPatterns.length }})</div>
+
+      <div v-if="pendingPatterns.length === 0" class="patterns__empty">No patterns pending review.</div>
+
+      <div
+        v-for="pattern in pendingPatterns"
+        :key="pattern.id"
+        class="patterns__pending-card"
+      >
+        <div class="patterns__pending-header">
+          <div>
+            <span class="patterns__bat">🦇</span>
+            <span class="patterns__strigoi-name">{{ pattern.appliesToStrigoi }}</span>
+          </div>
+          <span class="patterns__pending-when">proposed by Voievod, {{ daysAgo(pattern.proposedAt) }}</span>
+        </div>
+        <p class="patterns__lesson">{{ pattern.statement }}</p>
+        <div class="patterns__evidence">
+          Based on {{ pattern.evidenceCount }} cases
+          <template v-if="pattern.supportedCount !== undefined">
+            · {{ pattern.supportedCount }} of {{ pattern.evidenceCount }} supported
+          </template>
+          <template v-if="pattern.avgUpliftPercent !== null && pattern.avgUpliftPercent !== undefined">
+            · avg uplift +{{ pattern.avgUpliftPercent }}%
+          </template>
+          &nbsp;
+          <a href="#" class="patterns__cases-link" @click.prevent="() => {}">[View supporting cases →]</a>
+        </div>
+        <div class="patterns__pending-actions">
+          <button class="patterns__btn-ghost" @click="() => {}">Defer</button>
+          <button class="patterns__btn-secondary" @click="() => {}">Reject</button>
+          <button class="patterns__btn-primary" @click="() => {}">Approve &amp; Activate</button>
+        </div>
+      </div>
+
+      <!-- Active section -->
+      <div class="patterns__section-header" style="margin-top: 28px;">── active patterns ({{ activePatterns.length }})</div>
+
+      <div class="patterns__filter-chips">
+        <button
+          class="patterns__chip"
+          :class="{ 'patterns__chip--active': strigoiFilter === 'all' }"
+          @click="strigoiFilter = 'all'"
+        >
+          All Strigoi ({{ activePatterns.length }})
+        </button>
+        <button
+          v-for="name in strigoiNames"
+          :key="name"
+          class="patterns__chip"
+          :class="{ 'patterns__chip--active': strigoiFilter === name }"
+          @click="strigoiFilter = name"
+        >
+          {{ name.replace('strigoi-', '') }} ({{ activePatterns.filter(p => p.appliesToStrigoi === name).length }})
+        </button>
+      </div>
+
+      <div class="patterns__active-list">
+        <div
+          v-for="pattern in filteredActivePatterns"
+          :key="pattern.id"
+          class="patterns__active-row"
+        >
+          <div class="patterns__active-header" @click="toggleExpand(pattern.id)">
+            <span class="patterns__bat">🦇</span>
+            <span class="patterns__active-name">{{ pattern.name ?? pattern.id }}</span>
+            <span class="patterns__strigoi-chip">{{ pattern.appliesToStrigoi.replace('strigoi-', '') }}</span>
+            <span class="patterns__evidence-count">evidence: {{ pattern.evidenceCount }}</span>
+            <span class="patterns__activated">{{ monthsAgo(pattern.proposedAt) }}</span>
+            <button class="patterns__expand-btn">
+              {{ expandedIds.has(pattern.id) ? '▼' : '▶' }}
+            </button>
+          </div>
+          <div v-if="expandedIds.has(pattern.id)" class="patterns__active-body">
+            <p class="patterns__active-text">{{ pattern.statement }}</p>
+            <button class="patterns__btn-ghost" @click="() => {}">Deactivate</button>
+          </div>
+        </div>
+
+        <div v-if="filteredActivePatterns.length === 0" class="patterns__empty">
+          No active patterns for this Strigoi.
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useApi } from '../api'
+import type { Pattern } from '../api/types'
+
+const api = useApi()
+const allPatterns = ref<Pattern[]>([])
+const loading = ref(true)
+const strigoiFilter = ref('all')
+const expandedIds = ref<Set<string>>(new Set())
+
+onMounted(async () => {
+  try {
+    allPatterns.value = await api.getPatterns()
+  } finally {
+    loading.value = false
+  }
+})
+
+const pendingPatterns = computed(() =>
+  allPatterns.value.filter(p => p.status === 'PENDING')
+)
+
+const activePatterns = computed(() =>
+  allPatterns.value.filter(p => p.status === 'ACTIVE')
+)
+
+const strigoiNames = computed(() =>
+  [...new Set(activePatterns.value.map(p => p.appliesToStrigoi))].sort()
+)
+
+const filteredActivePatterns = computed(() =>
+  strigoiFilter.value === 'all'
+    ? activePatterns.value
+    : activePatterns.value.filter(p => p.appliesToStrigoi === strigoiFilter.value)
+)
+
+function toggleExpand(id: string) {
+  const next = new Set(expandedIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+  }
+  expandedIds.value = next
+}
+
+function daysAgo(isoString: string): string {
+  const days = Math.floor((Date.now() - new Date(isoString).getTime()) / 86_400_000)
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  return `${days} days ago`
+}
+
+function monthsAgo(isoString: string): string {
+  const months = Math.floor((Date.now() - new Date(isoString).getTime()) / (30 * 86_400_000))
+  if (months === 0) return 'this month'
+  if (months === 1) return '1 month ago'
+  return `${months} months ago`
+}
+</script>
 
 <style scoped>
-.stub-view {
-  max-width: 1280px;
+.patterns {
+  max-width: 960px;
   margin: 0 auto;
-  padding: var(--space-8) var(--space-6);
+  padding: 28px 32px;
 }
-.stub-view__header { margin-bottom: var(--space-8); }
-.stub-view__header h1 {
-  font-size: var(--text-h1);
-  line-height: 1.15;
-  letter-spacing: -0.01em;
+
+.patterns__header { margin-bottom: 28px; }
+.patterns__header-icon { color: var(--cathedral-gold); font-size: 20px; margin-bottom: 6px; }
+.patterns__title {
+  font-size: 36px;
+  font-weight: 400;
   color: var(--bone-ivory);
-  margin: 0 0 var(--space-2) 0;
+  margin: 0 0 4px 0;
 }
-.stub-view__subtitle { color: var(--bone-ivory-dim); margin: 0; font-size: var(--text-body); }
-.stub-view__placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--space-12) 0;
-  gap: var(--space-4);
+.patterns__subtitle { font-size: 14px; color: var(--bone-ivory-dim); margin: 0; }
+
+.patterns__section-header {
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--ash-gray);
-  font-style: italic;
+  letter-spacing: 0.05em;
+  margin: 20px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.stub-view__bat { font-size: 32px; line-height: 1; }
+.patterns__section-header::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.patterns__empty { font-size: 13px; color: var(--ash-gray); font-style: italic; }
+
+.patterns__pending-card {
+  background: var(--crypt-black-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 2px solid var(--cathedral-gold);
+  border-radius: 2px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+}
+
+.patterns__pending-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.patterns__bat { color: var(--cathedral-gold); margin-right: 6px; }
+.patterns__strigoi-name { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
+.patterns__pending-when { font-size: 11px; color: var(--ash-gray); }
+
+.patterns__lesson {
+  font-size: 13px;
+  color: var(--bone-ivory);
+  line-height: 1.6;
+  font-style: italic;
+  margin: 0 0 10px 0;
+}
+
+.patterns__evidence {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ash-gray);
+  margin-bottom: 12px;
+}
+
+.patterns__cases-link {
+  color: var(--blood-crimson);
+  text-decoration: none;
+}
+.patterns__cases-link:hover { color: var(--blood-crimson-bright); }
+
+.patterns__pending-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.patterns__btn-primary {
+  padding: 6px 14px;
+  background: var(--blood-crimson);
+  border: none;
+  border-radius: 2px;
+  color: var(--bone-ivory);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.patterns__btn-primary:hover { background: var(--blood-crimson-bright); }
+
+.patterns__btn-secondary {
+  padding: 6px 14px;
+  background: none;
+  border: 1px solid var(--ash-gray);
+  border-radius: 2px;
+  color: var(--bone-ivory-dim);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.patterns__btn-secondary:hover { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
+
+.patterns__btn-ghost {
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  color: var(--ash-gray);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.patterns__btn-ghost:hover { color: var(--bone-ivory-dim); }
+
+.patterns__filter-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.patterns__chip {
+  padding: 4px 10px;
+  border-radius: 2px;
+  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--ash-gray);
+  cursor: pointer;
+  background: none;
+  font-family: var(--font-body);
+  transition: border-color 0.1s, color 0.1s;
+}
+.patterns__chip--active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
+.patterns__chip:hover:not(.patterns__chip--active) { color: var(--bone-ivory-dim); }
+
+.patterns__active-list {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.patterns__active-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.patterns__active-row:last-child { border-bottom: none; }
+
+.patterns__active-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--crypt-black-elevated);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.patterns__active-header:hover { background: rgba(184, 148, 92, 0.04); }
+
+.patterns__active-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--bone-ivory);
+  flex: 1;
+}
+
+.patterns__strigoi-chip {
+  padding: 2px 8px;
+  border: 1px solid rgba(184, 148, 92, 0.3);
+  border-radius: 2px;
+  font-size: 11px;
+  color: var(--cathedral-gold);
+  font-family: var(--font-mono);
+}
+
+.patterns__evidence-count {
+  font-size: 11px;
+  color: var(--ash-gray);
+  font-family: var(--font-mono);
+  min-width: 80px;
+}
+.patterns__activated {
+  font-size: 11px;
+  color: var(--ash-gray);
+  min-width: 110px;
+}
+.patterns__expand-btn {
+  background: none;
+  border: none;
+  color: var(--ash-gray);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.patterns__active-body {
+  padding: 12px 16px 12px 36px;
+  background: rgba(255, 255, 255, 0.01);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.patterns__active-text {
+  font-size: 13px;
+  color: var(--bone-ivory-dim);
+  line-height: 1.6;
+  font-style: italic;
+  margin: 0 0 10px 0;
+}
 </style>
