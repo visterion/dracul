@@ -31,7 +31,7 @@ export default createVuetify({
           warning: '#B8945C',
         },
         variables: {
-          'border-color': '255, 241, 232',
+          'border-color': '245, 241, 232',
           'border-opacity': 0.08,
           'high-emphasis-opacity': 1,
           'medium-emphasis-opacity': 0.78,
