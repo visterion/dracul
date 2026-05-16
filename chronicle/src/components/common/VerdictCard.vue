@@ -13,7 +13,14 @@
 
     <!-- Contributing Strigoi + time -->
     <div class="verdict-card__subline">
-      found by {{ verdict.contributingStrigoi.join(' · ') }} · {{ relativeTime(verdict.createdAt) }}
+      found by
+      <template v-for="(name, i) in verdict.contributingStrigoi" :key="name">
+        <router-link
+          :to="{ name: 'strigoi-detail', params: { name } }"
+          class="verdict-card__strigoi-link"
+        >{{ name }}</router-link><span v-if="i < verdict.contributingStrigoi.length - 1"> · </span>
+      </template>
+      · {{ relativeTime(verdict.createdAt) }}
     </div>
 
     <!-- Summary -->
@@ -123,5 +130,15 @@ const summary = computed(() =>
   color: var(--blood-crimson-bright);
   border-color: var(--blood-crimson-bright);
   background-color: rgba(161, 29, 44, 0.08);
+}
+
+.verdict-card__strigoi-link {
+  color: var(--ash-gray);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.verdict-card__strigoi-link:hover {
+  color: var(--bone-ivory-dim);
 }
 </style>
