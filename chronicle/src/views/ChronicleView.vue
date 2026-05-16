@@ -21,12 +21,12 @@
     <template v-else>
       <!-- Morning Summary Banner -->
       <div class="chronicle__banner">
-        <span class="font-mono tabular">
+        <span>
           🦇
-          <strong>{{ store.prey.length }}</strong> new prey ·
-          <strong>{{ store.verdicts.length }}</strong> {{ store.verdicts.length === 1 ? 'verdict' : 'verdicts' }} ·
-          <strong>{{ store.alerts.length }}</strong> daywalker {{ store.alerts.length === 1 ? 'alert' : 'alerts' }} ·
-          <strong>{{ store.pendingPatterns.length }}</strong> {{ store.pendingPatterns.length === 1 ? 'lesson' : 'lessons' }} pending
+          <strong class="font-mono tabular">{{ store.prey.length }}</strong> new prey ·
+          <strong class="font-mono tabular">{{ store.verdicts.length }}</strong> {{ store.verdicts.length === 1 ? 'verdict' : 'verdicts' }} ·
+          <strong class="font-mono tabular">{{ store.alerts.length }}</strong> daywalker {{ store.alerts.length === 1 ? 'alert' : 'alerts' }} ·
+          <strong class="font-mono tabular">{{ store.pendingPatterns.length }}</strong> {{ store.pendingPatterns.length === 1 ? 'lesson' : 'lessons' }} pending
         </span>
       </div>
 
