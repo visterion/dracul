@@ -48,7 +48,7 @@
               <div
                 class="vistierie__agent-fill"
                 :style="{
-                  width: agent.pct + '%',
+                  width: Math.min(Math.max(agent.pct, 0), 100) + '%',
                   background: agentColor(agent.agent),
                 }"
               />
@@ -143,25 +143,28 @@ const chartSeries = computed(() => [{
   data: (data.value?.dailySpend30d ?? []).map(e => ({ x: e.date, y: e.totalUsd })),
 }])
 
+const CHART_GOLD  = '#c9aa71' // var(--cathedral-gold)
+const CHART_MUTED = '#6B6B70' // var(--ash-gray)
+
 const chartOptions = {
   chart: {
     background: 'transparent',
     toolbar: { show: false },
     zoom: { enabled: false },
     fontFamily: 'JetBrains Mono, IBM Plex Mono, Consolas, monospace',
-    foreColor: '#6B6B70',
+    foreColor: CHART_MUTED,
   },
-  colors: ['#c9aa71'],
+  colors: [CHART_GOLD],
   stroke: { width: 2, curve: 'smooth' as const },
   fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.3, opacityTo: 0.02 } },
   grid: { borderColor: 'rgba(255,255,255,0.04)', xaxis: { lines: { show: false } } },
   xaxis: {
     type: 'datetime' as const,
-    labels: { style: { fontSize: '10px', colors: '#6B6B70' }, datetimeUTC: false },
+    labels: { style: { fontSize: '10px', colors: CHART_MUTED }, datetimeUTC: false },
   },
   yaxis: {
     labels: {
-      style: { fontSize: '10px', colors: '#6B6B70' },
+      style: { fontSize: '10px', colors: CHART_MUTED },
       formatter: (v: number) => '$' + v.toFixed(2),
     },
   },
