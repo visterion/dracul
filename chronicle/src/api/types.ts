@@ -69,3 +69,74 @@ export interface ChronicleData {
   alerts: DaywalkerAlert[]
   pendingPatterns: Pattern[]
 }
+
+export interface ContributingStrigoiDetail {
+  name: string
+  confidence: number
+  thesis: string
+}
+
+export interface VerdictDetail extends Verdict {
+  anomalyTypes: AnomalyType[]
+  currentPrice: number
+  avgConfidence: number
+  horizon: TimeHorizon
+  signals: string[]
+  risks: string[]
+  contributingDetails: ContributingStrigoiDetail[]
+}
+
+export interface TraceEvent {
+  offset: string
+  type: 'start' | 'end' | 'llm-call' | 'info'
+  message: string
+}
+
+export interface RunEntry {
+  id: string
+  ranAt: string
+  preyCount: number
+  costUsd: number
+  model: string
+  trace: TraceEvent[]
+}
+
+export interface StrigoiConfiguration {
+  cron: string
+  nextRunAt: string
+  disabled: boolean
+  tier: string
+  allowedModels: string[]
+  dailyBudgetUsd: number
+  dailyUsedUsd: number
+  monthlyBudgetUsd: number
+  monthlyUsedUsd: number
+  primaryProvider: string
+  fallbackProvider: string | null
+}
+
+export interface WeeklyPerformance {
+  week: string
+  hitRate: number
+  preyCount: number
+}
+
+export interface StrigoiDetail {
+  name: string
+  anomalyType: AnomalyType
+  description: string
+  reference: string
+  state: StrigoiState
+  lastRunAt: string
+  nextRunAt: string
+  huntsThisMonth: number
+  scheduledHuntsThisMonth: number
+  avgPreyPerHunt: number
+  hitRate90d: number
+  hitRateNumerator: number
+  hitRateDenominator: number
+  recentRuns: RunEntry[]
+  recentPrey: Prey[]
+  configuration: StrigoiConfiguration
+  weeklyPerformance: WeeklyPerformance[]
+}
