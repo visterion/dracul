@@ -1,43 +1,164 @@
 <template>
-  <div class="stub-view">
-    <div class="stub-view__header">
-      <h1 class="font-display">Chronicle</h1>
-      <p class="stub-view__subtitle">The morning dashboard — last night's findings</p>
+  <div class="chronicle">
+    <!-- Loading skeleton -->
+    <template v-if="store.loading">
+      <v-skeleton-loader
+        v-for="n in 3"
+        :key="n"
+        type="card"
+        color="surface"
+        class="chronicle__skeleton"
+      />
+    </template>
+
+    <!-- Error state -->
+    <div v-else-if="store.error" class="chronicle__error">
+      <p>{{ store.error }}</p>
+      <button class="chronicle__retry" @click="store.load()">Retry</button>
     </div>
-    <div class="stub-view__placeholder">
-      <span class="stub-view__bat">🦇</span>
-      <p>The Strigoi are still returning from the night's hunt.</p>
-    </div>
+
+    <!-- Content -->
+    <template v-else>
+      <!-- Morning Summary Banner -->
+      <div class="chronicle__banner">
+        <span class="font-mono tabular">
+          🦇
+          <strong>{{ store.prey.length }}</strong> new prey ·
+          <strong>{{ store.verdicts.length }}</strong> {{ store.verdicts.length === 1 ? 'verdict' : 'verdicts' }} ·
+          <strong>{{ store.alerts.length }}</strong> daywalker {{ store.alerts.length === 1 ? 'alert' : 'alerts' }} ·
+          <strong>{{ store.pendingPatterns.length }}</strong> {{ store.pendingPatterns.length === 1 ? 'lesson' : 'lessons' }} pending
+        </span>
+      </div>
+
+      <!-- Verdicts -->
+      <SectionHeader label="verdicts (consensus from multiple strigoi)" />
+      <div v-if="store.verdicts.length > 0" class="chronicle__section" role="list">
+        <VerdictCard
+          v-for="verdict in store.verdicts"
+          :key="verdict.id"
+          :verdict="verdict"
+        />
+      </div>
+      <p v-else class="chronicle__empty">No consensus findings yet.</p>
+
+      <!-- Individual Prey -->
+      <SectionHeader label="individual prey" />
+      <div v-if="store.prey.length > 0" class="chronicle__section" role="list">
+        <PreyCard
+          v-for="prey in store.prey"
+          :key="prey.id"
+          :prey="prey"
+        />
+      </div>
+      <p v-else class="chronicle__empty">The Strigoi have not yet returned tonight.</p>
+
+      <!-- Daywalker Alerts -->
+      <template v-if="store.alerts.length > 0">
+        <SectionHeader label="daywalker alerts (today)" />
+        <div class="chronicle__alert-list" role="list" aria-label="Daywalker alerts">
+          <AlertRow
+            v-for="alert in store.alerts"
+            :key="alert.id"
+            :alert="alert"
+          />
+        </div>
+      </template>
+
+      <!-- Pending Lessons -->
+      <template v-if="store.pendingPatterns.length > 0">
+        <SectionHeader label="pending lessons from voievod" />
+        <div class="chronicle__lesson-list" role="list" aria-label="Pending lessons">
+          <PendingLessonRow
+            v-for="pattern in store.pendingPatterns"
+            :key="pattern.id"
+            :pattern="pattern"
+          />
+        </div>
+      </template>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-// Will be replaced in Task 12 with the full Chronicle implementation
+import { onMounted } from 'vue'
+import { useChronicleStore } from '../stores/chronicle'
+import SectionHeader from '../components/common/SectionHeader.vue'
+import VerdictCard from '../components/common/VerdictCard.vue'
+import PreyCard from '../components/common/PreyCard.vue'
+import AlertRow from '../components/common/AlertRow.vue'
+import PendingLessonRow from '../components/common/PendingLessonRow.vue'
+
+const store = useChronicleStore()
+onMounted(() => store.load())
 </script>
 
 <style scoped>
-.stub-view {
+.chronicle {
   max-width: 1280px;
   margin: 0 auto;
-  padding: var(--space-8) var(--space-6);
+  padding: var(--space-6);
 }
-.stub-view__header { margin-bottom: var(--space-8); }
-.stub-view__header h1 {
-  font-size: var(--text-h1);
-  line-height: 1.15;
-  letter-spacing: -0.01em;
+
+.chronicle__skeleton {
+  margin-bottom: var(--space-4);
+}
+
+.chronicle__error {
+  padding: var(--space-8) 0;
+  color: var(--ash-gray);
+  text-align: center;
+}
+
+.chronicle__retry {
+  margin-top: var(--space-3);
+  background: none;
+  border: 1px solid var(--ash-gray);
   color: var(--bone-ivory);
-  margin: 0 0 var(--space-2) 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--text-body-sm);
+  transition: border-color var(--transition-fast);
 }
-.stub-view__subtitle { color: var(--bone-ivory-dim); margin: 0; font-size: var(--text-body); }
-.stub-view__placeholder {
+
+.chronicle__retry:hover {
+  border-color: var(--cathedral-gold);
+}
+
+.chronicle__banner {
+  background-color: var(--crypt-black-elevated);
+  border: 1px solid rgba(184, 148, 92, 0.1);
+  border-radius: 4px;
+  padding: var(--space-5);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-body-sm);
+  color: var(--bone-ivory);
+}
+
+.chronicle__banner strong {
+  color: var(--bone-ivory);
+  font-weight: 600;
+}
+
+.chronicle__section {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: var(--space-12) 0;
   gap: var(--space-4);
+}
+
+.chronicle__alert-list,
+.chronicle__lesson-list {
+  background-color: var(--crypt-black-elevated);
+  border: 1px solid rgba(184, 148, 92, 0.1);
+  border-radius: 4px;
+  padding: 0 var(--space-5);
+}
+
+.chronicle__empty {
   color: var(--ash-gray);
   font-style: italic;
+  font-size: var(--text-body);
+  padding: var(--space-4) 0;
+  margin: 0;
 }
-.stub-view__bat { font-size: 32px; line-height: 1; }
 </style>
