@@ -13,11 +13,8 @@ export function useRelativeTime() {
   }
 
   function formatTime(isoString: string): string {
-    return new Date(isoString).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
+    const d = new Date(isoString)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
 
   return { relativeTime, formatTime }
