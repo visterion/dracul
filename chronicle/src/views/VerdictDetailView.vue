@@ -1,43 +1,284 @@
 <template>
-  <div class="stub-view">
-    <div class="stub-view__header">
-      <h1 class="font-display">Verdict</h1>
-      <p class="stub-view__subtitle">A consolidated finding from multiple Strigoi</p>
-    </div>
-    <div class="stub-view__placeholder">
-      <span class="stub-view__bat">🦇</span>
-      <p>The Strigoi are still returning from the night's hunt.</p>
-    </div>
+  <div v-if="loading" class="vd-loading">
+    <v-skeleton-loader v-for="n in 3" :key="n" type="card" color="surface" class="vd-loading__item" />
   </div>
+
+  <div v-else-if="!verdict" class="vd-notfound">
+    <p>Verdict not found.</p>
+    <router-link to="/" class="vd-notfound__link">← Back to chronicle</router-link>
+  </div>
+
+  <article v-else class="vd">
+    <!-- Breadcrumb -->
+    <nav class="vd__breadcrumb" aria-label="Breadcrumb">
+      <router-link to="/" class="vd__bc-link">chronicle</router-link>
+      <span class="vd__bc-sep">/</span>
+      <span class="vd__bc-link">verdict</span>
+      <span class="vd__bc-sep">/</span>
+      <span class="vd__bc-current">{{ verdict.symbol }}</span>
+    </nav>
+
+    <div class="vd__layout">
+      <!-- Main pane -->
+      <main class="vd__main">
+        <header class="vd__header">
+          <h1 class="vd__symbol font-display">{{ verdict.symbol }}</h1>
+          <p class="vd__company">{{ verdict.companyName }}</p>
+          <div class="vd__meta">
+            <span v-for="type in verdict.anomalyTypes" :key="type" class="vd__badge">{{ type }}</span>
+            <span class="vd__meta-sep">·</span>
+            <span class="vd__meta-text">discovered {{ relativeTime(verdict.createdAt) }}</span>
+            <span class="vd__meta-sep">·</span>
+            <span class="vd__meta-text">{{ verdict.contributingStrigoi.length }} strigoi</span>
+          </div>
+        </header>
+
+        <SectionHeader label="consensus thesis" />
+        <p class="vd__prose">{{ verdict.summary }}</p>
+
+        <SectionHeader label="signals" />
+        <ul class="vd__list vd__list--signals">
+          <li v-for="s in verdict.signals" :key="s">{{ s }}</li>
+        </ul>
+
+        <SectionHeader label="risks" />
+        <ul class="vd__list vd__list--risks">
+          <li v-for="r in verdict.risks" :key="r">{{ r }}</li>
+        </ul>
+
+        <SectionHeader label="contributing strigoi" />
+        <div class="vd__contributors">
+          <div v-for="c in verdict.contributingDetails" :key="c.name" class="vd__contributor">
+            <div class="vd__contributor-header">
+              <span class="vd__contributor-bat" aria-hidden="true">🦇</span>
+              <router-link
+                :to="{ name: 'strigoi-detail', params: { name: c.name } }"
+                class="vd__contributor-name font-mono"
+              >{{ c.name }}</router-link>
+              <span class="vd__contributor-score font-mono tabular">{{ c.confidence.toFixed(2) }}</span>
+            </div>
+            <p class="vd__contributor-thesis">{{ c.thesis }}</p>
+          </div>
+        </div>
+      </main>
+
+      <!-- Sidebar -->
+      <aside class="vd__sidebar" aria-label="Decision panel">
+        <div class="vd__panel">
+          <div class="vd__panel-title">Decision</div>
+          <div class="vd__buttons">
+            <button class="vd__btn vd__btn--primary">Track on Watchlist</button>
+            <button class="vd__btn vd__btn--secondary">Mark as Interesting</button>
+            <button class="vd__btn vd__btn--ghost">Dismiss</button>
+          </div>
+          <textarea class="vd__notes" placeholder="Add your reasoning..." aria-label="Notes" rows="3" />
+        </div>
+
+        <div class="vd__panel">
+          <div class="vd__panel-title">Quick stats</div>
+          <table class="vd__stats">
+            <tbody>
+              <tr>
+                <td class="vd__stats-label">Current price</td>
+                <td class="vd__stats-value font-mono tabular">
+                  ${{ verdict.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                </td>
+              </tr>
+              <tr>
+                <td class="vd__stats-label">Consensus</td>
+                <td class="vd__stats-value font-mono tabular">{{ verdict.consensusScore.toFixed(2) }}</td>
+              </tr>
+              <tr>
+                <td class="vd__stats-label">Avg confidence</td>
+                <td class="vd__stats-value font-mono tabular">{{ verdict.avgConfidence.toFixed(2) }}</td>
+              </tr>
+              <tr>
+                <td class="vd__stats-label">Time horizon</td>
+                <td class="vd__stats-value font-mono tabular">{{ verdict.horizon }}</td>
+              </tr>
+              <tr>
+                <td class="vd__stats-label">Discovered</td>
+                <td class="vd__stats-value font-mono tabular">{{ relativeTime(verdict.createdAt) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="vd__panel">
+          <div class="vd__panel-title">Daywalker status</div>
+          <p class="vd__daywalker-hint">Add to watchlist to enable Daywalker</p>
+        </div>
+      </aside>
+    </div>
+  </article>
 </template>
 
 <script setup lang="ts">
-// route param: :id — available via useRoute().params.id when implemented
+import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import type { VerdictDetail } from '../api/types'
+import { useApi } from '../api'
+import { useRelativeTime } from '../composables/useRelativeTime'
+import SectionHeader from '../components/common/SectionHeader.vue'
+
+const route = useRoute()
+const api = useApi()
+const { relativeTime } = useRelativeTime()
+
+const verdict = ref<VerdictDetail | null>(null)
+const loading = ref(true)
+
+onMounted(async () => {
+  verdict.value = await api.getVerdictDetail(route.params.id as string)
+  loading.value = false
+})
 </script>
 
 <style scoped>
-.stub-view {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6);
+.vd-loading { max-width: 1280px; margin: 0 auto; padding: var(--space-8) var(--space-6); }
+.vd-loading__item { margin-bottom: var(--space-4); }
+
+.vd-notfound {
+  max-width: 1280px; margin: 0 auto;
+  padding: var(--space-8) var(--space-6); color: var(--ash-gray);
 }
-.stub-view__header { margin-bottom: var(--space-8); }
-.stub-view__header h1 {
-  font-size: var(--text-h1);
-  line-height: 1.15;
-  letter-spacing: -0.01em;
-  color: var(--bone-ivory);
-  margin: 0 0 var(--space-2) 0;
+.vd-notfound__link {
+  color: var(--blood-crimson); text-decoration: none; font-size: var(--text-body-sm);
 }
-.stub-view__subtitle { color: var(--bone-ivory-dim); margin: 0; font-size: var(--text-body); }
-.stub-view__placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--space-12) 0;
-  gap: var(--space-4);
-  color: var(--ash-gray);
-  font-style: italic;
+.vd-notfound__link:hover { color: var(--blood-crimson-bright); }
+
+.vd {
+  max-width: 1280px; margin: 0 auto;
+  padding: var(--space-6) var(--space-6) var(--space-12);
 }
-.stub-view__bat { font-size: 32px; line-height: 1; }
+
+/* Breadcrumb */
+.vd__breadcrumb {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-bottom: var(--space-6);
+  font-size: var(--text-micro); letter-spacing: 0.02em;
+}
+.vd__bc-link { color: var(--ash-gray); text-decoration: none; }
+.vd__bc-link:hover { color: var(--bone-ivory-dim); }
+.vd__bc-sep { color: var(--ash-gray); }
+.vd__bc-current { color: var(--blood-crimson); }
+
+/* Two-pane layout */
+.vd__layout {
+  display: grid; grid-template-columns: 3fr 1fr;
+  gap: var(--space-10); align-items: start;
+}
+
+/* Header */
+.vd__symbol {
+  font-size: var(--text-h1); line-height: 1.1; letter-spacing: -0.01em;
+  color: var(--bone-ivory); margin: 0 0 var(--space-2) 0;
+}
+.vd__company { font-size: var(--text-body); color: var(--bone-ivory-dim); margin: 0 0 var(--space-4) 0; }
+.vd__meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.vd__badge {
+  font-size: var(--text-micro); color: var(--cathedral-gold);
+  border: 1px solid rgba(184, 148, 92, 0.4); border-radius: 2px;
+  padding: 1px 6px; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.vd__meta-sep { color: var(--ash-gray); font-size: var(--text-body-sm); }
+.vd__meta-text { color: var(--ash-gray); font-size: var(--text-body-sm); }
+
+/* Prose */
+.vd__prose {
+  font-size: var(--text-body); color: var(--bone-ivory);
+  line-height: 1.7; max-width: 70ch; margin: 0 0 var(--space-4) 0;
+}
+
+/* Lists */
+.vd__list {
+  list-style: none; margin: 0 0 var(--space-4) 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--space-2); max-width: 70ch;
+}
+.vd__list li {
+  font-size: var(--text-body); line-height: 1.6;
+  padding-left: var(--space-4); position: relative;
+}
+.vd__list li::before { content: '•'; position: absolute; left: 0; }
+.vd__list--signals li { color: var(--bone-ivory); }
+.vd__list--signals li::before { color: var(--cathedral-gold); }
+.vd__list--risks li { color: var(--bone-ivory-dim); }
+.vd__list--risks li::before { color: var(--ash-gray); }
+
+/* Contributors */
+.vd__contributors {
+  display: flex; flex-direction: column; gap: var(--space-4); max-width: 70ch;
+}
+.vd__contributor {
+  background-color: #1A1A22;
+  border: 1px solid rgba(184, 148, 92, 0.1);
+  border-radius: 4px; padding: var(--space-4) var(--space-5);
+}
+.vd__contributor-header {
+  display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-3);
+}
+.vd__contributor-bat { font-size: 14px; line-height: 1; flex-shrink: 0; }
+.vd__contributor-name {
+  font-size: var(--text-body-sm); color: var(--blood-crimson);
+  text-decoration: none; font-weight: 500;
+}
+.vd__contributor-name:hover { color: var(--blood-crimson-bright); }
+.vd__contributor-score { font-size: var(--text-micro); color: var(--ash-gray); margin-left: auto; }
+.vd__contributor-thesis {
+  font-size: var(--text-body-sm); color: var(--bone-ivory-dim); line-height: 1.6; margin: 0;
+}
+
+/* Sidebar */
+.vd__sidebar {
+  position: sticky; top: var(--space-6);
+  display: flex; flex-direction: column; gap: var(--space-4);
+}
+.vd__panel {
+  background-color: var(--crypt-black-elevated);
+  border: 1px solid rgba(184, 148, 92, 0.1);
+  border-radius: 4px; padding: var(--space-4) var(--space-5);
+}
+.vd__panel-title {
+  font-size: var(--text-micro); color: var(--ash-gray);
+  letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: var(--space-4);
+}
+
+/* Buttons */
+.vd__buttons { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
+.vd__btn {
+  width: 100%; padding: var(--space-3) var(--space-4); border-radius: 4px;
+  font-size: var(--text-body-sm); font-family: var(--font-body); cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.vd__btn--primary {
+  background-color: var(--blood-crimson); color: var(--bone-ivory); border: 1px solid var(--blood-crimson);
+}
+.vd__btn--primary:hover { background-color: var(--blood-crimson-bright); border-color: var(--blood-crimson-bright); }
+.vd__btn--secondary {
+  background-color: transparent; color: var(--bone-ivory); border: 1px solid var(--ash-gray);
+}
+.vd__btn--secondary:hover { border-color: var(--cathedral-gold); }
+.vd__btn--ghost { background-color: transparent; color: var(--bone-ivory-dim); border: none; }
+.vd__btn--ghost:hover { color: var(--bone-ivory); }
+
+/* Notes */
+.vd__notes {
+  width: 100%; background-color: var(--crypt-black-deep);
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px;
+  color: var(--bone-ivory); font-family: var(--font-body);
+  font-size: var(--text-body-sm); padding: var(--space-3);
+  resize: vertical; box-sizing: border-box;
+  transition: border-color var(--transition-fast);
+}
+.vd__notes::placeholder { color: var(--ash-gray); }
+.vd__notes:focus { outline: none; border-color: var(--cathedral-gold); }
+
+/* Stats table */
+.vd__stats { width: 100%; border-collapse: collapse; }
+.vd__stats tr + tr td { padding-top: var(--space-2); }
+.vd__stats-label { font-size: var(--text-body-sm); color: var(--ash-gray); padding-right: var(--space-4); white-space: nowrap; }
+.vd__stats-value { font-size: var(--text-body-sm); color: var(--bone-ivory); text-align: right; }
+
+/* Daywalker */
+.vd__daywalker-hint { font-size: var(--text-body-sm); color: var(--ash-gray); margin: 0; font-style: italic; }
 </style>
