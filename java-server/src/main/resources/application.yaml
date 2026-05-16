@@ -10,3 +10,14 @@ spring:
 dracul:
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
+    monthly-budget-usd: 5.00
+    tiers:
+      - name: Reasoning
+        models: "Sonnet, Opus"
+        budget-usd: 2.00
+      - name: Routine
+        models: "Haiku"
+        budget-usd: 1.00
+      - name: Local
+        models: "Ollama"
+        budget-usd: 0.00
