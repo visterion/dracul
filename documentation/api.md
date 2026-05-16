@@ -86,3 +86,19 @@ time without polling.
 Phase 1: single bearer token (`DRACUL_API_TOKEN` env var). All endpoints
 require `Authorization: Bearer <token>`. Phase 2 will replace this with
 per-user tokens via RBAC.
+
+## REST API (java-server, port 8080)
+
+All endpoints are read-only (GET). No authentication in Stufe 3.
+
+| Endpoint | Response | Description |
+|---|---|---|
+| `GET /api/chronicle` | `ChronicleData` | Morning feed: prey[], verdicts[], pendingPatterns[], alerts[] |
+| `GET /api/status` | `SystemStatus` | Strigoi states, last verdict timestamp, daily cost |
+| `GET /api/verdict/{id}` | `VerdictDetail` | Full verdict detail; 404 if not found |
+| `GET /api/strigoi/{name}` | `StrigoiDetail` | Strigoi detail from Vistierie + recent prey from DB; 404 if unknown |
+| `GET /api/watchlist` | `WatchlistItem[]` | All watchlist items with nested alerts and 30d price history |
+| `GET /api/patterns` | `Pattern[]` | All patterns (PENDING + ACTIVE + REJECTED) |
+| `GET /api/providers` | `LlmProvider[]` | LLM provider configurations from VistierieClient |
+
+CORS: `http://localhost:5173` allowed on all `/api/*` paths.
