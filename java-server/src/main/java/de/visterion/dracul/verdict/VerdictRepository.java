@@ -91,6 +91,7 @@ public class VerdictRepository {
     }
 
     private List<String> readList(String json) {
+        if (json == null) return List.of();
         try {
             return mapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
@@ -100,6 +101,7 @@ public class VerdictRepository {
     }
 
     private List<ContributingStrigoiDetail> readDetails(String json) {
+        if (json == null) return List.of();
         try {
             return mapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {

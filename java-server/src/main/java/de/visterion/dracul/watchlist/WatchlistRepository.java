@@ -82,6 +82,7 @@ public class WatchlistRepository {
     }
 
     private List<Double> readDoubleList(String json) {
+        if (json == null) return List.of();
         try {
             return mapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
