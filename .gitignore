@@ -1,6 +1,10 @@
 docs/
 CLAUDE.md
 AGENTS.md
+DRACUL-PLAN.md
+DESIGN.md
+GUI-MOCKUP.md
+vistierie-plan.md
 target/
 node_modules/
 dist/
