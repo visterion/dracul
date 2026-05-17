@@ -10,6 +10,30 @@ permissions:
   contents: read
   packages: write
 jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: chronicle/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: chronicle
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: chronicle
+      - name: Run E2E tests
+        run: npx playwright test
+        working-directory: chronicle
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: chronicle/playwright-report/
+          retention-days: 7
   build:
     runs-on: ubuntu-latest
     steps:
