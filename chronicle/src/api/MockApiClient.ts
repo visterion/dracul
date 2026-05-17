@@ -1,5 +1,9 @@
 import type { ApiClient } from './ApiClient'
-import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail, WatchlistItem, Pattern, LlmProvider, VistierieData } from './types'
+import type {
+  ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
+  WatchlistItem, Pattern, LlmProvider, VistierieData,
+  BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
+} from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
 import { mockAlerts } from '../mocks/alerts'
@@ -82,5 +86,47 @@ export class MockApiClient implements ApiClient {
       monthlyTotalUsd: 1.60,
       monthlyBudgetUsd: 5.00,
     }
+  }
+
+  async patchPattern(_id: string, _action: PatternAction): Promise<void> {
+    await delay(200)
+  }
+
+  async getSettingsBudgets(): Promise<SettingsBudgetData> {
+    await delay(50)
+    const mockBudget = (daily: number, monthly: number): BudgetStatus => ({
+      dailyCapMicros: daily,
+      monthlyCapMicros: monthly,
+      dailyWarnPercent: 80,
+      monthlyWarnPercent: 80,
+      dailyUsageMicros: Math.round(daily * 0.086),
+      monthlyUsageMicros: Math.round(monthly * 0.083),
+      dailyWarned: false,
+      monthlyWarned: false,
+      dailyBlocked: false,
+      monthlyBlocked: false,
+    })
+    return {
+      tenant: mockBudget(5_000_000, 150_000_000),
+      agents: [
+        { name: 'strigoi-spin',    budget: mockBudget(1_000_000,  25_000_000) },
+        { name: 'strigoi-insider', budget: mockBudget(1_000_000,  20_000_000) },
+        { name: 'strigoi-echo',    budget: mockBudget(750_000,    15_000_000) },
+        { name: 'strigoi-lazarus', budget: mockBudget(500_000,    10_000_000) },
+        { name: 'strigoi-index',   budget: mockBudget(500_000,    10_000_000) },
+        { name: 'strigoi-merger',  budget: mockBudget(500_000,    10_000_000) },
+      ],
+    }
+  }
+
+  async patchSettingsBudget(_patch: BudgetPatch): Promise<BudgetStatus> {
+    await delay(200)
+    return (await this.getSettingsBudgets()).tenant
+  }
+
+  async patchAgentBudget(agentName: string, _patch: BudgetPatch): Promise<BudgetStatus> {
+    await delay(200)
+    const data = await this.getSettingsBudgets()
+    return data.agents.find(a => a.name === agentName)?.budget ?? data.agents[0].budget
   }
 }

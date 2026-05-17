@@ -1,6 +1,7 @@
 import type {
   ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
-  WatchlistItem, Pattern, LlmProvider, VistierieData
+  WatchlistItem, Pattern, LlmProvider, VistierieData,
+  BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
 } from './types'
 
 export interface ApiClient {
@@ -12,4 +13,8 @@ export interface ApiClient {
   getPatterns(): Promise<Pattern[]>
   getProviders(): Promise<LlmProvider[]>
   getVistierieData(): Promise<VistierieData>
+  patchPattern(id: string, action: PatternAction): Promise<void>
+  getSettingsBudgets(): Promise<SettingsBudgetData>
+  patchSettingsBudget(patch: BudgetPatch): Promise<BudgetStatus>
+  patchAgentBudget(agentName: string, patch: BudgetPatch): Promise<BudgetStatus>
 }

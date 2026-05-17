@@ -214,3 +214,37 @@ export interface VistierieData {
   monthlyTotalUsd: number
   monthlyBudgetUsd: number
 }
+
+// ── Budget & Settings ──────────────────────────────────────────
+
+export interface BudgetStatus {
+  dailyCapMicros: number | null
+  monthlyCapMicros: number | null
+  dailyWarnPercent: number | null
+  monthlyWarnPercent: number | null
+  dailyUsageMicros: number
+  monthlyUsageMicros: number
+  dailyWarned: boolean
+  monthlyWarned: boolean
+  dailyBlocked: boolean
+  monthlyBlocked: boolean
+}
+
+export interface BudgetPatch {
+  dailyCapMicros?: number | null
+  monthlyCapMicros?: number | null
+  dailyWarnPercent?: number | null
+  monthlyWarnPercent?: number | null
+}
+
+export interface AgentBudget {
+  name: string
+  budget: BudgetStatus
+}
+
+export interface SettingsBudgetData {
+  tenant: BudgetStatus
+  agents: AgentBudget[]
+}
+
+export type PatternAction = 'approve' | 'reject' | 'deactivate' | 'defer'
