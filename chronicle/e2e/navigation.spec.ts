@@ -1,0 +1,64 @@
+import { test, expect } from '@playwright/test'
+
+test.describe('Top-bar navigation', () => {
+  test('chronicles tab navigates to /', async ({ page }) => {
+    await page.goto('/watchlist')
+    await page.click('a.top-bar__tab:has-text("chronicle")')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/')
+    await expect(page.locator('.chronicle__banner')).toBeVisible()
+  })
+
+  test('watchlist tab navigates to /watchlist', async ({ page }) => {
+    await page.goto('/')
+    await page.click('a.top-bar__tab:has-text("watchlist")')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/watchlist')
+    await expect(page.locator('.watchlist')).toBeVisible()
+  })
+
+  test('pattern library tab navigates to /patterns', async ({ page }) => {
+    await page.goto('/')
+    await page.click('a.top-bar__tab:has-text("pattern library")')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/patterns')
+    await expect(page.locator('h1.patterns__title')).toBeVisible()
+  })
+
+  test('vistierie tab navigates to /vistierie', async ({ page }) => {
+    await page.goto('/')
+    await page.click('a.top-bar__tab:has-text("vistierie")')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/vistierie')
+    await expect(page.locator('.vistierie__header h1')).toContainText('Vistierie')
+  })
+
+  test('backtest tab navigates to /backtest', async ({ page }) => {
+    await page.goto('/')
+    await page.click('a.top-bar__tab:has-text("backtest")')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/backtest')
+    await expect(page.locator('.backtest__header h1')).toContainText('Backtest')
+  })
+
+  test('settings tab navigates to /settings', async ({ page }) => {
+    await page.goto('/')
+    await page.click('a.top-bar__tab:has-text("settings")')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/settings')
+    await expect(page.locator('.settings__nav')).toBeVisible()
+  })
+
+  test('DRACUL wordmark links to /', async ({ page }) => {
+    await page.goto('/watchlist')
+    await page.click('a.top-bar__wordmark')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL('/')
+    await expect(page.locator('.chronicle__banner')).toBeVisible()
+  })
+
+  test('unknown route redirects to /', async ({ page }) => {
+    await page.goto('/does-not-exist')
+    await expect(page).toHaveURL('/')
+  })
+})
