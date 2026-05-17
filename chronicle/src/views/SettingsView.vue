@@ -90,7 +90,102 @@
         </div>
       </template>
 
-      <!-- Stub sections -->
+      <!-- Budgets section -->
+      <template v-else-if="navSection === 'budgets'">
+        <div class="settings__page-header">
+          <h1 class="settings__page-title font-display">Budgets &amp; Cost Control</h1>
+          <p class="settings__page-subtitle">Daily and monthly spend limits per tenant and agent</p>
+        </div>
+
+        <div v-if="budgetError" class="settings__budget-error">{{ budgetError }}</div>
+
+        <template v-if="budgetLoading">
+          <v-skeleton-loader v-for="i in 4" :key="i" type="text" class="mb-2" />
+        </template>
+
+        <template v-else-if="budgetData">
+          <div class="settings__section-header">── tenant budget (dracul)</div>
+          <div class="settings__budget-grid">
+            <div class="settings__budget-field">
+              <label class="settings__budget-label">Daily cap (USD)</label>
+              <input class="settings__budget-input" v-model="tenantEdit.dailyCapUsd" placeholder="∞" />
+              <div class="settings__budget-usage">
+                used: ${{ (budgetData.tenant.dailyUsageMicros / 1_000_000).toFixed(4) }}
+              </div>
+            </div>
+            <div class="settings__budget-field">
+              <label class="settings__budget-label">Monthly cap (USD)</label>
+              <input class="settings__budget-input" v-model="tenantEdit.monthlyCapUsd" placeholder="∞" />
+              <div class="settings__budget-usage">
+                used: ${{ (budgetData.tenant.monthlyUsageMicros / 1_000_000).toFixed(2) }}
+              </div>
+            </div>
+            <div class="settings__budget-field">
+              <label class="settings__budget-label">Daily warn %</label>
+              <input class="settings__budget-input" v-model="tenantEdit.dailyWarnPct" type="number" min="1" max="100" />
+            </div>
+            <div class="settings__budget-field">
+              <label class="settings__budget-label">Monthly warn %</label>
+              <input class="settings__budget-input" v-model="tenantEdit.monthlyWarnPct" type="number" min="1" max="100" />
+            </div>
+          </div>
+          <div v-if="budgetData.tenant.dailyWarned || budgetData.tenant.dailyBlocked" class="settings__budget-flags">
+            <span v-if="budgetData.tenant.dailyBlocked" class="settings__budget-flag--blocked">● daily blocked</span>
+            <span v-else-if="budgetData.tenant.dailyWarned" class="settings__budget-flag--warned">● daily warn</span>
+          </div>
+          <div class="settings__budget-actions">
+            <button
+              class="settings__btn-save"
+              :disabled="budgetSaving === 'tenant'"
+              @click="saveTenantBudget"
+            >{{ budgetSaving === 'tenant' ? 'Saving…' : 'Save tenant budget' }}</button>
+          </div>
+
+          <div class="settings__section-header settings__section-header--spaced">── per-agent budgets</div>
+          <table class="settings__budget-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Daily cap (USD)</th>
+                <th>Monthly cap (USD)</th>
+                <th>Daily used</th>
+                <th>Monthly used</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="agent in budgetData.agents" :key="agent.name">
+                <td class="settings__budget-agent">{{ agent.name }}</td>
+                <td>
+                  <input
+                    class="settings__budget-input settings__budget-input--sm"
+                    v-model="agentEdits[agent.name].dailyCapUsd"
+                    placeholder="∞"
+                  />
+                </td>
+                <td>
+                  <input
+                    class="settings__budget-input settings__budget-input--sm"
+                    v-model="agentEdits[agent.name].monthlyCapUsd"
+                    placeholder="∞"
+                  />
+                </td>
+                <td class="settings__budget-num">${{ (agent.budget.dailyUsageMicros / 1_000_000).toFixed(4) }}</td>
+                <td class="settings__budget-num">${{ (agent.budget.monthlyUsageMicros / 1_000_000).toFixed(2) }}</td>
+                <td>
+                  <button
+                    class="settings__btn-edit"
+                    :disabled="budgetSaving === agent.name"
+                    @click="saveAgentBudget(agent.name)"
+                  >{{ budgetSaving === agent.name ? '…' : 'save' }}</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+      </template>
+
+      <!-- Other stub sections -->
       <template v-else>
         <div class="settings__page-header">
           <h1 class="settings__page-title font-display">{{ currentNavItem?.label }}</h1>
@@ -104,9 +199,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useApi } from '../api'
-import type { LlmProvider } from '../api/types'
+import type { LlmProvider, BudgetPatch, SettingsBudgetData } from '../api/types'
 
 const api = useApi()
 const providers = ref<LlmProvider[]>([])
@@ -114,19 +209,103 @@ const loading = ref(true)
 const navSection = ref('llm-providers')
 
 const navItems = [
-  { id: 'llm-providers', icon: '⚙', label: 'LLM Providers', disabled: false, badge: null },
-  { id: 'agent-config', icon: '🦇', label: 'Agent Configuration', disabled: false, badge: null },
-  { id: 'budgets', icon: '🪙', label: 'Budgets & Cost Control', disabled: false, badge: null },
-  { id: 'data-sources', icon: '📊', label: 'Data Sources', disabled: false, badge: null },
-  { id: 'messenger', icon: '💬', label: 'Messenger & Notifications', disabled: false, badge: null },
-  { id: 'multi-user', icon: '👥', label: 'Multi-User Settings', disabled: true, badge: 'Phase 2' },
-  { id: 'backup', icon: '💾', label: 'Backup & Export', disabled: false, badge: null },
-  { id: 'about', icon: 'ℹ', label: 'About Dracul', disabled: false, badge: null },
+  { id: 'llm-providers', icon: '⚙', label: 'LLM Providers',              disabled: false, badge: null },
+  { id: 'agent-config',  icon: '🦇', label: 'Agent Configuration',       disabled: false, badge: null },
+  { id: 'budgets',       icon: '🪙', label: 'Budgets & Cost Control',    disabled: false, badge: null },
+  { id: 'data-sources',  icon: '📊', label: 'Data Sources',              disabled: false, badge: null },
+  { id: 'messenger',     icon: '💬', label: 'Messenger & Notifications', disabled: false, badge: null },
+  { id: 'multi-user',    icon: '👥', label: 'Multi-User Settings',       disabled: true,  badge: 'Phase 2' },
+  { id: 'backup',        icon: '💾', label: 'Backup & Export',           disabled: false, badge: null },
+  { id: 'about',         icon: 'ℹ',  label: 'About Dracul',             disabled: false, badge: null },
 ]
 
-const currentNavItem = computed(() =>
-  navItems.find(i => i.id === navSection.value)
-)
+const currentNavItem = computed(() => navItems.find(i => i.id === navSection.value))
+
+// ── Budget state ───────────────────────────────────────────────
+const budgetData    = ref<SettingsBudgetData | null>(null)
+const budgetLoading = ref(false)
+const budgetSaving  = ref<string | null>(null)
+const budgetError   = ref<string | null>(null)
+
+const tenantEdit = ref({ dailyCapUsd: '', monthlyCapUsd: '', dailyWarnPct: '80', monthlyWarnPct: '80' })
+const agentEdits = ref<Record<string, { dailyCapUsd: string; monthlyCapUsd: string }>>({})
+
+function microsToUsd(micros: number | null): string {
+  if (micros === null) return '∞'
+  return (micros / 1_000_000).toFixed(2)
+}
+
+function usdToMicros(usd: string): number | null {
+  if (usd === '∞' || usd === '') return null
+  const n = parseFloat(usd)
+  return isNaN(n) ? null : Math.round(n * 1_000_000)
+}
+
+async function loadBudgets() {
+  budgetLoading.value = true
+  budgetError.value = null
+  try {
+    budgetData.value = await api.getSettingsBudgets()
+    const t = budgetData.value.tenant
+    tenantEdit.value = {
+      dailyCapUsd:    microsToUsd(t.dailyCapMicros),
+      monthlyCapUsd:  microsToUsd(t.monthlyCapMicros),
+      dailyWarnPct:   String(t.dailyWarnPercent ?? 80),
+      monthlyWarnPct: String(t.monthlyWarnPercent ?? 80),
+    }
+    for (const a of budgetData.value.agents) {
+      agentEdits.value[a.name] = {
+        dailyCapUsd:   microsToUsd(a.budget.dailyCapMicros),
+        monthlyCapUsd: microsToUsd(a.budget.monthlyCapMicros),
+      }
+    }
+  } catch (e) {
+    budgetError.value = e instanceof Error ? e.message : 'Failed to load budgets'
+  } finally {
+    budgetLoading.value = false
+  }
+}
+
+async function saveTenantBudget() {
+  budgetSaving.value = 'tenant'
+  budgetError.value = null
+  try {
+    const patch: BudgetPatch = {
+      dailyCapMicros:     usdToMicros(tenantEdit.value.dailyCapUsd),
+      monthlyCapMicros:   usdToMicros(tenantEdit.value.monthlyCapUsd),
+      dailyWarnPercent:   parseInt(tenantEdit.value.dailyWarnPct) || null,
+      monthlyWarnPercent: parseInt(tenantEdit.value.monthlyWarnPct) || null,
+    }
+    budgetData.value!.tenant = await api.patchSettingsBudget(patch)
+  } catch (e) {
+    budgetError.value = e instanceof Error ? e.message : 'Save failed'
+  } finally {
+    budgetSaving.value = null
+  }
+}
+
+async function saveAgentBudget(agentName: string) {
+  budgetSaving.value = agentName
+  budgetError.value = null
+  try {
+    const edit = agentEdits.value[agentName]
+    const patch: BudgetPatch = {
+      dailyCapMicros:   usdToMicros(edit.dailyCapUsd),
+      monthlyCapMicros: usdToMicros(edit.monthlyCapUsd),
+    }
+    const updated = await api.patchAgentBudget(agentName, patch)
+    const agent = budgetData.value?.agents.find(a => a.name === agentName)
+    if (agent) agent.budget = updated
+  } catch (e) {
+    budgetError.value = e instanceof Error ? e.message : 'Save failed'
+  } finally {
+    budgetSaving.value = null
+  }
+}
+
+watch(navSection, (section) => {
+  if (section === 'budgets' && !budgetData.value) loadBudgets()
+})
 
 onMounted(async () => {
   try {
@@ -300,4 +479,64 @@ onMounted(async () => {
   color: var(--ash-gray);
   font-style: italic;
 }
+
+/* ── Budgets section ─────────────────────────────────────────── */
+.settings__budget-error {
+  color: var(--blood-crimson);
+  font-size: var(--text-micro);
+  margin-bottom: var(--space-4);
+}
+.settings__budget-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.settings__budget-field { display: flex; flex-direction: column; gap: var(--space-1); }
+.settings__budget-label { font-size: var(--text-micro); color: var(--ash-gray); }
+.settings__budget-input {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
+  color: var(--bone-ivory);
+  padding: 4px 8px;
+  font-size: var(--text-body);
+  font-family: var(--font-mono);
+  width: 100%;
+}
+.settings__budget-input--sm { width: 80px; }
+.settings__budget-usage { font-size: var(--text-micro); color: var(--ash-gray); }
+.settings__budget-flags { margin-bottom: var(--space-3); }
+.settings__budget-flag--blocked { font-size: var(--text-micro); color: var(--blood-crimson); }
+.settings__budget-flag--warned  { font-size: var(--text-micro); color: var(--cathedral-gold); }
+.settings__budget-actions { margin-bottom: var(--space-6); }
+.settings__btn-save {
+  padding: 6px 16px;
+  background: var(--blood-crimson);
+  border: none;
+  border-radius: 4px;
+  color: var(--bone-ivory);
+  font-size: var(--text-body);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.settings__btn-save:hover:not(:disabled) { opacity: 1; }
+.settings__btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+.settings__budget-table { width: 100%; border-collapse: collapse; font-size: var(--text-body); }
+.settings__budget-table th {
+  text-align: left;
+  color: var(--ash-gray);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  font-weight: 400;
+}
+.settings__budget-table td {
+  color: var(--bone-ivory-dim);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  vertical-align: middle;
+}
+.settings__budget-agent { font-family: var(--font-mono); color: var(--bone-ivory); }
+.settings__budget-num { font-family: var(--font-mono); }
+.settings__section-header--spaced { margin-top: var(--space-8); }
 </style>
