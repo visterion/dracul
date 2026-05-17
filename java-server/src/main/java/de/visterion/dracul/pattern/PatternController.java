@@ -1,6 +1,5 @@
 package de.visterion.dracul.pattern;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,11 +10,9 @@ import java.util.List;
 public class PatternController {
 
     private final PatternRepository repo;
-    private final ObjectMapper objectMapper;
 
-    public PatternController(PatternRepository repo, ObjectMapper objectMapper) {
+    public PatternController(PatternRepository repo) {
         this.repo = repo;
-        this.objectMapper = objectMapper;
     }
 
     @GetMapping("/api/patterns")
@@ -23,21 +20,12 @@ public class PatternController {
         return repo.findAllByUser("default");
     }
 
+    public record PatternActionRequest(String action) {}
+
     @PatchMapping("/api/patterns/{id}")
     public ResponseEntity<Void> action(@PathVariable String id,
-                                       @RequestBody String body) {
-        String action;
-        try {
-            var tree = objectMapper.readTree(body);
-            // If the client sent a JSON-encoded string (double-encoded), unwrap it first
-            var actionNode = tree.isTextual()
-                    ? objectMapper.readTree(tree.asText()).path("action")
-                    : tree.path("action");
-            action = actionNode.asText();
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().build();
-        }
-        return switch (action) {
+                                       @RequestBody PatternActionRequest req) {
+        return switch (req.action()) {
             case "approve" -> {
                 repo.updateStatus(id, "default", "ACTIVE");
                 repo.setName(id, "default", generateSlug(id));

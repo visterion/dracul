@@ -48,7 +48,7 @@ class PatternActionControllerIT {
         var response = rest.patch()
                 .uri("/api/patterns/" + PENDING_ID_1)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"action\":\"approve\"}")
+                .body(java.util.Map.of("action", "approve"))
                 .retrieve().toBodilessEntity();
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
@@ -68,7 +68,7 @@ class PatternActionControllerIT {
         var response = rest.patch()
                 .uri("/api/patterns/" + PENDING_ID_2)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"action\":\"reject\"}")
+                .body(java.util.Map.of("action", "reject"))
                 .retrieve().toBodilessEntity();
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
@@ -91,7 +91,7 @@ class PatternActionControllerIT {
         var response = rest.patch()
                 .uri("/api/patterns/" + PENDING_ID_3)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"action\":\"defer\"}")
+                .body(java.util.Map.of("action", "defer"))
                 .retrieve().toBodilessEntity();
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
@@ -109,7 +109,7 @@ class PatternActionControllerIT {
         var response = rest.patch()
                 .uri("/api/patterns/" + ACTIVE_ID)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"action\":\"deactivate\"}")
+                .body(java.util.Map.of("action", "deactivate"))
                 .retrieve().toBodilessEntity();
 
         assertThat(response.getStatusCode().value()).isEqualTo(204);
@@ -127,7 +127,7 @@ class PatternActionControllerIT {
         var response = rest.patch()
                 .uri("/api/patterns/" + PENDING_ID_1)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"action\":\"frobnicate\"}")
+                .body(java.util.Map.of("action", "frobnicate"))
                 .retrieve()
                 .onStatus(status -> status.value() == 400, (req, res) -> {})
                 .toBodilessEntity();
