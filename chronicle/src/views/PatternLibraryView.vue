@@ -90,7 +90,7 @@
           class="patterns__active-row"
           data-testid="active-pattern-row"
         >
-          <div class="patterns__active-header" @click="toggleExpand(pattern.id)">
+          <div class="patterns__active-header" data-testid="active-pattern-expand" @click="toggleExpand(pattern.id)">
             <span class="patterns__bat">🦇</span>
             <span class="patterns__active-name">{{ pattern.name ?? pattern.id }}</span>
             <span class="patterns__strigoi-chip">{{ pattern.appliesToStrigoi.replace('strigoi-', '') }}</span>
