@@ -181,3 +181,36 @@ clickable and switch the results section. Four result tabs: Overview (4 stat car
 Trades (8 simulated trades), Equity Curve (ApexCharts dual-series vs SPY), Comparison
 (strategy vs SPY table). All data is hardcoded constants — backend integration deferred
 until a real backtest engine exists.
+
+## Implementation status (Etappe 14)
+
+**Pattern Library actions wired** (`PATCH /api/patterns/{id}`): Approve/Reject/Defer/Deactivate
+buttons now call the backend. Approve auto-generates a slug from the first 5 words of the
+pattern statement (lowercased, kebab-cased). Defer is a no-op (status unchanged). Reject and
+Deactivate both set status → REJECTED. The frontend removes the pattern from the pending list
+(approve/reject/defer) or marks it REJECTED in-place (deactivate) without a full reload.
+Per-card `pendingLoadingId` / `activeLoadingId` refs prevent double-clicks during in-flight requests.
+
+**Settings > Budgets section** (`GET/PATCH /api/settings/budgets`,
+`PATCH /api/settings/budgets/agents/{name}`): Tenant-level and per-agent budget caps
+(daily + monthly) are now fully editable. Budget values transit as micros internally
+(1 USD = 1 000 000 micros); conversion happens at the API client boundary via
+`microsToUsd` / `usdToMicros` helpers. The section lazy-loads on first navigation
+(watch on navSection). A 4-column grid for tenant caps, a table for per-agent caps
+with inline save buttons.
+
+**VistierieClient expanded** — 11 new methods added to the interface:
+`patchAgent`, `listRuns`, `triggerRun`, `getRunEvents`, `getTenantBudget`,
+`patchTenantBudget`, `getAgentBudget`, `patchAgentBudget`, `getKillStatus`,
+`setKill`, `clearKill`. MockVistierieClient and HttpVistierieClient both implement
+the full interface. `getDashboardData()` in HttpVistierieClient now calls the real
+`/admin/cost?granularity=day` endpoint instead of returning zeros.
+
+**New REST endpoints (Etappe 14):**
+
+| Endpoint | Purpose |
+|----------|---------|
+| `PATCH /api/patterns/{id}` | approve / reject / defer / deactivate a pattern |
+| `GET /api/settings/budgets` | tenant budget + per-agent budgets |
+| `PATCH /api/settings/budgets` | update tenant budget caps |
+| `PATCH /api/settings/budgets/agents/{name}` | update one agent's budget caps |
