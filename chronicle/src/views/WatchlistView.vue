@@ -41,6 +41,7 @@
           :key="item.id"
           class="watchlist__item"
           :class="{ 'watchlist__item--selected': selectedId === item.id }"
+          data-testid="watchlist-item"
           @click="selectedId = item.id"
         >
           <div class="watchlist__item-top">

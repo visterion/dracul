@@ -1,5 +1,5 @@
 <template>
-  <article class="prey-card" :class="borderClass">
+  <article class="prey-card" :class="borderClass" data-testid="prey-card">
     <!-- Header -->
     <div class="prey-card__header">
       <div class="prey-card__identity">
