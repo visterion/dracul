@@ -76,6 +76,76 @@ public class MockVistierieClient implements VistierieClient {
         return result;
     }
 
+    @Override
+    public void patchAgent(String name, boolean paused) { /* no-op in mock */ }
+
+    @Override
+    public List<VistierieRunDetail> listRuns() {
+        return List.of(
+            new VistierieRunDetail("run-mock-1", "strigoi-spin", "done",
+                Instant.now().minus(1, ChronoUnit.HOURS).toString(),
+                Instant.now().minus(55, ChronoUnit.MINUTES).toString(),
+                "4 prey found", null),
+            new VistierieRunDetail("run-mock-2", "strigoi-insider", "done",
+                Instant.now().minus(2, ChronoUnit.HOURS).toString(),
+                Instant.now().minus(115, ChronoUnit.MINUTES).toString(),
+                "2 prey found", null)
+        );
+    }
+
+    @Override
+    public VistierieRunDetail triggerRun(String agentName) {
+        return new VistierieRunDetail("run-mock-triggered", agentName, "running",
+            Instant.now().toString(), null, null, null);
+    }
+
+    @Override
+    public List<VistierieRunEvent> getRunEvents(String runId) { return List.of(); }
+
+    @Override
+    public BudgetStatus getTenantBudget() {
+        return new BudgetStatus(
+            5_000_000L, 150_000_000L, 80, 80,
+            430_000L, 12_500_000L, false, false, false, false
+        );
+    }
+
+    @Override
+    public BudgetStatus patchTenantBudget(BudgetPatch patch) {
+        long daily   = patch.dailyCapMicros()   != null ? patch.dailyCapMicros()   : 5_000_000L;
+        long monthly = patch.monthlyCapMicros()  != null ? patch.monthlyCapMicros() : 150_000_000L;
+        int dw = patch.dailyWarnPercent()   != null ? patch.dailyWarnPercent()  : 80;
+        int mw = patch.monthlyWarnPercent() != null ? patch.monthlyWarnPercent() : 80;
+        return new BudgetStatus(daily, monthly, dw, mw, 430_000L, 12_500_000L, false, false, false, false);
+    }
+
+    @Override
+    public BudgetStatus getAgentBudget(String agentName) {
+        return switch (agentName) {
+            case "strigoi-spin"    -> new BudgetStatus(1_000_000L, 25_000_000L, 80, 80,  30_000L,  440_000L, false, false, false, false);
+            case "strigoi-insider" -> new BudgetStatus(1_000_000L, 20_000_000L, 80, 80,       0L,        0L, false, false, false, false);
+            case "strigoi-echo"    -> new BudgetStatus(  750_000L, 15_000_000L, 80, 80,  10_000L,  280_000L, false, false, false, false);
+            case "strigoi-lazarus" -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
+            case "strigoi-index"   -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
+            case "strigoi-merger"  -> new BudgetStatus(  500_000L, 10_000_000L, 80, 80,       0L,        0L, false, false, false, false);
+            default                -> BudgetStatus.empty();
+        };
+    }
+
+    @Override
+    public BudgetStatus patchAgentBudget(String agentName, BudgetPatch patch) {
+        return getAgentBudget(agentName);
+    }
+
+    @Override
+    public KillStatus getKillStatus() { return new KillStatus(null, null, null); }
+
+    @Override
+    public void setKill(String reason) { /* no-op */ }
+
+    @Override
+    public void clearKill() { /* no-op */ }
+
     private static final List<TraceEvent> SPIN_TRACE = List.of(
             new TraceEvent("00:00", "start",    "▼ awakened (scheduled)"),
             new TraceEvent("00:00", "info",     "pre-screening 47 candidates"),
