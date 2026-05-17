@@ -1,5 +1,5 @@
 <template>
-  <div class="tier-bar">
+  <div class="tier-bar" data-testid="tier-budget-bar">
     <div class="tier-bar__header">
       <div>
         <span class="tier-bar__name">{{ name }}</span>

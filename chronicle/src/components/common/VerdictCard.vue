@@ -1,5 +1,5 @@
 <template>
-  <article class="verdict-card">
+  <article class="verdict-card" data-testid="verdict-card">
     <!-- Header -->
     <div class="verdict-card__header">
       <div class="verdict-card__identity">

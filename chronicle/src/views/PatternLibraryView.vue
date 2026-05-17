@@ -21,6 +21,7 @@
         v-for="pattern in pendingPatterns"
         :key="pattern.id"
         class="patterns__pending-card"
+        data-testid="pending-lesson-card"
       >
         <div class="patterns__pending-header">
           <div>
@@ -87,6 +88,7 @@
           v-for="pattern in filteredActivePatterns"
           :key="pattern.id"
           class="patterns__active-row"
+          data-testid="active-pattern-row"
         >
           <div class="patterns__active-header" @click="toggleExpand(pattern.id)">
             <span class="patterns__bat">🦇</span>
