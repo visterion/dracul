@@ -1,5 +1,9 @@
 import type { ApiClient } from './ApiClient'
-import type { ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail, WatchlistItem, Pattern, LlmProvider, VistierieData } from './types'
+import type {
+  ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
+  WatchlistItem, Pattern, LlmProvider, VistierieData,
+  BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
+} from './types'
 
 export class HttpApiClient implements ApiClient {
   constructor(private readonly baseUrl: string) {}
@@ -52,5 +56,43 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/vistierie`)
     if (!res.ok) throw new Error(`getVistierieData failed: HTTP ${res.status}`)
     return res.json() as Promise<VistierieData>
+  }
+
+  async patchPattern(id: string, action: PatternAction): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/patterns/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    })
+    if (!res.ok) throw new Error(`patchPattern failed: HTTP ${res.status}`)
+  }
+
+  async getSettingsBudgets(): Promise<SettingsBudgetData> {
+    const res = await fetch(`${this.baseUrl}/api/settings/budgets`)
+    if (!res.ok) throw new Error(`getSettingsBudgets failed: HTTP ${res.status}`)
+    return res.json() as Promise<SettingsBudgetData>
+  }
+
+  async patchSettingsBudget(patch: BudgetPatch): Promise<BudgetStatus> {
+    const res = await fetch(`${this.baseUrl}/api/settings/budgets`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (!res.ok) throw new Error(`patchSettingsBudget failed: HTTP ${res.status}`)
+    return res.json() as Promise<BudgetStatus>
+  }
+
+  async patchAgentBudget(agentName: string, patch: BudgetPatch): Promise<BudgetStatus> {
+    const res = await fetch(
+      `${this.baseUrl}/api/settings/budgets/agents/${encodeURIComponent(agentName)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }
+    )
+    if (!res.ok) throw new Error(`patchAgentBudget failed: HTTP ${res.status}`)
+    return res.json() as Promise<BudgetStatus>
   }
 }
