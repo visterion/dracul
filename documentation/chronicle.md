@@ -214,3 +214,11 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 | `GET /api/settings/budgets` | tenant budget + per-agent budgets |
 | `PATCH /api/settings/budgets` | update tenant budget caps |
 | `PATCH /api/settings/budgets/agents/{name}` | update one agent's budget caps |
+
+## E2E Test Suite (Etappe 15)
+
+**Playwright E2E tests** (`chronicle/e2e/`): 9 spec files covering all 8 views plus navigation smoke tests. Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+
+Run locally: `cd chronicle && npm run test:e2e`
+
+CI: `e2e` job in `.github/workflows/docker.yml` runs in parallel with the Docker build job.
