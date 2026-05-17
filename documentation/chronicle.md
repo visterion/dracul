@@ -33,8 +33,8 @@ Both documents are required reading before implementing any view.
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
 | 4 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments | Medium | ✅ Etappe 11 |
 | 5 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
-| 6 | Vistierie | `/vistierie` | Cost dashboard, tier budgets, trends | High | stub |
-| 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | stub |
+| 6 | Vistierie | `/vistierie` | Cost dashboard, tier budgets, trends | High | ✅ Etappe 13 |
+| 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications | Variable | ✅ Etappe 11 |
 
 ## Application shell
@@ -164,3 +164,20 @@ run against Testcontainers Postgres with seed data.
 **Frontend status** with `VITE_MOCK=false`: Views 1–5 + 8 fully wired
 to real backend data. Views 6 (Vistierie) and 7 (Backtest) remain
 intentional stubs pending their respective etappes.
+
+## Implementation status (Etappe 13)
+
+**View 6 — Vistierie Dashboard** (`/vistierie`): Fully implemented with real backend data
+(`GET /api/vistierie`). Three-column layout: tier budget bars (green/gold/crimson by
+utilisation), horizontal agent spending bars, ApexCharts area trend chart (30-day daily
+spend). TierBudgetBar is a reusable component (`src/components/TierBudgetBar.vue`).
+Backend derives tier budgets from `application.yaml` config and aggregates provider costs
+from `VistierieClient`.
+
+**View 7 — Backtest** (`/backtest`): Fully implemented with static mock data (no backend
+needed). Config panel: strigoi chip-group (multi-select), date range with preset chips,
+universe radio group, disabled "Run Backtest" button. Three recent backtest cards are
+clickable and switch the results section. Four result tabs: Overview (4 stat cards),
+Trades (8 simulated trades), Equity Curve (ApexCharts dual-series vs SPY), Comparison
+(strategy vs SPY table). All data is hardcoded constants — backend integration deferred
+until a real backtest engine exists.
