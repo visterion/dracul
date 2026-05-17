@@ -18,7 +18,7 @@ test.describe('Strigoi Detail View (/strigoi/:name)', () => {
   })
 
   test('renders 3 stat cards', async ({ page }) => {
-    expect(await page.locator('.sd__stat-card').count()).toBe(3)
+    await expect(page.locator('.sd__stat-card')).toHaveCount(3)
   })
 
   test('renders at least 1 run in the timeline', async ({ page }) => {
