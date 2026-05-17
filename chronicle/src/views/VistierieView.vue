@@ -183,7 +183,7 @@ const AGENT_COLORS: Record<string, string> = {
   'strigoi-lazarus': '#1a4a6b',
   'strigoi-index':   '#4a4a8b',
   'strigoi-merger':  '#2a5a4a',
-  'voievod':         '#4a4a8b',
+  'voievod':         '#7a5a1a',
   'daywalker':       '#2a5a2a',
 }
 function agentColor(agent: string): string {

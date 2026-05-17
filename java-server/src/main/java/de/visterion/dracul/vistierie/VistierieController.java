@@ -57,7 +57,8 @@ public class VistierieController {
                 .toList();
 
         var daily = client.getDashboardData();
+        double monthlyTotalUsd = daily.stream().mapToDouble(VistierieData.DailySpend::totalUsd).sum();
 
-        return new VistierieData(tiers, agentSpendsWithPct, daily, totalCostUsd, props.monthlyBudgetUsd());
+        return new VistierieData(tiers, agentSpendsWithPct, daily, monthlyTotalUsd, props.monthlyBudgetUsd());
     }
 }
