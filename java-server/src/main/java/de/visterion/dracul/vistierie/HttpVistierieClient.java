@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.*;
 
 @Component
@@ -148,16 +149,193 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public List<VistierieData.DailySpend> getDashboardData() {
+        try {
+            var from = LocalDate.now().minusDays(29)
+                    .atStartOfDay(ZoneOffset.UTC).toInstant().toString();
+            var body = restClient.get()
+                    .uri("/admin/cost?granularity=day&from={from}&tenant=dracul", from)
+                    .retrieve().body(JsonNode.class);
+            if (body == null) return zeroSpend();
+            var byDate = new java.util.TreeMap<String, Double>();
+            var buckets = body.path("buckets");
+            if (buckets.isArray()) {
+                for (var bucket : buckets) {
+                    var ts = bucket.path("bucket").asText();
+                    var date = ts.length() >= 10 ? ts.substring(0, 10) : ts;
+                    double cost = 0.0;
+                    var groups = bucket.path("groups");
+                    if (groups.isArray()) {
+                        for (var g : groups) cost += g.path("cost_micros").asDouble(0) / 1_000_000.0;
+                    }
+                    byDate.merge(date, cost, Double::sum);
+                }
+            }
+            var today = LocalDate.now();
+            var result = new ArrayList<VistierieData.DailySpend>();
+            for (int i = 29; i >= 0; i--) {
+                var date = today.minusDays(i).toString();
+                result.add(new VistierieData.DailySpend(date, byDate.getOrDefault(date, 0.0)));
+            }
+            return result;
+        } catch (Exception e) {
+            return zeroSpend();
+        }
+    }
+
+    private List<VistierieData.DailySpend> zeroSpend() {
         var result = new ArrayList<VistierieData.DailySpend>();
         var today = LocalDate.now();
-        for (int i = 29; i >= 0; i--) {
+        for (int i = 29; i >= 0; i--)
             result.add(new VistierieData.DailySpend(today.minusDays(i).toString(), 0.0));
-        }
         return result;
     }
 
     private String capitalize(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    @Override
+    public void patchAgent(String name, boolean paused) {
+        restClient.patch().uri("/agents/{name}", name)
+            .body(java.util.Map.of("paused", paused))
+            .retrieve().toBodilessEntity();
+    }
+
+    @Override
+    public List<VistierieRunDetail> listRuns() {
+        try {
+            var body = restClient.get().uri("/runs").retrieve().body(JsonNode.class);
+            if (body == null || !body.isArray()) return List.of();
+            var result = new ArrayList<VistierieRunDetail>();
+            for (var node : body) {
+                result.add(new VistierieRunDetail(
+                    node.path("run_id").asText(),
+                    node.path("agent_name").asText(),
+                    node.path("status").asText(),
+                    node.path("started_at").isNull() ? null : node.path("started_at").asText(),
+                    node.path("finished_at").isNull() ? null : node.path("finished_at").asText(),
+                    node.path("summary").isNull() ? null : node.path("summary").asText(),
+                    node.path("error").isNull() ? null : node.path("error").asText()
+                ));
+            }
+            return result;
+        } catch (Exception e) { return List.of(); }
+    }
+
+    @Override
+    public VistierieRunDetail triggerRun(String agentName) {
+        var body = restClient.post().uri("/agents/{name}/run", agentName)
+            .body(java.util.Map.of())
+            .retrieve().body(JsonNode.class);
+        if (body == null) throw new RuntimeException("triggerRun returned null");
+        return new VistierieRunDetail(
+            body.path("run_id").asText(), agentName, body.path("status").asText(),
+            null, null, null, null
+        );
+    }
+
+    @Override
+    public List<VistierieRunEvent> getRunEvents(String runId) {
+        try {
+            var body = restClient.get().uri("/runs/{id}/events", runId).retrieve().body(JsonNode.class);
+            if (body == null || !body.isArray()) return List.of();
+            var result = new ArrayList<VistierieRunEvent>();
+            for (var node : body) {
+                result.add(new VistierieRunEvent(
+                    node.path("id").asLong(),
+                    node.path("ts").asText(),
+                    node.path("level").asText(),
+                    node.path("type").asText(),
+                    null
+                ));
+            }
+            return result;
+        } catch (Exception e) { return List.of(); }
+    }
+
+    @Override
+    public BudgetStatus getTenantBudget() {
+        try {
+            var body = restClient.get().uri("/admin/tenants/dracul/budget").retrieve().body(JsonNode.class);
+            return parseBudgetStatus(body);
+        } catch (Exception e) { return BudgetStatus.empty(); }
+    }
+
+    @Override
+    public BudgetStatus patchTenantBudget(BudgetPatch patch) {
+        var body = restClient.patch().uri("/admin/tenants/dracul/budget")
+            .body(buildPatchBody(patch))
+            .retrieve().body(JsonNode.class);
+        return parseBudgetStatus(body);
+    }
+
+    @Override
+    public BudgetStatus getAgentBudget(String agentName) {
+        try {
+            var body = restClient.get()
+                .uri("/admin/tenants/dracul/agents/{agent}/budget", agentName)
+                .retrieve().body(JsonNode.class);
+            return parseBudgetStatus(body);
+        } catch (Exception e) { return BudgetStatus.empty(); }
+    }
+
+    @Override
+    public BudgetStatus patchAgentBudget(String agentName, BudgetPatch patch) {
+        var body = restClient.patch()
+            .uri("/admin/tenants/dracul/agents/{agent}/budget", agentName)
+            .body(buildPatchBody(patch))
+            .retrieve().body(JsonNode.class);
+        return parseBudgetStatus(body);
+    }
+
+    @Override
+    public KillStatus getKillStatus() {
+        try {
+            var body = restClient.get().uri("/admin/tenants/dracul/kill").retrieve().body(JsonNode.class);
+            if (body == null) return new KillStatus(null, null, null);
+            return new KillStatus(
+                body.path("until").isNull() ? null : body.path("until").asText(),
+                body.path("reason").isNull() ? null : body.path("reason").asText(),
+                body.path("setBy").isNull() ? null : body.path("setBy").asText()
+            );
+        } catch (Exception e) { return new KillStatus(null, null, null); }
+    }
+
+    @Override
+    public void setKill(String reason) {
+        restClient.post().uri("/admin/tenants/dracul/kill")
+            .body(java.util.Map.of("reason", reason))
+            .retrieve().toBodilessEntity();
+    }
+
+    @Override
+    public void clearKill() {
+        restClient.delete().uri("/admin/tenants/dracul/kill").retrieve().toBodilessEntity();
+    }
+
+    private BudgetStatus parseBudgetStatus(JsonNode body) {
+        if (body == null) return BudgetStatus.empty();
+        return new BudgetStatus(
+            body.path("daily_cap_micros").isNull()     ? null : body.path("daily_cap_micros").longValue(),
+            body.path("monthly_cap_micros").isNull()   ? null : body.path("monthly_cap_micros").longValue(),
+            body.path("daily_warn_percent").isNull()   ? null : body.path("daily_warn_percent").intValue(),
+            body.path("monthly_warn_percent").isNull() ? null : body.path("monthly_warn_percent").intValue(),
+            body.path("daily_usage_micros").asLong(0),
+            body.path("monthly_usage_micros").asLong(0),
+            body.path("daily_warned").asBoolean(false),
+            body.path("monthly_warned").asBoolean(false),
+            body.path("daily_blocked").asBoolean(false),
+            body.path("monthly_blocked").asBoolean(false)
+        );
+    }
+
+    private java.util.Map<String, Object> buildPatchBody(BudgetPatch patch) {
+        var map = new java.util.HashMap<String, Object>();
+        if (patch.dailyCapMicros()     != null) map.put("daily_cap_micros",     patch.dailyCapMicros());
+        if (patch.monthlyCapMicros()   != null) map.put("monthly_cap_micros",   patch.monthlyCapMicros());
+        if (patch.dailyWarnPercent()   != null) map.put("daily_warn_percent",   patch.dailyWarnPercent());
+        if (patch.monthlyWarnPercent() != null) map.put("monthly_warn_percent", patch.monthlyWarnPercent());
+        return map;
     }
 }
