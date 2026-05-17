@@ -11,6 +11,7 @@
     </template>
 
     <template v-else>
+      <div v-if="actionError" class="patterns__action-error">{{ actionError }}</div>
       <!-- Pending section -->
       <div class="patterns__section-header">── pending review ({{ pendingPatterns.length }})</div>
 
@@ -41,9 +42,21 @@
           <a href="#" class="patterns__cases-link" @click.prevent="() => {}">[View supporting cases →]</a>
         </div>
         <div class="patterns__pending-actions">
-          <button class="patterns__btn-ghost" @click="() => {}">Defer</button>
-          <button class="patterns__btn-secondary" @click="() => {}">Reject</button>
-          <button class="patterns__btn-primary" @click="() => {}">Approve &amp; Activate</button>
+          <button
+            class="patterns__btn-ghost"
+            :disabled="pendingLoadingId === pattern.id"
+            @click="handlePendingAction(pattern.id, 'defer')"
+          >Defer</button>
+          <button
+            class="patterns__btn-secondary"
+            :disabled="pendingLoadingId === pattern.id"
+            @click="handlePendingAction(pattern.id, 'reject')"
+          >Reject</button>
+          <button
+            class="patterns__btn-primary"
+            :disabled="pendingLoadingId === pattern.id"
+            @click="handlePendingAction(pattern.id, 'approve')"
+          >{{ pendingLoadingId === pattern.id ? '…' : 'Approve &amp; Activate' }}</button>
         </div>
       </div>
 
@@ -87,7 +100,11 @@
           </div>
           <div v-if="expandedIds.has(pattern.id)" class="patterns__active-body">
             <p class="patterns__active-text">{{ pattern.statement }}</p>
-            <button class="patterns__btn-ghost" @click="() => {}">Deactivate</button>
+            <button
+              class="patterns__btn-ghost"
+              :disabled="activeLoadingId === pattern.id"
+              @click="handleDeactivate(pattern.id)"
+            >{{ activeLoadingId === pattern.id ? '…' : 'Deactivate' }}</button>
           </div>
         </div>
 
@@ -109,6 +126,38 @@ const allPatterns = ref<Pattern[]>([])
 const loading = ref(true)
 const strigoiFilter = ref('all')
 const expandedIds = ref<Set<string>>(new Set())
+
+const pendingLoadingId = ref<string | null>(null)
+const activeLoadingId  = ref<string | null>(null)
+const actionError      = ref<string | null>(null)
+
+async function handlePendingAction(id: string, action: 'approve' | 'reject' | 'defer') {
+  pendingLoadingId.value = id
+  actionError.value = null
+  try {
+    await api.patchPattern(id, action)
+    allPatterns.value = allPatterns.value.filter(p => p.id !== id)
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Action failed'
+  } finally {
+    pendingLoadingId.value = null
+  }
+}
+
+async function handleDeactivate(id: string) {
+  activeLoadingId.value = id
+  actionError.value = null
+  try {
+    await api.patchPattern(id, 'deactivate')
+    allPatterns.value = allPatterns.value.map(p =>
+      p.id === id ? { ...p, status: 'REJECTED' as const } : p
+    )
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Deactivate failed'
+  } finally {
+    activeLoadingId.value = null
+  }
+}
 
 onMounted(async () => {
   try {
@@ -369,5 +418,11 @@ function monthsAgo(isoString: string): string {
   line-height: 1.6;
   font-style: italic;
   margin: 0 0 10px 0;
+}
+
+.patterns__action-error {
+  color: var(--blood-crimson);
+  font-size: var(--text-micro);
+  margin-bottom: var(--space-4);
 }
 </style>
