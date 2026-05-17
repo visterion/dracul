@@ -40,6 +40,35 @@ public class PatternRepository {
                 .list();
     }
 
+    public java.util.Optional<Pattern> findById(String id, String userId) {
+        return jdbc.sql("""
+                SELECT id, applies_to_strigoi, statement, status, evidence_count,
+                       proposed_at, supported_count, avg_uplift_percent, name
+                FROM patterns
+                WHERE id = :id::uuid AND user_id = :userId
+                """)
+                .param("id", id)
+                .param("userId", userId)
+                .query(this::mapRow)
+                .optional();
+    }
+
+    public void updateStatus(String id, String userId, String status) {
+        jdbc.sql("UPDATE patterns SET status = :status WHERE id = :id::uuid AND user_id = :userId")
+                .param("status", status)
+                .param("id", id)
+                .param("userId", userId)
+                .update();
+    }
+
+    public void setName(String id, String userId, String name) {
+        jdbc.sql("UPDATE patterns SET name = :name WHERE id = :id::uuid AND user_id = :userId")
+                .param("name", name)
+                .param("id", id)
+                .param("userId", userId)
+                .update();
+    }
+
     private Pattern mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         var uplift = rs.getObject("avg_uplift_percent");
         var supported = rs.getObject("supported_count");
