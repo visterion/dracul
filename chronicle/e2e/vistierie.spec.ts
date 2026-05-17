@@ -12,7 +12,7 @@ test.describe('Vistierie View (/vistierie)', () => {
   })
 
   test('renders at least 3 tier budget bars', async ({ page }) => {
-    expect(await page.locator('[data-testid="tier-budget-bar"]').count()).toBeGreaterThanOrEqual(3)
+    await expect.poll(() => page.locator('[data-testid="tier-budget-bar"]').count()).toBeGreaterThanOrEqual(3)
   })
 
   test('renders "Reasoning" tier from mock data', async ({ page }) => {
@@ -21,7 +21,7 @@ test.describe('Vistierie View (/vistierie)', () => {
 
   test('renders agent spending bars', async ({ page }) => {
     await expect(page.locator('.vistierie__agent-bars')).toBeVisible()
-    expect(await page.locator('.vistierie__agent-row').count()).toBeGreaterThan(0)
+    await expect(page.locator('.vistierie__agent-row').first()).toBeVisible()
   })
 
   test('renders strigoi-spin as first agent', async ({ page }) => {

@@ -8,7 +8,7 @@ test.describe('Watchlist View (/watchlist)', () => {
   })
 
   test('renders at least 1 watchlist item', async ({ page }) => {
-    expect(await page.locator('[data-testid="watchlist-item"]').count()).toBeGreaterThan(0)
+    await expect(page.locator('[data-testid="watchlist-item"]').first()).toBeVisible()
   })
 
   test('renders all 4 filter chips', async ({ page }) => {

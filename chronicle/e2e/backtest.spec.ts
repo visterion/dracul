@@ -13,19 +13,19 @@ test.describe('Backtest View (/backtest)', () => {
 
   test('renders config panel with strigoi chips', async ({ page }) => {
     await expect(page.locator('.backtest__chips')).toBeVisible()
-    expect(await page.locator('.backtest__chip').count()).toBeGreaterThan(0)
+    await expect(page.locator('.backtest__chip').first()).toBeVisible()
   })
 
   test('renders date-range preset buttons', async ({ page }) => {
-    expect(await page.locator('.backtest__preset').count()).toBeGreaterThan(0)
+    await expect(page.locator('.backtest__preset').first()).toBeVisible()
   })
 
   test('renders universe radio options', async ({ page }) => {
-    expect(await page.locator('.backtest__radio').count()).toBeGreaterThan(0)
+    await expect(page.locator('.backtest__radio').first()).toBeVisible()
   })
 
   test('renders at least 3 recent backtest cards', async ({ page }) => {
-    expect(await page.locator('.backtest__run-card').count()).toBeGreaterThanOrEqual(3)
+    await expect.poll(() => page.locator('.backtest__run-card').count()).toBeGreaterThanOrEqual(3)
   })
 
   test('Overview tab is active by default', async ({ page }) => {
@@ -33,7 +33,7 @@ test.describe('Backtest View (/backtest)', () => {
   })
 
   test('renders 4 stat cards in Overview tab', async ({ page }) => {
-    expect(await page.locator('.backtest__stat-card').count()).toBe(4)
+    await expect(page.locator('.backtest__stat-card')).toHaveCount(4)
   })
 
   test('clicking Trades tab shows trades table', async ({ page }) => {

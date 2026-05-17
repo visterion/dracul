@@ -18,8 +18,7 @@ test.describe('Chronicle View (/)', () => {
   })
 
   test('renders at least 3 prey cards', async ({ page }) => {
-    const count = await page.locator('[data-testid="prey-card"]').count()
-    expect(count).toBeGreaterThan(2)
+    await expect.poll(() => page.locator('[data-testid="prey-card"]').count()).toBeGreaterThan(2)
   })
 
   test('status bar is visible', async ({ page }) => {

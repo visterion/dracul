@@ -13,7 +13,7 @@ test.describe('Pattern Library View (/patterns)', () => {
   })
 
   test('renders at least 1 pending pattern card', async ({ page }) => {
-    expect(await page.locator('[data-testid="pending-pattern-card"]').count()).toBeGreaterThan(0)
+    await expect(page.locator('[data-testid="pending-pattern-card"]').first()).toBeVisible()
   })
 
   test('renders Approve, Reject, Defer buttons on first pending card', async ({ page }) => {
@@ -24,7 +24,7 @@ test.describe('Pattern Library View (/patterns)', () => {
   })
 
   test('renders at least 1 active pattern row', async ({ page }) => {
-    expect(await page.locator('[data-testid="active-pattern-row"]').count()).toBeGreaterThan(0)
+    await expect(page.locator('[data-testid="active-pattern-row"]').first()).toBeVisible()
   })
 
   test('clicking Approve removes the card from pending list', async ({ page }) => {
