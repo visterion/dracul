@@ -21,7 +21,7 @@
         v-for="pattern in pendingPatterns"
         :key="pattern.id"
         class="patterns__pending-card"
-        data-testid="pending-lesson-card"
+        data-testid="pending-pattern-card"
       >
         <div class="patterns__pending-header">
           <div>
