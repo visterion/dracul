@@ -31,7 +31,8 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 @ActiveProfiles("dev")
 @TestPropertySource(properties = {
         "dracul.strigoi.insider.enabled=true",
-        "dracul.strigoi.insider.webhook-token=test-token-abc"
+        "dracul.strigoi.insider.webhook-token=test-token-abc",
+        "dracul.public-url=http://test.invalid:9090"
 })
 class StrigoiInsiderWebhookControllerIT {
 
