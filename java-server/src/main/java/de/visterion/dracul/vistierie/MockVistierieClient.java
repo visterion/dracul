@@ -16,6 +16,8 @@ import java.util.Optional;
 @Profile("dev")
 public class MockVistierieClient implements VistierieClient {
 
+    private final java.util.Map<String, AgentDetail> agents = new java.util.concurrent.ConcurrentHashMap<>();
+
     private static final String MINUS_22M = Instant.now().minus(22, ChronoUnit.MINUTES).toString();
     private static final String PLUS_22H  = Instant.now().plus(22, ChronoUnit.HOURS).toString();
     private static final String MINUS_1D  = Instant.now().minus(1, ChronoUnit.DAYS).toString();
@@ -220,6 +222,48 @@ public class MockVistierieClient implements VistierieClient {
             "strigoi-insider", INSIDER_DETAIL,
             "strigoi-echo",    ECHO_DETAIL
     );
+
+    @Override
+    public java.util.Optional<AgentDetail> getAgent(String name) {
+        return java.util.Optional.ofNullable(agents.get(name));
+    }
+
+    @Override
+    public AgentDetail registerAgent(CreateAgentRequest req) {
+        var now = java.time.Instant.now();
+        var d = new AgentDetail(
+                java.util.UUID.randomUUID().toString(),
+                req.name(),
+                req.system_prompt(),
+                req.model_purpose(),
+                req.tools(),
+                req.output_schema(),
+                req.max_turns() == null ? 25 : req.max_turns(),
+                req.max_run_seconds() == null ? 1800 : req.max_run_seconds(),
+                false, 1, now, now,
+                req.schedule(), null,
+                req.completion_webhook(), req.completion_webhook_token());
+        agents.put(req.name(), d);
+        return d;
+    }
+
+    @Override
+    public AgentDetail updateAgent(String name, UpdateAgentRequest req) {
+        var existing = agents.get(name);
+        if (existing == null) throw new RuntimeException("agent not found: " + name);
+        var updated = new AgentDetail(
+                existing.id(), existing.name(),
+                req.system_prompt(), req.model_purpose(),
+                req.tools(), req.output_schema(),
+                req.max_turns() == null ? 25 : req.max_turns(),
+                req.max_run_seconds() == null ? 1800 : req.max_run_seconds(),
+                existing.paused(), existing.version() + 1,
+                existing.created_at(), java.time.Instant.now(),
+                req.schedule(), existing.last_tick_at(),
+                req.completion_webhook(), req.completion_webhook_token());
+        agents.put(name, updated);
+        return updated;
+    }
 
     private static List<WeeklyPerformance> weeklyPerf(double base, double variance) {
         var weeks = List.of("Nov 25","Dec 2","Dec 9","Dec 16","Dec 23","Dec 30",
