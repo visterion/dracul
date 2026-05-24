@@ -43,6 +43,24 @@ use, prefer Alpha Vantage (free: 5 calls/min) or Polygon.io (paid,
 ~$50–100/month at meaningful volume). Plan adapter fallback accordingly:
 configure multiple price sources and let the adapter fall through.
 
+## Market data adapter
+
+Dracul resolves ticker metadata (company name, current price, 30-day history)
+via the `MarketDataPort` interface (`de.visterion.dracul.marketdata`). v1 ships
+a single adapter:
+
+- **YahooMarketDataAdapter** — HTTPS GET against
+  `query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1mo&interval=1d`.
+  No API key, no official SLA. The base URL is overridable via
+  `dracul.marketdata.yahoo.base-url` for tests.
+
+Failures surface as `MarketDataException`:
+- `NOT_FOUND` → HTTP 422 (symbol unknown)
+- `UNAVAILABLE` → HTTP 502 (Yahoo down or unreachable)
+
+The port is intentionally minimal so additional adapters (Alpha Vantage,
+Polygon) can be added without touching consumers.
+
 ## Edgar parsing notes
 
 SEC EDGAR Atom feeds surface new filings within minutes of acceptance.
