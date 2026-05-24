@@ -4,6 +4,7 @@ import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -24,10 +25,11 @@ public class ChronicleController {
     }
 
     @GetMapping("/api/chronicle")
-    public ChronicleData chronicle() {
+    public ChronicleData chronicle(
+            @RequestParam(name = "includeDismissed", defaultValue = "false") boolean includeDismissed) {
         return new ChronicleData(
                 preyRepo.findAllByUser("default"),
-                verdictRepo.findAllByUser("default"),
+                verdictRepo.findAllByUser("default", includeDismissed),
                 List.of(),
                 patternRepo.findPendingByUser("default")
         );
