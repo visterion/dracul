@@ -8,6 +8,12 @@ spring:
     locations: classpath:db/migration
 
 dracul:
+  public-url: ${DRACUL_PUBLIC_URL:http://localhost:8080}
+  edgar:
+    user-agent: ${DRACUL_EDGAR_USER_AGENT:dracul-research/1.0 contact@example.com}
+  strigoi:
+    insider:
+      schedule: ${DRACUL_INSIDER_SCHEDULE:0 0 21 * * 1-5}
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
     monthly-budget-usd: 5.00
