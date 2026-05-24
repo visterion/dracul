@@ -14,8 +14,11 @@ are relative to the context root of `dracul-app`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/verdicts` | List verdicts; query params: `from`, `to`, `minConsensus`, `page`, `size` |
+| GET | `/api/verdicts` | List verdicts; query params: `from`, `to`, `minConsensus`, `page`, `size`, `includeDismissed` (default false) |
 | GET | `/api/verdicts/{id}` | Single verdict with all contributing prey |
+| PUT | `/api/verdict/{id}/decision` | Set/clear verdict decision (TRACK / INTERESTING / DISMISS / ACTED / null) |
+| POST | `/api/verdict/{id}/notes` | Append a note to a verdict timeline |
+| GET | `/api/verdict/{id}/notes` | List notes for a verdict (DESC by createdAt) |
 
 ## Strigoi
 
@@ -30,9 +33,9 @@ are relative to the context root of `dracul-app`.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/watchlist` | All active watchlist items for the current user |
-| POST | `/api/watchlist` | Add an instrument to the watchlist |
-| PATCH | `/api/watchlist/{id}` | Update position details or notes |
-| DELETE | `/api/watchlist/{id}` | Remove from watchlist (sets `removed_at`) |
+| POST | `/api/watchlist` | Add ticker to watchlist; resolves market data synchronously |
+| PATCH | `/api/watchlist/{id}` | Update tag (HELD/TRACKING) |
+| DELETE | `/api/watchlist/{id}` | Remove watchlist item |
 
 ## Daywalker Alerts
 
@@ -86,6 +89,27 @@ time without polling.
 Phase 1: single bearer token (`DRACUL_API_TOKEN` env var). All endpoints
 require `Authorization: Bearer <token>`. Phase 2 will replace this with
 per-user tokens via RBAC.
+
+## Error Responses
+
+All error responses follow a uniform shape:
+
+```json
+{
+  "error": "ERROR_CODE",
+  "message": "human-readable description",
+  "field": "fieldName (optional, for validation errors)"
+}
+```
+
+Error codes and HTTP status:
+
+| Error Code | Status | Description |
+|---|---|---|
+| `VALIDATION_ERROR` | 400 | Input validation failed (e.g., invalid enum value) |
+| `NOT_FOUND` | 404 | Requested resource does not exist |
+| `MARKET_DATA_NOT_FOUND` | 422 | Symbol unknown to market data provider |
+| `MARKET_DATA_UNAVAILABLE` | 502 | Market data provider unreachable |
 
 ## REST API (java-server, port 8080)
 

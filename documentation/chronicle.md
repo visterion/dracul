@@ -222,3 +222,28 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 Run locally: `cd chronicle && npm run test:e2e`
 
 CI: `e2e` job in `.github/workflows/docker.yml` runs in parallel with the Docker build job.
+
+## Implementation status (verdict decisions + watchlist CRUD)
+
+Backend now persists verdict decisions and watchlist mutations.
+
+**Verdict decision** (`PUT /api/verdict/{id}/decision`) accepts TRACK, INTERESTING,
+DISMISS, ACTED, or null. The decision is stored on the verdict alongside a
+`decidedAt` timestamp.
+
+**Verdict notes** (`POST` and `GET /api/verdict/{id}/notes`) provide an append-only
+journal per verdict — useful for capturing evolving reasoning over time. The GET
+endpoint returns notes in descending order by createdAt.
+
+**Watchlist CRUD** (`POST`, `PATCH`, `DELETE /api/watchlist/{id}`): operators add
+tickers manually or by reference to a verdict. POST is idempotent — adding an
+existing symbol returns the existing item; the source verdict link is merged in
+only when previously null. Symbol metadata (company name, current price, 30-day
+history) is resolved synchronously via the new MarketDataPort (Yahoo Finance
+v1 adapter).
+
+`GET /api/chronicle` now filters DISMISS-ed verdicts by default. Pass
+`?includeDismissed=true` to see them.
+
+Frontend wiring (Decision buttons, Notes textarea, Add-to-Watchlist) is deferred
+to a follow-up etappe.

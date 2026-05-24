@@ -162,9 +162,17 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 |---|---|
 | `prey` | Immutable Strigoi findings; includes outcome columns filled by Voievod |
 | `verdicts` | Consolidated multi-Strigoi consensus records |
+| `verdict_notes` | Append-only audit trail per verdict (id, verdict_id FK, body, created_at, user_id) |
 | `patterns` | Voievod-proposed heuristics (`PENDING` → `ACTIVE` / `REJECTED`) |
 | `watchlist_items` | Items the Daywalker monitors; `active` generated column |
 | `daywalker_alerts` | Every Daywalker trigger, with LLM assessment and notification flag |
+
+**Verdict columns added:**
+- `decision` (TEXT, nullable) — CHECK constraint: TRACK, INTERESTING, DISMISS, ACTED
+- `decided_at` (TIMESTAMPTZ, nullable) — timestamp of decision
+
+**Watchlist indexes:**
+- `uq_watchlist_user_ticker` (UNIQUE) — composite index on (user_id, ticker) for idempotent POST
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
