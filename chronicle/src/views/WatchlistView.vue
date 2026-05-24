@@ -20,7 +20,36 @@
         </button>
       </div>
 
-      <button class="watchlist__add" @click="() => {}">+ Add to watchlist</button>
+      <button class="watchlist__add" data-testid="wl-open-add" @click="addOpen = true">+ Add to watchlist</button>
+
+      <v-dialog v-model="addOpen" max-width="420">
+        <div class="watchlist__dialog">
+          <div class="watchlist__dialog-title">Add to watchlist</div>
+          <input
+            v-model="addSymbol"
+            class="watchlist__dialog-input"
+            type="text"
+            placeholder="Ticker (e.g. AVGO)"
+            maxlength="10"
+            data-testid="wl-add-symbol"
+            @input="addSymbol = addSymbol.toUpperCase()"
+          />
+          <div class="watchlist__dialog-tag">
+            <label><input type="radio" v-model="addTag" value="TRACKING" /> Tracking</label>
+            <label><input type="radio" v-model="addTag" value="HELD" /> Held</label>
+          </div>
+          <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
+          <div class="watchlist__dialog-actions">
+            <button class="watchlist__dialog-cancel" @click="addOpen = false">Cancel</button>
+            <button
+              class="watchlist__dialog-submit"
+              :disabled="!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(addSymbol) || addSubmitting"
+              data-testid="wl-add-submit"
+              @click="onAddSymbol"
+            >Add</button>
+          </div>
+        </div>
+      </v-dialog>
 
       <template v-if="loading">
         <v-skeleton-loader
@@ -60,8 +89,22 @@
             </div>
           </div>
           <div class="watchlist__item-bottom">
-            <span class="watchlist__meta">added {{ daysAgo(item.addedAt) }} · {{ item.tag === 'HELD' ? 'held position' : 'tracking verdict' }}</span>
+            <button
+              class="watchlist__tag-toggle"
+              :class="`watchlist__tag-toggle--${item.tag.toLowerCase()}`"
+              :data-testid="`wl-tag-${item.id}`"
+              :disabled="rowBusyId === item.id"
+              @click.stop="onToggleTag(item)"
+            >{{ item.tag === 'HELD' ? 'held position' : 'tracking verdict' }}</button>
+            <span class="watchlist__meta">added {{ daysAgo(item.addedAt) }}</span>
             <span class="watchlist__dot" :class="`watchlist__dot--${item.status}`" />
+            <button
+              class="watchlist__delete"
+              :data-testid="`wl-delete-${item.id}`"
+              :disabled="rowBusyId === item.id"
+              aria-label="Delete from watchlist"
+              @click.stop="onDelete(item)"
+            >✕</button>
           </div>
         </div>
       </div>
@@ -153,7 +196,7 @@
 import { ref, computed, onMounted } from 'vue'
 import VueApexCharts from 'vue3-apexcharts'
 import { useApi } from '../api'
-import type { WatchlistItem } from '../api/types'
+import type { WatchlistItem, WatchlistTag } from '../api/types'
 
 const apexchart = VueApexCharts
 
@@ -225,6 +268,61 @@ const sparklineOptions = {
     },
   },
   tooltip: { enabled: false },
+}
+
+const addOpen = ref(false)
+const addSymbol = ref('')
+const addTag = ref<WatchlistTag>('TRACKING')
+const addSubmitting = ref(false)
+const addError = ref<string | null>(null)
+
+const rowBusyId = ref<string | null>(null)
+
+async function onAddSymbol() {
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(addSymbol.value)) return
+  addSubmitting.value = true
+  addError.value = null
+  try {
+    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: addTag.value })
+    items.value = [created, ...items.value.filter(i => i.id !== created.id)]
+    addOpen.value = false
+    addSymbol.value = ''
+    addTag.value = 'TRACKING'
+  } catch (e) {
+    addError.value = (e as Error).message
+  } finally {
+    addSubmitting.value = false
+  }
+}
+
+async function onToggleTag(item: WatchlistItem) {
+  const newTag: WatchlistTag = item.tag === 'HELD' ? 'TRACKING' : 'HELD'
+  const prev = item.tag
+  item.tag = newTag
+  rowBusyId.value = item.id
+  try {
+    await api.patchWatchlistItem(item.id, { tag: newTag })
+  } catch {
+    item.tag = prev
+  } finally {
+    rowBusyId.value = null
+  }
+}
+
+async function onDelete(item: WatchlistItem) {
+  if (!confirm(`Remove ${item.ticker} from watchlist?`)) return
+  const idx = items.value.findIndex(i => i.id === item.id)
+  if (idx === -1) return
+  const removed = items.value[idx]
+  items.value = items.value.filter(i => i.id !== item.id)
+  rowBusyId.value = item.id
+  try {
+    await api.deleteWatchlistItem(item.id)
+  } catch {
+    items.value = [...items.value.slice(0, idx), removed, ...items.value.slice(idx)]
+  } finally {
+    rowBusyId.value = null
+  }
 }
 
 function daysAgo(isoDate: string): string {
@@ -470,4 +568,60 @@ function formatDate(isoDate: string): string {
   color: var(--ash-gray);
   font-style: italic;
 }
+
+.watchlist__tag-toggle {
+  background: transparent;
+  border: 1px solid rgba(184, 148, 92, 0.3);
+  border-radius: 2px;
+  padding: 1px 6px;
+  font-size: var(--text-micro);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.watchlist__tag-toggle--held { color: var(--cathedral-gold); }
+.watchlist__tag-toggle--tracking { color: var(--bone-ivory-dim); }
+.watchlist__tag-toggle:hover:not([disabled]) { border-color: var(--cathedral-gold); }
+.watchlist__tag-toggle[disabled] { opacity: 0.5; cursor: not-allowed; }
+.watchlist__delete {
+  background: transparent; border: none; color: var(--ash-gray);
+  cursor: pointer; padding: 0 var(--space-2); font-size: var(--text-body-sm);
+}
+.watchlist__delete:hover { color: var(--blood-crimson); }
+.watchlist__delete[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.watchlist__dialog {
+  background-color: var(--crypt-black-elevated);
+  padding: var(--space-6); border-radius: 4px;
+  display: flex; flex-direction: column; gap: var(--space-4);
+  border: 1px solid rgba(184, 148, 92, 0.2);
+}
+.watchlist__dialog-title {
+  font-size: var(--text-body); color: var(--bone-ivory);
+  letter-spacing: 0.02em;
+}
+.watchlist__dialog-input {
+  background-color: var(--crypt-black-deep);
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px;
+  color: var(--bone-ivory); font-family: var(--font-mono);
+  padding: var(--space-3); font-size: var(--text-body-sm);
+}
+.watchlist__dialog-input:focus { outline: none; border-color: var(--cathedral-gold); }
+.watchlist__dialog-tag {
+  display: flex; gap: var(--space-4); font-size: var(--text-body-sm); color: var(--bone-ivory);
+}
+.watchlist__dialog-tag input { margin-right: var(--space-2); }
+.watchlist__dialog-error { color: var(--blood-crimson); font-size: var(--text-micro); margin: 0; }
+.watchlist__dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.watchlist__dialog-cancel, .watchlist__dialog-submit {
+  padding: var(--space-2) var(--space-4); border-radius: 4px;
+  font-size: var(--text-body-sm); cursor: pointer;
+}
+.watchlist__dialog-cancel {
+  background: transparent; border: 1px solid var(--ash-gray); color: var(--bone-ivory);
+}
+.watchlist__dialog-submit {
+  background-color: var(--blood-crimson); border: 1px solid var(--blood-crimson); color: var(--bone-ivory);
+}
+.watchlist__dialog-submit[disabled] { opacity: 0.5; cursor: not-allowed; }
 </style>
