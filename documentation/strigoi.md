@@ -16,6 +16,17 @@ logic and the hunt pattern.
 | 5 | strigoi-index | Index-inclusion drift | routine | S&P / Russell studies |
 | 6 | strigoi-merger | M&A arbitrage | reasoning | Mitchell & Pulvino 2001 |
 
+## Implementation status
+
+| Strigoi | Status |
+|---|---|
+| strigoi-spin | not yet implemented |
+| strigoi-insider | **implemented 2026-05-25** — Form-4 cluster screener, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases) |
+| strigoi-echo | not yet implemented |
+| strigoi-lazarus | not yet implemented |
+| strigoi-index | not yet implemented |
+| strigoi-merger | not yet implemented |
+
 ## Hunt Pattern
 
 Every Strigoi follows the same three-step shape:
