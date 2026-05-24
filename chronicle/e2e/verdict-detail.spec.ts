@@ -54,4 +54,16 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
     await page.waitForLoadState('networkidle')
     await expect(page.locator('.vd-notfound')).toBeVisible()
   })
+
+  test('decision badge appears after clicking Track', async ({ page }) => {
+    await page.getByTestId('vd-decide-track').click()
+    await expect(page.getByTestId('vd-decision-badge')).toContainText('TRACK')
+  })
+
+  test('can add a note', async ({ page }) => {
+    const noteText = `playwright note ${Date.now()}`
+    await page.getByTestId('vd-note-input').fill(noteText)
+    await page.getByTestId('vd-note-submit').click()
+    await expect(page.getByTestId('vd-notes-list')).toContainText(noteText)
+  })
 })
