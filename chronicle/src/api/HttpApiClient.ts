@@ -3,6 +3,7 @@ import type {
   ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
+  VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -94,5 +95,59 @@ export class HttpApiClient implements ApiClient {
     )
     if (!res.ok) throw new Error(`patchAgentBudget failed: HTTP ${res.status}`)
     return res.json() as Promise<BudgetStatus>
+  }
+
+  async putVerdictDecision(id: string, decision: VerdictDecision | null): Promise<DecisionResponse> {
+    const res = await fetch(`${this.baseUrl}/api/verdict/${encodeURIComponent(id)}/decision`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    })
+    if (!res.ok) throw new Error(`putVerdictDecision failed: HTTP ${res.status}`)
+    return res.json() as Promise<DecisionResponse>
+  }
+
+  async getVerdictNotes(id: string): Promise<VerdictNote[]> {
+    const res = await fetch(`${this.baseUrl}/api/verdict/${encodeURIComponent(id)}/notes`)
+    if (!res.ok) throw new Error(`getVerdictNotes failed: HTTP ${res.status}`)
+    const payload = (await res.json()) as { notes: VerdictNote[] }
+    return payload.notes
+  }
+
+  async addVerdictNote(id: string, body: string): Promise<VerdictNote> {
+    const res = await fetch(`${this.baseUrl}/api/verdict/${encodeURIComponent(id)}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    })
+    if (!res.ok) throw new Error(`addVerdictNote failed: HTTP ${res.status}`)
+    return res.json() as Promise<VerdictNote>
+  }
+
+  async createWatchlistItem(req: CreateWatchlistRequest): Promise<WatchlistItem> {
+    const res = await fetch(`${this.baseUrl}/api/watchlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) throw new Error(`createWatchlistItem failed: HTTP ${res.status}`)
+    return res.json() as Promise<WatchlistItem>
+  }
+
+  async patchWatchlistItem(id: string, req: PatchWatchlistRequest): Promise<WatchlistItem> {
+    const res = await fetch(`${this.baseUrl}/api/watchlist/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) throw new Error(`patchWatchlistItem failed: HTTP ${res.status}`)
+    return res.json() as Promise<WatchlistItem>
+  }
+
+  async deleteWatchlistItem(id: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/watchlist/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw new Error(`deleteWatchlistItem failed: HTTP ${res.status}`)
   }
 }
