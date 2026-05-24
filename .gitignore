@@ -8,6 +8,7 @@ vistierie-plan.md
 target/
 node_modules/
 dist/
+java-server/src/main/resources/static/
 .idea/
 .vscode/
 *.iml
