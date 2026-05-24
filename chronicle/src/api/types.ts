@@ -89,6 +89,21 @@ export interface VerdictDetail extends Verdict {
   contributingDetails: ContributingStrigoiDetail[]
 }
 
+export type VerdictDecision = 'TRACK' | 'INTERESTING' | 'DISMISS' | 'ACTED'
+
+export interface VerdictNote {
+  id: string
+  verdictId: string
+  body: string
+  createdAt: string
+}
+
+export interface DecisionResponse {
+  id: string
+  decision: VerdictDecision | null
+  decidedAt: string
+}
+
 export interface TraceEvent {
   offset: string
   type: 'start' | 'end' | 'llm-call' | 'info'
@@ -147,7 +162,7 @@ export interface StrigoiDetail {
 // ── Watchlist ──────────────────────────────────────────────────
 
 export type WatchlistStatus = 'calm' | 'elevated' | 'alert'
-export type WatchlistTag = 'held' | 'tracking'
+export type WatchlistTag = 'HELD' | 'TRACKING'
 
 export interface WatchlistAlert {
   id: string
@@ -165,9 +180,19 @@ export interface WatchlistItem {
   status: WatchlistStatus
   addedAt: string          // ISO date "2026-05-14"
   tag: WatchlistTag
-  verdictId: string | null // links to VerdictDetail when tag === 'tracking'
+  verdictId: string | null // links to VerdictDetail when tag === 'TRACKING'
   alerts: WatchlistAlert[]
   priceHistory30d: number[] // 30 data points for sparkline
+}
+
+export interface CreateWatchlistRequest {
+  symbol: string
+  tag: WatchlistTag
+  sourceVerdictId?: string | null
+}
+
+export interface PatchWatchlistRequest {
+  tag: WatchlistTag
 }
 
 // ── Settings / Providers ───────────────────────────────────────

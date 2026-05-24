@@ -2,6 +2,8 @@ import type {
   ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
+  VerdictDecision, VerdictNote, DecisionResponse,
+  CreateWatchlistRequest, PatchWatchlistRequest,
 } from './types'
 
 export interface ApiClient {
@@ -17,4 +19,10 @@ export interface ApiClient {
   getSettingsBudgets(): Promise<SettingsBudgetData>
   patchSettingsBudget(patch: BudgetPatch): Promise<BudgetStatus>
   patchAgentBudget(agentName: string, patch: BudgetPatch): Promise<BudgetStatus>
+  putVerdictDecision(id: string, decision: VerdictDecision | null): Promise<DecisionResponse>
+  getVerdictNotes(id: string): Promise<VerdictNote[]>
+  addVerdictNote(id: string, body: string): Promise<VerdictNote>
+  createWatchlistItem(req: CreateWatchlistRequest): Promise<WatchlistItem>
+  patchWatchlistItem(id: string, req: PatchWatchlistRequest): Promise<WatchlistItem>
+  deleteWatchlistItem(id: string): Promise<void>
 }

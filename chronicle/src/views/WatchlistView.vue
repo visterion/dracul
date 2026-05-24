@@ -60,7 +60,7 @@
             </div>
           </div>
           <div class="watchlist__item-bottom">
-            <span class="watchlist__meta">added {{ daysAgo(item.addedAt) }} · {{ item.tag === 'held' ? 'held position' : 'tracking verdict' }}</span>
+            <span class="watchlist__meta">added {{ daysAgo(item.addedAt) }} · {{ item.tag === 'HELD' ? 'held position' : 'tracking verdict' }}</span>
             <span class="watchlist__dot" :class="`watchlist__dot--${item.status}`" />
           </div>
         </div>
@@ -83,7 +83,7 @@
         </div>
 
         <div class="watchlist__position-card">
-          <template v-if="selectedItem.tag === 'tracking'">
+          <template v-if="selectedItem.tag === 'TRACKING'">
             <span class="watchlist__position-empty">Not held — only tracking verdict</span>
             <a class="watchlist__crimson-link" href="#">Mark as Held →</a>
           </template>
@@ -179,8 +179,8 @@ const selectedItem = computed(() =>
 
 const counts = computed(() => ({
   all: items.value.length,
-  held: items.value.filter(i => i.tag === 'held').length,
-  tracking: items.value.filter(i => i.tag === 'tracking').length,
+  held: items.value.filter(i => i.tag === 'HELD').length,
+  tracking: items.value.filter(i => i.tag === 'TRACKING').length,
   alerts: items.value.filter(i => i.alerts.length > 0).length,
 }))
 
@@ -194,8 +194,8 @@ const filters = computed(() => [
 const filteredItems = computed(() =>
   items.value
     .filter(item => {
-      if (activeFilter.value === 'held') return item.tag === 'held'
-      if (activeFilter.value === 'tracking') return item.tag === 'tracking'
+      if (activeFilter.value === 'held') return item.tag === 'HELD'
+      if (activeFilter.value === 'tracking') return item.tag === 'TRACKING'
       if (activeFilter.value === 'alerts') return item.alerts.length > 0
       return true
     })
