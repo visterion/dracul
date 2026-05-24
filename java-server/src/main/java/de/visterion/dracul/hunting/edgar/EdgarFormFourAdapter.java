@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.edgar;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -19,11 +20,12 @@ public class EdgarFormFourAdapter {
     private final RestClient http;
     private final String archiveBase;
 
+    @Autowired
     public EdgarFormFourAdapter(
-            RestClient.Builder builder,
             @Value("${dracul.edgar.user-agent}") String userAgent,
             @Value("${dracul.edgar.archive-base:https://www.sec.gov}") String archiveBase) {
-        this.http = builder.baseUrl("https://efts.sec.gov")
+        this.http = RestClient.builder()
+                .baseUrl("https://efts.sec.gov")
                 .defaultHeader("User-Agent", userAgent)
                 .build();
         this.archiveBase = archiveBase;
