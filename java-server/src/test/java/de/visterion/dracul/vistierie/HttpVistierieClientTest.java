@@ -199,6 +199,7 @@ class HttpVistierieClientTest {
 
     @Test
     void getDashboardData_parsesBucketsAndReturns30Days() {
+        String todayBucket = java.time.LocalDate.now().toString() + "T00:00:00Z";
         wm.stubFor(get(urlPathEqualTo("/admin/cost"))
                 .withQueryParam("granularity", equalTo("day"))
                 .withQueryParam("tenant", equalTo("dracul"))
@@ -206,7 +207,7 @@ class HttpVistierieClientTest {
                         {
                           "buckets": [
                             {
-                              "bucket": "2026-05-24T00:00:00Z",
+                              "bucket": "%s",
                               "groups": [
                                 {"cost_micros": 2000000},
                                 {"cost_micros": 500000}
@@ -214,7 +215,7 @@ class HttpVistierieClientTest {
                             }
                           ]
                         }
-                        """)));
+                        """.formatted(todayBucket))));
 
         var result = client.getDashboardData();
 
