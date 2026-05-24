@@ -78,6 +78,16 @@ dracul:
     cron: "0 0 21 * * SUN"        # Sunday 21:00 MEZ
 ```
 
+## Strigoi Insider
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `STRIGOI_INSIDER_ENABLED` | `false` | Enable agent registration on Dracul startup (controller + registrar `@ConditionalOnProperty`) |
+| `STRIGOI_INSIDER_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
+| `DRACUL_INSIDER_SCHEDULE` | `0 0 21 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 21:00 UTC weekdays. |
+| `DRACUL_PUBLIC_URL` | `http://localhost:8080` | Base URL Vistierie uses to call back into Dracul (tool + completion webhooks). Must be reachable from the Vistierie container. |
+| `DRACUL_EDGAR_USER_AGENT` | `dracul-research/1.0 contact@example.com` | SEC requires identifying User-Agent on EDGAR requests. Use a real contact in production. |
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the

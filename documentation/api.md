@@ -126,3 +126,70 @@ All endpoints are read-only (GET). No authentication in Stufe 3.
 | `GET /api/providers` | `LlmProvider[]` | LLM provider configurations from VistierieClient |
 
 CORS: `http://localhost:5173` allowed on all `/api/*` paths.
+
+## Strigoi-Insider Webhooks
+
+These endpoints are called by Vistierie during a `strigoi-insider` agent run. Both require `Authorization: Bearer <STRIGOI_INSIDER_TOKEN>`. They are only registered when `STRIGOI_INSIDER_ENABLED=true`.
+
+### `POST /api/strigoi-insider/tools/fetch-clusters`
+
+Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher. Returns insider-buying clusters detected by Dracul's deterministic screener (≥3 distinct filers, 30-day window, total > $500k, Purchase transactions only).
+
+Request body:
+```json
+{
+  "run_id": "...",
+  "tool_name": "fetch_recent_clusters",
+  "input": { "lookback_days": 7 }
+}
+```
+
+Response:
+```json
+{
+  "output": {
+    "clusters": [
+      {
+        "ticker": "...", "companyName": "...",
+        "filers": ["..."],
+        "windowStart": "2026-05-15", "windowEnd": "2026-05-25",
+        "totalDollarValue": 1234567,
+        "totalShares": 1000
+      }
+    ]
+  }
+}
+```
+
+### `POST /api/strigoi-insider/complete`
+
+Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher` when the agent run finishes. Persists Prey when the run succeeded.
+
+Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: <run-id>`.
+
+Request body (shape per Vistierie's completion-webhook contract):
+```json
+{
+  "run_id": "...",
+  "agent_version": 1,
+  "status": "succeeded",
+  "started_at": "...",
+  "finished_at": "...",
+  "output": {
+    "prey": [
+      {
+        "symbol": "...",
+        "companyName": "...",
+        "anomalyType": "INSIDER_CLUSTER",
+        "confidence": 0.7,
+        "thesis": "...",
+        "signals": [],
+        "risks": [],
+        "horizon": "3m"
+      }
+    ]
+  }
+}
+```
+
+Returns 204 on success. If `status != "succeeded"` or no `output.prey` array, the endpoint acknowledges (204) without persisting and logs the run-id.
