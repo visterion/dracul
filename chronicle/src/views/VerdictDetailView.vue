@@ -66,12 +66,48 @@
       <aside class="vd__sidebar" aria-label="Decision panel">
         <div class="vd__panel">
           <div class="vd__panel-title">Decision</div>
-          <div class="vd__buttons">
-            <button class="vd__btn vd__btn--primary">Track on Watchlist</button>
-            <button class="vd__btn vd__btn--secondary">Mark as Interesting</button>
-            <button class="vd__btn vd__btn--ghost">Dismiss</button>
+          <div v-if="currentDecision" class="vd__decision-badge" data-testid="vd-decision-badge">
+            {{ currentDecision.decision }} · {{ relativeTime(currentDecision.decidedAt) }}
           </div>
-          <textarea class="vd__notes" placeholder="Add your reasoning..." aria-label="Notes" rows="3" />
+          <div class="vd__buttons">
+            <button
+              v-for="opt in decisionOptions"
+              :key="opt.value"
+              class="vd__btn"
+              :class="opt.cssClass"
+              :disabled="decisionSubmitting"
+              :data-testid="`vd-decide-${opt.value.toLowerCase()}`"
+              @click="onDecision(opt.value)"
+            >{{ opt.label }}</button>
+          </div>
+          <p v-if="decisionError" class="vd__error" role="alert">{{ decisionError }}</p>
+        </div>
+
+        <div class="vd__panel">
+          <div class="vd__panel-title">Notes</div>
+          <ul v-if="notes.length" class="vd__notes-list" data-testid="vd-notes-list">
+            <li v-for="n in notes" :key="n.id" class="vd__notes-item">
+              <div class="vd__notes-body">{{ n.body }}</div>
+              <div class="vd__notes-meta">{{ relativeTime(n.createdAt) }}</div>
+            </li>
+          </ul>
+          <p v-else class="vd__notes-empty">No notes yet.</p>
+          <textarea
+            v-model="noteDraft"
+            class="vd__notes-input"
+            placeholder="Add your reasoning..."
+            aria-label="New note"
+            rows="3"
+            maxlength="4000"
+            data-testid="vd-note-input"
+          />
+          <button
+            class="vd__btn vd__btn--secondary"
+            :disabled="!noteDraft.trim() || noteSubmitting"
+            data-testid="vd-note-submit"
+            @click="onAddNote"
+          >Add note</button>
+          <p v-if="noteError" class="vd__error" role="alert">{{ noteError }}</p>
         </div>
 
         <div class="vd__panel">
@@ -116,7 +152,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import type { VerdictDetail } from '../api/types'
+import type { VerdictDetail, VerdictDecision, VerdictNote, DecisionResponse } from '../api/types'
 import { useApi } from '../api'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -128,13 +164,68 @@ const { relativeTime } = useRelativeTime()
 const verdict = ref<VerdictDetail | null>(null)
 const loading = ref(true)
 
+const notes = ref<VerdictNote[]>([])
+const noteDraft = ref('')
+const noteSubmitting = ref(false)
+const noteError = ref<string | null>(null)
+
+const currentDecision = ref<DecisionResponse | null>(null)
+const decisionSubmitting = ref(false)
+const decisionError = ref<string | null>(null)
+
+const decisionOptions: { value: VerdictDecision; label: string; cssClass: string }[] = [
+  { value: 'TRACK',       label: 'Track on Watchlist',  cssClass: 'vd__btn--primary'   },
+  { value: 'INTERESTING', label: 'Mark as Interesting', cssClass: 'vd__btn--secondary' },
+  { value: 'ACTED',       label: 'Acted',               cssClass: 'vd__btn--secondary' },
+  { value: 'DISMISS',     label: 'Dismiss',             cssClass: 'vd__btn--ghost'     },
+]
+
 onMounted(async () => {
+  const id = route.params.id as string
   try {
-    verdict.value = await api.getVerdictDetail(route.params.id as string)
+    verdict.value = await api.getVerdictDetail(id)
+    if (verdict.value) {
+      notes.value = await api.getVerdictNotes(id)
+    }
   } finally {
     loading.value = false
   }
 })
+
+async function onDecision(decision: VerdictDecision) {
+  if (!verdict.value) return
+  decisionSubmitting.value = true
+  decisionError.value = null
+  try {
+    currentDecision.value = await api.putVerdictDecision(verdict.value.id, decision)
+    if (decision === 'TRACK') {
+      await api.createWatchlistItem({
+        symbol: verdict.value.symbol,
+        tag: 'TRACKING',
+        sourceVerdictId: verdict.value.id,
+      })
+    }
+  } catch (e) {
+    decisionError.value = (e as Error).message
+  } finally {
+    decisionSubmitting.value = false
+  }
+}
+
+async function onAddNote() {
+  if (!verdict.value || !noteDraft.value.trim()) return
+  noteSubmitting.value = true
+  noteError.value = null
+  try {
+    const created = await api.addVerdictNote(verdict.value.id, noteDraft.value)
+    notes.value = [created, ...notes.value]
+    noteDraft.value = ''
+  } catch (e) {
+    noteError.value = (e as Error).message
+  } finally {
+    noteSubmitting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -264,18 +355,6 @@ onMounted(async () => {
 .vd__btn--ghost { background-color: transparent; color: var(--bone-ivory-dim); border: none; }
 .vd__btn--ghost:hover { color: var(--bone-ivory); }
 
-/* Notes */
-.vd__notes {
-  width: 100%; background-color: var(--crypt-black-deep);
-  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px;
-  color: var(--bone-ivory); font-family: var(--font-body);
-  font-size: var(--text-body-sm); padding: var(--space-3);
-  resize: vertical; box-sizing: border-box;
-  transition: border-color var(--transition-fast);
-}
-.vd__notes::placeholder { color: var(--ash-gray); }
-.vd__notes:focus { outline: none; border-color: var(--cathedral-gold); }
-
 /* Stats table */
 .vd__stats { width: 100%; border-collapse: collapse; }
 .vd__stats tr + tr td { padding-top: var(--space-2); }
@@ -284,4 +363,45 @@ onMounted(async () => {
 
 /* Daywalker */
 .vd__daywalker-hint { font-size: var(--text-body-sm); color: var(--ash-gray); margin: 0; font-style: italic; }
+
+.vd__decision-badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  color: var(--cathedral-gold);
+  border: 1px solid rgba(184, 148, 92, 0.4);
+  border-radius: 2px;
+  padding: 2px 6px;
+  margin-bottom: var(--space-3);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: inline-block;
+}
+.vd__btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.vd__error {
+  color: var(--blood-crimson);
+  font-size: var(--text-micro);
+  margin: var(--space-2) 0 0 0;
+}
+.vd__notes-list {
+  list-style: none; padding: 0; margin: 0 0 var(--space-3) 0;
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.vd__notes-item {
+  background-color: var(--crypt-black-deep);
+  border-left: 2px solid rgba(184, 148, 92, 0.4);
+  padding: var(--space-2) var(--space-3);
+}
+.vd__notes-body { font-size: var(--text-body-sm); color: var(--bone-ivory); line-height: 1.5; }
+.vd__notes-meta { font-size: var(--text-micro); color: var(--ash-gray); margin-top: var(--space-1); }
+.vd__notes-empty { font-size: var(--text-body-sm); color: var(--ash-gray); margin: 0 0 var(--space-3) 0; font-style: italic; }
+.vd__notes-input {
+  width: 100%; background-color: var(--crypt-black-deep);
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px;
+  color: var(--bone-ivory); font-family: var(--font-body);
+  font-size: var(--text-body-sm); padding: var(--space-3);
+  resize: vertical; box-sizing: border-box;
+  margin-bottom: var(--space-2);
+}
+.vd__notes-input::placeholder { color: var(--ash-gray); }
+.vd__notes-input:focus { outline: none; border-color: var(--cathedral-gold); }
 </style>
