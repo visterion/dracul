@@ -1,7 +1,7 @@
 package de.visterion.dracul.vistierie;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import de.visterion.dracul.strigoi.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
@@ -26,6 +26,12 @@ public class HttpVistierieClient implements VistierieClient {
                 .baseUrl(baseUrl)
                 .defaultHeader("X-Tenant-Id", "dracul")
                 .build();
+        this.mapper = mapper;
+    }
+
+    /** Package-private constructor for unit tests: accepts a pre-built RestClient. */
+    HttpVistierieClient(RestClient restClient, ObjectMapper mapper) {
+        this.restClient = restClient;
         this.mapper = mapper;
     }
 
