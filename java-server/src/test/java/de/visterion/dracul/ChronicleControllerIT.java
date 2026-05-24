@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +12,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.web.client.RestClient;
 
 import java.util.Map;
@@ -22,7 +22,6 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 @SpringBootTest(webEnvironment = RANDOM_PORT)
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class ChronicleControllerIT {
 
     @LocalServerPort
@@ -45,9 +44,9 @@ class ChronicleControllerIT {
     }
 
     @Test
-    void aChronicleReturns200WithExpectedCounts() {
+    void chronicleReturns200WithExpectedCounts() {
         var response = rest.get()
-                .uri("/api/chronicle")
+                .uri("/api/chronicle?includeDismissed=true")
                 .retrieve()
                 .toEntity(JsonNode.class);
 
@@ -61,26 +60,31 @@ class ChronicleControllerIT {
     }
 
     @Test
-    void bChronicleFiltersDismissedVerdictsByDefault() {
-        // Get initial verdict count - should have exactly 1 non-dismissed verdict
-        JsonNode initial = rest.get().uri("/api/chronicle").retrieve().body(JsonNode.class);
-        assertThat(initial.get("verdicts")).isNotEmpty();
-        String verdictId = initial.get("verdicts").get(0).get("id").asText();
-
-        // Mark the first verdict as DISMISS
-        rest.put().uri("/api/verdict/" + verdictId + "/decision")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("decision", "DISMISS"))
-                .retrieve().toBodilessEntity();
-
-        // Now the filtered endpoint (default behavior) should exclude it
-        JsonNode filtered = rest.get().uri("/api/chronicle").retrieve().body(JsonNode.class);
-        assertThat(filtered.get("verdicts")).hasSize(0);
-
-        // But the includeDismissed=true query should still show it
-        JsonNode allVerdicts = rest.get().uri("/api/chronicle?includeDismissed=true")
+    void chronicleFiltersDismissedVerdictsByDefault() {
+        JsonNode all = rest.get().uri("/api/chronicle?includeDismissed=true")
                 .retrieve().body(JsonNode.class);
-        assertThat(allVerdicts.get("verdicts")).hasSize(1);
-        assertThat(allVerdicts.get("verdicts").get(0).get("id").asText()).isEqualTo(verdictId);
+        int total = all.get("verdicts").size();
+        String verdictId = all.get("verdicts").get(0).get("id").asText();
+
+        try {
+            rest.put().uri("/api/verdict/" + verdictId + "/decision")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("decision", "DISMISS"))
+                    .retrieve().toBodilessEntity();
+
+            JsonNode filtered = rest.get().uri("/api/chronicle").retrieve().body(JsonNode.class);
+            assertThat(filtered.get("verdicts").size()).isEqualTo(total - 1);
+
+            JsonNode included = rest.get().uri("/api/chronicle?includeDismissed=true")
+                    .retrieve().body(JsonNode.class);
+            assertThat(included.get("verdicts").size()).isEqualTo(total);
+        } finally {
+            ObjectNode body = objectMapper.createObjectNode();
+            body.putNull("decision");
+            rest.put().uri("/api/verdict/" + verdictId + "/decision")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve().toBodilessEntity();
+        }
     }
 }
