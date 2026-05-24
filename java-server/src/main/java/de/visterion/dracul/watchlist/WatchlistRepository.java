@@ -81,6 +81,82 @@ public class WatchlistRepository {
                 .toList();
     }
 
+    public Optional<WatchlistItem> findByUserAndTicker(String userId, String ticker) {
+        return findAllByUser(userId).stream()
+                .filter(i -> i.ticker().equals(ticker))
+                .findFirst();
+    }
+
+    public Optional<WatchlistItem> findById(String id) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return Optional.empty(); }
+        return findAllByUser("default").stream()
+                .filter(i -> i.id().equals(uuid.toString()))
+                .findFirst();
+    }
+
+    public WatchlistItem insert(String userId, String ticker, String companyName,
+                                double currentPrice, java.util.List<Double> history,
+                                String tag, String sourceVerdictId) {
+        UUID id = UUID.randomUUID();
+        UUID verdictUuid = sourceVerdictId == null ? null : UUID.fromString(sourceVerdictId);
+        String historyJson;
+        try { historyJson = mapper.writeValueAsString(history); }
+        catch (Exception e) { historyJson = "[]"; }
+
+        jdbc.sql("""
+                INSERT INTO watchlist_items
+                  (id, ticker, company_name, current_price, day_change_percent,
+                   status, added_at, tag, verdict_id, price_history_30d, user_id)
+                VALUES
+                  (:id, :ticker, :name, :price, 0,
+                   'calm', CURRENT_DATE, :tag, :vid, CAST(:hist AS jsonb), :userId)
+                """)
+                .param("id", id).param("ticker", ticker).param("name", companyName)
+                .param("price", currentPrice).param("tag", tag)
+                .param("vid", verdictUuid).param("hist", historyJson)
+                .param("userId", userId)
+                .update();
+
+        return findById(id.toString()).orElseThrow();
+    }
+
+    public WatchlistItem mergeVerdictIdIfNull(String id, String sourceVerdictId) {
+        if (sourceVerdictId != null) {
+            UUID uuid = UUID.fromString(id);
+            UUID vid = UUID.fromString(sourceVerdictId);
+            jdbc.sql("""
+                    UPDATE watchlist_items
+                       SET verdict_id = :vid
+                     WHERE id = :id AND verdict_id IS NULL
+                    """)
+                    .param("vid", vid).param("id", uuid)
+                    .update();
+        }
+        return findById(id).orElseThrow();
+    }
+
+    public boolean updateTag(String id, String tag) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return false; }
+        int rows = jdbc.sql("UPDATE watchlist_items SET tag = :tag WHERE id = :id")
+                .param("tag", tag).param("id", uuid).update();
+        return rows > 0;
+    }
+
+    public boolean deleteById(String id) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return false; }
+        jdbc.sql("DELETE FROM daywalker_alerts WHERE watchlist_item_id = :id")
+                .param("id", uuid).update();
+        int rows = jdbc.sql("DELETE FROM watchlist_items WHERE id = :id")
+                .param("id", uuid).update();
+        return rows > 0;
+    }
+
     private List<Double> readDoubleList(String json) {
         if (json == null) return List.of();
         try {
