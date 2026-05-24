@@ -13,6 +13,8 @@ dracul:
     user-agent: ${DRACUL_EDGAR_USER_AGENT:dracul-research/1.0 contact@example.com}
   strigoi:
     insider:
+      enabled: ${STRIGOI_INSIDER_ENABLED:false}
+      webhook-token: ${STRIGOI_INSIDER_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_INSIDER_SCHEDULE:0 0 21 * * 1-5}
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
