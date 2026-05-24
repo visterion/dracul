@@ -1,0 +1,36 @@
+# For LXC hosts (Proxmox/PVE) where Docker containers can't open Unix-domain
+# sockets, layer the override: docker compose -f docker-compose.yml -f docker-compose.lxc.yml up
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dracul
+      POSTGRES_USER: dracul
+      POSTGRES_PASSWORD: dracul
+    volumes:
+      - dracul-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dracul"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: ${DRACUL_IMAGE:-ghcr.io/visterion/dracul:main}
+    build:
+      context: .
+      dockerfile: java-server/Dockerfile
+    ports:
+      - "${DRACUL_PORT:-8080}:8080"
+    environment:
+      DRACUL_DB_URL: jdbc:postgresql://db:5432/dracul
+      DRACUL_DB_USER: dracul
+      DRACUL_DB_PASSWORD: dracul
+      SPRING_PROFILES_ACTIVE: dev
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dracul-db:
