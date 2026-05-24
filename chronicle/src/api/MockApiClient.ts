@@ -3,6 +3,7 @@ import type {
   ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
+  VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -11,12 +12,16 @@ import { mockPatterns } from '../mocks/patterns'
 import { mockSystemStatus } from '../mocks/status'
 import { mockVerdictDetails } from '../mocks/verdictDetails'
 import { mockStrigoiDetails } from '../mocks/strigoiDetails'
-import { mockWatchlistItems } from '../mocks/watchlistItems'
+import { mockWatchlistItems as initialWatchlist } from '../mocks/watchlistItems'
+import { mockVerdictNotes } from '../mocks/verdictNotes'
 import { mockProviders } from '../mocks/providers'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 export class MockApiClient implements ApiClient {
+  private notes: VerdictNote[] = [...mockVerdictNotes]
+  private decisions = new Map<string, DecisionResponse>()
+  private watchlist: WatchlistItem[] = initialWatchlist.map(i => ({ ...i }))
   async getChronicle(): Promise<ChronicleData> {
     await delay(50)
     return {
@@ -44,7 +49,7 @@ export class MockApiClient implements ApiClient {
 
   async getWatchlistItems(): Promise<WatchlistItem[]> {
     await delay(50)
-    return mockWatchlistItems
+    return [...this.watchlist]
   }
 
   async getPatterns(): Promise<Pattern[]> {
@@ -128,5 +133,73 @@ export class MockApiClient implements ApiClient {
     await delay(200)
     const data = await this.getSettingsBudgets()
     return data.agents.find(a => a.name === agentName)?.budget ?? data.agents[0].budget
+  }
+
+  async putVerdictDecision(id: string, decision: VerdictDecision | null): Promise<DecisionResponse> {
+    await delay(50)
+    const resp: DecisionResponse = { id, decision, decidedAt: new Date().toISOString() }
+    if (decision === null) this.decisions.delete(id)
+    else this.decisions.set(id, resp)
+    return resp
+  }
+
+  async getVerdictNotes(id: string): Promise<VerdictNote[]> {
+    await delay(50)
+    return this.notes
+      .filter(n => n.verdictId === id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  async addVerdictNote(id: string, body: string): Promise<VerdictNote> {
+    await delay(50)
+    const note: VerdictNote = {
+      id: crypto.randomUUID(),
+      verdictId: id,
+      body: body.trim(),
+      createdAt: new Date().toISOString(),
+    }
+    this.notes.push(note)
+    return note
+  }
+
+  async createWatchlistItem(req: CreateWatchlistRequest): Promise<WatchlistItem> {
+    await delay(50)
+    const existing = this.watchlist.find(i => i.ticker === req.symbol)
+    if (existing) {
+      if (req.sourceVerdictId && !existing.verdictId) {
+        existing.verdictId = req.sourceVerdictId
+      }
+      return { ...existing }
+    }
+    const item: WatchlistItem = {
+      id: crypto.randomUUID(),
+      ticker: req.symbol,
+      companyName: req.symbol,
+      currentPrice: 0,
+      dayChangePercent: 0,
+      status: 'calm',
+      addedAt: new Date().toISOString().slice(0, 10),
+      tag: req.tag,
+      verdictId: req.sourceVerdictId ?? null,
+      alerts: [],
+      priceHistory30d: Array.from({ length: 30 }, () => 0),
+    }
+    this.watchlist.unshift(item)
+    return { ...item }
+  }
+
+  async patchWatchlistItem(id: string, req: PatchWatchlistRequest): Promise<WatchlistItem> {
+    await delay(50)
+    const item = this.watchlist.find(i => i.id === id)
+    if (!item) throw new Error(`watchlist item ${id} not found`)
+    item.tag = req.tag
+    return { ...item }
+  }
+
+  async deleteWatchlistItem(id: string): Promise<void> {
+    await delay(50)
+    const idx = this.watchlist.findIndex(i => i.id === id)
+    if (idx === -1) throw new Error(`watchlist item ${id} not found`)
+    this.watchlist.splice(idx, 1)
   }
 }
