@@ -47,4 +47,27 @@ test.describe('Watchlist View (/watchlist)', () => {
   test('sparkline chart is visible for selected item', async ({ page }) => {
     await expect(page.locator('.apexcharts-canvas').first()).toBeVisible()
   })
+
+  test('can add a symbol via dialog', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('TSLA')
+    await page.getByTestId('wl-add-submit').click()
+    await expect(page.getByText('TSLA').first()).toBeVisible()
+  })
+
+  test('can toggle the tag on a row', async ({ page }) => {
+    const firstRow = page.locator('[data-testid="watchlist-item"]').first()
+    const toggle = firstRow.locator('[data-testid^="wl-tag-"]').first()
+    const before = (await toggle.textContent())?.trim()
+    await toggle.click()
+    await expect(toggle).not.toHaveText(before ?? '')
+  })
+
+  test('can delete a row after confirm', async ({ page }) => {
+    page.on('dialog', d => d.accept())
+    const firstRow = page.locator('[data-testid="watchlist-item"]').first()
+    const ticker = await firstRow.locator('.watchlist__ticker').textContent()
+    await firstRow.locator('[data-testid^="wl-delete-"]').click()
+    await expect(page.locator(`.watchlist__ticker:has-text("${ticker?.trim()}")`)).toHaveCount(0)
+  })
 })
