@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:integration": "playwright test --config playwright.config.integration.ts"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",
