@@ -61,6 +61,18 @@ The frontend uses an `ApiClient` interface with two implementations:
 Switch via `VITE_MOCK` in `.env.development` / `.env.production`. Factory
 in `src/api/index.ts` exports `useApi()`.
 
+To run the dev server against the real backend locally, copy
+`.env.local.example` to `.env.local` (gitignored):
+
+```bash
+cp chronicle/.env.local.example chronicle/.env.local
+# then: npm run dev → proxies /api/* to http://localhost:8080
+```
+
+In production, the frontend is served directly by Spring Boot (Vue
+`dist/` baked into `src/main/resources/static/` of the JAR; `SpaFallbackController`
+handles Vue Router paths).
+
 ## Development
 
 ```bash
@@ -79,7 +91,8 @@ this stream. This is planned for Etappe 12.
 
 ## Implementation status (Etappe 10)
 
-**View 2 — Verdict Detail** (`/verdict/:id`): Fully implemented with mock data.
+**View 2 — Verdict Detail** (`/verdict/:id`): Fully implemented and wired to the real API,
+including `PUT /api/verdict/{id}/decision` and `POST`/`GET /api/verdict/{id}/notes`.
 Two-pane layout (3fr + 1fr sticky sidebar). Main pane: breadcrumb, symbol header,
 anomaly type badges, full prose summary, signals list (gold bullets), risks list
 (ash-gray bullets), contributing strigoi sub-cards with router-links to View 3.
@@ -87,7 +100,7 @@ Sidebar: Decision panel (Track/Interesting/Dismiss buttons + notes textarea), Qu
 stats table (price, consensus, avg confidence, horizon, discovered), Daywalker
 status panel.
 
-**View 3 — Strigoi Detail** (`/strigoi/:name`): Fully implemented with mock data.
+**View 3 — Strigoi Detail** (`/strigoi/:name`): Fully implemented and wired to the real API.
 Single-pane layout. Page header with bat icon, state pill (hunting/resting/paused/
 budget-hit), schedule. Three stat cards (hunts, avg prey, hit rate — green when
 ≥60%). Expandable run trace timeline (newest auto-expanded, trace rows styled by
@@ -97,7 +110,8 @@ panel. ApexCharts dual-axis line chart (hit rate % left axis, prey count right a
 
 ## Implementation status (Etappe 11)
 
-**View 4 — Watchlist** (`/watchlist`): Fully implemented with mock data.
+**View 4 — Watchlist** (`/watchlist`): Fully implemented and wired to the real API, full CRUD
+(`POST`, `PATCH`, `DELETE /api/watchlist/{id}`) wired.
 Two-pane layout (60% list / 40% detail). Left pane: search input, filter chips
 (All/Held/Tracking/Alerts with live counts), add-to-watchlist button (stub), scrollable
 item list with ticker, price, day change, status dot (calm/elevated/alert). Right pane:
@@ -105,7 +119,8 @@ selected item detail with Daywalker alert timeline (max 5 alerts), 30-day ApexCh
 area sparkline, linked verdict card (when verdictId is set), ghost action buttons (stubs).
 Selected state is a local `ref<string | null>` initialized to the first item on load.
 
-**View 5 — Pattern Library** (`/patterns`): Fully implemented with mock data.
+**View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
+approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
 Single-pane max-width 960px. Pending section: Voievod-proposed lesson cards with gold
 left border, evidence counts, and Approve/Reject/Defer buttons (stubs). Active section:
 filterable by Strigoi chip (derived from unique `appliesToStrigoi` values); each row
@@ -113,7 +128,8 @@ expands to show full pattern text and Deactivate button (stub). Expand state use
 `ref<Set<string>>` reactivity pattern from StrigoiDetailView — new Set created on each
 toggle for correct Vue reactivity.
 
-**View 8 — Settings** (`/settings`): Fully implemented with mock data.
+**View 8 — Settings** (`/settings`): Fully implemented and wired to the real API,
+including `GET`/`PATCH /api/settings/budgets` and `PATCH /api/settings/budgets/agents/{name}`.
 Two-pane: 220px sidebar nav + scrollable content area. LLM Providers section fully
 implemented: 3 provider cards (Anthropic connected, OpenAI fallback, Ollama local) with
 API key, endpoint, models, and today's usage/cost. All other nav sections show a
@@ -174,13 +190,12 @@ spend). TierBudgetBar is a reusable component (`src/components/TierBudgetBar.vue
 Backend derives tier budgets from `application.yaml` config and aggregates provider costs
 from `VistierieClient`.
 
-**View 7 — Backtest** (`/backtest`): Fully implemented with static mock data (no backend
-needed). Config panel: strigoi chip-group (multi-select), date range with preset chips,
-universe radio group, disabled "Run Backtest" button. Three recent backtest cards are
-clickable and switch the results section. Four result tabs: Overview (4 stat cards),
-Trades (8 simulated trades), Equity Curve (ApexCharts dual-series vs SPY), Comparison
-(strategy vs SPY table). All data is hardcoded constants — backend integration deferred
-until a real backtest engine exists.
+**View 7 — Backtest** (`/backtest`): View structure complete, backtest engine deferred to
+Stufe 5 — Run button is disabled, data is hardcoded. Config panel: strigoi chip-group
+(multi-select), date range with preset chips, universe radio group, disabled "Run Backtest"
+button. Three recent backtest cards are clickable and switch the results section. Four
+result tabs: Overview (4 stat cards), Trades (8 simulated trades), Equity Curve (ApexCharts
+dual-series vs SPY), Comparison (strategy vs SPY table).
 
 ## Implementation status (Etappe 14)
 

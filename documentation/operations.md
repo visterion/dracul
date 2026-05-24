@@ -17,16 +17,28 @@
 
 See [configuration.md](./configuration.md) for the full list.
 
-## Starting the stack
+## Building and starting the stack
+
+The image is a multi-stage build (`java-server/Dockerfile`):
+1. Node 22 Alpine builds the Vue frontend (`npm run build`, reads `.env.production` → `VITE_MOCK=false`, relative `/api/*`).
+2. JDK 25 Maven builds the Spring Boot JAR, with `chronicle/dist/` copied into `src/main/resources/static/` first — the SPA is baked into the JAR as a classpath resource.
+3. JRE 25 runs the JAR. Spring Boot serves `classpath:static/` and a `SpaFallbackController` rewrites non-API/non-file paths to `index.html` for Vue Router.
 
 ```bash
-# Prerequisite: Vistierie is already running on the same Docker network.
-docker compose up -d dracul
+# Production: pull pre-built image from CI and start (Vistierie must already be running)
+docker compose pull app
+docker compose up -d
+
+# Local development stack (Postgres + app, MockVistierieClient via dev profile):
+docker compose up --build -d
+
+# On LXC hosts (Proxmox/PVE) where containers can't open Unix sockets, layer the override:
+docker compose -f docker-compose.yml -f docker-compose.lxc.yml up -d
 ```
 
-The `dracul-app` container exposes port 8080. The Chronicle frontend
-is served as a static build from the same container (or a separate nginx
-container in production).
+The `app` container exposes port 8080. Override the host port via `DRACUL_PORT`
+and the image tag via `DRACUL_IMAGE` (defaults: `8080` and
+`ghcr.io/visterion/dracul:main`).
 
 ## Kill switch
 
