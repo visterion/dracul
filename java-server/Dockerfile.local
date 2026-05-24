@@ -1,0 +1,17 @@
+# Local-build override for hosts where Docker containers cannot spawn
+# sub-processes (Proxmox/PVE kernels). Pre-build both frontend and backend first:
+#   cd chronicle && npm run build
+#   cp -r chronicle/dist java-server/src/main/resources/static/
+#   export JAVA_HOME=/usr/local/lib/jdk-25.0.2+10 && export PATH=$JAVA_HOME/bin:$PATH
+#   cd java-server && ./mvnw -q -DskipTests package
+# Then:
+#   docker build -f java-server/Dockerfile.local -t dracul:local .
+#
+# For CI use java-server/Dockerfile (full multi-stage including Node build).
+
+# Minimal runtime image — wraps a pre-built JAR (jar must exist at java-server/target/*.jar)
+FROM eclipse-temurin:25-jre AS runtime
+WORKDIR /app
+COPY java-server/target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
