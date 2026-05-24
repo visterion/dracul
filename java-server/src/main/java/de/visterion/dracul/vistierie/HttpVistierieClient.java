@@ -344,4 +344,39 @@ public class HttpVistierieClient implements VistierieClient {
         if (patch.monthlyWarnPercent() != null) map.put("monthly_warn_percent", patch.monthlyWarnPercent());
         return map;
     }
+
+    @Override
+    public Optional<AgentDetail> getAgent(String name) {
+        try {
+            AgentDetail body = restClient.get()
+                    .uri("/agents/{name}", name)
+                    .retrieve()
+                    .body(AgentDetail.class);
+            return Optional.ofNullable(body);
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public AgentDetail registerAgent(CreateAgentRequest req) {
+        AgentDetail body = restClient.post()
+                .uri("/agents")
+                .body(req)
+                .retrieve()
+                .body(AgentDetail.class);
+        if (body == null) throw new RuntimeException("registerAgent returned null");
+        return body;
+    }
+
+    @Override
+    public AgentDetail updateAgent(String name, UpdateAgentRequest req) {
+        AgentDetail body = restClient.put()
+                .uri("/agents/{name}", name)
+                .body(req)
+                .retrieve()
+                .body(AgentDetail.class);
+        if (body == null) throw new RuntimeException("updateAgent returned null");
+        return body;
+    }
 }

@@ -30,4 +30,11 @@ public interface VistierieClient {
     KillStatus getKillStatus();
     void setKill(String reason);
     void clearKill();
+
+    // ── agent registration ────────────────────────────────────────
+    Optional<AgentDetail> getAgent(String name);
+
+    AgentDetail registerAgent(CreateAgentRequest req);
+
+    AgentDetail updateAgent(String name, UpdateAgentRequest req);
 }
