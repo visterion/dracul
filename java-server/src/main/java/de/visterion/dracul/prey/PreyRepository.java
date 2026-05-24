@@ -65,6 +65,31 @@ public class PreyRepository {
         );
     }
 
+    public void insertAll(java.util.List<Prey> prey) {
+        if (prey.isEmpty()) return;
+        for (Prey p : prey) {
+            String signalsJson;
+            String risksJson;
+            try {
+                signalsJson = mapper.writeValueAsString(p.signals());
+                risksJson = mapper.writeValueAsString(p.risks());
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to serialize prey signals/risks", e);
+            }
+            jdbc.sql("""
+                    INSERT INTO prey
+                      (id, symbol, company_name, anomaly_type, confidence,
+                       thesis, signals, risks, horizon, discovered_by, discovered_at, user_id)
+                    VALUES (?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?::timestamptz, ?)
+                    """)
+                    .params(p.id(), p.symbol(), p.companyName(), p.anomalyType(),
+                            p.confidence(), p.thesis(),
+                            signalsJson, risksJson,
+                            p.horizon(), p.discoveredBy(), p.discoveredAt(), "default")
+                    .update();
+        }
+    }
+
     private List<String> readList(String json) {
         if (json == null) return List.of();
         try {
