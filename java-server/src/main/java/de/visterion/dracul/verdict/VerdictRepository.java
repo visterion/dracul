@@ -55,7 +55,8 @@ public class VerdictRepository {
         return jdbc.sql("""
                 SELECT id, symbol, company_name, contributing_strigoi, consensus_score,
                        summary, created_at, anomaly_types, current_price, avg_confidence,
-                       horizon, signals, risks, contributing_details
+                       horizon, signals, risks, contributing_details,
+                       decision, decided_at
                 FROM verdicts
                 WHERE id = :id
                 """)
@@ -74,7 +75,9 @@ public class VerdictRepository {
                         rs.getString("horizon"),
                         readList(rs.getString("signals")),
                         readList(rs.getString("risks")),
-                        readDetails(rs.getString("contributing_details"))
+                        readDetails(rs.getString("contributing_details")),
+                        rs.getString("decision"),
+                        rs.getString("decided_at")
                 ))
                 .optional();
     }
@@ -87,6 +90,26 @@ public class VerdictRepository {
                 """)
                 .param("userId", userId)
                 .query((rs, rowNum) -> rs.getString("created_at"))
+                .optional();
+    }
+
+    public Optional<String> updateDecision(String id, String decision) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return Optional.empty(); }
+        int rows = jdbc.sql("""
+                UPDATE verdicts
+                   SET decision   = :decision,
+                       decided_at = now()
+                 WHERE id = :id
+                """)
+                .param("decision", decision)
+                .param("id", uuid)
+                .update();
+        if (rows == 0) return Optional.empty();
+        return jdbc.sql("SELECT decided_at::text FROM verdicts WHERE id = :id")
+                .param("id", uuid)
+                .query(String.class)
                 .optional();
     }
 

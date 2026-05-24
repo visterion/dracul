@@ -9,4 +9,5 @@ public record VerdictDetail(
         List<String> anomalyTypes, double currentPrice,
         double avgConfidence, String horizon,
         List<String> signals, List<String> risks,
-        List<ContributingStrigoiDetail> contributingDetails) {}
+        List<ContributingStrigoiDetail> contributingDetails,
+        String decision, String decidedAt) {}
