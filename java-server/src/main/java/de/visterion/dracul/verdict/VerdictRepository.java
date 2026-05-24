@@ -25,24 +25,50 @@ public class VerdictRepository {
     }
 
     public List<Verdict> findAllByUser(String userId) {
-        return jdbc.sql("""
-                SELECT id, symbol, company_name, contributing_strigoi,
-                       consensus_score, summary, created_at
-                FROM verdicts
-                WHERE user_id = :userId
-                ORDER BY created_at DESC
-                """)
-                .param("userId", userId)
-                .query((rs, rowNum) -> new Verdict(
-                        rs.getString("id"),
-                        rs.getString("symbol"),
-                        rs.getString("company_name"),
-                        readList(rs.getString("contributing_strigoi")),
-                        rs.getDouble("consensus_score"),
-                        rs.getString("summary"),
-                        rs.getString("created_at")
-                ))
-                .list();
+        return findAllByUser(userId, false);
+    }
+
+    public List<Verdict> findAllByUser(String userId, boolean includeDismissed) {
+        if (includeDismissed) {
+            return jdbc.sql("""
+                    SELECT id, symbol, company_name, contributing_strigoi,
+                           consensus_score, summary, created_at
+                    FROM verdicts
+                    WHERE user_id = :userId
+                    ORDER BY created_at DESC
+                    """)
+                    .param("userId", userId)
+                    .query((rs, rowNum) -> new Verdict(
+                            rs.getString("id"),
+                            rs.getString("symbol"),
+                            rs.getString("company_name"),
+                            readList(rs.getString("contributing_strigoi")),
+                            rs.getDouble("consensus_score"),
+                            rs.getString("summary"),
+                            rs.getString("created_at")
+                    ))
+                    .list();
+        } else {
+            return jdbc.sql("""
+                    SELECT id, symbol, company_name, contributing_strigoi,
+                           consensus_score, summary, created_at
+                    FROM verdicts
+                    WHERE user_id = :userId
+                    AND (decision IS NULL OR decision <> 'DISMISS')
+                    ORDER BY created_at DESC
+                    """)
+                    .param("userId", userId)
+                    .query((rs, rowNum) -> new Verdict(
+                            rs.getString("id"),
+                            rs.getString("symbol"),
+                            rs.getString("company_name"),
+                            readList(rs.getString("contributing_strigoi")),
+                            rs.getDouble("consensus_score"),
+                            rs.getString("summary"),
+                            rs.getString("created_at")
+                    ))
+                    .list();
+        }
     }
 
     public Optional<VerdictDetail> findDetailById(String id) {
