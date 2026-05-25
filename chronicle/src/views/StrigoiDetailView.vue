@@ -273,7 +273,7 @@ const chartOptions = computed(() => ({
     },
   ],
   legend: { labels: { colors: '#C9C5BC' }, fontSize: '12px' },
-  tooltip: { theme: 'dark', style: { fontSize: '12px', fontFamily: 'JetBrains Mono, monospace' } },
+  tooltip: { theme: 'dark' as const, style: { fontSize: '12px', fontFamily: 'JetBrains Mono, monospace' } },
   markers: { size: 0 },
 }))
 

@@ -219,7 +219,7 @@ const equityOptions = {
       formatter: (v: number) => v.toFixed(0),
     },
   },
-  tooltip: { theme: 'dark', x: { format: 'MMM yyyy' } },
+  tooltip: { theme: 'dark' as const, x: { format: 'MMM yyyy' } },
   dataLabels: { enabled: false },
   legend: { labels: { colors: CHART_MUTED } },
 }
