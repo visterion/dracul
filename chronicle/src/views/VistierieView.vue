@@ -169,7 +169,7 @@ const chartOptions = {
     },
   },
   tooltip: {
-    theme: 'dark',
+    theme: 'dark' as const,
     x: { format: 'dd MMM' },
     y: { formatter: (v: number) => '$' + v.toFixed(2) },
   },
