@@ -4,7 +4,7 @@
 #           cd chronicle && npm run build
 #       then use the companion java-server/Dockerfile.local for local builds.
 #       CI (GitHub Actions ubuntu-latest) uses this file unchanged.
-FROM node:22-bookworm-slim AS frontend
+FROM node:26-bookworm-slim AS frontend
 WORKDIR /app/chronicle
 COPY chronicle/package*.json ./
 RUN npm ci
