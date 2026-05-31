@@ -168,6 +168,22 @@ class HttpVistierieClientTest {
         assertThat(client.getTodayCostUsd()).isEqualTo(0.0);
     }
 
+    @Test
+    void getTodayCostUsd_sumsGroupCostMicros() {
+        wm.stubFor(get(urlPathEqualTo("/admin/cost")).willReturn(okJson("""
+                {"from":"2026-06-01T00:00:00Z","to":"2026-06-01T12:00:00Z",
+                 "granularity":"day","group_by":["tenant"],
+                 "buckets":[{"ts":"2026-06-01T00:00:00Z","groups":[
+                   {"dimensions":{"tenant":"dracul"},"calls":3,"input_tokens":100,
+                    "output_tokens":50,"cache_creation_input_tokens":0,
+                    "cache_read_input_tokens":0,"cost_micros":1500000,"cost_eur":1.5}]}]}
+                """)));
+
+        var total = client.getTodayCostUsd();
+
+        assertThat(total).isEqualTo(1.5);
+    }
+
     // -------------------------------------------------------------------------
     // getProviders
     // -------------------------------------------------------------------------
