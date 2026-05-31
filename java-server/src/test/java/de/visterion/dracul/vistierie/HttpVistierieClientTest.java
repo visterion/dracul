@@ -137,7 +137,7 @@ class HttpVistierieClientTest {
     // -------------------------------------------------------------------------
 
     @Test
-    void getTodayCostUsd_sumsCostEurFromArray() {
+    void getTodayCostUsd_sumsMultipleGroupsAcrossBuckets() {
         wm.stubFor(get(urlPathEqualTo("/admin/cost"))
                 .withQueryParam("granularity", equalTo("day"))
                 .withQueryParam("tenant", equalTo("dracul"))
@@ -151,7 +151,7 @@ class HttpVistierieClientTest {
     }
 
     @Test
-    void getTodayCostUsd_singleObjectShape() {
+    void getTodayCostUsd_sumsSingleGroup() {
         wm.stubFor(get(urlPathEqualTo("/admin/cost"))
                 .withQueryParam("granularity", equalTo("day"))
                 .willReturn(okJson("""
@@ -593,5 +593,52 @@ class HttpVistierieClientTest {
         client.getProviders();
         wm.verify(getRequestedFor(urlPathEqualTo("/admin/routing-rules"))
                 .withHeader("Authorization", equalTo("Bearer admin-tkn")));
+    }
+
+    // -------------------------------------------------------------------------
+    // Contract-pinning: snake_case field mapping
+    // -------------------------------------------------------------------------
+
+    @Test
+    void listRuns_parsesSnakeCaseRunDetail() {
+        wm.stubFor(get(urlEqualTo("/runs")).willReturn(okJson("""
+                [{"run_id":"r1","agent_name":"strigoi-insider","agent_version":1,
+                  "trigger":"manual","status":"done","started_at":"2026-06-01T04:00:00Z",
+                  "finished_at":"2026-06-01T04:01:00Z","summary":"2 prey","output":null,
+                  "error":null,"parent_run_id":null,"children_summary":{}}]
+                """)));
+
+        var runs = client.listRuns();
+
+        assertThat(runs).hasSize(1);
+        assertThat(runs.get(0).id()).isEqualTo("r1");
+        assertThat(runs.get(0).agentName()).isEqualTo("strigoi-insider");
+        assertThat(runs.get(0).status()).isEqualTo("done");
+        assertThat(runs.get(0).startedAt()).isEqualTo("2026-06-01T04:00:00Z");
+    }
+
+    @Test
+    void triggerRun_parsesRunCreatedResponse() {
+        wm.stubFor(post(urlEqualTo("/agents/strigoi-insider/run")).willReturn(okJson("""
+                {"run_id":"r9","agent_name":"strigoi-insider","agent_version":1,"status":"queued"}
+                """)));
+
+        var run = client.triggerRun("strigoi-insider");
+
+        assertThat(run.id()).isEqualTo("r9");
+        assertThat(run.status()).isEqualTo("queued");
+    }
+
+    @Test
+    void getKillStatus_parsesUntilReasonSetBy() {
+        wm.stubFor(get(urlPathEqualTo("/admin/tenants/dracul/kill")).willReturn(okJson("""
+                {"until":"2026-06-02T00:00:00Z","reason":"manual stop","setBy":"admin"}
+                """)));
+
+        var kill = client.getKillStatus();
+
+        assertThat(kill.until()).isEqualTo("2026-06-02T00:00:00Z");
+        assertThat(kill.reason()).isEqualTo("manual stop");
+        assertThat(kill.setBy()).isEqualTo("admin");
     }
 }
