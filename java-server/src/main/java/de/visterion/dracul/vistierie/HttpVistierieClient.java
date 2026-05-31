@@ -131,16 +131,16 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public double getTodayCostUsd() {
         try {
-            var today = java.time.LocalDate.now() + "T00:00:00Z";
+            var today = LocalDate.now().atStartOfDay(ZoneOffset.UTC).toInstant().toString();
             var body = adminClient.get()
-                    .uri("/admin/cost?granularity=day&from={from}&group_by=tenant", today)
+                    .uri("/admin/cost?granularity=day&from={from}&tenant=dracul", today)
                     .retrieve().body(JsonNode.class);
             if (body == null) return 0.0;
             double total = 0.0;
-            if (body.isArray()) {
-                for (var row : body) total += row.path("cost_eur").asDouble(0);
-            } else {
-                total = body.path("cost_eur").asDouble(0);
+            for (var bucket : body.path("buckets")) {
+                for (var g : bucket.path("groups")) {
+                    total += g.path("cost_micros").asDouble(0) / 1_000_000.0;
+                }
             }
             return total;
         } catch (Exception e) {
