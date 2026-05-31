@@ -11,6 +11,20 @@ rules map `<dracul, *, reasoning>` and `<dracul, *, routine>` to concrete
 provider+model combinations. Switching a Strigoi from Sonnet to Haiku is a
 routing-rule edit in Vistierie, not a code change in Dracul.
 
+## Authentication
+
+Vistierie requires a `Bearer` token on every path except `/healthz`, `/readyz`,
+`/actuator/*`. There are two token classes:
+
+- **Tenant token** — authorises tenant endpoints (`/agents`, `/runs`). Issued once by
+  `POST /admin/tenants {"name":"dracul"}`. Dracul holds it as `VISTIERIE_TENANT_TOKEN`.
+- **Admin token** — authorises `/admin/*` (cost, routing rules, budget, kill). Dracul holds
+  it as `VISTIERIE_ADMIN_TOKEN`. Note: this token has authority over all tenants; Dracul
+  holding it is an accepted v1 trust-boundary decision (same boundary as HiveMem).
+
+Dracul's `HttpVistierieClient` sends the tenant token on tenant calls and the admin token on
+`/admin/*` calls via two separate `RestClient`s.
+
 ## Tier conventions
 
 | Tier | Use for | Agents |

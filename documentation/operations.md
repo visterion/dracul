@@ -25,16 +25,21 @@ The image is a multi-stage build (`java-server/Dockerfile`):
 3. JRE 25 runs the JAR. Spring Boot serves `classpath:static/` and a `SpaFallbackController` rewrites non-API/non-file paths to `index.html` for Vue Router.
 
 ```bash
-# Production: pull pre-built image from CI and start (Vistierie must already be running)
+# Pull the pre-built CI image (Vistierie must already be running):
 docker compose pull app
-docker compose up -d
 
-# Local development stack (Postgres + app, MockVistierieClient via dev profile):
+# Dev profile (MockVistierieClient) — local frontend work, no real Vistierie needed:
 docker compose up --build -d
 
 # On LXC hosts (Proxmox/PVE) where containers can't open Unix sockets, layer the override:
 docker compose -f docker-compose.yml -f docker-compose.lxc.yml up -d
+
+# Co-located with the real Vistierie on the same LXC host (Proxmox/PVE):
+# requires a local .env (see .env.example) and Vistierie already running on hivemind-net.
+docker compose -f docker-compose.yml -f docker-compose.lxc.yml -f docker-compose.host.yml up -d
 ```
+
+The base `docker-compose.yml` alone runs the dev profile (MockVistierieClient) for local frontend work; the `docker-compose.host.yml` override flips to the real Vistierie.
 
 The `app` container exposes port 8080. Override the host port via `DRACUL_PORT`
 and the image tag via `DRACUL_IMAGE` (defaults: `8080` and
