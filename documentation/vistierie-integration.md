@@ -53,8 +53,9 @@ patched into Dracul.
 
 Each Strigoi declares its tools (`prey.scan`, `filing.fetch`, etc.) as
 webhook URLs pointing back into `dracul-app`. Vistierie calls those URLs
-from inside the tool-dispatch loop. The shared secret is
-`DRACUL_TOOL_WEBHOOK_TOKEN`.
+from inside the tool-dispatch loop. The shared secret is per-Strigoi; the
+Strigoi-Insider uses `STRIGOI_INSIDER_TOKEN` (set both as Dracul's inbound
+verifier and registered with Vistierie as the tool + completion webhook token).
 
 ## Completion webhook
 
