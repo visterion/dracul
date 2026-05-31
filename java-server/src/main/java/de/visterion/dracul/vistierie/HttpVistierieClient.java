@@ -184,7 +184,7 @@ public class HttpVistierieClient implements VistierieClient {
             var buckets = body.path("buckets");
             if (buckets.isArray()) {
                 for (var bucket : buckets) {
-                    var ts = bucket.path("bucket").asText();
+                    var ts = bucket.path("ts").asText();
                     var date = ts.length() >= 10 ? ts.substring(0, 10) : ts;
                     double cost = 0.0;
                     var groups = bucket.path("groups");
