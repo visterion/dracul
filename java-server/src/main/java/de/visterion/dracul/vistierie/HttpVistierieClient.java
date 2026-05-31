@@ -63,7 +63,7 @@ public class HttpVistierieClient implements VistierieClient {
             result.add(new StrigoiStatus(
                     node.path("name").asText(),
                     state,
-                    node.path("last_tick_at").isNull() ? null : node.path("last_tick_at").asText(),
+                    node.path("updated_at").isNull() ? null : node.path("updated_at").asText(),
                     null
             ));
         }

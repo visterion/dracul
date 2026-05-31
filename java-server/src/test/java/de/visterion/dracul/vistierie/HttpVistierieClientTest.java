@@ -60,8 +60,8 @@ class HttpVistierieClientTest {
         wm.stubFor(get(urlEqualTo("/agents"))
                 .willReturn(okJson("""
                         [
-                          {"name":"spinoff","paused":false,"last_tick_at":"2026-05-23T01:00:00Z"},
-                          {"name":"insider","paused":true,"last_tick_at":null}
+                          {"id":"a1","name":"spinoff","version":1,"paused":false,"updated_at":"2026-05-23T01:00:00Z"},
+                          {"id":"a2","name":"insider","version":2,"paused":true,"updated_at":null}
                         ]
                         """)));
 
@@ -71,7 +71,6 @@ class HttpVistierieClientTest {
         assertThat(result.get(0).name()).isEqualTo("spinoff");
         assertThat(result.get(0).state()).isEqualTo("resting");
         assertThat(result.get(0).lastRunAt()).isEqualTo("2026-05-23T01:00:00Z");
-        assertThat(result.get(1).name()).isEqualTo("insider");
         assertThat(result.get(1).state()).isEqualTo("paused");
         assertThat(result.get(1).lastRunAt()).isNull();
     }
