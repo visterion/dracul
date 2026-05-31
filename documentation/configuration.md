@@ -16,9 +16,9 @@ Schema is `dracul`. Flyway migrations run on startup.
 
 | Variable | Purpose |
 |---|---|
-| `DRACUL_VISTIERIE_BASE_URL` | Vistierie base URL (e.g. `http://vistierie:8090`) |
-| `DRACUL_VISTIERIE_TOKEN` | Bearer token Dracul uses against Vistierie |
-| `DRACUL_TOOL_WEBHOOK_TOKEN` | Token Vistierie uses to call back into Dracul tool webhooks |
+| `VISTIERIE_URL` | Vistierie base URL (e.g. `http://vistierie:8090`) |
+| `VISTIERIE_TENANT_TOKEN` | Bearer token for the `dracul` tenant (tenant endpoints: `/agents`, `/runs`) |
+| `VISTIERIE_ADMIN_TOKEN` | Vistierie admin bearer token (admin endpoints: `/admin/*`) |
 
 ## Authentication
 
