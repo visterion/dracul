@@ -16,6 +16,9 @@ import java.util.*;
 @Profile("!dev")
 public class HttpVistierieClient implements VistierieClient {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(HttpVistierieClient.class);
+
     private final RestClient tenantClient;
     private final RestClient adminClient;
     private final ObjectMapper mapper;
@@ -35,6 +38,12 @@ public class HttpVistierieClient implements VistierieClient {
                 .defaultHeader("Authorization", "Bearer " + adminToken)
                 .build();
         this.mapper = mapper;
+        if (tenantToken.isBlank() || adminToken.isBlank()) {
+            log.warn("Vistierie tokens are blank (tenant-token blank={}, admin-token blank={}); "
+                    + "requests to Vistierie will be unauthenticated and 401. "
+                    + "Set VISTIERIE_TENANT_TOKEN and VISTIERIE_ADMIN_TOKEN.",
+                    tenantToken.isBlank(), adminToken.isBlank());
+        }
     }
 
     /** Package-private constructor for unit tests: accepts pre-built RestClients. */

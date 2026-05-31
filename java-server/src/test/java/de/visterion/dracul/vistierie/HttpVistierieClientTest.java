@@ -27,9 +27,6 @@ class HttpVistierieClientTest {
     @AfterAll
     static void stop() { wm.stop(); }
 
-    RestClient tenantClient;
-    RestClient adminClient;
-
     @BeforeEach
     void setUp() {
         wm.resetAll();
@@ -40,13 +37,13 @@ class HttpVistierieClientTest {
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
         var factory = new JdkClientHttpRequestFactory(jdkClient);
-        tenantClient = RestClient.builder()
+        RestClient tenantClient = RestClient.builder()
                 .requestFactory(factory)
                 .baseUrl(wm.baseUrl())
                 .defaultHeader("Authorization", "Bearer tenant-tkn")
                 .defaultHeader("X-Tenant-Id", "dracul")
                 .build();
-        adminClient = RestClient.builder()
+        RestClient adminClient = RestClient.builder()
                 .requestFactory(factory)
                 .baseUrl(wm.baseUrl())
                 .defaultHeader("Authorization", "Bearer admin-tkn")
