@@ -140,9 +140,11 @@ class HttpVistierieClientTest {
     void getTodayCostUsd_sumsCostEurFromArray() {
         wm.stubFor(get(urlPathEqualTo("/admin/cost"))
                 .withQueryParam("granularity", equalTo("day"))
-                .withQueryParam("group_by", equalTo("tenant"))
+                .withQueryParam("tenant", equalTo("dracul"))
                 .willReturn(okJson("""
-                        [{"cost_eur":1.5},{"cost_eur":0.75}]
+                        {"granularity":"day","buckets":[
+                          {"ts":"2026-06-01T00:00:00Z","groups":[
+                            {"cost_micros":1500000},{"cost_micros":750000}]}]}
                         """)));
 
         assertThat(client.getTodayCostUsd()).isEqualTo(2.25);
@@ -153,7 +155,9 @@ class HttpVistierieClientTest {
         wm.stubFor(get(urlPathEqualTo("/admin/cost"))
                 .withQueryParam("granularity", equalTo("day"))
                 .willReturn(okJson("""
-                        {"cost_eur":3.0}
+                        {"granularity":"day","buckets":[
+                          {"ts":"2026-06-01T00:00:00Z","groups":[
+                            {"cost_micros":3000000}]}]}
                         """)));
 
         assertThat(client.getTodayCostUsd()).isEqualTo(3.0);
@@ -229,7 +233,7 @@ class HttpVistierieClientTest {
                         {
                           "buckets": [
                             {
-                              "bucket": "%s",
+                              "ts": "%s",
                               "groups": [
                                 {"cost_micros": 2000000},
                                 {"cost_micros": 500000}
