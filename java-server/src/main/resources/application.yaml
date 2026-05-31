@@ -18,6 +18,8 @@ dracul:
       schedule: ${DRACUL_INSIDER_SCHEDULE:0 0 21 * * 1-5}
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
+    tenant-token: ${VISTIERIE_TENANT_TOKEN:}
+    admin-token: ${VISTIERIE_ADMIN_TOKEN:}
     monthly-budget-usd: 5.00
     tiers:
       - name: Reasoning
