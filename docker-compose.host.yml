@@ -1,0 +1,28 @@
+# Override for running Dracul co-located with Vistierie on the SAME host (LXC 102).
+# Attaches Dracul to Vistierie's external `hivemem-net` and points it at the real
+# Vistierie instead of the dev MockVistierieClient.
+#
+# Usage on 102 (combine with the LXC privileged-socket fix):
+#   docker compose -f docker-compose.yml -f docker-compose.lxc.yml -f docker-compose.host.yml up -d
+#
+# Secrets come from a local .env file (see .env.example), never committed.
+
+services:
+  app:
+    container_name: dracul
+    networks:
+      - default
+      - hivemem-net
+    environment:
+      SPRING_PROFILES_ACTIVE: ""
+      VISTIERIE_URL: http://vistierie:8090
+      DRACUL_PUBLIC_URL: http://dracul:8080
+      VISTIERIE_TENANT_TOKEN: ${VISTIERIE_TENANT_TOKEN:?VISTIERIE_TENANT_TOKEN required}
+      VISTIERIE_ADMIN_TOKEN: ${VISTIERIE_ADMIN_TOKEN:?VISTIERIE_ADMIN_TOKEN required}
+      STRIGOI_INSIDER_ENABLED: "true"
+      STRIGOI_INSIDER_TOKEN: ${STRIGOI_INSIDER_TOKEN:?STRIGOI_INSIDER_TOKEN required}
+      DRACUL_EDGAR_USER_AGENT: ${DRACUL_EDGAR_USER_AGENT:?DRACUL_EDGAR_USER_AGENT required}
+
+networks:
+  hivemem-net:
+    external: true

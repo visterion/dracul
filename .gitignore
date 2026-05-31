@@ -16,3 +16,4 @@ java-server/src/main/resources/static/
 .serena/
 .worktrees/
 .superpowers/
+.env
