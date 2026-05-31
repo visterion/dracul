@@ -251,6 +251,25 @@ class HttpVistierieClientTest {
     }
 
     @Test
+    void getDashboardData_mapsBucketTsToDate() {
+        var today = java.time.LocalDate.now().toString();
+        wm.stubFor(get(urlPathEqualTo("/admin/cost")).willReturn(okJson("""
+                {"from":"%sT00:00:00Z","to":"%sT00:00:00Z","granularity":"day","group_by":[],
+                 "buckets":[{"ts":"%sT00:00:00Z","groups":[
+                   {"dimensions":{},"calls":1,"input_tokens":10,"output_tokens":5,
+                    "cache_creation_input_tokens":0,"cache_read_input_tokens":0,
+                    "cost_micros":2000000,"cost_eur":2.0}]}]}
+                """.formatted(today, today, today))));
+
+        var series = client.getDashboardData();
+
+        assertThat(series).hasSize(30);
+        var last = series.get(series.size() - 1);
+        assertThat(last.date()).isEqualTo(today);
+        assertThat(last.totalUsd()).isEqualTo(2.0);
+    }
+
+    @Test
     void getDashboardData_returnsZeroSpendOnError() {
         wm.stubFor(get(urlPathEqualTo("/admin/cost"))
                 .withQueryParam("tenant", equalTo("dracul"))
