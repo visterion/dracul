@@ -16,28 +16,37 @@ import java.util.*;
 @Profile("!dev")
 public class HttpVistierieClient implements VistierieClient {
 
-    private final RestClient restClient;
+    private final RestClient tenantClient;
+    private final RestClient adminClient;
     private final ObjectMapper mapper;
 
     public HttpVistierieClient(
             @Value("${dracul.vistierie.url}") String baseUrl,
+            @Value("${dracul.vistierie.tenant-token:}") String tenantToken,
+            @Value("${dracul.vistierie.admin-token:}") String adminToken,
             ObjectMapper mapper) {
-        this.restClient = RestClient.builder()
+        this.tenantClient = RestClient.builder()
                 .baseUrl(baseUrl)
+                .defaultHeader("Authorization", "Bearer " + tenantToken)
                 .defaultHeader("X-Tenant-Id", "dracul")
+                .build();
+        this.adminClient = RestClient.builder()
+                .baseUrl(baseUrl)
+                .defaultHeader("Authorization", "Bearer " + adminToken)
                 .build();
         this.mapper = mapper;
     }
 
-    /** Package-private constructor for unit tests: accepts a pre-built RestClient. */
-    HttpVistierieClient(RestClient restClient, ObjectMapper mapper) {
-        this.restClient = restClient;
+    /** Package-private constructor for unit tests: accepts pre-built RestClients. */
+    HttpVistierieClient(RestClient tenantClient, RestClient adminClient, ObjectMapper mapper) {
+        this.tenantClient = tenantClient;
+        this.adminClient = adminClient;
         this.mapper = mapper;
     }
 
     @Override
     public List<StrigoiStatus> listStrigoi() {
-        var body = restClient.get().uri("/agents").retrieve().body(JsonNode.class);
+        var body = tenantClient.get().uri("/agents").retrieve().body(JsonNode.class);
         if (body == null || !body.isArray()) return List.of();
         var result = new ArrayList<StrigoiStatus>();
         for (var node : body) {
@@ -55,9 +64,9 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public Optional<StrigoiDetail> getStrigoiDetail(String name) {
         try {
-            var agentNode = restClient.get().uri("/agents/{name}", name).retrieve().body(JsonNode.class);
+            var agentNode = tenantClient.get().uri("/agents/{name}", name).retrieve().body(JsonNode.class);
             if (agentNode == null) return Optional.empty();
-            var runsNode = restClient.get()
+            var runsNode = adminClient.get()
                     .uri("/admin/runs?agent={name}&limit=5", name)
                     .retrieve().body(JsonNode.class);
 
@@ -114,7 +123,7 @@ public class HttpVistierieClient implements VistierieClient {
     public double getTodayCostUsd() {
         try {
             var today = java.time.LocalDate.now() + "T00:00:00Z";
-            var body = restClient.get()
+            var body = adminClient.get()
                     .uri("/admin/cost?granularity=day&from={from}&group_by=tenant", today)
                     .retrieve().body(JsonNode.class);
             if (body == null) return 0.0;
@@ -133,7 +142,7 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public List<LlmProvider> getProviders() {
         try {
-            var body = restClient.get().uri("/admin/routing-rules").retrieve().body(JsonNode.class);
+            var body = adminClient.get().uri("/admin/routing-rules").retrieve().body(JsonNode.class);
             if (body == null || !body.isArray()) return List.of();
             var seen = new LinkedHashSet<String>();
             var result = new ArrayList<LlmProvider>();
@@ -158,7 +167,7 @@ public class HttpVistierieClient implements VistierieClient {
         try {
             var from = LocalDate.now().minusDays(29)
                     .atStartOfDay(ZoneOffset.UTC).toInstant().toString();
-            var body = restClient.get()
+            var body = adminClient.get()
                     .uri("/admin/cost?granularity=day&from={from}&tenant=dracul", from)
                     .retrieve().body(JsonNode.class);
             if (body == null) return zeroSpend();
@@ -203,7 +212,7 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public void patchAgent(String name, boolean paused) {
-        restClient.patch().uri("/agents/{name}", name)
+        tenantClient.patch().uri("/agents/{name}", name)
             .body(java.util.Map.of("paused", paused))
             .retrieve().toBodilessEntity();
     }
@@ -211,7 +220,7 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public List<VistierieRunDetail> listRuns() {
         try {
-            var body = restClient.get().uri("/runs").retrieve().body(JsonNode.class);
+            var body = tenantClient.get().uri("/runs").retrieve().body(JsonNode.class);
             if (body == null || !body.isArray()) return List.of();
             var result = new ArrayList<VistierieRunDetail>();
             for (var node : body) {
@@ -231,7 +240,7 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public VistierieRunDetail triggerRun(String agentName) {
-        var body = restClient.post().uri("/agents/{name}/run", agentName)
+        var body = tenantClient.post().uri("/agents/{name}/run", agentName)
             .body(java.util.Map.of())
             .retrieve().body(JsonNode.class);
         if (body == null) throw new RuntimeException("triggerRun returned null");
@@ -244,7 +253,7 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public List<VistierieRunEvent> getRunEvents(String runId) {
         try {
-            var body = restClient.get().uri("/runs/{id}/events", runId).retrieve().body(JsonNode.class);
+            var body = tenantClient.get().uri("/runs/{id}/events", runId).retrieve().body(JsonNode.class);
             if (body == null || !body.isArray()) return List.of();
             var result = new ArrayList<VistierieRunEvent>();
             for (var node : body) {
@@ -263,14 +272,14 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public BudgetStatus getTenantBudget() {
         try {
-            var body = restClient.get().uri("/admin/tenants/dracul/budget").retrieve().body(JsonNode.class);
+            var body = adminClient.get().uri("/admin/tenants/dracul/budget").retrieve().body(JsonNode.class);
             return parseBudgetStatus(body);
         } catch (Exception e) { return BudgetStatus.empty(); }
     }
 
     @Override
     public BudgetStatus patchTenantBudget(BudgetPatch patch) {
-        var body = restClient.patch().uri("/admin/tenants/dracul/budget")
+        var body = adminClient.patch().uri("/admin/tenants/dracul/budget")
             .body(buildPatchBody(patch))
             .retrieve().body(JsonNode.class);
         return parseBudgetStatus(body);
@@ -279,7 +288,7 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public BudgetStatus getAgentBudget(String agentName) {
         try {
-            var body = restClient.get()
+            var body = adminClient.get()
                 .uri("/admin/tenants/dracul/agents/{agent}/budget", agentName)
                 .retrieve().body(JsonNode.class);
             return parseBudgetStatus(body);
@@ -288,7 +297,7 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public BudgetStatus patchAgentBudget(String agentName, BudgetPatch patch) {
-        var body = restClient.patch()
+        var body = adminClient.patch()
             .uri("/admin/tenants/dracul/agents/{agent}/budget", agentName)
             .body(buildPatchBody(patch))
             .retrieve().body(JsonNode.class);
@@ -298,7 +307,7 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public KillStatus getKillStatus() {
         try {
-            var body = restClient.get().uri("/admin/tenants/dracul/kill").retrieve().body(JsonNode.class);
+            var body = adminClient.get().uri("/admin/tenants/dracul/kill").retrieve().body(JsonNode.class);
             if (body == null) return new KillStatus(null, null, null);
             return new KillStatus(
                 body.path("until").isNull() ? null : body.path("until").asText(),
@@ -310,14 +319,14 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public void setKill(String reason) {
-        restClient.post().uri("/admin/tenants/dracul/kill")
+        adminClient.post().uri("/admin/tenants/dracul/kill")
             .body(java.util.Map.of("reason", reason))
             .retrieve().toBodilessEntity();
     }
 
     @Override
     public void clearKill() {
-        restClient.delete().uri("/admin/tenants/dracul/kill").retrieve().toBodilessEntity();
+        adminClient.delete().uri("/admin/tenants/dracul/kill").retrieve().toBodilessEntity();
     }
 
     private BudgetStatus parseBudgetStatus(JsonNode body) {
@@ -348,7 +357,7 @@ public class HttpVistierieClient implements VistierieClient {
     @Override
     public Optional<AgentDetail> getAgent(String name) {
         try {
-            AgentDetail body = restClient.get()
+            AgentDetail body = tenantClient.get()
                     .uri("/agents/{name}", name)
                     .retrieve()
                     .body(AgentDetail.class);
@@ -360,7 +369,7 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public AgentDetail registerAgent(CreateAgentRequest req) {
-        AgentDetail body = restClient.post()
+        AgentDetail body = tenantClient.post()
                 .uri("/agents")
                 .body(req)
                 .retrieve()
@@ -371,7 +380,7 @@ public class HttpVistierieClient implements VistierieClient {
 
     @Override
     public AgentDetail updateAgent(String name, UpdateAgentRequest req) {
-        AgentDetail body = restClient.put()
+        AgentDetail body = tenantClient.put()
                 .uri("/agents/{name}", name)
                 .body(req)
                 .retrieve()

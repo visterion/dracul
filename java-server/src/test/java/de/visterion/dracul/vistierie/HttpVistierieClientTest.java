@@ -27,6 +27,9 @@ class HttpVistierieClientTest {
     @AfterAll
     static void stop() { wm.stop(); }
 
+    RestClient tenantClient;
+    RestClient adminClient;
+
     @BeforeEach
     void setUp() {
         wm.resetAll();
@@ -36,12 +39,19 @@ class HttpVistierieClientTest {
         var jdkClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
-        var restClient = RestClient.builder()
-                .requestFactory(new JdkClientHttpRequestFactory(jdkClient))
+        var factory = new JdkClientHttpRequestFactory(jdkClient);
+        tenantClient = RestClient.builder()
+                .requestFactory(factory)
                 .baseUrl(wm.baseUrl())
+                .defaultHeader("Authorization", "Bearer tenant-tkn")
                 .defaultHeader("X-Tenant-Id", "dracul")
                 .build();
-        client = new HttpVistierieClient(restClient, new ObjectMapper());
+        adminClient = RestClient.builder()
+                .requestFactory(factory)
+                .baseUrl(wm.baseUrl())
+                .defaultHeader("Authorization", "Bearer admin-tkn")
+                .build();
+        client = new HttpVistierieClient(tenantClient, adminClient, new ObjectMapper());
     }
 
     // -------------------------------------------------------------------------
@@ -528,5 +538,25 @@ class HttpVistierieClientTest {
 
         wm.verify(getRequestedFor(urlEqualTo("/agents"))
                 .withHeader("X-Tenant-Id", equalTo("dracul")));
+    }
+
+    // -------------------------------------------------------------------------
+    // Auth routing
+    // -------------------------------------------------------------------------
+
+    @Test
+    void tenantEndpoint_sendsTenantBearer() {
+        wm.stubFor(get(urlEqualTo("/agents")).willReturn(okJson("[]")));
+        client.listStrigoi();
+        wm.verify(getRequestedFor(urlEqualTo("/agents"))
+                .withHeader("Authorization", equalTo("Bearer tenant-tkn")));
+    }
+
+    @Test
+    void adminEndpoint_sendsAdminBearer() {
+        wm.stubFor(get(urlPathEqualTo("/admin/routing-rules")).willReturn(okJson("[]")));
+        client.getProviders();
+        wm.verify(getRequestedFor(urlPathEqualTo("/admin/routing-rules"))
+                .withHeader("Authorization", equalTo("Bearer admin-tkn")));
     }
 }
