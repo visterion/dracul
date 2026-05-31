@@ -35,7 +35,7 @@ docker compose up --build -d
 docker compose -f docker-compose.yml -f docker-compose.lxc.yml up -d
 
 # Co-located with the real Vistierie on the same LXC host (Proxmox/PVE):
-# requires a local .env (see .env.example) and Vistierie already running on hivemind-net.
+# requires a local .env (see .env.example) and Vistierie already running on hivemem-net.
 docker compose -f docker-compose.yml -f docker-compose.lxc.yml -f docker-compose.host.yml up -d
 ```
 
