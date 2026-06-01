@@ -3,6 +3,7 @@ package de.visterion.dracul.vistierie;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import de.visterion.dracul.strigoi.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ public class HttpVistierieClient implements VistierieClient {
     private final RestClient adminClient;
     private final ObjectMapper mapper;
 
+    @Autowired
     public HttpVistierieClient(
             @Value("${dracul.vistierie.url}") String baseUrl,
             @Value("${dracul.vistierie.tenant-token:}") String tenantToken,
