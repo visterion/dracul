@@ -18,10 +18,10 @@
     "@phosphor-icons/vue": "^2.2.0",
     "apexcharts": "^5.13.0",
     "pinia": "^3.0.4",
-    "vue": "^3.5.13",
-    "vue-router": "^5.0.7",
+    "vue": "^3.5.35",
+    "vue-router": "^5.1.0",
     "vue3-apexcharts": "^1.11.1",
-    "vuetify": "^4.0.7"
+    "vuetify": "^4.0.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -30,6 +30,6 @@
     "sass": "^1.100.0",
     "typescript": "^6.0.3",
     "vite": "^6.1.0",
-    "vue-tsc": "^3.3.1"
+    "vue-tsc": "^3.3.3"
   }
 }
