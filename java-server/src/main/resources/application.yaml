@@ -16,6 +16,12 @@ dracul:
       enabled: ${STRIGOI_INSIDER_ENABLED:false}
       webhook-token: ${STRIGOI_INSIDER_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_INSIDER_SCHEDULE:0 0 21 * * 1-5}
+    echo:
+      enabled: ${STRIGOI_ECHO_ENABLED:false}
+      webhook-token: ${STRIGOI_ECHO_TOKEN:dev-token-change-me}
+      schedule: ${DRACUL_ECHO_SCHEDULE:0 0 22 * * 1-5}
+      min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
+      min-price: ${ECHO_MIN_PRICE:5.0}
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
     tenant-token: ${VISTIERIE_TENANT_TOKEN:}
