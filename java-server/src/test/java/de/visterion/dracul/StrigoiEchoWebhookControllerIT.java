@@ -1,0 +1,143 @@
+package de.visterion.dracul;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.hunting.yahoo.YahooEarningsAdapter;
+import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
+
+@SpringBootTest(webEnvironment = RANDOM_PORT)
+@Import(ContainerConfig.class)
+@ActiveProfiles("dev")
+@TestPropertySource(properties = {
+        "dracul.strigoi.echo.enabled=true",
+        "dracul.strigoi.echo.webhook-token=test-echo-token",
+        "dracul.public-url=http://test.invalid:9090"
+})
+class StrigoiEchoWebhookControllerIT {
+
+    @LocalServerPort int port;
+    @Autowired ObjectMapper objectMapper;
+    @MockitoBean YahooEarningsAdapter yahoo;
+
+    RestClient rest;
+
+    @BeforeEach
+    void setUp() {
+        rest = RestClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .messageConverters(c -> {
+                    c.clear();
+                    c.add(new MappingJackson2HttpMessageConverter(objectMapper));
+                })
+                .build();
+        when(yahoo.recentEarnings(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of());
+    }
+
+    @Test
+    void toolEndpointReturns200WithValidBearer() {
+        var resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r1", "tool_name", "fetch_recent_pead_candidates",
+                            "input", Map.of("lookback_days", 7)))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void toolEndpointReturns401WithoutBearer() {
+        try {
+            rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("run_id", "r1", "tool_name", "x", "input", Map.of()))
+                    .retrieve().toBodilessEntity();
+        } catch (HttpClientErrorException e) {
+            assertThat(e.getStatusCode().value()).isEqualTo(401);
+            return;
+        }
+        fail("Expected 401");
+    }
+
+    @Test
+    void completeEndpointPersistsPrey() {
+        var preyJson = Map.of("prey", List.of(
+                Map.of("symbol", "ECHA", "companyName", "Echo A",
+                       "anomalyType", "PEAD", "confidence", 0.7,
+                       "thesis", "Strong positive earnings surprise.",
+                       "signals", List.of("EPS beat by 18%"),
+                       "risks", List.of("Soft forward guidance"),
+                       "horizon", "3m")
+        ));
+        var resp = rest.post().uri("/api/strigoi-echo/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
+                .header("X-Vistierie-Run-Id", "run-echo-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-echo-1", "status", "succeeded",
+                            "output", preyJson))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+
+        JsonNode chronicle = rest.get().uri("/api/chronicle?includeDismissed=true")
+                .retrieve().body(JsonNode.class);
+        JsonNode preyArr = chronicle.path("prey");
+        boolean found = false;
+        for (JsonNode p : preyArr) {
+            if ("ECHA".equals(p.path("symbol").asText())
+                    && "strigoi-echo".equals(p.path("discoveredBy").asText())
+                    && "PEAD".equals(p.path("anomalyType").asText())) {
+                found = true;
+                break;
+            }
+        }
+        assertThat(found).as("inserted PEAD prey visible in chronicle").isTrue();
+    }
+
+    @Test
+    void completeEndpointReturns401WithWrongBearer() {
+        try {
+            rest.post().uri("/api/strigoi-echo/complete")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer wrong-token")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("run_id", "x", "status", "succeeded",
+                                "output", Map.of("prey", List.of())))
+                    .retrieve().toBodilessEntity();
+        } catch (HttpClientErrorException e) {
+            assertThat(e.getStatusCode().value()).isEqualTo(401);
+            return;
+        }
+        fail("Expected 401");
+    }
+
+    @Test
+    void completeEndpointAcknowledgesNonSuccessStatus() {
+        var resp = rest.post().uri("/api/strigoi-echo/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
+                .header("X-Vistierie-Run-Id", "run-failed")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-failed", "status", "failed",
+                            "error", "LLM timeout"))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+}
