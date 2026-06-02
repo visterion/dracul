@@ -193,3 +193,70 @@ Request body (shape per Vistierie's completion-webhook contract):
 ```
 
 Returns 204 on success. If `status != "succeeded"` or no `output.prey` array, the endpoint acknowledges (204) without persisting and logs the run-id.
+
+## Strigoi-Echo Webhooks
+
+These endpoints are called by Vistierie during a `strigoi-echo` agent run (Post-Earnings-Announcement-Drift). Both require `Authorization: Bearer <STRIGOI_ECHO_TOKEN>`. They are only registered when `STRIGOI_ECHO_ENABLED=true`.
+
+### `POST /api/strigoi-echo/tools/fetch-candidates`
+
+Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher. Returns positive-surprise PEAD candidates from Dracul's deterministic screener (positive earnings surprise only, surprise ≥ 5%, current price ≥ $5).
+
+Request body:
+```json
+{
+  "run_id": "...",
+  "tool_name": "fetch_recent_pead_candidates",
+  "input": { "lookback_days": 7 }
+}
+```
+
+Response:
+```json
+{
+  "output": {
+    "candidates": [
+      {
+        "symbol": "...", "companyName": "...",
+        "reportDate": "2026-05-20",
+        "epsActual": 1.65, "epsEstimate": 1.50,
+        "surprisePercent": 10.0,
+        "currentPrice": 190.5
+      }
+    ]
+  }
+}
+```
+
+### `POST /api/strigoi-echo/complete`
+
+Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher` when the agent run finishes. Persists Prey when the run succeeded.
+
+Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: <run-id>`.
+
+Request body (shape per Vistierie's completion-webhook contract):
+```json
+{
+  "run_id": "...",
+  "agent_version": 1,
+  "status": "succeeded",
+  "started_at": "...",
+  "finished_at": "...",
+  "output": {
+    "prey": [
+      {
+        "symbol": "...",
+        "companyName": "...",
+        "anomalyType": "PEAD",
+        "confidence": 0.7,
+        "thesis": "...",
+        "signals": [],
+        "risks": [],
+        "horizon": "3m"
+      }
+    ]
+  }
+}
+```
+
+Returns 204 on success. If `status != "succeeded"` or no `output.prey` array, the endpoint acknowledges (204) without persisting and logs the run-id.
