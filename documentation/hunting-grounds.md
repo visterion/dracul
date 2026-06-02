@@ -61,6 +61,23 @@ Failures surface as `MarketDataException`:
 The port is intentionally minimal so additional adapters (Alpha Vantage,
 Polygon) can be added without touching consumers.
 
+## Earnings calendar adapter
+
+Strigoi-Echo (PEAD) resolves recent earnings reports and surprises via
+`YahooEarningsAdapter` (`de.visterion.dracul.hunting.yahoo`):
+
+- HTTPS GET against Yahoo's (unofficial) earnings calendar endpoint
+  (`/v1/finance/calendar/earnings?startdt=…&enddt=…`), reusing the shared
+  `yahooRestClient`. No API key, no official SLA.
+- Normalises rows to `EarningsEvent(symbol, companyName, reportDate, epsActual,
+  epsEstimate, surprisePercent)` using Yahoo's documented field names
+  (`ticker`, `companyshortname`, `startdatetime`, `epsestimate`, `epsactual`,
+  `epssurprisepct`).
+- **Graceful degradation:** the endpoint is fragile, so any failure returns an
+  empty list (after one retry) and logs a warning — the bee never dies on a
+  Yahoo hiccup. If the endpoint proves unreliable in production, the fallback is
+  a configured ticker-list universe (deferred).
+
 ## Edgar parsing notes
 
 SEC EDGAR Atom feeds surface new filings within minutes of acceptance.

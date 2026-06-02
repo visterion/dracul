@@ -22,7 +22,7 @@ logic and the hunt pattern.
 |---|---|
 | strigoi-spin | not yet implemented |
 | strigoi-insider | **implemented 2026-05-25** — Form-4 cluster screener, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases) |
-| strigoi-echo | not yet implemented |
+| strigoi-echo | **implemented 2026-06-02** — Yahoo earnings-calendar adapter, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (positive surprise ≥ 5%, current price ≥ $5) |
 | strigoi-lazarus | not yet implemented |
 | strigoi-index | not yet implemented |
 | strigoi-merger | not yet implemented |
