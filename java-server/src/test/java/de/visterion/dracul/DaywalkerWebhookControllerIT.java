@@ -1,0 +1,160 @@
+package de.visterion.dracul;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
+import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
+import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
+import de.visterion.dracul.hunting.yahoo.IntradayCandles;
+import de.visterion.dracul.hunting.yahoo.YahooIntradayAdapter;
+import de.visterion.dracul.watchlist.WatchlistRepository;
+import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.when;
+import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
+
+@SpringBootTest(webEnvironment = RANDOM_PORT)
+@Import(ContainerConfig.class)
+@ActiveProfiles("dev")
+@TestPropertySource(properties = {
+        "dracul.daywalker.enabled=true",
+        "dracul.daywalker.webhook-token=test-dw-token",
+        "dracul.daywalker.session-cron=0 30 13 * * 1-5",
+        "dracul.public-url=http://test.invalid:9090"
+})
+class DaywalkerWebhookControllerIT {
+
+    @LocalServerPort int port;
+    @Autowired ObjectMapper objectMapper;
+    @Autowired WatchlistRepository watchlist;
+    @Autowired DaywalkerAlertRepository alerts;
+
+    @MockitoBean YahooIntradayAdapter yahoo;
+    @MockitoBean FinnhubNewsAdapter finnhub;
+    @MockitoBean EdgarFormFourAdapter edgar;
+
+    RestClient rest;
+
+    @BeforeEach
+    void setUp() {
+        rest = RestClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
+                .build();
+        when(yahoo.intradayCandles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
+        when(finnhub.companyNews(anyString(), any(), any())).thenReturn(List.of());
+        when(finnhub.recommendationTrend(anyString())).thenReturn(List.of());
+        when(edgar.recentFilings(any(), any())).thenReturn(List.of());
+    }
+
+    @Test
+    void eventsEndpointReturnsDetectedEvents() {
+        watchlist.insert("default", "SPK", "Spike Co", 100.0, List.of(100.0), "", null);
+        when(yahoo.intradayCandles("SPK")).thenReturn(
+                new IntradayCandles(List.of(new BigDecimal("100"), new BigDecimal("106")), List.of()));
+
+        JsonNode resp = rest.post().uri("/api/daywalker/events")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("session_id", "s1", "agent", "daywalker",
+                        "since", "2026-06-03T17:00:00Z", "now", "2026-06-03T18:00:00Z"))
+                .retrieve().body(JsonNode.class);
+
+        boolean found = false;
+        for (JsonNode e : resp.path("events")) {
+            if ("SPK".equals(e.path("symbol").asText())
+                    && "PRICE_SPIKE".equals(e.path("trigger_type").asText())) found = true;
+        }
+        assertThat(found).as("price spike event for SPK").isTrue();
+    }
+
+    @Test
+    void eventsEndpointReturns401WithoutBearer() {
+        try {
+            rest.post().uri("/api/daywalker/events")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("now", "2026-06-03T18:00:00Z"))
+                    .retrieve().toBodilessEntity();
+        } catch (HttpClientErrorException e) {
+            assertThat(e.getStatusCode().value()).isEqualTo(401);
+            return;
+        }
+        fail("Expected 401");
+    }
+
+    @Test
+    void completeEndpointPersistsAlert() {
+        watchlist.insert("default", "CMP", "Complete Co", 80.0, List.of(80.0), "", null);
+
+        var resp = rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", "run-dw-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-dw-1", "status", "succeeded",
+                        "output", Map.of("symbol", "CMP", "trigger_type", "PRICE_SPIKE",
+                                "severity", "WARNING", "thesis", "Sharp move on no news.",
+                                "confidence", 0.6)))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(alerts.lastAlertAt("default", "CMP", "PRICE_SPIKE")).isPresent();
+    }
+
+    @Test
+    void completeEndpointAcknowledgesUnknownSymbolWithoutPersisting() {
+        var resp = rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", "run-dw-2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-dw-2", "status", "succeeded",
+                        "output", Map.of("symbol", "GHOST", "trigger_type", "PRICE_SPIKE",
+                                "severity", "INFO", "thesis", "x", "confidence", 0.3)))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(alerts.lastAlertAt("default", "GHOST", "PRICE_SPIKE")).isEmpty();
+    }
+
+    @Test
+    void completeEndpointAcknowledgesNonSuccessStatusWithoutPersisting() {
+        var resp = rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", "run-dw-failed")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-dw-failed", "status", "failed",
+                        "error", "LLM timeout"))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+    }
+
+    @Test
+    void completeEndpointReturns401WithWrongBearer() {
+        try {
+            rest.post().uri("/api/daywalker/complete")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer wrong")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("status", "succeeded", "output", Map.of()))
+                    .retrieve().toBodilessEntity();
+        } catch (HttpClientErrorException e) {
+            assertThat(e.getStatusCode().value()).isEqualTo(401);
+            return;
+        }
+        fail("Expected 401");
+    }
+}

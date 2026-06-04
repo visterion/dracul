@@ -78,6 +78,30 @@ Strigoi-Echo (PEAD) resolves recent earnings reports and surprises via
   Yahoo hiccup. If the endpoint proves unreliable in production, the fallback is
   a configured ticker-list universe (deferred).
 
+## Yahoo intraday adapter
+
+The Daywalker resolves intraday price and volume via
+`YahooIntradayAdapter` (`de.visterion.dracul.hunting.yahoo`):
+
+- HTTPS GET against `query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=5m`,
+  reusing the shared `yahooRestClient`. No API key.
+- Returns `IntradayCandles(closes, volumes)` — parallel lists of 5-minute closes
+  and volumes from one call, feeding both PRICE_SPIKE and VOLUME_SPIKE detection.
+- **Graceful degradation:** any failure returns empty candles (logged) — the
+  Daywalker poll never dies on a Yahoo hiccup.
+
+## Finnhub news adapter
+
+The Daywalker resolves material news and analyst-rating shifts via
+`FinnhubNewsAdapter` (`de.visterion.dracul.hunting.finnhub`):
+
+- `companyNews(symbol, from, to)` → `/company-news`; `recommendationTrend(symbol)`
+  → `/stock/recommendation`. Auth via `FINNHUB_API_KEY` query token.
+- Returns normalised `NewsHeadline` / `RecommendationTrend` records.
+- **Graceful degradation:** a blank `FINNHUB_API_KEY` short-circuits to an empty
+  list (no HTTP); any error also returns empty. Negativity / downgrade severity
+  is judged by the LLM child run, not the adapter.
+
 ## Edgar parsing notes
 
 SEC EDGAR Atom feeds surface new filings within minutes of acceptance.
