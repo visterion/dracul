@@ -43,8 +43,15 @@ public class DaywalkerAlertRepository {
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
+    /** Back-compat: insert without an explicit notification outcome (not notified). */
     public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
                        String severity, String thesis, BigDecimal confidence, String runId) {
+        insert(userId, watchlistItemId, symbol, triggerType, severity, thesis, confidence, runId, false);
+    }
+
+    public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
+                       String severity, String thesis, BigDecimal confidence, String runId,
+                       boolean notificationSent) {
         // Map the precise severity onto the frontend's WatchlistAlert level vocabulary
         // ('elevated' | 'info' | 'neutral'); the exact severity is preserved in the
         // `severity` column for downstream (Telegram / SSE) consumers.
@@ -52,9 +59,9 @@ public class DaywalkerAlertRepository {
             case "CRITICAL", "WARNING" -> "elevated";
             default -> "info";
         };
-        java.util.UUID wid;
+        UUID wid;
         try {
-            wid = java.util.UUID.fromString(watchlistItemId);
+            wid = UUID.fromString(watchlistItemId);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(
                     "DaywalkerAlertRepository.insert: invalid watchlistItemId '" + watchlistItemId + "'", e);
@@ -63,10 +70,10 @@ public class DaywalkerAlertRepository {
         jdbc.sql("""
                 INSERT INTO daywalker_alerts
                   (id, watchlist_item_id, at, message, level, user_id,
-                   symbol, trigger_type, thesis, confidence, severity, vistierie_run_id)
+                   symbol, trigger_type, thesis, confidence, severity, vistierie_run_id, notification_sent)
                 VALUES
                   (:id, :wid, :at, :msg, :lvl, :u,
-                   :sym, :tt, :th, :conf, :sev, :run)
+                   :sym, :tt, :th, :conf, :sev, :run, :notified)
                 """)
                 .param("id", UUID.randomUUID())
                 .param("wid", wid)
@@ -80,6 +87,7 @@ public class DaywalkerAlertRepository {
                 .param("conf", confidence)
                 .param("sev", severity)
                 .param("run", runId)
+                .param("notified", notificationSent)
                 .update();
     }
 }

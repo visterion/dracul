@@ -25,15 +25,15 @@ public class DaywalkerWebhookController {
 
     private final BearerTokenVerifier verifier;
     private final DaywalkerEventEngine engine;
-    private final DaywalkerAlertRepository alerts;
+    private final DaywalkerCompletionService completionService;
 
     public DaywalkerWebhookController(
             @Value("${dracul.daywalker.webhook-token}") String token,
             DaywalkerEventEngine engine,
-            DaywalkerAlertRepository alerts) {
+            DaywalkerCompletionService completionService) {
         this.verifier = new BearerTokenVerifier(token);
         this.engine = engine;
-        this.alerts = alerts;
+        this.completionService = completionService;
     }
 
     /** Event-source webhook: deterministic detection over the watchlist. */
@@ -73,16 +73,10 @@ public class DaywalkerWebhookController {
             log.warn("daywalker run {} missing symbol/trigger_type — skipping", runId);
             return ResponseEntity.noContent().build();
         }
-        var wid = alerts.resolveWatchlistItemId("default", symbol);
-        if (wid.isEmpty()) {
-            log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
-            return ResponseEntity.noContent().build();
-        }
         BigDecimal confidence = o.path("confidence").isNumber()
                 ? new BigDecimal(o.path("confidence").asText()) : null;
-        alerts.insert("default", wid.get(), symbol, triggerType,
+        completionService.persistAssessment(symbol, triggerType,
                 o.path("severity").asText("INFO"), o.path("thesis").asText(""), confidence, runId);
-        log.info("daywalker run {} persisted alert for {} ({})", runId, symbol, triggerType);
         return ResponseEntity.noContent().build();
     }
 

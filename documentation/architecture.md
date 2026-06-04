@@ -180,6 +180,9 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 - `created_at` (TIMESTAMPTZ, default now()) — drives the per-`(symbol, trigger_type)` cooldown
 - index `idx_daywalker_alerts_symbol_trigger` on (user_id, symbol, trigger_type, created_at DESC)
 
+**Daywalker-alert columns (V5):**
+- `notification_sent` (BOOLEAN, default false) — true when a Telegram push was delivered for this alert
+
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
 an update to this document.

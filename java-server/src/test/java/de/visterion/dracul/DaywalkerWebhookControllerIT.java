@@ -7,8 +7,10 @@ import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
 import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
 import de.visterion.dracul.hunting.yahoo.IntradayCandles;
 import de.visterion.dracul.hunting.yahoo.YahooIntradayAdapter;
+import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,7 +30,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
 @SpringBootTest(webEnvironment = RANDOM_PORT)
@@ -50,11 +52,16 @@ class DaywalkerWebhookControllerIT {
     @MockitoBean YahooIntradayAdapter yahoo;
     @MockitoBean FinnhubNewsAdapter finnhub;
     @MockitoBean EdgarFormFourAdapter edgar;
+    @MockitoBean TelegramNotifier telegramNotifier;
+    @Autowired JdbcClient jdbc;
 
     RestClient rest;
 
     @BeforeEach
     void setUp() {
+        jdbc.sql("DELETE FROM daywalker_alerts WHERE symbol IN ('SPK','CMP','CRT','INF')").update();
+        jdbc.sql("DELETE FROM watchlist_items WHERE ticker IN ('SPK','CMP','CRT','INF')").update();
+        when(telegramNotifier.notifyAlert(anyString(), anyString(), anyString(), any())).thenReturn(true);
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
@@ -156,5 +163,48 @@ class DaywalkerWebhookControllerIT {
             return;
         }
         fail("Expected 401");
+    }
+
+    @Test
+    void criticalCompletionPushesAndMarksNotificationSent() {
+        watchlist.insert("default", "CRT", "Critical Co", 70.0, List.of(70.0), "", null);
+
+        var resp = rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", "run-crt-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-crt-1", "status", "succeeded",
+                        "output", Map.of("symbol", "CRT", "trigger_type", "INSIDER_SELL",
+                                "severity", "CRITICAL", "thesis", "Cluster of insider sales.",
+                                "confidence", 0.8)))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+
+        verify(telegramNotifier).notifyAlert("CRT", "INSIDER_SELL", "CRITICAL", "Cluster of insider sales.");
+        Boolean sent = jdbc.sql(
+                "SELECT notification_sent FROM daywalker_alerts WHERE symbol = 'CRT'")
+                .query(Boolean.class).single();
+        assertThat(sent).isTrue();
+    }
+
+    @Test
+    void infoCompletionDoesNotPush() {
+        watchlist.insert("default", "INF", "Info Co", 40.0, List.of(40.0), "", null);
+
+        rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", "run-inf-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-inf-1", "status", "succeeded",
+                        "output", Map.of("symbol", "INF", "trigger_type", "NEGATIVE_NEWS",
+                                "severity", "INFO", "thesis", "Routine headline.",
+                                "confidence", 0.2)))
+                .retrieve().toBodilessEntity();
+
+        verify(telegramNotifier, never()).notifyAlert(anyString(), anyString(), anyString(), any());
+        Boolean sent = jdbc.sql(
+                "SELECT notification_sent FROM daywalker_alerts WHERE symbol = 'INF'")
+                .query(Boolean.class).single();
+        assertThat(sent).isFalse();
     }
 }
