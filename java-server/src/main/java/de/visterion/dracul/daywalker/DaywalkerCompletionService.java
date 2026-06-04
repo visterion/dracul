@@ -4,15 +4,16 @@ import de.visterion.dracul.notify.TelegramNotifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
 /**
  * Resolves the watchlist item for a completed Daywalker assessment, decides
- * whether the severity warrants a Telegram push (best-effort), and persists the
- * alert with the push outcome in one insert. Extracted from the controller so
- * the notify decision is unit-testable without a web context.
+ * whether the severity warrants a Telegram push (best-effort), persists the
+ * alert with the push outcome in one insert, and publishes an event so live
+ * consumers (SSE) can react.
  */
 @Component
 public class DaywalkerCompletionService {
@@ -22,14 +23,17 @@ public class DaywalkerCompletionService {
 
     private final DaywalkerAlertRepository alerts;
     private final TelegramNotifier notifier;
+    private final ApplicationEventPublisher events;
     private final int notifyRank;
 
     public DaywalkerCompletionService(
             DaywalkerAlertRepository alerts,
             TelegramNotifier notifier,
+            ApplicationEventPublisher events,
             @Value("${dracul.daywalker.notify-level:CRITICAL}") String notifyLevel) {
         this.alerts = alerts;
         this.notifier = notifier;
+        this.events = events;
         this.notifyRank = rank(notifyLevel);
     }
 
@@ -45,6 +49,7 @@ public class DaywalkerCompletionService {
             sent = notifier.notifyAlert(symbol, triggerType, severity, thesis);
         }
         alerts.insert(USER, wid.get(), symbol, triggerType, severity, thesis, confidence, runId, sent);
+        events.publishEvent(new DaywalkerAlertCreatedEvent(symbol, triggerType, severity, thesis));
         log.info("daywalker run {} persisted alert for {} ({}), notified={}",
                 runId, symbol, triggerType, sent);
     }

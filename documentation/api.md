@@ -77,12 +77,21 @@ are relative to the context root of `dracul-app`.
 
 ## Live Updates (SSE)
 
-| Path | Events pushed |
-|---|---|
-| `/api/events` | `prey.new`, `verdict.new`, `alert.new`, `strigoi.status`, `cost.update` |
+`GET /api/events` is a Server-Sent-Events stream (`text/event-stream`). The
+Chronicle frontend connects via `EventSource` and updates live without polling.
+Unauthenticated, consistent with the read API (a browser `EventSource` cannot
+send an `Authorization` header).
 
-The Chronicle frontend subscribes to this endpoint and updates in real
-time without polling.
+**v1 emits only `alert.new`** — a new Daywalker alert:
+
+```text
+event: alert.new
+data: {"symbol":"AAPL","trigger_type":"PRICE_SPIKE","severity":"CRITICAL","thesis":"…","ts":"2026-06-04T18:00:00Z"}
+```
+
+The stream is generic; `verdict.new` and `strigoi.status` are planned and will
+attach to the same stream once their sources exist. No replay / Last-Event-ID in
+v1 — clients receive events from connect time; `EventSource` auto-reconnects.
 
 ## Authentication
 
