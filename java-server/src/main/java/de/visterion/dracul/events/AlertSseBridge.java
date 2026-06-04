@@ -18,6 +18,10 @@ public class AlertSseBridge {
         this.broadcaster = broadcaster;
     }
 
+    // Runs synchronously on the webhook thread (default Spring @EventListener).
+    // Keep this body total and exception-free — broadcast() already swallows
+    // per-emitter I/O errors — so it can never break the /complete 204 contract.
+    // Future verdict.new / strigoi.status bridges should preserve that property.
     @EventListener
     public void onAlertCreated(DaywalkerAlertCreatedEvent e) {
         Map<String, Object> payload = new LinkedHashMap<>();
