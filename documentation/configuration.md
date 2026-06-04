@@ -121,6 +121,18 @@ dracul:
 Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared Yahoo
 market-data client. It needs no API key.
 
+## Strigoi Spin
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `STRIGOI_SPIN_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
+| `STRIGOI_SPIN_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
+| `DRACUL_SPIN_SCHEDULE` | `0 0 4 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 04:00 UTC weekdays. |
+| `SPIN_LOOKBACK_DAYS` | `60` | Default Form-10-12B lookback window (days) for the pre-screen. |
+
+Spin reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared EDGAR
+User-Agent. It needs no API key.
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the
