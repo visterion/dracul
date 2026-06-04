@@ -31,9 +31,14 @@ dracul:
     price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
+    notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
   finnhub:
     api-key: ${FINNHUB_API_KEY:}
     base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    chat-id: ${TELEGRAM_CHAT_ID:}
+    base-url: ${TELEGRAM_BASE_URL:https://api.telegram.org}
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
     tenant-token: ${VISTIERIE_TENANT_TOKEN:}

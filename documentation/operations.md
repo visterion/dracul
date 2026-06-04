@@ -9,9 +9,11 @@
   URL — no TLS / mTLS in v1 (same trust boundary as HiveMem).
 - **Postgres**: Dracul uses its own database/schema (`dracul`) on the
   shared Postgres instance. Flyway migrations run on container startup.
-- **Telegram bot**: the Daywalker sends push alerts via a Telegram bot.
-  The bot token and target chat ID are configured via env vars (see
-  [Configuration](./configuration.md)).
+- **Telegram bot**: the Daywalker sends best-effort push alerts for CRITICAL findings via a Telegram bot.
+  1. Create a bot with @BotFather and copy its token → `TELEGRAM_BOT_TOKEN`.
+  2. Get your chat id (e.g. message the bot, then read `https://api.telegram.org/bot<token>/getUpdates`) → `TELEGRAM_CHAT_ID`.
+  3. Optionally lower `DRACUL_DAYWALKER_NOTIFY_LEVEL` to `WARNING` for more alerts.
+  A blank token or chat id disables push; alerts are still persisted and visible in Chronicle.
 
 ## Environment variables
 

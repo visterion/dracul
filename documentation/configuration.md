@@ -38,10 +38,15 @@ Schema is `dracul`. Flyway migrations run on startup.
 
 ## Notifications
 
-| Variable | Purpose |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token for Daywalker push alerts |
-| `TELEGRAM_CHAT_ID` | Target chat / user ID for Daywalker notifications |
+| Variable | Default | Purpose |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | _(blank)_ | Telegram bot token for Daywalker push alerts. Blank disables push. |
+| `TELEGRAM_CHAT_ID` | _(blank)_ | Target chat / user id. Blank disables push. |
+| `TELEGRAM_BASE_URL` | `https://api.telegram.org` | Override for tests. |
+| `DRACUL_DAYWALKER_NOTIFY_LEVEL` | `CRITICAL` | Minimum alert severity that triggers a Telegram push (INFO / WARNING / CRITICAL). |
+
+Push is best-effort: a failed or disabled send never blocks alert persistence; the
+outcome is recorded in `daywalker_alerts.notification_sent`.
 
 ## Daywalker
 
