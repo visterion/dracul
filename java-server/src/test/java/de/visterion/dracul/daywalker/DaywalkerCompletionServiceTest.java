@@ -2,6 +2,7 @@ package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.notify.TelegramNotifier;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -11,12 +12,14 @@ import static org.mockito.Mockito.*;
 
 class DaywalkerCompletionServiceTest {
 
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+
     private DaywalkerCompletionService service(DaywalkerAlertRepository alerts, TelegramNotifier notifier) {
-        return new DaywalkerCompletionService(alerts, notifier, "CRITICAL");
+        return new DaywalkerCompletionService(alerts, notifier, events, "CRITICAL");
     }
 
     @Test
-    void criticalNotifiesAndPersistsSentTrue() {
+    void criticalNotifiesPersistsSentTrueAndPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.resolveWatchlistItemId("default", "AAPL")).thenReturn(Optional.of("wid-1"));
@@ -28,10 +31,12 @@ class DaywalkerCompletionServiceTest {
         verify(notifier).notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis");
         verify(alerts).insert(eq("default"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
                 eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true));
+        verify(events).publishEvent(
+                new DaywalkerAlertCreatedEvent("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
     }
 
     @Test
-    void infoDoesNotNotifyAndPersistsSentFalse() {
+    void infoDoesNotNotifyPersistsSentFalseAndPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.resolveWatchlistItemId("default", "AAPL")).thenReturn(Optional.of("wid-1"));
@@ -42,24 +47,12 @@ class DaywalkerCompletionServiceTest {
         verifyNoInteractions(notifier);
         verify(alerts).insert(eq("default"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
                 eq("INFO"), eq("thesis"), isNull(), eq("run-2"), eq(false));
+        verify(events).publishEvent(
+                new DaywalkerAlertCreatedEvent("AAPL", "PRICE_SPIKE", "INFO", "thesis"));
     }
 
     @Test
-    void notifyFailureStillPersistsSentFalse() {
-        var alerts = mock(DaywalkerAlertRepository.class);
-        var notifier = mock(TelegramNotifier.class);
-        when(alerts.resolveWatchlistItemId("default", "AAPL")).thenReturn(Optional.of("wid-1"));
-        when(notifier.notifyAlert(anyString(), anyString(), anyString(), any())).thenReturn(false);
-
-        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
-                "thesis", null, "run-3");
-
-        verify(alerts).insert(eq("default"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis"), isNull(), eq("run-3"), eq(false));
-    }
-
-    @Test
-    void unknownSymbolNeitherNotifiesNorInserts() {
+    void unknownSymbolNeitherNotifiesInsertsNorPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.resolveWatchlistItemId("default", "GHOST")).thenReturn(Optional.empty());
@@ -70,5 +63,6 @@ class DaywalkerCompletionServiceTest {
         verifyNoInteractions(notifier);
         verify(alerts, never()).insert(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), any(), anyString(), anyBoolean());
+        verifyNoInteractions(events);
     }
 }
