@@ -22,6 +22,18 @@ dracul:
       schedule: ${DRACUL_ECHO_SCHEDULE:0 0 22 * * 1-5}
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
+  daywalker:
+    enabled: ${DRACUL_DAYWALKER_ENABLED:false}
+    webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
+    session-cron: ${DRACUL_DAYWALKER_SESSION_CRON:0 30 13 * * 1-5}
+    session-duration: ${DRACUL_DAYWALKER_SESSION_DURATION:23400}
+    poll-interval: ${DRACUL_DAYWALKER_POLL_INTERVAL:300}
+    price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
+    volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
+    cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
+  finnhub:
+    api-key: ${FINNHUB_API_KEY:}
+    base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
   vistierie:
     url: ${VISTIERIE_URL:http://vistierie:8090}
     tenant-token: ${VISTIERIE_TENANT_TOKEN:}
