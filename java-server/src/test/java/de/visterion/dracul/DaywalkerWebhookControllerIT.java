@@ -132,6 +132,18 @@ class DaywalkerWebhookControllerIT {
     }
 
     @Test
+    void completeEndpointAcknowledgesNonSuccessStatusWithoutPersisting() {
+        var resp = rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", "run-dw-failed")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "run-dw-failed", "status", "failed",
+                        "error", "LLM timeout"))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+    }
+
+    @Test
     void completeEndpointReturns401WithWrongBearer() {
         try {
             rest.post().uri("/api/daywalker/complete")
