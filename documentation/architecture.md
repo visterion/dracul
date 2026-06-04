@@ -211,6 +211,12 @@ External sources (EDGAR, prices, news, calendar)
     User — reads, approves patterns, manages watchlist
 ```
 
+**Live alerts (SSE):** `DaywalkerCompletionService` publishes a
+`DaywalkerAlertCreatedEvent` after persisting an alert → an `@EventListener`
+bridge calls `SseBroadcaster.broadcast("alert.new", …)` → `GET /api/events`
+fans it out to connected `EventSource` clients (Chronicle live panel). The
+broadcaster is domain-agnostic; new event types attach with one `broadcast` call.
+
 ## Multi-User Readiness
 
 Phase 1 is single-user. `user_id` columns exist everywhere but are always

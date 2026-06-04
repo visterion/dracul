@@ -37,6 +37,13 @@ Both documents are required reading before implementing any view.
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications | Variable | ✅ Etappe 11 |
 
+## Live alert panel
+
+A top-bar indicator (🔔 with a connection dot + unread badge) opens a dedicated
+live-alert panel. The panel subscribes to `GET /api/events` over SSE and lists
+incoming Daywalker alerts (severity, symbol, trigger, thesis) newest-first, with
+a connection status. Active only against a real backend (disabled in mock mode).
+
 ## Application shell
 
 Present on every view:
