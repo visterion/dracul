@@ -22,22 +22,25 @@ public class SseBroadcaster {
     private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
 
     public SseEmitter subscribe() {
-        return register(new SseEmitter(TIMEOUT_MS));
-    }
-
-    /** Package-private: register a (possibly test-supplied) emitter. */
-    SseEmitter register(SseEmitter emitter) {
-        emitter.onCompletion(() -> emitters.remove(emitter));
-        emitter.onTimeout(() -> emitters.remove(emitter));
-        emitter.onError(t -> emitters.remove(emitter));
-        emitters.add(emitter);
-        // Send a comment immediately so that HTTP response headers are flushed
-        // to the client before any real event arrives.
+        SseEmitter emitter = register(new SseEmitter(TIMEOUT_MS));
+        // Send a comment immediately so the HTTP response headers flush to the
+        // client before any real event arrives (otherwise clients hang on
+        // connect until the first event). Real connection path only —
+        // register() stays a pure registration seam for tests.
         try {
             emitter.send(SseEmitter.event().comment("connected"));
         } catch (IOException | IllegalStateException e) {
             emitters.remove(emitter);
         }
+        return emitter;
+    }
+
+    /** Package-private: register an emitter (wires removal callbacks, no I/O). */
+    SseEmitter register(SseEmitter emitter) {
+        emitter.onCompletion(() -> emitters.remove(emitter));
+        emitter.onTimeout(() -> emitters.remove(emitter));
+        emitter.onError(t -> emitters.remove(emitter));
+        emitters.add(emitter);
         return emitter;
     }
 
