@@ -260,3 +260,51 @@ Request body (shape per Vistierie's completion-webhook contract):
 ```
 
 Returns 204 on success. If `status != "succeeded"` or no `output.prey` array, the endpoint acknowledges (204) without persisting and logs the run-id.
+
+## Daywalker Webhooks
+
+These endpoints are called by Vistierie for the `daywalker` StreamingBee. Both
+require `Authorization: Bearer <DRACUL_DAYWALKER_TOKEN>`. They are only registered
+when `DRACUL_DAYWALKER_ENABLED=true`.
+
+### `POST /api/daywalker/events`
+
+Event-source webhook — polled by Vistierie on a cadence within the session
+window. Runs deterministic detection over the active watchlist (no LLM) and
+returns trigger events. Each event becomes the payload of one child run.
+
+Request body (Vistierie → Dracul):
+```json
+{ "session_id": "<uuid>", "agent": "daywalker",
+  "since": "2026-06-03T17:00:00Z", "now": "2026-06-03T18:00:00Z" }
+```
+
+Response:
+```json
+{ "events": [
+  { "symbol": "ACME", "company_name": "Acme Corp",
+    "trigger_type": "PRICE_SPIKE", "current_price": 106.0,
+    "detail": { "price_change_pct": 0.06, "from_price": 100, "to_price": 106 } }
+] }
+```
+
+Empty `events` → nothing spawned. A `(symbol, trigger_type)` within its cooldown
+window is suppressed.
+
+### `POST /api/daywalker/complete`
+
+Completion webhook — invoked when a child run finishes. Persists an enriched
+`daywalker_alerts` row when the run succeeded.
+
+Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: <run-id>`.
+
+Request body:
+```json
+{ "run_id": "...", "status": "succeeded",
+  "output": { "symbol": "ACME", "trigger_type": "PRICE_SPIKE",
+              "severity": "WARNING", "thesis": "...", "confidence": 0.6 } }
+```
+
+Returns 204. If `status != "succeeded"`, the symbol/trigger_type is missing, or
+the symbol is not on the watchlist, the endpoint acknowledges (204) without
+persisting and logs the run-id.

@@ -31,8 +31,7 @@ Dracul's `HttpVistierieClient` sends the tenant token on tenant calls and the ad
 |---|---|---|
 | `reasoning` | Dense filings, multi-factor judgement | strigoi-spin, strigoi-lazarus, strigoi-merger, Voievod |
 | `routine` | Pattern-matching, simple classification | strigoi-insider, strigoi-echo, strigoi-index |
-| `routine` (pre-filter) | Daywalker Haiku pre-filter | daywalker (first stage) |
-| `reasoning` (escalation) | Daywalker Sonnet full assessment | daywalker (second stage) |
+| `reasoning` | Daywalker per-event assessment (v1: single Sonnet) | daywalker |
 
 ## Bee lifecycle types
 
@@ -42,7 +41,7 @@ Dracul uses two of Vistierie's Bee lifecycle models:
 |---|---|---|
 | Strigoi (6 agents) | ScheduledBee | Cron nightly |
 | Voievod | ScheduledBee | Cron weekly (Sunday) |
-| Daywalker | StreamingBee | Starts at market open, runs continuously |
+| Daywalker | StreamingBee | Window-bounded session at market open; polls an event-source webhook every 5 min |
 
 The `StreamingBee` pattern is a Vistierie extension introduced to support
 Dracul's Daywalker. If Vistierie does not yet expose this interface, it
