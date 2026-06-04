@@ -48,6 +48,22 @@ class TelegramNotifierTest {
     }
 
     @Test
+    void sendsPlainTextWithoutParseModeForUnderscoreTriggerTypes() {
+        // Regression: trigger types contain underscores (PRICE_SPIKE). With
+        // parse_mode=Markdown Telegram rejected these with HTTP 400 (unbalanced
+        // italic entity). The message must be sent as plain text — no parse_mode.
+        wm.stubFor(post(urlPathEqualTo("/bottkn123/sendMessage")).willReturn(okJson("{\"ok\":true}")));
+
+        boolean sent = notifier("tkn123", "99").notifyAlert(
+                "NVDA", "PRICE_SPIKE", "CRITICAL", "Sharp move on no news.");
+
+        assertThat(sent).isTrue();
+        wm.verify(postRequestedFor(urlPathEqualTo("/bottkn123/sendMessage"))
+                .withRequestBody(containing("PRICE_SPIKE"))
+                .withRequestBody(notContaining("parse_mode")));
+    }
+
+    @Test
     void serverErrorReturnsFalse() {
         wm.stubFor(post(urlPathEqualTo("/bottkn123/sendMessage")).willReturn(aResponse().withStatus(500)));
         assertThat(notifier("tkn123", "99").notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "x")).isFalse();

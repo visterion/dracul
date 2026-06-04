@@ -45,14 +45,18 @@ public class TelegramNotifier {
     /** Returns true only on a successful send; false if disabled or on any error. */
     public boolean notifyAlert(String symbol, String triggerType, String severity, String thesis) {
         if (botToken.isBlank() || chatId.isBlank()) return false;
-        String text = String.format("🔴 *%s* — %s (%s)%n%s",
+        // Plain text — NO parse_mode. trigger types contain underscores (PRICE_SPIKE,
+        // INSIDER_SELL, …) which Telegram's Markdown parser treats as unbalanced italic
+        // entities and rejects with HTTP 400. Plain text is robust against any dynamic
+        // content (symbol / trigger / thesis) without escaping.
+        String text = String.format("🔴 %s — %s (%s)%n%s",
                 severity, symbol, triggerType, thesis == null ? "" : thesis);
         try {
             // Token is concatenated (not a URI variable) so its ':' is not percent-encoded.
             http.post()
                     .uri("/bot" + botToken + "/sendMessage")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("chat_id", chatId, "text", text, "parse_mode", "Markdown"))
+                    .body(Map.of("chat_id", chatId, "text", text))
                     .retrieve()
                     .toBodilessEntity();
             return true;
