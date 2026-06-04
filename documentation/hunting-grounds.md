@@ -108,3 +108,17 @@ SEC EDGAR Atom feeds surface new filings within minutes of acceptance.
 XBRL parsing for quantitative data (GAAP metrics) is significantly more
 complex than filing metadata extraction. Expect Etappe 2 of the build
 plan (EDGAR adapter) to take 2–3 weeks of evening work.
+
+## EDGAR spin-off adapter
+
+Strigoi-Spin resolves recent spin-off registrations via `EdgarSpinoffAdapter`
+(`de.visterion.dracul.hunting.edgar`):
+
+- SEC EDGAR full-text search (`efts.sec.gov/LATEST/search-index?forms=10-12B&…`),
+  reusing the `dracul.edgar.user-agent` header. No API key.
+- Metadata-only — returns `SpinoffFiling(ticker, companyName, formType, filingDate,
+  filingUrl)` from each hit's `_source` (no per-filing XML fetch). Tickers are
+  often absent on fresh registrations (the spin-co is not trading yet) and are
+  returned empty.
+- **Graceful degradation:** any failure returns an empty list (logged) — the bee
+  never dies on an EDGAR hiccup.
