@@ -174,6 +174,12 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 **Watchlist indexes:**
 - `uq_watchlist_user_ticker` (UNIQUE) — composite index on (user_id, ticker) for idempotent POST
 
+**Daywalker-alert columns (V4):**
+- `symbol`, `trigger_type`, `thesis`, `severity`, `vistierie_run_id` (TEXT, nullable)
+- `confidence` (NUMERIC(4,3), nullable)
+- `created_at` (TIMESTAMPTZ, default now()) — drives the per-`(symbol, trigger_type)` cooldown
+- index `idx_daywalker_alerts_symbol_trigger` on (user_id, symbol, trigger_type, created_at DESC)
+
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
 an update to this document.

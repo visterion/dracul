@@ -98,32 +98,32 @@ as additional prompt context, closing the feedback loop.
 
 ## Daywalker (streaming guardian)
 
-Not a scheduled agent — a `StreamingBee` that runs during US market
-hours (15:30–22:00 MEZ):
+**Implemented 2026-06-04** as a Vistierie `StreamingBee` consumer (Daywalker
+sub-project 2 of 4). Not a scheduled agent — Vistierie opens a window-bounded
+session at market open and polls Dracul's event-source webhook every 5 minutes.
 
-1. Polls prices and volume every 5 minutes for all active watchlist items.
-2. Subscribes to news and SEC filing streams.
-3. On trigger (price spike > 3%, negative news, Form-4 SELL, analyst
-   downgrade, volume spike > 3×):
-   - **Haiku pre-filter**: "is this actually relevant?"
-   - If relevant → **Sonnet full assessment**
-   - If critical → Telegram push + `notification_sent = true`
-   - Always → persist row in `dracul.daywalker_alerts`
+1. `POST /api/daywalker/events` runs deterministic detection over the active
+   watchlist (no LLM) and returns trigger events.
+2. Vistierie spawns one reasoning-tier (Sonnet) child run per event; the run
+   judges severity and returns `{severity, thesis, confidence}`.
+3. `POST /api/daywalker/complete` persists each assessment to
+   `dracul.daywalker_alerts`.
 
-### Tier routing
+A per-`(symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
+condition from spawning a run on every poll.
 
-| Stage | Tier | Model |
+### Trigger types (v1)
+
+| TriggerType | Source | Deterministic condition |
 |---|---|---|
-| Pre-filter | routine | claude-haiku-4-5 |
-| Full assessment | reasoning | claude-sonnet-4-6 |
-| Critical escalation | reasoning | claude-opus-4-7 (rare) |
+| PRICE_SPIKE | Yahoo intraday (5-min) | abs(price change) > 3% over ~1h |
+| VOLUME_SPIKE | Yahoo intraday (5-min) | volume > 3× rolling average |
+| INSIDER_SELL | EDGAR Form-4 | a Form-4 sale ("S") for the symbol |
+| NEGATIVE_NEWS | Finnhub company-news | a new material headline (LLM judges negativity) |
+| ANALYST_DOWNGRADE | Finnhub recommendation-trend | rating trend shifts toward sell |
 
-### Trigger types
+### Tier routing (v1)
 
-| TriggerType | Threshold |
-|---|---|
-| PRICE_SPIKE | > 3% in 1 hour |
-| NEGATIVE_NEWS | news-adapter classification |
-| INSIDER_SELL | Form-4 SELL filing |
-| ANALYST_DOWNGRADE | news/calendar adapter |
-| VOLUME_SPIKE | > 3× rolling average |
+A single reasoning-tier (Sonnet) assessment per event. The documented
+Haiku pre-filter and Opus critical escalation are deferred; deterministic
+detection plus the cooldown already gate event volume.

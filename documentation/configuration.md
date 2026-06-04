@@ -45,14 +45,29 @@ Schema is `dracul`. Flyway migrations run on startup.
 
 ## Daywalker
 
-| Property | Default | Purpose |
+| Env var | Default | Purpose |
 |---|---|---|
-| `dracul.daywalker.enabled` | `true` | Enable / disable Daywalker |
-| `dracul.daywalker.market-open` | `15:30` | Market open time MEZ (UTC+1/+2) |
-| `dracul.daywalker.market-close` | `22:00` | Market close time MEZ |
-| `dracul.daywalker.poll-interval` | `5m` | Price / volume poll interval |
-| `dracul.daywalker.price-spike-threshold` | `0.03` | Trigger if price moves > 3% in 1 hour |
-| `dracul.daywalker.volume-spike-multiplier` | `3.0` | Trigger if volume > N× rolling average |
+| `DRACUL_DAYWALKER_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
+| `DRACUL_DAYWALKER_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the event-source + completion webhooks. **Change in production.** |
+| `DRACUL_DAYWALKER_SESSION_CRON` | `0 30 13 * * 1-5` | StreamingBee session-open cron (sec min hour dom mon dow), UTC. Default ≈ US market open (EDT). |
+| `DRACUL_DAYWALKER_SESSION_DURATION` | `23400` | Session window length in seconds (6.5 h) |
+| `DRACUL_DAYWALKER_POLL_INTERVAL` | `300` | Event-source poll cadence in seconds (5 min) |
+| `DRACUL_DAYWALKER_PRICE_SPIKE` | `0.03` | PRICE_SPIKE threshold (fraction) |
+| `DRACUL_DAYWALKER_VOLUME_MULT` | `3.0` | VOLUME_SPIKE multiple of rolling average |
+| `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min) |
+
+Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
+
+**DST caveat:** the session cron is a fixed UTC expression, so it drifts ~1h
+against US market open across the EST/EDT boundary. A calendar-aware open is
+deferred.
+
+## Finnhub
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FINNHUB_API_KEY` | _(blank)_ | Finnhub token for Daywalker news + recommendation triggers. Blank → those triggers degrade to no-op. |
+| `FINNHUB_BASE_URL` | `https://finnhub.io/api/v1` | Override for tests. |
 
 ## Strigoi schedules
 
