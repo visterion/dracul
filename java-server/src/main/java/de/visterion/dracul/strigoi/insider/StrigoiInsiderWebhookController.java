@@ -64,8 +64,9 @@ public class StrigoiInsiderWebhookController {
             @RequestBody JsonNode body) {
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
+        // Vistierie's successful agent-run status is "done"; "succeeded" kept defensively.
         String status = body.path("status").asText("");
-        if (!"succeeded".equals(status)) {
+        if (!"done".equals(status) && !"succeeded".equals(status)) {
             log.warn("strigoi-insider run {} status={} — acknowledging without persisting",
                     runId, status);
             return ResponseEntity.noContent().build();
