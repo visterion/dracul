@@ -9,8 +9,10 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Fires NEGATIVE_NEWS when a material headline exists for the item since the
- * last poll. Negativity itself is judged by the LLM child run, not here.
+ * Fires NEGATIVE_NEWS when the supplied headline list is non-empty. The caller
+ * bounds the headlines by date window; repeated re-emission of the same day's
+ * headline is suppressed by the per-(symbol, trigger_type) cooldown, not here.
+ * Negativity itself is judged by the LLM child run, not here.
  */
 public class NewsDetector {
 
