@@ -93,7 +93,7 @@ class StrigoiEchoWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
                 .header("X-Vistierie-Run-Id", "run-echo-1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "run-echo-1", "status", "succeeded",
+                .body(Map.of("run_id", "run-echo-1", "status", "done",
                             "output", preyJson))
                 .retrieve().toBodilessEntity();
         assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
@@ -119,7 +119,7 @@ class StrigoiEchoWebhookControllerIT {
             rest.post().uri("/api/strigoi-echo/complete")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer wrong-token")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("run_id", "x", "status", "succeeded",
+                    .body(Map.of("run_id", "x", "status", "done",
                                 "output", Map.of("prey", List.of())))
                     .retrieve().toBodilessEntity();
         } catch (HttpClientErrorException e) {
