@@ -171,6 +171,14 @@ export interface WatchlistAlert {
   level: 'elevated' | 'info' | 'neutral'
 }
 
+export interface LiveAlert {
+  symbol: string
+  triggerType: string
+  severity: string
+  thesis: string
+  ts: string
+}
+
 export interface WatchlistItem {
   id: string
   ticker: string

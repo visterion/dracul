@@ -113,6 +113,9 @@ CRITICAL alerts also fire a best-effort Telegram push (configurable via
 `DRACUL_DAYWALKER_NOTIFY_LEVEL`); the delivery outcome is recorded in
 `daywalker_alerts.notification_sent`.
 
+New alerts also stream live to the Chronicle frontend over SSE (`GET /api/events`,
+`alert.new`), surfaced in the live-alert panel.
+
 A per-`(symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
 condition from spawning a run on every poll.
 

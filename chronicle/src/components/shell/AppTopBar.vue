@@ -21,6 +21,19 @@
 
       <!-- Controls -->
       <div class="top-bar__controls">
+        <button
+          class="top-bar__icon-btn top-bar__live"
+          aria-label="Live alerts"
+          title="Live alerts"
+          data-testid="live-toggle"
+          @click="$emit('toggle-live')"
+        >
+          🔔
+          <span class="top-bar__live-dot" :class="`top-bar__live-dot--${live.status}`"></span>
+          <span v-if="live.unread > 0" class="top-bar__live-badge" data-testid="live-unread">
+            {{ live.unread }}
+          </span>
+        </button>
         <!-- Moon icon placeholder — cream/dark toggle (not implemented in scaffold) -->
         <button class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
           🌙
@@ -35,6 +48,12 @@
 </template>
 
 <script setup lang="ts">
+import { useLiveAlertsStore } from '../../stores/liveAlerts'
+
+defineEmits<{ 'toggle-live': [] }>()
+
+const live = useLiveAlertsStore()
+
 const navTabs = [
   { name: 'chronicle', label: 'chronicle' },
   { name: 'watchlist', label: 'watchlist' },
@@ -143,5 +162,19 @@ const navTabs = [
   color: var(--bone-ivory);
   cursor: pointer;
   flex-shrink: 0;
+}
+
+.top-bar__live { position: relative; }
+.top-bar__live-dot {
+  position: absolute; top: 2px; right: 0; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ash-gray);
+}
+.top-bar__live-dot--open { background: var(--signal-positive); }
+.top-bar__live-dot--connecting { background: var(--cathedral-gold); }
+.top-bar__live-dot--closed { background: var(--ash-gray); }
+.top-bar__live-badge {
+  position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--blood-crimson); color: var(--bone-ivory);
+  font-size: 10px; line-height: 16px; text-align: center; font-weight: 600;
 }
 </style>
