@@ -45,11 +45,20 @@ public class DaywalkerAlertRepository {
 
     public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
                        String severity, String thesis, BigDecimal confidence, String runId) {
+        // Map the precise severity onto the frontend's WatchlistAlert level vocabulary
+        // ('elevated' | 'info' | 'neutral'); the exact severity is preserved in the
+        // `severity` column for downstream (Telegram / SSE) consumers.
         String level = switch (severity == null ? "" : severity.toUpperCase()) {
-            case "CRITICAL" -> "critical";
-            case "WARNING" -> "warning";
+            case "CRITICAL", "WARNING" -> "elevated";
             default -> "info";
         };
+        java.util.UUID wid;
+        try {
+            wid = java.util.UUID.fromString(watchlistItemId);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "DaywalkerAlertRepository.insert: invalid watchlistItemId '" + watchlistItemId + "'", e);
+        }
         String nowIso = Instant.now().toString();
         jdbc.sql("""
                 INSERT INTO daywalker_alerts
@@ -60,7 +69,7 @@ public class DaywalkerAlertRepository {
                    :sym, :tt, :th, :conf, :sev, :run)
                 """)
                 .param("id", UUID.randomUUID())
-                .param("wid", UUID.fromString(watchlistItemId))
+                .param("wid", wid)
                 .param("at", nowIso)
                 .param("msg", thesis == null || thesis.isBlank() ? triggerType : thesis)
                 .param("lvl", level)

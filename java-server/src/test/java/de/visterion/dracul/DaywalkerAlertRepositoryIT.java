@@ -2,10 +2,12 @@ package de.visterion.dracul;
 
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
 import de.visterion.dracul.watchlist.WatchlistRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
@@ -20,6 +22,14 @@ class DaywalkerAlertRepositoryIT {
 
     @Autowired DaywalkerAlertRepository alerts;
     @Autowired WatchlistRepository watchlist;
+    @Autowired JdbcClient jdbc;
+
+    @BeforeEach
+    void cleanup() {
+        jdbc.sql("DELETE FROM daywalker_alerts WHERE symbol = 'DWA' OR watchlist_item_id IN "
+                + "(SELECT id FROM watchlist_items WHERE ticker = 'DWA')").update();
+        jdbc.sql("DELETE FROM watchlist_items WHERE ticker = 'DWA'").update();
+    }
 
     @Test
     void insertResolvesWatchlistItemAndCooldownQuery() {
