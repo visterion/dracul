@@ -31,6 +31,7 @@ dracul:
     price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
+    notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
   finnhub:
     api-key: ${FINNHUB_API_KEY:}
     base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
