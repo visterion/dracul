@@ -95,6 +95,9 @@ public class DaywalkerRegistrar {
                 publicUrl + "/api/daywalker/events", sessionDuration, pollInterval);
     }
 
+    // NOTE: AgentDetail carries no streaming fields, so changes to event_source_url /
+    // session_duration_seconds / poll_interval_seconds cannot be detected here and require
+    // a manual re-register (delete the agent) until AgentDetail is extended. v1 accepts this.
     private boolean matches(AgentDetail existing, CreateAgentRequest desired) {
         return Objects.equals(existing.system_prompt(), desired.system_prompt())
                 && Objects.equals(existing.schedule(), desired.schedule())
