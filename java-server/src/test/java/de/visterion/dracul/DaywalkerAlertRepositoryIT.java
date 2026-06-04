@@ -50,4 +50,19 @@ class DaywalkerAlertRepositoryIT {
     void resolveReturnsEmptyForUnknownSymbol() {
         assertThat(alerts.resolveWatchlistItemId("default", "NOPE")).isEmpty();
     }
+
+    @org.junit.jupiter.api.Test
+    void insertPersistsNotificationSentFlag() {
+        var item = watchlist.insert("default", "DWA", "Daywalker Test A",
+                50.0, java.util.List.of(50.0), "", null);
+
+        alerts.insert("default", item.id(), "DWA", "INSIDER_SELL",
+                "CRITICAL", "Cluster of insider sales.", new java.math.BigDecimal("0.800"),
+                "run-dwa-2", true);
+
+        Boolean sent = jdbc.sql(
+                "SELECT notification_sent FROM daywalker_alerts WHERE symbol = 'DWA' AND trigger_type = 'INSIDER_SELL'")
+                .query(Boolean.class).single();
+        assertThat(sent).isTrue();
+    }
 }
