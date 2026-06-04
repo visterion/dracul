@@ -31,6 +31,13 @@ public class SseBroadcaster {
         emitter.onTimeout(() -> emitters.remove(emitter));
         emitter.onError(t -> emitters.remove(emitter));
         emitters.add(emitter);
+        // Send a comment immediately so that HTTP response headers are flushed
+        // to the client before any real event arrives.
+        try {
+            emitter.send(SseEmitter.event().comment("connected"));
+        } catch (IOException | IllegalStateException e) {
+            emitters.remove(emitter);
+        }
         return emitter;
     }
 
