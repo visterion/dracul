@@ -115,7 +115,7 @@ class DaywalkerWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
                 .header("X-Vistierie-Run-Id", "run-dw-1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "run-dw-1", "status", "succeeded",
+                .body(Map.of("run_id", "run-dw-1", "status", "done",
                         "output", Map.of("symbol", "CMP", "trigger_type", "PRICE_SPIKE",
                                 "severity", "WARNING", "thesis", "Sharp move on no news.",
                                 "confidence", 0.6)))
@@ -130,7 +130,7 @@ class DaywalkerWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
                 .header("X-Vistierie-Run-Id", "run-dw-2")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "run-dw-2", "status", "succeeded",
+                .body(Map.of("run_id", "run-dw-2", "status", "done",
                         "output", Map.of("symbol", "GHOST", "trigger_type", "PRICE_SPIKE",
                                 "severity", "INFO", "thesis", "x", "confidence", 0.3)))
                 .retrieve().toBodilessEntity();
@@ -156,7 +156,7 @@ class DaywalkerWebhookControllerIT {
             rest.post().uri("/api/daywalker/complete")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer wrong")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("status", "succeeded", "output", Map.of()))
+                    .body(Map.of("status", "done", "output", Map.of()))
                     .retrieve().toBodilessEntity();
         } catch (HttpClientErrorException e) {
             assertThat(e.getStatusCode().value()).isEqualTo(401);
@@ -173,7 +173,7 @@ class DaywalkerWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
                 .header("X-Vistierie-Run-Id", "run-crt-1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "run-crt-1", "status", "succeeded",
+                .body(Map.of("run_id", "run-crt-1", "status", "done",
                         "output", Map.of("symbol", "CRT", "trigger_type", "INSIDER_SELL",
                                 "severity", "CRITICAL", "thesis", "Cluster of insider sales.",
                                 "confidence", 0.8)))
@@ -195,7 +195,7 @@ class DaywalkerWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
                 .header("X-Vistierie-Run-Id", "run-inf-1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "run-inf-1", "status", "succeeded",
+                .body(Map.of("run_id", "run-inf-1", "status", "done",
                         "output", Map.of("symbol", "INF", "trigger_type", "NEGATIVE_NEWS",
                                 "severity", "INFO", "thesis", "Routine headline.",
                                 "confidence", 0.2)))

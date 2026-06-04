@@ -61,9 +61,11 @@ public class DaywalkerWebhookController {
             @RequestBody JsonNode body) {
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
-        if (!"succeeded".equals(body.path("status").asText(""))) {
-            log.warn("daywalker run {} status={} — acknowledging without persisting",
-                    runId, body.path("status").asText(""));
+        // Vistierie's successful agent-run status is "done" (AgentRunner); "succeeded"
+        // is kept for defensive compatibility with tests/fixtures.
+        String status = body.path("status").asText("");
+        if (!"done".equals(status) && !"succeeded".equals(status)) {
+            log.warn("daywalker run {} status={} — acknowledging without persisting", runId, status);
             return ResponseEntity.noContent().build();
         }
         JsonNode o = body.path("output");

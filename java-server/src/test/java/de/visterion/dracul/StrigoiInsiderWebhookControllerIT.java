@@ -93,7 +93,7 @@ class StrigoiInsiderWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-token-abc")
                 .header("X-Vistierie-Run-Id", "run-it-1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "run-it-1", "status", "succeeded",
+                .body(Map.of("run_id", "run-it-1", "status", "done",
                             "output", preyJson))
                 .retrieve().toBodilessEntity();
         assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
@@ -118,7 +118,7 @@ class StrigoiInsiderWebhookControllerIT {
             rest.post().uri("/api/strigoi-insider/complete")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer wrong-token")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("run_id", "x", "status", "succeeded",
+                    .body(Map.of("run_id", "x", "status", "done",
                                 "output", Map.of("prey", List.of())))
                     .retrieve().toBodilessEntity();
         } catch (HttpClientErrorException e) {
