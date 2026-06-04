@@ -20,7 +20,7 @@ logic and the hunt pattern.
 
 | Strigoi | Status |
 |---|---|
-| strigoi-spin | not yet implemented |
+| strigoi-spin | **implemented 2026-06-05** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted) |
 | strigoi-insider | **implemented 2026-05-25** — Form-4 cluster screener, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases) |
 | strigoi-echo | **implemented 2026-06-02** — Yahoo earnings-calendar adapter, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (positive surprise ≥ 5%, current price ≥ $5) |
 | strigoi-lazarus | not yet implemented |

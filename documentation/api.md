@@ -317,3 +317,30 @@ Request body:
 Returns 204. If `status != "succeeded"`, the symbol/trigger_type is missing, or
 the symbol is not on the watchlist, the endpoint acknowledges (204) without
 persisting and logs the run-id.
+
+## Strigoi-Spin Webhooks
+
+Called by Vistierie during a `strigoi-spin` agent run (spin-off forced-selling).
+Both require `Authorization: Bearer <STRIGOI_SPIN_TOKEN>`; only registered when
+`STRIGOI_SPIN_ENABLED=true`.
+
+### `POST /api/strigoi-spin/tools/fetch-candidates`
+
+Tool webhook. Returns recent Form-10-12B spin-off registrations (deterministic).
+
+Request: `{ "run_id": "...", "tool_name": "fetch_recent_spinoff_candidates", "input": { "lookback_days": 60 } }`
+
+Response:
+```json
+{ "output": { "candidates": [
+  { "symbol": "SPN", "companyName": "Acme Spinco Inc", "formType": "10-12B",
+    "filingDate": "2026-05-20", "filingUrl": "https://www.sec.gov/Archives/..." }
+] } }
+```
+
+### `POST /api/strigoi-spin/complete`
+
+Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: ...`.
+On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
+`anomalyType=SPINOFF`, `discoveredBy=strigoi-spin`. Prey without a `symbol` are
+skipped. Returns 204; non-success / empty prey acknowledged without persisting.
