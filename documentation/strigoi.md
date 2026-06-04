@@ -109,6 +109,10 @@ session at market open and polls Dracul's event-source webhook every 5 minutes.
 3. `POST /api/daywalker/complete` persists each assessment to
    `dracul.daywalker_alerts`.
 
+CRITICAL alerts also fire a best-effort Telegram push (configurable via
+`DRACUL_DAYWALKER_NOTIFY_LEVEL`); the delivery outcome is recorded in
+`daywalker_alerts.notification_sent`.
+
 A per-`(symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
 condition from spawning a run on every poll.
 
