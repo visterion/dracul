@@ -25,7 +25,7 @@ logic and the hunt pattern.
 | strigoi-echo | **implemented 2026-06-02** — Yahoo earnings-calendar adapter, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (positive surprise ≥ 5%, current price ≥ $5) |
 | strigoi-lazarus | **implemented 2026-06-05** — watchlist-scoped; screens watchlist names within ~10% of their 52-week low with a light solvency gate (positive ROA or free cash flow, modest leverage); the reasoning-tier LLM applies Piotroski's F-Score judgement and emits `QUALITY_52W_LOW` Prey |
 | strigoi-index | not yet implemented |
-| strigoi-merger | not yet implemented |
+| strigoi-merger | **implemented 2026-06-05** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey |
 
 ## Hunt Pattern
 

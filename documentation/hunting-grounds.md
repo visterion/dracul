@@ -33,7 +33,7 @@ never see vendor-specific schemas.
 | strigoi-echo | calendar-adapter (earnings) + prices-adapter |
 | strigoi-lazarus | watchlist + Finnhub /stock/metric (52w-low + fundamentals) |
 | strigoi-index | calendar-adapter (reconstitution dates) |
-| strigoi-merger | news-adapter (deal announcements) + prices-adapter |
+| strigoi-merger | edgar-adapter (`EDGAR EFTS forms=DEFM14A,SC TO-T (deal filings, metadata-only)`) |
 | daywalker | prices-adapter (5-min polling) + news-adapter + edgar-adapter (Form-4) |
 
 ## Cost considerations
@@ -112,6 +112,18 @@ The Daywalker resolves material news and analyst-rating shifts via
 - **Graceful degradation:** a blank `FINNHUB_API_KEY` short-circuits to an empty
   list (no HTTP); any error also returns empty. Negativity / downgrade severity
   is judged by the LLM child run, not the adapter.
+
+## EDGAR merger adapter
+
+Strigoi-Merger resolves recent deal filings via `EdgarMergerAdapter`
+(`de.visterion.dracul.hunting.edgar`):
+
+- SEC EDGAR full-text search (`efts.sec.gov/LATEST/search-index?forms=DEFM14A,SC TO-T&…`),
+  reusing the `dracul.edgar.user-agent` header. No API key.
+- Metadata-only — returns `MergerFiling(symbol, companyName, formType, filingDate,
+  filingUrl)` from each hit's `_source` (no per-filing XML fetch).
+- **Graceful degradation:** any failure returns an empty list (logged) — the bee
+  never dies on an EDGAR hiccup.
 
 ## Edgar parsing notes
 
