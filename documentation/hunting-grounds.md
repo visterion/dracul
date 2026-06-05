@@ -31,7 +31,7 @@ never see vendor-specific schemas.
 | strigoi-spin | edgar-adapter (Form-10, 10-12B) |
 | strigoi-insider | edgar-adapter (Form-4) |
 | strigoi-echo | calendar-adapter (earnings) + prices-adapter |
-| strigoi-lazarus | prices-adapter (52w low screen) |
+| strigoi-lazarus | watchlist + Finnhub /stock/metric (52w-low + fundamentals) |
 | strigoi-index | calendar-adapter (reconstitution dates) |
 | strigoi-merger | news-adapter (deal announcements) + prices-adapter |
 | daywalker | prices-adapter (5-min polling) + news-adapter + edgar-adapter (Form-4) |
@@ -89,6 +89,17 @@ The Daywalker resolves intraday price and volume via
   and volumes from one call, feeding both PRICE_SPIKE and VOLUME_SPIKE detection.
 - **Graceful degradation:** any failure returns empty candles (logged) — the
   Daywalker poll never dies on a Yahoo hiccup.
+
+## Finnhub fundamentals adapter
+
+Strigoi-Lazarus resolves 52-week range and health ratios via
+`FinnhubFundamentalsAdapter` (`de.visterion.dracul.hunting.finnhub`):
+
+- `GET /stock/metric?metric=all` — returns the 52-week high/low plus health
+  ratios (ROA, current ratio, debt/equity, margins, growth, FCF/share).
+- Auth via `FINNHUB_API_KEY` query token.
+- **Graceful degradation:** a blank `FINNHUB_API_KEY` or any error → returns
+  `null`; strigoi-lazarus skips that symbol entirely.
 
 ## Finnhub news adapter
 
