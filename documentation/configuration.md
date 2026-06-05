@@ -133,6 +133,20 @@ market-data client. It needs no API key.
 Spin reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared EDGAR
 User-Agent. It needs no API key.
 
+## Strigoi Lazarus
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `STRIGOI_LAZARUS_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
+| `STRIGOI_LAZARUS_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
+| `DRACUL_LAZARUS_SCHEDULE` | `0 0 6 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 06:00 UTC weekdays. |
+| `LAZARUS_MAX_ABOVE_LOW` | `0.10` | Maximum fraction above the 52-week low to pass the price-proximity screen (default: within 10%). |
+| `LAZARUS_MAX_DEBT_EQUITY` | `3.0` | Leverage cap for the solvency gate; candidates above this ratio are excluded. |
+
+Lazarus reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and `FINNHUB_API_KEY`
+(fundamentals adapter). A blank API key degrades gracefully — symbols without
+fundamentals are skipped by the screener.
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the

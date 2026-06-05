@@ -270,6 +270,40 @@ Request body (shape per Vistierie's completion-webhook contract):
 
 Returns 204 on success. If `status != "succeeded"` or no `output.prey` array, the endpoint acknowledges (204) without persisting and logs the run-id.
 
+## Strigoi-Lazarus Webhooks
+
+Called by Vistierie during a `strigoi-lazarus` agent run (Quality-at-52w-Low).
+Both require `Authorization: Bearer <STRIGOI_LAZARUS_TOKEN>`; only registered when
+`STRIGOI_LAZARUS_ENABLED=true`.
+
+### `POST /api/strigoi-lazarus/tools/fetch-candidates`
+
+Tool webhook. Returns watchlist names that are trading within `max-above-low`
+(default 10%) of their 52-week low, together with Finnhub fundamentals. No input
+args required.
+
+Request: `{ "run_id": "...", "tool_name": "fetch_quality_at_low_candidates", "input": {} }`
+
+Response:
+```json
+{ "output": { "candidates": [
+  { "symbol": "ACME", "companyName": "Acme Corp",
+    "currentPrice": 42.10, "week52Low": 39.50, "week52High": 78.00,
+    "pctAboveLow": 0.066, "roaTtm": 4.0, "currentRatio": 1.8,
+    "debtToEquity": 1.2, "grossMargin": 35.0, "netMargin": 8.0,
+    "revenueGrowthYoy": 4.0, "epsGrowthYoy": 3.0, "priceToBook": 1.2,
+    "peTtm": 11.0, "fcfPerShare": 2.10 }
+] } }
+```
+
+### `POST /api/strigoi-lazarus/complete`
+
+Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: ...`.
+On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
+`anomalyType=QUALITY_52W_LOW`, `discoveredBy=strigoi-lazarus`. Prey without a
+`symbol` are skipped. Returns 204; non-success / empty prey acknowledged without
+persisting.
+
 ## Daywalker Webhooks
 
 These endpoints are called by Vistierie for the `daywalker` StreamingBee. Both
