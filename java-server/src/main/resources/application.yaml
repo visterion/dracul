@@ -27,6 +27,12 @@ dracul:
       webhook-token: ${STRIGOI_SPIN_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_SPIN_SCHEDULE:0 0 4 * * 1-5}
       lookback-days: ${SPIN_LOOKBACK_DAYS:60}
+    lazarus:
+      enabled: ${STRIGOI_LAZARUS_ENABLED:false}
+      webhook-token: ${STRIGOI_LAZARUS_TOKEN:dev-token-change-me}
+      schedule: ${DRACUL_LAZARUS_SCHEDULE:0 0 6 * * 1-5}
+      max-above-low: ${LAZARUS_MAX_ABOVE_LOW:0.10}
+      max-debt-equity: ${LAZARUS_MAX_DEBT_EQUITY:3.0}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
