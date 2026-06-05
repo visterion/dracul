@@ -378,3 +378,32 @@ Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: .
 On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
 `anomalyType=SPINOFF`, `discoveredBy=strigoi-spin`. Prey without a `symbol` are
 skipped. Returns 204; non-success / empty prey acknowledged without persisting.
+
+## Strigoi-Merger Webhooks
+
+Called by Vistierie during a `strigoi-merger` agent run (M&A arbitrage).
+Both require `Authorization: Bearer <STRIGOI_MERGER_TOKEN>`; only registered when
+`STRIGOI_MERGER_ENABLED=true`.
+
+### `POST /api/strigoi-merger/tools/fetch-candidates`
+
+Tool webhook. Returns recent DEFM14A / SC TO-T deal filings (deterministic, metadata-only).
+
+Request: `{ "run_id": "...", "tool_name": "fetch_recent_merger_candidates", "input": { "lookback_days": 45 } }`
+
+Input `lookback_days` range: 1–120; default 45.
+
+Response:
+```json
+{ "output": { "candidates": [
+  { "symbol": "TGT", "companyName": "Target Co Inc", "formType": "DEFM14A",
+    "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/..." }
+] } }
+```
+
+### `POST /api/strigoi-merger/complete`
+
+Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: ...`.
+On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
+`anomalyType=MERGER_ARB`, `discoveredBy=strigoi-merger`. Prey without a `symbol` are
+skipped. Returns 204; non-success / empty prey acknowledged without persisting.

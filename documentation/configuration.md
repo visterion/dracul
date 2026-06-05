@@ -147,6 +147,18 @@ Lazarus reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and `FINNHUB_API_
 (fundamentals adapter). A blank API key degrades gracefully — symbols without
 fundamentals are skipped by the screener.
 
+## Strigoi Merger
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `STRIGOI_MERGER_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
+| `STRIGOI_MERGER_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
+| `DRACUL_MERGER_SCHEDULE` | `0 0 5 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 05:00 UTC weekdays. |
+| `MERGER_LOOKBACK_DAYS` | `45` | Default DEFM14A / SC TO-T lookback window (days) for the pre-screen (1–120). |
+
+Merger reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared EDGAR
+User-Agent. It needs no API key.
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the
