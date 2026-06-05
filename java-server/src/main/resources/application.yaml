@@ -38,6 +38,11 @@ dracul:
       webhook-token: ${STRIGOI_MERGER_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_MERGER_SCHEDULE:0 0 5 * * 1-5}
       lookback-days: ${MERGER_LOOKBACK_DAYS:45}
+    index:
+      enabled: ${STRIGOI_INDEX_ENABLED:false}
+      webhook-token: ${STRIGOI_INDEX_TOKEN:dev-token-change-me}
+      schedule: ${DRACUL_INDEX_SCHEDULE:0 0 7 * * 1-5}
+      lookback-days: ${INDEX_LOOKBACK_DAYS:30}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
@@ -51,6 +56,10 @@ dracul:
   finnhub:
     api-key: ${FINNHUB_API_KEY:}
     base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
+  wikipedia:
+    base-url: ${WIKIPEDIA_BASE_URL:https://en.wikipedia.org}
+    user-agent: ${WIKIPEDIA_USER_AGENT:Dracul/1.0 (research; contact via repo)}
+    sp500-page: ${WIKIPEDIA_SP500_PAGE:List of S&P 500 companies}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}
