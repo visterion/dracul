@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": ["prey"],
+  "properties": {
+    "prey": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "companyName", "confidence", "thesis", "horizon"],
+        "properties": {
+          "symbol":      {"type": "string"},
+          "companyName": {"type": "string"},
+          "anomalyType": {"type": "string", "const": "INDEX_INCLUSION"},
+          "confidence":  {"type": "number", "minimum": 0, "maximum": 1},
+          "thesis":      {"type": "string"},
+          "signals":     {"type": "array", "items": {"type": "string"}},
+          "risks":       {"type": "array", "items": {"type": "string"}},
+          "horizon":     {"type": "string", "enum": ["1m", "3m", "6m", "12m"]}
+        }
+      }
+    }
+  }
+}
