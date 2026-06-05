@@ -33,6 +33,11 @@ dracul:
       schedule: ${DRACUL_LAZARUS_SCHEDULE:0 0 6 * * 1-5}
       max-above-low: ${LAZARUS_MAX_ABOVE_LOW:0.10}
       max-debt-equity: ${LAZARUS_MAX_DEBT_EQUITY:3.0}
+    merger:
+      enabled: ${STRIGOI_MERGER_ENABLED:false}
+      webhook-token: ${STRIGOI_MERGER_TOKEN:dev-token-change-me}
+      schedule: ${DRACUL_MERGER_SCHEDULE:0 0 5 * * 1-5}
+      lookback-days: ${MERGER_LOOKBACK_DAYS:45}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
