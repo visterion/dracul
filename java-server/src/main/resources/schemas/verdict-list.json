@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "required": ["verdicts"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "summary"],
+        "properties": {
+          "symbol":  {"type": "string"},
+          "summary": {"type": "string"}
+        }
+      }
+    }
+  }
+}
