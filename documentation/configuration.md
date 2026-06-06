@@ -190,6 +190,18 @@ to these env vars via Spring's relaxed-binding rules.
 | `WIKIPEDIA_USER_AGENT` | `Dracul/1.0 (research; contact via repo)` | `User-Agent` header sent on all Wikipedia requests. MediaWiki policy requires a descriptive UA. |
 | `WIKIPEDIA_SP500_PAGE` | `List of S&P 500 companies` | MediaWiki page title passed as `page=` to `action=parse`. Override if the page is renamed. |
 
+## Language / i18n
+
+| Setting | Storage | Default | Allowed values | How to change |
+|---|---|---|---|---|
+| `language` | DB — table `app_settings`, key `language` | `de` | `de`, `en` | `PUT /api/settings/language` with body `{"language":"en"}` |
+
+The language setting controls the language directive appended to every agent's
+`system_prompt` at registration time. Changing it via the API publishes a
+`LanguageChangedEvent`, which causes all registrars (all Strigoi, Voievod, and
+Daywalker) to re-register immediately with the updated prompt. No restart is
+required.
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the

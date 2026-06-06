@@ -68,6 +68,19 @@ Dracul does **not** maintain its own cost ledger. It proxies
 `/api/cost` and `/api/cost/runs` from Vistierie's Run History API.
 The Vistierie view in Chronicle displays this data directly.
 
+## Agent system_prompt localisation
+
+Every agent (all 6 Strigoi, Voievod, and Daywalker) has its `system_prompt`
+localised at registration time. `LanguageDirective.append` appends an
+instruction in the configured language to the end of the prompt loaded from
+the classpath (`prompts/<agent>.md`). The language is read from the
+`app_settings` table via `AppSettingsRepository.getLanguage()`.
+
+When the language setting is changed via `PUT /api/settings/language`, Dracul
+publishes a `LanguageChangedEvent`. Every registrar listens for this event via
+`@EventListener(LanguageChangedEvent.class)` and immediately re-registers the
+agent with the updated (re-localised) prompt.
+
 ## What Vistierie owns vs what Dracul owns
 
 | Vistierie owns | Dracul owns |

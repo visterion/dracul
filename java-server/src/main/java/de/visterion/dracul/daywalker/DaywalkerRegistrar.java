@@ -1,5 +1,8 @@
 package de.visterion.dracul.daywalker;
 
+import de.visterion.dracul.i18n.LanguageChangedEvent;
+import de.visterion.dracul.i18n.LanguageDirective;
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.vistierie.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +33,7 @@ public class DaywalkerRegistrar {
     private final String schedule;
     private final int sessionDuration;
     private final int pollInterval;
+    private final AppSettingsRepository settings;
 
     public DaywalkerRegistrar(
             VistierieClient vistierie,
@@ -38,7 +42,8 @@ public class DaywalkerRegistrar {
             @Value("${dracul.daywalker.webhook-token}") String webhookToken,
             @Value("${dracul.daywalker.session-cron}") String schedule,
             @Value("${dracul.daywalker.session-duration:23400}") int sessionDuration,
-            @Value("${dracul.daywalker.poll-interval:300}") int pollInterval) {
+            @Value("${dracul.daywalker.poll-interval:300}") int pollInterval,
+            AppSettingsRepository settings) {
         this.vistierie = vistierie;
         this.mapper = mapper;
         this.publicUrl = publicUrl.endsWith("/")
@@ -47,6 +52,7 @@ public class DaywalkerRegistrar {
         this.schedule = schedule;
         this.sessionDuration = sessionDuration;
         this.pollInterval = pollInterval;
+        this.settings = settings;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -78,8 +84,15 @@ public class DaywalkerRegistrar {
         }
     }
 
+    @EventListener(LanguageChangedEvent.class)
+    public void onLanguageChanged(LanguageChangedEvent event) {
+        log.info("language changed to {}; re-registering daywalker", event.language());
+        register();
+    }
+
     CreateAgentRequest buildRequest() {
-        var prompt = readClasspath("prompts/daywalker.md");
+        var prompt = LanguageDirective.append(
+                readClasspath("prompts/daywalker.md"), settings.getLanguage());
         JsonNode schema;
         try {
             schema = mapper.readTree(readClasspath("schemas/daywalker-assessment.json"));

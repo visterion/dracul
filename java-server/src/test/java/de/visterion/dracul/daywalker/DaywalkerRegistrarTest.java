@@ -1,5 +1,6 @@
 package de.visterion.dracul.daywalker;
 
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.vistierie.CreateAgentRequest;
 import de.visterion.dracul.vistierie.VistierieClient;
 import org.junit.jupiter.api.Test;
@@ -7,15 +8,18 @@ import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class DaywalkerRegistrarTest {
 
     @Test
     void buildRequestSetsStreamingFields() {
+        var settingsRepo = mock(AppSettingsRepository.class);
+        when(settingsRepo.getLanguage()).thenReturn("de");
         var registrar = new DaywalkerRegistrar(
                 mock(VistierieClient.class), new ObjectMapper(),
                 "http://test.invalid:9090/", "tok",
-                "0 30 13 * * 1-5", 23400, 300);
+                "0 30 13 * * 1-5", 23400, 300, settingsRepo);
 
         CreateAgentRequest req = registrar.buildRequest();
 
