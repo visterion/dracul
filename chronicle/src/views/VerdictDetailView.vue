@@ -4,16 +4,16 @@
   </div>
 
   <div v-else-if="!verdict" class="vd-notfound">
-    <p>Verdict not found.</p>
-    <router-link to="/" class="vd-notfound__link">← Back to chronicle</router-link>
+    <p>{{ t('verdict.notFound.message') }}</p>
+    <router-link to="/" class="vd-notfound__link">{{ t('verdict.notFound.backLink') }}</router-link>
   </div>
 
   <article v-else class="vd">
     <!-- Breadcrumb -->
     <nav class="vd__breadcrumb" aria-label="Breadcrumb">
-      <router-link to="/" class="vd__bc-link">chronicle</router-link>
+      <router-link to="/" class="vd__bc-link">{{ t('verdict.breadcrumb.chronicle') }}</router-link>
       <span class="vd__bc-sep">/</span>
-      <span class="vd__bc-link">verdict</span>
+      <span class="vd__bc-link">{{ t('verdict.breadcrumb.verdict') }}</span>
       <span class="vd__bc-sep">/</span>
       <span class="vd__bc-current">{{ verdict.symbol }}</span>
     </nav>
@@ -27,26 +27,26 @@
           <div class="vd__meta">
             <span v-for="type in verdict.anomalyTypes" :key="type" class="vd__badge">{{ type }}</span>
             <span class="vd__meta-sep">·</span>
-            <span class="vd__meta-text">discovered {{ relativeTime(verdict.createdAt) }}</span>
+            <span class="vd__meta-text">{{ t('verdict.meta.discovered') }} {{ relativeTime(verdict.createdAt) }}</span>
             <span class="vd__meta-sep">·</span>
-            <span class="vd__meta-text">{{ verdict.contributingStrigoi.length }} strigoi</span>
+            <span class="vd__meta-text">{{ verdict.contributingStrigoi.length }} {{ t('verdict.meta.strigoi') }}</span>
           </div>
         </header>
 
-        <SectionHeader label="consensus thesis" />
+        <SectionHeader :label="t('verdict.sections.thesis')" />
         <p class="vd__prose">{{ verdict.summary }}</p>
 
-        <SectionHeader label="signals" />
+        <SectionHeader :label="t('verdict.sections.signals')" />
         <ul class="vd__list vd__list--signals">
           <li v-for="(s, i) in verdict.signals" :key="i">{{ s }}</li>
         </ul>
 
-        <SectionHeader label="risks" />
+        <SectionHeader :label="t('verdict.sections.risks')" />
         <ul class="vd__list vd__list--risks">
           <li v-for="(r, i) in verdict.risks" :key="i">{{ r }}</li>
         </ul>
 
-        <SectionHeader label="contributing strigoi" />
+        <SectionHeader :label="t('verdict.sections.contributingStrigoi')" />
         <div class="vd__contributors">
           <div v-for="c in verdict.contributingDetails" :key="c.name" class="vd__contributor">
             <div class="vd__contributor-header">
@@ -63,9 +63,9 @@
       </main>
 
       <!-- Sidebar -->
-      <aside class="vd__sidebar" aria-label="Decision panel">
+      <aside class="vd__sidebar" :aria-label="t('verdict.sidebar.decisionTitle')">
         <div class="vd__panel">
-          <div class="vd__panel-title">Decision</div>
+          <div class="vd__panel-title">{{ t('verdict.sidebar.decisionTitle') }}</div>
           <div v-if="currentDecision" class="vd__decision-badge" data-testid="vd-decision-badge">
             {{ currentDecision.decision }} · {{ relativeTime(currentDecision.decidedAt) }}
           </div>
@@ -84,19 +84,19 @@
         </div>
 
         <div class="vd__panel">
-          <div class="vd__panel-title">Notes</div>
+          <div class="vd__panel-title">{{ t('verdict.sidebar.notesTitle') }}</div>
           <ul v-if="notes.length" class="vd__notes-list" data-testid="vd-notes-list">
             <li v-for="n in notes" :key="n.id" class="vd__notes-item">
               <div class="vd__notes-body">{{ n.body }}</div>
               <div class="vd__notes-meta">{{ relativeTime(n.createdAt) }}</div>
             </li>
           </ul>
-          <p v-else class="vd__notes-empty">No notes yet.</p>
+          <p v-else class="vd__notes-empty">{{ t('verdict.sidebar.notesEmpty') }}</p>
           <textarea
             v-model="noteDraft"
             class="vd__notes-input"
-            placeholder="Add your reasoning..."
-            aria-label="New note"
+            :placeholder="t('verdict.sidebar.notesPlaceholder')"
+            :aria-label="t('verdict.sidebar.notesTitle')"
             rows="3"
             maxlength="4000"
             data-testid="vd-note-input"
@@ -106,34 +106,34 @@
             :disabled="!noteDraft.trim() || noteSubmitting"
             data-testid="vd-note-submit"
             @click="onAddNote"
-          >Add note</button>
+          >{{ t('verdict.sidebar.addNote') }}</button>
           <p v-if="noteError" class="vd__error" role="alert">{{ noteError }}</p>
         </div>
 
         <div class="vd__panel">
-          <div class="vd__panel-title">Quick stats</div>
+          <div class="vd__panel-title">{{ t('verdict.sidebar.statsTitle') }}</div>
           <table class="vd__stats">
             <tbody>
               <tr>
-                <td class="vd__stats-label">Current price</td>
+                <td class="vd__stats-label">{{ t('verdict.stats.currentPrice') }}</td>
                 <td class="vd__stats-value font-mono tabular">
                   ${{ verdict.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
                 </td>
               </tr>
               <tr>
-                <td class="vd__stats-label">Consensus</td>
+                <td class="vd__stats-label">{{ t('verdict.stats.consensus') }}</td>
                 <td class="vd__stats-value font-mono tabular">{{ verdict.consensusScore.toFixed(2) }}</td>
               </tr>
               <tr>
-                <td class="vd__stats-label">Avg confidence</td>
+                <td class="vd__stats-label">{{ t('verdict.stats.avgConfidence') }}</td>
                 <td class="vd__stats-value font-mono tabular">{{ verdict.avgConfidence.toFixed(2) }}</td>
               </tr>
               <tr>
-                <td class="vd__stats-label">Time horizon</td>
+                <td class="vd__stats-label">{{ t('verdict.stats.timeHorizon') }}</td>
                 <td class="vd__stats-value font-mono tabular">{{ verdict.horizon }}</td>
               </tr>
               <tr>
-                <td class="vd__stats-label">Discovered</td>
+                <td class="vd__stats-label">{{ t('verdict.stats.discovered') }}</td>
                 <td class="vd__stats-value font-mono tabular">{{ relativeTime(verdict.createdAt) }}</td>
               </tr>
             </tbody>
@@ -141,8 +141,8 @@
         </div>
 
         <div class="vd__panel">
-          <div class="vd__panel-title">Daywalker status</div>
-          <p class="vd__daywalker-hint">Add to watchlist to enable Daywalker</p>
+          <div class="vd__panel-title">{{ t('verdict.sidebar.daywalkerTitle') }}</div>
+          <p class="vd__daywalker-hint">{{ t('verdict.sidebar.daywalkerHint') }}</p>
         </div>
       </aside>
     </div>
@@ -150,13 +150,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import type { VerdictDetail, VerdictDecision, VerdictNote, DecisionResponse } from '../api/types'
 import { useApi } from '../api'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import SectionHeader from '../components/common/SectionHeader.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const api = useApi()
 const { relativeTime } = useRelativeTime()
@@ -173,12 +175,12 @@ const currentDecision = ref<DecisionResponse | null>(null)
 const decisionSubmitting = ref(false)
 const decisionError = ref<string | null>(null)
 
-const decisionOptions: { value: VerdictDecision; label: string; cssClass: string }[] = [
-  { value: 'TRACK',       label: 'Track on Watchlist',  cssClass: 'vd__btn--primary'   },
-  { value: 'INTERESTING', label: 'Mark as Interesting', cssClass: 'vd__btn--secondary' },
-  { value: 'ACTED',       label: 'Acted',               cssClass: 'vd__btn--secondary' },
-  { value: 'DISMISS',     label: 'Dismiss',             cssClass: 'vd__btn--ghost'     },
-]
+const decisionOptions = computed<{ value: VerdictDecision; label: string; cssClass: string }[]>(() => [
+  { value: 'TRACK',       label: t('verdict.decisions.track'),       cssClass: 'vd__btn--primary'   },
+  { value: 'INTERESTING', label: t('verdict.decisions.interesting'), cssClass: 'vd__btn--secondary' },
+  { value: 'ACTED',       label: t('verdict.decisions.acted'),       cssClass: 'vd__btn--secondary' },
+  { value: 'DISMISS',     label: t('verdict.decisions.dismiss'),     cssClass: 'vd__btn--ghost'     },
+])
 
 onMounted(async () => {
   const id = route.params.id as string
