@@ -101,6 +101,7 @@ export default {
       huntsThisMonth: 'Hunts This Month',
       huntsScheduled: 'of {n} scheduled',
       avgPreyPerHunt: 'Avg Prey per Hunt',
+      avgPreyDetail: 'median 1, max 7',
       hitRate90d: 'Hit Rate (90d)',
       hitRateDetail: '{num} of {den} prey within thesis',
     },
@@ -109,6 +110,12 @@ export default {
       recentPrey: 'recent prey',
       configuration: 'configuration',
       performance: 'performance over time',
+    },
+    run: {
+      traceLabel: 'Trace for run {id}',
+      today: 'today',
+      yesterday: 'yesterday',
+      daysAgo: 'd ago',
     },
     config: {
       scheduleTitle: 'Schedule',
