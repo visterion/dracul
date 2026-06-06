@@ -4,6 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
+  LanguageSetting,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -149,5 +150,21 @@ export class HttpApiClient implements ApiClient {
       method: 'DELETE',
     })
     if (!res.ok) throw new Error(`deleteWatchlistItem failed: HTTP ${res.status}`)
+  }
+
+  async getLanguage(): Promise<LanguageSetting> {
+    const res = await fetch(`${this.baseUrl}/api/settings/language`)
+    if (!res.ok) throw new Error(`getLanguage failed: HTTP ${res.status}`)
+    return res.json() as Promise<LanguageSetting>
+  }
+
+  async setLanguage(language: string): Promise<LanguageSetting> {
+    const res = await fetch(`${this.baseUrl}/api/settings/language`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language }),
+    })
+    if (!res.ok) throw new Error(`setLanguage failed: HTTP ${res.status}`)
+    return res.json() as Promise<LanguageSetting>
   }
 }

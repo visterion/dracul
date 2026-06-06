@@ -4,6 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
+  LanguageSetting,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -22,6 +23,7 @@ export class MockApiClient implements ApiClient {
   private notes: VerdictNote[] = [...mockVerdictNotes]
   private decisions = new Map<string, DecisionResponse>()
   private watchlist: WatchlistItem[] = initialWatchlist.map(i => ({ ...i }))
+  private _language = 'de'
   async getChronicle(): Promise<ChronicleData> {
     await delay(50)
     return {
@@ -201,5 +203,14 @@ export class MockApiClient implements ApiClient {
     const idx = this.watchlist.findIndex(i => i.id === id)
     if (idx === -1) throw new Error(`watchlist item ${id} not found`)
     this.watchlist.splice(idx, 1)
+  }
+
+  async getLanguage(): Promise<LanguageSetting> {
+    return { language: this._language }
+  }
+
+  async setLanguage(language: string): Promise<LanguageSetting> {
+    this._language = language === 'en' ? 'en' : 'de'
+    return { language: this._language }
   }
 }
