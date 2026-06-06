@@ -281,3 +281,7 @@ export interface SettingsBudgetData {
 }
 
 export type PatternAction = 'approve' | 'reject' | 'deactivate' | 'defer'
+
+export interface LanguageSetting {
+  language: string
+}
