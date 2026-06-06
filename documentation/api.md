@@ -69,6 +69,30 @@ are relative to the context root of `dracul-app`.
 | GET | `/api/backtest/{id}` | Poll backtest status and results |
 | GET | `/api/backtest` | List recent backtest runs |
 
+## Settings — Language
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/settings/language` | Return the current UI language |
+| PUT | `/api/settings/language` | Update the UI language; returns new value, 400 on unsupported locale |
+
+`GET /api/settings/language` response:
+```json
+{ "language": "de" }
+```
+
+`PUT /api/settings/language` request body:
+```json
+{ "language": "en" }
+```
+
+Response (200):
+```json
+{ "language": "en" }
+```
+
+Supported locales: `de`, `en`. Any other value returns HTTP 400 with an `error` field. On success, a `LanguageChangedEvent` is published internally so agent registrars can react.
+
 ## Admin
 
 | Method | Path | Purpose |

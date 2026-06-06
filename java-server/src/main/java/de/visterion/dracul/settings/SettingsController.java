@@ -1,11 +1,15 @@
 package de.visterion.dracul.settings;
 
+import de.visterion.dracul.i18n.LanguageChangedEvent;
 import de.visterion.dracul.vistierie.BudgetPatch;
 import de.visterion.dracul.vistierie.BudgetStatus;
 import de.visterion.dracul.vistierie.VistierieClient;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/settings")
@@ -16,10 +20,18 @@ public class SettingsController {
             "strigoi-lazarus", "strigoi-index", "strigoi-merger"
     );
 
-    private final VistierieClient client;
+    private static final Set<String> ALLOWED_LANGUAGES = Set.of("de", "en");
 
-    public SettingsController(VistierieClient client) {
+    private final VistierieClient client;
+    private final AppSettingsRepository settings;
+    private final ApplicationEventPublisher events;
+
+    public SettingsController(VistierieClient client,
+                              AppSettingsRepository settings,
+                              ApplicationEventPublisher events) {
         this.client = client;
+        this.settings = settings;
+        this.events = events;
     }
 
     @GetMapping("/budgets")
@@ -40,5 +52,22 @@ public class SettingsController {
     public BudgetStatus patchAgentBudget(@PathVariable String name,
                                           @RequestBody BudgetPatch patch) {
         return client.patchAgentBudget(name, patch);
+    }
+
+    @GetMapping("/language")
+    public LanguageSetting getLanguage() {
+        return new LanguageSetting(settings.getLanguage());
+    }
+
+    @PutMapping("/language")
+    public ResponseEntity<?> putLanguage(@RequestBody LanguageSetting body) {
+        String lang = body.language() == null ? "" : body.language().strip().toLowerCase();
+        if (!ALLOWED_LANGUAGES.contains(lang)) {
+            return ResponseEntity.badRequest()
+                    .body(java.util.Map.of("error", "unsupported language: " + body.language()));
+        }
+        settings.setLanguage(lang);
+        events.publishEvent(new LanguageChangedEvent(lang));
+        return ResponseEntity.ok(new LanguageSetting(lang));
     }
 }
