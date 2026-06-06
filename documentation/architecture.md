@@ -20,7 +20,7 @@ adapters, persistence, synthesis, and the frontend.
    │   STRIGOI   │      │  VOIEVOD   │      │ DAYWALKER  │
    │  6 hunters  │      │ 1 reviewer │      │ 1 guardian │
    │  scheduled  │      │  scheduled │      │ streaming  │
-   │  nightly    │      │  weekly    │      │ mkt hours  │
+   │  nightly    │      │  daily     │      │ mkt hours  │
    └─────────────┘      └─────────────┘     └─────────────┘
     hunts prey           reviews outcomes    guards watchlist
 ```
@@ -184,7 +184,7 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 - `notification_sent` (BOOLEAN, default false) — true when a Telegram push was delivered for this alert
 
 **Verdict columns (V6):**
-- `contributing_prey_ids` (JSONB, nullable) — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
+- `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
@@ -199,7 +199,7 @@ External sources (EDGAR, prices, news, calendar)
           │
    ┌──────┴──────────────────────┐
    │ Strigoi (6, nightly)         │→ Prey → dracul.prey
-   │ Voievod (1, weekly)          │→ Patterns → dracul.patterns
+   │ Voievod (1, daily)           │→ Patterns → dracul.patterns
    │ Daywalker (1, streaming)     │→ Alerts → dracul.daywalker_alerts
    └─────────────────────────────┘
                 │
