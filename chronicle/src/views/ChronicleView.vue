@@ -14,7 +14,7 @@
     <!-- Error state -->
     <div v-else-if="store.error" class="chronicle__error">
       <p>{{ store.error }}</p>
-      <button class="chronicle__retry" @click="store.load()">Retry</button>
+      <button class="chronicle__retry" @click="store.load()">{{ t('chronicle.error.retry') }}</button>
     </div>
 
     <!-- Content -->
@@ -23,15 +23,15 @@
       <div class="chronicle__banner">
         <span>
           🦇
-          <strong class="font-mono tabular">{{ store.prey.length }}</strong> new prey ·
-          <strong class="font-mono tabular">{{ store.verdicts.length }}</strong> {{ store.verdicts.length === 1 ? 'verdict' : 'verdicts' }} ·
-          <strong class="font-mono tabular">{{ store.alerts.length }}</strong> daywalker {{ store.alerts.length === 1 ? 'alert' : 'alerts' }} ·
-          <strong class="font-mono tabular">{{ store.pendingPatterns.length }}</strong> {{ store.pendingPatterns.length === 1 ? 'lesson' : 'lessons' }} pending
+          <strong class="font-mono tabular">{{ store.prey.length }}</strong> {{ t('chronicle.banner.newPrey') }} ·
+          <strong class="font-mono tabular">{{ store.verdicts.length }}</strong> {{ store.verdicts.length === 1 ? t('chronicle.banner.verdictSingular') : t('chronicle.banner.verdictPlural') }} ·
+          <strong class="font-mono tabular">{{ store.alerts.length }}</strong> {{ store.alerts.length === 1 ? t('chronicle.banner.alertSingular') : t('chronicle.banner.alertPlural') }} ·
+          <strong class="font-mono tabular">{{ store.pendingPatterns.length }}</strong> {{ store.pendingPatterns.length === 1 ? t('chronicle.banner.lessonSingular') : t('chronicle.banner.lessonPlural') }}
         </span>
       </div>
 
       <!-- Verdicts -->
-      <SectionHeader label="verdicts (consensus from multiple strigoi)" />
+      <SectionHeader :label="t('chronicle.sections.verdicts')" />
       <div v-if="store.verdicts.length > 0" class="chronicle__section" role="list">
         <VerdictCard
           v-for="verdict in store.verdicts"
@@ -39,10 +39,10 @@
           :verdict="verdict"
         />
       </div>
-      <p v-else class="chronicle__empty">No consensus findings yet.</p>
+      <p v-else class="chronicle__empty">{{ t('chronicle.emptyState.noVerdicts') }}</p>
 
       <!-- Individual Prey -->
-      <SectionHeader label="individual prey" />
+      <SectionHeader :label="t('chronicle.sections.individualPrey')" />
       <div v-if="store.prey.length > 0" class="chronicle__section" role="list">
         <PreyCard
           v-for="prey in store.prey"
@@ -50,12 +50,12 @@
           :prey="prey"
         />
       </div>
-      <p v-else class="chronicle__empty">The Strigoi have not yet returned tonight.</p>
+      <p v-else class="chronicle__empty">{{ t('chronicle.emptyState.noPreyYet') }}</p>
 
       <!-- Daywalker Alerts -->
       <template v-if="store.alerts.length > 0">
-        <SectionHeader label="daywalker alerts (today)" />
-        <div class="chronicle__alert-list" role="list" aria-label="Daywalker alerts">
+        <SectionHeader :label="t('chronicle.sections.daywalkerAlerts')" />
+        <div class="chronicle__alert-list" role="list" :aria-label="t('chronicle.ariaLabels.daywalkerAlerts')">
           <AlertRow
             v-for="alert in store.alerts"
             :key="alert.id"
@@ -66,8 +66,8 @@
 
       <!-- Pending Lessons -->
       <template v-if="store.pendingPatterns.length > 0">
-        <SectionHeader label="pending lessons from voievod" />
-        <div class="chronicle__lesson-list" role="list" aria-label="Pending lessons">
+        <SectionHeader :label="t('chronicle.sections.pendingLessons')" />
+        <div class="chronicle__lesson-list" role="list" :aria-label="t('chronicle.ariaLabels.pendingLessons')">
           <PendingLessonRow
             v-for="pattern in store.pendingPatterns"
             :key="pattern.id"
@@ -81,6 +81,7 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useChronicleStore } from '../stores/chronicle'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import VerdictCard from '../components/common/VerdictCard.vue'
@@ -88,6 +89,7 @@ import PreyCard from '../components/common/PreyCard.vue'
 import AlertRow from '../components/common/AlertRow.vue'
 import PendingLessonRow from '../components/common/PendingLessonRow.vue'
 
+const { t } = useI18n()
 const store = useChronicleStore()
 onMounted(() => store.load())
 </script>

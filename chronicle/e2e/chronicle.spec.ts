@@ -9,8 +9,8 @@ test.describe('Chronicle View (/)', () => {
 
   test('renders morning banner with counts', async ({ page }) => {
     const banner = page.locator('.chronicle__banner')
-    await expect(banner).toContainText('new prey')
-    await expect(banner).toContainText('verdict')
+    await expect(banner).toContainText('neue Beute')
+    await expect(banner).toContainText('Urteil')
   })
 
   test('renders at least 1 verdict card', async ({ page }) => {
