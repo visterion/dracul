@@ -2,10 +2,12 @@ package de.visterion.dracul;
 
 import de.visterion.dracul.verdict.ContributingStrigoiDetail;
 import de.visterion.dracul.verdict.VerdictRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
@@ -19,6 +21,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class VerdictRepositoryIT {
 
     @Autowired VerdictRepository repo;
+    @Autowired JdbcClient jdbc;
+
+    @BeforeEach
+    void clean() {
+        jdbc.sql("DELETE FROM verdicts WHERE symbol IN ('RTST','RTUP','RTMR')").update();
+    }
 
     private String insert(String symbol, String summary, List<String> preyIds) {
         return repo.insertSynthesized(

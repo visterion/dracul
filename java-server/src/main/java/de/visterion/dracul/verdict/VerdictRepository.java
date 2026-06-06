@@ -122,9 +122,18 @@ public class VerdictRepository {
                 .optional();
     }
 
-    /** Minimal view used by the synthesizer's upsert decision. */
+    /**
+     * The most-recent verdict for a symbol, used by the synthesizer's upsert decision.
+     * MAY already carry a user {@code decision} (TRACK/INTERESTING/DISMISS/ACTED) — callers
+     * must inspect {@link #decision()} before overwriting, to honor "user decision wins".
+     */
     public record ActiveVerdict(String id, String decision, List<String> contributingPreyIds) {}
 
+    /**
+     * Returns the most-recent verdict for the symbol (whether or not the user has decided it),
+     * or empty if none exists. Callers must check {@link ActiveVerdict#decision()} before
+     * calling {@link #updateSynthesized}.
+     */
     public Optional<ActiveVerdict> findActiveBySymbol(String symbol, String userId) {
         return jdbc.sql("""
                 SELECT id, decision, contributing_prey_ids
