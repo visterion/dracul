@@ -40,7 +40,7 @@ Dracul uses two of Vistierie's Bee lifecycle models:
 | Bee | Type | Trigger |
 |---|---|---|
 | Strigoi (6 agents) | ScheduledBee | Cron nightly |
-| Voievod | ScheduledBee | Cron weekly (Sunday) |
+| Voievod (synthesizer, Etappe 7) | ScheduledBee | Cron daily on weekdays (~08:00 UTC); reasoning tier. Note: a separate outcome-analysis learning loop (Etappe 8) is a later addition and will run on a different schedule. |
 | Daywalker | StreamingBee | Window-bounded session at market open; polls an event-source webhook every 5 min |
 
 The `StreamingBee` pattern is a Vistierie extension introduced to support

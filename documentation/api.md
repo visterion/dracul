@@ -408,6 +408,83 @@ On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
 `anomalyType=MERGER_ARB`, `discoveredBy=strigoi-merger`. Prey without a `symbol` are
 skipped. Returns 204; non-success / empty prey acknowledged without persisting.
 
+## Voievod Webhooks
+
+Called by Vistierie during a `voievod` agent run (consensus synthesizer).
+Both require `Authorization: Bearer <VOIEVOD_TOKEN>`; only registered when
+`VOIEVOD_ENABLED=true`.
+
+### `POST /api/voievod/tools/fetch-candidates`
+
+Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher.
+Returns the current consensus clusters: symbols flagged by ≥2 distinct Strigoi
+whose prey are still open (`discoveredAt + horizon ≥ today`).
+
+Request: `{ "run_id": "...", "tool_name": "fetch_consensus_clusters", "input": {} }`
+
+Response:
+```json
+{
+  "output": {
+    "clusters": [
+      {
+        "symbol": "ACME",
+        "companyName": "Acme Corp",
+        "prey": [
+          {
+            "discoveredBy": "strigoi-insider",
+            "anomalyType": "INSIDER_CLUSTER",
+            "confidence": 0.75,
+            "thesis": "...",
+            "signals": [],
+            "risks": [],
+            "horizon": "3m",
+            "discoveredAt": "2026-06-01T08:00:00Z"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### `POST /api/voievod/complete`
+
+Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher` when
+the agent run finishes. Accepts agent output (`status` = `done` / `succeeded`).
+
+For each emitted symbol Dracul re-derives the cluster from the database
+(source of truth), computes the consensus score (noisy-OR:
+`1 − ∏(1 − confidenceᵢ)`), and upserts the verdict. A verdict the user has
+already decided (`decision` is set) is not overwritten. The current price is
+fetched from the market-data adapter (failure is non-fatal). Returns 204.
+
+Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: <run-id>`.
+
+Request body:
+```json
+{
+  "run_id": "...",
+  "agent_version": 1,
+  "status": "done",
+  "started_at": "...",
+  "finished_at": "...",
+  "output": {
+    "verdicts": [
+      {
+        "symbol": "ACME",
+        "summary": "Two independent Strigoi flagged insider buying and PEAD drift..."
+      }
+    ]
+  }
+}
+```
+
+Returns 204. If `status` is not `done` / `succeeded`, or the `output.verdicts`
+array is absent, the endpoint acknowledges (204) without persisting and logs the
+run-id. Symbols in the output that no longer form a valid cluster (e.g. prey
+expired between tool-call and completion) are silently skipped.
+
 ## Strigoi-Index Webhooks
 
 Called by Vistierie during a `strigoi-index` agent run (index-inclusion drift).

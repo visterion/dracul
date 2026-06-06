@@ -183,6 +183,9 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 **Daywalker-alert columns (V5):**
 - `notification_sent` (BOOLEAN, default false) — true when a Telegram push was delivered for this alert
 
+**Verdict columns (V6):**
+- `contributing_prey_ids` (JSONB, nullable) — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
+
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
 an update to this document.
@@ -210,6 +213,17 @@ External sources (EDGAR, prices, news, calendar)
                 │
     User — reads, approves patterns, manages watchlist
 ```
+
+**Prey → Verdict synthesis (Voievod):** Each weekday morning a reasoning-tier
+`ScheduledBee` groups all open prey (within their declared horizon) by symbol.
+Any symbol confirmed by ≥2 distinct Strigoi becomes a consensus cluster. The
+consensus score is deterministic noisy-OR (`1 − ∏(1 − confidenceᵢ)`) and is
+recomputed from the database at completion time — the LLM's tool-call snapshot
+is advisory only. The LLM writes the narrative `summary` and may legitimately
+drop a cluster it judges coincidental. Verdicts are upserted per symbol; a
+verdict that already carries a user decision (`decision` IS NOT NULL) is never
+overwritten. The new column `contributing_prey_ids` (JSONB, V6) captures the
+exact prey UUIDs used for each upsert, enabling future outcome analysis.
 
 **Live alerts (SSE):** `DaywalkerCompletionService` publishes a
 `DaywalkerAlertCreatedEvent` after persisting an alert → an `@EventListener`
