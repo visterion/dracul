@@ -1,5 +1,8 @@
 package de.visterion.dracul.strigoi.lazarus;
 
+import de.visterion.dracul.i18n.LanguageChangedEvent;
+import de.visterion.dracul.i18n.LanguageDirective;
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.vistierie.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,18 +31,21 @@ public class StrigoiLazarusRegistrar {
     private final String publicUrl;
     private final String webhookToken;
     private final String schedule;
+    private final AppSettingsRepository settings;
 
     public StrigoiLazarusRegistrar(
             VistierieClient vistierie,
             ObjectMapper mapper,
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.strigoi.lazarus.webhook-token}") String webhookToken,
-            @Value("${dracul.strigoi.lazarus.schedule}") String schedule) {
+            @Value("${dracul.strigoi.lazarus.schedule}") String schedule,
+            AppSettingsRepository settings) {
         this.vistierie = vistierie;
         this.mapper = mapper;
         this.publicUrl = publicUrl.endsWith("/") ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
         this.webhookToken = webhookToken;
         this.schedule = schedule;
+        this.settings = settings;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -69,8 +75,15 @@ public class StrigoiLazarusRegistrar {
         }
     }
 
+    @EventListener(LanguageChangedEvent.class)
+    public void onLanguageChanged(LanguageChangedEvent event) {
+        log.info("language changed to {}; re-registering strigoi-lazarus", event.language());
+        register();
+    }
+
     private CreateAgentRequest buildRequest() {
-        var prompt = readClasspath("prompts/strigoi-lazarus.md");
+        var prompt = LanguageDirective.append(
+                readClasspath("prompts/strigoi-lazarus.md"), settings.getLanguage());
         JsonNode schema;
         try {
             schema = mapper.readTree(readClasspath("schemas/prey-list-lazarus.json"));
