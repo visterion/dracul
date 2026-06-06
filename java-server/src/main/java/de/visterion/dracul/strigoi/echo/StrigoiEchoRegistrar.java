@@ -1,5 +1,8 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.i18n.LanguageChangedEvent;
+import de.visterion.dracul.i18n.LanguageDirective;
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.vistierie.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,18 +30,21 @@ public class StrigoiEchoRegistrar {
     private final String publicUrl;
     private final String webhookToken;
     private final String schedule;
+    private final AppSettingsRepository settings;
 
     public StrigoiEchoRegistrar(
             VistierieClient vistierie,
             ObjectMapper mapper,
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.strigoi.echo.webhook-token}") String webhookToken,
-            @Value("${dracul.strigoi.echo.schedule}") String schedule) {
+            @Value("${dracul.strigoi.echo.schedule}") String schedule,
+            AppSettingsRepository settings) {
         this.vistierie = vistierie;
         this.mapper = mapper;
         this.publicUrl = publicUrl.endsWith("/") ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
         this.webhookToken = webhookToken;
         this.schedule = schedule;
+        this.settings = settings;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -68,8 +74,15 @@ public class StrigoiEchoRegistrar {
         }
     }
 
+    @EventListener(LanguageChangedEvent.class)
+    public void onLanguageChanged(LanguageChangedEvent event) {
+        log.info("language changed to {}; re-registering strigoi-echo", event.language());
+        register();
+    }
+
     private CreateAgentRequest buildRequest() {
-        var prompt = readClasspath("prompts/strigoi-echo.md");
+        var prompt = LanguageDirective.append(
+                readClasspath("prompts/strigoi-echo.md"), settings.getLanguage());
         JsonNode schema;
         try {
             schema = mapper.readTree(readClasspath("schemas/prey-list-pead.json"));
