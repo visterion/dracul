@@ -185,6 +185,27 @@
         </template>
       </template>
 
+      <!-- Language -->
+      <template v-else-if="navSection === 'language'">
+        <div class="settings__page-header">
+          <h1 class="settings__page-title font-display">{{ t('settings.language.title') }}</h1>
+          <p class="settings__page-subtitle">{{ t('settings.language.subtitle') }}</p>
+        </div>
+        <div class="settings__language" data-testid="language-section">
+          <label class="settings__language-label" for="language-select">{{ t('common.language') }}</label>
+          <select
+            id="language-select"
+            class="settings__language-select"
+            data-testid="language-select"
+            :value="language"
+            @change="changeLanguage(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="de">{{ t('settings.language.german') }}</option>
+            <option value="en">{{ t('settings.language.english') }}</option>
+          </select>
+        </div>
+      </template>
+
       <!-- Other stub sections -->
       <template v-else>
         <div class="settings__page-header">
@@ -200,13 +221,29 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useApi } from '../api'
+import { setLocale } from '../i18n'
 import type { LlmProvider, BudgetPatch, SettingsBudgetData } from '../api/types'
 
+const { t } = useI18n()
 const api = useApi()
 const providers = ref<LlmProvider[]>([])
 const loading = ref(true)
 const navSection = ref('llm-providers')
+const language = ref('de')
+const languageSaving = ref(false)
+
+async function changeLanguage(lang: string) {
+  languageSaving.value = true
+  try {
+    const res = await api.setLanguage(lang)
+    language.value = res.language
+    setLocale(res.language)
+  } finally {
+    languageSaving.value = false
+  }
+}
 
 const navItems = [
   { id: 'llm-providers', icon: '⚙', label: 'LLM Providers',              disabled: false, badge: null },
@@ -216,6 +253,7 @@ const navItems = [
   { id: 'messenger',     icon: '💬', label: 'Messenger & Notifications', disabled: false, badge: null },
   { id: 'multi-user',    icon: '👥', label: 'Multi-User Settings',       disabled: true,  badge: 'Phase 2' },
   { id: 'backup',        icon: '💾', label: 'Backup & Export',           disabled: false, badge: null },
+  { id: 'language',      icon: '🌐', label: 'Sprache',                 disabled: false, badge: null },
   { id: 'about',         icon: 'ℹ',  label: 'About Dracul',             disabled: false, badge: null },
 ]
 
@@ -313,6 +351,11 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  try {
+    const { language: lang } = await api.getLanguage()
+    language.value = lang
+    setLocale(lang)
+  } catch { /* keep current locale */ }
 })
 </script>
 
@@ -539,4 +582,31 @@ onMounted(async () => {
 .settings__budget-agent { font-family: var(--font-mono); color: var(--bone-ivory); }
 .settings__budget-num { font-family: var(--font-mono); }
 .settings__section-header--spaced { margin-top: var(--space-8); }
+
+/* ── Language section ────────────────────────────────────────── */
+.settings__language {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 280px;
+}
+.settings__language-label {
+  font-size: var(--text-micro);
+  color: var(--ash-gray);
+}
+.settings__language-select {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
+  color: var(--bone-ivory);
+  padding: 6px 10px;
+  font-size: var(--text-body);
+  font-family: var(--font-body);
+  cursor: pointer;
+  appearance: auto;
+}
+.settings__language-select:focus {
+  outline: 1px solid var(--blood-crimson);
+  border-color: var(--blood-crimson);
+}
 </style>
