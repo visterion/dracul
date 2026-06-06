@@ -20,6 +20,7 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
@@ -50,6 +51,7 @@ class VoievodWebhookControllerIT {
     @Autowired ObjectMapper objectMapper;
     @Autowired PreyRepository preyRepo;
     @Autowired VerdictRepository verdictRepo;
+    @Autowired JdbcClient jdbc;
     @MockitoBean MarketDataPort marketData;
 
     RestClient rest;
@@ -178,6 +180,10 @@ class VoievodWebhookControllerIT {
                 .filter(v -> "NOPX".equals(v.symbol())).findFirst().orElseThrow();
         var full = verdictRepo.findDetailById(detail.id()).orElseThrow();
         assertThat(full.currentPrice()).isEqualTo(0.0);
+        // graceful degradation stores SQL NULL (the double read-projection surfaces it as 0.0)
+        Integer nonNull = jdbc.sql("SELECT count(*) FROM verdicts WHERE symbol = 'NOPX' AND current_price IS NOT NULL")
+                .query(Integer.class).single();
+        assertThat(nonNull).isZero();
     }
 
     @Test
