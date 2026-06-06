@@ -116,6 +116,7 @@ export default {
       today: 'heute',
       yesterday: 'gestern',
       daysAgo: 'T zurück',
+      preyUnit: 'Beute',
     },
     config: {
       scheduleTitle: 'Zeitplan',
@@ -130,7 +131,7 @@ export default {
       monthlyBudget: 'Monatsbudget',
       primary: 'Primär',
       fallback: 'Fallback',
-      used: '(verwendet: ${n})',
+      used: '(verwendet: {n})',
     },
     chart: {
       hitRate: 'Trefferquote',

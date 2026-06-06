@@ -77,7 +77,7 @@
           <span class="sd__run-chevron" :class="{ 'sd__run-chevron--open': expandedRuns.has(run.id) }">▶</span>
           <span class="sd__run-date font-mono tabular">{{ formatRunDate(run.ranAt) }}</span>
           <span class="sd__run-sep">·</span>
-          <span class="sd__run-prey font-mono tabular">{{ run.preyCount }} prey</span>
+          <span class="sd__run-prey font-mono tabular">{{ run.preyCount }} {{ t('strigoi.run.preyUnit') }}</span>
           <span class="sd__run-sep">·</span>
           <span class="sd__run-cost font-mono tabular">${{ run.costUsd.toFixed(3) }}</span>
           <span class="sd__run-sep">·</span>
