@@ -44,9 +44,9 @@ dracul:
       schedule: ${DRACUL_INDEX_SCHEDULE:0 0 7 * * 1-5}
       lookback-days: ${INDEX_LOOKBACK_DAYS:30}
   voievod:
-    enabled: ${VOIEVOD_ENABLED:false}
-    webhook-token: ${VOIEVOD_TOKEN:dev-token-change-me}
-    schedule: ${VOIEVOD_SCHEDULE:0 0 8 * * 1-5}
+    enabled: ${DRACUL_VOIEVOD_ENABLED:false}
+    webhook-token: ${DRACUL_VOIEVOD_TOKEN:dev-token-change-me}
+    schedule: ${DRACUL_VOIEVOD_SCHEDULE:0 0 8 * * 1-5}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}

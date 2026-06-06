@@ -174,9 +174,9 @@ Index reuses `DRACUL_PUBLIC_URL` (webhook callback base URL). It needs no API ke
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `VOIEVOD_ENABLED` | `false` | Enable the consensus synthesizer agent + webhooks (`@ConditionalOnProperty`). |
-| `VOIEVOD_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the tool + completion webhooks. **Change in production.** |
-| `VOIEVOD_SCHEDULE` | `0 0 8 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 08:00 UTC weekdays. |
+| `DRACUL_VOIEVOD_ENABLED` | `false` | Enable the consensus synthesizer agent + webhooks (`@ConditionalOnProperty`). |
+| `DRACUL_VOIEVOD_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the tool + completion webhooks. **Change in production.** |
+| `DRACUL_VOIEVOD_SCHEDULE` | `0 0 8 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 08:00 UTC weekdays. |
 
 Voievod reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared
 price adapter (graceful on failure). The `dracul.voievod.*` properties correspond
