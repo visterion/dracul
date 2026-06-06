@@ -407,3 +407,31 @@ Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: .
 On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
 `anomalyType=MERGER_ARB`, `discoveredBy=strigoi-merger`. Prey without a `symbol` are
 skipped. Returns 204; non-success / empty prey acknowledged without persisting.
+
+## Strigoi-Index Webhooks
+
+Called by Vistierie during a `strigoi-index` agent run (index-inclusion drift).
+Both require `Authorization: Bearer <STRIGOI_INDEX_TOKEN>`; only registered when
+`STRIGOI_INDEX_ENABLED=true`.
+
+### `POST /api/strigoi-index/tools/fetch-candidates`
+
+Tool webhook. Returns recently-added S&P 500 constituents (deterministic, metadata-only).
+
+Request: `{ "run_id": "...", "tool_name": "fetch_recent_index_additions", "input": { "lookback_days": 30 } }`
+
+Input `lookback_days` range: 1–90; default 30.
+
+Response:
+```json
+{ "output": { "candidates": [
+  { "symbol": "ACME", "companyName": "Acme Corp", "dateAdded": "2026-05-15" }
+] } }
+```
+
+### `POST /api/strigoi-index/complete`
+
+Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: ...`.
+On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
+`anomalyType=INDEX_INCLUSION`, `discoveredBy=strigoi-index`. Prey without a `symbol` are
+skipped. Returns 204; non-success / empty prey acknowledged without persisting.

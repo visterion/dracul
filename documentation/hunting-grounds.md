@@ -32,7 +32,7 @@ never see vendor-specific schemas.
 | strigoi-insider | edgar-adapter (Form-4) |
 | strigoi-echo | calendar-adapter (earnings) + prices-adapter |
 | strigoi-lazarus | watchlist + Finnhub /stock/metric (52w-low + fundamentals) |
-| strigoi-index | calendar-adapter (reconstitution dates) |
+| strigoi-index | Wikipedia S&P 500 (main constituents table, Date added column) |
 | strigoi-merger | edgar-adapter (`EDGAR EFTS forms=DEFM14A,SC TO-T (deal filings, metadata-only)`) |
 | daywalker | prices-adapter (5-min polling) + news-adapter + edgar-adapter (Form-4) |
 
@@ -124,6 +124,22 @@ Strigoi-Merger resolves recent deal filings via `EdgarMergerAdapter`
   filingUrl)` from each hit's `_source` (no per-filing XML fetch).
 - **Graceful degradation:** any failure returns an empty list (logged) — the bee
   never dies on an EDGAR hiccup.
+
+## Wikipedia S&P 500 adapter
+
+Strigoi-Index resolves recently-added S&P 500 constituents via `WikipediaSp500Adapter`
+(`de.visterion.dracul.hunting.wikipedia`):
+
+- MediaWiki API `action=parse&prop=wikitext` on "List of S&P 500 companies",
+  using a dedicated `RestClient` configured by `dracul.wikipedia.base-url` and
+  `dracul.wikipedia.user-agent`. No API key.
+- Parses only the **main constituents table** — extracts the Symbol and
+  `Date added` columns; does not fetch historical additions/removals tables.
+- Metadata-only — returns `Sp500Constituent(symbol, companyName, dateAdded)`
+  records; no per-entry follow-up requests.
+- **Graceful degradation:** any failure (network error, parse error, missing
+  columns) returns an empty list (logged) — the bee never dies on a Wikipedia
+  hiccup.
 
 ## Edgar parsing notes
 
