@@ -1,6 +1,7 @@
 package de.visterion.dracul;
 
 import de.visterion.dracul.settings.AppSettingsRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -18,6 +19,11 @@ class AppSettingsRepositoryIT {
     @Autowired AppSettingsRepository repo;
     @Autowired JdbcClient jdbc;
 
+    @AfterEach
+    void restore() {
+        repo.setLanguage("de");
+    }
+
     @Test
     void defaultLanguageIsGermanFromSeed() {
         assertThat(repo.getLanguage()).isEqualTo("de");
@@ -27,13 +33,11 @@ class AppSettingsRepositoryIT {
     void setLanguagePersistsAndIsReadBack() {
         repo.setLanguage("en");
         assertThat(repo.getLanguage()).isEqualTo("en");
-        repo.setLanguage("de");
     }
 
     @Test
     void getLanguageFallsBackToDeWhenRowMissing() {
         jdbc.sql("DELETE FROM app_settings WHERE key = 'language'").update();
         assertThat(repo.getLanguage()).isEqualTo("de");
-        jdbc.sql("INSERT INTO app_settings(key, value) VALUES ('language','de')").update();
     }
 }
