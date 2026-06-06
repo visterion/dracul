@@ -95,7 +95,7 @@ dracul:
     merger:
       cron: "0 0 4 * * MON-FRI"
   voievod:
-    cron: "0 0 21 * * SUN"        # Sunday 21:00 MEZ
+    cron: "0 0 8 * * 1-5"         # 08:00 UTC on weekdays (synthesizer)
 ```
 
 ## Strigoi Insider
@@ -169,6 +169,18 @@ User-Agent. It needs no API key.
 | `INDEX_LOOKBACK_DAYS` | `30` | Default S&P 500 `Date added` lookback window (days) for the pre-screen (1–90). |
 
 Index reuses `DRACUL_PUBLIC_URL` (webhook callback base URL). It needs no API key.
+
+## Voievod (consensus synthesizer)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `VOIEVOD_ENABLED` | `false` | Enable the consensus synthesizer agent + webhooks (`@ConditionalOnProperty`). |
+| `VOIEVOD_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the tool + completion webhooks. **Change in production.** |
+| `VOIEVOD_SCHEDULE` | `0 0 8 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 08:00 UTC weekdays. |
+
+Voievod reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared
+price adapter (graceful on failure). The `dracul.voievod.*` properties correspond
+to these env vars via Spring's relaxed-binding rules.
 
 ## Wikipedia
 
