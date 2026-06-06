@@ -199,7 +199,7 @@ External sources (EDGAR, prices, news, calendar)
           │
    ┌──────┴──────────────────────┐
    │ Strigoi (6, nightly)         │→ Prey → dracul.prey
-   │ Voievod (1, daily)           │→ Patterns → dracul.patterns
+   │ Voievod (1, daily)           │→ Verdicts → dracul.verdicts
    │ Daywalker (1, streaming)     │→ Alerts → dracul.daywalker_alerts
    └─────────────────────────────┘
                 │
