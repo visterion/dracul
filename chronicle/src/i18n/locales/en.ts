@@ -116,6 +116,7 @@ export default {
       today: 'today',
       yesterday: 'yesterday',
       daysAgo: 'd ago',
+      preyUnit: 'prey',
     },
     config: {
       scheduleTitle: 'Schedule',
@@ -130,7 +131,7 @@ export default {
       monthlyBudget: 'Monthly budget',
       primary: 'Primary',
       fallback: 'Fallback',
-      used: '(used: ${n})',
+      used: '(used: {n})',
     },
     chart: {
       hitRate: 'hit rate',
