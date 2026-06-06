@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -119,6 +120,82 @@ public class VerdictRepository {
                 .param("id", uuid)
                 .query(String.class)
                 .optional();
+    }
+
+    /** Minimal view used by the synthesizer's upsert decision. */
+    public record ActiveVerdict(String id, String decision, List<String> contributingPreyIds) {}
+
+    public Optional<ActiveVerdict> findActiveBySymbol(String symbol, String userId) {
+        return jdbc.sql("""
+                SELECT id, decision, contributing_prey_ids
+                FROM verdicts
+                WHERE symbol = :symbol AND user_id = :userId
+                ORDER BY created_at DESC
+                LIMIT 1
+                """)
+                .param("symbol", symbol)
+                .param("userId", userId)
+                .query((rs, rowNum) -> new ActiveVerdict(
+                        rs.getString("id"),
+                        rs.getString("decision"),
+                        readList(rs.getString("contributing_prey_ids"))))
+                .optional();
+    }
+
+    /** Insert a synthesizer-produced verdict. Returns the new id. decision stays null. */
+    public String insertSynthesized(
+            String symbol, String companyName, List<String> contributingStrigoi,
+            double consensusScore, String summary, List<String> anomalyTypes,
+            BigDecimal currentPrice, double avgConfidence, String horizon,
+            List<String> signals, List<String> risks,
+            List<ContributingStrigoiDetail> contributingDetails,
+            List<String> contributingPreyIds, String userId) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("""
+                INSERT INTO verdicts
+                  (id, symbol, company_name, contributing_strigoi, consensus_score, summary,
+                   created_at, anomaly_types, current_price, avg_confidence, horizon,
+                   signals, risks, contributing_details, user_id, contributing_prey_ids)
+                VALUES (?::uuid, ?, ?, ?::jsonb, ?, ?, now(), ?::jsonb, ?, ?, ?,
+                        ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb)
+                """)
+                .params(id, symbol, companyName, json(contributingStrigoi), consensusScore, summary,
+                        json(anomalyTypes), currentPrice, avgConfidence, horizon,
+                        json(signals), json(risks), json(contributingDetails), userId,
+                        json(contributingPreyIds))
+                .update();
+        return id;
+    }
+
+    /** Update a synthesizer-produced verdict's content. Leaves decision/decided_at/created_at. */
+    public void updateSynthesized(
+            String id, String companyName, List<String> contributingStrigoi,
+            double consensusScore, String summary, List<String> anomalyTypes,
+            BigDecimal currentPrice, double avgConfidence, String horizon,
+            List<String> signals, List<String> risks,
+            List<ContributingStrigoiDetail> contributingDetails,
+            List<String> contributingPreyIds, String userId) {
+        jdbc.sql("""
+                UPDATE verdicts SET
+                  company_name = ?, contributing_strigoi = ?::jsonb, consensus_score = ?,
+                  summary = ?, anomaly_types = ?::jsonb, current_price = ?, avg_confidence = ?,
+                  horizon = ?, signals = ?::jsonb, risks = ?::jsonb,
+                  contributing_details = ?::jsonb, contributing_prey_ids = ?::jsonb
+                WHERE id = ?::uuid
+                """)
+                .params(companyName, json(contributingStrigoi), consensusScore, summary,
+                        json(anomalyTypes), currentPrice, avgConfidence, horizon,
+                        json(signals), json(risks), json(contributingDetails),
+                        json(contributingPreyIds), id)
+                .update();
+    }
+
+    private String json(Object value) {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize verdict JSON", e);
+        }
     }
 
     private List<String> readList(String json) {

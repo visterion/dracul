@@ -1,0 +1,66 @@
+package de.visterion.dracul;
+
+import de.visterion.dracul.verdict.ContributingStrigoiDetail;
+import de.visterion.dracul.verdict.VerdictRepository;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest
+@Import(ContainerConfig.class)
+@ActiveProfiles("dev")
+class VerdictRepositoryIT {
+
+    @Autowired VerdictRepository repo;
+
+    private String insert(String symbol, String summary, List<String> preyIds) {
+        return repo.insertSynthesized(
+                symbol, "Test Co", List.of("strigoi-spin", "strigoi-insider"),
+                0.88, summary, List.of("SPINOFF", "INSIDER"),
+                new BigDecimal("123.4500"), 0.65, "6m",
+                List.of("signal A"), List.of("risk A"),
+                List.of(new ContributingStrigoiDetail("strigoi-spin", 0.7, "t1"),
+                        new ContributingStrigoiDetail("strigoi-insider", 0.6, "t2")),
+                preyIds, "default");
+    }
+
+    @Test
+    void insertThenFindActiveBySymbol() {
+        insert("RTST", "first summary", List.of("p1", "p2"));
+        var active = repo.findActiveBySymbol("RTST", "default").orElseThrow();
+        assertThat(active.decision()).isNull();
+        assertThat(active.contributingPreyIds()).containsExactlyInAnyOrder("p1", "p2");
+    }
+
+    @Test
+    void updateSynthesizedChangesContentNotDecision() {
+        String id = insert("RTUP", "old summary", List.of("p1", "p2"));
+        repo.updateDecision(id, "TRACK");
+        repo.updateSynthesized(id, "Test Co", List.of("strigoi-spin", "strigoi-insider"),
+                0.9, "new summary", List.of("SPINOFF"),
+                new BigDecimal("200.0000"), 0.7, "3m",
+                List.of("signal B"), List.of("risk B"),
+                List.of(new ContributingStrigoiDetail("strigoi-spin", 0.8, "t3")),
+                List.of("p1", "p2", "p3"), "default");
+        var detail = repo.findDetailById(id).orElseThrow();
+        assertThat(detail.summary()).isEqualTo("new summary");
+        assertThat(detail.decision()).isEqualTo("TRACK");
+        var active = repo.findActiveBySymbol("RTUP", "default").orElseThrow();
+        assertThat(active.contributingPreyIds()).containsExactlyInAnyOrder("p1", "p2", "p3");
+    }
+
+    @Test
+    void findActiveReturnsMostRecent() {
+        insert("RTMR", "older", List.of("p1", "p2"));
+        insert("RTMR", "newer", List.of("p3", "p4"));
+        var active = repo.findActiveBySymbol("RTMR", "default").orElseThrow();
+        assertThat(active.contributingPreyIds()).containsExactlyInAnyOrder("p3", "p4");
+    }
+}
