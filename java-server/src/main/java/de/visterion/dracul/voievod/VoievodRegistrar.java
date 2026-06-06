@@ -1,5 +1,8 @@
 package de.visterion.dracul.voievod;
 
+import de.visterion.dracul.i18n.LanguageChangedEvent;
+import de.visterion.dracul.i18n.LanguageDirective;
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.vistierie.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,18 +31,21 @@ public class VoievodRegistrar {
     private final String publicUrl;
     private final String webhookToken;
     private final String schedule;
+    private final AppSettingsRepository settings;
 
     public VoievodRegistrar(
             VistierieClient vistierie,
             ObjectMapper mapper,
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.voievod.webhook-token}") String webhookToken,
-            @Value("${dracul.voievod.schedule}") String schedule) {
+            @Value("${dracul.voievod.schedule}") String schedule,
+            AppSettingsRepository settings) {
         this.vistierie = vistierie;
         this.mapper = mapper;
         this.publicUrl = publicUrl.endsWith("/") ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
         this.webhookToken = webhookToken;
         this.schedule = schedule;
+        this.settings = settings;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -69,8 +75,19 @@ public class VoievodRegistrar {
         }
     }
 
+    @EventListener(LanguageChangedEvent.class)
+    public void onLanguageChanged(LanguageChangedEvent event) {
+        log.info("language changed to {}; re-registering voievod", event.language());
+        register();
+    }
+
+    public CreateAgentRequest buildRequestForTest() {
+        return buildRequest();
+    }
+
     private CreateAgentRequest buildRequest() {
-        var prompt = readClasspath("prompts/voievod.md");
+        var prompt = LanguageDirective.append(
+                readClasspath("prompts/voievod.md"), settings.getLanguage());
         JsonNode schema;
         try {
             schema = mapper.readTree(readClasspath("schemas/verdict-list.json"));
