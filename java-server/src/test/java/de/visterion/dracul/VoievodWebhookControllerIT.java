@@ -134,6 +134,9 @@ class VoievodWebhookControllerIT {
         long count = verdictRepo.findAllByUser("default", true).stream()
                 .filter(v -> "DUP".equals(v.symbol())).count();
         assertThat(count).isEqualTo(1);
+        var detail = verdictRepo.findAllByUser("default", true).stream()
+                .filter(v -> "DUP".equals(v.symbol())).findFirst().orElseThrow();
+        assertThat(detail.summary()).isEqualTo("first");
     }
 
     @Test
@@ -172,7 +175,7 @@ class VoievodWebhookControllerIT {
     @Test
     void priceFailureStillPersistsWithNullPrice() {
         when(marketData.resolve(anyString()))
-                .thenThrow(new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "boom"));
+                .thenThrow(new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "boom")); // MarketDataException requires (Kind, message)
         seedPrey("NOPX", "strigoi-spin", 0.7);
         seedPrey("NOPX", "strigoi-insider", 0.6);
         complete("run-nopx-1", "NOPX", "price unavailable but still consolidated");
