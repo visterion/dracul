@@ -159,6 +159,25 @@ fundamentals are skipped by the screener.
 Merger reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared EDGAR
 User-Agent. It needs no API key.
 
+## Strigoi Index
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `STRIGOI_INDEX_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
+| `STRIGOI_INDEX_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
+| `DRACUL_INDEX_SCHEDULE` | `0 0 7 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 07:00 UTC weekdays. |
+| `INDEX_LOOKBACK_DAYS` | `30` | Default S&P 500 `Date added` lookback window (days) for the pre-screen (1–90). |
+
+Index reuses `DRACUL_PUBLIC_URL` (webhook callback base URL). It needs no API key.
+
+## Wikipedia
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `WIKIPEDIA_BASE_URL` | `https://en.wikipedia.org` | MediaWiki API base URL. Override for tests. |
+| `WIKIPEDIA_USER_AGENT` | `Dracul/1.0 (research; contact via repo)` | `User-Agent` header sent on all Wikipedia requests. MediaWiki policy requires a descriptive UA. |
+| `WIKIPEDIA_SP500_PAGE` | `List of S&P 500 companies` | MediaWiki page title passed as `page=` to `action=parse`. Override if the page is renamed. |
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the
