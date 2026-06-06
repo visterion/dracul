@@ -4,16 +4,16 @@
   </div>
 
   <div v-else-if="!strigoi" class="sd-notfound">
-    <p>Strigoi not found.</p>
-    <router-link to="/" class="sd-notfound__link">← Back to chronicle</router-link>
+    <p>{{ t('strigoi.notFound.message') }}</p>
+    <router-link to="/" class="sd-notfound__link">{{ t('strigoi.notFound.backLink') }}</router-link>
   </div>
 
   <article v-else class="sd">
     <!-- Breadcrumb -->
     <nav class="sd__breadcrumb" aria-label="Breadcrumb">
-      <router-link to="/" class="sd__bc-link">chronicle</router-link>
+      <router-link to="/" class="sd__bc-link">{{ t('strigoi.breadcrumb.chronicle') }}</router-link>
       <span class="sd__bc-sep">/</span>
-      <span class="sd__bc-link">strigoi</span>
+      <span class="sd__bc-link">{{ t('strigoi.breadcrumb.strigoi') }}</span>
       <span class="sd__bc-sep">/</span>
       <span class="sd__bc-current">{{ strigoi.name }}</span>
     </nav>
@@ -36,9 +36,9 @@
           {{ strigoi.state }}
         </span>
         <div class="sd__schedule">
-          <span>last run: {{ relativeTime(strigoi.lastRunAt) }}</span>
+          <span>{{ t('strigoi.schedule.lastRun') }} {{ relativeTime(strigoi.lastRunAt) }}</span>
           <span class="sd__schedule-sep">·</span>
-          <span>next: {{ formatNextRun(strigoi.nextRunAt) }}</span>
+          <span>{{ t('strigoi.schedule.next') }} {{ formatNextRun(strigoi.nextRunAt) }}</span>
         </div>
       </div>
     </header>
@@ -47,26 +47,26 @@
     <div class="sd__stats-row">
       <div class="sd__stat-card">
         <div class="sd__stat-value font-display tabular">{{ strigoi.huntsThisMonth }}</div>
-        <div class="sd__stat-label">Hunts This Month</div>
-        <div class="sd__stat-sub">of {{ strigoi.scheduledHuntsThisMonth }} scheduled</div>
+        <div class="sd__stat-label">{{ t('strigoi.stats.huntsThisMonth') }}</div>
+        <div class="sd__stat-sub">{{ t('strigoi.stats.huntsScheduled', { n: strigoi.scheduledHuntsThisMonth }) }}</div>
       </div>
       <div class="sd__stat-card">
         <div class="sd__stat-value font-display tabular">{{ strigoi.avgPreyPerHunt.toFixed(1) }}</div>
-        <div class="sd__stat-label">Avg Prey per Hunt</div>
-        <div class="sd__stat-sub">median 1, max 7</div>
+        <div class="sd__stat-label">{{ t('strigoi.stats.avgPreyPerHunt') }}</div>
+        <div class="sd__stat-sub">{{ t('strigoi.stats.avgPreyDetail') }}</div>
       </div>
       <div class="sd__stat-card">
         <div
           class="sd__stat-value font-display tabular"
           :class="strigoi.hitRate90d >= 0.6 ? 'sd__stat-value--positive' : ''"
         >{{ Math.round(strigoi.hitRate90d * 100) }}%</div>
-        <div class="sd__stat-label">Hit Rate (90d)</div>
-        <div class="sd__stat-sub">{{ strigoi.hitRateNumerator }} of {{ strigoi.hitRateDenominator }} prey within thesis</div>
+        <div class="sd__stat-label">{{ t('strigoi.stats.hitRate90d') }}</div>
+        <div class="sd__stat-sub">{{ t('strigoi.stats.hitRateDetail', { num: strigoi.hitRateNumerator, den: strigoi.hitRateDenominator }) }}</div>
       </div>
     </div>
 
     <!-- Recent runs -->
-    <SectionHeader label="recent runs" />
+    <SectionHeader :label="t('strigoi.sections.recentRuns')" />
     <div class="sd__runs" role="list">
       <div v-for="run in strigoi.recentRuns" :key="run.id" class="sd__run" role="listitem">
         <button
@@ -87,7 +87,7 @@
           v-if="expandedRuns.has(run.id)"
           class="sd__run-trace"
           role="region"
-          :aria-label="`Trace for run ${run.id}`"
+          :aria-label="t('strigoi.run.traceLabel', { id: run.id })"
         >
           <div
             v-for="(event, idx) in run.trace"
@@ -103,61 +103,61 @@
     </div>
 
     <!-- Recent prey -->
-    <SectionHeader label="recent prey" />
+    <SectionHeader :label="t('strigoi.sections.recentPrey')" />
     <div class="sd__prey-grid">
       <PreyCard v-for="prey in strigoi.recentPrey" :key="prey.id" :prey="prey" />
     </div>
 
     <!-- Configuration -->
-    <SectionHeader label="configuration" />
+    <SectionHeader :label="t('strigoi.sections.configuration')" />
     <div class="sd__config">
       <div class="sd__config-col">
-        <div class="sd__config-title">Schedule</div>
+        <div class="sd__config-title">{{ t('strigoi.config.scheduleTitle') }}</div>
         <table class="sd__config-table">
           <tbody>
             <tr>
-              <td class="sd__config-label">Cron</td>
+              <td class="sd__config-label">{{ t('strigoi.config.cron') }}</td>
               <td class="sd__config-value font-mono">{{ strigoi.configuration.cron }}</td>
             </tr>
             <tr>
-              <td class="sd__config-label">Next run</td>
+              <td class="sd__config-label">{{ t('strigoi.config.nextRun') }}</td>
               <td class="sd__config-value font-mono tabular">{{ formatAbsoluteDate(strigoi.configuration.nextRunAt) }}</td>
             </tr>
             <tr>
-              <td class="sd__config-label">Disabled</td>
-              <td class="sd__config-value font-mono">{{ strigoi.configuration.disabled ? 'Yes' : 'No' }}</td>
+              <td class="sd__config-label">{{ t('strigoi.config.disabled') }}</td>
+              <td class="sd__config-value font-mono">{{ strigoi.configuration.disabled ? t('strigoi.config.disabledYes') : t('strigoi.config.disabledNo') }}</td>
             </tr>
           </tbody>
         </table>
       </div>
       <div class="sd__config-col">
-        <div class="sd__config-title">LLM &amp; Budget</div>
+        <div class="sd__config-title">{{ t('strigoi.config.llmTitle') }}</div>
         <table class="sd__config-table">
           <tbody>
             <tr>
-              <td class="sd__config-label">Tier</td>
+              <td class="sd__config-label">{{ t('strigoi.config.tier') }}</td>
               <td class="sd__config-value font-mono">{{ strigoi.configuration.tier }}</td>
             </tr>
             <tr>
-              <td class="sd__config-label">Daily budget</td>
+              <td class="sd__config-label">{{ t('strigoi.config.dailyBudget') }}</td>
               <td class="sd__config-value font-mono tabular">
                 ${{ strigoi.configuration.dailyBudgetUsd.toFixed(2) }}
-                <span class="sd__config-used">(used: ${{ strigoi.configuration.dailyUsedUsd.toFixed(2) }})</span>
+                <span class="sd__config-used">{{ t('strigoi.config.used', { n: strigoi.configuration.dailyUsedUsd.toFixed(2) }) }}</span>
               </td>
             </tr>
             <tr>
-              <td class="sd__config-label">Monthly budget</td>
+              <td class="sd__config-label">{{ t('strigoi.config.monthlyBudget') }}</td>
               <td class="sd__config-value font-mono tabular">
                 ${{ strigoi.configuration.monthlyBudgetUsd.toFixed(2) }}
-                <span class="sd__config-used">(used: ${{ strigoi.configuration.monthlyUsedUsd.toFixed(2) }})</span>
+                <span class="sd__config-used">{{ t('strigoi.config.used', { n: strigoi.configuration.monthlyUsedUsd.toFixed(2) }) }}</span>
               </td>
             </tr>
             <tr>
-              <td class="sd__config-label">Primary</td>
+              <td class="sd__config-label">{{ t('strigoi.config.primary') }}</td>
               <td class="sd__config-value font-mono">{{ strigoi.configuration.primaryProvider }}</td>
             </tr>
             <tr v-if="strigoi.configuration.fallbackProvider">
-              <td class="sd__config-label">Fallback</td>
+              <td class="sd__config-label">{{ t('strigoi.config.fallback') }}</td>
               <td class="sd__config-value font-mono">{{ strigoi.configuration.fallbackProvider }}</td>
             </tr>
           </tbody>
@@ -166,7 +166,7 @@
     </div>
 
     <!-- Performance chart -->
-    <SectionHeader label="performance over time" />
+    <SectionHeader :label="t('strigoi.sections.performance')" />
     <div class="sd__chart">
       <apexchart type="line" height="260" :options="chartOptions" :series="chartSeries" />
     </div>
@@ -176,6 +176,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import VueApexCharts from 'vue3-apexcharts'
 import type { StrigoiDetail } from '../api/types'
 import { useApi } from '../api'
@@ -186,6 +187,7 @@ import PreyCard from '../components/common/PreyCard.vue'
 // Required: Vue resolves <apexchart> tag by matching the variable name
 const apexchart = VueApexCharts
 
+const { t } = useI18n()
 const route = useRoute()
 const api = useApi()
 const { relativeTime } = useRelativeTime()
@@ -224,10 +226,10 @@ const stateIcon = computed(() => {
 function formatRunDate(iso: string): string {
   const d = new Date(iso)
   const diffDays = Math.floor((Date.now() - d.getTime()) / 86_400_000)
-  const t = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-  if (diffDays === 0) return `today ${t} EST`
-  if (diffDays === 1) return `yesterday ${t} EST`
-  return `${diffDays}d ago ${t} EST`
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (diffDays === 0) return `${t('strigoi.run.today')} ${time} EST`
+  if (diffDays === 1) return `${t('strigoi.run.yesterday')} ${time} EST`
+  return `${diffDays}${t('strigoi.run.daysAgo')} ${time} EST`
 }
 
 function formatNextRun(iso: string): string {
@@ -278,8 +280,8 @@ const chartOptions = computed(() => ({
 }))
 
 const chartSeries = computed(() => [
-  { name: 'hit rate', data: strigoi.value?.weeklyPerformance.map(w => w.hitRate) ?? [] },
-  { name: 'prey count', data: strigoi.value?.weeklyPerformance.map(w => w.preyCount) ?? [], yAxisIndex: 1 },
+  { name: t('strigoi.chart.hitRate'), data: strigoi.value?.weeklyPerformance.map(w => w.hitRate) ?? [] },
+  { name: t('strigoi.chart.preyCount'), data: strigoi.value?.weeklyPerformance.map(w => w.preyCount) ?? [], yAxisIndex: 1 },
 ])
 </script>
 

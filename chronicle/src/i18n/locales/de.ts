@@ -101,6 +101,7 @@ export default {
       huntsThisMonth: 'Jagden diesen Monat',
       huntsScheduled: 'von {n} geplant',
       avgPreyPerHunt: 'Ø Beute pro Jagd',
+      avgPreyDetail: 'Median 1, Max 7',
       hitRate90d: 'Trefferquote (90T)',
       hitRateDetail: '{num} von {den} Beute innerhalb der These',
     },
@@ -109,6 +110,12 @@ export default {
       recentPrey: 'Letzte Beute',
       configuration: 'Konfiguration',
       performance: 'Leistung über Zeit',
+    },
+    run: {
+      traceLabel: 'Ablaufprotokoll für Lauf {id}',
+      today: 'heute',
+      yesterday: 'gestern',
+      daysAgo: 'T zurück',
     },
     config: {
       scheduleTitle: 'Zeitplan',
