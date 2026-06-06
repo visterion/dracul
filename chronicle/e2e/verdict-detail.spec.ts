@@ -18,7 +18,7 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
   })
 
   test('renders breadcrumb with chronicle link', async ({ page }) => {
-    await expect(page.locator('.vd__bc-link').first()).toContainText('chronicle')
+    await expect(page.locator('.vd__bc-link').first()).toContainText('chronik')
   })
 
   test('renders at least 1 anomaly type badge', async ({ page }) => {
