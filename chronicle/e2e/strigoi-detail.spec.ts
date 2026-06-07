@@ -46,4 +46,10 @@ test.describe('Strigoi Detail View (/strigoi/:name)', () => {
     await page.waitForLoadState('networkidle')
     await expect(page.locator('.sd-notfound')).toBeVisible()
   })
+
+  test('config panel shows a humanized recurring schedule', async ({ page }) => {
+    await page.goto('/strigoi/strigoi-spin')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('.kv-v', { hasText: /werktags|weekdays/ }).first()).toBeVisible()
+  })
 })

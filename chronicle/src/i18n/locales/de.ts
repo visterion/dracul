@@ -438,6 +438,9 @@ export default {
     },
     schedule: {
       next: 'nächster:',
+      weekdays: 'werktags',
+      daily: 'täglich',
+      everyAt: '{rec} · {time} Uhr',
     },
     stats: {
       preyPerHunt: 'Beute · je Jagd',

@@ -438,6 +438,9 @@ export default {
     },
     schedule: {
       next: 'next:',
+      weekdays: 'weekdays',
+      daily: 'daily',
+      everyAt: '{rec} · {time}',
     },
     stats: {
       preyPerHunt: 'Prey · per hunt',
