@@ -170,8 +170,28 @@ export default {
       backLink: '← Back to chronicle',
     },
     breadcrumb: {
-      chronicle: 'chronicle',
+      chronicle: 'the chronicle',
       verdict: 'verdict',
+    },
+    eyebrow: 'Verdict · {count} Strigoi converged',
+    tags: {
+      consensus: 'Consensus {value}',
+      horizon: 'Horizon {value}',
+    },
+    aside: {
+      consensusLabel: 'Consensus confidence',
+      glanceTitle: 'At a glance',
+      contributorsTitle: 'Contributors',
+      addToWatchlist: 'Add to watchlist',
+      watchlistAdded: 'Added to watchlist.',
+    },
+    facts: {
+      convergence: 'Convergence',
+      consensus: 'Consensus confidence',
+      avgConfidence: 'Avg confidence',
+      horizon: 'Horizon',
+      anomalyClass: 'Anomaly class',
+      currentPrice: 'Current price',
     },
     meta: {
       discovered: 'discovered',

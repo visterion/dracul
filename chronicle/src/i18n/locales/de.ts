@@ -170,8 +170,28 @@ export default {
       backLink: '← Zurück zur Chronik',
     },
     breadcrumb: {
-      chronicle: 'chronik',
+      chronicle: 'die Chronik',
       verdict: 'urteil',
+    },
+    eyebrow: 'Urteil · {count} Strigoi konvergiert',
+    tags: {
+      consensus: 'Konsens {value}',
+      horizon: 'Horizont {value}',
+    },
+    aside: {
+      consensusLabel: 'Konsens-Konfidenz',
+      glanceTitle: 'Auf einen Blick',
+      contributorsTitle: 'Beitragende',
+      addToWatchlist: 'Zur Watchlist hinzufügen',
+      watchlistAdded: 'Zur Watchlist hinzugefügt.',
+    },
+    facts: {
+      convergence: 'Konvergenz',
+      consensus: 'Konsens-Konfidenz',
+      avgConfidence: 'Ø Konfidenz',
+      horizon: 'Horizont',
+      anomalyClass: 'Anomalie-Klasse',
+      currentPrice: 'Aktueller Kurs',
     },
     meta: {
       discovered: 'entdeckt',
