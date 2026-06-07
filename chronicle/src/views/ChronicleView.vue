@@ -165,6 +165,6 @@ onMounted(() => store.load())
 }
 
 @media (max-width: 959.98px) {
-  .chronicle { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .chronicle { padding-inline: var(--space-4); }
 }
 </style>
