@@ -406,4 +406,8 @@ async function onAddNote() {
 }
 .vd__notes-input::placeholder { color: var(--ash-gray); }
 .vd__notes-input:focus { outline: none; border-color: var(--cathedral-gold); }
+
+@media (max-width: 959.98px) {
+  .vd__layout { grid-template-columns: 1fr; gap: var(--space-6); }
+}
 </style>

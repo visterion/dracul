@@ -377,4 +377,10 @@ const chartSeries = computed(() => [
 
 /* Chart */
 .sd__chart { background-color: var(--crypt-black-elevated); border: 1px solid rgba(184,148,92,0.1); border-radius: 4px; padding: var(--space-4) var(--space-5); }
+
+@media (max-width: 959.98px) {
+  .sd__stats-row { grid-template-columns: 1fr; }
+  .sd__prey-grid { grid-template-columns: 1fr; }
+  .sd__config { grid-template-columns: 1fr; }
+}
 </style>
