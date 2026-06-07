@@ -91,11 +91,11 @@ class HttpVistierieClientTest {
                 {
                   "name":"spinoff","anomaly_type":"SPINOFF","description":"Spin-off hunter",
                   "reference":"ref","paused":false,"last_tick_at":"2026-05-23T01:00:00Z",
+                  "schedule":"0 1 * * *","next_run_at":"2026-05-24T01:00:00Z",
                   "hunts_this_month":3,"scheduled_hunts_this_month":4,
                   "avg_prey_per_hunt":1.5,"hit_rate_90d":0.7,
                   "configuration":{
-                    "cron":"0 1 * * *","next_run_at":"2026-05-24T01:00:00Z",
-                    "disabled":false,"tier":"Standard",
+                    "tier":"Standard",
                     "daily_budget_usd":5.0,"daily_used_usd":1.2,
                     "monthly_budget_usd":50.0,"monthly_used_usd":10.0,
                     "primary_provider":"anthropic","fallback_provider":null
@@ -122,6 +122,26 @@ class HttpVistierieClientTest {
         assertThat(detail.configuration().cron()).isEqualTo("0 1 * * *");
         assertThat(detail.configuration().primaryProvider()).isEqualTo("anthropic");
         assertThat(detail.configuration().fallbackProvider()).isNull();
+    }
+
+    @Test
+    void getStrigoiDetail_readsFlatScheduleFields() {
+        wm.stubFor(get(urlEqualTo("/agents/strigoi-spin")).willReturn(okJson("""
+                {
+                  "name":"strigoi-spin","anomaly_type":"SPINOFF","description":"Spin-off hunter",
+                  "reference":"ref","paused":true,"last_tick_at":"2026-06-07T04:00:00Z",
+                  "schedule":"0 0 4 * * 1-5","next_run_at":"2026-06-11T04:00:00Z",
+                  "hunts_this_month":1,"scheduled_hunts_this_month":2,
+                  "avg_prey_per_hunt":0.5,"hit_rate_90d":0.4
+                }
+                """)));
+        wm.stubFor(get(urlEqualTo("/admin/runs?agent=strigoi-spin&limit=5")).willReturn(okJson("[]")));
+
+        var d = client.getStrigoiDetail("strigoi-spin").orElseThrow();
+
+        assertThat(d.configuration().cron()).isEqualTo("0 0 4 * * 1-5");
+        assertThat(d.configuration().nextRunAt()).isEqualTo("2026-06-11T04:00:00Z");
+        assertThat(d.configuration().disabled()).isTrue();
     }
 
     @Test
