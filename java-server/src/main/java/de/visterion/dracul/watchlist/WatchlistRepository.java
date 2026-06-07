@@ -25,25 +25,32 @@ public class WatchlistRepository {
     public List<WatchlistItem> findAllByUser(String userId) {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
-                       status, added_at, tag, verdict_id, price_history_30d
+                       status, added_at, tag, verdict_id, price_history_30d,
+                       entry_price, share_count
                 FROM watchlist_items
                 WHERE user_id = :userId
                 ORDER BY added_at DESC
                 """)
                 .param("userId", userId)
-                .query((rs, rowNum) -> new WatchlistItem(
-                        rs.getString("id"),
-                        rs.getString("ticker"),
-                        rs.getString("company_name"),
-                        rs.getDouble("current_price"),
-                        rs.getDouble("day_change_percent"),
-                        rs.getString("status"),
-                        rs.getString("added_at"),
-                        rs.getString("tag"),
-                        rs.getString("verdict_id"),
-                        new ArrayList<>(),
-                        readDoubleList(rs.getString("price_history_30d"))
-                ))
+                .query((rs, rowNum) -> {
+                    var ep = rs.getBigDecimal("entry_price");
+                    var sc = rs.getBigDecimal("share_count");
+                    return new WatchlistItem(
+                            rs.getString("id"),
+                            rs.getString("ticker"),
+                            rs.getString("company_name"),
+                            rs.getDouble("current_price"),
+                            rs.getDouble("day_change_percent"),
+                            rs.getString("status"),
+                            rs.getString("added_at"),
+                            rs.getString("tag"),
+                            rs.getString("verdict_id"),
+                            new ArrayList<>(),
+                            readDoubleList(rs.getString("price_history_30d")),
+                            ep == null ? null : ep.doubleValue(),
+                            sc == null ? null : sc.doubleValue()
+                    );
+                })
                 .list();
 
         if (items.isEmpty()) return items;
@@ -76,7 +83,8 @@ public class WatchlistRepository {
                         item.status(), item.addedAt(), item.tag(),
                         item.verdictId(),
                         alertsByItem.getOrDefault(item.id(), List.of()),
-                        item.priceHistory30d()
+                        item.priceHistory30d(),
+                        item.entryPrice(), item.shareCount()
                 ))
                 .toList();
     }
