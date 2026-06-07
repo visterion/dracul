@@ -21,11 +21,11 @@
       <!-- LLM Providers -->
       <template v-if="navSection === 'llm-providers'">
         <div class="settings__page-header">
-          <h1 class="settings__page-title font-display">LLM Providers</h1>
-          <p class="settings__page-subtitle">Configure which models the agents may call</p>
+          <h1 class="settings__page-title font-display">{{ t('settings.providers.title') }}</h1>
+          <p class="settings__page-subtitle">{{ t('settings.providers.subtitle') }}</p>
         </div>
 
-        <div class="settings__section-header">── connected providers</div>
+        <div class="settings__section-header">{{ t('settings.providers.sectionConnected') }}</div>
 
         <template v-if="loading">
           <v-skeleton-loader v-for="i in 3" :key="i" type="card" class="mb-3" />
@@ -44,25 +44,25 @@
             >
               ●
               {{
-                provider.status === 'connected' ? 'connected' :
-                provider.status === 'fallback' ? 'connected (fallback only)' :
-                'running'
+                provider.status === 'connected' ? t('settings.providers.statusConnected') :
+                provider.status === 'fallback' ? t('settings.providers.statusFallback') :
+                t('settings.providers.statusRunning')
               }}
             </span>
           </div>
 
           <div class="settings__provider-row">
             <template v-if="provider.status === 'local'">
-              Endpoint: <span>{{ provider.endpoint }}</span>
+              {{ t('settings.providers.endpoint') }}: <span>{{ provider.endpoint }}</span>
             </template>
             <template v-else>
-              API key: <span>configured {{ provider.apiKeyMasked }}</span>
-              &nbsp;<a href="#" class="settings__reveal-link" @click.prevent="() => {}">[reveal]</a>
+              {{ t('settings.providers.apiKey') }}: <span>{{ t('settings.providers.apiKeyConfigured') }} {{ provider.apiKeyMasked }}</span>
+              &nbsp;<a href="#" class="settings__reveal-link" @click.prevent="() => {}">{{ t('settings.providers.reveal') }}</a>
             </template>
           </div>
 
           <div class="settings__provider-row">
-            Models: <span>{{ provider.models.join(', ') }}</span>
+            {{ t('settings.providers.models') }}: <span>{{ provider.models.join(', ') }}</span>
           </div>
 
           <div class="settings__provider-row">
@@ -78,23 +78,23 @@
           </div>
 
           <div class="settings__provider-actions">
-            <button class="settings__btn-edit" @click="() => {}">edit</button>
-            <button class="settings__btn-edit" @click="() => {}">test connection</button>
+            <button class="settings__btn-edit" @click="() => {}">{{ t('settings.providers.edit') }}</button>
+            <button class="settings__btn-edit" @click="() => {}">{{ t('settings.providers.testConnection') }}</button>
           </div>
         </div>
 
-        <div class="settings__section-header">── add provider</div>
+        <div class="settings__section-header">{{ t('settings.providers.sectionAddProvider') }}</div>
         <div class="settings__add-provider" @click="() => {}">
-          <div>+ Add provider plugin</div>
-          <small>Vistierie supports any provider implementing the ProviderPlugin interface</small>
+          <div>{{ t('settings.providers.addPlugin') }}</div>
+          <small>{{ t('settings.providers.addPluginHint') }}</small>
         </div>
       </template>
 
       <!-- Budgets section -->
       <template v-else-if="navSection === 'budgets'">
         <div class="settings__page-header">
-          <h1 class="settings__page-title font-display">Budgets &amp; Cost Control</h1>
-          <p class="settings__page-subtitle">Daily and monthly spend limits per tenant and agent</p>
+          <h1 class="settings__page-title font-display">{{ t('settings.budgets.title') }}</h1>
+          <p class="settings__page-subtitle">{{ t('settings.budgets.subtitle') }}</p>
         </div>
 
         <div v-if="budgetError" class="settings__budget-error">{{ budgetError }}</div>
@@ -104,52 +104,52 @@
         </template>
 
         <template v-else-if="budgetData">
-          <div class="settings__section-header">── tenant budget (dracul)</div>
+          <div class="settings__section-header">{{ t('settings.budgets.sectionTenant') }}</div>
           <div class="settings__budget-grid">
             <div class="settings__budget-field">
-              <label class="settings__budget-label">Daily cap (USD)</label>
+              <label class="settings__budget-label">{{ t('settings.budgets.dailyCap') }}</label>
               <input class="settings__budget-input" v-model="tenantEdit.dailyCapUsd" placeholder="∞" />
               <div class="settings__budget-usage">
                 used: ${{ (budgetData.tenant.dailyUsageMicros / 1_000_000).toFixed(4) }}
               </div>
             </div>
             <div class="settings__budget-field">
-              <label class="settings__budget-label">Monthly cap (USD)</label>
+              <label class="settings__budget-label">{{ t('settings.budgets.monthlyCap') }}</label>
               <input class="settings__budget-input" v-model="tenantEdit.monthlyCapUsd" placeholder="∞" />
               <div class="settings__budget-usage">
                 used: ${{ (budgetData.tenant.monthlyUsageMicros / 1_000_000).toFixed(2) }}
               </div>
             </div>
             <div class="settings__budget-field">
-              <label class="settings__budget-label">Daily warn %</label>
+              <label class="settings__budget-label">{{ t('settings.budgets.dailyWarn') }}</label>
               <input class="settings__budget-input" v-model="tenantEdit.dailyWarnPct" type="number" min="1" max="100" />
             </div>
             <div class="settings__budget-field">
-              <label class="settings__budget-label">Monthly warn %</label>
+              <label class="settings__budget-label">{{ t('settings.budgets.monthlyWarn') }}</label>
               <input class="settings__budget-input" v-model="tenantEdit.monthlyWarnPct" type="number" min="1" max="100" />
             </div>
           </div>
           <div v-if="budgetData.tenant.dailyWarned || budgetData.tenant.dailyBlocked" class="settings__budget-flags">
-            <span v-if="budgetData.tenant.dailyBlocked" class="settings__budget-flag--blocked">● daily blocked</span>
-            <span v-else-if="budgetData.tenant.dailyWarned" class="settings__budget-flag--warned">● daily warn</span>
+            <span v-if="budgetData.tenant.dailyBlocked" class="settings__budget-flag--blocked">{{ t('settings.budgets.flagBlocked') }}</span>
+            <span v-else-if="budgetData.tenant.dailyWarned" class="settings__budget-flag--warned">{{ t('settings.budgets.flagWarned') }}</span>
           </div>
           <div class="settings__budget-actions">
             <button
               class="settings__btn-save"
               :disabled="budgetSaving === 'tenant'"
               @click="saveTenantBudget"
-            >{{ budgetSaving === 'tenant' ? 'Saving…' : 'Save tenant budget' }}</button>
+            >{{ budgetSaving === 'tenant' ? t('settings.budgets.saving') : t('settings.budgets.saveTenant') }}</button>
           </div>
 
-          <div class="settings__section-header settings__section-header--spaced">── per-agent budgets</div>
+          <div class="settings__section-header settings__section-header--spaced">{{ t('settings.budgets.sectionAgents') }}</div>
           <table class="settings__budget-table">
             <thead>
               <tr>
-                <th>Agent</th>
-                <th>Daily cap (USD)</th>
-                <th>Monthly cap (USD)</th>
-                <th>Daily used</th>
-                <th>Monthly used</th>
+                <th>{{ t('settings.budgets.tableAgent') }}</th>
+                <th>{{ t('settings.budgets.tableDailyCap') }}</th>
+                <th>{{ t('settings.budgets.tableMonthlyCap') }}</th>
+                <th>{{ t('settings.budgets.tableDailyUsed') }}</th>
+                <th>{{ t('settings.budgets.tableMonthlyUsed') }}</th>
                 <th></th>
               </tr>
             </thead>
@@ -177,7 +177,7 @@
                     class="settings__btn-edit"
                     :disabled="budgetSaving === agent.name"
                     @click="saveAgentBudget(agent.name)"
-                  >{{ budgetSaving === agent.name ? '…' : 'save' }}</button>
+                  >{{ budgetSaving === agent.name ? t('settings.budgets.savingAgent') : t('settings.budgets.saveAgent') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -212,7 +212,7 @@
           <h1 class="settings__page-title font-display">{{ currentNavItem?.label }}</h1>
         </div>
         <div class="settings__stub">
-          <p>Configuration for this section is coming in a future etappe.</p>
+          <p>{{ t('settings.stub') }}</p>
         </div>
       </template>
     </div>
@@ -245,19 +245,19 @@ async function changeLanguage(lang: string) {
   }
 }
 
-const navItems = [
-  { id: 'llm-providers', icon: '⚙', label: 'LLM Providers',              disabled: false, badge: null },
-  { id: 'agent-config',  icon: '🦇', label: 'Agent Configuration',       disabled: false, badge: null },
-  { id: 'budgets',       icon: '🪙', label: 'Budgets & Cost Control',    disabled: false, badge: null },
-  { id: 'data-sources',  icon: '📊', label: 'Data Sources',              disabled: false, badge: null },
-  { id: 'messenger',     icon: '💬', label: 'Messenger & Notifications', disabled: false, badge: null },
-  { id: 'multi-user',    icon: '👥', label: 'Multi-User Settings',       disabled: true,  badge: 'Phase 2' },
-  { id: 'backup',        icon: '💾', label: 'Backup & Export',           disabled: false, badge: null },
-  { id: 'language',      icon: '🌐', label: 'Sprache',                 disabled: false, badge: null },
-  { id: 'about',         icon: 'ℹ',  label: 'About Dracul',             disabled: false, badge: null },
-]
+const navItems = computed(() => [
+  { id: 'llm-providers', icon: '⚙', label: t('settings.nav.llmProviders'),  disabled: false, badge: null },
+  { id: 'agent-config',  icon: '🦇', label: t('settings.nav.agentConfig'),  disabled: false, badge: null },
+  { id: 'budgets',       icon: '🪙', label: t('settings.nav.budgets'),       disabled: false, badge: null },
+  { id: 'data-sources',  icon: '📊', label: t('settings.nav.dataSources'),   disabled: false, badge: null },
+  { id: 'messenger',     icon: '💬', label: t('settings.nav.messenger'),     disabled: false, badge: null },
+  { id: 'multi-user',    icon: '👥', label: t('settings.nav.multiUser'),     disabled: true,  badge: 'Phase 2' },
+  { id: 'backup',        icon: '💾', label: t('settings.nav.backup'),        disabled: false, badge: null },
+  { id: 'language',      icon: '🌐', label: t('settings.nav.language'),      disabled: false, badge: null },
+  { id: 'about',         icon: 'ℹ',  label: t('settings.nav.about'),         disabled: false, badge: null },
+])
 
-const currentNavItem = computed(() => navItems.find(i => i.id === navSection.value))
+const currentNavItem = computed(() => navItems.value.find(i => i.id === navSection.value))
 
 // ── Budget state ───────────────────────────────────────────────
 const budgetData    = ref<SettingsBudgetData | null>(null)
@@ -284,12 +284,12 @@ async function loadBudgets() {
   budgetError.value = null
   try {
     budgetData.value = await api.getSettingsBudgets()
-    const t = budgetData.value.tenant
+    const tb = budgetData.value.tenant
     tenantEdit.value = {
-      dailyCapUsd:    microsToUsd(t.dailyCapMicros),
-      monthlyCapUsd:  microsToUsd(t.monthlyCapMicros),
-      dailyWarnPct:   String(t.dailyWarnPercent ?? 80),
-      monthlyWarnPct: String(t.monthlyWarnPercent ?? 80),
+      dailyCapUsd:    microsToUsd(tb.dailyCapMicros),
+      monthlyCapUsd:  microsToUsd(tb.monthlyCapMicros),
+      dailyWarnPct:   String(tb.dailyWarnPercent ?? 80),
+      monthlyWarnPct: String(tb.monthlyWarnPercent ?? 80),
     }
     for (const a of budgetData.value.agents) {
       agentEdits.value[a.name] = {
