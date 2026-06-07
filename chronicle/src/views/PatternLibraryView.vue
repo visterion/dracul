@@ -1,10 +1,14 @@
 <template>
-  <div class="patterns">
-    <div class="patterns__header">
-      <div class="patterns__header-icon">📜</div>
-      <h1 class="patterns__title font-display">{{ t('patterns.title') }}</h1>
-      <p class="patterns__subtitle">{{ t('patterns.subtitle') }}</p>
-    </div>
+  <div class="patterns content-inner">
+    <PageHead :sub="t('patterns.subtitle')">
+      <template #eyebrow>
+        <BatGlyph :size="13" :dim="false" />
+        {{ t('patterns.eyebrow') }}
+      </template>
+      <template #title>
+        <span class="patterns__title">{{ t('patterns.pageTitle') }}</span>
+      </template>
+    </PageHead>
 
     <template v-if="loading">
       <v-skeleton-loader v-for="i in 3" :key="i" type="card" class="mb-3" />
@@ -12,57 +16,36 @@
 
     <template v-else>
       <div v-if="actionError" class="patterns__action-error">{{ actionError }}</div>
+
       <!-- Pending section -->
-      <div class="patterns__section-header">{{ t('patterns.sections.pending', { n: pendingPatterns.length }) }}</div>
+      <div class="section-head">
+        <span class="sh-rule" />
+        {{ t('patterns.sections.pendingTitle') }}
+        <span class="sh-sub">{{ pendingPatterns.length }} {{ t('patterns.sections.pendingCount') }}</span>
+      </div>
 
-      <div v-if="pendingPatterns.length === 0" class="patterns__empty">{{ t('patterns.empty.pending') }}</div>
+      <div v-if="pendingPatterns.length === 0" class="empty small">
+        <p class="em-text">{{ t('patterns.empty.pending') }}</p>
+      </div>
 
-      <div
-        v-for="pattern in pendingPatterns"
-        :key="pattern.id"
-        class="patterns__pending-card"
-        data-testid="pending-pattern-card"
-      >
-        <div class="patterns__pending-header">
-          <div>
-            <span class="patterns__bat">🦇</span>
-            <span class="patterns__strigoi-name">{{ pattern.appliesToStrigoi }}</span>
-          </div>
-          <span class="patterns__pending-when">{{ t('patterns.proposedBy', { when: daysAgo(pattern.proposedAt) }) }}</span>
-        </div>
-        <p class="patterns__lesson">{{ pattern.statement }}</p>
-        <div class="patterns__evidence">
-          {{ t('patterns.evidence.basedOn', { n: pattern.evidenceCount }) }}
-          <template v-if="pattern.supportedCount !== undefined">
-            {{ t('patterns.evidence.supported', { n: pattern.supportedCount, total: pattern.evidenceCount }) }}
-          </template>
-          <template v-if="pattern.avgUpliftPercent !== null && pattern.avgUpliftPercent !== undefined">
-            {{ t('patterns.evidence.avgUplift', { n: pattern.avgUpliftPercent }) }}
-          </template>
-          &nbsp;
-          <a href="#" class="patterns__cases-link" @click.prevent="() => {}">{{ t('patterns.evidence.viewCases') }}</a>
-        </div>
-        <div class="patterns__pending-actions">
-          <button
-            class="patterns__btn-ghost"
-            :disabled="pendingLoadingId === pattern.id"
-            @click="handlePendingAction(pattern.id, 'defer')"
-          >{{ t('patterns.buttons.defer') }}</button>
-          <button
-            class="patterns__btn-secondary"
-            :disabled="pendingLoadingId === pattern.id"
-            @click="handlePendingAction(pattern.id, 'reject')"
-          >{{ t('patterns.buttons.reject') }}</button>
-          <button
-            class="patterns__btn-primary"
-            :disabled="pendingLoadingId === pattern.id"
-            @click="handlePendingAction(pattern.id, 'approve')"
-          >{{ pendingLoadingId === pattern.id ? t('patterns.buttons.loading') : t('patterns.buttons.approveActivate') }}</button>
-        </div>
+      <div class="stack-5" style="margin-bottom: var(--space-10)">
+        <PatternCard
+          v-for="pattern in pendingPatterns"
+          :key="pattern.id"
+          :pattern="pattern"
+          :pending="true"
+          :loading="pendingLoadingId === pattern.id"
+          data-testid="pending-pattern-card"
+          @act="(action) => handlePendingAction(pattern.id, action)"
+        />
       </div>
 
       <!-- Active section -->
-      <div class="patterns__section-header patterns__section-header--spaced">{{ t('patterns.sections.active', { n: activePatterns.length }) }}</div>
+      <div class="section-head">
+        <span class="sh-rule" />
+        {{ t('patterns.sections.activeTitle') }}
+        <span class="sh-sub">{{ activePatterns.length }} {{ t('patterns.sections.activeCount') }}</span>
+      </div>
 
       <div class="patterns__filter-chips">
         <button
@@ -83,18 +66,22 @@
         </button>
       </div>
 
-      <div class="patterns__active-list">
+      <div class="stack-4">
         <div
           v-for="pattern in filteredActivePatterns"
           :key="pattern.id"
           class="patterns__active-row"
           data-testid="active-pattern-row"
         >
-          <div class="patterns__active-header" data-testid="active-pattern-expand" @click="toggleExpand(pattern.id)">
-            <span class="patterns__bat">🦇</span>
-            <span class="patterns__active-name">{{ pattern.name ?? pattern.id }}</span>
+          <div
+            class="patterns__active-header"
+            data-testid="active-pattern-expand"
+            @click="toggleExpand(pattern.id)"
+          >
+            <BatGlyph :size="13" :dim="false" class="patterns__bat" />
+            <span class="patterns__active-name mono">{{ pattern.name ?? pattern.id }}</span>
             <span class="patterns__strigoi-chip">{{ pattern.appliesToStrigoi.replace('strigoi-', '') }}</span>
-            <span class="patterns__evidence-count">{{ t('patterns.evidenceCount', { n: pattern.evidenceCount }) }}</span>
+            <span class="patterns__evidence-count mono">{{ t('patterns.evidenceCount', { n: pattern.evidenceCount }) }}</span>
             <span class="patterns__activated">{{ monthsAgo(pattern.proposedAt) }}</span>
             <button class="patterns__expand-btn" @click.stop="toggleExpand(pattern.id)">
               {{ expandedIds.has(pattern.id) ? '▼' : '▶' }}
@@ -103,15 +90,15 @@
           <div v-if="expandedIds.has(pattern.id)" class="patterns__active-body">
             <p class="patterns__active-text">{{ pattern.statement }}</p>
             <button
-              class="patterns__btn-ghost"
+              class="btn btn-ghost"
               :disabled="activeLoadingId === pattern.id"
               @click="handleDeactivate(pattern.id)"
             >{{ activeLoadingId === pattern.id ? t('patterns.buttons.loading') : t('patterns.buttons.deactivate') }}</button>
           </div>
         </div>
 
-        <div v-if="filteredActivePatterns.length === 0" class="patterns__empty">
-          {{ t('patterns.empty.active') }}
+        <div v-if="filteredActivePatterns.length === 0" class="empty small">
+          <p class="em-text">{{ t('patterns.empty.active') }}</p>
         </div>
       </div>
     </template>
@@ -122,7 +109,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../api'
-import type { Pattern } from '../api/types'
+import type { Pattern, PatternAction } from '../api/types'
+import PageHead from '../components/common/PageHead.vue'
+import BatGlyph from '../components/common/BatGlyph.vue'
+import PatternCard from '../components/common/PatternCard.vue'
 
 const { t } = useI18n()
 const api = useApi()
@@ -135,7 +125,8 @@ const pendingLoadingId = ref<string | null>(null)
 const activeLoadingId  = ref<string | null>(null)
 const actionError      = ref<string | null>(null)
 
-async function handlePendingAction(id: string, action: 'approve' | 'reject' | 'defer') {
+async function handlePendingAction(id: string, action: PatternAction) {
+  if (action === 'deactivate') return  // only for active cards
   pendingLoadingId.value = id
   actionError.value = null
   try {
@@ -199,13 +190,6 @@ function toggleExpand(id: string) {
   expandedIds.value = next
 }
 
-function daysAgo(isoString: string): string {
-  const days = Math.floor((Date.now() - new Date(isoString).getTime()) / 86_400_000)
-  if (days === 0) return t('patterns.daysAgo.today')
-  if (days === 1) return t('patterns.daysAgo.yesterday')
-  return t('patterns.daysAgo.days', { n: days })
-}
-
 function monthsAgo(isoString: string): string {
   const months = Math.floor((Date.now() - new Date(isoString).getTime()) / (30 * 86_400_000))
   if (months === 0) return t('patterns.monthsAgo.thisMonth')
@@ -221,116 +205,11 @@ function monthsAgo(isoString: string): string {
   padding: 28px 32px;
 }
 
-.patterns__header { margin-bottom: 28px; }
-.patterns__header-icon { color: var(--cathedral-gold); font-size: 20px; margin-bottom: 6px; }
-.patterns__title {
-  font-size: 36px;
-  font-weight: 400;
-  color: var(--bone-ivory);
-  margin: 0 0 4px 0;
-}
-.patterns__subtitle { font-size: 14px; color: var(--bone-ivory-dim); margin: 0; }
-
-.patterns__section-header {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ash-gray);
-  letter-spacing: 0.05em;
-  margin: 20px 0 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.patterns__section-header::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.06);
-}
-.patterns__section-header--spaced { margin-top: 28px; }
-
-.patterns__empty { font-size: 13px; color: var(--ash-gray); font-style: italic; }
-
-.patterns__pending-card {
-  background: var(--crypt-black-elevated);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-left: 2px solid var(--cathedral-gold);
-  border-radius: 2px;
-  padding: 16px 20px;
-  margin-bottom: 12px;
-}
-
-.patterns__pending-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.patterns__bat { color: var(--cathedral-gold); margin-right: 6px; }
-.patterns__strigoi-name { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
-.patterns__pending-when { font-size: 11px; color: var(--ash-gray); }
-
-.patterns__lesson {
-  font-size: 13px;
-  color: var(--bone-ivory);
-  line-height: 1.6;
-  font-style: italic;
-  margin: 0 0 10px 0;
-}
-
-.patterns__evidence {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ash-gray);
-  margin-bottom: 12px;
-}
-
-.patterns__cases-link {
+.patterns__action-error {
   color: var(--blood-crimson);
-  text-decoration: none;
+  font-size: var(--text-micro);
+  margin-bottom: var(--space-4);
 }
-.patterns__cases-link:hover { color: var(--blood-crimson-bright); }
-
-.patterns__pending-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.patterns__btn-primary {
-  padding: 6px 14px;
-  background: var(--blood-crimson);
-  border: none;
-  border-radius: 2px;
-  color: var(--bone-ivory);
-  font-size: 12px;
-  cursor: pointer;
-  font-family: var(--font-body);
-}
-.patterns__btn-primary:hover { background: var(--blood-crimson-bright); }
-
-.patterns__btn-secondary {
-  padding: 6px 14px;
-  background: none;
-  border: 1px solid var(--ash-gray);
-  border-radius: 2px;
-  color: var(--bone-ivory-dim);
-  font-size: 12px;
-  cursor: pointer;
-  font-family: var(--font-body);
-}
-.patterns__btn-secondary:hover { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
-
-.patterns__btn-ghost {
-  padding: 6px 14px;
-  background: none;
-  border: none;
-  color: var(--ash-gray);
-  font-size: 12px;
-  cursor: pointer;
-  font-family: var(--font-body);
-}
-.patterns__btn-ghost:hover { color: var(--bone-ivory-dim); }
 
 .patterns__filter-chips {
   display: flex;
@@ -338,7 +217,6 @@ function monthsAgo(isoString: string): string {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-
 .patterns__chip {
   padding: 4px 10px;
   border-radius: 2px;
@@ -353,30 +231,26 @@ function monthsAgo(isoString: string): string {
 .patterns__chip--active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
 .patterns__chip:hover:not(.patterns__chip--active) { color: var(--bone-ivory-dim); }
 
-.patterns__active-list {
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
 .patterns__active-row {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--crypt-black-elevated);
+  border: var(--hairline);
+  border-radius: 4px;
 }
-.patterns__active-row:last-child { border-bottom: none; }
 
 .patterns__active-header {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  background: var(--crypt-black-elevated);
   cursor: pointer;
   transition: background 0.1s;
 }
 .patterns__active-header:hover { background: rgba(184, 148, 92, 0.04); }
 
+.patterns__bat { flex-shrink: 0; }
+
 .patterns__active-name {
-  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--bone-ivory);
   flex: 1;
@@ -394,7 +268,6 @@ function monthsAgo(isoString: string): string {
 .patterns__evidence-count {
   font-size: 11px;
   color: var(--ash-gray);
-  font-family: var(--font-mono);
   min-width: 80px;
 }
 .patterns__activated {
@@ -424,15 +297,8 @@ function monthsAgo(isoString: string): string {
   margin: 0 0 10px 0;
 }
 
-.patterns__action-error {
-  color: var(--blood-crimson);
-  font-size: var(--text-micro);
-  margin-bottom: var(--space-4);
-}
-
 @media (max-width: 959.98px) {
-  .patterns__pending-header { flex-wrap: wrap; }
-  .patterns__pending-actions { flex-wrap: wrap; }
+  .patterns { padding: 16px; }
   .patterns__active-header { flex-wrap: wrap; }
 }
 </style>

@@ -277,10 +277,17 @@ export default {
   },
   patterns: {
     title: 'Musterbibliothek',
+    pageTitle: 'Die Lehren des Woiwoden',
+    eyebrow: 'Musterbibliothek',
     subtitle: 'Lektionen des Woiwoden, die das Jagdverhalten der Strigoi bestimmen',
+    activeSince: 'aktiv seit {when}',
     sections: {
       pending: '── ausstehende Überprüfung ({n})',
       active: '── aktive Muster ({n})',
+      pendingTitle: 'Ausstehende Überprüfung',
+      pendingCount: 'ausstehend',
+      activeTitle: 'Aktive Muster',
+      activeCount: 'aktiv',
     },
     empty: {
       pending: 'Keine Muster zur Überprüfung.',
