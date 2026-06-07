@@ -4,6 +4,7 @@
     :viewBox="`0 0 ${W} ${H}`"
     preserveAspectRatio="none"
     role="img"
+    :aria-label="ariaLabel"
   >
     <line
       v-for="(gy, i) in gridYs"
@@ -54,6 +55,7 @@ const props = defineProps<{
   height?: number
   areaFill?: boolean
   labels?: { i: number; t: string }[]
+  ariaLabel?: string
 }>()
 
 const W = 720
@@ -85,12 +87,14 @@ const gridYs = computed(() =>
 )
 
 function linePath(s: Series): string {
+  if (s.data.length === 0) return ''
   return s.data
     .map((v, i) => `${i === 0 ? 'M' : 'L'} ${xPos(i).toFixed(1)} ${yPos(v).toFixed(1)}`)
     .join(' ')
 }
 
 function areaPath(s: Series): string {
+  if (s.data.length === 0) return ''
   const line = linePath(s)
   const last = s.data.length - 1
   return `${line} L ${xPos(last).toFixed(1)} ${H.value - padB.value} L ${xPos(0).toFixed(1)} ${H.value - padB.value} Z`
