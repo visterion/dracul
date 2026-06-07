@@ -6,51 +6,39 @@ test.describe('Strigoi Detail View (/strigoi/:name)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`/strigoi/${STRIGOI_NAME}`)
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.sd__name')).toBeVisible()
+    await expect(page.locator('.page-title')).toBeVisible()
   })
 
   test('renders agent name in header', async ({ page }) => {
-    await expect(page.locator('.sd__name')).toContainText(STRIGOI_NAME)
+    await expect(page.locator('.page-title')).toContainText(STRIGOI_NAME)
   })
 
-  test('renders state pill', async ({ page }) => {
-    await expect(page.locator('.sd__state-pill')).toBeVisible()
+  test('renders state dot + label in the sub line', async ({ page }) => {
+    await expect(page.locator('.strigoi-state .state-dot')).toBeVisible()
+    await expect(page.locator('.strigoi-state')).not.toBeEmpty()
   })
 
-  test('renders 3 stat cards', async ({ page }) => {
-    await expect(page.locator('.sd__stat-card')).toHaveCount(3)
+  test('renders 4 stat tiles', async ({ page }) => {
+    await expect(page.locator('.stat-grid .stat-tile')).toHaveCount(4)
   })
 
-  test('renders at least 1 run in the timeline', async ({ page }) => {
-    await expect(page.locator('.sd__run').first()).toBeVisible()
+  test('renders the run trace', async ({ page }) => {
+    await expect(page.locator('[data-testid="run-trace"]')).toBeVisible()
+    await expect(page.locator('[data-testid="run-trace"] .trace-line').first()).toBeVisible()
   })
 
-  test('renders at least 1 prey card in recent prey grid', async ({ page }) => {
-    await expect(page.locator('[data-testid="prey-card"]').first()).toBeVisible()
+  test('renders at least 1 prey card in the recent prey feed', async ({ page }) => {
+    await expect(page.locator('.feed [data-testid="prey-card"]').first()).toBeVisible()
   })
 
-  test('renders ApexCharts chart container', async ({ page }) => {
-    await expect(page.locator('.apexcharts-canvas').first()).toBeVisible()
+  test('renders the configuration aside', async ({ page }) => {
+    await expect(page.locator('.verdict-aside .kv-list')).toBeVisible()
+    await expect(page.locator('.verdict-aside .kv-row').first()).toBeVisible()
   })
 
-  test('clicking a run header expands the trace', async ({ page }) => {
-    const runHeaders = page.locator('.sd__run-header')
-    const traces = page.locator('.sd__run-trace')
-    // The first run is auto-expanded on mount. Collapse it first, then expand again.
-    await expect(traces.first()).toBeVisible()
-    await runHeaders.first().click()
-    await expect(traces.first()).not.toBeVisible()
-    await runHeaders.first().click()
-    await expect(traces.first()).toBeVisible()
-  })
-
-  test('clicking an expanded run header collapses the trace', async ({ page }) => {
-    const firstHeader = page.locator('.sd__run-header').first()
-    const firstTrace = page.locator('.sd__run-trace').first()
-    // First run is auto-expanded on mount
-    await expect(firstTrace).toBeVisible()
-    await firstHeader.click()
-    await expect(firstTrace).not.toBeVisible()
+  test('clicking a prey card navigates to the prey detail view', async ({ page }) => {
+    await page.locator('.feed [data-testid="prey-card"]').first().click()
+    await expect(page).toHaveURL(/\/prey\//)
   })
 
   test('unknown strigoi name shows not-found state', async ({ page }) => {

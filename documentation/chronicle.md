@@ -10,7 +10,7 @@ operator's morning view and daily workspace.
 - Pinia 2 (Setup Stores)
 - Vue Router 4 (`createWebHistory`)
 - Vite 6 + TypeScript 5 (strict mode)
-- ApexCharts / vue3-apexcharts (used in View 3 Strigoi Detail; stubs in Views 6, 7)
+- ApexCharts / vue3-apexcharts (used in Views 6, 7)
 - @phosphor-icons/vue for functional iconography
 - SSE via native `EventSource` for live Daywalker updates (Etappe 12)
 
@@ -151,12 +151,20 @@ stats table (price, consensus, avg confidence, horizon, discovered), Daywalker
 status panel.
 
 **View 3 — Strigoi Detail** (`/strigoi/:name`): Fully implemented and wired to the real API.
-Single-pane layout. Page header with bat icon, state pill (hunting/resting/paused/
-budget-hit), schedule. Three stat cards (hunts, avg prey, hit rate — green when
-≥60%). Expandable run trace timeline (newest auto-expanded, trace rows styled by
-event type). 3-column recent prey grid (reuses PreyCard). 2-column configuration
-panel. ApexCharts dual-axis line chart (hit rate % left axis, prey count right axis,
-25 weeks of data).
+BackLink + PageHead (bat-glyph eyebrow "Strigoi · {focus}", mono agent name, sub line
+with StateDot + localized state label (jagt/ruht/pausiert/Budget erreicht) + next-run
+summary). Four `.stat-tile`s from real fields only — prey per hunt (`avgPreyPerHunt`),
+hit rate (`hitRate90d` with numerator/denominator foot), hunts (`huntsThisMonth` of
+`scheduledHuntsThisMonth`), tier (`configuration.tier` with cron foot); no fabricated
+return metric. Two-column `verdict-grid`: left stack = "Letzter Lauf · Trace" card
+(RunTrace component rendering `recentRuns[0].trace`, with run meta ranAt/model/prey/cost)
++ "Jüngste Beute" feed (PreyCard per `recentPrey`, empty state when none); right
+sticky aside = "Konfiguration" kv-list (cron, next run, tier, allowed models, daily/
+monthly budget used vs cap, primary/fallback provider, disabled flag). No trigger/pause
+action is rendered — no such write endpoint exists in v1, so the prototype's button is
+intentionally omitted rather than faked. **RunTrace** (`components/common/RunTrace.vue`):
+maps `TraceEvent.type` → start (▼) / end (▲) crimson event rows, llm-call highlighted
+row, info/other plain rows.
 
 ## Implementation status (Etappe 11)
 
