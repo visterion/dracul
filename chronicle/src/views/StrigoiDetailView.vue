@@ -197,7 +197,8 @@ watch(() => route.params.name as string, async (name) => {
 }, { immediate: true })
 
 function onBack() {
-  router.push('/')
+  if (window.history.state?.back) router.back()
+  else router.push({ name: 'chronicle' })
 }
 
 function onOpenPrey(prey: Prey) {
