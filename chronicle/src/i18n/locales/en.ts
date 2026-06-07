@@ -1,7 +1,5 @@
 export default {
   common: {
-    save: 'Save',
-    loading: 'Loading …',
     language: 'Language',
   },
   app: {
@@ -20,7 +18,6 @@ export default {
   },
   settings: {
     language: {
-      navLabel: 'Language',
       title: 'Language',
       subtitle: 'Language of the interface and the AI narratives',
       german: 'German',
