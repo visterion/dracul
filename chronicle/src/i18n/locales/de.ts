@@ -19,7 +19,7 @@ export default {
       hunting: 'jagen',
       lastVerdict: 'letztes Urteil vor {time}',
       lastVerdictNone: 'noch kein Urteil',
-      costThisMonth: '{cost} diesen Monat',
+      costToday: '{cost} heute',
       motto: 'eternal patience',
     },
   },

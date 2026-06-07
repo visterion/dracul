@@ -271,7 +271,7 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
 
 @media (max-width: 959.98px) {
   /* Touch ergonomics: comfortable tap targets, no iOS input auto-zoom. */
-  button, a, [role="button"], .v-btn { min-height: 44px; }
+  button, [role="button"], .v-btn, a.btn, a.back-link { min-height: 44px; }
   input, select, textarea { font-size: 16px; }
 
   /* Shell is swapped at the component level via useDisplay() in App.vue

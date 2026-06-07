@@ -42,7 +42,7 @@
           <i class="ph ph-moon" aria-hidden="true"></i>
         </button>
         <!-- User avatar placeholder — auth not in Phase 1 -->
-        <div v-if="!mobile" class="top-bar__avatar" aria-label="User account">
+        <div v-if="!mobile" class="top-bar__avatar" aria-hidden="true">
           <span>V</span>
         </div>
       </div>

@@ -18,7 +18,7 @@
     </span>
     <span class="sb-sep">·</span>
     <span class="sb-item">
-      <i18n-t keypath="app.status.costThisMonth" tag="span">
+      <i18n-t keypath="app.status.costToday" tag="span">
         <template #cost><span class="sb-strong mono">${{ cost }}</span></template>
       </i18n-t>
     </span>
