@@ -42,33 +42,33 @@ test.describe('Backtest View (/backtest)', () => {
     await expect.poll(() => page.locator('.bt-recent-card').count()).toBeGreaterThanOrEqual(3)
   })
 
-  test('Übersicht tab is active by default and shows the equity chart', async ({ page }) => {
-    await expect(page.locator('.restab.active')).toContainText('Übersicht')
+  test('overview tab is active by default and shows the equity chart', async ({ page }) => {
+    await expect(page.locator('[data-testid="restab-overview"]')).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.chart-card .svg-chart')).toBeVisible()
   })
 
-  test('clicking Trades tab shows trades table', async ({ page }) => {
-    await page.click('.restab:has-text("Trades")')
-    await expect(page.locator('.restab.active')).toContainText('Trades')
+  test('clicking trades tab shows trades table', async ({ page }) => {
+    await page.click('[data-testid="restab-trades"]')
+    await expect(page.locator('[data-testid="restab-trades"]')).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('table.dt')).toBeVisible()
     await expect(page.locator('table.dt tbody tr').first()).toBeVisible()
   })
 
-  test('clicking Equity-Kurve tab shows SVG chart', async ({ page }) => {
-    await page.click('.restab:has-text("Equity-Kurve")')
-    await expect(page.locator('.restab.active')).toContainText('Equity-Kurve')
+  test('clicking equity tab shows SVG chart', async ({ page }) => {
+    await page.click('[data-testid="restab-equity"]')
+    await expect(page.locator('[data-testid="restab-equity"]')).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.chart-card .svg-chart')).toBeVisible()
   })
 
-  test('clicking Vergleich tab shows the chart card', async ({ page }) => {
-    await page.click('.restab:has-text("Vergleich")')
-    await expect(page.locator('.restab.active')).toContainText('Vergleich')
+  test('clicking compare tab shows the chart card', async ({ page }) => {
+    await page.click('[data-testid="restab-compare"]')
+    await expect(page.locator('[data-testid="restab-compare"]')).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.chart-card .svg-chart')).toBeVisible()
   })
 
-  test('switching from chart to Trades changes content', async ({ page }) => {
+  test('switching from chart to trades changes content', async ({ page }) => {
     await expect(page.locator('.chart-card')).toBeVisible()
-    await page.click('.restab:has-text("Trades")')
+    await page.click('[data-testid="restab-trades"]')
     await expect(page.locator('.chart-card')).toHaveCount(0)
     await expect(page.locator('table.dt')).toBeVisible()
   })
