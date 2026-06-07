@@ -610,4 +610,21 @@ onMounted(async () => {
   outline: 1px solid var(--blood-crimson);
   border-color: var(--blood-crimson);
 }
+
+@media (max-width: 959.98px) {
+  .settings { grid-template-columns: 1fr; height: auto; }
+  .settings__nav {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: var(--space-2);
+    border-right: none;
+    border-bottom: 1px solid rgba(184, 148, 92, 0.12);
+    padding-bottom: var(--space-2);
+  }
+  .settings__nav::-webkit-scrollbar { display: none; }
+  .settings__nav-item { flex: 0 0 auto; white-space: nowrap; }
+  .settings__budget-grid { grid-template-columns: 1fr; }
+}
 </style>
