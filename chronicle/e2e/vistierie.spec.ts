@@ -1,17 +1,17 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('Vistierie View (/vistierie)', () => {
+// Vistierie (Schatzkammer) no longer has its own route — it is embedded
+// admin-only inside Settings. These tests exercise it via /settings.
+test.describe('Vistierie (Schatzkammer) embedded in Settings', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/vistierie')
+    await page.goto('/settings')
     await page.waitForLoadState('networkidle')
+    // Admin sees Schatzkammer pinned and active by default.
+    await expect(page.locator('.set-nav-item.active')).toContainText('Schatzkammer')
     await expect(page.locator('[data-testid="tier-budget-bar"]').first()).toBeVisible()
   })
 
-  test('renders "Vistierie" heading', async ({ page }) => {
-    await expect(page.locator('.vistierie__header h1')).toContainText('Vistierie')
-  })
-
-  test('renders at least 3 tier budget bars', async ({ page }) => {
+  test('renders at least 3 tier ledger rows', async ({ page }) => {
     await expect.poll(() => page.locator('[data-testid="tier-budget-bar"]').count()).toBeGreaterThanOrEqual(3)
   })
 
@@ -19,26 +19,26 @@ test.describe('Vistierie View (/vistierie)', () => {
     await expect(page.locator('[data-testid="tier-budget-bar"]:has-text("Reasoning")')).toBeVisible()
   })
 
-  test('renders agent spending bars', async ({ page }) => {
-    await expect(page.locator('.vistierie__agent-bars')).toBeVisible()
-    await expect(page.locator('.vistierie__agent-row').first()).toBeVisible()
+  test('renders agent spend rows with strigoi-spin first', async ({ page }) => {
+    await expect(page.locator('.agent-spend')).toBeVisible()
+    await expect(page.locator('.as-name').first()).toContainText('strigoi-spin')
   })
 
-  test('renders strigoi-spin as first agent', async ({ page }) => {
-    await expect(page.locator('.vistierie__agent-label').first()).toContainText('strigoi-spin')
+  test('renders the SVG daily-spend chart (no ApexCharts)', async ({ page }) => {
+    await expect(page.locator('.chart-card svg.svg-chart').first()).toBeVisible()
+    await expect(page.locator('.apexcharts-canvas')).toHaveCount(0)
   })
 
-  test('renders ApexCharts area chart', async ({ page }) => {
-    await expect(page.locator('.apexcharts-canvas').first()).toBeVisible()
+  test('renders avg/day and month-total foot stats', async ({ page }) => {
+    await expect(page.locator('.vist-foot .vf-v').first()).toBeVisible()
+    await expect(page.locator('.vist-foot .vf-v').nth(1)).toBeVisible()
   })
+})
 
-  test('renders Avg/day stat', async ({ page }) => {
-    await expect(page.locator('.vistierie__stat-label').first()).toBeVisible()
-    await expect(page.locator('.vistierie__stat').first()).toBeVisible()
-  })
-
-  test('renders Month total stat', async ({ page }) => {
-    await expect(page.locator('.vistierie__stat-label').nth(1)).toBeVisible()
-    await expect(page.locator('.vistierie__stat').nth(1)).toBeVisible()
+test.describe('Legacy /vistierie route', () => {
+  test('redirects to the chronicle home', async ({ page }) => {
+    await page.goto('/vistierie')
+    await page.waitForLoadState('networkidle')
+    await expect(page).toHaveURL(/\/$/)
   })
 })
