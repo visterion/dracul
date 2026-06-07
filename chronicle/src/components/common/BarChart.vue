@@ -4,6 +4,7 @@
     :viewBox="`0 0 ${W} ${H}`"
     preserveAspectRatio="none"
     role="img"
+    :aria-label="ariaLabel"
   >
     <rect
       v-for="(v, i) in props.data"
@@ -25,6 +26,7 @@ const props = defineProps<{
   data: number[]
   height?: number
   threshold?: number
+  ariaLabel?: string
 }>()
 
 const W = 720
