@@ -1,5 +1,5 @@
 <template>
-  <span class="spend-bar">
+  <span class="spend-bar" role="meter" :aria-valuenow="value" :aria-valuemin="0" :aria-valuemax="max" :aria-label="`Spend ${value} of ${max}`">
     <span class="spend-fill" :style="{ width: pct + '%' }" />
   </span>
 </template>

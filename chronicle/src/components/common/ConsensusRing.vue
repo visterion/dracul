@@ -1,6 +1,6 @@
 <template>
-  <div class="consensus-ring" :style="{ width: size + 'px', height: size + 'px' }">
-    <svg :width="size" :height="size" :viewBox="`0 0 ${size} ${size}`">
+  <div class="consensus-ring" :style="{ width: size + 'px', height: size + 'px' }" role="meter" :aria-valuenow="value" :aria-valuemin="0" :aria-valuemax="1" :aria-label="`Consensus score ${value.toFixed(2)}`">
+    <svg :width="size" :height="size" :viewBox="`0 0 ${size} ${size}`" aria-hidden="true">
       <circle
         :cx="size / 2"
         :cy="size / 2"

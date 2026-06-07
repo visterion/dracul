@@ -1,5 +1,5 @@
 <template>
-  <span :class="['state-dot', dotClass]" :aria-label="state" />
+  <span :class="['state-dot', dotClass]" role="img" :aria-label="`State: ${state}`" />
 </template>
 
 <script setup lang="ts">
