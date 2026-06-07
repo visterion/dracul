@@ -97,9 +97,9 @@ public class HttpVistierieClient implements VistierieClient {
 
             var cfg = agentNode.path("configuration");
             var config = new StrigoiConfiguration(
-                    cfg.path("cron").asText(),
-                    cfg.path("next_run_at").asText(""),
-                    cfg.path("disabled").asBoolean(false),
+                    agentNode.path("schedule").asText(""),
+                    agentNode.path("next_run_at").asText(""),
+                    agentNode.path("paused").asBoolean(false),
                     cfg.path("tier").asText("Standard"),
                     List.of(),
                     cfg.path("daily_budget_usd").asDouble(0),
