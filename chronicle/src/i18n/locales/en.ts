@@ -382,6 +382,21 @@ export default {
     confirmDelete: 'Remove {ticker} from watchlist?',
     back: 'Watchlist',
   },
+  prey: {
+    eyebrow: 'Prey · {anomalyType}',
+    thesisTitle: 'The Thesis',
+    signals: 'Signals',
+    risks: 'Risks',
+    confidenceTitle: 'Confidence',
+    facts: {
+      anomaly: 'Anomaly',
+      horizon: 'Horizon',
+      firstSeen: 'first seen',
+    },
+    foundBy: 'Found by',
+    addToWatchlist: 'Add to watchlist',
+    notFound: 'Prey not found.',
+  },
   strigoi: {
     notFound: {
       message: 'Strigoi not found.',
