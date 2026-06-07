@@ -260,7 +260,7 @@ import AlertRow from '../components/common/AlertRow.vue'
 import { useApi } from '../api'
 import type { WatchlistItem, WatchlistStatus, WatchlistTag } from '../api/types'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
 
 const api = useApi()
@@ -474,7 +474,7 @@ async function onDelete(item: WatchlistItem) {
 }
 
 function formatDate(isoDate: string): string {
-  return new Date(isoDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+  return new Date(isoDate).toLocaleDateString(locale.value, { day: 'numeric', month: 'long', year: 'numeric' })
 }
 </script>
 

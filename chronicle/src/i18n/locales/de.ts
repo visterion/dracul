@@ -2,6 +2,18 @@ export default {
   common: {
     language: 'Sprache',
   },
+  time: {
+    justNow: 'gerade eben',
+    minutesAgo: 'vor {n}m',
+    hoursAgo: 'vor {n}h',
+    yesterday: 'gestern',
+    today: 'heute',
+    daysAgo: 'vor {n} Tagen',
+    weeksAgo: 'vor {n}w',
+    monthsAgo: 'vor {n} Monaten',
+    thisMonth: 'diesen Monat',
+    oneMonthAgo: 'vor 1 Monat',
+  },
   app: {
     nav: {
       chronicle: 'chronicle',
@@ -124,20 +136,11 @@ export default {
     error: {
       retry: 'Wiederholen',
     },
-    banner: {
-      newPrey: 'neue Beute',
-      verdictSingular: 'Urteil',
-      verdictPlural: 'Urteile',
-      alertSingular: 'Tagesläufer-Alarm',
-      alertPlural: 'Tagesläufer-Alarme',
-      lessonSingular: 'Lektion ausstehend',
-      lessonPlural: 'Lektionen ausstehend',
-    },
     dusk: {
       newPrey: 'neue Beute',
-      verdicts: 'Urteil',
-      alerts: 'Tagesläufer-Alarme',
-      lessons: 'Lektionen ausstehend',
+      verdicts: 'Urteil | Urteile',
+      alerts: 'Tagesläufer-Alarm | Tagesläufer-Alarme',
+      lessons: 'Lektion ausstehend | Lektionen ausstehend',
     },
     sections: {
       verdicts: 'Urteile',
@@ -337,16 +340,6 @@ export default {
       allStrigoi: 'Alle Strigoi ({n})',
     },
     evidenceCount: 'Belege: {n}',
-    daysAgo: {
-      today: 'heute',
-      yesterday: 'gestern',
-      days: 'vor {n} Tagen',
-    },
-    monthsAgo: {
-      thisMonth: 'diesen Monat',
-      oneMonth: 'vor 1 Monat',
-      months: 'vor {n} Monaten',
-    },
     actionError: {
       failed: 'Aktion fehlgeschlagen',
       deactivateFailed: 'Deaktivierung fehlgeschlagen',
