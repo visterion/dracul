@@ -16,7 +16,7 @@
       <div v-else>
         {{ t('settings.providers.apiKey') }}:
         <span class="pv-val">{{ t('settings.providers.apiKeyConfigured') }} {{ provider.apiKeyMasked }}</span>
-        <a class="pv-link" role="button" tabindex="0">{{ t('settings.providers.reveal') }}</a>
+        <button type="button" class="pv-link" disabled>{{ t('settings.providers.reveal') }}</button>
       </div>
 
       <div>
@@ -96,8 +96,9 @@ const todayLine = computed(() => {
   margin-bottom: var(--space-4);
 }
 .pv-val { color: var(--bone-ivory); }
-.pv-link { color: var(--cathedral-gold); cursor: pointer; margin-left: var(--space-2); }
+.pv-link { color: var(--cathedral-gold); cursor: pointer; margin-left: var(--space-2); background: none; border: none; padding: 0; font: inherit; }
 .pv-link:hover { color: var(--cathedral-gold-bright); }
+.pv-link:disabled { color: var(--cathedral-gold); opacity: 0.6; cursor: not-allowed; }
 .pv-muted { color: var(--ash-gray); }
 .pv-actions { display: flex; gap: var(--space-2); }
 </style>

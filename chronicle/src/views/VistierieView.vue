@@ -184,7 +184,7 @@ function fillWidth(tier: TierBudget): string {
 const monthFillWidth = computed(() => {
   const d = data.value
   if (!d || !d.monthlyBudgetUsd) return '0%'
-  return `${Math.min((d.monthlyTotalUsd / d.monthlyBudgetUsd) * 100, 100)}%`
+  return `${Math.max(0, Math.min((d.monthlyTotalUsd / d.monthlyBudgetUsd) * 100, 100))}%`
 })
 
 const chartSeries = computed(() => [{
