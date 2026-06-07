@@ -12,6 +12,7 @@
             v-model="searchQuery"
             type="text"
             :placeholder="t('watchlist.search.placeholder')"
+            :aria-label="t('watchlist.search.placeholder')"
           />
         </div>
 
@@ -74,13 +75,17 @@
         </div>
 
         <div v-else class="watch-rows">
-          <button
+          <div
             v-for="item in filteredItems"
             :key="item.id"
             class="watch-row"
+            role="button"
+            tabindex="0"
             :class="{ active: selectedId === item.id }"
             data-testid="watchlist-item"
             @click="selectedId = item.id"
+            @keydown.enter="selectedId = item.id"
+            @keydown.space.prevent="selectedId = item.id"
           >
             <div class="wr-id">
               <span class="wr-ticker mono">{{ item.ticker }}</span>
@@ -113,7 +118,7 @@
                 @click.stop="onDelete(item)"
               >✕</button>
             </div>
-          </button>
+          </div>
         </div>
       </div>
 
@@ -356,10 +361,30 @@ async function onAddPosition() {
 
 async function onPositionBlur() {
   const item = selectedItem.value
+  // No existing position → nothing to persist on blur.
   if (!item || item.entryPrice === null) return
-  const entry = entryPriceInput.value || 0
-  const shares = shareCountInput.value || 0
-  if (entry === item.entryPrice && shares === item.shareCount) return
+  // v-model.number yields NaN for a cleared field. Reject NaN, non-positive
+  // entry prices, and negative share counts — to clear a position the user
+  // uses the explicit "remove position" control, not an emptied input.
+  const rawEntry = entryPriceInput.value
+  const rawShares = shareCountInput.value
+  if (
+    Number.isNaN(rawEntry) ||
+    Number.isNaN(rawShares) ||
+    rawEntry <= 0 ||
+    rawShares < 0
+  ) {
+    entryPriceInput.value = item.entryPrice ?? 0
+    shareCountInput.value = item.shareCount ?? 0
+    return
+  }
+  const entry = rawEntry
+  const shares = rawShares
+  // No-op short-circuit with float tolerance (exact === misfires on FP rounding).
+  if (
+    Math.abs(entry - (item.entryPrice ?? 0)) < 0.0001 &&
+    Math.abs(shares - (item.shareCount ?? 0)) < 0.0001
+  ) return
   await persistPosition(item, entry, shares)
 }
 
@@ -522,6 +547,7 @@ function formatDate(isoDate: string): string {
 }
 .watch-row:hover { background: rgba(184, 148, 92, 0.05); }
 .watch-row.active { background: rgba(161, 29, 44, 0.08); border-left-color: var(--blood-crimson); }
+.watch-row:focus-visible { outline: 2px solid var(--cathedral-gold); outline-offset: -2px; }
 .wr-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wr-ticker { font-size: var(--text-body); color: var(--bone-ivory); }
 .wr-name { font-size: var(--text-micro); color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
