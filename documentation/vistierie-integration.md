@@ -68,6 +68,15 @@ Dracul does **not** maintain its own cost ledger. It proxies
 `/api/cost` and `/api/cost/runs` from Vistierie's Run History API.
 The Vistierie view in Chronicle displays this data directly.
 
+The `/api/vistierie` cost panel is assembled by `VistierieDataService`,
+which needs data from several Vistierie endpoints — routing rules, the
+agent list, one detail call **per** strigoi, and the cost dashboard
+(~15 blocking calls in total). These are fanned out across virtual
+threads rather than fetched serially, and the assembled result is
+cached for `VISTIERIE_CACHE_TTL_SECONDS` (default 30s). This keeps the
+Chronicle view load fast; previously the serial fetch dominated it at
+~2s.
+
 ## Agent system_prompt localisation
 
 Every agent (all 6 Strigoi, Voievod, and Daywalker) has its `system_prompt`

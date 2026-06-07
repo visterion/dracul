@@ -19,6 +19,7 @@ Schema is `dracul`. Flyway migrations run on startup.
 | `VISTIERIE_URL` | Vistierie base URL (e.g. `http://vistierie:8090`) |
 | `VISTIERIE_TENANT_TOKEN` | Bearer token for the `dracul` tenant (tenant endpoints: `/agents`, `/runs`) |
 | `VISTIERIE_ADMIN_TOKEN` | Vistierie admin bearer token (admin endpoints: `/admin/*`) |
+| `VISTIERIE_CACHE_TTL_SECONDS` | TTL (seconds) for the aggregated `/api/vistierie` cost panel; `0` disables caching (default `30`) |
 
 ## Authentication
 

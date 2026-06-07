@@ -72,6 +72,10 @@ dracul:
     url: ${VISTIERIE_URL:http://vistierie:8090}
     tenant-token: ${VISTIERIE_TENANT_TOKEN:}
     admin-token: ${VISTIERIE_ADMIN_TOKEN:}
+    # TTL for the aggregated /api/vistierie cost panel. The aggregation fans out
+    # ~15 Vistierie calls across virtual threads; this short cache spares repeat
+    # loads. Set to 0 to disable caching.
+    cache-ttl-seconds: ${VISTIERIE_CACHE_TTL_SECONDS:30}
     monthly-budget-usd: 5.00
     tiers:
       - name: Reasoning
