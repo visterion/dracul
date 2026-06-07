@@ -1,6 +1,10 @@
 <template>
   <div class="watchlist">
-    <div class="watchlist__left">
+    <div
+      class="watchlist__left"
+      data-testid="watchlist-list"
+      v-show="!smAndDown || selectedId === null"
+    >
       <input
         v-model="searchQuery"
         class="watchlist__search"
@@ -68,7 +72,7 @@
         <div
           v-for="item in filteredItems"
           :key="item.id"
-          class="watchlist__item"
+          class="watchlist__item watchlist__row"
           :class="{ 'watchlist__item--selected': selectedId === item.id }"
           data-testid="watchlist-item"
           @click="selectedId = item.id"
@@ -110,7 +114,19 @@
       </div>
     </div>
 
-    <div class="watchlist__right">
+    <div
+      class="watchlist__right"
+      :class="{ 'watchlist__detail--mobile': smAndDown }"
+      data-testid="watchlist-detail"
+      v-show="!smAndDown || selectedId !== null"
+    >
+      <button
+        v-if="smAndDown"
+        class="watchlist__back"
+        data-testid="watchlist-back"
+        @click="selectedId = null"
+      >‹ {{ t('app.nav.watchlist') }}</button>
+
       <template v-if="loading">
         <v-skeleton-loader type="heading" />
         <v-skeleton-loader type="paragraph" class="mt-4" />
@@ -197,11 +213,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
 import VueApexCharts from 'vue3-apexcharts'
 import { useApi } from '../api'
 import type { WatchlistItem, WatchlistTag } from '../api/types'
 
 const { t } = useI18n()
+const { smAndDown } = useDisplay()
 const apexchart = VueApexCharts
 
 const api = useApi()
@@ -214,7 +232,9 @@ const activeFilter = ref<'all' | 'held' | 'tracking' | 'alerts'>('all')
 onMounted(async () => {
   try {
     items.value = await api.getWatchlistItems()
-    if (items.value.length > 0) selectedId.value = items.value[0].id
+    // On desktop, auto-select the first item so the right pane is populated.
+    // On mobile (drill-in), keep the list as the entry point — no auto-select.
+    if (items.value.length > 0 && !smAndDown.value) selectedId.value = items.value[0].id
   } finally {
     loading.value = false
   }
@@ -628,4 +648,28 @@ function formatDate(isoDate: string): string {
   background-color: var(--blood-crimson); border: 1px solid var(--blood-crimson); color: var(--bone-ivory);
 }
 .watchlist__dialog-submit[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+@media (max-width: 959.98px) {
+  .watchlist { grid-template-columns: 1fr; height: auto; }
+  .watchlist__detail--mobile {
+    position: fixed;
+    top: 64px; /* clear the fixed 64px top-bar (z-index 100) so it stays tappable */
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 90;
+    background: var(--crypt-black);
+    overflow-y: auto;
+    padding: var(--space-4);
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  }
+  .watchlist__back {
+    background: none;
+    border: none;
+    color: var(--blood-crimson);
+    font-size: 15px;
+    padding: var(--space-2) 0;
+    min-height: 44px;
+  }
+}
 </style>

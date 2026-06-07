@@ -40,3 +40,20 @@ test.describe('Responsive shell (mobile viewport)', () => {
     await expect(page).toHaveURL(/watchlist/)
   })
 })
+
+test.describe('Watchlist drill-in (mobile)', () => {
+  test('row opens full-screen detail, back returns to list', async ({ page }) => {
+    await page.goto('/watchlist')
+    await page.waitForLoadState('networkidle')
+    // list visible, detail hidden initially
+    await expect(page.getByTestId('watchlist-list')).toBeVisible()
+    await expect(page.getByTestId('watchlist-detail')).toBeHidden()
+    // tap first row → detail panel appears
+    await page.locator('[data-testid="watchlist-item"]').first().click()
+    await expect(page.getByTestId('watchlist-detail')).toBeVisible()
+    // back → list again
+    await page.getByTestId('watchlist-back').click()
+    await expect(page.getByTestId('watchlist-list')).toBeVisible()
+    await expect(page.getByTestId('watchlist-detail')).toBeHidden()
+  })
+})
