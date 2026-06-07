@@ -99,26 +99,28 @@
 
       <!-- Trades -->
       <div v-else-if="activeTab === 'trades'" class="backtest__trades">
-        <table class="backtest__table">
-          <thead>
-            <tr>
-              <th>{{ t('backtest.table.trades.symbol') }}</th>
-              <th>{{ t('backtest.table.trades.entry') }}</th>
-              <th>{{ t('backtest.table.trades.exit') }}</th>
-              <th>{{ t('backtest.table.trades.return') }}</th>
-              <th>{{ t('backtest.table.trades.thesis') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="tr in TRADES" :key="tr.symbol + tr.entry">
-              <td class="backtest__ticker">{{ tr.symbol }}</td>
-              <td>{{ tr.entry }}</td>
-              <td>{{ tr.exit }}</td>
-              <td :class="tr.ret.startsWith('+') ? 'backtest__ret--pos' : 'backtest__ret--neg'">{{ tr.ret }}</td>
-              <td>{{ tr.validated ? '✓' : '✗' }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll">
+          <table class="backtest__table">
+            <thead>
+              <tr>
+                <th>{{ t('backtest.table.trades.symbol') }}</th>
+                <th>{{ t('backtest.table.trades.entry') }}</th>
+                <th>{{ t('backtest.table.trades.exit') }}</th>
+                <th>{{ t('backtest.table.trades.return') }}</th>
+                <th>{{ t('backtest.table.trades.thesis') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tr in TRADES" :key="tr.symbol + tr.entry">
+                <td class="backtest__ticker">{{ tr.symbol }}</td>
+                <td>{{ tr.entry }}</td>
+                <td>{{ tr.exit }}</td>
+                <td :class="tr.ret.startsWith('+') ? 'backtest__ret--pos' : 'backtest__ret--neg'">{{ tr.ret }}</td>
+                <td>{{ tr.validated ? '✓' : '✗' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Equity Curve -->
@@ -128,26 +130,28 @@
 
       <!-- Comparison -->
       <div v-else-if="activeTab === 'comparison'" class="backtest__comparison">
-        <table class="backtest__table">
-          <thead>
-            <tr>
-              <th>{{ t('backtest.table.comparison.strategy') }}</th>
-              <th>{{ t('backtest.table.comparison.cagr') }}</th>
-              <th>{{ t('backtest.table.comparison.sharpe') }}</th>
-              <th>{{ t('backtest.table.comparison.winRate') }}</th>
-              <th>{{ t('backtest.table.comparison.trades') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in COMPARISON" :key="row.strategy">
-              <td>{{ row.strategy }}</td>
-              <td class="backtest__ret--pos">{{ row.cagr }}</td>
-              <td>{{ row.sharpe }}</td>
-              <td>{{ row.winRate }}</td>
-              <td>{{ row.trades }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll">
+          <table class="backtest__table">
+            <thead>
+              <tr>
+                <th>{{ t('backtest.table.comparison.strategy') }}</th>
+                <th>{{ t('backtest.table.comparison.cagr') }}</th>
+                <th>{{ t('backtest.table.comparison.sharpe') }}</th>
+                <th>{{ t('backtest.table.comparison.winRate') }}</th>
+                <th>{{ t('backtest.table.comparison.trades') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in COMPARISON" :key="row.strategy">
+                <td>{{ row.strategy }}</td>
+                <td class="backtest__ret--pos">{{ row.cagr }}</td>
+                <td>{{ row.sharpe }}</td>
+                <td>{{ row.winRate }}</td>
+                <td>{{ row.trades }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </template>
   </div>
@@ -422,4 +426,8 @@ function applyPreset(years: number) {
 .backtest__ticker { font-family: var(--font-mono); color: var(--bone-ivory); }
 .backtest__ret--pos { color: var(--signal-positive); font-family: var(--font-mono); }
 .backtest__ret--neg { color: var(--blood-crimson); font-family: var(--font-mono); }
+
+@media (max-width: 959.98px) {
+  .backtest__overview { grid-template-columns: 1fr; }
+}
 </style>

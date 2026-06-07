@@ -429,4 +429,10 @@ function monthsAgo(isoString: string): string {
   font-size: var(--text-micro);
   margin-bottom: var(--space-4);
 }
+
+@media (max-width: 959.98px) {
+  .patterns__pending-header { flex-wrap: wrap; }
+  .patterns__pending-actions { flex-wrap: wrap; }
+  .patterns__active-header { flex-wrap: wrap; }
+}
 </style>
