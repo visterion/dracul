@@ -653,7 +653,7 @@ function formatDate(isoDate: string): string {
   .watchlist { grid-template-columns: 1fr; height: auto; }
   .watchlist__detail--mobile {
     position: fixed;
-    top: 64px; /* clear the fixed 64px top-bar (z-index 100) so it stays tappable */
+    top: 64px; /* start below the 64px top-bar (the first flex child of the 100vh column) */
     right: 0;
     bottom: 0;
     left: 0;
