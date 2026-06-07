@@ -1,146 +1,155 @@
 <template>
-  <article class="prey-card" :class="borderClass" data-testid="prey-card">
+  <article
+    class="prey-card"
+    :class="confClass"
+    data-testid="prey-card"
+    @click="$emit('open', prey)"
+  >
     <!-- Header -->
-    <div class="prey-card__header">
-      <div class="prey-card__identity">
-        <span class="prey-card__symbol font-mono">{{ prey.symbol }}</span>
-        <span class="prey-card__name">{{ prey.companyName }}</span>
-      </div>
-      <div class="prey-card__meta-right">
-        <span class="prey-card__badge">{{ prey.anomalyType }}</span>
-      </div>
-    </div>
+    <header class="prey-head">
+      <span class="prey-ticker font-mono">{{ prey.symbol }}</span>
+      <span class="prey-name">{{ prey.companyName }}</span>
+      <span class="prey-head-spacer" />
+      <!-- anomalyType rendered verbatim — no whitelist/mapping -->
+      <span class="anomaly-badge">{{ prey.anomalyType }}</span>
+    </header>
 
     <!-- Confidence -->
-    <div class="prey-card__confidence">
+    <div class="conf-block">
       <ConfidenceBar :score="prey.confidence" />
     </div>
 
     <!-- Thesis -->
-    <p class="prey-card__thesis">{{ prey.thesis }}</p>
+    <p class="prey-thesis">{{ prey.thesis }}</p>
 
     <!-- Signals + Risks -->
-    <div class="prey-card__signals-risks">
-      <div class="prey-card__column">
-        <div class="prey-card__column-label">signals</div>
-        <ul class="prey-card__list prey-card__list--signals">
+    <div class="sr-grid">
+      <div class="sr-col">
+        <div class="sr-head">{{ t('chronicle.preyCard.signals') }}</div>
+        <ul class="sr-list">
           <li v-for="signal in prey.signals" :key="signal">{{ signal }}</li>
         </ul>
       </div>
-      <div class="prey-card__column">
-        <div class="prey-card__column-label">risks</div>
-        <ul class="prey-card__list prey-card__list--risks">
+      <div class="sr-col">
+        <div class="sr-head">{{ t('chronicle.preyCard.risks') }}</div>
+        <ul class="sr-list">
           <li v-for="risk in prey.risks" :key="risk">{{ risk }}</li>
         </ul>
       </div>
     </div>
 
     <!-- Footer -->
-    <div class="prey-card__footer">
-      <span class="font-mono tabular">
-        discovered by {{ prey.discoveredBy }} · {{ relativeTime(prey.discoveredAt) }} · horizon: {{ prey.horizon }}
-      </span>
-    </div>
+    <footer class="prey-foot">
+      <span>{{ t('chronicle.preyCard.discoveredBy') }} <span class="by">{{ prey.discoveredBy }}</span></span>
+      <span class="fdot">·</span>
+      <span>{{ relativeTime(prey.discoveredAt) }}</span>
+      <span class="fdot">·</span>
+      <span>{{ t('chronicle.preyCard.horizon') }}: {{ prey.horizon }}</span>
+    </footer>
   </article>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Prey } from '../../api/types'
 import ConfidenceBar from './ConfidenceBar.vue'
 import { useRelativeTime } from '../../composables/useRelativeTime'
 
 const props = defineProps<{ prey: Prey }>()
+defineEmits<{ (e: 'open', prey: Prey): void }>()
+
+const { t } = useI18n()
 const { relativeTime } = useRelativeTime()
 
-const borderClass = computed(() => {
-  if (props.prey.confidence >= 0.75) return 'prey-card--high'
-  if (props.prey.confidence >= 0.5) return 'prey-card--mid'
-  return 'prey-card--low'
-})
+// confClass per prototype: >0.75 high, >=0.5 mid, else low
+const confClass = computed(() =>
+  props.prey.confidence > 0.75 ? 'conf-high' : props.prey.confidence >= 0.5 ? 'conf-mid' : 'conf-low',
+)
 </script>
 
 <style scoped>
+/* mirrors styles.css:184-211 (sr-* 204-208) */
 .prey-card {
-  background-color: var(--crypt-black-elevated);
-  border: 1px solid rgba(184, 148, 92, 0.1);
+  background: var(--crypt-black-elevated);
+  border: var(--hairline);
+  border-left: 3px solid var(--ash-gray);
   border-radius: 4px;
-  border-left-width: 3px;
   padding: var(--space-5);
-  transition: border-color var(--transition-fast);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
+
+.prey-card.conf-high { border-left-color: var(--blood-crimson); }
+.prey-card.conf-mid { border-left-color: var(--cathedral-gold); }
+.prey-card.conf-low { border-left-color: var(--ash-gray); }
 
 .prey-card:hover {
-  border-color: rgba(184, 148, 92, 0.3);
-  border-left-color: inherit;
+  border-top-color: rgba(184, 148, 92, 0.3);
+  border-right-color: rgba(184, 148, 92, 0.3);
+  border-bottom-color: rgba(184, 148, 92, 0.3);
+  background: #15151d;
 }
 
-.prey-card--high { border-left-color: var(--blood-crimson); }
-.prey-card--mid  { border-left-color: var(--cathedral-gold); }
-.prey-card--low  { border-left-color: var(--ash-gray); }
-
-.prey-card__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--space-3);
-}
-
-.prey-card__identity {
+.prey-head {
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
-.prey-card__symbol {
+.prey-ticker {
   font-size: var(--text-body-lg);
-  color: var(--bone-ivory);
   font-weight: 500;
+  color: var(--bone-ivory);
 }
 
-.prey-card__name {
-  font-size: var(--text-body);
+.prey-name {
+  font-size: var(--text-body-sm);
   color: var(--bone-ivory-dim);
 }
 
-.prey-card__badge {
+.prey-head-spacer { flex: 1; }
+
+.anomaly-badge {
   font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--cathedral-gold);
   border: 1px solid rgba(184, 148, 92, 0.4);
-  border-radius: 2px;
-  padding: 1px 6px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  border-radius: 3px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  line-height: 1;
 }
 
-.prey-card__confidence {
-  margin-bottom: var(--space-4);
-}
+.conf-block { margin-bottom: var(--space-4); }
 
-.prey-card__thesis {
-  font-size: var(--text-body);
+.prey-thesis {
   color: var(--bone-ivory);
+  font-size: var(--text-body-sm);
   line-height: 1.6;
-  max-width: 70ch;
-  margin: 0 0 var(--space-4) 0;
+  max-width: 72ch;
+  margin: 0 0 var(--space-4);
+  text-wrap: pretty;
 }
 
-.prey-card__signals-risks {
+.sr-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
+  gap: var(--space-5);
   margin-bottom: var(--space-4);
 }
 
-.prey-card__column-label {
+.sr-head {
   font-size: var(--text-micro);
-  color: var(--ash-gray);
-  letter-spacing: 0.05em;
   text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ash-gray);
   margin-bottom: var(--space-2);
 }
 
-.prey-card__list {
+.sr-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -149,27 +158,32 @@ const borderClass = computed(() => {
   gap: var(--space-1);
 }
 
-.prey-card__list li {
+.sr-list li {
   font-size: var(--text-body-sm);
-  line-height: 1.5;
-  padding-left: var(--space-3);
+  color: var(--bone-ivory-dim);
+  padding-left: var(--space-4);
   position: relative;
+  line-height: 1.5;
 }
 
-.prey-card__list li::before {
+.sr-list li::before {
   content: '•';
   position: absolute;
   left: 0;
+  color: var(--cathedral-gold);
 }
 
-.prey-card__list--signals li { color: var(--bone-ivory); }
-.prey-card__list--signals li::before { color: var(--cathedral-gold); }
-.prey-card__list--risks li { color: var(--bone-ivory-dim); }
-.prey-card__list--risks li::before { color: var(--ash-gray); }
-
-.prey-card__footer {
+.prey-foot {
+  font-family: var(--font-mono);
   font-size: var(--text-micro);
   color: var(--ash-gray);
-  letter-spacing: 0.02em;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
+
+.prey-foot .by { color: var(--bone-ivory-dim); }
 </style>
