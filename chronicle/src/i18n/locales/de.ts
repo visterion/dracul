@@ -165,6 +165,7 @@ export default {
     },
   },
   verdict: {
+    loadError: 'Urteil konnte nicht geladen werden.',
     notFound: {
       message: 'Urteil nicht gefunden.',
       backLink: '← Zurück zur Chronik',
