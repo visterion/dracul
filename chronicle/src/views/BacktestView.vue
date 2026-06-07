@@ -56,7 +56,7 @@
     </div>
 
     <!-- Recent backtests -->
-    <SectionHeader label="recent backtests" class="backtest__section-gap" />
+    <SectionHeader :label="t('backtest.sections.recentBacktests')" class="backtest__section-gap" />
     <div class="backtest__runs">
       <div
         v-for="run in BACKTEST_RUNS"
@@ -76,7 +76,7 @@
 
     <!-- Results -->
     <template v-if="activeRunId">
-      <SectionHeader label="results" class="backtest__section-gap" />
+      <SectionHeader :label="t('backtest.sections.results')" class="backtest__section-gap" />
       <div class="backtest__tabs">
         <button
           v-for="tab in tabs"
