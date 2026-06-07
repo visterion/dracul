@@ -277,10 +277,17 @@ export default {
   },
   patterns: {
     title: 'Pattern Library',
+    pageTitle: 'The Voievod\'s Lessons',
+    eyebrow: 'Pattern Library',
     subtitle: 'Lessons learned by the Voievod, governing how the Strigoi hunt',
+    activeSince: 'active since {when}',
     sections: {
       pending: '── pending review ({n})',
       active: '── active patterns ({n})',
+      pendingTitle: 'Pending Review',
+      pendingCount: 'pending',
+      activeTitle: 'Active Patterns',
+      activeCount: 'active',
     },
     empty: {
       pending: 'No patterns pending review.',

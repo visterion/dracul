@@ -4,12 +4,14 @@ test.describe('Pattern Library View (/patterns)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/patterns')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('h1.patterns__title')).toBeVisible()
+    await expect(page.locator('h1.page-title')).toBeVisible()
     await expect(page.locator('[data-testid="pending-pattern-card"]').first()).toBeVisible()
   })
 
   test('renders "Musterbibliothek" heading', async ({ page }) => {
-    await expect(page.locator('h1.patterns__title')).toContainText('Musterbibliothek')
+    // h1 shows the page title; eyebrow shows "Musterbibliothek"
+    await expect(page.locator('h1.page-title')).toContainText('Die Lehren des Woiwoden')
+    await expect(page.locator('.page-eyebrow')).toContainText('Musterbibliothek')
   })
 
   test('renders at least 1 pending pattern card', async ({ page }) => {
