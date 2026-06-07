@@ -27,9 +27,9 @@
           {{ t('patterns.evidence.avgUplift', { n: pattern.avgUpliftPercent }) }}
         </template>
       </span>
-      <a v-if="pending" href="#" class="pt-cases" @click.prevent>
+      <span v-if="pending" class="pt-cases" aria-hidden="true">
         {{ t('patterns.evidence.viewCases') }}
-      </a>
+      </span>
       <div v-if="pending" class="pt-actions">
         <button class="btn btn-ghost" :disabled="loading" @click="emit('act', 'defer')">
           {{ t('patterns.buttons.defer') }}
