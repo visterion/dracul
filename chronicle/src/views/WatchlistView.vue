@@ -125,7 +125,7 @@
         class="watchlist__back"
         data-testid="watchlist-back"
         @click="selectedId = null"
-      >‹ {{ t('app.nav.watchlist') }}</button>
+      >‹ {{ t('watchlist.back') }}</button>
 
       <template v-if="loading">
         <v-skeleton-loader type="heading" />

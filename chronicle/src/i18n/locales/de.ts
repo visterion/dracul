@@ -321,6 +321,7 @@ export default {
     },
     noSelection: 'Element aus der Liste auswählen.',
     confirmDelete: '{ticker} aus der Watchlist entfernen?',
+    back: 'Watchlist',
   },
   strigoi: {
     notFound: {

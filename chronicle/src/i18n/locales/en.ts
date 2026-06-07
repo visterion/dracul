@@ -321,6 +321,7 @@ export default {
     },
     noSelection: 'Select an item from the list.',
     confirmDelete: 'Remove {ticker} from watchlist?',
+    back: 'Watchlist',
   },
   strigoi: {
     notFound: {
