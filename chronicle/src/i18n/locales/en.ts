@@ -165,6 +165,7 @@ export default {
     },
   },
   verdict: {
+    loadError: 'Could not load verdict.',
     notFound: {
       message: 'Verdict not found.',
       backLink: '← Back to chronicle',

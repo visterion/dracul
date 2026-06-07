@@ -3,6 +3,11 @@
     <v-skeleton-loader v-for="n in 3" :key="n" type="card" color="surface" class="vd-loading__item" />
   </div>
 
+  <div v-else-if="fetchError" class="content-inner prose-width vd-notfound" role="alert">
+    <p>{{ t('verdict.loadError') }}</p>
+    <router-link to="/" class="vd-notfound__link">{{ t('verdict.notFound.backLink') }}</router-link>
+  </div>
+
   <div v-else-if="!verdict" class="content-inner prose-width vd-notfound">
     <p>{{ t('verdict.notFound.message') }}</p>
     <router-link to="/" class="vd-notfound__link">{{ t('verdict.notFound.backLink') }}</router-link>
@@ -182,6 +187,7 @@ const { relativeTime } = useRelativeTime()
 
 const verdict = ref<VerdictDetail | null>(null)
 const loading = ref(true)
+const fetchError = ref<string | null>(null)
 
 const notes = ref<VerdictNote[]>([])
 const noteDraft = ref('')
@@ -217,6 +223,8 @@ onMounted(async () => {
     if (verdict.value) {
       notes.value = await api.getVerdictNotes(id)
     }
+  } catch (e) {
+    fetchError.value = (e as Error).message
   } finally {
     loading.value = false
   }
@@ -242,6 +250,7 @@ async function onDecision(decision: VerdictDecision) {
         tag: 'TRACKING',
         sourceVerdictId: verdict.value.id,
       })
+      watchlistAdded.value = true
     }
   } catch (e) {
     decisionError.value = (e as Error).message
@@ -320,6 +329,7 @@ async function onAddNote() {
   border-radius: 4px; transition: background var(--transition-fast); width: 100%;
 }
 .contributor:hover { background: rgba(184,148,92,0.05); }
+.contributor:focus-visible { outline: 2px solid var(--blood-crimson); outline-offset: 2px; }
 .cb-name { color: var(--blood-crimson); flex: 1; }
 .contributor:hover .cb-name { color: var(--blood-crimson-bright); }
 .cb-conf { color: var(--bone-ivory); }
