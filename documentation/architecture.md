@@ -186,6 +186,11 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 **Verdict columns (V6):**
 - `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
 
+**Watchlist position columns (V8):**
+- `entry_price` (NUMERIC(12,4), nullable) — operator-recorded entry price; NULL until a position is recorded
+- `share_count` (NUMERIC(12,4), nullable) — operator-recorded share count (fractional shares allowed); NULL until set
+- Both are surfaced on the read API as `entryPrice` / `shareCount` and set via `PATCH /api/watchlist/{id}/position`; client-side P&L is derived from `currentPrice − entryPrice`.
+
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
 an update to this document.
