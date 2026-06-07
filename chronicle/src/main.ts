@@ -5,6 +5,7 @@ import router from './plugins/router'
 import App from './App.vue'
 import { i18n, setLocale } from './i18n'
 import { useApi } from './api'
+import '@phosphor-icons/web/regular'
 import './styles/global.css'
 
 const app = createApp(App)

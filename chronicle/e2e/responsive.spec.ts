@@ -14,16 +14,14 @@ test.describe('Responsive shell (mobile viewport)', () => {
     await expect(page.locator('.top-bar__nav')).toBeHidden()
   })
 
-  test('bottom nav lists all 6 destinations', async ({ page }) => {
-    await expect(page.locator('.bottom-nav__tab')).toHaveCount(6)
+  test('bottom nav lists all 5 destinations', async ({ page }) => {
+    await expect(page.locator('.bottom-nav__tab')).toHaveCount(5)
   })
 
-  test('bottom nav is horizontally scrollable (content wider than viewport)', async ({ page }) => {
-    const scroll = page.locator('.bottom-nav__scroll')
-    const overflow = await scroll.evaluate(
-      (el) => el.scrollWidth > el.clientWidth + 1,
-    )
-    expect(overflow).toBe(true)
+  test('bottom nav does not contain a vistierie destination', async ({ page }) => {
+    await expect(
+      page.locator('.bottom-nav__tab', { hasText: 'vistierie' }),
+    ).toHaveCount(0)
   })
 
   test('mobile shell hides the status bar but keeps the live bell', async ({ page }) => {

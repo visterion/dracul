@@ -10,3 +10,7 @@ declare module '*.module.css' {
   const classes: Record<string, string>
   export default classes
 }
+
+/* Phosphor web font: the `./regular` subpath export maps to a side-effect CSS
+   file whose specifier has no `.css` suffix, so it needs an explicit shim. */
+declare module '@phosphor-icons/web/regular'

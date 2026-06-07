@@ -7,13 +7,20 @@ export default {
       chronicle: 'chronicle',
       watchlist: 'watchlist',
       patternLibrary: 'pattern library',
-      vistierie: 'vistierie',
       backtest: 'backtest',
       settings: 'settings',
     },
     liveAlerts: {
       title: 'Live Alerts',
       empty: 'No live alerts yet.',
+    },
+    status: {
+      strigoi: 'Strigoi',
+      hunting: 'hunting',
+      lastVerdict: 'last verdict {time} ago',
+      lastVerdictNone: 'no verdict yet',
+      costThisMonth: '{cost} this month',
+      motto: 'eternal patience',
     },
   },
   settings: {

@@ -19,6 +19,11 @@ const router = createRouter({
       component: () => import('../views/StrigoiDetailView.vue'),
     },
     {
+      path: '/prey/:id',
+      name: 'prey-detail',
+      component: () => import('../views/PreyDetailView.vue'),
+    },
+    {
       path: '/watchlist',
       name: 'watchlist',
       component: () => import('../views/WatchlistView.vue'),
@@ -27,11 +32,6 @@ const router = createRouter({
       path: '/patterns',
       name: 'pattern-library',
       component: () => import('../views/PatternLibraryView.vue'),
-    },
-    {
-      path: '/vistierie',
-      name: 'vistierie',
-      component: () => import('../views/VistierieView.vue'),
     },
     {
       path: '/backtest',
