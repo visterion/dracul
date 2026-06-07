@@ -1,8 +1,8 @@
 <template>
   <div class="vistierie">
     <div class="vistierie__header">
-      <h1 class="font-display">Vistierie</h1>
-      <p class="vistierie__subtitle">The treasury — every token counted</p>
+      <h1 class="font-display">{{ t('vistierie.title') }}</h1>
+      <p class="vistierie__subtitle">{{ t('vistierie.subtitle') }}</p>
     </div>
 
     <template v-if="loading">
@@ -16,7 +16,7 @@
     <div v-else-if="data" class="vistierie__grid">
       <!-- LEFT: Tier Budgets -->
       <div class="vistierie__col">
-        <SectionHeader label="tier budgets" />
+        <SectionHeader :label="t('vistierie.sections.tierBudgets')" />
         <TierBudgetBar
           v-for="tier in data.tiers"
           :key="tier.name"
@@ -25,7 +25,7 @@
           :budget-usd="tier.budgetUsd"
           :used-usd="tier.usedUsd"
         />
-        <SectionHeader label="monthly total" class="vistierie__section-gap" />
+        <SectionHeader :label="t('vistierie.sections.monthlyTotal')" class="vistierie__section-gap" />
         <TierBudgetBar
           name="Month"
           models=""
@@ -36,7 +36,7 @@
 
       <!-- MIDDLE: Spending by Agent -->
       <div class="vistierie__col">
-        <SectionHeader label="spending by agent" />
+        <SectionHeader :label="t('vistierie.sections.spendingByAgent')" />
         <div class="vistierie__agent-bars">
           <div
             v-for="agent in data.spendingByAgent"
@@ -56,12 +56,12 @@
             <div class="vistierie__agent-amount">${{ agent.totalUsd.toFixed(2) }}</div>
           </div>
         </div>
-        <SectionHeader label="top spenders" class="vistierie__section-gap" />
+        <SectionHeader :label="t('vistierie.sections.topSpenders')" class="vistierie__section-gap" />
         <table class="vistierie__table">
           <thead>
             <tr>
-              <th>Agent</th>
-              <th class="vistierie__table-num">USD today</th>
+              <th>{{ t('vistierie.table.agent') }}</th>
+              <th class="vistierie__table-num">{{ t('vistierie.table.usdToday') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -78,7 +78,7 @@
 
       <!-- RIGHT: Daily Trend -->
       <div class="vistierie__col">
-        <SectionHeader label="daily spend (30d)" />
+        <SectionHeader :label="t('vistierie.sections.dailySpend')" />
         <apexchart
           type="area"
           height="220"
@@ -87,11 +87,11 @@
         />
         <div class="vistierie__stats">
           <div class="vistierie__stat">
-            <span class="vistierie__stat-label">Avg/day</span>
+            <span class="vistierie__stat-label">{{ t('vistierie.stats.avgPerDay') }}</span>
             <span class="vistierie__stat-value">${{ avgPerDay }}</span>
           </div>
           <div class="vistierie__stat">
-            <span class="vistierie__stat-label">Month total</span>
+            <span class="vistierie__stat-label">{{ t('vistierie.stats.monthTotal') }}</span>
             <span class="vistierie__stat-value">${{ data.monthlyTotalUsd.toFixed(2) }}</span>
           </div>
         </div>
@@ -102,12 +102,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import VueApexCharts from 'vue3-apexcharts'
 import type { VistierieData } from '../api/types'
 import { useApi } from '../api'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import TierBudgetBar from '../components/TierBudgetBar.vue'
 
+const { t } = useI18n()
 const apexchart = VueApexCharts
 
 const api = useApi()
