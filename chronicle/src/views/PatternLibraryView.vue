@@ -2,8 +2,8 @@
   <div class="patterns">
     <div class="patterns__header">
       <div class="patterns__header-icon">📜</div>
-      <h1 class="patterns__title font-display">Pattern Library</h1>
-      <p class="patterns__subtitle">Lessons learned by the Voievod, governing how the Strigoi hunt</p>
+      <h1 class="patterns__title font-display">{{ t('patterns.title') }}</h1>
+      <p class="patterns__subtitle">{{ t('patterns.subtitle') }}</p>
     </div>
 
     <template v-if="loading">
@@ -13,9 +13,9 @@
     <template v-else>
       <div v-if="actionError" class="patterns__action-error">{{ actionError }}</div>
       <!-- Pending section -->
-      <div class="patterns__section-header">── pending review ({{ pendingPatterns.length }})</div>
+      <div class="patterns__section-header">{{ t('patterns.sections.pending', { n: pendingPatterns.length }) }}</div>
 
-      <div v-if="pendingPatterns.length === 0" class="patterns__empty">No patterns pending review.</div>
+      <div v-if="pendingPatterns.length === 0" class="patterns__empty">{{ t('patterns.empty.pending') }}</div>
 
       <div
         v-for="pattern in pendingPatterns"
@@ -28,41 +28,41 @@
             <span class="patterns__bat">🦇</span>
             <span class="patterns__strigoi-name">{{ pattern.appliesToStrigoi }}</span>
           </div>
-          <span class="patterns__pending-when">proposed by Voievod, {{ daysAgo(pattern.proposedAt) }}</span>
+          <span class="patterns__pending-when">{{ t('patterns.proposedBy', { when: daysAgo(pattern.proposedAt) }) }}</span>
         </div>
         <p class="patterns__lesson">{{ pattern.statement }}</p>
         <div class="patterns__evidence">
-          Based on {{ pattern.evidenceCount }} cases
+          {{ t('patterns.evidence.basedOn', { n: pattern.evidenceCount }) }}
           <template v-if="pattern.supportedCount !== undefined">
-            · {{ pattern.supportedCount }} of {{ pattern.evidenceCount }} supported
+            {{ t('patterns.evidence.supported', { n: pattern.supportedCount, total: pattern.evidenceCount }) }}
           </template>
           <template v-if="pattern.avgUpliftPercent !== null && pattern.avgUpliftPercent !== undefined">
-            · avg uplift +{{ pattern.avgUpliftPercent }}%
+            {{ t('patterns.evidence.avgUplift', { n: pattern.avgUpliftPercent }) }}
           </template>
           &nbsp;
-          <a href="#" class="patterns__cases-link" @click.prevent="() => {}">[View supporting cases →]</a>
+          <a href="#" class="patterns__cases-link" @click.prevent="() => {}">{{ t('patterns.evidence.viewCases') }}</a>
         </div>
         <div class="patterns__pending-actions">
           <button
             class="patterns__btn-ghost"
             :disabled="pendingLoadingId === pattern.id"
             @click="handlePendingAction(pattern.id, 'defer')"
-          >Defer</button>
+          >{{ t('patterns.buttons.defer') }}</button>
           <button
             class="patterns__btn-secondary"
             :disabled="pendingLoadingId === pattern.id"
             @click="handlePendingAction(pattern.id, 'reject')"
-          >Reject</button>
+          >{{ t('patterns.buttons.reject') }}</button>
           <button
             class="patterns__btn-primary"
             :disabled="pendingLoadingId === pattern.id"
             @click="handlePendingAction(pattern.id, 'approve')"
-          >{{ pendingLoadingId === pattern.id ? '…' : 'Approve &amp; Activate' }}</button>
+          >{{ pendingLoadingId === pattern.id ? t('patterns.buttons.loading') : t('patterns.buttons.approveActivate') }}</button>
         </div>
       </div>
 
       <!-- Active section -->
-      <div class="patterns__section-header patterns__section-header--spaced">── active patterns ({{ activePatterns.length }})</div>
+      <div class="patterns__section-header patterns__section-header--spaced">{{ t('patterns.sections.active', { n: activePatterns.length }) }}</div>
 
       <div class="patterns__filter-chips">
         <button
@@ -70,7 +70,7 @@
           :class="{ 'patterns__chip--active': strigoiFilter === 'all' }"
           @click="strigoiFilter = 'all'"
         >
-          All Strigoi ({{ activePatterns.length }})
+          {{ t('patterns.filter.allStrigoi', { n: activePatterns.length }) }}
         </button>
         <button
           v-for="name in strigoiNames"
@@ -94,7 +94,7 @@
             <span class="patterns__bat">🦇</span>
             <span class="patterns__active-name">{{ pattern.name ?? pattern.id }}</span>
             <span class="patterns__strigoi-chip">{{ pattern.appliesToStrigoi.replace('strigoi-', '') }}</span>
-            <span class="patterns__evidence-count">evidence: {{ pattern.evidenceCount }}</span>
+            <span class="patterns__evidence-count">{{ t('patterns.evidenceCount', { n: pattern.evidenceCount }) }}</span>
             <span class="patterns__activated">{{ monthsAgo(pattern.proposedAt) }}</span>
             <button class="patterns__expand-btn" @click.stop="toggleExpand(pattern.id)">
               {{ expandedIds.has(pattern.id) ? '▼' : '▶' }}
@@ -106,12 +106,12 @@
               class="patterns__btn-ghost"
               :disabled="activeLoadingId === pattern.id"
               @click="handleDeactivate(pattern.id)"
-            >{{ activeLoadingId === pattern.id ? '…' : 'Deactivate' }}</button>
+            >{{ activeLoadingId === pattern.id ? t('patterns.buttons.loading') : t('patterns.buttons.deactivate') }}</button>
           </div>
         </div>
 
         <div v-if="filteredActivePatterns.length === 0" class="patterns__empty">
-          No active patterns for this Strigoi.
+          {{ t('patterns.empty.active') }}
         </div>
       </div>
     </template>
@@ -120,9 +120,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useApi } from '../api'
 import type { Pattern } from '../api/types'
 
+const { t } = useI18n()
 const api = useApi()
 const allPatterns = ref<Pattern[]>([])
 const loading = ref(true)
@@ -140,7 +142,7 @@ async function handlePendingAction(id: string, action: 'approve' | 'reject' | 'd
     await api.patchPattern(id, action)
     allPatterns.value = allPatterns.value.filter(p => p.id !== id)
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Action failed'
+    actionError.value = e instanceof Error ? e.message : t('patterns.actionError.failed')
   } finally {
     pendingLoadingId.value = null
   }
@@ -155,7 +157,7 @@ async function handleDeactivate(id: string) {
       p.id === id ? { ...p, status: 'REJECTED' as const } : p
     )
   } catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Deactivate failed'
+    actionError.value = e instanceof Error ? e.message : t('patterns.actionError.deactivateFailed')
   } finally {
     activeLoadingId.value = null
   }
@@ -199,16 +201,16 @@ function toggleExpand(id: string) {
 
 function daysAgo(isoString: string): string {
   const days = Math.floor((Date.now() - new Date(isoString).getTime()) / 86_400_000)
-  if (days === 0) return 'today'
-  if (days === 1) return 'yesterday'
-  return `${days} days ago`
+  if (days === 0) return t('patterns.daysAgo.today')
+  if (days === 1) return t('patterns.daysAgo.yesterday')
+  return t('patterns.daysAgo.days', { n: days })
 }
 
 function monthsAgo(isoString: string): string {
   const months = Math.floor((Date.now() - new Date(isoString).getTime()) / (30 * 86_400_000))
-  if (months === 0) return 'this month'
-  if (months === 1) return '1 month ago'
-  return `${months} months ago`
+  if (months === 0) return t('patterns.monthsAgo.thisMonth')
+  if (months === 1) return t('patterns.monthsAgo.oneMonth')
+  return t('patterns.monthsAgo.months', { n: months })
 }
 </script>
 
