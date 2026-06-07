@@ -26,7 +26,7 @@ test.describe('Top-bar navigation', () => {
     await page.click('a.top-bar__tab:has-text("watchlist")')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/watchlist')
-    await expect(page.locator('.watchlist')).toBeVisible()
+    await expect(page.locator('.watch-grid')).toBeVisible()
   })
 
   test('pattern library tab navigates to /patterns', async ({ page }) => {
@@ -34,7 +34,7 @@ test.describe('Top-bar navigation', () => {
     await page.click('a.top-bar__tab:has-text("pattern library")')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/patterns')
-    await expect(page.locator('h1.patterns__title')).toBeVisible()
+    await expect(page.locator('h1.page-title')).toBeVisible()
   })
 
   test('backtest tab navigates to /backtest', async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe('Top-bar navigation', () => {
     await page.click('a.top-bar__tab:has-text("backtest")')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/backtest')
-    await expect(page.locator('.backtest__header h1')).toContainText('Backtest')
+    await expect(page.locator('.page-eyebrow')).toContainText('Backtest')
   })
 
   test('settings tab navigates to /settings', async ({ page }) => {
