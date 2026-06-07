@@ -12,14 +12,14 @@ test.describe('Watchlist View (/watchlist)', () => {
   })
 
   test('renders all 4 filter chips', async ({ page }) => {
-    await expect(page.locator('.watchlist__chip:has-text("All")')).toBeVisible()
-    await expect(page.locator('.watchlist__chip:has-text("Held")')).toBeVisible()
-    await expect(page.locator('.watchlist__chip:has-text("Tracking")')).toBeVisible()
-    await expect(page.locator('.watchlist__chip:has-text("Alerts")')).toBeVisible()
+    await expect(page.locator('.watchlist__chip:has-text("Alle")')).toBeVisible()
+    await expect(page.locator('.watchlist__chip:has-text("gehalten")')).toBeVisible()
+    await expect(page.locator('.watchlist__chip:has-text("verfolgt")')).toBeVisible()
+    await expect(page.locator('.watchlist__chip:has-text("Alarme")')).toBeVisible()
   })
 
-  test('"All" filter chip is active by default', async ({ page }) => {
-    await expect(page.locator('.watchlist__chip--active')).toContainText('All')
+  test('"Alle" filter chip is active by default', async ({ page }) => {
+    await expect(page.locator('.watchlist__chip--active')).toContainText('Alle')
   })
 
   test('right pane shows detail of auto-selected first item', async ({ page }) => {
@@ -36,9 +36,9 @@ test.describe('Watchlist View (/watchlist)', () => {
     await expect(items.nth(1)).toHaveClass(/watchlist__item--selected/)
   })
 
-  test('clicking "Held" filter chip filters the list', async ({ page }) => {
-    await page.click('.watchlist__chip:has-text("Held")')
-    await expect(page.locator('.watchlist__chip--active')).toContainText('Held')
+  test('clicking "Positionen gehalten" filter chip filters the list', async ({ page }) => {
+    await page.click('.watchlist__chip:has-text("gehalten")')
+    await expect(page.locator('.watchlist__chip--active')).toContainText('gehalten')
     const hasItems = await page.locator('[data-testid="watchlist-item"]').count()
     const hasEmpty = await page.locator('.watchlist__empty').isVisible()
     expect(hasItems > 0 || hasEmpty).toBeTruthy()

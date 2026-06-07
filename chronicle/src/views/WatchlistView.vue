@@ -5,7 +5,7 @@
         v-model="searchQuery"
         class="watchlist__search"
         type="text"
-        placeholder="search by ticker or company…"
+        :placeholder="t('watchlist.search.placeholder')"
       />
 
       <div class="watchlist__chips">
@@ -20,33 +20,33 @@
         </button>
       </div>
 
-      <button class="watchlist__add" data-testid="wl-open-add" @click="addOpen = true">+ Add to watchlist</button>
+      <button class="watchlist__add" data-testid="wl-open-add" @click="addOpen = true">{{ t('watchlist.addButton') }}</button>
 
       <v-dialog v-model="addOpen" max-width="420">
         <div class="watchlist__dialog">
-          <div class="watchlist__dialog-title">Add to watchlist</div>
+          <div class="watchlist__dialog-title">{{ t('watchlist.dialog.title') }}</div>
           <input
             v-model="addSymbol"
             class="watchlist__dialog-input"
             type="text"
-            placeholder="Ticker (e.g. AVGO)"
+            :placeholder="t('watchlist.dialog.placeholder')"
             maxlength="10"
             data-testid="wl-add-symbol"
             @input="addSymbol = addSymbol.toUpperCase()"
           />
           <div class="watchlist__dialog-tag">
-            <label><input type="radio" v-model="addTag" value="TRACKING" /> Tracking</label>
-            <label><input type="radio" v-model="addTag" value="HELD" /> Held</label>
+            <label><input type="radio" v-model="addTag" value="TRACKING" /> {{ t('watchlist.dialog.tagTracking') }}</label>
+            <label><input type="radio" v-model="addTag" value="HELD" /> {{ t('watchlist.dialog.tagHeld') }}</label>
           </div>
           <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
           <div class="watchlist__dialog-actions">
-            <button class="watchlist__dialog-cancel" @click="addOpen = false">Cancel</button>
+            <button class="watchlist__dialog-cancel" @click="addOpen = false">{{ t('watchlist.dialog.cancel') }}</button>
             <button
               class="watchlist__dialog-submit"
               :disabled="!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(addSymbol) || addSubmitting"
               data-testid="wl-add-submit"
               @click="onAddSymbol"
-            >Add</button>
+            >{{ t('watchlist.dialog.add') }}</button>
           </div>
         </div>
       </v-dialog>
@@ -61,7 +61,7 @@
       </template>
 
       <div v-else-if="filteredItems.length === 0" class="watchlist__empty">
-        No instruments match this filter.
+        {{ t('watchlist.empty') }}
       </div>
 
       <div v-else class="watchlist__list">
@@ -95,14 +95,14 @@
               :data-testid="`wl-tag-${item.id}`"
               :disabled="rowBusyId === item.id"
               @click.stop="onToggleTag(item)"
-            >{{ item.tag === 'HELD' ? 'held position' : 'tracking verdict' }}</button>
-            <span class="watchlist__meta">added {{ daysAgo(item.addedAt) }}</span>
+            >{{ item.tag === 'HELD' ? t('watchlist.tagLabel.held') : t('watchlist.tagLabel.tracking') }}</button>
+            <span class="watchlist__meta">{{ t('watchlist.meta.added', { when: daysAgo(item.addedAt) }) }}</span>
             <span class="watchlist__dot" :class="`watchlist__dot--${item.status}`" />
             <button
               class="watchlist__delete"
               :data-testid="`wl-delete-${item.id}`"
               :disabled="rowBusyId === item.id"
-              aria-label="Delete from watchlist"
+              :aria-label="t('watchlist.deleteAria')"
               @click.stop="onDelete(item)"
             >✕</button>
           </div>
@@ -121,24 +121,26 @@
           <div class="watchlist__detail-ticker">{{ selectedItem.ticker }}</div>
           <div class="watchlist__detail-company">{{ selectedItem.companyName }}</div>
           <div class="watchlist__detail-subtitle">
-            {{ selectedItem.verdictId ? `tracking verdict from ${formatDate(selectedItem.addedAt)}` : `held position since ${formatDate(selectedItem.addedAt)}` }}
+            {{ selectedItem.verdictId
+              ? t('watchlist.detail.subtitleTracking', { date: formatDate(selectedItem.addedAt) })
+              : t('watchlist.detail.subtitleHeld', { date: formatDate(selectedItem.addedAt) }) }}
           </div>
         </div>
 
         <div class="watchlist__position-card">
           <template v-if="selectedItem.tag === 'TRACKING'">
-            <span class="watchlist__position-empty">Not held — only tracking verdict</span>
-            <a class="watchlist__crimson-link" href="#">Mark as Held →</a>
+            <span class="watchlist__position-empty">{{ t('watchlist.detail.notHeld') }}</span>
+            <a class="watchlist__crimson-link" href="#">{{ t('watchlist.detail.markHeld') }}</a>
           </template>
           <template v-else>
-            <span class="watchlist__position-empty">Entry price —  ·  Size —  ·  P&amp;L —</span>
+            <span class="watchlist__position-empty">{{ t('watchlist.detail.heldPosition') }}</span>
           </template>
         </div>
 
-        <div class="watchlist__section-header">── recent daywalker alerts</div>
+        <div class="watchlist__section-header">{{ t('watchlist.sections.alerts') }}</div>
 
         <div v-if="selectedItem.alerts.length === 0" class="watchlist__no-alerts">
-          No alerts yet.
+          {{ t('watchlist.noAlerts') }}
         </div>
         <div v-else>
           <div
@@ -153,13 +155,13 @@
                 class="watchlist__alert-level"
                 :class="`watchlist__alert-level--${alert.level}`"
               >
-                {{ alert.level === 'elevated' ? '⚠ elevated' : alert.level === 'info' ? 'ℹ info' : '— neutral' }}
+                {{ alert.level === 'elevated' ? t('watchlist.alertLevel.elevated') : alert.level === 'info' ? t('watchlist.alertLevel.info') : t('watchlist.alertLevel.neutral') }}
               </div>
             </div>
           </div>
         </div>
 
-        <div class="watchlist__section-header">── price (30d)</div>
+        <div class="watchlist__section-header">{{ t('watchlist.sections.price30d') }}</div>
         <div class="watchlist__chart">
           <apexchart
             type="area"
@@ -170,34 +172,36 @@
         </div>
 
         <template v-if="selectedItem.verdictId">
-          <div class="watchlist__section-header">── linked verdicts</div>
+          <div class="watchlist__section-header">{{ t('watchlist.sections.linkedVerdicts') }}</div>
           <div class="watchlist__verdict-card">
             <div class="watchlist__verdict-ticker">{{ selectedItem.ticker }} · Verdict #{{ selectedItem.verdictId }}</div>
-            <div class="watchlist__verdict-meta">tracking verdict · consensus 0.84</div>
+            <div class="watchlist__verdict-meta">{{ t('watchlist.verdictMeta', { consensus: '0.84' }) }}</div>
             <router-link
               :to="{ name: 'verdict-detail', params: { id: selectedItem.verdictId } }"
               class="watchlist__crimson-link"
-            >Read full verdict →</router-link>
+            >{{ t('watchlist.verdictLink') }}</router-link>
           </div>
         </template>
 
-        <div class="watchlist__section-header">── actions</div>
-        <button class="watchlist__ghost-btn" @click="() => {}">Remove from Watchlist</button>
-        <button class="watchlist__ghost-btn" @click="() => {}">Pause Daywalker for this item</button>
-        <button class="watchlist__ghost-btn" @click="() => {}">Edit Notes</button>
+        <div class="watchlist__section-header">{{ t('watchlist.sections.actions') }}</div>
+        <button class="watchlist__ghost-btn" @click="() => {}">{{ t('watchlist.actions.remove') }}</button>
+        <button class="watchlist__ghost-btn" @click="() => {}">{{ t('watchlist.actions.pauseDaywalker') }}</button>
+        <button class="watchlist__ghost-btn" @click="() => {}">{{ t('watchlist.actions.editNotes') }}</button>
       </template>
 
-      <div v-else class="watchlist__no-selection">Select an item from the list.</div>
+      <div v-else class="watchlist__no-selection">{{ t('watchlist.noSelection') }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import VueApexCharts from 'vue3-apexcharts'
 import { useApi } from '../api'
 import type { WatchlistItem, WatchlistTag } from '../api/types'
 
+const { t } = useI18n()
 const apexchart = VueApexCharts
 
 const api = useApi()
@@ -228,10 +232,10 @@ const counts = computed(() => ({
 }))
 
 const filters = computed(() => [
-  { key: 'all' as const, label: `All (${counts.value.all})` },
-  { key: 'held' as const, label: `Held Positions (${counts.value.held})` },
-  { key: 'tracking' as const, label: `Tracking Verdicts (${counts.value.tracking})` },
-  { key: 'alerts' as const, label: `Recent Alerts (${counts.value.alerts})` },
+  { key: 'all' as const, label: t('watchlist.filter.all', { n: counts.value.all }) },
+  { key: 'held' as const, label: t('watchlist.filter.held', { n: counts.value.held }) },
+  { key: 'tracking' as const, label: t('watchlist.filter.tracking', { n: counts.value.tracking }) },
+  { key: 'alerts' as const, label: t('watchlist.filter.alerts', { n: counts.value.alerts }) },
 ])
 
 const filteredItems = computed(() =>
@@ -310,7 +314,7 @@ async function onToggleTag(item: WatchlistItem) {
 }
 
 async function onDelete(item: WatchlistItem) {
-  if (!confirm(`Remove ${item.ticker} from watchlist?`)) return
+  if (!confirm(t('watchlist.confirmDelete', { ticker: item.ticker }))) return
   const idx = items.value.findIndex(i => i.id === item.id)
   if (idx === -1) return
   const removed = items.value[idx]
@@ -328,9 +332,9 @@ async function onDelete(item: WatchlistItem) {
 function daysAgo(isoDate: string): string {
   const diffMs = Date.now() - new Date(isoDate).getTime()
   const days = Math.floor(diffMs / 86_400_000)
-  if (days === 0) return 'today'
-  if (days === 1) return 'yesterday'
-  return `${days} days ago`
+  if (days === 0) return t('watchlist.daysAgo.today')
+  if (days === 1) return t('watchlist.daysAgo.yesterday')
+  return t('watchlist.daysAgo.days', { n: days })
 }
 
 function formatDate(isoDate: string): string {
