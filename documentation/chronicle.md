@@ -169,15 +169,28 @@ row, info/other plain rows.
 ## Implementation status (Etappe 11)
 
 **View 4 — Watchlist** (`/watchlist`): Fully implemented and wired to the real API, full CRUD
-(`POST`, `PATCH`, `DELETE /api/watchlist/{id}`) wired.
-Two-pane layout (60% list / 40% detail). Left pane: search input, filter chips
-(All/Held/Tracking/Alerts with live counts), add-to-watchlist button (stub), scrollable
-item list with ticker, price, day change, status dot (calm/elevated/alert). Right pane:
-selected item detail with Daywalker alert timeline (max 5 alerts), 30-day ApexCharts
-area sparkline, linked verdict card (when verdictId is set), ghost action buttons (stubs).
-Selected state is a local `ref<string | null>` initialized to the first item on load
-(auto-selection is suppressed on mobile so the list is the entry point; see the
-mobile drill-in under "Responsive layout").
+(`POST`, `PATCH`, `DELETE /api/watchlist/{id}`) plus the position PATCH
+(`PATCH /api/watchlist/{id}/position`) wired. Master/detail layout (`.watch-grid`,
+420px list pane / fluid detail pane). Left pane: search input (filters ticker/company),
+tabs (Alle / Positionen gehalten / Urteile verfolgt / Aktuelle Alarme — counts derived
+from real items: positions = `entryPrice != null`, tracked = `tag === 'TRACKING'`,
+alerts = `alerts.length > 0`), add-to-watchlist dialog, and `.watch-row` rows showing
+ticker, company, price, day change (pos/neg color), status dot (calm→positive,
+elevated→warning, alert→danger), and flags ("Urteil verfolgt", "Position"). Per-row
+tag toggle (HELD/TRACKING) and delete are preserved. Right pane: header (mono ticker,
+company, tracked-since, live quote) and a **backend-backed position panel** ("Meine
+Position"): items with no `entryPrice` show a dashed add-card whose "Position erfassen"
+button snapshots `currentPrice` as the entry (default 100 shares) via
+`patchWatchlistPosition`; items with a position show editable Einstiegskurs/Größe number
+inputs (persisted on blur) and a live P&L readout (abs `(currentPrice − entryPrice) ×
+shareCount`, pct `(currentPrice − entryPrice) / entryPrice × 100`, colored pos/neg) plus
+a "Position entfernen" affordance that PATCHes the position back to null. Positions are
+server-persisted (no localStorage). Below the panel is the Daywalker alert feed (the
+`AlertRow` atom, mapping level elevated→warning / info→info / neutral→neutral) and the
+linked-verdict card (when `verdictId` is set). Selected state is a local
+`ref<string | null>` initialized to the first item on load (auto-selection is suppressed
+on mobile so the list is the entry point; see the mobile drill-in under "Responsive
+layout").
 
 **View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
 approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
