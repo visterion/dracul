@@ -1,7 +1,7 @@
 <template>
   <aside v-if="open" class="live-panel" data-testid="live-alert-panel">
     <header class="live-panel__head">
-      <span class="live-panel__title">Live Alerts</span>
+      <span class="live-panel__title">{{ t('app.liveAlerts.title') }}</span>
       <span
         class="live-panel__status"
         :class="`live-panel__status--${store.status}`"
@@ -27,16 +27,18 @@
         <p class="live-panel__thesis">{{ a.thesis }}</p>
       </li>
     </ul>
-    <p v-else class="live-panel__empty">No live alerts yet.</p>
+    <p v-else class="live-panel__empty">{{ t('app.liveAlerts.empty') }}</p>
   </aside>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
 
+const { t } = useI18n()
 const store = useLiveAlertsStore()
 </script>
 

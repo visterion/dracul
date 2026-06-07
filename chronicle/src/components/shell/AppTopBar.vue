@@ -23,8 +23,8 @@
       <div class="top-bar__controls">
         <button
           class="top-bar__icon-btn top-bar__live"
-          aria-label="Live alerts"
-          title="Live alerts"
+          :aria-label="t('app.liveAlerts.title')"
+          :title="t('app.liveAlerts.title')"
           data-testid="live-toggle"
           @click="$emit('toggle-live')"
         >
@@ -48,20 +48,23 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
 
 defineEmits<{ 'toggle-live': [] }>()
 
+const { t } = useI18n()
 const live = useLiveAlertsStore()
 
-const navTabs = [
-  { name: 'chronicle', label: 'chronicle' },
-  { name: 'watchlist', label: 'watchlist' },
-  { name: 'pattern-library', label: 'pattern library' },
-  { name: 'vistierie', label: 'vistierie' },
-  { name: 'backtest', label: 'backtest' },
-  { name: 'settings', label: 'settings' },
-] as const
+const navTabs = computed(() => [
+  { name: 'chronicle' as const,        label: t('app.nav.chronicle') },
+  { name: 'watchlist' as const,        label: t('app.nav.watchlist') },
+  { name: 'pattern-library' as const,  label: t('app.nav.patternLibrary') },
+  { name: 'vistierie' as const,        label: t('app.nav.vistierie') },
+  { name: 'backtest' as const,         label: t('app.nav.backtest') },
+  { name: 'settings' as const,         label: t('app.nav.settings') },
+])
 </script>
 
 <style scoped>
