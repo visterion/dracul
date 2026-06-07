@@ -80,6 +80,22 @@ In production, the frontend is served directly by Spring Boot (Vue
 `dist/` baked into `src/main/resources/static/` of the JAR; `SpaFallbackController`
 handles Vue Router paths).
 
+## Language / i18n
+
+The Chronicle GUI is multilingual: German (default) and English, powered by
+`vue-i18n`.
+
+- **Startup**: the app calls `GET /api/settings/language` to load the active
+  locale from the backend (server-authoritative). On network failure it falls
+  back to German (`de`).
+- **Live switching**: Settings → "Sprache" lets the user switch language
+  without a page reload. The choice is persisted via
+  `PUT /api/settings/language` (accepted values: `de`, `en`).
+- **LLM narratives**: agent-generated prose (summaries, signals, theses) is
+  localized separately — the backend selects the narrative language at
+  agent-registration time. See `configuration.md` and
+  `vistierie-integration.md` for details.
+
 ## Development
 
 ```bash
