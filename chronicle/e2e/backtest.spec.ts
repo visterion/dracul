@@ -28,11 +28,11 @@ test.describe('Backtest View (/backtest)', () => {
     await expect.poll(() => page.locator('.backtest__run-card').count()).toBeGreaterThanOrEqual(3)
   })
 
-  test('Overview tab is active by default', async ({ page }) => {
-    await expect(page.locator('.backtest__tab--active')).toContainText('Overview')
+  test('Übersicht tab is active by default', async ({ page }) => {
+    await expect(page.locator('.backtest__tab--active')).toContainText('Übersicht')
   })
 
-  test('renders 4 stat cards in Overview tab', async ({ page }) => {
+  test('renders 4 stat cards in Übersicht tab', async ({ page }) => {
     await expect(page.locator('.backtest__stat-card')).toHaveCount(4)
   })
 
@@ -42,14 +42,14 @@ test.describe('Backtest View (/backtest)', () => {
     await expect(page.locator('.backtest__trades table')).toBeVisible()
   })
 
-  test('clicking Equity Curve tab shows chart', async ({ page }) => {
-    await page.click('.backtest__tab:has-text("Equity Curve")')
-    await expect(page.locator('.backtest__tab--active')).toContainText('Equity Curve')
+  test('clicking Equity-Kurve tab shows chart', async ({ page }) => {
+    await page.click('.backtest__tab:has-text("Equity-Kurve")')
+    await expect(page.locator('.backtest__tab--active')).toContainText('Equity-Kurve')
     await expect(page.locator('.backtest__chart .apexcharts-canvas')).toBeVisible()
   })
 
-  test('clicking Comparison tab shows comparison table', async ({ page }) => {
-    await page.click('.backtest__tab:has-text("Comparison")')
+  test('clicking Vergleich tab shows comparison table', async ({ page }) => {
+    await page.click('.backtest__tab:has-text("Vergleich")')
     await expect(page.locator('.backtest__comparison table')).toBeVisible()
   })
 

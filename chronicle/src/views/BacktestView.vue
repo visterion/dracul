@@ -1,14 +1,14 @@
 <template>
   <div class="backtest">
     <div class="backtest__header">
-      <h1 class="font-display">Backtest</h1>
-      <p class="backtest__subtitle">Validate the Strigoi against history</p>
+      <h1 class="font-display">{{ t('backtest.title') }}</h1>
+      <p class="backtest__subtitle">{{ t('backtest.subtitle') }}</p>
     </div>
 
     <!-- Config panel -->
     <div class="backtest__config">
       <div class="backtest__config-row">
-        <span class="backtest__config-label">Strigoi</span>
+        <span class="backtest__config-label">{{ t('backtest.config.strigoi') }}</span>
         <div class="backtest__chips">
           <button
             v-for="s in STRIGOI_OPTIONS"
@@ -20,7 +20,7 @@
         </div>
       </div>
       <div class="backtest__config-row">
-        <span class="backtest__config-label">Time range</span>
+        <span class="backtest__config-label">{{ t('backtest.config.timeRange') }}</span>
         <div class="backtest__date-row">
           <input class="backtest__input" type="date" v-model="fromDate" />
           <span class="backtest__date-sep">→</span>
@@ -36,7 +36,7 @@
         </div>
       </div>
       <div class="backtest__config-row">
-        <span class="backtest__config-label">Universe</span>
+        <span class="backtest__config-label">{{ t('backtest.config.universe') }}</span>
         <div class="backtest__radio-row">
           <label
             v-for="u in UNIVERSES"
@@ -49,8 +49,8 @@
         </div>
       </div>
       <div class="backtest__config-row backtest__config-row--right">
-        <button class="backtest__run" disabled title="Backtest engine coming in a future etappe">
-          Run Backtest
+        <button class="backtest__run" disabled :title="t('backtest.config.runButtonTitle')">
+          {{ t('backtest.config.runButton') }}
         </button>
       </div>
     </div>
@@ -67,8 +67,8 @@
       >
         <div class="backtest__run-label">{{ run.label }}</div>
         <div class="backtest__run-stats">
-          <span class="backtest__run-stat">Hit rate <strong>{{ run.hitRate }}</strong></span>
-          <span class="backtest__run-stat">Avg return <strong>{{ run.avgReturn }}</strong></span>
+          <span class="backtest__run-stat">{{ t('backtest.runStats.hitRate') }} <strong>{{ run.hitRate }}</strong></span>
+          <span class="backtest__run-stat">{{ t('backtest.runStats.avgReturn') }} <strong>{{ run.avgReturn }}</strong></span>
         </div>
         <div class="backtest__run-meta">{{ run.ranAgo }}</div>
       </div>
@@ -79,17 +79,17 @@
       <SectionHeader label="results" class="backtest__section-gap" />
       <div class="backtest__tabs">
         <button
-          v-for="tab in TABS"
-          :key="tab"
+          v-for="tab in tabs"
+          :key="tab.key"
           class="backtest__tab"
-          :class="{ 'backtest__tab--active': activeTab === tab }"
-          @click="activeTab = tab"
-        >{{ tab }}</button>
+          :class="{ 'backtest__tab--active': activeTab === tab.key }"
+          @click="activeTab = tab.key"
+        >{{ tab.label }}</button>
       </div>
 
       <!-- Overview -->
-      <div v-if="activeTab === 'Overview'" class="backtest__overview">
-        <div v-for="stat in OVERVIEW_STATS" :key="stat.label" class="backtest__stat-card">
+      <div v-if="activeTab === 'overview'" class="backtest__overview">
+        <div v-for="stat in overviewStats" :key="stat.label" class="backtest__stat-card">
           <div class="backtest__stat-label">{{ stat.label }}</div>
           <div class="backtest__stat-value" :class="stat.positive ? 'backtest__stat-value--pos' : ''">
             {{ stat.value }}
@@ -98,35 +98,45 @@
       </div>
 
       <!-- Trades -->
-      <div v-else-if="activeTab === 'Trades'" class="backtest__trades">
+      <div v-else-if="activeTab === 'trades'" class="backtest__trades">
         <table class="backtest__table">
           <thead>
             <tr>
-              <th>Symbol</th><th>Entry</th><th>Exit</th><th>Return</th><th>Thesis</th>
+              <th>{{ t('backtest.table.trades.symbol') }}</th>
+              <th>{{ t('backtest.table.trades.entry') }}</th>
+              <th>{{ t('backtest.table.trades.exit') }}</th>
+              <th>{{ t('backtest.table.trades.return') }}</th>
+              <th>{{ t('backtest.table.trades.thesis') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="t in TRADES" :key="t.symbol + t.entry">
-              <td class="backtest__ticker">{{ t.symbol }}</td>
-              <td>{{ t.entry }}</td>
-              <td>{{ t.exit }}</td>
-              <td :class="t.ret.startsWith('+') ? 'backtest__ret--pos' : 'backtest__ret--neg'">{{ t.ret }}</td>
-              <td>{{ t.validated ? '✓' : '✗' }}</td>
+            <tr v-for="tr in TRADES" :key="tr.symbol + tr.entry">
+              <td class="backtest__ticker">{{ tr.symbol }}</td>
+              <td>{{ tr.entry }}</td>
+              <td>{{ tr.exit }}</td>
+              <td :class="tr.ret.startsWith('+') ? 'backtest__ret--pos' : 'backtest__ret--neg'">{{ tr.ret }}</td>
+              <td>{{ tr.validated ? '✓' : '✗' }}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <!-- Equity Curve -->
-      <div v-else-if="activeTab === 'Equity Curve'" class="backtest__chart">
+      <div v-else-if="activeTab === 'equityCurve'" class="backtest__chart">
         <apexchart type="area" height="280" :options="equityOptions" :series="equitySeries" />
       </div>
 
       <!-- Comparison -->
-      <div v-else-if="activeTab === 'Comparison'" class="backtest__comparison">
+      <div v-else-if="activeTab === 'comparison'" class="backtest__comparison">
         <table class="backtest__table">
           <thead>
-            <tr><th>Strategy</th><th>CAGR</th><th>Sharpe</th><th>Win Rate</th><th>Trades</th></tr>
+            <tr>
+              <th>{{ t('backtest.table.comparison.strategy') }}</th>
+              <th>{{ t('backtest.table.comparison.cagr') }}</th>
+              <th>{{ t('backtest.table.comparison.sharpe') }}</th>
+              <th>{{ t('backtest.table.comparison.winRate') }}</th>
+              <th>{{ t('backtest.table.comparison.trades') }}</th>
+            </tr>
           </thead>
           <tbody>
             <tr v-for="row in COMPARISON" :key="row.strategy">
@@ -144,16 +154,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import VueApexCharts from 'vue3-apexcharts'
 import SectionHeader from '../components/common/SectionHeader.vue'
 
+const { t } = useI18n()
 const apexchart = VueApexCharts
 
 const STRIGOI_OPTIONS = ['spin', 'insider', 'echo', 'lazarus', 'index', 'merger']
 const PRESETS = [{ label: '1Y', years: 1 }, { label: '2Y', years: 2 }, { label: '5Y', years: 5 }, { label: 'Max', years: 10 }]
 const UNIVERSES = ['S&P 500', 'Russell 2000', 'NASDAQ 100', 'Custom']
-const TABS = ['Overview', 'Trades', 'Equity Curve', 'Comparison']
 
 const BACKTEST_RUNS = [
   { id: 'r1', label: 'Strigoi-Spin · Russell 2000 · 2024–2026', hitRate: '67%', avgReturn: '+14.2%', ranAgo: '2h ago' },
@@ -161,12 +172,19 @@ const BACKTEST_RUNS = [
   { id: 'r3', label: 'Strigoi-Spin · NASDAQ 100 · 2022–2026',   hitRate: '61%', avgReturn: '+11.8%', ranAgo: '3d ago' },
 ]
 
-const OVERVIEW_STATS = [
-  { label: 'Hit Rate',    value: '67%',    positive: true },
-  { label: 'Avg Return',  value: '+14.2%', positive: true },
-  { label: 'Sharpe',      value: '1.34',   positive: true },
-  { label: 'Max Drawdown',value: '-8.1%',  positive: false },
-]
+const tabs = computed(() => [
+  { key: 'overview',    label: t('backtest.tabs.overview') },
+  { key: 'trades',      label: t('backtest.tabs.trades') },
+  { key: 'equityCurve', label: t('backtest.tabs.equityCurve') },
+  { key: 'comparison',  label: t('backtest.tabs.comparison') },
+])
+
+const overviewStats = computed(() => [
+  { label: t('backtest.overview.hitRate'),    value: '67%',    positive: true },
+  { label: t('backtest.overview.avgReturn'),  value: '+14.2%', positive: true },
+  { label: t('backtest.overview.sharpe'),     value: '1.34',   positive: true },
+  { label: t('backtest.overview.maxDrawdown'),value: '-8.1%',  positive: false },
+])
 
 const TRADES = [
   { symbol: 'AVGO', entry: '2024-03-15', exit: '2024-09-15', ret: '+28.4%', validated: true },
@@ -229,7 +247,7 @@ const fromDate = ref('2024-01-01')
 const toDate = ref(new Date().toISOString().slice(0, 10))
 const universe = ref('Russell 2000')
 const activeRunId = ref(BACKTEST_RUNS[0].id)
-const activeTab = ref('Overview')
+const activeTab = ref('overview')
 
 function toggleStrigoi(s: string) {
   const idx = selectedStrigoi.value.indexOf(s)
