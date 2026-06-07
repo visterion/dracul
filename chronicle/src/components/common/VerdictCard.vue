@@ -155,4 +155,9 @@ const { relativeTime } = useRelativeTime()
   font-size: var(--text-micro);
   color: var(--bone-ivory-dim);
 }
+
+.verdict-card .btn:focus-visible {
+  outline: 2px solid var(--cathedral-gold);
+  outline-offset: 2px;
+}
 </style>

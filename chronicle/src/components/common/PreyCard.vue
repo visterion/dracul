@@ -3,7 +3,11 @@
     class="prey-card"
     :class="confClass"
     data-testid="prey-card"
+    role="button"
+    tabindex="0"
     @click="$emit('open', prey)"
+    @keydown.enter="$emit('open', prey)"
+    @keydown.space.prevent="$emit('open', prey)"
   >
     <!-- Header -->
     <header class="prey-head">
@@ -186,4 +190,9 @@ const confClass = computed(() =>
 }
 
 .prey-foot .by { color: var(--bone-ivory-dim); }
+
+.prey-card:focus-visible {
+  outline: 2px solid var(--cathedral-gold);
+  outline-offset: 2px;
+}
 </style>
