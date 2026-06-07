@@ -18,6 +18,7 @@
             :key="n"
             class="select-chip"
             :class="{ active: strat === n }"
+            :aria-pressed="strat === n"
             @click="strat = n"
           >{{ n }}</button>
         </div>
@@ -41,15 +42,17 @@
       </div>
       <div class="bt-field">
         <span class="bt-label">{{ t('backtest.config.universe') }}</span>
-        <div class="chip-row">
+        <div class="chip-row" role="radiogroup" :aria-label="t('backtest.config.universe')">
           <button
             v-for="u in UNIVERSES"
             :key="u"
             class="radio-opt"
             :class="{ active: universe === u }"
+            role="radio"
+            :aria-checked="universe === u"
             @click="universe = u"
           >
-            <span class="radio-dot" /> {{ u }}
+            <span class="radio-dot" aria-hidden="true" /> {{ u }}
           </button>
         </div>
       </div>
@@ -81,18 +84,21 @@
 
     <!-- results -->
     <SectionHeader :label="t('backtest.sections.results')" />
-    <div class="bt-restabs">
+    <div class="bt-restabs" role="tablist" :aria-label="t('backtest.sections.results')">
       <button
         v-for="tab in tabs"
         :key="tab.key"
         class="restab"
         :class="{ active: resTab === tab.key }"
+        role="tab"
+        :aria-selected="resTab === tab.key"
+        :data-testid="`restab-${tab.key}`"
         @click="resTab = tab.key"
       >{{ tab.label }}</button>
     </div>
 
     <!-- Trades -->
-    <div v-if="resTab === 'trades'" class="card bt-trades-card">
+    <div v-if="resTab === 'trades'" role="tabpanel" class="card bt-trades-card">
       <div class="table-wrap">
         <table class="dt">
           <thead>
@@ -127,7 +133,7 @@
     </div>
 
     <!-- Equity / Comparison / Overview -->
-    <div v-else class="chart-card">
+    <div v-else role="tabpanel" class="chart-card">
       <div class="chart-head">
         <span class="chart-title">{{ t('backtest.chart.title') }}</span>
         <div class="chart-legend">
@@ -208,7 +214,7 @@ const strat = ref('spin')
 const universe = ref('Russell 2000')
 const preset = ref('2J')
 const resTab = ref('overview')
-const fromDate = '01.01.2024'
+const fromDate = computed(() => ({ '1J': '01.01.2025', '2J': '01.01.2024', '5J': '01.01.2021', 'Max': '01.01.2019' }[preset.value] ?? '01.01.2024'))
 const toDate = '07.06.2026'
 </script>
 
