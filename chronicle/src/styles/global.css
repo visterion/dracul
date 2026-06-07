@@ -120,3 +120,21 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Responsive system (see DESIGN.md Part 4 — Breakpoints & Responsive System) ──
+   Mobile = viewport < 960px (phones + portrait tablets). Always use the exact
+   query `@media (max-width: 959.98px)`. */
+:root { --bp-mobile: 960px; }
+
+/* Reusable horizontal-scroll wrapper for data-dense tables on mobile (DESIGN.md 5.8). */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 959.98px) {
+  /* Touch ergonomics: comfortable tap targets, no iOS input auto-zoom. */
+  button, a, [role="button"], .v-btn { min-height: 44px; }
+  input, select, textarea { font-size: 16px; }
+}
