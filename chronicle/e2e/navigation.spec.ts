@@ -50,7 +50,7 @@ test.describe('Top-bar navigation', () => {
     await page.click('a.top-bar__tab:has-text("settings")')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/settings')
-    await expect(page.locator('.settings__nav')).toBeVisible()
+    await expect(page.locator('.settings-nav')).toBeVisible()
   })
 
   test('DRACUL wordmark links to /', async ({ page }) => {
