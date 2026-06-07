@@ -4,6 +4,13 @@
     <v-skeleton-loader v-for="n in 3" :key="n" type="card" color="surface" class="pd-loading__item" />
   </div>
 
+  <!-- Error state -->
+  <div v-else-if="fetchError" class="content-inner prose-width pd-notfound" role="alert">
+    <BatGlyph :size="28" class="pd-notfound__glyph" />
+    <p>{{ t('prey.loadError') }}</p>
+    <BackLink @click="onBack">{{ t('verdict.notFound.backLink') }}</BackLink>
+  </div>
+
   <!-- Not-found state -->
   <div v-else-if="!prey" class="content-inner prose-width pd-notfound">
     <BatGlyph :size="28" class="pd-notfound__glyph" />
@@ -85,7 +92,7 @@
           >
             <BatGlyph :size="13" />
             <span class="brood-name mono">{{ prey.discoveredBy }}</span>
-            <i class="ph ph-caret-right brood-caret" />
+            <i class="ph ph-caret-right brood-caret" aria-hidden="true" />
           </button>
         </div>
 
@@ -106,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { Prey } from '../api/types'
@@ -127,13 +134,17 @@ const { relativeTime } = useRelativeTime()
 
 const prey = ref<Prey | null>(null)
 const loading = ref(true)
+const fetchError = ref<string | null>(null)
 
 const watchlistSubmitting = ref(false)
 const watchlistError = ref<string | null>(null)
 const watchlistAdded = ref(false)
 
-onMounted(async () => {
-  const id = route.params.id as string
+async function resolve(id: string) {
+  loading.value = true
+  fetchError.value = null
+  watchlistAdded.value = false
+  watchlistError.value = null
 
   // Deep-link / refresh: store may be empty.
   // Always load when prey list is empty — store.load() is idempotent
@@ -142,12 +153,23 @@ onMounted(async () => {
     await store.load()
   }
 
+  if (store.error) {
+    fetchError.value = store.error
+    prey.value = null
+    loading.value = false
+    return
+  }
+
   prey.value = store.prey.find(p => p.id === id) ?? null
   loading.value = false
-})
+}
+
+onMounted(() => resolve(route.params.id as string))
+watch(() => route.params.id as string, (id) => { if (id) resolve(id) })
 
 function onBack() {
-  router.back()
+  if (window.history.state?.back) router.back()
+  else router.push({ name: 'chronicle' })
 }
 
 function onOpenStrigoi(name: string) {
