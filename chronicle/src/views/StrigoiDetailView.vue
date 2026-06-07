@@ -191,7 +191,9 @@ const humanSchedule = computed(() => {
   else if (dow === '*' || dow === '?') rec = t('strigoi.schedule.daily')
   else return cron   // unexpected pattern → show raw cron rather than guess
   if (!next) return rec
-  const time = new Date(next).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
+  const d = new Date(next)
+  if (isNaN(d.getTime())) return rec
+  const time = d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
   return t('strigoi.schedule.everyAt', { rec, time })
 })
 
