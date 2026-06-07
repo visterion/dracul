@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  LanguageSetting,
+  PatchPositionRequest, LanguageSetting,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -142,6 +142,16 @@ export class HttpApiClient implements ApiClient {
       body: JSON.stringify(req),
     })
     if (!res.ok) throw new Error(`patchWatchlistItem failed: HTTP ${res.status}`)
+    return res.json() as Promise<WatchlistItem>
+  }
+
+  async patchWatchlistPosition(id: string, req: PatchPositionRequest): Promise<WatchlistItem> {
+    const res = await fetch(`${this.baseUrl}/api/watchlist/${encodeURIComponent(id)}/position`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+    if (!res.ok) throw new Error(`patchWatchlistPosition failed: HTTP ${res.status}`)
     return res.json() as Promise<WatchlistItem>
   }
 

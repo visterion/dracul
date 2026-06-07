@@ -3,7 +3,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse,
-  CreateWatchlistRequest, PatchWatchlistRequest, LanguageSetting,
+  CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting,
 } from './types'
 
 export interface ApiClient {
@@ -24,6 +24,7 @@ export interface ApiClient {
   addVerdictNote(id: string, body: string): Promise<VerdictNote>
   createWatchlistItem(req: CreateWatchlistRequest): Promise<WatchlistItem>
   patchWatchlistItem(id: string, req: PatchWatchlistRequest): Promise<WatchlistItem>
+  patchWatchlistPosition(id: string, req: PatchPositionRequest): Promise<WatchlistItem>
   deleteWatchlistItem(id: string): Promise<void>
   getLanguage(): Promise<LanguageSetting>
   setLanguage(language: string): Promise<LanguageSetting>
