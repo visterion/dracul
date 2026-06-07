@@ -160,14 +160,18 @@ function countFor(key: string): number {
 }
 
 // ── day grouping (by distinct calendar day of discoveredAt, newest first) ──
+function localDayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function dayKey(iso: string): string {
-  return new Date(iso).toISOString().slice(0, 10)
+  return localDayKey(new Date(iso))
 }
 
 function dayLabel(iso: string): string {
   const key = dayKey(iso)
-  const todayKey = new Date().toISOString().slice(0, 10)
-  const yesterdayKey = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+  const todayKey = localDayKey(new Date())
+  const yesterdayKey = localDayKey(new Date(Date.now() - 86_400_000))
   if (key === todayKey) return t('chronicle.daymark.today')
   if (key === yesterdayKey) return t('chronicle.daymark.yesterday')
   return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long' }).format(new Date(iso))
