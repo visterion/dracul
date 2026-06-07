@@ -67,13 +67,13 @@
 
           <div class="settings__provider-row">
             <template v-if="provider.status === 'local'">
-              Today: <span>{{ provider.callsToday ?? 0 }} calls · $0.00 (local compute)</span>
+              {{ t('settings.providers.todayLocal', { calls: provider.callsToday ?? 0 }) }}
             </template>
             <template v-else-if="provider.todayInputTokens === 0">
-              Today: <span>0 tokens · $0.00 — used only when Anthropic unavailable</span>
+              {{ t('settings.providers.todayZero') }}
             </template>
             <template v-else>
-              Today: <span>{{ provider.todayInputTokens.toLocaleString() }} input · {{ provider.todayOutputTokens.toLocaleString() }} output tokens · ${{ provider.todayCostUsd.toFixed(2) }}</span>
+              {{ t('settings.providers.todayUsage', { input: provider.todayInputTokens.toLocaleString(), output: provider.todayOutputTokens.toLocaleString(), cost: provider.todayCostUsd.toFixed(2) }) }}
             </template>
           </div>
 
@@ -110,14 +110,14 @@
               <label class="settings__budget-label">{{ t('settings.budgets.dailyCap') }}</label>
               <input class="settings__budget-input" v-model="tenantEdit.dailyCapUsd" placeholder="∞" />
               <div class="settings__budget-usage">
-                used: ${{ (budgetData.tenant.dailyUsageMicros / 1_000_000).toFixed(4) }}
+                {{ t('settings.budgets.used', { amount: (budgetData.tenant.dailyUsageMicros / 1_000_000).toFixed(4) }) }}
               </div>
             </div>
             <div class="settings__budget-field">
               <label class="settings__budget-label">{{ t('settings.budgets.monthlyCap') }}</label>
               <input class="settings__budget-input" v-model="tenantEdit.monthlyCapUsd" placeholder="∞" />
               <div class="settings__budget-usage">
-                used: ${{ (budgetData.tenant.monthlyUsageMicros / 1_000_000).toFixed(2) }}
+                {{ t('settings.budgets.used', { amount: (budgetData.tenant.monthlyUsageMicros / 1_000_000).toFixed(2) }) }}
               </div>
             </div>
             <div class="settings__budget-field">
