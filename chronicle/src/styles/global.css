@@ -234,6 +234,19 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
   }
 }
 
+/* ── Shell layout (App.vue + view content wrappers) ────────────────────
+   The app shell itself is component-driven (AppTopBar / AppStatusBar /
+   AppBottomNav, swapped by `useDisplay()` in App.vue). These are the shared
+   content wrappers every view drops its markup into — centered, max-width,
+   with the gutter that collapses on mobile below. */
+.content-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-8) var(--space-10);
+}
+.content-inner.prose-width { max-width: 1180px; }
+.content-inner.full-bleed { max-width: none; padding: 0; height: 100%; }
+
 /* ── Responsive system (see DESIGN.md Part 4 — Breakpoints & Responsive System) ──
    Mobile = viewport < 960px (phones + portrait tablets). Always use the exact
    query `@media (max-width: 959.98px)`. */
@@ -246,10 +259,78 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
   -webkit-overflow-scrolling: touch;
 }
 
+/* Tablet-width grid relaxations (above the mobile breakpoint). */
+@media (max-width: 1240px) {
+  .vist-grid { grid-template-columns: 1fr; }
+  .vist-grid > :last-child { grid-column: auto; }
+}
+@media (max-width: 1100px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .bt-recent { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 959.98px) {
   /* Touch ergonomics: comfortable tap targets, no iOS input auto-zoom. */
   button, a, [role="button"], .v-btn { min-height: 44px; }
   input, select, textarea { font-size: 16px; }
+
+  /* Shell is swapped at the component level via useDisplay() in App.vue
+     (mobile-header / bottom-nav render instead of top-bar / status-bar);
+     the rules below collapse the in-view layouts that later view tasks rely on. */
+  .content-inner { padding: var(--space-5) var(--space-4) var(--space-8); }
+  .content-inner.full-bleed { padding: 0; }
+
+  /* Multi-column page layouts collapse to a single column. */
+  .chronicle-grid, .verdict-grid, .two-col, .vist-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+  .verdict-aside, .filters { position: static; }
+  .filters { flex-direction: column; }
+
+  /* Verdict card: side rail drops beneath the body. */
+  .verdict-card { grid-template-columns: 1fr; }
+  .vc-side {
+    flex-direction: row;
+    border-left: none;
+    border-top: var(--hairline);
+    justify-content: flex-start;
+    gap: var(--space-5);
+  }
+  .vc-side-strat { width: auto; flex: 1; }
+
+  .stat-grid { grid-template-columns: 1fr 1fr; }
+  .page-title { font-size: var(--text-h2); }
+  .sr-grid { grid-template-columns: 1fr; gap: var(--space-4); }
+  .bt-field { grid-template-columns: 1fr; gap: var(--space-2); }
+  .bt-recent { grid-template-columns: 1fr; }
+  .pt-actions { margin-left: 0; width: 100%; }
+  .pt-actions .btn { flex: 1; justify-content: center; }
+
+  /* Watchlist: master/detail → drill-in (handled by the view; styles here). */
+  .watch-grid { grid-template-columns: 1fr; }
+  .watch-grid .watch-detail-pane { display: none; }
+  .watch-grid.show-detail .watch-list-pane { display: none; }
+  .watch-grid.show-detail .watch-detail-pane { display: block; padding: var(--space-5) var(--space-4); }
+  .watch-detail-pane .back-link { display: inline-flex; }
+  .watch-list-pane { border-right: none; }
+
+  /* Settings: sidebar → horizontal chip row. */
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: var(--hairline);
+    padding: var(--space-3);
+    gap: var(--space-2);
+  }
+  .set-nav-item { width: auto; white-space: nowrap; flex: 0 0 auto; }
+  .set-nav-item span { display: none; }
+  .set-nav-item.active span, .set-nav-item .set-badge { display: inline; }
+  .settings-body { padding: var(--space-5) var(--space-4); }
+  .wd-pos-fields { grid-template-columns: 1fr; gap: var(--space-4); }
+  .wd-addpos { flex-direction: column; align-items: stretch; }
 }
 
 /* ── SVG Charts (LineChart.vue, BarChart.vue) ──────────────────────── */

@@ -45,11 +45,27 @@ onMounted(() => {
   flex-direction: column;
   height: 100vh;
   background-color: var(--crypt-black);
+  position: relative;
+}
+
+/* Ambient moonlight glow bleeding from the top-right corner. */
+.app-layout::before {
+  content: "";
+  position: fixed;
+  top: -280px;
+  right: -200px;
+  width: 680px;
+  height: 680px;
+  background: radial-gradient(circle, rgba(196, 196, 202, 0.05) 0%, rgba(184, 148, 92, 0.022) 32%, transparent 62%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .app-main {
   flex: 1;
   overflow-y: auto;
+  position: relative;
+  z-index: 1;
 }
 
 /* Clear the fixed bottom nav on mobile so content isn't hidden behind it. */

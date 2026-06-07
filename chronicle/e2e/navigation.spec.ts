@@ -1,6 +1,18 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Top-bar navigation', () => {
+  test('top nav has exactly 5 destinations', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('a.top-bar__tab')).toHaveCount(5)
+  })
+
+  test('top nav does not contain a vistierie destination', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('a.top-bar__tab', { hasText: 'vistierie' })).toHaveCount(0)
+  })
+
   test('chronicles tab navigates to /', async ({ page }) => {
     await page.goto('/watchlist')
     await page.click('a.top-bar__tab:has-text("chronicle")')
@@ -25,14 +37,6 @@ test.describe('Top-bar navigation', () => {
     await expect(page.locator('h1.patterns__title')).toBeVisible()
   })
 
-  test('vistierie tab navigates to /vistierie', async ({ page }) => {
-    await page.goto('/')
-    await page.click('a.top-bar__tab:has-text("vistierie")')
-    await page.waitForLoadState('networkidle')
-    await expect(page).toHaveURL('/vistierie')
-    await expect(page.locator('.vistierie__header h1')).toContainText('Vistierie')
-  })
-
   test('backtest tab navigates to /backtest', async ({ page }) => {
     await page.goto('/')
     await page.click('a.top-bar__tab:has-text("backtest")')
@@ -55,6 +59,11 @@ test.describe('Top-bar navigation', () => {
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/')
     await expect(page.locator('.chronicle__banner')).toBeVisible()
+  })
+
+  test('the removed /vistierie route redirects to /', async ({ page }) => {
+    await page.goto('/vistierie')
+    await expect(page).toHaveURL('/')
   })
 
   test('unknown route redirects to /', async ({ page }) => {
