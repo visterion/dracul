@@ -65,6 +65,16 @@ class WatchlistControllerIT {
     }
 
     @Test
+    void watchlistItemsExposePositionFieldsAsNullByDefault() {
+        var response = rest.get().uri("/api/watchlist").retrieve().toEntity(JsonNode.class);
+        var first = response.getBody().get(0);
+        assertThat(first.has("entryPrice")).isTrue();
+        assertThat(first.has("shareCount")).isTrue();
+        assertThat(first.get("entryPrice").isNull()).isTrue();
+        assertThat(first.get("shareCount").isNull()).isTrue();
+    }
+
+    @Test
     void watchlistAvgoHasVerdictId() {
         var response = rest.get()
                 .uri("/api/watchlist")

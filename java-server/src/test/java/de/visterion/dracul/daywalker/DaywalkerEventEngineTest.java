@@ -23,7 +23,7 @@ class DaywalkerEventEngineTest {
 
     private static WatchlistItem item() {
         return new WatchlistItem("id-1", "ACME", "Acme Corp", 100.0, 0.0,
-                "calm", "2026-06-01", "", null, List.of(), List.of());
+                "calm", "2026-06-01", "", null, List.of(), List.of(), null, null);
     }
 
     private static List<BigDecimal> closes(double... v) {

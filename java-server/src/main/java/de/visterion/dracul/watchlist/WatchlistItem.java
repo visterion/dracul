@@ -7,4 +7,5 @@ public record WatchlistItem(
         double currentPrice, double dayChangePercent,
         String status, String addedAt, String tag,
         String verdictId, List<WatchlistAlert> alerts,
-        List<Double> priceHistory30d) {}
+        List<Double> priceHistory30d,
+        Double entryPrice, Double shareCount) {}
