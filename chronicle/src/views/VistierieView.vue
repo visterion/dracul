@@ -276,4 +276,8 @@ function agentColor(agent: string): string {
   font-family: var(--font-mono);
   color: var(--cathedral-gold);
 }
+
+@media (max-width: 959.98px) {
+  .vistierie__grid { grid-template-columns: 1fr; }
+}
 </style>
