@@ -56,6 +56,33 @@ Present on every view:
 The status bar currently reads from Pinia (mock data). SSE integration
 (`/api/events`) comes in Etappe 12 (Daywalker).
 
+### Responsive layout
+
+Chronicle is responsive across phones, tablets, and desktop. The single
+breakpoint is **960px** (`--bp-mobile`), chosen as the iPad portrait/landscape
+divide — phones and portrait tablets get the mobile layout, landscape tablets
+and desktop keep the desktop shell. The JS switch is Vuetify
+`useDisplay().smAndDown` (true `< 960px`); CSS uses `@media (max-width: 959.98px)`.
+
+Below 960px:
+
+- The centered top-bar nav is replaced by **`AppBottomNav`** — a fixed,
+  horizontally scrollable bottom tab bar with all six destinations (no "More"
+  overflow), the active tab in `--blood-crimson`. It reserves
+  `env(safe-area-inset-bottom)` and uses ≥44px tap targets. Both navs draw their
+  entries from a shared `useNavItems()` composable.
+- The top bar collapses to a slim header (wordmark + live-alert bell only); the
+  status bar is hidden.
+- Multi-column view grids stack to a single column; data-dense tables (Backtest)
+  scroll horizontally via the global `.table-scroll` helper (no columns hidden);
+  the Settings section nav becomes a horizontal scrollable chip row.
+- **Watchlist** switches from its two-pane layout to a **drill-in**: the list is
+  full-width, tapping a row opens the detail as a full-screen overlay with a
+  `‹ Watchlist` back control. Desktop keeps both panes.
+
+The responsive system is specified in `DESIGN.md` Part 4 (Breakpoints), Part 5.8
+(Tables, mobile) and Part 9.1 (Mobile Shell).
+
 ## ApiClient abstraction
 
 The frontend uses an `ApiClient` interface with two implementations:
@@ -140,7 +167,9 @@ Two-pane layout (60% list / 40% detail). Left pane: search input, filter chips
 item list with ticker, price, day change, status dot (calm/elevated/alert). Right pane:
 selected item detail with Daywalker alert timeline (max 5 alerts), 30-day ApexCharts
 area sparkline, linked verdict card (when verdictId is set), ghost action buttons (stubs).
-Selected state is a local `ref<string | null>` initialized to the first item on load.
+Selected state is a local `ref<string | null>` initialized to the first item on load
+(auto-selection is suppressed on mobile so the list is the entry point; see the
+mobile drill-in under "Responsive layout").
 
 **View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
 approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
@@ -255,7 +284,7 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 
 ## E2E Test Suite (Etappe 15)
 
-**Playwright E2E tests** (`chronicle/e2e/`): 9 spec files covering all 8 views plus navigation smoke tests. Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+**Playwright E2E tests** (`chronicle/e2e/`): 10 spec files covering all 8 views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
 
 Run locally: `cd chronicle && npm run test:e2e`
 
