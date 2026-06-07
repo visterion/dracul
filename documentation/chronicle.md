@@ -10,7 +10,8 @@ operator's morning view and daily workspace.
 - Pinia 2 (Setup Stores)
 - Vue Router 4 (`createWebHistory`)
 - Vite 6 + TypeScript 5 (strict mode)
-- ApexCharts / vue3-apexcharts (used in Views 6, 7)
+- Hand-rolled inline-SVG charts (`LineChart`, `BarChart`) — no charting
+  library dependency (ApexCharts was removed in the Chronicle redesign)
 - @phosphor-icons/vue for functional iconography
 - SSE via native `EventSource` for live Daywalker updates (Etappe 12)
 
@@ -33,9 +34,14 @@ Both documents are required reading before implementing any view.
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
 | 4 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments | Medium | ✅ Etappe 11 |
 | 5 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
-| 6 | Vistierie | `/vistierie` | Cost dashboard, tier budgets, trends | High | ✅ Etappe 13 |
+| 6 | Vistierie (Schatzkammer) | embedded in `/settings` (admin-only) | Cost dashboard, tier budgets, trends | High | ✅ Etappe 13 |
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
-| 8 | Settings | `/settings` | Providers, budgets, agent config, notifications | Variable | ✅ Etappe 11 |
+| 8 | Settings | `/settings` | Embedded Schatzkammer (admin), providers, budgets, agent config, notifications | Variable | ✅ Etappe 11 |
+
+> **Note (Chronicle redesign):** Vistierie no longer has a standalone
+> `/vistierie` route — it is an embeddable component hosted admin-only inside
+> Settings as the pinned "Schatzkammer · Vistierie" section. The legacy
+> `/vistierie` path redirects to `/` via the catch-all route.
 
 ## Live alert panel
 
@@ -256,19 +262,22 @@ intentional stubs pending their respective etappes.
 
 ## Implementation status (Etappe 13)
 
-**View 6 — Vistierie Dashboard** (`/vistierie`): Fully implemented with real backend data
-(`GET /api/vistierie`). Three-column layout: tier budget bars (green/gold/crimson by
-utilisation), horizontal agent spending bars, ApexCharts area trend chart (30-day daily
-spend). TierBudgetBar is a reusable component (`src/components/TierBudgetBar.vue`).
-Backend derives tier budgets from `application.yaml` config and aggregates provider costs
-from `VistierieClient`.
+**View 6 — Vistierie (Schatzkammer)** (`GET /api/vistierie`): Fully implemented with real
+backend data. In the Chronicle redesign it became an **embeddable** component
+(`VistierieView` with an `embedded` prop) hosted admin-only inside Settings — there is no
+longer a standalone `/vistierie` route. Layout: two stat tiles (month spent/cap, avg/day —
+no prey/cost-per-prey tiles since `VistierieData` carries no such fields), a tier-budget
+ledger (gold/crimson fills by utilisation) plus a month-total row, an agent-spend list
+(`SpendBar` per agent), and a hand-rolled inline-SVG `LineChart` for the 30-day daily-spend
+trend (replacing the former ApexCharts area chart). Backend derives tier budgets from
+`application.yaml` config and aggregates provider costs from `VistierieClient`.
 
 **View 7 — Backtest** (`/backtest`): View structure complete, backtest engine deferred to
 Stufe 5 — Run button is disabled, data is hardcoded. Config panel: strigoi chip-group
 (multi-select), date range with preset chips, universe radio group, disabled "Run Backtest"
 button. Three recent backtest cards are clickable and switch the results section. Four
-result tabs: Overview (4 stat cards), Trades (8 simulated trades), Equity Curve (ApexCharts
-dual-series vs SPY), Comparison (strategy vs SPY table).
+result tabs: Overview (4 stat cards), Trades (8 simulated trades), Equity Curve (inline-SVG
+`LineChart` dual-series vs SPY), Comparison (strategy vs SPY table).
 
 ## Implementation status (Etappe 14)
 
