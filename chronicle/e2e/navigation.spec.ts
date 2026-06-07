@@ -18,7 +18,7 @@ test.describe('Top-bar navigation', () => {
     await page.click('a.top-bar__tab:has-text("chronicle")')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/')
-    await expect(page.locator('.chronicle__banner')).toBeVisible()
+    await expect(page.locator('[data-testid="dusk-strip"]')).toBeVisible()
   })
 
   test('watchlist tab navigates to /watchlist', async ({ page }) => {
@@ -58,7 +58,7 @@ test.describe('Top-bar navigation', () => {
     await page.click('a.top-bar__wordmark')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL('/')
-    await expect(page.locator('.chronicle__banner')).toBeVisible()
+    await expect(page.locator('[data-testid="dusk-strip"]')).toBeVisible()
   })
 
   test('the removed /vistierie route redirects to /', async ({ page }) => {

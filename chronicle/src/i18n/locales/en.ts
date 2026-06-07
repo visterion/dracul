@@ -118,11 +118,41 @@ export default {
       lessonSingular: 'lesson pending',
       lessonPlural: 'lessons pending',
     },
+    dusk: {
+      newPrey: 'new prey',
+      verdicts: 'verdicts',
+      alerts: 'daywalker alerts',
+      lessons: 'lessons pending',
+    },
     sections: {
-      verdicts: 'verdicts (consensus from multiple strigoi)',
+      verdicts: 'verdicts',
+      verdictsSub: 'consensus from multiple strigoi',
       individualPrey: 'individual prey',
+      individualPreySub: 'one strigoi each',
       daywalkerAlerts: 'daywalker alerts (today)',
       pendingLessons: 'pending lessons from voievod',
+    },
+    daymark: {
+      today: 'today',
+      yesterday: 'yesterday',
+    },
+    filters: {
+      title: 'Filter',
+      allPrey: 'all prey',
+      highConfidence: 'high confidence',
+      anomalyClass: 'anomaly class',
+      brood: 'The Brood',
+    },
+    preyCard: {
+      signals: 'signals',
+      risks: 'risks',
+      discoveredBy: 'discovered by',
+      horizon: 'horizon',
+    },
+    verdictCard: {
+      consensus: 'consensus',
+      foundBy: 'discovered by',
+      readVerdict: 'Read verdict',
     },
     ariaLabels: {
       daywalkerAlerts: 'Daywalker alerts',
@@ -131,6 +161,7 @@ export default {
     emptyState: {
       noVerdicts: 'No consensus findings yet.',
       noPreyYet: 'The Strigoi have not yet returned tonight.',
+      noPreyMatchFilter: 'No prey matches your filter.',
     },
   },
   verdict: {

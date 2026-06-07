@@ -118,11 +118,41 @@ export default {
       lessonSingular: 'Lektion ausstehend',
       lessonPlural: 'Lektionen ausstehend',
     },
+    dusk: {
+      newPrey: 'neue Beute',
+      verdicts: 'Urteil',
+      alerts: 'Tagesläufer-Alarme',
+      lessons: 'Lektionen ausstehend',
+    },
     sections: {
-      verdicts: 'Urteile (Konsens mehrerer Strigoi)',
+      verdicts: 'Urteile',
+      verdictsSub: 'Konsens mehrerer Strigoi',
       individualPrey: 'Einzelne Beute',
+      individualPreySub: 'je ein Strigoi',
       daywalkerAlerts: 'Tagesläufer-Alarme (heute)',
       pendingLessons: 'Ausstehende Lektionen vom Woiwoden',
+    },
+    daymark: {
+      today: 'heute',
+      yesterday: 'gestern',
+    },
+    filters: {
+      title: 'Filter',
+      allPrey: 'alle Beute',
+      highConfidence: 'hohe Konfidenz',
+      anomalyClass: 'Anomalie-Klasse',
+      brood: 'Die Brut',
+    },
+    preyCard: {
+      signals: 'Signale',
+      risks: 'Risiken',
+      discoveredBy: 'gefunden von',
+      horizon: 'Horizont',
+    },
+    verdictCard: {
+      consensus: 'konsens',
+      foundBy: 'gefunden von',
+      readVerdict: 'Urteil lesen',
     },
     ariaLabels: {
       daywalkerAlerts: 'Tagesläufer-Alarme',
@@ -131,6 +161,7 @@ export default {
     emptyState: {
       noVerdicts: 'Noch keine Konsens-Funde.',
       noPreyYet: 'Die Strigoi sind heute Nacht noch nicht zurückgekehrt.',
+      noPreyMatchFilter: 'Keine Beute passt zu deinem Filter.',
     },
   },
   verdict: {

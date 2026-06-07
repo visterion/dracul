@@ -1,144 +1,158 @@
 <template>
-  <article class="verdict-card" data-testid="verdict-card">
-    <!-- Header -->
-    <div class="verdict-card__header">
-      <div class="verdict-card__identity">
-        <span class="verdict-card__symbol font-mono">{{ verdict.symbol }}</span>
-        <span class="verdict-card__name">{{ verdict.companyName }}</span>
+  <article class="verdict-card" data-testid="verdict-card" @click="$emit('open', verdict)">
+    <div class="vc-main">
+      <header class="vc-head">
+        <span class="vc-ticker font-mono">{{ verdict.symbol }}</span>
+        <span class="vc-name">{{ verdict.companyName }}</span>
+        <span class="vc-spacer" />
+        <span class="vc-meta font-mono tabular">{{ t('chronicle.verdictCard.consensus') }}: {{ verdict.consensusScore.toFixed(2) }}</span>
+      </header>
+
+      <div class="vc-attrib">
+        {{ t('chronicle.verdictCard.foundBy') }}
+        <span class="vc-strat">{{ verdict.contributingStrigoi.join(' · ') }}</span>
+        · {{ relativeTime(verdict.createdAt) }}
       </div>
-      <span class="verdict-card__score font-mono tabular">
-        consensus: {{ verdict.consensusScore.toFixed(2) }}
-      </span>
+
+      <!-- summary used as teaser (no separate teaser/paras on the summary Verdict) -->
+      <p class="vc-teaser">{{ verdict.summary }}</p>
+
+      <div class="vc-foot">
+        <button
+          type="button"
+          class="btn btn-secondary btn-crimson-ghost"
+          data-testid="verdict-card-read"
+          @click.stop="$emit('open', verdict)"
+        >
+          {{ t('chronicle.verdictCard.readVerdict') }} <i class="ph ph-arrow-right" />
+        </button>
+      </div>
     </div>
 
-    <!-- Contributing Strigoi + time -->
-    <div class="verdict-card__subline">
-      found by
-      <template v-for="(name, i) in verdict.contributingStrigoi" :key="name">
-        <router-link
-          :to="{ name: 'strigoi-detail', params: { name } }"
-          class="verdict-card__strigoi-link"
-        >{{ name }}</router-link><span v-if="i < verdict.contributingStrigoi.length - 1"> · </span>
-      </template>
-      · {{ relativeTime(verdict.createdAt) }}
-    </div>
-
-    <!-- Summary -->
-    <p class="verdict-card__summary">{{ summary }}</p>
-
-    <!-- Footer -->
-    <div class="verdict-card__footer">
-      <router-link :to="{ name: 'verdict-detail', params: { id: verdict.id } }" class="verdict-card__link">
-        Read full verdict →
-      </router-link>
-    </div>
+    <aside class="vc-side">
+      <ConsensusRing :value="verdict.consensusScore" />
+      <div class="vc-side-strat">
+        <!-- NAMES ONLY — the summary Verdict has no per-contributor confidence -->
+        <div v-for="name in verdict.contributingStrigoi" :key="name" class="vc-side-row">
+          <BatGlyph :size="12" />
+          <span class="font-mono">{{ name }}</span>
+        </div>
+      </div>
+    </aside>
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Verdict } from '../../api/types'
 import { useRelativeTime } from '../../composables/useRelativeTime'
+import ConsensusRing from './ConsensusRing.vue'
+import BatGlyph from './BatGlyph.vue'
 
-const props = defineProps<{ verdict: Verdict }>()
+defineProps<{ verdict: Verdict }>()
+defineEmits<{ (e: 'open', verdict: Verdict): void }>()
+
+const { t } = useI18n()
 const { relativeTime } = useRelativeTime()
-
-// Truncate summary to ~200 characters for the card view
-const summary = computed(() =>
-  props.verdict.summary.length > 200
-    ? props.verdict.summary.slice(0, 197) + '…'
-    : props.verdict.summary,
-)
 </script>
 
 <style scoped>
+/* mirrors styles.css:164-181 */
 .verdict-card {
-  background-color: var(--crypt-black-elevated);
-  border: 1px solid rgba(184, 148, 92, 0.1);
+  display: grid;
+  grid-template-columns: 1fr 188px;
+  background: linear-gradient(180deg, var(--surface-2), var(--crypt-black-elevated));
+  border: var(--hairline);
   border-left: 3px solid var(--blood-crimson);
   border-radius: 4px;
-  padding: var(--space-5);
+  cursor: pointer;
+  overflow: hidden;
   transition: border-color var(--transition-fast);
 }
 
 .verdict-card:hover {
-  border-color: rgba(184, 148, 92, 0.3);
-  border-left-color: var(--blood-crimson);
+  border-top-color: rgba(184, 148, 92, 0.3);
+  border-right-color: rgba(184, 148, 92, 0.3);
+  border-bottom-color: rgba(184, 148, 92, 0.3);
 }
 
-.verdict-card__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: var(--space-2);
+.vc-main {
+  padding: var(--space-5);
+  min-width: 0;
 }
 
-.verdict-card__identity {
+.vc-head {
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
-.verdict-card__symbol {
+.vc-ticker {
   font-size: var(--text-body-lg);
-  color: var(--bone-ivory);
   font-weight: 500;
+  color: var(--bone-ivory);
 }
 
-.verdict-card__name {
-  font-size: var(--text-body);
-  color: var(--bone-ivory-dim);
-}
-
-.verdict-card__score {
+.vc-name {
   font-size: var(--text-body-sm);
   color: var(--bone-ivory-dim);
 }
 
-.verdict-card__subline {
-  font-size: var(--text-micro);
+.vc-spacer { flex: 1; }
+
+.vc-meta {
+  font-size: var(--text-body-sm);
+  color: var(--cathedral-gold);
+  white-space: nowrap;
+}
+
+.vc-attrib {
+  font-size: var(--text-body-sm);
   color: var(--ash-gray);
-  letter-spacing: 0.02em;
   margin-bottom: var(--space-4);
 }
 
-.verdict-card__summary {
-  font-size: var(--text-body);
+.vc-strat {
+  color: var(--bone-ivory-dim);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.vc-teaser {
   color: var(--bone-ivory);
+  font-size: var(--text-body);
   line-height: 1.6;
-  max-width: 70ch;
-  margin: 0 0 var(--space-4) 0;
+  margin: 0 0 var(--space-4);
+  max-width: 64ch;
+  text-wrap: pretty;
 }
 
-.verdict-card__footer {
+.vc-foot { display: flex; }
+
+.vc-side {
+  background: rgba(5, 5, 7, 0.4);
+  border-left: var(--hairline);
+  padding: var(--space-5);
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  justify-content: center;
 }
 
-.verdict-card__link {
-  font-size: var(--text-body-sm);
-  color: var(--blood-crimson);
-  border: 1px solid var(--blood-crimson);
-  border-radius: 2px;
-  padding: 2px 8px;
-  text-decoration: none;
-  background: transparent;
-  transition: color var(--transition-fast), background-color var(--transition-fast);
+.vc-side-strat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
 }
 
-.verdict-card__link:hover {
-  color: var(--blood-crimson-bright);
-  border-color: var(--blood-crimson-bright);
-  background-color: rgba(161, 29, 44, 0.08);
-}
-
-.verdict-card__strigoi-link {
-  color: var(--ash-gray);
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-.verdict-card__strigoi-link:hover {
+.vc-side-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-micro);
   color: var(--bone-ivory-dim);
 }
 </style>
