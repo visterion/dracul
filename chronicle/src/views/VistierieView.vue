@@ -141,7 +141,7 @@ const avgPerDay = computed(() => {
 })
 
 const chartSeries = computed(() => [{
-  name: 'Daily Spend',
+  name: t('vistierie.sections.dailySpend'),
   data: (data.value?.dailySpend30d ?? []).map(e => ({ x: e.date, y: e.totalUsd })),
 }])
 
