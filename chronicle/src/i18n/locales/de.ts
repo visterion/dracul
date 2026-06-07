@@ -84,6 +84,155 @@ export default {
       dismiss: 'Verwerfen',
     },
   },
+  backtest: {
+    title: 'Backtest',
+    subtitle: 'Strigoi gegen historische Daten validieren',
+    config: {
+      strigoi: 'Strigoi',
+      timeRange: 'Zeitraum',
+      universe: 'Universum',
+      runButton: 'Backtest starten',
+      runButtonTitle: 'Backtest-Engine folgt in einer späteren Etappe',
+    },
+    runStats: {
+      hitRate: 'Trefferquote',
+      avgReturn: 'Ø Rendite',
+    },
+    tabs: {
+      overview: 'Übersicht',
+      trades: 'Trades',
+      equityCurve: 'Equity-Kurve',
+      comparison: 'Vergleich',
+    },
+    overview: {
+      hitRate: 'Trefferquote',
+      avgReturn: 'Ø Rendite',
+      sharpe: 'Sharpe',
+      maxDrawdown: 'Max. Drawdown',
+    },
+    table: {
+      trades: {
+        symbol: 'Symbol',
+        entry: 'Einstieg',
+        exit: 'Ausstieg',
+        return: 'Rendite',
+        thesis: 'These',
+      },
+      comparison: {
+        strategy: 'Strategie',
+        cagr: 'CAGR',
+        sharpe: 'Sharpe',
+        winRate: 'Gewinnrate',
+        trades: 'Trades',
+      },
+    },
+  },
+  patterns: {
+    title: 'Musterbibliothek',
+    subtitle: 'Lektionen des Woiwoden, die das Jagdverhalten der Strigoi bestimmen',
+    sections: {
+      pending: '── ausstehende Überprüfung ({n})',
+      active: '── aktive Muster ({n})',
+    },
+    empty: {
+      pending: 'Keine Muster zur Überprüfung.',
+      active: 'Keine aktiven Muster für diesen Strigoi.',
+    },
+    proposedBy: 'vom Woiwoden vorgeschlagen, {when}',
+    evidence: {
+      basedOn: 'Basierend auf {n} Fällen',
+      supported: '· {n} von {total} unterstützt',
+      avgUplift: '· Ø Uplift +{n}%',
+      viewCases: '[Unterstützende Fälle ansehen →]',
+    },
+    buttons: {
+      defer: 'Zurückstellen',
+      reject: 'Ablehnen',
+      approveActivate: 'Genehmigen & Aktivieren',
+      deactivate: 'Deaktivieren',
+      loading: '…',
+    },
+    filter: {
+      allStrigoi: 'Alle Strigoi ({n})',
+    },
+    evidenceCount: 'Belege: {n}',
+    daysAgo: {
+      today: 'heute',
+      yesterday: 'gestern',
+      days: 'vor {n} Tagen',
+    },
+    monthsAgo: {
+      thisMonth: 'diesen Monat',
+      oneMonth: 'vor 1 Monat',
+      months: 'vor {n} Monaten',
+    },
+    actionError: {
+      failed: 'Aktion fehlgeschlagen',
+      deactivateFailed: 'Deaktivierung fehlgeschlagen',
+    },
+  },
+  watchlist: {
+    search: {
+      placeholder: 'Ticker oder Unternehmen suchen …',
+    },
+    filter: {
+      all: 'Alle ({n})',
+      held: 'Positionen gehalten ({n})',
+      tracking: 'Urteile verfolgt ({n})',
+      alerts: 'Aktuelle Alarme ({n})',
+    },
+    addButton: '+ Zur Watchlist hinzufügen',
+    dialog: {
+      title: 'Zur Watchlist hinzufügen',
+      placeholder: 'Ticker (z. B. AVGO)',
+      tagTracking: 'Verfolgen',
+      tagHeld: 'Gehalten',
+      cancel: 'Abbrechen',
+      add: 'Hinzufügen',
+    },
+    empty: 'Keine Instrumente für diesen Filter.',
+    tagLabel: {
+      held: 'Position gehalten',
+      tracking: 'Urteil verfolgt',
+    },
+    meta: {
+      added: 'hinzugefügt {when}',
+    },
+    daysAgo: {
+      today: 'heute',
+      yesterday: 'gestern',
+      days: 'vor {n} Tagen',
+    },
+    deleteAria: 'Aus Watchlist löschen',
+    detail: {
+      subtitleTracking: 'Urteil verfolgt seit {date}',
+      subtitleHeld: 'Position gehalten seit {date}',
+      notHeld: 'Nicht gehalten — nur Urteil verfolgt',
+      heldPosition: 'Einstiegskurs —  ·  Größe —  ·  G&V —',
+      markHeld: 'Als gehalten markieren →',
+    },
+    sections: {
+      alerts: '── aktuelle Tagesläufer-Alarme',
+      price30d: '── Kurs (30T)',
+      linkedVerdicts: '── verknüpfte Urteile',
+      actions: '── Aktionen',
+    },
+    noAlerts: 'Noch keine Alarme.',
+    alertLevel: {
+      elevated: '⚠ erhöht',
+      info: 'ℹ info',
+      neutral: '— neutral',
+    },
+    verdictMeta: 'Urteil verfolgt · Konsens {consensus}',
+    verdictLink: 'Vollständiges Urteil lesen →',
+    actions: {
+      remove: 'Aus Watchlist entfernen',
+      pauseDaywalker: 'Tagesläufer pausieren',
+      editNotes: 'Notizen bearbeiten',
+    },
+    noSelection: 'Element aus der Liste auswählen.',
+    confirmDelete: '{ticker} aus der Watchlist entfernen?',
+  },
   strigoi: {
     notFound: {
       message: 'Strigoi nicht gefunden.',

@@ -84,6 +84,155 @@ export default {
       dismiss: 'Dismiss',
     },
   },
+  backtest: {
+    title: 'Backtest',
+    subtitle: 'Validate the Strigoi against history',
+    config: {
+      strigoi: 'Strigoi',
+      timeRange: 'Time range',
+      universe: 'Universe',
+      runButton: 'Run Backtest',
+      runButtonTitle: 'Backtest engine coming in a future etappe',
+    },
+    runStats: {
+      hitRate: 'Hit rate',
+      avgReturn: 'Avg return',
+    },
+    tabs: {
+      overview: 'Overview',
+      trades: 'Trades',
+      equityCurve: 'Equity Curve',
+      comparison: 'Comparison',
+    },
+    overview: {
+      hitRate: 'Hit Rate',
+      avgReturn: 'Avg Return',
+      sharpe: 'Sharpe',
+      maxDrawdown: 'Max Drawdown',
+    },
+    table: {
+      trades: {
+        symbol: 'Symbol',
+        entry: 'Entry',
+        exit: 'Exit',
+        return: 'Return',
+        thesis: 'Thesis',
+      },
+      comparison: {
+        strategy: 'Strategy',
+        cagr: 'CAGR',
+        sharpe: 'Sharpe',
+        winRate: 'Win Rate',
+        trades: 'Trades',
+      },
+    },
+  },
+  patterns: {
+    title: 'Pattern Library',
+    subtitle: 'Lessons learned by the Voievod, governing how the Strigoi hunt',
+    sections: {
+      pending: '── pending review ({n})',
+      active: '── active patterns ({n})',
+    },
+    empty: {
+      pending: 'No patterns pending review.',
+      active: 'No active patterns for this Strigoi.',
+    },
+    proposedBy: 'proposed by Voievod, {when}',
+    evidence: {
+      basedOn: 'Based on {n} cases',
+      supported: '· {n} of {total} supported',
+      avgUplift: '· avg uplift +{n}%',
+      viewCases: '[View supporting cases →]',
+    },
+    buttons: {
+      defer: 'Defer',
+      reject: 'Reject',
+      approveActivate: 'Approve & Activate',
+      deactivate: 'Deactivate',
+      loading: '…',
+    },
+    filter: {
+      allStrigoi: 'All Strigoi ({n})',
+    },
+    evidenceCount: 'evidence: {n}',
+    daysAgo: {
+      today: 'today',
+      yesterday: 'yesterday',
+      days: '{n} days ago',
+    },
+    monthsAgo: {
+      thisMonth: 'this month',
+      oneMonth: '1 month ago',
+      months: '{n} months ago',
+    },
+    actionError: {
+      failed: 'Action failed',
+      deactivateFailed: 'Deactivate failed',
+    },
+  },
+  watchlist: {
+    search: {
+      placeholder: 'search by ticker or company…',
+    },
+    filter: {
+      all: 'All ({n})',
+      held: 'Held Positions ({n})',
+      tracking: 'Tracking Verdicts ({n})',
+      alerts: 'Recent Alerts ({n})',
+    },
+    addButton: '+ Add to watchlist',
+    dialog: {
+      title: 'Add to watchlist',
+      placeholder: 'Ticker (e.g. AVGO)',
+      tagTracking: 'Tracking',
+      tagHeld: 'Held',
+      cancel: 'Cancel',
+      add: 'Add',
+    },
+    empty: 'No instruments match this filter.',
+    tagLabel: {
+      held: 'held position',
+      tracking: 'tracking verdict',
+    },
+    meta: {
+      added: 'added {when}',
+    },
+    daysAgo: {
+      today: 'today',
+      yesterday: 'yesterday',
+      days: '{n} days ago',
+    },
+    deleteAria: 'Delete from watchlist',
+    detail: {
+      subtitleTracking: 'tracking verdict from {date}',
+      subtitleHeld: 'held position since {date}',
+      notHeld: 'Not held — only tracking verdict',
+      heldPosition: 'Entry price —  ·  Size —  ·  P&L —',
+      markHeld: 'Mark as Held →',
+    },
+    sections: {
+      alerts: '── recent daywalker alerts',
+      price30d: '── price (30d)',
+      linkedVerdicts: '── linked verdicts',
+      actions: '── actions',
+    },
+    noAlerts: 'No alerts yet.',
+    alertLevel: {
+      elevated: '⚠ elevated',
+      info: 'ℹ info',
+      neutral: '— neutral',
+    },
+    verdictMeta: 'tracking verdict · consensus {consensus}',
+    verdictLink: 'Read full verdict →',
+    actions: {
+      remove: 'Remove from Watchlist',
+      pauseDaywalker: 'Pause Daywalker for this item',
+      editNotes: 'Edit Notes',
+    },
+    noSelection: 'Select an item from the list.',
+    confirmDelete: 'Remove {ticker} from watchlist?',
+  },
   strigoi: {
     notFound: {
       message: 'Strigoi not found.',
