@@ -396,6 +396,7 @@ export default {
     foundBy: 'Gefunden von',
     addToWatchlist: 'Zur Watchlist hinzufügen',
     notFound: 'Beute nicht gefunden.',
+    loadError: 'Beute konnte nicht geladen werden.',
   },
   strigoi: {
     notFound: {

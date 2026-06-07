@@ -396,6 +396,7 @@ export default {
     foundBy: 'Found by',
     addToWatchlist: 'Add to watchlist',
     notFound: 'Prey not found.',
+    loadError: 'Could not load prey.',
   },
   strigoi: {
     notFound: {
