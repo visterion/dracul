@@ -148,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiDetail, Prey } from '../api/types'
@@ -179,18 +179,22 @@ const stateLabel = computed(() => {
 
 const scheduleSummary = computed(() => {
   if (!strigoi.value) return ''
+  if (strigoi.value.state === 'paused' || strigoi.value.state === 'budget-hit') return ''
   return `${t('strigoi.schedule.next')} ${formatNextRun(strigoi.value.nextRunAt)}`
 })
 
-onMounted(async () => {
+watch(() => route.params.name as string, async (name) => {
+  loading.value = true
+  fetchError.value = null
+  strigoi.value = null
   try {
-    strigoi.value = await api.getStrigoiDetail(route.params.name as string)
+    strigoi.value = await api.getStrigoiDetail(name)
   } catch (e) {
     fetchError.value = (e as Error).message
   } finally {
     loading.value = false
   }
-})
+}, { immediate: true })
 
 function onBack() {
   router.push('/')

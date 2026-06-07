@@ -167,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { VerdictDetail, VerdictDecision, VerdictNote, DecisionResponse } from '../api/types'
@@ -216,8 +216,17 @@ const decisionOptions = computed<{ value: VerdictDecision; label: string; cssCla
   { value: 'DISMISS',     label: t('verdict.decisions.dismiss'),     cssClass: 'btn-crimson-ghost' },
 ])
 
-onMounted(async () => {
-  const id = route.params.id as string
+watch(() => route.params.id as string, async (id) => {
+  loading.value = true
+  fetchError.value = null
+  verdict.value = null
+  notes.value = []
+  noteDraft.value = ''
+  noteError.value = null
+  currentDecision.value = null
+  decisionError.value = null
+  watchlistError.value = null
+  watchlistAdded.value = false
   try {
     verdict.value = await api.getVerdictDetail(id)
     if (verdict.value) {
@@ -228,7 +237,7 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}, { immediate: true })
 
 function onBack() {
   router.push('/')
