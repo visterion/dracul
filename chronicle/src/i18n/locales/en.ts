@@ -60,6 +60,7 @@ export default {
       todayLocal: 'Today: {calls} calls · $0.00 (local compute)',
       todayZero: 'Today: 0 tokens · $0.00 — used only when Anthropic unavailable',
       todayUsage: 'Today: {input} input · {output} output tokens · ${cost}',
+      loadError: 'Could not load providers.',
       reveal: '[reveal]',
       edit: 'edit',
       testConnection: 'test connection',

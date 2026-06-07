@@ -12,7 +12,9 @@
             disabled: item.disabled,
             'admin-only': item.admin,
           }"
-          @click="!item.disabled && (active = item.id)"
+          :aria-current="active === item.id ? 'page' : undefined"
+          :disabled="item.disabled"
+          @click="active = item.id"
         >
           <i v-if="item.icon" :class="['ph', item.icon]" />
           <span>{{ item.label }}</span>
@@ -30,6 +32,7 @@
           <PageHead :title="t('settings.providers.title')" :sub="t('settings.providers.subtitle')" />
 
           <SectionHeader :label="t('settings.providers.sectionConnected')" />
+          <div v-if="providerError" role="alert" class="set-budget-error">{{ providerError }}</div>
           <template v-if="providersLoading">
             <div class="stack-5">
               <v-skeleton-loader v-for="i in 3" :key="i" type="card" />
@@ -207,6 +210,7 @@ const currentNavItem = computed(() => navItems.value.find(i => i.id === active.v
 // ── Providers ──────────────────────────────────────────────────
 const providers = ref<LlmProvider[]>([])
 const providersLoading = ref(true)
+const providerError = ref<string | null>(null)
 
 // ── Language ───────────────────────────────────────────────────
 const language = ref('de')
@@ -311,6 +315,8 @@ watch(active, (section) => {
 onMounted(async () => {
   try {
     providers.value = await api.getProviders()
+  } catch (e) {
+    providerError.value = e instanceof Error ? e.message : t('settings.providers.loadError')
   } finally {
     providersLoading.value = false
   }

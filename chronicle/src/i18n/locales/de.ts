@@ -60,6 +60,7 @@ export default {
       todayLocal: 'Heute: {calls} Aufrufe · $0.00 (lokale Berechnung)',
       todayZero: 'Heute: 0 Tokens · $0.00 — nur genutzt wenn Anthropic nicht verfügbar',
       todayUsage: 'Heute: {input} Eingabe · {output} Ausgabe Tokens · ${cost}',
+      loadError: 'Anbieter konnten nicht geladen werden.',
       reveal: '[aufdecken]',
       edit: 'bearbeiten',
       testConnection: 'Verbindung testen',
