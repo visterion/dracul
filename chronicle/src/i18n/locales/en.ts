@@ -19,7 +19,7 @@ export default {
       hunting: 'hunting',
       lastVerdict: 'last verdict {time} ago',
       lastVerdictNone: 'no verdict yet',
-      costThisMonth: '{cost} this month',
+      costToday: '{cost} today',
       motto: 'eternal patience',
     },
   },
