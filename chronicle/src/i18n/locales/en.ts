@@ -230,6 +230,8 @@ export default {
   },
   backtest: {
     title: 'Backtest',
+    eyebrow: 'Backtest',
+    pageTitle: 'Was the hunt worth it?',
     subtitle: 'Validate the Strigoi against history',
     config: {
       strigoi: 'Strigoi',
@@ -241,6 +243,15 @@ export default {
     runStats: {
       hitRate: 'Hit rate',
       avgReturn: 'Avg return',
+    },
+    chart: {
+      title: 'Cumulative return, %',
+      ariaLabel: 'Equity curve: Strigoi versus benchmark, cumulative return',
+      legendStrigoi: 'Strigoi-Spin',
+      legendBenchmark: 'Benchmark',
+      footStrigoi: 'Strigoi',
+      footBenchmark: 'Benchmark',
+      footEdge: 'Edge',
     },
     tabs: {
       overview: 'Overview',

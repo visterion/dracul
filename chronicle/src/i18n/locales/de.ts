@@ -230,6 +230,8 @@ export default {
   },
   backtest: {
     title: 'Backtest',
+    eyebrow: 'Backtest',
+    pageTitle: 'Hat sich die Jagd gelohnt?',
     subtitle: 'Strigoi gegen historische Daten validieren',
     config: {
       strigoi: 'Strigoi',
@@ -241,6 +243,15 @@ export default {
     runStats: {
       hitRate: 'Trefferquote',
       avgReturn: 'Ø Rendite',
+    },
+    chart: {
+      title: 'Kumulative Rendite, %',
+      ariaLabel: 'Equity-Kurve: Strigoi gegen Benchmark, kumulative Rendite',
+      legendStrigoi: 'Strigoi-Spin',
+      legendBenchmark: 'Benchmark',
+      footStrigoi: 'Strigoi',
+      footBenchmark: 'Benchmark',
+      footEdge: 'Edge',
     },
     tabs: {
       overview: 'Übersicht',
