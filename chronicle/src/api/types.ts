@@ -191,6 +191,13 @@ export interface WatchlistItem {
   verdictId: string | null // links to VerdictDetail when tag === 'TRACKING'
   alerts: WatchlistAlert[]
   priceHistory30d: number[] // 30 data points for sparkline
+  entryPrice: number | null
+  shareCount: number | null
+}
+
+export interface PatchPositionRequest {
+  entryPrice: number | null
+  shareCount: number | null
 }
 
 export interface CreateWatchlistRequest {

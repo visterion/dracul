@@ -27,6 +27,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
       { id: 'a-3', at: '3 days ago', message: 'added to watchlist', level: 'neutral' },
     ],
     priceHistory30d: priceHistory(1247.50, 1),
+    entryPrice: 1190.00,
+    shareCount: 8,
   },
   {
     id: 'wl-2',
@@ -43,6 +45,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
       { id: 'a-5', at: '2 days ago', message: 'added to watchlist', level: 'neutral' },
     ],
     priceHistory30d: priceHistory(143.20, -1),
+    entryPrice: 146.00,
+    shareCount: 30,
   },
   {
     id: 'wl-3',
@@ -56,6 +60,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
     verdictId: null,
     alerts: [],
     priceHistory30d: priceHistory(1892.40, 0.5),
+    entryPrice: null,
+    shareCount: null,
   },
   {
     id: 'wl-4',
@@ -69,6 +75,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
     verdictId: null,
     alerts: [],
     priceHistory30d: priceHistory(402.10, -0.5),
+    entryPrice: null,
+    shareCount: null,
   },
   {
     id: 'wl-5',
@@ -84,6 +92,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
       { id: 'a-6', at: '11:02 today', message: 'unusual options activity detected', level: 'elevated' },
     ],
     priceHistory30d: priceHistory(167.45, 1.5),
+    entryPrice: 154.20,
+    shareCount: 40,
   },
   {
     id: 'wl-6',
@@ -97,6 +107,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
     verdictId: null,
     alerts: [],
     priceHistory30d: priceHistory(528.70, 0.8),
+    entryPrice: null,
+    shareCount: null,
   },
   {
     id: 'wl-7',
@@ -112,6 +124,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
       { id: 'a-7', at: 'yesterday 14:30', message: 'price declined below 30d moving average', level: 'elevated' },
     ],
     priceHistory30d: priceHistory(312.40, -1.2),
+    entryPrice: null,
+    shareCount: null,
   },
   {
     id: 'wl-8',
@@ -125,5 +139,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     verdictId: null,
     alerts: [],
     priceHistory30d: priceHistory(274.80, 0.3),
+    entryPrice: null,
+    shareCount: null,
   },
 ]

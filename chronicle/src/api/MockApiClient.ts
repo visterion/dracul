@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  LanguageSetting,
+  PatchPositionRequest, LanguageSetting,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -185,6 +185,8 @@ export class MockApiClient implements ApiClient {
       verdictId: req.sourceVerdictId ?? null,
       alerts: [],
       priceHistory30d: Array.from({ length: 30 }, () => 0),
+      entryPrice: null,
+      shareCount: null,
     }
     this.watchlist.unshift(item)
     return { ...item }
@@ -195,6 +197,15 @@ export class MockApiClient implements ApiClient {
     const item = this.watchlist.find(i => i.id === id)
     if (!item) throw new Error(`watchlist item ${id} not found`)
     item.tag = req.tag
+    return { ...item }
+  }
+
+  async patchWatchlistPosition(id: string, req: PatchPositionRequest): Promise<WatchlistItem> {
+    await delay(50)
+    const item = this.watchlist.find(i => i.id === id)
+    if (!item) throw new Error(`watchlist item ${id} not found`)
+    item.entryPrice = req.entryPrice
+    item.shareCount = req.shareCount
     return { ...item }
   }
 
