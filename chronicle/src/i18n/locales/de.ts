@@ -369,14 +369,6 @@ export default {
       held: 'Position gehalten',
       tracking: 'Urteil verfolgt',
     },
-    meta: {
-      added: 'hinzugefügt {when}',
-    },
-    daysAgo: {
-      today: 'heute',
-      yesterday: 'gestern',
-      days: 'vor {n} Tagen',
-    },
     deleteAria: 'Aus Watchlist löschen',
     flags: {
       tracked: 'Urteil verfolgt',

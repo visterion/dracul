@@ -369,14 +369,6 @@ export default {
       held: 'held position',
       tracking: 'tracking verdict',
     },
-    meta: {
-      added: 'added {when}',
-    },
-    daysAgo: {
-      today: 'today',
-      yesterday: 'yesterday',
-      days: '{n} days ago',
-    },
     deleteAria: 'Delete from watchlist',
     flags: {
       tracked: 'tracking verdict',
