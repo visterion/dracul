@@ -198,6 +198,7 @@
             class="settings__language-select"
             data-testid="language-select"
             :value="language"
+            :disabled="languageSaving"
             @change="changeLanguage(($event.target as HTMLSelectElement).value)"
           >
             <option value="de">{{ t('settings.language.german') }}</option>
