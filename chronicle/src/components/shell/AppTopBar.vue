@@ -7,20 +7,20 @@
       </router-link>
 
       <!-- Navigation -->
-      <nav class="top-bar__nav">
+      <nav v-if="!mobile" class="top-bar__nav">
         <router-link
-          v-for="tab in navTabs"
-          :key="tab.name"
-          :to="{ name: tab.name }"
+          v-for="item in navItems"
+          :key="item.name"
+          :to="{ name: item.name }"
           class="top-bar__tab"
           active-class="top-bar__tab--active"
         >
-          {{ tab.label }}
+          {{ item.label }}
         </router-link>
       </nav>
 
       <!-- Controls -->
-      <div class="top-bar__controls">
+      <div class="top-bar__controls" :class="{ 'top-bar__controls--mobile': mobile }">
         <button
           class="top-bar__icon-btn top-bar__live"
           :aria-label="t('app.liveAlerts.title')"
@@ -35,11 +35,11 @@
           </span>
         </button>
         <!-- Moon icon placeholder — cream/dark toggle (not implemented in scaffold) -->
-        <button class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
+        <button v-if="!mobile" class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
           🌙
         </button>
         <!-- User avatar placeholder — auth not in Phase 1 -->
-        <div class="top-bar__avatar" aria-label="User account">
+        <div v-if="!mobile" class="top-bar__avatar" aria-label="User account">
           <span>V</span>
         </div>
       </div>
@@ -48,23 +48,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
+import { useNavItems } from '../../composables/useNavItems'
 
+defineProps<{ mobile?: boolean }>()
 defineEmits<{ 'toggle-live': [] }>()
 
 const { t } = useI18n()
 const live = useLiveAlertsStore()
-
-const navTabs = computed(() => [
-  { name: 'chronicle' as const,        label: t('app.nav.chronicle') },
-  { name: 'watchlist' as const,        label: t('app.nav.watchlist') },
-  { name: 'pattern-library' as const,  label: t('app.nav.patternLibrary') },
-  { name: 'vistierie' as const,        label: t('app.nav.vistierie') },
-  { name: 'backtest' as const,         label: t('app.nav.backtest') },
-  { name: 'settings' as const,         label: t('app.nav.settings') },
-])
+const navItems = useNavItems()
 </script>
 
 <style scoped>
@@ -135,6 +128,13 @@ const navTabs = computed(() => [
   align-items: center;
   gap: var(--space-3);
   flex-shrink: 0;
+}
+
+/* With the centered nav hidden on mobile, push the remaining controls
+   (the live bell) to the far right so the slim header reads
+   wordmark | bell. */
+.top-bar__controls--mobile {
+  margin-left: auto;
 }
 
 .top-bar__icon-btn {
