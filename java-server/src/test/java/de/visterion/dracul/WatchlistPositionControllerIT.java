@@ -114,6 +114,21 @@ class WatchlistPositionControllerIT {
     }
 
     @Test
+    void patchPositionRejectsZeroEntryPrice() {
+        stub.register("TSLA", "Tesla Inc", 950.0);
+        String id = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "TSLA", "tag", "HELD"))
+                .retrieve().body(JsonNode.class).get("id").asText();
+
+        var resp = rest.patch().uri("/api/watchlist/" + id + "/position")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("entryPrice", 0.0, "shareCount", 10.0))
+                .exchange((req, res) -> res.getStatusCode().value());
+        assertThat(resp).isEqualTo(400);
+    }
+
+    @Test
     void patchPositionUnknownIdIs404() {
         var resp = rest.patch().uri("/api/watchlist/00000000-0000-0000-0000-000000000999/position")
                 .contentType(MediaType.APPLICATION_JSON)
