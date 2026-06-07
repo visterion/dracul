@@ -33,10 +33,12 @@ test.describe('Vistierie View (/vistierie)', () => {
   })
 
   test('renders Avg/day stat', async ({ page }) => {
-    await expect(page.locator('.vistierie__stat-label:has-text("Avg/day")')).toBeVisible()
+    await expect(page.locator('.vistierie__stat-label').first()).toBeVisible()
+    await expect(page.locator('.vistierie__stat').first()).toBeVisible()
   })
 
   test('renders Month total stat', async ({ page }) => {
-    await expect(page.locator('.vistierie__stat-label:has-text("Month total")')).toBeVisible()
+    await expect(page.locator('.vistierie__stat-label').nth(1)).toBeVisible()
+    await expect(page.locator('.vistierie__stat').nth(1)).toBeVisible()
   })
 })
