@@ -26,8 +26,17 @@ test.describe('Responsive shell (mobile viewport)', () => {
     expect(overflow).toBe(true)
   })
 
+  test('mobile shell hides the status bar but keeps the live bell', async ({ page }) => {
+    // Live-alert bell stays visible on mobile (top-bar controls are kept).
+    await expect(page.getByTestId('live-toggle')).toBeVisible()
+    // Status bar is rendered via v-if="!smAndDown", so it is absent from the
+    // DOM on mobile — assert it is not present at all.
+    await expect(page.locator('.status-bar')).toHaveCount(0)
+  })
+
   test('tapping a bottom-nav tab navigates', async ({ page }) => {
-    await page.locator('.bottom-nav__tab', { hasText: 'Watchlist' }).click()
+    // The bottom-nav label renders lowercase ("watchlist"); no text-transform.
+    await page.locator('.bottom-nav__tab', { hasText: 'watchlist' }).click()
     await expect(page).toHaveURL(/watchlist/)
   })
 })
