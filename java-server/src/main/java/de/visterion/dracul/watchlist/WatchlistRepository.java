@@ -154,6 +154,21 @@ public class WatchlistRepository {
         return rows > 0;
     }
 
+    public boolean updatePosition(String id, Double entryPrice, Double shareCount) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return false; }
+        int rows = jdbc.sql("""
+                UPDATE watchlist_items SET entry_price = :entryPrice, share_count = :shareCount
+                WHERE id = :id
+                """)
+                .param("entryPrice", entryPrice)
+                .param("shareCount", shareCount)
+                .param("id", uuid)
+                .update();
+        return rows > 0;
+    }
+
     public boolean deleteById(String id) {
         UUID uuid;
         try { uuid = UUID.fromString(id); }

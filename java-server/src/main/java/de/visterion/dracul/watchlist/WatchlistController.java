@@ -64,6 +64,15 @@ public class WatchlistController {
         return repo.findById(id).orElseThrow();
     }
 
+    @PatchMapping("/api/watchlist/{id}/position")
+    public WatchlistItem patchPosition(@PathVariable String id,
+                                       @Valid @RequestBody PatchPositionRequest req) {
+        if (!repo.updatePosition(id, req.entryPrice(), req.shareCount())) {
+            throw new NoSuchElementException("watchlist item " + id);
+        }
+        return repo.findById(id).orElseThrow();
+    }
+
     @DeleteMapping("/api/watchlist/{id}")
     public ResponseEntity<Void> delete(@PathVariable String id) {
         if (!repo.deleteById(id)) {
