@@ -51,7 +51,7 @@
       <StatTile
         :label="t('strigoi.stats.tier')"
         :value="strigoi.configuration.tier"
-        :foot="strigoi.configuration.cron"
+        :foot="humanSchedule"
       />
     </div>
 
@@ -100,7 +100,7 @@
           <div class="kv-list">
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.schedule') }}</span>
-              <span class="kv-v mono">{{ strigoi.configuration.cron }}</span>
+              <span class="kv-v mono" :title="strigoi.configuration.cron">{{ humanSchedule }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.nextRun') }}</span>
@@ -175,6 +175,24 @@ const lastRun = computed(() => strigoi.value?.recentRuns[0] ?? null)
 const stateLabel = computed(() => {
   if (!strigoi.value) return ''
   return t(`strigoi.state.${strigoi.value.state}`)
+})
+
+// Humanize the cron's recurrence + show the next fire's LOCAL time (browser TZ → Berlin for the
+// user, DST-correct, no hardcoded zone). Time comes from nextRunAt (an absolute instant) formatted
+// locally; recurrence comes from the cron's day-of-week field (last whitespace token → works for
+// 5- and 6-field crons).
+const humanSchedule = computed(() => {
+  const cron = strigoi.value?.configuration.cron?.trim()
+  const next = strigoi.value?.configuration.nextRunAt
+  if (!cron) return '—'
+  const dow = cron.split(/\s+/).pop() ?? '*'
+  let rec: string
+  if (dow === '1-5') rec = t('strigoi.schedule.weekdays')
+  else if (dow === '*' || dow === '?') rec = t('strigoi.schedule.daily')
+  else return cron   // unexpected pattern → show raw cron rather than guess
+  if (!next) return rec
+  const time = new Date(next).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
+  return t('strigoi.schedule.everyAt', { rec, time })
 })
 
 const scheduleSummary = computed(() => {
