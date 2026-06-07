@@ -110,6 +110,10 @@ export default {
       sharpe: 'Sharpe',
       maxDrawdown: 'Max. Drawdown',
     },
+    sections: {
+      recentBacktests: 'jüngste backtests',
+      results: 'ergebnisse',
+    },
     table: {
       trades: {
         symbol: 'Symbol',
