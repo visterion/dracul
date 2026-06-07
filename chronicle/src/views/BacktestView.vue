@@ -429,5 +429,10 @@ function applyPreset(years: number) {
 
 @media (max-width: 959.98px) {
   .backtest__overview { grid-template-columns: 1fr; }
+  .backtest__config-row { flex-wrap: wrap; }
+  .backtest__chips,
+  .backtest__date-row,
+  .backtest__radio-row { width: 100%; }
+  .backtest__radio-row { flex-wrap: wrap; gap: var(--space-3) var(--space-4); }
 }
 </style>
