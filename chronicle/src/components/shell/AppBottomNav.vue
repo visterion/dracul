@@ -1,5 +1,5 @@
 <template>
-  <nav class="bottom-nav" data-testid="bottom-nav" aria-label="Primary">
+  <nav class="bottom-nav" data-testid="bottom-nav" aria-label="Main navigation">
     <div class="bottom-nav__scroll">
       <router-link
         v-for="item in navItems"
@@ -48,6 +48,7 @@ const navItems = useNavItems()
   padding: var(--space-2) var(--space-3);
   text-decoration: none;
   color: var(--ash-gray);
+  transition: color var(--transition-fast);
 }
 .bottom-nav__icon { font-size: 18px; line-height: 1; }
 .bottom-nav__label { font-size: 11px; white-space: nowrap; }
