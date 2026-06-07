@@ -333,7 +333,7 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
   .wd-addpos { flex-direction: column; align-items: stretch; }
 }
 
-/* ── SVG Charts (LineChart.vue, BarChart.vue) ──────────────────────── */
+/* ── SVG Charts (LineChart.vue) ──────────────────────── */
 .svg-chart { width: 100%; height: auto; display: block; }
 .svg-chart .grid-line { stroke: rgba(245, 241, 232, 0.04); stroke-width: 1; }
 .svg-chart .axis-label { fill: var(--ash-gray); font-family: var(--font-mono); font-size: 10px; }

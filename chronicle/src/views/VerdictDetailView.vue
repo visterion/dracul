@@ -240,7 +240,8 @@ watch(() => route.params.id as string, async (id) => {
 }, { immediate: true })
 
 function onBack() {
-  router.push('/')
+  if (window.history.state?.back) router.back()
+  else router.push({ name: 'chronicle' })
 }
 
 function onOpenStrigoi(name: string) {
