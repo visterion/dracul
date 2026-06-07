@@ -25,23 +25,25 @@ specified in the companion documents at the repo root:
 
 Both documents are required reading before implementing any view.
 
-## Eight views
+## Views and routes
 
 | # | View | Route | Purpose | Density | Status |
 |---|------|-------|---------|---------|--------|
 | 1 | Chronicle | `/` | Morning dashboard — new prey, verdicts, alerts, lessons | Medium | ✅ Etappe 9 |
 | 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) | ✅ Etappe 10 |
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
-| 4 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments | Medium | ✅ Etappe 11 |
-| 5 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
-| 6 | Vistierie (Schatzkammer) | embedded in `/settings` (admin-only) | Cost dashboard, tier budgets, trends | High | ✅ Etappe 13 |
+| 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, thesis, outcome | Medium | ✅ Chronicle redesign |
+| 5 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments, position P&L | Medium | ✅ Etappe 11 |
+| 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
-| 8 | Settings | `/settings` | Embedded Schatzkammer (admin), providers, budgets, agent config, notifications | Variable | ✅ Etappe 11 |
+| 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
 
-> **Note (Chronicle redesign):** Vistierie no longer has a standalone
-> `/vistierie` route — it is an embeddable component hosted admin-only inside
-> Settings as the pinned "Schatzkammer · Vistierie" section. The legacy
-> `/vistierie` path redirects to `/` via the catch-all route.
+> **Vistierie (Schatzkammer):** Vistierie no longer has a standalone route. It is an
+> embeddable component (`VistierieView` with an `embedded` prop) hosted admin-only
+> inside the Settings view as the pinned "Schatzkammer · Vistierie" section. The legacy
+> `/vistierie` path (and any unmatched path) is caught by the catch-all route and
+> redirected to `/`.
+
 
 ## Live alert panel
 
@@ -55,7 +57,8 @@ a connection status. Active only against a real backend (disabled in mock mode).
 Present on every view:
 
 - **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center
-  (6 entries), moon-icon + avatar placeholder right.
+  (5 destinations: Chronicle, Watchlist, Pattern Library, Backtest, Settings),
+  moon-icon + avatar placeholder right.
 - **Bottom status bar (32px)**: operational summary from `useStatusStore` —
   `☾ 6 strigoi · 2 hunting · daywalker active · $0.43 today`
 
@@ -73,7 +76,7 @@ and desktop keep the desktop shell. The JS switch is Vuetify
 Below 960px:
 
 - The centered top-bar nav is replaced by **`AppBottomNav`** — a fixed,
-  horizontally scrollable bottom tab bar with all six destinations (no "More"
+  horizontally scrollable bottom tab bar with all five destinations (no "More"
   overflow), the active tab in `--blood-crimson`. It reserves
   `env(safe-area-inset-bottom)` and uses ≥44px tap targets. Both navs draw their
   entries from a shared `useNavItems()` composable.
@@ -217,15 +220,21 @@ pointer-events: none) with a Phase 2 badge.
 
 ## Navigation structure
 
+The five top-level nav destinations (Chronicle, Watchlist, Pattern Library,
+Backtest, Settings) are available from both the desktop top-bar and the mobile
+bottom tab bar. Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail)
+are not in the nav but are reachable via in-app links.
+
 - **Chronicle** is the home page. Most navigation starts here.
-- **Verdict Detail** and **Strigoi Detail** are deep-linked from
-  Chronicle items. Strigoi names in VerdictCard sublines are clickable links.
-- **Watchlist** receives items via the "Track on Watchlist" action in
-  Verdict Detail (button rendered, not yet wired).
-- **Pattern Library** is reviewed periodically when the Voievod proposes
-  new patterns.
-- **Vistierie** and **Backtest** are reference / diagnostic views.
-- **Settings** is utility.
+- **Verdict Detail** and **Strigoi Detail** are deep-linked from Chronicle items.
+  Strigoi names in VerdictCard sublines are clickable links. **Prey Detail**
+  (`/prey/:id`) is resolved client-side from the chronicle store.
+- **Watchlist** receives items via the "Track on Watchlist" action in Verdict
+  Detail (button rendered, not yet wired).
+- **Pattern Library** is reviewed periodically when the Voievod proposes new patterns.
+- **Backtest** is a reference view; the compute engine is deferred to Stufe 5.
+- **Settings** holds utility config plus the admin-only embedded Schatzkammer
+  (Vistierie cost panel).
 
 ## Module location
 

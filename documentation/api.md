@@ -35,7 +35,38 @@ are relative to the context root of `dracul-app`.
 | GET | `/api/watchlist` | All active watchlist items for the current user |
 | POST | `/api/watchlist` | Add ticker to watchlist; resolves market data synchronously |
 | PATCH | `/api/watchlist/{id}` | Update tag (HELD/TRACKING) |
+| PATCH | `/api/watchlist/{id}/position` | Set or clear the operator position (entry price + share count) |
 | DELETE | `/api/watchlist/{id}` | Remove watchlist item |
+
+### `PATCH /api/watchlist/{id}/position`
+
+Records or clears the operator's position for a watchlist item. Both fields are
+nullable — send `null` to remove the position.
+
+Request body:
+```json
+{ "entryPrice": 142.50, "shareCount": 100 }
+```
+
+Constraints:
+- `entryPrice`: `>= 0` or `null`
+- `shareCount`: `>= 0` or `null`
+- Both `null` clears the position (P&L section reverts to the "add position" state)
+- 400 on negative values; 404 if the item id is unknown
+
+Response (200): the updated `WatchlistItem`.
+
+### `WatchlistItem` read model
+
+`GET /api/watchlist` items include two nullable position fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `entryPrice` | `number \| null` | Operator-recorded entry price; null until a position is set |
+| `shareCount` | `number \| null` | Operator-recorded share count (fractional shares supported); null until set |
+
+Client-side P&L is derived as `(currentPrice − entryPrice) × shareCount`; the
+backend stores only the raw inputs.
 
 ## Daywalker Alerts
 
