@@ -48,6 +48,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import BatGlyph from './BatGlyph.vue'
+import { useRelativeTime } from '../../composables/useRelativeTime'
 import type { Pattern, PatternAction } from '../../api/types'
 
 const props = defineProps<{
@@ -61,20 +62,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-
-function daysAgo(isoString: string): string {
-  const days = Math.floor((Date.now() - new Date(isoString).getTime()) / 86_400_000)
-  if (days === 0) return t('patterns.daysAgo.today')
-  if (days === 1) return t('patterns.daysAgo.yesterday')
-  return t('patterns.daysAgo.days', { n: days })
-}
-
-function monthsAgo(isoString: string): string {
-  const months = Math.floor((Date.now() - new Date(isoString).getTime()) / (30 * 86_400_000))
-  if (months === 0) return t('patterns.monthsAgo.thisMonth')
-  if (months === 1) return t('patterns.monthsAgo.oneMonth')
-  return t('patterns.monthsAgo.months', { n: months })
-}
+const { monthsAgo, daysAgo } = useRelativeTime()
 </script>
 
 <style scoped>

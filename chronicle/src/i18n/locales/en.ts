@@ -2,6 +2,18 @@ export default {
   common: {
     language: 'Language',
   },
+  time: {
+    justNow: 'just now',
+    minutesAgo: '{n}m ago',
+    hoursAgo: '{n}h ago',
+    yesterday: 'yesterday',
+    today: 'today',
+    daysAgo: '{n} days ago',
+    weeksAgo: '{n}w ago',
+    monthsAgo: '{n} months ago',
+    thisMonth: 'this month',
+    oneMonthAgo: '1 month ago',
+  },
   app: {
     nav: {
       chronicle: 'chronicle',
@@ -124,20 +136,11 @@ export default {
     error: {
       retry: 'Retry',
     },
-    banner: {
-      newPrey: 'new prey',
-      verdictSingular: 'verdict',
-      verdictPlural: 'verdicts',
-      alertSingular: 'daywalker alert',
-      alertPlural: 'daywalker alerts',
-      lessonSingular: 'lesson pending',
-      lessonPlural: 'lessons pending',
-    },
     dusk: {
       newPrey: 'new prey',
-      verdicts: 'verdicts',
-      alerts: 'daywalker alerts',
-      lessons: 'lessons pending',
+      verdicts: 'verdict | verdicts',
+      alerts: 'daywalker alert | daywalker alerts',
+      lessons: 'lesson pending | lessons pending',
     },
     sections: {
       verdicts: 'verdicts',
@@ -337,16 +340,6 @@ export default {
       allStrigoi: 'All Strigoi ({n})',
     },
     evidenceCount: 'evidence: {n}',
-    daysAgo: {
-      today: 'today',
-      yesterday: 'yesterday',
-      days: '{n} days ago',
-    },
-    monthsAgo: {
-      thisMonth: 'this month',
-      oneMonth: '1 month ago',
-      months: '{n} months ago',
-    },
     actionError: {
       failed: 'Action failed',
       deactivateFailed: 'Deactivate failed',

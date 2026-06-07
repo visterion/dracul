@@ -144,7 +144,7 @@ import LineChart from '../components/common/LineChart.vue'
 
 defineProps<{ embedded?: boolean }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const api = useApi()
 const data = ref<VistierieData | null>(null)
 const loading = ref(true)
@@ -203,7 +203,7 @@ const chartLabels = computed(() => {
 
 function formatLabel(iso: string): string {
   const dt = new Date(iso)
-  return dt.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  return dt.toLocaleDateString(locale.value, { day: 'numeric', month: 'short' })
 }
 </script>
 

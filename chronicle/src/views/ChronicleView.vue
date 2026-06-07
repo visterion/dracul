@@ -125,7 +125,7 @@ import PreyCard from '../components/common/PreyCard.vue'
 import BroodMini from '../components/common/BroodMini.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const store = useChronicleStore()
 const statusStore = useStatusStore()
@@ -174,7 +174,7 @@ function dayLabel(iso: string): string {
   const yesterdayKey = localDayKey(new Date(Date.now() - 86_400_000))
   if (key === todayKey) return t('chronicle.daymark.today')
   if (key === yesterdayKey) return t('chronicle.daymark.yesterday')
-  return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long' }).format(new Date(iso))
+  return new Intl.DateTimeFormat(locale.value, { day: 'numeric', month: 'long' }).format(new Date(iso))
 }
 
 const preyGroups = computed(() => {

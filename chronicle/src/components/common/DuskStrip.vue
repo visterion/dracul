@@ -7,11 +7,11 @@
     <div class="dusk-tally">
       <span class="dt-item"><b class="font-mono tabular">{{ prey }}</b> {{ t('chronicle.dusk.newPrey') }}</span>
       <span class="dt-sep">·</span>
-      <span class="dt-item"><b class="font-mono tabular">{{ verdicts }}</b> {{ t('chronicle.dusk.verdicts') }}</span>
+      <span class="dt-item"><b class="font-mono tabular">{{ verdicts }}</b> {{ t('chronicle.dusk.verdicts', verdicts) }}</span>
       <span class="dt-sep">·</span>
-      <span class="dt-item"><b class="font-mono tabular">{{ alerts }}</b> {{ t('chronicle.dusk.alerts') }}</span>
+      <span class="dt-item"><b class="font-mono tabular">{{ alerts }}</b> {{ t('chronicle.dusk.alerts', alerts) }}</span>
       <span class="dt-sep">·</span>
-      <span class="dt-item"><b class="font-mono tabular">{{ lessons }}</b> {{ t('chronicle.dusk.lessons') }}</span>
+      <span class="dt-item"><b class="font-mono tabular">{{ lessons }}</b> {{ t('chronicle.dusk.lessons', lessons) }}</span>
     </div>
   </div>
 </template>

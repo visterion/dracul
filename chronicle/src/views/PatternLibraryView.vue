@@ -113,8 +113,10 @@ import type { Pattern, PatternAction } from '../api/types'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import PatternCard from '../components/common/PatternCard.vue'
+import { useRelativeTime } from '../composables/useRelativeTime'
 
 const { t } = useI18n()
+const { monthsAgo } = useRelativeTime()
 const api = useApi()
 const allPatterns = ref<Pattern[]>([])
 const loading = ref(true)
@@ -188,13 +190,6 @@ function toggleExpand(id: string) {
     next.add(id)
   }
   expandedIds.value = next
-}
-
-function monthsAgo(isoString: string): string {
-  const months = Math.floor((Date.now() - new Date(isoString).getTime()) / (30 * 86_400_000))
-  if (months === 0) return t('patterns.monthsAgo.thisMonth')
-  if (months === 1) return t('patterns.monthsAgo.oneMonth')
-  return t('patterns.monthsAgo.months', { n: months })
 }
 </script>
 

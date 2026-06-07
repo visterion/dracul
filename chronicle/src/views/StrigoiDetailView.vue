@@ -161,7 +161,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import RunTrace from '../components/common/RunTrace.vue'
 import PreyCard from '../components/common/PreyCard.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
@@ -207,7 +207,7 @@ function onOpenPrey(prey: Prey) {
 function formatRunDate(iso: string): string {
   const d = new Date(iso)
   const diffDays = Math.floor((Date.now() - d.getTime()) / 86_400_000)
-  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const time = d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
   if (diffDays === 0) return `${t('strigoi.run.today')} ${time}`
   if (diffDays === 1) return `${t('strigoi.run.yesterday')} ${time}`
   return `${diffDays}${t('strigoi.run.daysAgo')} ${time}`
@@ -215,14 +215,14 @@ function formatRunDate(iso: string): string {
 
 function formatNextRun(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) +
-    ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return d.toLocaleDateString(locale.value, { weekday: 'short', month: 'short', day: 'numeric' }) +
+    ', ' + d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function formatAbsoluteDate(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) +
-    ', ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return d.toLocaleDateString(locale.value, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) +
+    ', ' + d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 </script>
 
