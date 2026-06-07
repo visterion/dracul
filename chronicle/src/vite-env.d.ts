@@ -12,5 +12,6 @@ declare module '*.module.css' {
 }
 
 /* Phosphor web font: the `./regular` subpath export maps to a side-effect CSS
-   file whose specifier has no `.css` suffix, so it needs an explicit shim. */
+   file (via the package's exports map) whose specifier has no `.css` suffix,
+   so it needs an explicit ambient declaration. */
 declare module '@phosphor-icons/web/regular'
