@@ -51,6 +51,27 @@ public class SettingsController {
                 .toList();
     }
 
+    @PatchMapping("/agents/{name}")
+    public ResponseEntity<AgentConfigRow> patchAgentPaused(@PathVariable String name,
+                                                           @RequestBody AgentPausePatch body) {
+        if (body == null || body.paused() == null) return ResponseEntity.badRequest().build();
+        var status = client.listStrigoi().stream()
+                .filter(s -> s.name().equals(name))
+                .findFirst();
+        if (status.isEmpty()) return ResponseEntity.notFound().build();
+
+        client.patchAgent(name, body.paused());
+
+        var base = toAgentConfigRow(status.get());
+        var newState = body.paused()
+                ? "paused"
+                : ("paused".equals(base.state()) ? "resting" : base.state());
+        var row = new AgentConfigRow(base.name(), base.role(), newState, body.paused(),
+                base.tier(), base.schedule(), base.nextRunAt(),
+                base.dailyUsedUsd(), base.dailyBudgetUsd(), base.primaryProvider());
+        return ResponseEntity.ok(row);
+    }
+
     private AgentConfigRow toAgentConfigRow(StrigoiStatus s) {
         var detail = client.getStrigoiDetail(s.name());
         if (detail.isPresent()) {
