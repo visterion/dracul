@@ -160,6 +160,7 @@ import StateDot from '../components/common/StateDot.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import RunTrace from '../components/common/RunTrace.vue'
 import PreyCard from '../components/common/PreyCard.vue'
+import { humanScheduleText } from '../utils/schedule'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -177,25 +178,13 @@ const stateLabel = computed(() => {
   return t(`strigoi.state.${strigoi.value.state}`)
 })
 
-// Humanize the cron's recurrence + show the next fire's LOCAL time (browser TZ → Berlin for the
-// user, DST-correct, no hardcoded zone). Time comes from nextRunAt (an absolute instant) formatted
-// locally; recurrence comes from the cron's day-of-week field (last whitespace token → works for
-// 5- and 6-field crons).
-const humanSchedule = computed(() => {
-  const cron = strigoi.value?.configuration.cron?.trim()
-  const next = strigoi.value?.configuration.nextRunAt
-  if (!cron) return '—'
-  const dow = cron.split(/\s+/).pop() ?? '*'
-  let rec: string
-  if (dow === '1-5') rec = t('strigoi.schedule.weekdays')
-  else if (dow === '*' || dow === '?') rec = t('strigoi.schedule.daily')
-  else return cron   // unexpected pattern → show raw cron rather than guess
-  if (!next) return rec
-  const d = new Date(next)
-  if (isNaN(d.getTime())) return rec
-  const time = d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', hour12: false })
-  return t('strigoi.schedule.everyAt', { rec, time })
-})
+const humanSchedule = computed(() =>
+  humanScheduleText(
+    strigoi.value?.configuration.cron,
+    strigoi.value?.configuration.nextRunAt,
+    locale.value,
+    t,
+  ))
 
 const scheduleSummary = computed(() => {
   if (!strigoi.value) return ''
