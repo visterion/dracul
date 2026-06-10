@@ -155,6 +155,44 @@
           </div>
         </template>
 
+        <!-- Agent config -->
+        <template v-else-if="active === 'agent-config'">
+          <PageHead :title="t('settings.agentConfig.title')" :sub="t('settings.agentConfig.subtitle')" />
+
+          <div v-if="agentError" role="alert" class="set-budget-error">{{ agentError }}</div>
+
+          <template v-if="agentsLoading">
+            <v-skeleton-loader v-for="i in 4" :key="i" type="list-item" />
+          </template>
+
+          <div v-else-if="agentData && agentData.length" class="stack-5" data-testid="agent-config-list">
+            <div v-for="row in agentData" :key="row.name" class="agent-row" :data-agent="row.name">
+              <div class="agent-row__main">
+                <div class="agent-row__name">{{ row.name }}</div>
+                <span class="agent-row__role mono">{{ row.role }}</span>
+              </div>
+              <div class="agent-row__meta mono">
+                <span class="agent-row__state" :data-state="row.state">{{ row.state }}</span>
+                <span>{{ agentSchedule(row) }}</span>
+                <span v-if="row.tier">{{ row.tier }}</span>
+                <span v-if="row.primaryProvider">{{ row.primaryProvider }}</span>
+                <span>${{ row.dailyUsedUsd.toFixed(2) }} / ${{ row.dailyBudgetUsd.toFixed(2) }}</span>
+              </div>
+              <button
+                class="btn btn-secondary agent-row__toggle"
+                :disabled="pausing === row.name"
+                :data-testid="`agent-pause-${row.name}`"
+                @click="togglePause(row)"
+              >{{ row.paused ? t('settings.agentConfig.resume') : t('settings.agentConfig.pause') }}</button>
+            </div>
+          </div>
+
+          <div v-else class="empty">
+            <div class="em-icon"><BatGlyph :size="28" :dim="false" /></div>
+            <div class="em-text">{{ t('settings.agentConfig.empty') }}</div>
+          </div>
+        </template>
+
         <!-- Stub for the remaining sections -->
         <template v-else>
           <PageHead :title="currentNavItem?.label ?? t('settings.title')" :sub="t('settings.stubSub')" />
@@ -174,14 +212,15 @@ import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import { useApi } from '../api'
 import { setLocale } from '../i18n'
-import type { LlmProvider, BudgetPatch, SettingsBudgetData } from '../api/types'
+import type { LlmProvider, BudgetPatch, SettingsBudgetData, AgentConfigRow } from '../api/types'
 import VistierieView from './VistierieView.vue'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import ProviderCard from '../components/common/ProviderCard.vue'
+import { humanScheduleText } from '../utils/schedule'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const api = useApi()
 const { smAndDown } = useDisplay()
 
@@ -308,8 +347,50 @@ async function saveAgentBudget(agentName: string) {
   }
 }
 
+// ── Agent Config ───────────────────────────────────────────────
+const agentData = ref<AgentConfigRow[] | null>(null)
+const agentsLoading = ref(false)
+const agentError = ref<string | null>(null)
+const pausing = ref<string | null>(null)
+
+async function loadAgents() {
+  agentsLoading.value = true
+  agentError.value = null
+  try {
+    agentData.value = await api.getAgents()
+  } catch (e) {
+    agentError.value = e instanceof Error ? e.message : t('settings.agentConfig.loadError')
+  } finally {
+    agentsLoading.value = false
+  }
+}
+
+async function togglePause(row: AgentConfigRow) {
+  pausing.value = row.name
+  const previous = { paused: row.paused, state: row.state }
+  // optimistic
+  row.paused = !row.paused
+  row.state = row.paused ? 'paused' : 'resting'
+  try {
+    const updated = await api.setAgentPaused(row.name, row.paused)
+    row.paused = updated.paused
+    row.state = updated.state
+  } catch {
+    row.paused = previous.paused
+    row.state = previous.state
+    agentError.value = t('settings.agentConfig.pauseError')
+  } finally {
+    pausing.value = null
+  }
+}
+
+function agentSchedule(row: AgentConfigRow): string {
+  return humanScheduleText(row.schedule, row.nextRunAt, locale.value, t)
+}
+
 watch(active, (section) => {
   if (section === 'budgets' && !budgetData.value) loadBudgets()
+  if (section === 'agent-config' && !agentData.value) loadAgents()
 })
 
 onMounted(async () => {
@@ -460,4 +541,16 @@ onMounted(async () => {
 .settings-nav--chips::-webkit-scrollbar { display: none; }
 .settings-nav--chips .set-nav-item { flex: 0 0 auto; white-space: nowrap; width: auto; }
 .settings-grid--mobile .set-budget-grid { grid-template-columns: 1fr; }
+
+/* ── Agent Config ─────────────────────────────────────────────── */
+.agent-row { display: flex; align-items: center; gap: 16px; padding: 12px 14px;
+  border: 1px solid rgba(184, 148, 92, 0.12); border-radius: 6px; }
+.agent-row__main { display: flex; flex-direction: column; min-width: 160px; }
+.agent-row__name { color: var(--bone-ivory); font-weight: 600; }
+.agent-row__role { font-size: 11px; color: var(--ash-gray); }
+.agent-row__meta { display: flex; flex-wrap: wrap; gap: 12px; flex: 1;
+  font-size: 12px; color: var(--ash-gray); }
+.agent-row__state[data-state="paused"] { color: var(--cathedral-gold); }
+.agent-row__state[data-state="budget-hit"] { color: var(--blood-red); }
+.agent-row__toggle { flex: 0 0 auto; }
 </style>
