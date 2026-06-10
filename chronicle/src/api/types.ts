@@ -292,3 +292,18 @@ export type PatternAction = 'approve' | 'reject' | 'deactivate' | 'defer'
 export interface LanguageSetting {
   language: string
 }
+
+// ── Agent Config ───────────────────────────────────────────────
+
+export interface AgentConfigRow {
+  name: string
+  role: string
+  state: string
+  paused: boolean
+  tier: string | null
+  schedule: string | null
+  nextRunAt: string | null
+  dailyUsedUsd: number
+  dailyBudgetUsd: number
+  primaryProvider: string | null
+}

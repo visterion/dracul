@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting,
+  PatchPositionRequest, LanguageSetting, AgentConfigRow,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -176,5 +176,24 @@ export class HttpApiClient implements ApiClient {
     })
     if (!res.ok) throw new Error(`setLanguage failed: HTTP ${res.status}`)
     return res.json() as Promise<LanguageSetting>
+  }
+
+  async getAgents(): Promise<AgentConfigRow[]> {
+    const res = await fetch(`${this.baseUrl}/api/settings/agents`)
+    if (!res.ok) throw new Error(`getAgents failed: ${res.status}`)
+    return res.json() as Promise<AgentConfigRow[]>
+  }
+
+  async setAgentPaused(name: string, paused: boolean): Promise<AgentConfigRow> {
+    const res = await fetch(
+      `${this.baseUrl}/api/settings/agents/${encodeURIComponent(name)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused }),
+      },
+    )
+    if (!res.ok) throw new Error(`setAgentPaused failed: ${res.status}`)
+    return res.json() as Promise<AgentConfigRow>
   }
 }
