@@ -62,4 +62,17 @@ class SettingsAgentConfigControllerIT {
         assertThat(lazarus.get("state").asText()).isEqualTo("paused");
         assertThat(lazarus.get("paused").asBoolean()).isTrue();
     }
+
+    @Test
+    void patchAgentPausedReturnsUpdatedRow() {
+        var body = rest.patch().uri("/api/settings/agents/strigoi-spin")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("paused", true))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(body).isNotNull();
+        assertThat(body.get("name").asText()).isEqualTo("strigoi-spin");
+        assertThat(body.get("paused").asBoolean()).isTrue();
+        assertThat(body.get("state").asText()).isEqualTo("paused");
+    }
 }
