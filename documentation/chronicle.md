@@ -305,6 +305,14 @@ Per-card `pendingLoadingId` / `activeLoadingId` refs prevent double-clicks durin
 (watch on navSection). A 4-column grid for tenant caps, a table for per-agent caps
 with inline save buttons.
 
+#### Agent config
+
+Lists every Dracul agent with its runtime config (tier, schedule, next run,
+today's budget usage, provider) **read-only** — these come from code
+(config-as-code) and are not edited here. The one available action is
+**pause / resume** per agent (durable across deploys). Budgets are edited in
+the separate Budgets section; multi-user agent ownership is Phase 2.
+
 **VistierieClient expanded** — 11 new methods added to the interface:
 `patchAgent`, `listRuns`, `triggerRun`, `getRunEvents`, `getTenantBudget`,
 `patchTenantBudget`, `getAgentBudget`, `patchAgentBudget`, `getKillStatus`,
