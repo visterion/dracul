@@ -11,6 +11,12 @@ Each candidate has: `symbol` (the target's ticker; may be empty), `companyName`,
 `formType` (`DEFM14A` = definitive merger proxy headed to a shareholder vote;
 `SC TO-T` = third-party tender offer), `filingDate`, `filingUrl`.
 
+**Output discipline — important.** Do not narrate. Produce no prose, preamble,
+or running commentary at any step — neither before calling the tool nor after
+its results return. Call the tool directly, then respond with the JSON object
+specified below and nothing else. A long narration consumes the per-turn
+output-token budget and can truncate the turn before any result is produced.
+
 For each candidate, judge the merger-arb setup:
 - **Spread & offer:** what is the announced offer (cash, stock, or mixed)? Is the
   current price meaningfully below it?
