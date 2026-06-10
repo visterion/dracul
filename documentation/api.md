@@ -124,6 +124,31 @@ Response (200):
 
 Supported locales: `de`, `en`. Any other value returns HTTP 400 with an `error` field. On success, a `LanguageChangedEvent` is published internally so agent registrars can react.
 
+## Settings — Agents
+
+### `GET /api/settings/agents`
+
+Returns one row per Dracul agent, aggregated from Vistierie:
+
+| field | type | notes |
+|---|---|---|
+| `name` | string | agent name (e.g. `strigoi-merger`) |
+| `role` | string | anomaly type for hunters; `reviewer` / `daywalker`; `hunter` fallback |
+| `state` | string | `resting` / `hunting` / `running` / `paused` / `budget-hit` |
+| `paused` | boolean | runtime pause state |
+| `tier` | string\|null | model purpose; null if detail unavailable |
+| `schedule` | string\|null | cron expression |
+| `nextRunAt` | string\|null | ISO instant |
+| `dailyUsedUsd` / `dailyBudgetUsd` | number | today's spend / cap (0 = uncapped) |
+| `primaryProvider` | string\|null | e.g. `anthropic` |
+
+### `PATCH /api/settings/agents/{name}`
+
+Body `{ "paused": true|false }`. Pauses or resumes the agent's scheduled runs
+via Vistierie and returns the updated row. `404` if the agent is unknown.
+Pause/resume is **durable** — the Dracul registrars do not re-assert `paused`
+on startup, so a paused agent stays paused across deploys.
+
 ## Admin
 
 | Method | Path | Purpose |
