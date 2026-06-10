@@ -58,4 +58,23 @@ test.describe('Settings View (/settings)', () => {
     // but the page sub copy switches — assert the select reflects the choice.
     await expect(select).toHaveValue('en')
   })
+
+  test('Agent config section lists agents', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await expect(page.locator('[data-testid="agent-config-list"]')).toBeVisible()
+    await expect(page.locator('.agent-row').first()).toBeVisible()
+    await expect(page.locator('.agent-row[data-agent="strigoi-spin"]')).toBeVisible()
+  })
+
+  test('Pause toggles an agent to paused', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    const toggle = page.locator('[data-testid="agent-pause-strigoi-spin"]')
+    await expect(toggle).toHaveText(/Pause|Pausieren/)
+    await toggle.click()
+    await expect(toggle).toHaveText(/Resume|Aktivieren/)
+    // row state is an internal enum from the backend (not localized)
+    await expect(
+      page.locator('.agent-row[data-agent="strigoi-spin"] .agent-row__state'),
+    ).toHaveText('paused')
+  })
 })
