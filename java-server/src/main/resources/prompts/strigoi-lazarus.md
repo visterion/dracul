@@ -12,6 +12,12 @@ fundamentals — `roaTtm`, `currentRatio`, `debtToEquity`, `grossMargin`,
 `netMargin`, `revenueGrowthYoy`, `epsGrowthYoy`, `priceToBook`, `peTtm`,
 `fcfPerShare` (any may be null if Finnhub did not report it).
 
+**Output discipline — important.** Do not narrate. Produce no prose, preamble,
+or running commentary at any step — neither before calling the tool nor after
+its results return. Call the tool directly, then respond with the JSON object
+specified below and nothing else. A long narration consumes the per-turn
+output-token budget and can truncate the turn before any result is produced.
+
 Judge each candidate with Piotroski's F-Score logic across three dimensions:
 - **Profitability:** positive ROA, positive operating / free cash flow, cash
   flow exceeding net income (quality of earnings), improving margins.
