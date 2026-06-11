@@ -110,6 +110,17 @@ export default {
       pauseError: 'Zustand konnte nicht geändert werden.',
       empty: 'Keine Agenten registriert.',
     },
+    dataSources: {
+      title: 'Datenquellen',
+      subtitle: 'Live-Status jeder Markt-Datenquelle. „Erneut prüfen" probt erneut (ca. 60s gecacht).',
+      recheck: 'Erneut prüfen',
+      checking: 'Prüfe…',
+      usedBy: 'Genutzt von',
+      lastChecked: 'Zuletzt geprüft',
+      loadError: 'Datenquellen konnten nicht geladen werden.',
+      empty: 'Keine Datenquellen.',
+      status: { ok: 'OK', rate_limited: 'Rate-Limit', error: 'Fehler', not_configured: 'Nicht konfiguriert', timeout: 'Timeout' },
+    },
     stub: 'Noch nicht eingerichtet.',
   },
   vistierie: {
