@@ -110,6 +110,17 @@ export default {
       pauseError: 'Could not change the agent state.',
       empty: 'No agents registered.',
     },
+    dataSources: {
+      title: 'Data Sources',
+      subtitle: 'Live health of each market-data source. Re-check probes them again (cached ~60s).',
+      recheck: 'Re-check',
+      checking: 'Checking…',
+      usedBy: 'Used by',
+      lastChecked: 'Last checked',
+      loadError: 'Could not load data sources.',
+      empty: 'No data sources.',
+      status: { ok: 'OK', rate_limited: 'Rate-limited', error: 'Error', not_configured: 'Not configured', timeout: 'Timeout' },
+    },
     stub: 'Not yet configured.',
   },
   vistierie: {
