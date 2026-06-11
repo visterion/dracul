@@ -149,6 +149,17 @@ via Vistierie and returns the updated row. `404` if the agent is unknown.
 Pause/resume is **durable** — the Dracul registrars do not re-assert `paused`
 on startup, so a paused agent stays paused across deploys.
 
+## Settings — Data Sources
+
+### `GET /api/settings/data-sources`
+
+Query: `refresh` (boolean, default `false`). Actively probes each market-data
+source (EDGAR, Yahoo, Finnhub, Wikipedia) with one minimal request and returns
+their live health. Results are cached ~60s server-side; `refresh=true` bypasses
+the cache. Each entry: `id`, `label`, `configured`, `status` (`ok` /
+`rate_limited` / `error` / `not_configured` / `timeout`), `httpStatus`, `detail`,
+`latencyMs`, `usedBy` (Strigoi names), `rateLimitNote`, `checkedAt`.
+
 ## Admin
 
 | Method | Path | Purpose |

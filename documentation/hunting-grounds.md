@@ -13,6 +13,10 @@ never see vendor-specific schemas.
 | `news-adapter` | Finnhub / NewsAPI | Material-news firehose, analyst notes | Provider-dependent |
 | `calendar-adapter` | Multiple | Earnings dates, index reconstitutions | — |
 
+> **Health:** Settings → Data Sources actively probes each source (one cheap
+> request, cached ~60s) and shows ok / rate-limited / error / not-configured /
+> timeout. See `GET /api/settings/data-sources`.
+
 ## Conventions
 
 - **Rate-limiting and retry policy live in the adapter**, not in Strigoi.
