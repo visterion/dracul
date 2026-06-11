@@ -3,6 +3,7 @@ package de.visterion.dracul;
 import de.visterion.dracul.settings.AgentConfigRow;
 import de.visterion.dracul.settings.AgentPausePatch;
 import de.visterion.dracul.settings.AppSettingsRepository;
+import de.visterion.dracul.settings.DataSourceHealthService;
 import de.visterion.dracul.settings.SettingsController;
 import de.visterion.dracul.vistierie.StrigoiStatus;
 import de.visterion.dracul.vistierie.VistierieClient;
@@ -20,7 +21,7 @@ class SettingsAgentPauseUnitTest {
 
     private final VistierieClient client = mock(VistierieClient.class);
     private final SettingsController controller =
-            new SettingsController(client, mock(AppSettingsRepository.class), null);
+            new SettingsController(client, mock(AppSettingsRepository.class), null, mock(DataSourceHealthService.class));
 
     @Test
     void patchPausesAgentAndReturnsUpdatedRow() {

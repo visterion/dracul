@@ -26,13 +26,16 @@ public class SettingsController {
     private final VistierieClient client;
     private final AppSettingsRepository settings;
     private final ApplicationEventPublisher events;
+    private final DataSourceHealthService dataSourceHealth;
 
     public SettingsController(VistierieClient client,
                               AppSettingsRepository settings,
-                              ApplicationEventPublisher events) {
+                              ApplicationEventPublisher events,
+                              DataSourceHealthService dataSourceHealth) {
         this.client = client;
         this.settings = settings;
         this.events = events;
+        this.dataSourceHealth = dataSourceHealth;
     }
 
     @GetMapping("/budgets")
@@ -42,6 +45,12 @@ public class SettingsController {
                 .map(name -> new SettingsBudgetData.AgentBudget(name, client.getAgentBudget(name)))
                 .toList();
         return new SettingsBudgetData(tenant, agents);
+    }
+
+    @GetMapping("/data-sources")
+    public List<DataSourceHealth> getDataSources(
+            @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
+        return dataSourceHealth.probeAll(refresh);
     }
 
     @GetMapping("/agents")
