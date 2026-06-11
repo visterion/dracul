@@ -1,6 +1,7 @@
 package de.visterion.dracul.settings;
 
 import java.io.InterruptedIOException;
+import java.net.http.HttpTimeoutException;
 import java.util.concurrent.TimeoutException;
 
 /** Pure mapping from an HTTP outcome to a data-source status string. */
@@ -22,7 +23,9 @@ public final class DataSourceStatus {
     // (extends InterruptedIOException); CompletableFuture-level timeouts surface as TimeoutException.
     private static boolean isTimeout(Throwable error) {
         for (Throwable t = error; t != null; t = t.getCause()) {
-            if (t instanceof TimeoutException || t instanceof InterruptedIOException) return true;
+            if (t instanceof TimeoutException
+                    || t instanceof InterruptedIOException
+                    || t instanceof HttpTimeoutException) return true;
         }
         return false;
     }
