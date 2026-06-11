@@ -313,6 +313,14 @@ today's budget usage, provider) **read-only** — these come from code
 **pause / resume** per agent (durable across deploys). Budgets are edited in
 the separate Budgets section; multi-user agent ownership is Phase 2.
 
+#### Data sources
+
+Live health of each market-data source (EDGAR, Yahoo, Finnhub, Wikipedia):
+status chip (ok / rate-limited / error / not-configured / timeout), HTTP status,
+latency, which Strigoi use it, and the free-tier rate-limit note. Probed on open
+(cached ~60s) with a manual **Re-check**. Probing is server-side, one minimal
+request per source, concurrent with a 4s timeout — it never hammers a source.
+
 **VistierieClient expanded** — 11 new methods added to the interface:
 `patchAgent`, `listRuns`, `triggerRun`, `getRunEvents`, `getTenantBudget`,
 `patchTenantBudget`, `getAgentBudget`, `patchAgentBudget`, `getKillStatus`,
