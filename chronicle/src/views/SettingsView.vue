@@ -193,6 +193,46 @@
           </div>
         </template>
 
+        <!-- Data sources -->
+        <template v-else-if="active === 'data-sources'">
+          <PageHead :title="t('settings.dataSources.title')" :sub="t('settings.dataSources.subtitle')" />
+
+          <div class="ds-actions">
+            <button class="btn btn-secondary" :disabled="rechecking || dataSourcesLoading"
+                    data-testid="ds-recheck" @click="loadDataSources(true)">
+              {{ rechecking ? t('settings.dataSources.checking') : t('settings.dataSources.recheck') }}
+            </button>
+          </div>
+
+          <div v-if="dataSourceError" role="alert" class="set-budget-error">{{ dataSourceError }}</div>
+
+          <template v-if="dataSourcesLoading">
+            <v-skeleton-loader v-for="i in 4" :key="i" type="list-item" />
+          </template>
+
+          <div v-else-if="dataSourceData && dataSourceData.length" class="stack-5" data-testid="data-sources-list">
+            <div v-for="ds in dataSourceData" :key="ds.id" class="ds-row" :data-source="ds.id">
+              <div class="ds-row__main">
+                <div class="ds-row__label">{{ ds.label }}</div>
+                <span class="ds-row__used mono">{{ t('settings.dataSources.usedBy') }}: {{ ds.usedBy.join(', ') }}</span>
+              </div>
+              <div class="ds-row__meta mono">
+                <span class="ds-row__status" :data-status="ds.status">{{ t('settings.dataSources.status.' + ds.status) }}</span>
+                <span v-if="ds.httpStatus">HTTP {{ ds.httpStatus }}</span>
+                <span v-if="ds.latencyMs != null">{{ ds.latencyMs }} ms</span>
+                <span>{{ ds.rateLimitNote }}</span>
+                <span v-if="ds.detail" class="ds-row__detail">{{ ds.detail }}</span>
+                <span>{{ t('settings.dataSources.lastChecked') }}: {{ dsCheckedAt(ds.checkedAt) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="empty">
+            <div class="em-icon"><BatGlyph :size="28" :dim="false" /></div>
+            <div class="em-text">{{ t('settings.dataSources.empty') }}</div>
+          </div>
+        </template>
+
         <!-- Stub for the remaining sections -->
         <template v-else>
           <PageHead :title="currentNavItem?.label ?? t('settings.title')" :sub="t('settings.stubSub')" />
@@ -212,7 +252,7 @@ import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import { useApi } from '../api'
 import { setLocale } from '../i18n'
-import type { LlmProvider, BudgetPatch, SettingsBudgetData, AgentConfigRow } from '../api/types'
+import type { LlmProvider, BudgetPatch, SettingsBudgetData, AgentConfigRow, DataSourceHealth } from '../api/types'
 import VistierieView from './VistierieView.vue'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
@@ -388,9 +428,34 @@ function agentSchedule(row: AgentConfigRow): string {
   return humanScheduleText(row.schedule, row.nextRunAt, locale.value, t)
 }
 
+// ── Data Sources ───────────────────────────────────────────────
+const dataSourceData = ref<DataSourceHealth[] | null>(null)
+const dataSourcesLoading = ref(false)
+const dataSourceError = ref<string | null>(null)
+const rechecking = ref(false)
+
+async function loadDataSources(refresh = false) {
+  if (refresh) rechecking.value = true; else dataSourcesLoading.value = true
+  dataSourceError.value = null
+  try {
+    dataSourceData.value = await api.getDataSources(refresh)
+  } catch (e) {
+    dataSourceError.value = e instanceof Error ? e.message : t('settings.dataSources.loadError')
+  } finally {
+    dataSourcesLoading.value = false
+    rechecking.value = false
+  }
+}
+
+function dsCheckedAt(iso: string): string {
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
 watch(active, (section) => {
   if (section === 'budgets' && !budgetData.value) loadBudgets()
   if (section === 'agent-config' && !agentData.value) loadAgents()
+  if (section === 'data-sources' && !dataSourceData.value) loadDataSources()
 })
 
 onMounted(async () => {
@@ -553,4 +618,16 @@ onMounted(async () => {
 .agent-row__state[data-state="paused"] { color: var(--cathedral-gold); }
 .agent-row__state[data-state="budget-hit"] { color: var(--blood-red); }
 .agent-row__toggle { flex: 0 0 auto; }
+
+/* ── Data Sources ─────────────────────────────────────────────── */
+.ds-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.ds-row { display: flex; align-items: center; gap: 16px; padding: 12px 14px;
+  border: 1px solid rgba(184, 148, 92, 0.12); border-radius: 6px; }
+.ds-row__main { display: flex; flex-direction: column; min-width: 180px; }
+.ds-row__label { color: var(--bone-ivory); font-weight: 600; }
+.ds-row__used { font-size: 11px; color: var(--ash-gray); }
+.ds-row__meta { display: flex; flex-wrap: wrap; gap: 12px; flex: 1; font-size: 12px; color: var(--ash-gray); }
+.ds-row__status[data-status="ok"] { color: #8a9a5b; }
+.ds-row__status[data-status="rate_limited"] { color: var(--cathedral-gold); }
+.ds-row__status[data-status="error"], .ds-row__status[data-status="timeout"] { color: var(--blood-red); }
 </style>
