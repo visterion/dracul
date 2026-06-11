@@ -4,7 +4,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse,
   CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting,
-  AgentConfigRow,
+  AgentConfigRow, DataSourceHealth,
 } from './types'
 
 export interface ApiClient {
@@ -31,4 +31,5 @@ export interface ApiClient {
   setLanguage(language: string): Promise<LanguageSetting>
   getAgents(): Promise<AgentConfigRow[]>
   setAgentPaused(name: string, paused: boolean): Promise<AgentConfigRow>
+  getDataSources(refresh?: boolean): Promise<DataSourceHealth[]>
 }

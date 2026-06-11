@@ -307,3 +307,18 @@ export interface AgentConfigRow {
   dailyBudgetUsd: number
   primaryProvider: string | null
 }
+
+// ── Settings / Data Sources ────────────────────────────────────
+
+export interface DataSourceHealth {
+  id: string
+  label: string
+  configured: boolean
+  status: string
+  httpStatus: number | null
+  detail: string | null
+  latencyMs: number | null
+  usedBy: string[]
+  rateLimitNote: string
+  checkedAt: string
+}

@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow,
+  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -244,5 +244,15 @@ export class MockApiClient implements ApiClient {
     a.paused = paused
     a.state = paused ? 'paused' : (a.state === 'paused' ? 'resting' : a.state)
     return { ...a }
+  }
+
+  async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {
+    const now = new Date().toISOString()
+    return [
+      { id: 'edgar', label: 'SEC EDGAR', configured: true, status: 'ok', httpStatus: 200, detail: null, latencyMs: 142, usedBy: ['strigoi-spin', 'strigoi-insider', 'strigoi-merger', 'daywalker'], rateLimitNote: '10 req/s', checkedAt: now },
+      { id: 'yahoo', label: 'Yahoo Finance', configured: true, status: 'rate_limited', httpStatus: 429, detail: 'Too Many Requests', latencyMs: 88, usedBy: ['strigoi-echo', 'daywalker'], rateLimitNote: 'unofficial / scraped', checkedAt: now },
+      { id: 'finnhub', label: 'Finnhub', configured: true, status: 'ok', httpStatus: 200, detail: null, latencyMs: 210, usedBy: ['strigoi-lazarus', 'daywalker'], rateLimitNote: 'provider-dependent (free tier)', checkedAt: now },
+      { id: 'wikipedia', label: 'Wikipedia', configured: true, status: 'ok', httpStatus: 200, detail: null, latencyMs: 175, usedBy: ['strigoi-index'], rateLimitNote: 'MediaWiki UA policy', checkedAt: now },
+    ]
   }
 }
