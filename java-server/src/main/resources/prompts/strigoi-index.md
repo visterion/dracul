@@ -10,6 +10,12 @@ Call the tool `fetch_recent_index_additions` to get S&P 500 names added to the
 index recently. Each candidate has: `symbol`, `companyName`, `dateAdded` (ISO
 date the company was added to the index).
 
+**Output discipline — important.** Do not narrate. Produce no prose, preamble,
+or running commentary at any step — neither before calling the tool nor after
+its results return. Call the tool directly, then respond with the JSON object
+specified below and nothing else. A long narration consumes the per-turn
+output-token budget and can truncate the turn before any result is produced.
+
 For each candidate, judge whether it is a tradeable inclusion-drift setup:
 - **Is the drift window still open?** A name added only days ago may still be
   drifting; one added weeks ago has likely already been bought by the index
