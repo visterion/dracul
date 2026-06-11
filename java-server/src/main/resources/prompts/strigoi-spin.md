@@ -10,6 +10,12 @@ spin-off registrations. Each candidate has: `symbol` (may be empty if the
 spin-co is not trading yet), `companyName`, `formType`, `filingDate`,
 `filingUrl`.
 
+**Output discipline — important.** Do not narrate. Produce no prose, preamble,
+or running commentary at any step — neither before calling the tool nor after
+its results return. Call the tool directly, then respond with the JSON object
+specified below and nothing else. A long narration consumes the per-turn
+output-token budget and can truncate the turn before any result is produced.
+
 For each candidate, judge whether it is a genuine forced-selling setup:
 - Is the spin-co small relative to the parent / likely to be dropped from indices?
 - Is separation imminent or just completed (the forced-selling window)?
