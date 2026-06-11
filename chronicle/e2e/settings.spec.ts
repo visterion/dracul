@@ -77,4 +77,19 @@ test.describe('Settings View (/settings)', () => {
       page.locator('.agent-row[data-agent="strigoi-spin"] .agent-row__state'),
     ).toHaveText('paused')
   })
+
+  test('Data sources section lists sources with health', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Data Sources")')
+    await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
+    await expect(page.locator('.ds-row[data-source="yahoo"] .ds-row__status')).toHaveAttribute('data-status', 'rate_limited')
+    await expect(page.locator('.ds-row[data-source="edgar"]')).toBeVisible()
+  })
+
+  test('Re-check reloads data sources', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Data Sources")')
+    await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
+    await page.click('[data-testid="ds-recheck"]')
+    await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
+    await expect(page.locator('.ds-row[data-source="edgar"]')).toBeVisible()
+  })
 })
