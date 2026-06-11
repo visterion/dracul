@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
+import java.net.http.HttpTimeoutException;
 import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -35,6 +36,11 @@ class DataSourceStatusTest {
         assertThat(DataSourceStatus.classify(null, new SocketTimeoutException("read timed out")))
                 .isEqualTo("timeout");
         assertThat(DataSourceStatus.classify(null, new RuntimeException(new SocketTimeoutException())))
+                .isEqualTo("timeout");
+    }
+
+    @Test void httpTimeoutIsTimeout() {
+        assertThat(DataSourceStatus.classify(null, new HttpTimeoutException("request timed out")))
                 .isEqualTo("timeout");
     }
 

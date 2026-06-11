@@ -2,9 +2,11 @@ package de.visterion.dracul.settings;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -45,19 +47,17 @@ public class HttpDataSourceHealthService implements DataSourceHealthService {
             @Value("${dracul.wikipedia.base-url:https://en.wikipedia.org}") String wikipediaBase,
             @Value("${dracul.wikipedia.user-agent:Dracul/1.0 (research)}") String wikipediaUserAgent) {
         this.finnhubKey = finnhubKey;
-        this.edgar = RestClient.builder().baseUrl(edgarBase)
-                .defaultHeader("User-Agent", edgarUserAgent).build();
-        this.yahoo = RestClient.builder().baseUrl(yahooBase).build();
-        this.finnhub = RestClient.builder().baseUrl(finnhubBase).build();
-        this.wikipedia = RestClient.builder().baseUrl(wikipediaBase)
-                .defaultHeader("User-Agent", wikipediaUserAgent).build();
+        this.edgar = timedBuilder(edgarBase).defaultHeader("User-Agent", edgarUserAgent).build();
+        this.yahoo = timedBuilder(yahooBase).build();
+        this.finnhub = timedBuilder(finnhubBase).build();
+        this.wikipedia = timedBuilder(wikipediaBase).defaultHeader("User-Agent", wikipediaUserAgent).build();
         this.sources = List.of(
                 new Source("edgar", "SEC EDGAR",
                         "/LATEST/search-index?q=test", List.of("strigoi-spin", "strigoi-insider", "strigoi-merger", "daywalker"), "10 req/s"),
                 new Source("yahoo", "Yahoo Finance",
                         "/v8/finance/chart/AAPL", List.of("strigoi-echo", "daywalker"), "unofficial / scraped"),
                 new Source("finnhub", "Finnhub",
-                        "/quote?symbol=AAPL&token=" + finnhubKey, List.of("strigoi-lazarus", "daywalker"), "provider-dependent (free tier)"),
+                        "/quote?symbol=AAPL", List.of("strigoi-lazarus", "daywalker"), "provider-dependent (free tier)"),
                 new Source("wikipedia", "Wikipedia",
                         "/w/api.php?action=query&meta=siteinfo&format=json", List.of("strigoi-index"), "MediaWiki UA policy"));
     }
@@ -97,16 +97,34 @@ public class HttpDataSourceHealthService implements DataSourceHealthService {
             case "finnhub" -> finnhub;
             default -> wikipedia;
         };
+        String path = src.probePath();
+        if ("finnhub".equals(src.id())) {
+            path = path + "&token=" + finnhubKey;
+        }
         long t0 = System.nanoTime();
         try {
-            int code = client.get().uri(src.probePath())
+            int code = client.get().uri(path)
                     .exchange((req, res) -> res.getStatusCode().value());
             long ms = (System.nanoTime() - t0) / 1_000_000;
             return health(src, true, DataSourceStatus.classify(code, null), code, null, ms, now);
         } catch (Exception e) {
             long ms = (System.nanoTime() - t0) / 1_000_000;
-            return health(src, true, DataSourceStatus.classify(null, e), null, e.getMessage(), ms, now);
+            return health(src, true, DataSourceStatus.classify(null, e), null, redact(e.getMessage()), ms, now);
         }
+    }
+
+    private static RestClient.Builder timedBuilder(String baseUrl) {
+        var httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(3_500))
+                .build();
+        var factory = new JdkClientHttpRequestFactory(httpClient);
+        factory.setReadTimeout(Duration.ofMillis(3_500));
+        return RestClient.builder().requestFactory(factory).baseUrl(baseUrl);
+    }
+
+    private String redact(String message) {
+        if (message == null || finnhubKey.isBlank()) return message;
+        return message.replace(finnhubKey, "***");
     }
 
     private static DataSourceHealth health(Source s, boolean configured, String status,
