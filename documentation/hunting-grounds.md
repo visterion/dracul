@@ -50,13 +50,43 @@ configure multiple price sources and let the adapter fall through.
 ## Market data adapter
 
 Dracul resolves ticker metadata (company name, current price, 30-day history)
-via the `MarketDataPort` interface (`de.visterion.dracul.marketdata`). v1 ships
-a single adapter:
+via the `MarketDataPort` interface (`de.visterion.dracul.marketdata`).
 
-- **YahooMarketDataAdapter** — HTTPS GET against
-  `query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1mo&interval=1d`.
-  No API key, no official SLA. The base URL is overridable via
-  `dracul.marketdata.yahoo.base-url` for tests.
+### TwelveDataMarketDataAdapter (primary)
+
+The primary `MarketDataPort` bean. Requires a Twelve Data API key
+(`dracul.marketdata.twelvedata.api-key` / `DRACUL_MARKETDATA_TWELVEDATA_API_KEY`).
+
+**`resolve(symbol)`** — resolves full ticker metadata for a single symbol:
+
+1. `GET /quote` — retrieves current price, company name, and percent day-change.
+2. `GET /time_series?interval=1day&outputsize=30` — retrieves 30 daily closes.
+
+Returns `MarketData(companyName, currentPrice, dayChangePercent, priceHistory30d)`.
+
+**`quotes(symbols)`** — batch price refresh for the watchlist on-read path:
+
+- Single call: `GET /quote?symbol=A,B,C` — returns current price and day-change
+  for all symbols in one HTTP request.
+- Results are cached in-adapter for `dracul.marketdata.twelvedata.cache-seconds`
+  (default `120`). Repeated loads within the TTL window cost zero provider credits.
+
+**Graceful degradation:** if the API key is blank or Twelve Data returns a
+status-error response, the watchlist falls back to serving stored prices rather
+than failing. No exception surfaces to the caller.
+
+**Free-tier limit:** Twelve Data free tier = 8 API credits/min. A batch `/quote`
+of N symbols costs N credits. A watchlist of up to ~8 tickers fits within one
+fresh refresh per 2-minute cache window. Watchlists larger than ~8 tickers can
+exceed the 8-credit/min limit on a cold load; chunking the batch request is a
+future improvement.
+
+### YahooMarketDataAdapter (non-primary)
+
+Retained as a non-primary Spring bean. Not used for watchlist price resolution;
+Yahoo is used only by the earnings calendar and intraday hunting-ground adapters
+(see below). The base URL is overridable via `dracul.marketdata.yahoo.base-url`
+for tests.
 
 Failures surface as `MarketDataException`:
 - `NOT_FOUND` → HTTP 422 (symbol unknown)
