@@ -37,6 +37,19 @@ Schema is `dracul`. Flyway migrations run on startup.
 | `FINNHUB_API_KEY` | Finnhub news and quote adapter |
 | `NEWSAPI_KEY` | NewsAPI news adapter (optional) |
 
+## Twelve Data (primary price adapter)
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_MARKETDATA_TWELVEDATA_API_KEY` (`dracul.marketdata.twelvedata.api-key`) | _(blank)_ | **Required for live prices.** Twelve Data API key. If blank, Twelve Data rejects calls with a status-error response; the watchlist gracefully serves stored prices instead. |
+| `DRACUL_MARKETDATA_TWELVEDATA_BASE_URL` (`dracul.marketdata.twelvedata.base-url`) | `https://api.twelvedata.com` | Base URL for all Twelve Data requests. Override for tests. |
+| `DRACUL_MARKETDATA_TWELVEDATA_CACHE_SECONDS` (`dracul.marketdata.twelvedata.cache-seconds`) | `120` | TTL (seconds) for the in-adapter batch-quote cache. Repeated watchlist loads within the window cost zero provider credits. |
+
+**Free-tier note:** Twelve Data free tier = 8 API credits/min. A batch `/quote`
+of N symbols costs N credits. The default 120-second cache ensures at most one
+fresh batch call per window; a watchlist larger than ~8 tickers may exceed the
+8-credit/min limit on a cold load (chunking is deferred).
+
 ## Notifications
 
 | Variable | Default | Purpose |
