@@ -4,7 +4,6 @@ import tools.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -14,7 +13,6 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
-@Primary
 public class TwelveDataMarketDataAdapter implements MarketDataPort {
 
     private static final Logger log = LoggerFactory.getLogger(TwelveDataMarketDataAdapter.class);
