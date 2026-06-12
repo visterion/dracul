@@ -17,7 +17,7 @@ class SignalDetectorsTest {
 
     private static WatchlistItem item() {
         return new WatchlistItem("id-1", "ACME", "Acme Corp", 100.0, 0.0,
-                "calm", "2026-06-01", "", null, List.of(), List.of(), null, null);
+                "calm", "2026-06-01", "", null, List.of(), List.of(), null, null, null);
     }
 
     private static Form4Filing filing(String ticker, String code) {

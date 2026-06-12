@@ -22,35 +22,52 @@ public class WatchlistRepository {
         this.mapper = mapper;
     }
 
+    public List<WatchlistItem> findAll() {
+        var items = jdbc.sql("""
+                SELECT id, ticker, company_name, current_price, day_change_percent,
+                       status, added_at, tag, verdict_id, price_history_30d,
+                       entry_price, share_count, user_id
+                FROM watchlist_items
+                ORDER BY added_at DESC
+                """)
+                .query(itemRowMapper())
+                .list();
+
+        if (items.isEmpty()) return items;
+
+        var alertsByItem = new HashMap<String, List<WatchlistAlert>>();
+        jdbc.sql("""
+                SELECT id, watchlist_item_id, at, message, level
+                FROM daywalker_alerts
+                ORDER BY watchlist_item_id, ctid
+                """)
+                .query((rs, rowNum) -> {
+                    var itemId = rs.getString("watchlist_item_id");
+                    alertsByItem.computeIfAbsent(itemId, k -> new ArrayList<>())
+                            .add(new WatchlistAlert(
+                                    rs.getString("id"),
+                                    rs.getString("at"),
+                                    rs.getString("message"),
+                                    rs.getString("level")
+                            ));
+                    return null;
+                })
+                .list();
+
+        return attachAlerts(items, alertsByItem);
+    }
+
     public List<WatchlistItem> findAllByUser(String userId) {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count
+                       entry_price, share_count, user_id
                 FROM watchlist_items
                 WHERE user_id = :userId
                 ORDER BY added_at DESC
                 """)
                 .param("userId", userId)
-                .query((rs, rowNum) -> {
-                    var ep = rs.getBigDecimal("entry_price");
-                    var sc = rs.getBigDecimal("share_count");
-                    return new WatchlistItem(
-                            rs.getString("id"),
-                            rs.getString("ticker"),
-                            rs.getString("company_name"),
-                            rs.getDouble("current_price"),
-                            rs.getDouble("day_change_percent"),
-                            rs.getString("status"),
-                            rs.getString("added_at"),
-                            rs.getString("tag"),
-                            rs.getString("verdict_id"),
-                            new ArrayList<>(),
-                            readDoubleList(rs.getString("price_history_30d")),
-                            ep == null ? null : ep.doubleValue(),
-                            sc == null ? null : sc.doubleValue()
-                    );
-                })
+                .query(itemRowMapper())
                 .list();
 
         if (items.isEmpty()) return items;
@@ -76,6 +93,34 @@ public class WatchlistRepository {
                 })
                 .list();
 
+        return attachAlerts(items, alertsByItem);
+    }
+
+    private org.springframework.jdbc.core.RowMapper<WatchlistItem> itemRowMapper() {
+        return (rs, rowNum) -> {
+            var ep = rs.getBigDecimal("entry_price");
+            var sc = rs.getBigDecimal("share_count");
+            return new WatchlistItem(
+                    rs.getString("id"),
+                    rs.getString("ticker"),
+                    rs.getString("company_name"),
+                    rs.getDouble("current_price"),
+                    rs.getDouble("day_change_percent"),
+                    rs.getString("status"),
+                    rs.getString("added_at"),
+                    rs.getString("tag"),
+                    rs.getString("verdict_id"),
+                    new ArrayList<>(),
+                    readDoubleList(rs.getString("price_history_30d")),
+                    ep == null ? null : ep.doubleValue(),
+                    sc == null ? null : sc.doubleValue(),
+                    rs.getString("user_id")
+            );
+        };
+    }
+
+    private List<WatchlistItem> attachAlerts(List<WatchlistItem> items,
+                                              Map<String, List<WatchlistAlert>> alertsByItem) {
         return items.stream()
                 .map(item -> new WatchlistItem(
                         item.id(), item.ticker(), item.companyName(),
@@ -84,7 +129,8 @@ public class WatchlistRepository {
                         item.verdictId(),
                         alertsByItem.getOrDefault(item.id(), List.of()),
                         item.priceHistory30d(),
-                        item.entryPrice(), item.shareCount()
+                        item.entryPrice(), item.shareCount(),
+                        item.owner()
                 ))
                 .toList();
     }
@@ -99,9 +145,42 @@ public class WatchlistRepository {
         UUID uuid;
         try { uuid = UUID.fromString(id); }
         catch (IllegalArgumentException e) { return Optional.empty(); }
-        return findAllByUser("default").stream()
-                .filter(i -> i.id().equals(uuid.toString()))
-                .findFirst();
+
+        var items = jdbc.sql("""
+                SELECT id, ticker, company_name, current_price, day_change_percent,
+                       status, added_at, tag, verdict_id, price_history_30d,
+                       entry_price, share_count, user_id
+                FROM watchlist_items
+                WHERE id = :id
+                """)
+                .param("id", uuid)
+                .query(itemRowMapper())
+                .list();
+
+        if (items.isEmpty()) return Optional.empty();
+
+        var alertsByItem = new HashMap<String, List<WatchlistAlert>>();
+        jdbc.sql("""
+                SELECT id, watchlist_item_id, at, message, level
+                FROM daywalker_alerts
+                WHERE watchlist_item_id = :id
+                ORDER BY ctid
+                """)
+                .param("id", uuid)
+                .query((rs, rowNum) -> {
+                    var itemId = rs.getString("watchlist_item_id");
+                    alertsByItem.computeIfAbsent(itemId, k -> new ArrayList<>())
+                            .add(new WatchlistAlert(
+                                    rs.getString("id"),
+                                    rs.getString("at"),
+                                    rs.getString("message"),
+                                    rs.getString("level")
+                            ));
+                    return null;
+                })
+                .list();
+
+        return attachAlerts(items, alertsByItem).stream().findFirst();
     }
 
     public WatchlistItem insert(String userId, String ticker, String companyName,
