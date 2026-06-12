@@ -1,6 +1,6 @@
 <template>
   <div class="alert-item" :class="`sev-${sev}`">
-    <span class="ai-time mono">{{ alert.at }}</span>
+    <span class="ai-time mono">{{ displayTime }}</span>
     <div class="ai-body">
       <span class="ai-text">{{ alert.message }}</span>
       <span class="ai-tag">
@@ -15,9 +15,12 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { WatchlistAlert } from '../../api/types'
+import { formatRelativeTime } from '../../utils/time'
 
 const props = defineProps<{ alert: WatchlistAlert }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+
+const displayTime = computed(() => formatRelativeTime(props.alert.at, locale.value))
 
 // Map domain level → severity class (elevated→warning, info→info, neutral→neutral)
 const sev = computed(() => {
