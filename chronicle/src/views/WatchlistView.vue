@@ -90,6 +90,7 @@
             <div class="wr-id">
               <span class="wr-ticker mono">{{ item.ticker }}</span>
               <span class="wr-name">{{ item.companyName }}</span>
+              <span class="wr-owner mono" :data-testid="`wl-owner-${item.id}`">{{ item.owner }}</span>
               <span class="wr-flags">
                 <span v-if="item.tag === 'TRACKING'" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
                 <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
@@ -103,6 +104,7 @@
             </div>
             <div class="wr-meta">
               <button
+                v-if="isMine(item)"
                 class="wr-tag-toggle"
                 :class="`wr-tag-toggle--${item.tag.toLowerCase()}`"
                 :data-testid="`wl-tag-${item.id}`"
@@ -111,6 +113,7 @@
               >{{ item.tag === 'HELD' ? t('watchlist.tagLabel.held') : t('watchlist.tagLabel.tracking') }}</button>
               <span class="wr-dot" :class="`dot-${dotClass(item.status)}`" />
               <button
+                v-if="isMine(item)"
                 class="wr-delete"
                 :data-testid="`wl-delete-${item.id}`"
                 :disabled="rowBusyId === item.id"
@@ -258,12 +261,14 @@ import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import AlertRow from '../components/common/AlertRow.vue'
 import { useApi } from '../api'
+import { useMe } from '../composables/useMe'
 import type { WatchlistItem, WatchlistStatus, WatchlistTag } from '../api/types'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
 
 const api = useApi()
+const me = useMe()
 const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
@@ -280,6 +285,7 @@ onMounted(async () => {
     loading.value = false
   }
 })
+function isMine(item: WatchlistItem): boolean { return item.owner === me.value }
 
 const selectedItem = computed(() =>
   items.value.find(i => i.id === selectedId.value) ?? null
@@ -551,6 +557,7 @@ function formatDate(isoDate: string): string {
 .wr-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wr-ticker { font-size: var(--text-body); color: var(--bone-ivory); }
 .wr-name { font-size: var(--text-micro); color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wr-owner { font-size: 11px; color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .wr-flags { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .wr-track { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--cathedral-gold); margin-top: 2px; }
 .wr-held { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--signal-positive-bright); margin-top: 2px; }

@@ -14,6 +14,9 @@ export default {
     thisMonth: 'diesen Monat',
     oneMonthAgo: 'vor 1 Monat',
   },
+  shell: {
+    logout: 'Abmelden',
+  },
   app: {
     nav: {
       chronicle: 'chronicle',

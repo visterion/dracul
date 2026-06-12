@@ -41,8 +41,11 @@
         <button v-if="!mobile" class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
           <i class="ph ph-moon" aria-hidden="true"></i>
         </button>
+        <span v-if="me" class="top-bar__user mono" data-testid="topbar-user">{{ me }}</span>
+        <a v-if="me && me !== 'default'" class="top-bar__icon-btn" href="/cdn-cgi/access/logout"
+           :aria-label="t('shell.logout')" :title="t('shell.logout')"><i class="ph ph-sign-out" /></a>
         <!-- User avatar placeholder — auth not in Phase 1 -->
-        <div v-if="!mobile" class="top-bar__avatar" aria-hidden="true">
+        <div v-if="!mobile && !me" class="top-bar__avatar" aria-hidden="true">
           <span>V</span>
         </div>
       </div>
@@ -54,6 +57,7 @@
 import { useI18n } from 'vue-i18n'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
 import { useNavItems } from '../../composables/useNavItems'
+import { useMe } from '../../composables/useMe'
 
 defineProps<{ mobile?: boolean }>()
 defineEmits<{ 'toggle-live': [] }>()
@@ -61,6 +65,7 @@ defineEmits<{ 'toggle-live': [] }>()
 const { t } = useI18n()
 const live = useLiveAlertsStore()
 const navItems = useNavItems()
+const me = useMe()
 </script>
 
 <style scoped>
@@ -203,6 +208,7 @@ const navItems = useNavItems()
   flex-shrink: 0;
 }
 
+.top-bar__user { font-size: 11px; color: var(--ash-gray); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top-bar__live { position: relative; }
 .top-bar__live-dot {
   position: absolute; top: 7px; right: 8px; width: 7px; height: 7px; border-radius: 50%;
