@@ -193,7 +193,10 @@ export interface WatchlistItem {
   priceHistory30d: number[] // 30 data points for sparkline
   entryPrice: number | null
   shareCount: number | null
+  owner: string
 }
+
+export interface Me { email: string }
 
 export interface PatchPositionRequest {
   entryPrice: number | null

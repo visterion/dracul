@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth,
+  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -201,5 +201,11 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/settings/data-sources?refresh=${refresh}`)
     if (!res.ok) throw new Error(`getDataSources failed: ${res.status}`)
     return res.json() as Promise<DataSourceHealth[]>
+  }
+
+  async getMe(): Promise<Me> {
+    const res = await fetch(`${this.baseUrl}/api/me`)
+    if (!res.ok) throw new Error(`getMe failed: HTTP ${res.status}`)
+    return res.json() as Promise<Me>
   }
 }
