@@ -105,4 +105,14 @@ test.describe('Watchlist View (/watchlist)', () => {
     await shares.blur()
     await expect(pnl).not.toHaveText(before ?? '')
   })
+
+  test('watchlist rows show an owner badge', async ({ page }) => {
+    await expect(page.locator('[data-testid^="wl-owner-"]').first()).toBeVisible()
+  })
+
+  test('foreign rows are read-only (no delete control)', async ({ page }) => {
+    const foreign = page.locator('.watch-row', { hasText: 'daniel@dracul.local' }).first()
+    await expect(foreign).toBeVisible()
+    await expect(foreign.locator('[data-testid^="wl-delete-"]')).toHaveCount(0)
+  })
 })
