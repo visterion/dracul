@@ -3,6 +3,7 @@ package de.visterion.dracul.marketdata;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.web.client.RestClient;
 
 @Configuration
@@ -17,5 +18,13 @@ class MarketDataConfig {
     RestClient twelveDataRestClient(
             @Value("${dracul.marketdata.twelvedata.base-url:https://api.twelvedata.com}") String baseUrl) {
         return RestClient.builder().baseUrl(baseUrl).build();
+    }
+
+    @Bean
+    @Primary
+    FallbackMarketDataPort fallbackMarketDataPort(
+            TwelveDataMarketDataAdapter twelveData,
+            YahooMarketDataAdapter yahoo) {
+        return new FallbackMarketDataPort(twelveData, yahoo);
     }
 }
