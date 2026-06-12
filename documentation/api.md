@@ -28,7 +28,24 @@ are relative to the context root of `dracul-app`.
 | GET | `/api/strigoi/{name}` | Single Strigoi: runs, stats, configuration |
 | POST | `/api/strigoi/{name}/hunt` | Trigger manual one-off hunt (proxied to Vistierie) |
 
+## Authentication
+
+User-facing endpoints sit behind **Cloudflare Access**. Dracul verifies the
+`Cf-Access-Jwt-Assertion` JWT (signature against the team JWKS + audience) and
+derives the current user (email). Webhook endpoints (`/api/strigoi-*`,
+`/api/voievod`, `/api/daywalker`) keep their machine bearer-token auth and are
+exempt. In bypass mode (no Cloudflare config — local/dev) an `X-Dev-User` header
+sets the user, else `default`.
+
+### `GET /api/me`
+Returns `{ "email": "<current user>" }`.
+
 ## Watchlist
+
+### Watchlist (collaborative)
+`GET /api/watchlist` returns **all users' items**, each with an `owner` field.
+`POST` creates an item owned by the current user. `PATCH`/`DELETE`/`PATCH …/position`
+require ownership — editing another user's item returns **403**.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -183,12 +200,6 @@ data: {"symbol":"AAPL","trigger_type":"PRICE_SPIKE","severity":"CRITICAL","thesi
 The stream is generic; `verdict.new` and `strigoi.status` are planned and will
 attach to the same stream once their sources exist. No replay / Last-Event-ID in
 v1 — clients receive events from connect time; `EventSource` auto-reconnects.
-
-## Authentication
-
-Phase 1: single bearer token (`DRACUL_API_TOKEN` env var). All endpoints
-require `Authorization: Bearer <token>`. Phase 2 will replace this with
-per-user tokens via RBAC.
 
 ## Error Responses
 
