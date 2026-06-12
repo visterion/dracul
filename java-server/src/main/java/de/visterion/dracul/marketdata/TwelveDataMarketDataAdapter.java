@@ -1,6 +1,8 @@
 package de.visterion.dracul.marketdata;
 
 import tools.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
@@ -14,6 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 @Primary
 public class TwelveDataMarketDataAdapter implements MarketDataPort {
+
+    private static final Logger log = LoggerFactory.getLogger(TwelveDataMarketDataAdapter.class);
 
     private final RestClient client;
     private final String apiKey;
@@ -33,13 +37,13 @@ public class TwelveDataMarketDataAdapter implements MarketDataPort {
 
     @Override
     public MarketData resolve(String symbol) {
-        JsonNode quote = getJson("/quote", symbol);
+        JsonNode quote = getQuoteJson(symbol);
         requireOk(quote, symbol);
         String name = quote.path("name").asText(symbol);
         BigDecimal price = bd(quote, "close");
         BigDecimal change = bd(quote, "percent_change");
 
-        JsonNode ts = getJson("/time_series", symbol);
+        JsonNode ts = getTimeSeriesJson(symbol);
         List<BigDecimal> history = new ArrayList<>();
         JsonNode values = ts.path("values");
         if (values.isArray()) {
@@ -64,7 +68,8 @@ public class TwelveDataMarketDataAdapter implements MarketDataPort {
         }
         if (misses.isEmpty()) return out;
 
-        JsonNode body = getJson("/quote", String.join(",", misses));
+        JsonNode body = getQuoteJson(String.join(",", misses));
+        int sizeBefore = out.size();
         for (String s : misses) {
             JsonNode node = misses.size() == 1 && !body.has(s) ? body : body.path(s);
             if (node.isMissingNode() || "error".equals(node.path("status").asText(""))) continue;
@@ -72,13 +77,34 @@ public class TwelveDataMarketDataAdapter implements MarketDataPort {
             cache.put(s, new Cached(q, now + ttlMillis));
             out.put(s, q);
         }
+        if (out.size() == sizeBefore) {
+            log.warn("Twelve Data quotes(): {} symbol(s) returned no parseable data: {}", misses.size(), misses);
+        }
         return out;
     }
 
-    private JsonNode getJson(String path, String symbol) {
+    private JsonNode getQuoteJson(String symbol) {
         try {
             return client.get()
-                    .uri(uri -> uri.path(path)
+                    .uri(uri -> uri.path("/quote")
+                            .queryParam("symbol", symbol)
+                            .queryParam("apikey", apiKey)
+                            .build())
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientResponseException e) {
+            throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE,
+                    "Twelve Data returned HTTP " + e.getStatusCode(), e);
+        } catch (Exception e) {
+            throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE,
+                    "Twelve Data unreachable: " + e.getMessage(), e);
+        }
+    }
+
+    private JsonNode getTimeSeriesJson(String symbol) {
+        try {
+            return client.get()
+                    .uri(uri -> uri.path("/time_series")
                             .queryParam("symbol", symbol)
                             .queryParam("interval", "1day")
                             .queryParam("outputsize", 30)
