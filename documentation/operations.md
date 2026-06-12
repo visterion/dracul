@@ -19,6 +19,22 @@
 
 See [configuration.md](./configuration.md) for the full list.
 
+### Cloudflare Access (authentication)
+
+| Variable | Description |
+|---|---|
+| `DRACUL_CLOUDFLARE_TEAM_DOMAIN` | Your Cloudflare Access team URL, e.g. `https://<team>.cloudflareaccess.com`. Used to fetch the JWKS for JWT verification. |
+| `DRACUL_CLOUDFLARE_AUD` | The Access application audience tag (shown in the Access application settings). Dracul validates the `aud` claim in every incoming JWT against this value. |
+| `DRACUL_PRIMARY_USER_EMAIL` | Email address of the primary operator. On startup, any watchlist rows with `user_id = 'default'` are reassigned to this address so that legacy data has a proper owner after the auth migration. |
+
+**Important:** In production the app **must** sit behind Cloudflare Access. The
+JWT verification makes header spoofing moot, but the Access policy is what
+gates which users may log in. If `DRACUL_CLOUDFLARE_TEAM_DOMAIN` or
+`DRACUL_CLOUDFLARE_AUD` is blank outside a `dev` or `test` Spring profile,
+**the application refuses to start (fail-closed)**. Under the `dev` or `test`
+profiles a blank CF config enables bypass mode instead: an `X-Dev-User` request
+header sets the current user (fallback: `default`).
+
 ## Building and starting the stack
 
 The image is a multi-stage build (`java-server/Dockerfile`):

@@ -236,8 +236,23 @@ bridge calls `SseBroadcaster.broadcast("alert.new", …)` → `GET /api/events`
 fans it out to connected `EventSource` clients (Chronicle live panel). The
 broadcaster is domain-agnostic; new event types attach with one `broadcast` call.
 
-## Multi-User Readiness
+## Authentication & multi-user
 
-Phase 1 is single-user. `user_id` columns exist everywhere but are always
-`"default"`. Phase 2 adds auth/RBAC and row-level security without schema
-changes.
+**Identity**: Cloudflare Access sits in front of all user-facing endpoints.
+Dracul verifies the `Cf-Access-Jwt-Assertion` JWT (JWKS signature + audience
+check) and derives the authenticated user from the token's email claim. Webhook
+endpoints retain machine bearer-token auth and bypass Cloudflare verification.
+
+**Watchlist visibility**: the watchlist is per-owner with
+collaborative read-all / write-own semantics. `GET /api/watchlist` returns all
+users' items (each row carries an `owner` field); `POST` creates items owned by
+the calling user; `PATCH` / `DELETE` / `PATCH …/position` enforce ownership —
+attempting to modify another user's item returns 403.
+
+**Other domain data**: prey, verdicts, patterns, and alerts remain shared under
+`user_id = 'default'` for now; per-user scoping for these objects is a Phase-2
+concern.
+
+**Legacy data migration**: on startup, any watchlist rows with `user_id =
+'default'` are reassigned to `DRACUL_PRIMARY_USER_EMAIL`, preventing the
+existing dataset from becoming ownerless after the auth migration.
