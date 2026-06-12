@@ -29,6 +29,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(1247.50, 1),
     entryPrice: 1190.00,
     shareCount: 8,
+    owner: 'you@dracul.local',
   },
   {
     id: 'wl-2',
@@ -47,6 +48,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(143.20, -1),
     entryPrice: 146.00,
     shareCount: 30,
+    owner: 'you@dracul.local',
   },
   {
     id: 'wl-3',
@@ -62,6 +64,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(1892.40, 0.5),
     entryPrice: null,
     shareCount: null,
+    owner: 'you@dracul.local',
   },
   {
     id: 'wl-4',
@@ -77,6 +80,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(402.10, -0.5),
     entryPrice: null,
     shareCount: null,
+    owner: 'daniel@dracul.local',
   },
   {
     id: 'wl-5',
@@ -94,6 +98,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(167.45, 1.5),
     entryPrice: 154.20,
     shareCount: 40,
+    owner: 'you@dracul.local',
   },
   {
     id: 'wl-6',
@@ -109,6 +114,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(528.70, 0.8),
     entryPrice: null,
     shareCount: null,
+    owner: 'you@dracul.local',
   },
   {
     id: 'wl-7',
@@ -126,6 +132,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(312.40, -1.2),
     entryPrice: null,
     shareCount: null,
+    owner: 'you@dracul.local',
   },
   {
     id: 'wl-8',
@@ -141,5 +148,6 @@ export const mockWatchlistItems: WatchlistItem[] = [
     priceHistory30d: priceHistory(274.80, 0.3),
     entryPrice: null,
     shareCount: null,
+    owner: 'you@dracul.local',
   },
 ]

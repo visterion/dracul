@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth,
+  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -187,6 +187,7 @@ export class MockApiClient implements ApiClient {
       priceHistory30d: Array.from({ length: 30 }, () => 0),
       entryPrice: null,
       shareCount: null,
+      owner: 'you@dracul.local',
     }
     this.watchlist.unshift(item)
     return { ...item }
@@ -244,6 +245,10 @@ export class MockApiClient implements ApiClient {
     a.paused = paused
     a.state = paused ? 'paused' : (a.state === 'paused' ? 'resting' : a.state)
     return { ...a }
+  }
+
+  async getMe(): Promise<Me> {
+    return { email: 'you@dracul.local' }
   }
 
   async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {
