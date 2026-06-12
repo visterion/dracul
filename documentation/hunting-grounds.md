@@ -52,9 +52,23 @@ configure multiple price sources and let the adapter fall through.
 Dracul resolves ticker metadata (company name, current price, 30-day history)
 via the `MarketDataPort` interface (`de.visterion.dracul.marketdata`).
 
-### TwelveDataMarketDataAdapter (primary)
+### FallbackMarketDataPort (primary bean)
 
-The primary `MarketDataPort` bean. Requires a Twelve Data API key
+The `@Primary` `MarketDataPort` is a thin decorator wired in `MarketDataConfig`.
+It serves from Twelve Data first and automatically falls back to Yahoo when
+Twelve Data fails (HTTP error, exhausted credits) or cannot resolve a symbol:
+
+- `resolve(symbol)` — try Twelve Data; on any failure, retry via Yahoo. Only if
+  Yahoo also fails does the exception surface.
+- `quotes(symbols)` — take Twelve Data's batch result, then fill any symbols it
+  did not return (or all symbols, if the batch call threw) from Yahoo.
+
+This keeps add-symbol, the echo/PEAD screener, and verdict synthesis working even
+when Twelve Data is unavailable.
+
+### TwelveDataMarketDataAdapter (primary provider)
+
+The primary provider behind the fallback decorator. Requires a Twelve Data API key
 (`dracul.marketdata.twelvedata.api-key` / `DRACUL_MARKETDATA_TWELVEDATA_API_KEY`).
 
 **`resolve(symbol)`** — resolves full ticker metadata for a single symbol:
@@ -72,8 +86,9 @@ Returns `MarketData(companyName, currentPrice, dayChangePercent, priceHistory30d
   (default `120`). Repeated loads within the TTL window cost zero provider credits.
 
 **Graceful degradation:** if the API key is blank or Twelve Data returns a
-status-error response, the watchlist falls back to serving stored prices rather
-than failing. No exception surfaces to the caller.
+status-error response, the `FallbackMarketDataPort` retries via Yahoo; if Yahoo
+also has no value, the watchlist on-read path serves the stored price rather than
+failing. No exception surfaces to the watchlist caller.
 
 **Free-tier limit:** Twelve Data free tier = 8 API credits/min. A batch `/quote`
 of N symbols costs N credits. A watchlist of up to ~8 tickers fits within one
@@ -81,12 +96,12 @@ fresh refresh per 2-minute cache window. Watchlists larger than ~8 tickers can
 exceed the 8-credit/min limit on a cold load; chunking the batch request is a
 future improvement.
 
-### YahooMarketDataAdapter (non-primary)
+### YahooMarketDataAdapter (fallback provider)
 
-Retained as a non-primary Spring bean. Not used for watchlist price resolution;
-Yahoo is used only by the earnings calendar and intraday hunting-ground adapters
-(see below). The base URL is overridable via `dracul.marketdata.yahoo.base-url`
-for tests.
+Non-primary Spring bean. Used as the automatic price fallback behind
+`FallbackMarketDataPort` (above), and directly by the earnings calendar and
+intraday hunting-ground adapters (see below). The base URL is overridable via
+`dracul.marketdata.yahoo.base-url` for tests.
 
 Failures surface as `MarketDataException`:
 - `NOT_FOUND` → HTTP 422 (symbol unknown)
