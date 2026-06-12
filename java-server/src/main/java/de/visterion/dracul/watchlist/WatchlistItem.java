@@ -8,4 +8,5 @@ public record WatchlistItem(
         String status, String addedAt, String tag,
         String verdictId, List<WatchlistAlert> alerts,
         List<Double> priceHistory30d,
-        Double entryPrice, Double shareCount) {}
+        Double entryPrice, Double shareCount,
+        String owner) {}
