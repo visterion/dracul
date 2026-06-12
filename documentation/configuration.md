@@ -27,6 +27,25 @@ Schema is `dracul`. Flyway migrations run on startup.
 |---|---|
 | `DRACUL_API_TOKEN` | Single bearer token for all Chronicle API requests (Phase 1) |
 
+## Cloudflare Access (Zero Trust)
+
+Chronicle sits behind **Cloudflare Access**. The edge enforces an identity login
+and injects a signed `Cf-Access-Jwt-Assertion` header; `CloudflareAccessFilter`
+verifies it against the team JWKS and the expected audience, then stores the email
+in `CurrentUserHolder`.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_CLOUDFLARE_TEAM_DOMAIN` (`dracul.cloudflare.team-domain`) | _(blank)_ | Full team-domain URL, e.g. `https://<team>.cloudflareaccess.com`. JWKS is fetched from `<team-domain>/cdn-cgi/access/certs`. **Required outside the `dev`/`test` profiles — the app refuses to start if blank.** |
+| `DRACUL_CLOUDFLARE_AUD` (`dracul.cloudflare.aud`) | _(blank)_ | Application Audience (AUD) tag of the Cloudflare Access app protecting this host. A token is rejected unless its `aud` claim matches. **Required outside `dev`/`test`.** |
+
+When **both** values are blank **and** the active profile is `dev` or `test`, the
+filter runs in **bypass mode**: it honors an `X-Dev-User` header (falling back to
+`default`) instead of verifying a JWT. Machine webhook paths (`/api/strigoi-*`,
+`/api/voievod`, `/api/daywalker`) and `/actuator/health` are always excluded — they
+authenticate with their own bearer tokens and are reached in-cluster, bypassing
+Cloudflare.
+
 ## Market-data adapters
 
 | Variable | Purpose |
