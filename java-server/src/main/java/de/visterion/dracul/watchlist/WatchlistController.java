@@ -1,5 +1,6 @@
 package de.visterion.dracul.watchlist;
 
+import de.visterion.dracul.auth.CurrentUserHolder;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataPort;
 import de.visterion.dracul.verdict.VerdictRepository;
@@ -29,7 +30,7 @@ public class WatchlistController {
 
     @GetMapping("/api/watchlist")
     public List<WatchlistItem> watchlist() {
-        return repo.findAllByUser("default");
+        return repo.findAll();
     }
 
     @PostMapping("/api/watchlist")
@@ -39,7 +40,8 @@ public class WatchlistController {
             throw new NoSuchElementException("verdict " + req.sourceVerdictId());
         }
 
-        Optional<WatchlistItem> existing = repo.findByUserAndTicker("default", req.symbol());
+        String user = CurrentUserHolder.get();
+        Optional<WatchlistItem> existing = repo.findByUserAndTicker(user, req.symbol());
         if (existing.isPresent()) {
             WatchlistItem merged = repo.mergeVerdictIdIfNull(
                     existing.get().id(), req.sourceVerdictId());
@@ -49,7 +51,7 @@ public class WatchlistController {
         MarketData md = marketData.resolve(req.symbol());
         List<Double> hist = md.priceHistory30d().stream().map(BigDecimal::doubleValue).toList();
         WatchlistItem created = repo.insert(
-                "default", req.symbol(), md.companyName(),
+                user, req.symbol(), md.companyName(),
                 md.currentPrice().doubleValue(), hist,
                 req.tag(), req.sourceVerdictId());
         return ResponseEntity.status(201).body(created);
@@ -58,6 +60,7 @@ public class WatchlistController {
     @PatchMapping("/api/watchlist/{id}")
     public WatchlistItem patch(@PathVariable String id,
                                 @Valid @RequestBody PatchWatchlistRequest req) {
+        requireOwner(id);
         if (!repo.updateTag(id, req.tag())) {
             throw new NoSuchElementException("watchlist item " + id);
         }
@@ -67,6 +70,7 @@ public class WatchlistController {
     @PatchMapping("/api/watchlist/{id}/position")
     public WatchlistItem patchPosition(@PathVariable String id,
                                        @Valid @RequestBody PatchPositionRequest req) {
+        requireOwner(id);
         if (!repo.updatePosition(id, req.entryPrice(), req.shareCount())) {
             throw new NoSuchElementException("watchlist item " + id);
         }
@@ -75,9 +79,19 @@ public class WatchlistController {
 
     @DeleteMapping("/api/watchlist/{id}")
     public ResponseEntity<Void> delete(@PathVariable String id) {
+        requireOwner(id);
         if (!repo.deleteById(id)) {
             throw new NoSuchElementException("watchlist item " + id);
         }
         return ResponseEntity.noContent().build();
+    }
+
+    private void requireOwner(String id) {
+        WatchlistItem item = repo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("watchlist item " + id));
+        if (!item.owner().equals(CurrentUserHolder.get())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "not your watchlist item");
+        }
     }
 }
