@@ -101,4 +101,15 @@ const today = computed(() => {
 }
 
 .dt-sep { color: rgba(107, 107, 112, 0.5); }
+
+/* ── Mobile (< 960px) — mirrors styles.css:525-526 ──
+   Tighten the strip so it doesn't dominate a small viewport. Scoped here
+   for the same specificity reason as VerdictCard's mobile rules. */
+@media (max-width: 959.98px) {
+  .dusk-strip {
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-5);
+    gap: var(--space-3);
+  }
+}
 </style>

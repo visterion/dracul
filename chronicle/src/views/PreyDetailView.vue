@@ -337,5 +337,8 @@ async function onAddToWatchlist() {
     grid-template-columns: 1fr;
     gap: var(--space-5);
   }
+
+  /* Lead thesis steps down to body size on small screens (styles.css:527). */
+  .lead-prose { font-size: var(--text-body); }
 }
 </style>

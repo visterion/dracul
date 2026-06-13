@@ -94,6 +94,10 @@ html,
 body {
   margin: 0;
   padding: 0;
+  /* Safety net: nothing (a long username, an un-wrapped mono token, a
+     stray wide child) may widen the viewport into a sideways scroll. */
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -288,16 +292,10 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
   .verdict-aside, .filters { position: static; }
   .filters { flex-direction: column; }
 
-  /* Verdict card: side rail drops beneath the body. */
-  .verdict-card { grid-template-columns: 1fr; }
-  .vc-side {
-    flex-direction: row;
-    border-left: none;
-    border-top: var(--hairline);
-    justify-content: flex-start;
-    gap: var(--space-5);
-  }
-  .vc-side-strat { width: auto; flex: 1; }
+  /* NOTE: the verdict-card mobile collapse lives in VerdictCard.vue's
+     scoped block — a global rule here loses to the scoped base rule's
+     higher specificity (.verdict-card[data-v-…]). See the mobile-hardening
+     spec (2026-06-13). Same reasoning for dusk-strip → DuskStrip.vue. */
 
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .page-title { font-size: var(--text-h2); }
@@ -331,6 +329,13 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
   .settings-body { padding: var(--space-5) var(--space-4); }
   .wd-pos-fields { grid-template-columns: 1fr; gap: var(--space-4); }
   .wd-addpos { flex-direction: column; align-items: stretch; }
+}
+
+/* Very narrow phones (< 420px): tighten gutters, single-column stat tiles
+   so nothing feels wasteful on a small viewport (see mobile-hardening spec). */
+@media (max-width: 420px) {
+  .content-inner { padding: var(--space-4) var(--space-3) var(--space-8); }
+  .stat-grid { grid-template-columns: 1fr; }
 }
 
 /* ── SVG Charts (LineChart.vue) ──────────────────────── */

@@ -160,4 +160,32 @@ const { relativeTime } = useRelativeTime()
   outline: 2px solid var(--cathedral-gold);
   outline-offset: 2px;
 }
+
+/* ── Mobile (< 960px) — mirrors styles.css:520-524 ──
+   These live here, not in global.css: the scoped base rules compile to
+   `.verdict-card[data-v-…]` (specificity 0,2,0) and would beat a plain
+   global `.verdict-card` (0,1,0) even inside a media query. Co-locating
+   keeps the override at matching specificity so it actually wins. */
+@media (max-width: 959.98px) {
+  /* Side rail drops beneath the body and reflows as a wrapping row. */
+  .verdict-card { grid-template-columns: 1fr; }
+  .vc-side {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-left: none;
+    border-top: var(--hairline);
+    justify-content: flex-start;
+    gap: var(--space-4) var(--space-5);
+  }
+  .vc-side-strat { width: auto; flex: 1 1 140px; }
+  .vc-meta { white-space: normal; }
+  /* Long mono tokens (consensus meta, contributor names) must wrap rather
+     than push the card past the viewport edge. */
+  .vc-strat,
+  .vc-side-row .font-mono {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .vc-teaser { font-size: var(--text-body); }
+}
 </style>
