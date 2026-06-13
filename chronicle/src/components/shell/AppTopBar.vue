@@ -41,7 +41,7 @@
         <button v-if="!mobile" class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
           <i class="ph ph-moon" aria-hidden="true"></i>
         </button>
-        <span v-if="me" class="top-bar__user mono" data-testid="topbar-user">{{ me }}</span>
+        <span v-if="me && !mobile" class="top-bar__user mono" data-testid="topbar-user">{{ me }}</span>
         <a v-if="me && me !== 'default'" class="top-bar__icon-btn" href="/cdn-cgi/access/logout"
            :aria-label="t('shell.logout')" :title="t('shell.logout')"><i class="ph ph-sign-out" /></a>
         <!-- User avatar placeholder — auth not in Phase 1 -->
