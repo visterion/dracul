@@ -29,8 +29,8 @@
 
     <div class="verdict-tags">
       <TagPill tone="gold">{{ t('verdict.tags.consensus', { value: verdict.consensusScore.toFixed(2) }) }}</TagPill>
-      <TagPill tone="ash">{{ t('verdict.tags.horizon', { value: verdict.horizon }) }}</TagPill>
-      <TagPill v-for="type in verdict.anomalyTypes" :key="type" tone="crimson">{{ type }}</TagPill>
+      <TagPill tone="ash">{{ t('verdict.tags.horizon', { value: horizonLabel(verdict.horizon) }) }}</TagPill>
+      <TagPill v-for="type in verdict.anomalyTypes" :key="type" tone="crimson">{{ anomalyTypeLabel(type) }}</TagPill>
     </div>
 
     <div class="verdict-grid">
@@ -102,11 +102,11 @@
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.horizon') }}</span>
-              <span class="kv-v mono">{{ verdict.horizon }}</span>
+              <span class="kv-v mono">{{ horizonLabel(verdict.horizon) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.anomalyClass') }}</span>
-              <span class="kv-v mono">{{ verdict.anomalyTypes.join(', ') }}</span>
+              <span class="kv-v mono">{{ verdict.anomalyTypes.map(anomalyTypeLabel).join(', ') }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.currentPrice') }}</span>
@@ -172,6 +172,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { VerdictDetail, VerdictDecision, VerdictNote, DecisionResponse } from '../api/types'
 import { useApi } from '../api'
+import { useEnumLabels } from '../composables/useEnumLabels'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import BackLink from '../components/common/BackLink.vue'
 import PageHead from '../components/common/PageHead.vue'
@@ -180,6 +181,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import ConsensusRing from '../components/common/ConsensusRing.vue'
 
 const { t } = useI18n()
+const { anomalyTypeLabel, horizonLabel } = useEnumLabels()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
