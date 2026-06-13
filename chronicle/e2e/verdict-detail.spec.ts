@@ -21,7 +21,17 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
   test('renders tag pills (consensus, horizon, anomaly classes)', async ({ page }) => {
     await expect(page.locator('.verdict-tags .tag-pill').first()).toBeVisible()
     await expect(page.locator('.verdict-tags')).toContainText('0.84')
-    await expect(page.locator('.verdict-tags')).toContainText('90d')
+    await expect(page.locator('.verdict-tags')).toContainText('90 Tage')
+  })
+
+  test('verdict tags + facts use localized anomaly + horizon labels', async ({ page }) => {
+    await page.waitForLoadState('networkidle')
+    const tags = page.locator('.verdict-tags')
+    await expect(tags).toContainText('Spin-off')
+    await expect(tags).toContainText('Insider-Cluster')
+    const tagText = await tags.textContent()
+    expect(tagText?.includes('SPIN')).toBe(false)
+    expect(tagText?.includes('INSIDER')).toBe(false)
   })
 
   test('renders drop-cap prose paragraph', async ({ page }) => {
