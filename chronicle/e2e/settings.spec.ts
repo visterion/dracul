@@ -72,10 +72,10 @@ test.describe('Settings View (/settings)', () => {
     await expect(toggle).toHaveText(/Pause|Pausieren/)
     await toggle.click()
     await expect(toggle).toHaveText(/Resume|Aktivieren/)
-    // row state is an internal enum from the backend (not localized)
+    // row state label is localized (de: 'paused' → 'pausiert')
     await expect(
       page.locator('.agent-row[data-agent="strigoi-spin"] .agent-row__state'),
-    ).toHaveText('paused')
+    ).toHaveText('pausiert')
   })
 
   test('Data sources section lists sources with health', async ({ page }) => {
@@ -91,5 +91,16 @@ test.describe('Settings View (/settings)', () => {
     await page.click('[data-testid="ds-recheck"]')
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
     await expect(page.locator('.ds-row[data-source="edgar"]')).toBeVisible()
+  })
+
+  test('agent config rows show localized role + state labels', async ({ page }) => {
+    await page.goto('/settings')
+    await page.waitForLoadState('networkidle')
+    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    const roles = page.locator('.agent-row__role')
+    await expect(roles.first()).toBeVisible()
+    const roleTexts = await roles.allTextContents()
+    expect(roleTexts.some((tx) => tx.includes('Index-Aufnahme'))).toBe(true)
+    expect(roleTexts.every((tx) => !tx.includes('INDEX'))).toBe(true)
   })
 })

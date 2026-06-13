@@ -19,7 +19,7 @@
     <PageHead>
       <template #eyebrow>
         <span class="eb-glyph"><BatGlyph :size="13" /></span>
-        {{ t('strigoi.eyebrow', { focus: strigoi.description || strigoi.anomalyType }) }}
+        {{ t('strigoi.eyebrow', { focus: strigoi.description || anomalyTypeLabel(strigoi.anomalyType) }) }}
       </template>
       <template #title>
         <span class="mono sd-title">{{ strigoi.name }}</span>
@@ -50,7 +50,7 @@
       />
       <StatTile
         :label="t('strigoi.stats.tier')"
-        :value="strigoi.configuration.tier"
+        :value="agentTierLabel(strigoi.configuration.tier)"
         :foot="humanSchedule"
       />
     </div>
@@ -108,7 +108,7 @@
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.tier') }}</span>
-              <span class="kv-v mono">{{ strigoi.configuration.tier }}</span>
+              <span class="kv-v mono">{{ agentTierLabel(strigoi.configuration.tier) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.allowedModels') }}</span>
@@ -161,8 +161,10 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import RunTrace from '../components/common/RunTrace.vue'
 import PreyCard from '../components/common/PreyCard.vue'
 import { humanScheduleText } from '../utils/schedule'
+import { useEnumLabels } from '../composables/useEnumLabels'
 
 const { t, locale } = useI18n()
+const { anomalyTypeLabel, agentTierLabel } = useEnumLabels()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
