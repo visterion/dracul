@@ -210,6 +210,23 @@ linked-verdict card (when `verdictId` is set). Selected state is a local
 on mobile so the list is the entry point; see the mobile drill-in under "Responsive
 layout").
 
+##### Compare mode
+
+The watchlist view has a `Liste | Vergleich` toggle. In **Vergleich** mode you
+pick another user (from the owner dropdown — populated from the owners present
+in the shared watchlist) and the view groups tickers into three buckets:
+
+- **Beide** — tickers you both watch. The shared market price is shown once;
+  each user's status, position (entry/shares) and alert count are listed
+  per-user, since those differ between users.
+- **Nur ich** — tickers only you watch.
+- **Nur \<user\>** — tickers only the other user watches.
+
+The comparison is computed entirely in the browser from `GET /api/watchlist`
+(which already returns every user's items with an `owner` field) — there is no
+dedicated compare endpoint. The toggle is disabled when no other user keeps a
+watchlist.
+
 **View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
 approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
 Single-pane max-width 960px. Pending section: Voievod-proposed lesson cards with gold
