@@ -201,7 +201,7 @@ public class WatchlistRepository {
                    'calm', CURRENT_DATE, :tag, :vid, CAST(:hist AS jsonb), :userId)
                 """)
                 .param("id", id).param("ticker", ticker).param("name", companyName)
-                .param("price", currentPrice).param("tag", tag)
+                .param("price", currentPrice).param("tag", tag == null ? "" : tag)
                 .param("vid", verdictUuid).param("hist", historyJson)
                 .param("userId", userId)
                 .update();
@@ -246,6 +246,26 @@ public class WatchlistRepository {
                 .param("id", uuid)
                 .update();
         return rows > 0;
+    }
+
+    /** Distinct tickers across all users — input to the background price refresher. */
+    public List<String> distinctTickers() {
+        return jdbc.sql("SELECT DISTINCT ticker FROM watchlist_items")
+                .query(String.class)
+                .list();
+    }
+
+    /** Update price + day-change for every row of a ticker; returns rows affected. */
+    public int updatePriceByTicker(String ticker, double price, double dayChangePercent) {
+        return jdbc.sql("""
+                UPDATE watchlist_items
+                   SET current_price = :price, day_change_percent = :dcp
+                 WHERE ticker = :ticker
+                """)
+                .param("price", price)
+                .param("dcp", dayChangePercent)
+                .param("ticker", ticker)
+                .update();
     }
 
     public boolean deleteById(String id) {
