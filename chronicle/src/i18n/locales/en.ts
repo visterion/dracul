@@ -496,12 +496,18 @@ export default {
       open: 'live',
       closed: 'disconnected',
     },
+    // Agent roles are a distinct upstream code set from anomalyType (e.g. MERGER_ARB
+    // vs MERGER, QUALITY_52W_LOW vs LAZARUS), so they are kept separate on purpose.
+    // The anomaly-style codes are mirrored here too in case the backend sends them as
+    // a role; unknown values fall back to the raw string via useEnumLabels.
     agentRole: {
       hunter: 'Hunter',
       INSIDER: 'Insider cluster',
       SPIN: 'Spin-off',
       PEAD: 'PEAD',
+      LAZARUS: 'Lazarus',
       INDEX: 'Index inclusion',
+      MERGER: 'Merger arbitrage',
       MERGER_ARB: 'Merger arbitrage',
       QUALITY_52W_LOW: 'Quality at 52w low',
     },
