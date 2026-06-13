@@ -411,7 +411,7 @@ export default {
       alertsCount: '{n} alerts',
       noAlerts: 'no alerts',
       tracking: 'tracking',
-      held: 'held {shares}@${entry}',
+      held: "held {shares}{'@'}${entry}",
     },
     addButton: '+ Add to watchlist',
     dialog: {
