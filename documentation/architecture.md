@@ -172,6 +172,17 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 - `decision` (TEXT, nullable) — CHECK constraint: TRACK, INTERESTING, DISMISS, ACTED
 - `decided_at` (TIMESTAMPTZ, nullable) — timestamp of decision
 
+**Watchlist price refresh:**
+`WatchlistPriceRefresher` is a `@Scheduled` bean (enabled via `SchedulingConfig` /
+`@EnableScheduling`). It runs every minute during US market hours (default cron:
+`0 * 13-20 * * MON-FRI`, UTC; configurable via
+`dracul.watchlist.price-refresh.cron`). On each tick it calls
+`WatchlistPriceRepository.distinctTickers()`, fetches live quotes via the
+Finnhub → Twelve Data → Yahoo chain, and writes `current_price` /
+`day_change_percent` back via `updatePriceByTicker()`. The refresh is
+independent of read traffic: `GET /api/watchlist` serves the stored values
+directly without triggering any market-data call.
+
 **Watchlist indexes:**
 - `uq_watchlist_user_ticker` (UNIQUE) — composite index on (user_id, ticker) for idempotent POST
 

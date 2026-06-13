@@ -61,6 +61,10 @@ dracul:
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
     notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
+  watchlist:
+    price-refresh:
+      enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}
+      cron:    ${DRACUL_WATCHLIST_PRICE_REFRESH_CRON:0 * 13-20 * * MON-FRI}
   finnhub:
     api-key: ${FINNHUB_API_KEY:}
     base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}

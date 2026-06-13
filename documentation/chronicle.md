@@ -376,6 +376,12 @@ only when previously null. Symbol metadata (company name, current price, 30-day
 history) is resolved synchronously via the new MarketDataPort (Yahoo Finance
 v1 adapter).
 
+**Watchlist prices are server-refreshed in the background.** A
+`WatchlistPriceRefresher` (`@Scheduled`, US market hours) updates
+`watchlist_items.current_price` / `day_change_percent` in place every minute
+during the session. `GET /api/watchlist` serves these stored values — no
+per-load market-data call is made on read.
+
 `GET /api/chronicle` now filters DISMISS-ed verdicts by default. Pass
 `?includeDismissed=true` to see them.
 
