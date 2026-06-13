@@ -94,7 +94,7 @@
               :class="{ active: filter === a }"
               @click="filter = a"
             >
-              {{ a }} <span class="fc-count font-mono">{{ countFor(a) }}</span>
+              {{ anomalyTypeLabel(a) }} <span class="fc-count font-mono">{{ countFor(a) }}</span>
             </button>
           </div>
 
@@ -116,6 +116,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { useEnumLabels } from '../composables/useEnumLabels'
 import { useChronicleStore } from '../stores/chronicle'
 import { useStatusStore } from '../stores/status'
 import type { Prey, Verdict, StrigoiStatus } from '../api/types'
@@ -129,6 +130,7 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const store = useChronicleStore()
 const statusStore = useStatusStore()
+const { anomalyTypeLabel } = useEnumLabels()
 
 onMounted(() => {
   store.load()

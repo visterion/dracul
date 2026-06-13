@@ -60,4 +60,14 @@ test.describe('Chronicle View (/)', () => {
     expect(allBadges.every(t => t !== 'SPIN')).toBe(true)
     expect(allBadges.every(t => t !== 'INSIDER')).toBe(true)
   })
+
+  test('anomaly filter chips use localized labels', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    const group = page.locator('.filter-group', { hasText: 'Anomalie-Klasse' })
+    await expect(group).toBeVisible()
+    await expect(group.locator('.filter-chip').filter({ hasText: 'Spin-off' }).first()).toBeVisible()
+    const chipTexts = await group.locator('.filter-chip').allTextContents()
+    expect(chipTexts.every((tx) => !tx.includes('SPIN'))).toBe(true)
+  })
 })
