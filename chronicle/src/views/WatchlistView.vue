@@ -1,6 +1,42 @@
 <template>
   <div class="content-inner full-bleed">
-    <div class="watch-grid" :class="{ 'show-detail': smAndDown && selectedId !== null }">
+    <div class="watch-toolbar">
+      <div class="watch-mode" role="tablist">
+        <button
+          class="watch-mode-btn"
+          :class="{ active: mode === 'list' }"
+          data-testid="wl-mode-list"
+          @click="mode = 'list'"
+        >{{ t('watchlist.compare.modeList') }}</button>
+        <button
+          class="watch-mode-btn"
+          :class="{ active: mode === 'compare' }"
+          data-testid="wl-mode-compare"
+          :disabled="otherOwners.length === 0"
+          :title="otherOwners.length === 0 ? t('watchlist.compare.noOtherUser') : ''"
+          @click="mode = 'compare'"
+        >{{ t('watchlist.compare.modeCompare') }}</button>
+      </div>
+      <label v-if="mode === 'compare' && otherOwners.length > 0" class="watch-vs">
+        <span class="watch-vs-k">{{ me }} {{ t('watchlist.compare.vs') }}</span>
+        <select v-model="compareWith" class="watch-vs-select mono" data-testid="wl-compare-with">
+          <option v-for="o in otherOwners" :key="o" :value="o">{{ o }}</option>
+        </select>
+      </label>
+    </div>
+
+    <WatchlistCompare
+      v-if="mode === 'compare' && compareWith"
+      :items="items"
+      :me="me"
+      :compare-with="compareWith"
+    />
+
+    <div
+      v-else
+      class="watch-grid"
+      :class="{ 'show-detail': smAndDown && selectedId !== null }"
+    >
       <!-- LIST PANE -->
       <div
         class="watch-list-pane"
@@ -260,6 +296,7 @@ import { useDisplay } from 'vuetify'
 import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import AlertRow from '../components/common/AlertRow.vue'
+import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import type { WatchlistItem, WatchlistStatus, WatchlistTag } from '../api/types'
@@ -274,6 +311,13 @@ const loading = ref(true)
 const selectedId = ref<string | null>(null)
 const searchQuery = ref('')
 const activeFilter = ref<'all' | 'held' | 'tracking' | 'alerts'>('all')
+const mode = ref<'list' | 'compare'>('list')
+const compareWith = ref<string | null>(null)
+
+// Distinct owners other than me — drives the compare picker.
+const otherOwners = computed(() =>
+  [...new Set(items.value.map(i => i.owner))].filter(o => o && o !== me.value).sort()
+)
 
 onMounted(async () => {
   try {
@@ -281,6 +325,7 @@ onMounted(async () => {
     // Desktop: auto-select the first item so the right pane is populated.
     // Mobile (drill-in): keep the list as the entry point — no auto-select.
     if (items.value.length > 0 && !smAndDown.value) selectedId.value = items.value[0].id
+    if (otherOwners.value.length > 0) compareWith.value = otherOwners.value[0]
   } finally {
     loading.value = false
   }
@@ -485,6 +530,32 @@ function formatDate(isoDate: string): string {
 </script>
 
 <style scoped>
+/* ── Mode toggle + owner picker toolbar ── */
+.watch-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-4); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--hairline);
+}
+.watch-mode { display: inline-flex; gap: var(--space-1); }
+.watch-mode-btn {
+  font-size: var(--text-body-sm); color: var(--ash-gray);
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  padding: var(--space-2) var(--space-4); cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.watch-mode-btn:hover:not([disabled]) { color: var(--bone-ivory-dim); }
+.watch-mode-btn.active { color: var(--bone-ivory); background: rgba(161, 29, 44, 0.12); }
+.watch-mode-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.watch-vs { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-body-sm); color: var(--ash-gray); }
+.watch-vs-k { color: var(--bone-ivory-dim); }
+.watch-vs-select {
+  background: var(--crypt-black-deep);
+  border: 1px solid rgba(184, 148, 92, 0.25);
+  border-radius: 4px; color: var(--bone-ivory);
+  padding: var(--space-1) var(--space-2); font-size: var(--text-body-sm);
+}
+
 /* ── Master / detail grid (ported from styles.css:343-407) ── */
 .watch-grid { display: grid; grid-template-columns: 420px 1fr; height: 100%; }
 .watch-list-pane {
