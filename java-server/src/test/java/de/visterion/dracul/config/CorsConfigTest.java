@@ -7,15 +7,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CorsConfigTest {
 
     @Test
-    void derivesOriginFromPublicUrl() {
-        assertThat(CorsConfig.originOf("https://dracul.ufelmann.com")).isEqualTo("https://dracul.ufelmann.com");
-        assertThat(CorsConfig.originOf("https://dracul.ufelmann.com/")).isEqualTo("https://dracul.ufelmann.com");
-        assertThat(CorsConfig.originOf("https://dracul.ufelmann.com/api/x")).isEqualTo("https://dracul.ufelmann.com");
-        assertThat(CorsConfig.originOf("http://localhost:8080")).isEqualTo("http://localhost:8080");
+    void parsesSingleOrigin() {
+        assertThat(CorsConfig.parseOrigins("https://dracul.ufelmann.com"))
+                .containsExactly("https://dracul.ufelmann.com");
     }
 
     @Test
-    void fallsBackOnUnparseableInput() {
-        assertThat(CorsConfig.originOf("not a url")).isEqualTo("not a url");
+    void parsesCommaSeparatedOriginsAndTrims() {
+        assertThat(CorsConfig.parseOrigins("http://localhost:5173, https://dracul.ufelmann.com"))
+                .containsExactly("http://localhost:5173", "https://dracul.ufelmann.com");
+    }
+
+    @Test
+    void dropsBlankEntries() {
+        assertThat(CorsConfig.parseOrigins("https://dracul.ufelmann.com, ,"))
+                .containsExactly("https://dracul.ufelmann.com");
     }
 }

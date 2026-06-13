@@ -9,6 +9,10 @@ spring:
 
 dracul:
   public-url: ${DRACUL_PUBLIC_URL:http://localhost:8080}
+  cors:
+    # Browser origin(s) allowed to call /api/** (comma-separated). Must be the public
+    # SPA origin in prod (e.g. https://dracul.ufelmann.com), NOT public-url (internal).
+    allowed-origins: ${DRACUL_CORS_ALLOWED_ORIGINS:http://localhost:5173}
   edgar:
     user-agent: ${DRACUL_EDGAR_USER_AGENT:dracul-research/1.0 contact@example.com}
   strigoi:
