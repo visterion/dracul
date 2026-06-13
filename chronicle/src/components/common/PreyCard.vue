@@ -196,4 +196,18 @@ const confClass = computed(() =>
   outline: 2px solid var(--cathedral-gold);
   outline-offset: 2px;
 }
+
+/* Long unbreakable tokens in model-generated content (company names, tickers,
+   URLs in thesis / signals / risks) must wrap rather than expand the card past
+   its container and get clipped on the right edge. min-width:0 lets the flex
+   item (name) and the grid columns (signals/risks) shrink below content size. */
+.prey-name,
+.prey-thesis,
+.sr-list li,
+.prey-foot .by {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.prey-name { min-width: 0; }
+.sr-col { min-width: 0; }
 </style>
