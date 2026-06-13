@@ -503,7 +503,7 @@ export default {
       PEAD: 'PEAD',
       INDEX: 'Index inclusion',
       MERGER_ARB: 'Merger arbitrage',
-      QUALITY_52W_LOW: 'Quality @ 52w low',
+      QUALITY_52W_LOW: 'Quality at 52w low',
     },
     agentTier: {
       Standard: 'Standard',
