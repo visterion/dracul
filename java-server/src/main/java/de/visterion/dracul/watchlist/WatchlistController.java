@@ -8,11 +8,8 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import de.visterion.dracul.marketdata.Quote;
-
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
@@ -33,23 +30,8 @@ public class WatchlistController {
 
     @GetMapping("/api/watchlist")
     public List<WatchlistItem> watchlist() {
-        List<WatchlistItem> items = repo.findAll();
-        if (items.isEmpty()) return items;
-        Map<String, Quote> live;
-        try {
-            live = marketData.quotes(items.stream().map(WatchlistItem::ticker).distinct().toList());
-        } catch (RuntimeException e) {
-            return items; // provider down → serve stored values unchanged
-        }
-        return items.stream().map(it -> {
-            Quote q = live.get(it.ticker());
-            if (q == null) return it; // no fresh quote → keep stored
-            return new WatchlistItem(
-                    it.id(), it.ticker(), it.companyName(),
-                    q.price().doubleValue(), q.dayChangePercent().doubleValue(),
-                    it.status(), it.addedAt(), it.tag(), it.verdictId(), it.alerts(),
-                    it.priceHistory30d(), it.entryPrice(), it.shareCount(), it.owner());
-        }).toList();
+        // Prices are kept fresh by WatchlistPriceRefresher; serve stored values (no per-load call).
+        return repo.findAll();
     }
 
     @PostMapping("/api/watchlist")
