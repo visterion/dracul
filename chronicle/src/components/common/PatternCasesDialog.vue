@@ -52,7 +52,7 @@
             >
               <td class="tkr">{{ c.symbol }}</td>
               <td>{{ c.companyName }}</td>
-              <td>{{ c.anomalyType }}</td>
+              <td>{{ anomalyTypeLabel(c.anomalyType) }}</td>
               <td class="mono pc-date">{{ formatDate(c.occurredAt) }}</td>
               <td>
                 <span v-if="c.supported" class="pc-outcome pc-outcome--yes">
@@ -80,6 +80,7 @@
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import type { Pattern, PatternCase } from '../../api/types'
+import { useEnumLabels } from '../../composables/useEnumLabels'
 
 defineProps<{
   modelValue: boolean
@@ -95,6 +96,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { smAndDown } = useDisplay()
+const { anomalyTypeLabel } = useEnumLabels()
 
 function formatDate(iso: string): string {
   return iso.slice(0, 10)
