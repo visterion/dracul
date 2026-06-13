@@ -131,6 +131,15 @@ The Chronicle GUI is multilingual: German (default) and English, powered by
   localized separately — the backend selects the narrative language at
   agent-registration time. See `configuration.md` and
   `vistierie-integration.md` for details.
+- **Domain codes**: backend enum/code values (alert severity, daywalker trigger
+  type, anomaly type, time horizon, SSE connection status, agent role/tier/state)
+  must never be rendered raw in a component template. Route them through the
+  `useEnumLabels()` composable (`src/composables/useEnumLabels.ts`), which maps
+  each code to a localized label and falls back to the raw value when no
+  translation key exists. Labels live under the shared `enums.*` namespace in
+  `src/i18n/locales/{de,en}.ts` (agent state reuses `strigoi.state.*`). Note:
+  vue-i18n treats `@` as a special linked-message character — never put a literal
+  `@` in a label string.
 
 ## Development
 
