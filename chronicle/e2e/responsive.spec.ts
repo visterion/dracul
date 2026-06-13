@@ -39,6 +39,68 @@ test.describe('Responsive shell (mobile viewport)', () => {
   })
 })
 
+test.describe('Mobile hardening (chat2 fixes)', () => {
+  // Number of explicit tracks in a computed `grid-template-columns` value,
+  // e.g. "390px" → 1, "201.6px 188px" → 2.
+  const trackCount = (gtc: string) =>
+    gtc === 'none' ? 0 : gtc.trim().split(/\s+/).length
+
+  test('verdict card collapses to a single column at 390px', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    const card = page.getByTestId('verdict-card').first()
+    await expect(card).toBeVisible()
+    const gtc = await card.evaluate(
+      el => getComputedStyle(el as HTMLElement).gridTemplateColumns,
+    )
+    expect(trackCount(gtc)).toBe(1)
+  })
+
+  for (const width of [360, 390]) {
+    test(`no horizontal overflow on Chronicle at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 })
+      await page.goto('/')
+      await page.waitForLoadState('networkidle')
+      const overflow = await page.evaluate(() => {
+        const d = document.documentElement
+        return d.scrollWidth - d.clientWidth
+      })
+      expect(overflow).toBeLessThanOrEqual(0)
+    })
+  }
+
+  test('verdict detail has no horizontal overflow at 360px', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 844 })
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.getByTestId('verdict-card-read').first().click()
+    await page.waitForLoadState('networkidle')
+    const overflow = await page.evaluate(() => {
+      const d = document.documentElement
+      return d.scrollWidth - d.clientWidth
+    })
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
+})
+
+test.describe('Verdict card on desktop (regression guard)', () => {
+  test.use({ viewport: { width: 1280, height: 900 } })
+
+  test('keeps its two-column layout (body + 188px side rail)', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    const card = page.getByTestId('verdict-card').first()
+    await expect(card).toBeVisible()
+    const gtc = await card.evaluate(
+      el => getComputedStyle(el as HTMLElement).gridTemplateColumns,
+    )
+    // "<bodypx> 188px" → two tracks, second ≈ 188px.
+    const tracks = gtc.trim().split(/\s+/)
+    expect(tracks).toHaveLength(2)
+    expect(Math.round(parseFloat(tracks[1]))).toBe(188)
+  })
+})
+
 test.describe('Watchlist drill-in (mobile)', () => {
   test('row opens full-screen detail, back returns to list', async ({ page }) => {
     await page.goto('/watchlist')
