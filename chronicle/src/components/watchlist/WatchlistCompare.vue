@@ -98,7 +98,7 @@ function fmtPrice(n: number): string {
 function posLabel(item: WatchlistItem): string {
   if (item.entryPrice !== null) {
     return t('watchlist.compare.held', {
-      shares: item.shareCount ?? 0,
+      shares: item.shareCount ?? '—',
       entry: fmtPrice(item.entryPrice),
     })
   }

@@ -319,6 +319,16 @@ const otherOwners = computed(() =>
   [...new Set(items.value.map(i => i.owner))].filter(o => o && o !== me.value).sort()
 )
 
+// Keep the compare target valid: if the selected owner disappears (e.g. their
+// last item is removed), fall back to the first available owner, or leave
+// compare mode entirely when nobody else remains.
+watch(otherOwners, (owners) => {
+  if (!owners.includes(compareWith.value ?? '')) {
+    compareWith.value = owners[0] ?? null
+    if (owners.length === 0) mode.value = 'list'
+  }
+})
+
 onMounted(async () => {
   try {
     items.value = await api.getWatchlistItems()
