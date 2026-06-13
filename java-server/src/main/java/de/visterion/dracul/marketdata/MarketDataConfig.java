@@ -23,8 +23,10 @@ class MarketDataConfig {
     @Bean
     @Primary
     FallbackMarketDataPort fallbackMarketDataPort(
+            FinnhubMarketDataAdapter finnhub,
             TwelveDataMarketDataAdapter twelveData,
             YahooMarketDataAdapter yahoo) {
-        return new FallbackMarketDataPort(twelveData, yahoo);
+        // Finnhub (60/min) first for quotes(); resolve() falls through to Twelve Data (history) then Yahoo.
+        return new FallbackMarketDataPort(finnhub, new FallbackMarketDataPort(twelveData, yahoo));
     }
 }
