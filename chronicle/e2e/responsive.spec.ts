@@ -69,6 +69,28 @@ test.describe('Mobile hardening (chat2 fixes)', () => {
     })
   }
 
+  test('prey card with a long unbreakable token does not overflow (regression)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    // Model-generated prey content can contain long unbreakable tokens (company
+    // names, tickers, URLs). They must wrap, not expand the card off-screen.
+    const result = await page.evaluate(() => {
+      const card = document.querySelector('[data-testid="prey-card"]') as HTMLElement | null
+      if (!card) return { skipped: true, overflow: 0, cardRight: 0, vw: 0 }
+      const LONG = 'WolverineWorldwideInternationalHoldingsAcquisitionCorporationXYZ1234567890'
+      card.querySelectorAll('.prey-thesis, .sr-list li, .prey-name').forEach((el) => {
+        el.textContent = LONG
+      })
+      void card.offsetWidth
+      const vw = document.documentElement.clientWidth
+      return { skipped: false, overflow: document.documentElement.scrollWidth - vw, cardRight: card.getBoundingClientRect().right, vw }
+    })
+    expect(result.skipped, 'a prey card should be present on the chronicle home').toBe(false)
+    expect(result.overflow).toBeLessThanOrEqual(0)
+    expect(result.cardRight).toBeLessThanOrEqual(result.vw + 1)
+  })
+
   test('verdict detail has no horizontal overflow at 360px', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 844 })
     await page.goto('/')
