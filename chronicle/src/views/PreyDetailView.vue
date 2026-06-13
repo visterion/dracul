@@ -24,7 +24,7 @@
 
     <PageHead>
       <template #eyebrow>
-        {{ t('prey.eyebrow', { anomalyType: prey.anomalyType }) }}
+        {{ t('prey.eyebrow', { anomalyType: anomalyTypeLabel(prey.anomalyType) }) }}
       </template>
       <template #title>
         <span class="mono title-ticker">{{ prey.symbol }}</span>

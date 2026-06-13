@@ -17,7 +17,7 @@ test.describe('Prey Detail View (/prey/:id)', () => {
   })
 
   test('renders eyebrow with anomaly type', async ({ page }) => {
-    await expect(page.locator('.page-eyebrow')).toContainText('SPIN')
+    await expect(page.locator('.page-eyebrow')).toContainText('Spin-off')
   })
 
   test('renders thesis prose', async ({ page }) => {
