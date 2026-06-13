@@ -37,6 +37,7 @@
           :loading="pendingLoadingId === pattern.id"
           data-testid="pending-pattern-card"
           @act="(action) => handlePendingAction(pattern.id, action)"
+          @view-cases="openCases(pattern)"
         />
       </div>
 
@@ -102,6 +103,14 @@
         </div>
       </div>
     </template>
+
+    <PatternCasesDialog
+      v-model="casesOpen"
+      :pattern="casesPattern"
+      :cases="cases"
+      :loading="casesLoading"
+      :error="casesError"
+    />
   </div>
 </template>
 
@@ -109,10 +118,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../api'
-import type { Pattern, PatternAction } from '../api/types'
+import type { Pattern, PatternAction, PatternCase } from '../api/types'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import PatternCard from '../components/common/PatternCard.vue'
+import PatternCasesDialog from '../components/common/PatternCasesDialog.vue'
 import { useRelativeTime } from '../composables/useRelativeTime'
 
 const { t } = useI18n()
@@ -126,6 +136,28 @@ const expandedIds = ref<Set<string>>(new Set())
 const pendingLoadingId = ref<string | null>(null)
 const activeLoadingId  = ref<string | null>(null)
 const actionError      = ref<string | null>(null)
+
+// Supporting-cases dialog (state owned here)
+const casesOpen    = ref(false)
+const casesPattern = ref<Pattern | null>(null)
+const cases        = ref<PatternCase[]>([])
+const casesLoading = ref(false)
+const casesError   = ref(false)
+
+async function openCases(pattern: Pattern) {
+  casesPattern.value = pattern
+  cases.value = []
+  casesError.value = false
+  casesLoading.value = true
+  casesOpen.value = true
+  try {
+    cases.value = await api.getPatternCases(pattern.id)
+  } catch {
+    casesError.value = true
+  } finally {
+    casesLoading.value = false
+  }
+}
 
 async function handlePendingAction(id: string, action: PatternAction) {
   if (action === 'deactivate') return  // only for active cards

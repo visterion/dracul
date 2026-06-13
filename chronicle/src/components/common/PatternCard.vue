@@ -27,9 +27,14 @@
           {{ t('patterns.evidence.avgUplift', { n: pattern.avgUpliftPercent }) }}
         </template>
       </span>
-      <span v-if="pending" class="pt-cases" aria-hidden="true">
+      <button
+        v-if="pending"
+        class="pt-cases"
+        type="button"
+        @click="emit('view-cases')"
+      >
         {{ t('patterns.evidence.viewCases') }}
-      </span>
+      </button>
       <div v-if="pending" class="pt-actions">
         <button class="btn btn-ghost" :disabled="loading" @click="emit('act', 'defer')">
           {{ t('patterns.buttons.defer') }}
@@ -59,6 +64,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   act: [action: PatternAction]
+  'view-cases': []
 }>()
 
 const { t } = useI18n()
@@ -123,8 +129,13 @@ const { monthsAgo, daysAgo } = useRelativeTime()
   color: var(--cathedral-gold);
   cursor: pointer;
   text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
 }
 .pt-cases:hover { color: var(--cathedral-gold-bright, var(--cathedral-gold)); }
+.pt-cases:focus-visible { outline: 1px solid var(--cathedral-gold); outline-offset: 2px; }
 
 .pt-actions {
   margin-left: auto;

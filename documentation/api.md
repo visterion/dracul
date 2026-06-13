@@ -97,10 +97,29 @@ backend stores only the raw inputs.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/patterns` | All patterns; query params: `strigoi`, `status` |
+| GET | `/api/patterns/{id}/cases` | Supporting cases (evidence) for one pattern, newest first |
 | POST | `/api/patterns/{id}/approve` | Activate a `PENDING` pattern |
 | POST | `/api/patterns/{id}/reject` | Reject with optional `reason` body |
 | POST | `/api/patterns/{id}/defer` | Move back to pending for later review |
 | DELETE | `/api/patterns/{id}` | Deactivate an `ACTIVE` pattern |
+
+### `GET /api/patterns/{id}/cases`
+
+Returns the supporting cases (historical anomaly occurrences) backing one
+pattern, ordered by `occurredAt` DESC. `404` if the pattern is not the current
+user's.
+
+Response (200): `PatternCase[]`
+
+| Field | Type | Description |
+|---|---|---|
+| `symbol` | string | ticker of the case instrument |
+| `companyName` | string | company name |
+| `anomalyType` | string | anomaly type the case exhibited |
+| `occurredAt` | string | ISO instant the case occurred |
+| `supported` | boolean | whether the outcome supported the pattern |
+| `returnPercent` | `number \| null` | realized return of the case; null if unknown |
+| `note` | `string \| null` | optional free-text annotation |
 
 ## Cost / Vistierie Proxy
 

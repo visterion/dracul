@@ -204,9 +204,12 @@ layout").
 **View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
 approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
 Single-pane max-width 960px. Pending section: Voievod-proposed lesson cards with gold
-left border, evidence counts, and Approve/Reject/Defer buttons (stubs). Active section:
-filterable by Strigoi chip (derived from unique `appliesToStrigoi` values); each row
-expands to show full pattern text and Deactivate button (stub). Expand state uses the
+left border, evidence counts, and Approve/Reject/Defer buttons (stubs). A pending card's
+"Unterstützende Fälle ansehen →" link opens the **`PatternCasesDialog.vue`** modal, which
+loads `GET /api/patterns/{id}/cases` and lists the supporting cases in a table
+(ticker / company / anomaly / date / outcome / return); the dialog is full-screen on mobile.
+Active section: filterable by Strigoi chip (derived from unique `appliesToStrigoi` values);
+each row expands to show full pattern text and Deactivate button (stub). Expand state uses the
 `ref<Set<string>>` reactivity pattern from StrigoiDetailView — new Set created on each
 toggle for correct Vue reactivity.
 

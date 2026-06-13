@@ -164,6 +164,7 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 | `verdicts` | Consolidated multi-Strigoi consensus records |
 | `verdict_notes` | Append-only audit trail per verdict (id, verdict_id FK, body, created_at, user_id) |
 | `patterns` | Voievod-proposed heuristics (`PENDING` → `ACTIVE` / `REJECTED`) |
+| `pattern_evidence` | Supporting cases per pattern (symbol, anomaly, outcome, return); `pattern_id` FK ON DELETE CASCADE |
 | `watchlist_items` | Items the Daywalker monitors; `active` generated column |
 | `daywalker_alerts` | Every Daywalker trigger, with LLM assessment and notification flag |
 
@@ -190,6 +191,11 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 - `entry_price` (NUMERIC(12,4), nullable) — operator-recorded entry price; NULL until a position is recorded
 - `share_count` (NUMERIC(12,4), nullable) — operator-recorded share count (fractional shares allowed); NULL until set
 - Both are surfaced on the read API as `entryPrice` / `shareCount` and set via `PATCH /api/watchlist/{id}/position`; client-side P&L is derived from `currentPrice − entryPrice`.
+
+**Pattern evidence table (V9):**
+- `pattern_evidence` — one row per supporting case backing a pattern: `id` (UUID PK), `pattern_id` (UUID NOT NULL, FK → `patterns(id)` ON DELETE CASCADE), `symbol`, `company_name`, `anomaly_type` (TEXT), `occurred_at` (TIMESTAMPTZ), `supported` (BOOLEAN), `return_percent` (NUMERIC(7,2), nullable), `note` (TEXT, nullable)
+- index `idx_pattern_evidence_pattern` on `pattern_id`
+- Surfaced via `GET /api/patterns/{id}/cases` (cases ordered by `occurred_at` DESC); seeded with evidence for the 3 pending patterns.
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
