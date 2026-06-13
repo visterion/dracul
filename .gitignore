@@ -17,3 +17,6 @@ java-server/src/main/resources/static/
 .worktrees/
 .superpowers/
 .env
+.playwright-mcp/
+/PLAN.md
+/*-preview.png

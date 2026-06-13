@@ -101,6 +101,13 @@ Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 against US market open across the EST/EDT boundary. A calendar-aware open is
 deferred.
 
+## Watchlist price refresh
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED` (`dracul.watchlist.price-refresh.enabled`) | `true` | Enables the background scheduler that refreshes watchlist prices into the DB. |
+| `DRACUL_WATCHLIST_PRICE_REFRESH_CRON` (`dracul.watchlist.price-refresh.cron`) | `0 * 13-20 * * MON-FRI` | Spring cron (UTC) for the refresh. Default = every minute during the US session (EDT 13:30–20:00 UTC; widen to `13-21` for EST winter). |
+
 ## Finnhub
 
 | Variable | Default | Purpose |

@@ -139,6 +139,24 @@ The Daywalker resolves intraday price and volume via
 - **Graceful degradation:** any failure returns empty candles (logged) — the
   Daywalker poll never dies on a Yahoo hiccup.
 
+## Finnhub quote adapter (watchlist price refresh)
+
+`FinnhubMarketDataAdapter` (`de.visterion.dracul.marketdata.finnhub`) is the
+**primary** watchlist price source. It calls `GET /quote` (free tier: 60 calls/min)
+for each ticker and returns current price and day-change percent.
+
+The full watchlist price-refresh chain is **Finnhub → Twelve Data → Yahoo**:
+
+- `WatchlistPriceRefresher` calls `FinnhubMarketDataAdapter.quotes()` first.
+- On failure or missing symbols it falls back to `TwelveDataMarketDataAdapter`
+  via `FallbackMarketDataPort`.
+- Yahoo is the final fallback for any symbols still unresolved.
+
+Finnhub is quote-only (no history). The history-bearing `resolve()` path used
+when adding a symbol continues to flow through Twelve Data (with Yahoo as its
+fallback), as Twelve Data's `/time_series` provides the 30-day price history
+required for the watchlist chart.
+
 ## Finnhub fundamentals adapter
 
 Strigoi-Lazarus resolves 52-week range and health ratios via
