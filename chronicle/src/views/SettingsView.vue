@@ -169,12 +169,12 @@
             <div v-for="row in agentData" :key="row.name" class="agent-row" :data-agent="row.name">
               <div class="agent-row__main">
                 <div class="agent-row__name">{{ row.name }}</div>
-                <span class="agent-row__role mono">{{ row.role }}</span>
+                <span class="agent-row__role mono">{{ agentRoleLabel(row.role) }}</span>
               </div>
               <div class="agent-row__meta mono">
-                <span class="agent-row__state" :data-state="row.state">{{ row.state }}</span>
+                <span class="agent-row__state" :data-state="row.state">{{ agentStateLabel(row.state) }}</span>
                 <span>{{ agentSchedule(row) }}</span>
-                <span v-if="row.tier">{{ row.tier }}</span>
+                <span v-if="row.tier">{{ agentTierLabel(row.tier) }}</span>
                 <span v-if="row.primaryProvider">{{ row.primaryProvider }}</span>
                 <span>${{ row.dailyUsedUsd.toFixed(2) }} / ${{ row.dailyBudgetUsd.toFixed(2) }}</span>
               </div>
@@ -259,8 +259,10 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import ProviderCard from '../components/common/ProviderCard.vue'
 import { humanScheduleText } from '../utils/schedule'
+import { useEnumLabels } from '../composables/useEnumLabels'
 
 const { t, locale } = useI18n()
+const { agentRoleLabel, agentTierLabel, agentStateLabel } = useEnumLabels()
 const api = useApi()
 const { smAndDown } = useDisplay()
 
