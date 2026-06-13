@@ -14,8 +14,7 @@
       <span class="prey-ticker font-mono">{{ prey.symbol }}</span>
       <span class="prey-name">{{ prey.companyName }}</span>
       <span class="prey-head-spacer" />
-      <!-- anomalyType rendered verbatim — no whitelist/mapping -->
-      <span class="anomaly-badge">{{ prey.anomalyType }}</span>
+      <span class="anomaly-badge">{{ anomalyTypeLabel(prey.anomalyType) }}</span>
     </header>
 
     <!-- Confidence -->
@@ -48,7 +47,7 @@
       <span class="fdot">·</span>
       <span>{{ relativeTime(prey.discoveredAt) }}</span>
       <span class="fdot">·</span>
-      <span>{{ t('chronicle.preyCard.horizon') }}: {{ prey.horizon }}</span>
+      <span>{{ t('chronicle.preyCard.horizon') }}: {{ horizonLabel(prey.horizon) }}</span>
     </footer>
   </article>
 </template>
@@ -59,12 +58,14 @@ import { useI18n } from 'vue-i18n'
 import type { Prey } from '../../api/types'
 import ConfidenceBar from './ConfidenceBar.vue'
 import { useRelativeTime } from '../../composables/useRelativeTime'
+import { useEnumLabels } from '../../composables/useEnumLabels'
 
 const props = defineProps<{ prey: Prey }>()
 defineEmits<{ (e: 'open', prey: Prey): void }>()
 
 const { t } = useI18n()
 const { relativeTime } = useRelativeTime()
+const { anomalyTypeLabel, horizonLabel } = useEnumLabels()
 
 // confClass per prototype: >0.75 high, >=0.5 mid, else low
 const confClass = computed(() =>

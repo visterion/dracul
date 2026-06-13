@@ -69,11 +69,11 @@
           <div class="kv-list pd-kv">
             <div class="kv-row">
               <span class="kv-k">{{ t('prey.facts.anomaly') }}</span>
-              <span class="kv-v mono">{{ prey.anomalyType }}</span>
+              <span class="kv-v mono">{{ anomalyTypeLabel(prey.anomalyType) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('prey.facts.horizon') }}</span>
-              <span class="kv-v mono">{{ prey.horizon }}</span>
+              <span class="kv-v mono">{{ horizonLabel(prey.horizon) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('prey.facts.firstSeen') }}</span>
@@ -120,12 +120,14 @@ import type { Prey } from '../api/types'
 import { useApi } from '../api'
 import { useChronicleStore } from '../stores/chronicle'
 import { useRelativeTime } from '../composables/useRelativeTime'
+import { useEnumLabels } from '../composables/useEnumLabels'
 import BackLink from '../components/common/BackLink.vue'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import ConfidenceBar from '../components/common/ConfidenceBar.vue'
 
 const { t } = useI18n()
+const { anomalyTypeLabel, horizonLabel } = useEnumLabels()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()

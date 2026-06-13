@@ -48,4 +48,16 @@ test.describe('Chronicle View (/)', () => {
   test('AVGO verdict card is visible', async ({ page }) => {
     await expect(page.locator('[data-testid="verdict-card"]:has-text("AVGO")')).toBeVisible()
   })
+
+  test('prey cards show localized anomaly labels, not raw codes', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    const cards = page.locator('[data-testid="prey-card"]')
+    await expect(cards.first()).toBeVisible()
+    const badges = page.locator('[data-testid="prey-card"] .anomaly-badge')
+    await expect(badges.filter({ hasText: 'Insider-Cluster' }).first()).toBeVisible()
+    const allBadges = await badges.allTextContents()
+    expect(allBadges.every(t => t !== 'SPIN')).toBe(true)
+    expect(allBadges.every(t => t !== 'INSIDER')).toBe(true)
+  })
 })

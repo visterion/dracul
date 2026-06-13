@@ -33,8 +33,8 @@ test.describe('Prey Detail View (/prey/:id)', () => {
 
   test('renders at-a-glance kv facts (anomaly, horizon)', async ({ page }) => {
     const kvList = page.locator('.pd-kv')
-    await expect(kvList).toContainText('SPIN')
-    await expect(kvList).toContainText('90d')
+    await expect(kvList).toContainText('Spin-off')
+    await expect(kvList).toContainText('90 Tage')
   })
 
   test('renders signals list with at least 1 item', async ({ page }) => {
