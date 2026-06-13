@@ -6,7 +6,7 @@
         class="live-panel__status"
         :class="`live-panel__status--${store.status}`"
         data-testid="live-indicator"
-      >{{ store.status }}</span>
+      >{{ connectionStatusLabel(store.status) }}</span>
       <button class="live-panel__close" aria-label="Close" @click="$emit('close')">✕</button>
     </header>
 
@@ -19,10 +19,10 @@
       >
         <div class="live-panel__row">
           <span class="live-panel__sev" :class="`live-panel__sev--${a.severity.toLowerCase()}`">
-            {{ a.severity }}
+            {{ severityLabel(a.severity) }}
           </span>
           <span class="live-panel__symbol">{{ a.symbol }}</span>
-          <span class="live-panel__trigger">{{ a.triggerType }}</span>
+          <span class="live-panel__trigger">{{ triggerTypeLabel(a.triggerType) }}</span>
         </div>
         <p class="live-panel__thesis">{{ a.thesis }}</p>
       </li>
@@ -34,12 +34,14 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
+import { useEnumLabels } from '../../composables/useEnumLabels'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
 const store = useLiveAlertsStore()
+const { severityLabel, triggerTypeLabel, connectionStatusLabel } = useEnumLabels()
 </script>
 
 <style scoped>

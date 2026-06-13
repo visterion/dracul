@@ -31,6 +31,9 @@ test.describe('Live alert panel (SSE)', () => {
 
     const item = page.locator('[data-testid="live-alert-item"]').first()
     await expect(item).toContainText('TST')
-    await expect(item).toContainText('CRITICAL')
+    await expect(item).toContainText('Kritisch')
+    await expect(item).toContainText('Kurssprung')
+    await expect(item).not.toContainText('CRITICAL')
+    await expect(item).not.toContainText('PRICE_SPIKE')
   })
 })
