@@ -4,7 +4,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse,
   CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting,
-  AgentConfigRow, DataSourceHealth, Me,
+  AgentConfigRow, DataSourceHealth, Me, PatternCase,
 } from './types'
 
 export interface ApiClient {
@@ -14,6 +14,7 @@ export interface ApiClient {
   getStrigoiDetail(name: string): Promise<StrigoiDetail | null>
   getWatchlistItems(): Promise<WatchlistItem[]>
   getPatterns(): Promise<Pattern[]>
+  getPatternCases(id: string): Promise<PatternCase[]>
   getProviders(): Promise<LlmProvider[]>
   getVistierieData(): Promise<VistierieData>
   patchPattern(id: string, action: PatternAction): Promise<void>

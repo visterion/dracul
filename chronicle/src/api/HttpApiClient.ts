@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me,
+  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -46,6 +46,12 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/patterns`)
     if (!res.ok) throw new Error(`getPatterns failed: HTTP ${res.status}`)
     return res.json() as Promise<Pattern[]>
+  }
+
+  async getPatternCases(id: string): Promise<PatternCase[]> {
+    const res = await fetch(`${this.baseUrl}/api/patterns/${encodeURIComponent(id)}/cases`)
+    if (!res.ok) throw new Error(`getPatternCases failed: HTTP ${res.status}`)
+    return res.json() as Promise<PatternCase[]>
   }
 
   async getProviders(): Promise<LlmProvider[]> {

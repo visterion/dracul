@@ -52,6 +52,19 @@ export interface Pattern {
   name?: string                    // slug for active patterns, e.g. "tech-spinoffs-outperform-industrials"
 }
 
+export interface PatternCase {
+  symbol: string
+  companyName: string
+  anomalyType: string
+  /** ISO 8601 */
+  occurredAt: string
+  /** whether this instance supported (true) or refuted (false) the lesson */
+  supported: boolean
+  /** realized return over the horizon; null if open/unknown */
+  returnPercent: number | null
+  note?: string | null
+}
+
 export interface StrigoiStatus {
   name: string
   state: StrigoiState

@@ -20,6 +20,14 @@ public class PatternController {
         return repo.findAllByUser("default");
     }
 
+    @GetMapping("/api/patterns/{id}/cases")
+    public ResponseEntity<List<PatternCase>> cases(@PathVariable String id) {
+        if (repo.findById(id, "default").isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(repo.findCases(id, "default"));
+    }
+
     public record PatternActionRequest(String action) {}
 
     @PatchMapping("/api/patterns/{id}")

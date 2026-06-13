@@ -4,12 +4,13 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me,
+  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
 import { mockAlerts } from '../mocks/alerts'
 import { mockPatterns } from '../mocks/patterns'
+import { mockPatternCases } from '../mocks/patternCases'
 import { mockSystemStatus } from '../mocks/status'
 import { mockVerdictDetails } from '../mocks/verdictDetails'
 import { mockStrigoiDetails } from '../mocks/strigoiDetails'
@@ -57,6 +58,11 @@ export class MockApiClient implements ApiClient {
   async getPatterns(): Promise<Pattern[]> {
     await delay(50)
     return mockPatterns
+  }
+
+  async getPatternCases(id: string): Promise<PatternCase[]> {
+    await delay(50)
+    return mockPatternCases(id)
   }
 
   async getProviders(): Promise<LlmProvider[]> {

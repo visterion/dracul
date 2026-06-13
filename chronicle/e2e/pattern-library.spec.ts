@@ -48,4 +48,25 @@ test.describe('Pattern Library View (/patterns)', () => {
     await firstRow.locator('[data-testid="active-pattern-expand"]').click()
     await expect(firstRow.locator('button:has-text("Deaktivieren")')).toBeVisible()
   })
+
+  test('clicking supporting-cases link opens the cases dialog with rows', async ({ page }) => {
+    const firstCard = page.locator('[data-testid="pending-pattern-card"]').first()
+    await firstCard.locator('button.pt-cases').click()
+
+    const dialog = page.locator('[data-testid="pattern-cases-dialog"]')
+    await expect(dialog).toBeVisible()
+
+    const rows = dialog.locator('[data-testid="pattern-case-row"]')
+    await expect(rows.first()).toBeVisible()
+    expect(await rows.count()).toBeGreaterThanOrEqual(1)
+
+    // an outcome cell renders (supported or refuted)
+    await expect(
+      dialog.locator('.pc-outcome').first()
+    ).toBeVisible()
+
+    // closing works
+    await dialog.locator('.pc-close').click()
+    await expect(dialog).not.toBeVisible()
+  })
 })

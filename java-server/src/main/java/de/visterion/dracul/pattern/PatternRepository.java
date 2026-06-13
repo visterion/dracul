@@ -53,6 +53,21 @@ public class PatternRepository {
                 .optional();
     }
 
+    public List<PatternCase> findCases(String patternId, String userId) {
+        return jdbc.sql("""
+                SELECT e.symbol, e.company_name, e.anomaly_type, e.occurred_at,
+                       e.supported, e.return_percent, e.note
+                FROM pattern_evidence e
+                JOIN patterns p ON p.id = e.pattern_id
+                WHERE e.pattern_id = :patternId::uuid AND p.user_id = :userId
+                ORDER BY e.occurred_at DESC
+                """)
+                .param("patternId", patternId)
+                .param("userId", userId)
+                .query(this::mapCaseRow)
+                .list();
+    }
+
     public void updateStatus(String id, String userId, String status) {
         jdbc.sql("UPDATE patterns SET status = :status WHERE id = :id::uuid AND user_id = :userId")
                 .param("status", status)
@@ -67,6 +82,19 @@ public class PatternRepository {
                 .param("id", id)
                 .param("userId", userId)
                 .update();
+    }
+
+    private PatternCase mapCaseRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        var returnPercent = rs.getObject("return_percent");
+        return new PatternCase(
+                rs.getString("symbol"),
+                rs.getString("company_name"),
+                rs.getString("anomaly_type"),
+                rs.getString("occurred_at"),
+                rs.getBoolean("supported"),
+                returnPercent == null ? null : ((Number) returnPercent).doubleValue(),
+                rs.getString("note")
+        );
     }
 
     private Pattern mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
