@@ -33,7 +33,7 @@ Both documents are required reading before implementing any view.
 | 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) | ✅ Etappe 10 |
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
 | 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, thesis, outcome | Medium | ✅ Chronicle redesign |
-| 5 | Watchlist | `/watchlist` | Active monitoring of held/tracked instruments, position P&L | Medium | ✅ Etappe 11 |
+| 5 | Watchlist | `/watchlist` | Tracking-only monitoring of watched candidates (positions live in Portfolio) | Medium | ✅ Etappe 11 |
 | 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
@@ -59,7 +59,7 @@ a connection status. Active only against a real backend (disabled in mock mode).
 Present on every view:
 
 - **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center
-  (5 destinations: Chronicle, Watchlist, Pattern Library, Backtest, Settings),
+  (6 destinations: Chronicle, Watchlist, Portfolio, Pattern Library, Backtest, Settings),
   moon-icon + avatar placeholder right.
 - **Bottom status bar (32px)**: operational summary from `useStatusStore` —
   `☾ 6 strigoi · 2 hunting · daywalker active · $0.43 today`
@@ -78,7 +78,7 @@ and desktop keep the desktop shell. The JS switch is Vuetify
 Below 960px:
 
 - The centered top-bar nav is replaced by **`AppBottomNav`** — a fixed,
-  horizontally scrollable bottom tab bar with all five destinations (no "More"
+  horizontally scrollable bottom tab bar with all six destinations (no "More"
   overflow), the active tab in `--blood-crimson`. It reserves
   `env(safe-area-inset-bottom)` and uses ≥44px tap targets. Both navs draw their
   entries from a shared `useNavItems()` composable.
@@ -188,31 +188,25 @@ row, info/other plain rows.
 
 ## Implementation status (Etappe 11)
 
-**View 4 — Watchlist** (`/watchlist`): Fully implemented and wired to the real API, full CRUD
-(`POST`, `PATCH`, `DELETE /api/watchlist/{id}`) plus the position PATCH
-(`PATCH /api/watchlist/{id}/position`) wired. Master/detail layout (`.watch-grid`,
-420px list pane / fluid detail pane). Left pane: search input (filters ticker/company;
-when the filter is empty and the query is a ticker not already on the list, an
-"‚{symbol}' hinzufügen" CTA opens the add dialog prefilled with that symbol),
-tabs (Alle / Positionen gehalten / Urteile verfolgt / Aktuelle Alarme — counts derived
-from real items: positions = `entryPrice != null`, tracked = `tag === 'TRACKING'`,
-alerts = `alerts.length > 0`), add-to-watchlist dialog, and `.watch-row` rows showing
-ticker, company, price, day change (pos/neg color), status dot (calm→positive,
-elevated→warning, alert→danger), and flags ("Urteil verfolgt", "Position"). Per-row
-tag toggle (HELD/TRACKING) and delete are preserved. Right pane: header (mono ticker,
-company, tracked-since, live quote) and a **backend-backed position panel** ("Meine
-Position"): items with no `entryPrice` show a dashed add-card whose "Position erfassen"
-button snapshots `currentPrice` as the entry (default 100 shares) via
-`patchWatchlistPosition`; items with a position show editable Einstiegskurs/Größe number
-inputs (persisted on blur) and a live P&L readout (abs `(currentPrice − entryPrice) ×
-shareCount`, pct `(currentPrice − entryPrice) / entryPrice × 100`, colored pos/neg) plus
-a "Position entfernen" affordance that PATCHes the position back to null. Positions are
-server-persisted (no localStorage). Below the panel is the Daywalker alert feed (the
-`AlertRow` atom, mapping level elevated→warning / info→info / neutral→neutral) and the
-linked-verdict card (when `verdictId` is set). Selected state is a local
-`ref<string | null>` initialized to the first item on load (auto-selection is suppressed
-on mobile so the list is the entry point; see the mobile drill-in under "Responsive
-layout").
+**View 4 — Watchlist** (`/watchlist`): **Tracking-only** — it shows watched candidates
+(items with `entryPrice == null`); held positions live in the **Portfolio** view, not
+here. Wired to the real API (`POST`, `PATCH`, `DELETE /api/watchlist/{id}`).
+Master/detail layout (`.watch-grid`, 420px list pane / fluid detail pane). The view
+scopes its data to `trackingItems = items.filter(i => i.entryPrice == null)`. Left pane:
+search input (filters ticker/company; when the filter is empty and the query is a ticker
+not already tracked, an "‚{symbol}' hinzufügen" CTA opens the add dialog prefilled with
+that symbol), two tabs (**Alle** / **Aktuelle Alarme** — counts derived from tracking
+items: all = `trackingItems.length`, alerts = `alerts.length > 0`), an add-to-watchlist
+dialog (creates a `TRACKING` item; no tag choice), and `.watch-row` rows showing ticker,
+company, price, day change (pos/neg color), status dot (calm→positive, elevated→warning,
+alert→danger), and an owner badge; own rows have a delete control, foreign rows are
+read-only. Right pane: header (mono ticker, company, tracked-since, live quote), the
+Daywalker alert feed (the `AlertRow` atom, level elevated→warning / info→info /
+neutral→neutral), and the linked-verdict card (when `verdictId` is set). Selected state is
+a local `ref<string | null>` initialized to the first tracking item on load (auto-selection
+suppressed on mobile so the list is the entry point; see the mobile drill-in under
+"Responsive layout"). Position management (entry/size/P&L) lives entirely in the Portfolio
+view.
 
 ##### Compare mode
 
@@ -220,9 +214,9 @@ The watchlist view has a `Liste | Vergleich` toggle. In **Vergleich** mode you
 pick another user (from the owner dropdown — populated from the owners present
 in the shared watchlist) and the view groups tickers into three buckets:
 
-- **Beide** — tickers you both watch. The shared market price is shown once;
-  each user's status, position (entry/shares) and alert count are listed
-  per-user, since those differ between users.
+- **Beide** — tickers you both track. The shared market price is shown once;
+  each user's status and alert count are listed per-user, since those differ
+  between users. (Compare is tracking-only — positions are excluded.)
 - **Nur ich** — tickers only you watch.
 - **Nur \<user\>** — tickers only the other user watches.
 
@@ -244,10 +238,9 @@ entry/size are PATCHed in), edit a position's entry/size, or clear it (the clear
 control confirms, then PATCHes the position fields back to `null`). Rows that
 have a signal are clickable and route to the exit detail.
 
-> **Transitional duplication:** held positions still also appear in the Watchlist
-> (which already surfaces a per-item position panel). The Portfolio view reads
-> the same watchlist data; a later de-conflation slice will separate the two
-> surfaces so a position lives in exactly one place.
+Positions live in exactly one place: the Portfolio holds them (`entryPrice != null`),
+the Watchlist holds tracked candidates (`entryPrice == null`). The two surfaces are
+fully separated.
 
 **Exit Signal Detail** (`/exit-signal/:id`): the deep-read for one signal. It
 renders the `action` badge, the full `rationale` prose, the `firedRules[]` as a
@@ -280,7 +273,7 @@ pointer-events: none) with a Phase 2 badge.
 
 ## Navigation structure
 
-The five top-level nav destinations (Chronicle, Watchlist, Pattern Library,
+The six top-level nav destinations (Chronicle, Watchlist, Portfolio, Pattern Library,
 Backtest, Settings) are available from both the desktop top-bar and the mobile
 bottom tab bar. Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail)
 are not in the nav but are reachable via in-app links.
