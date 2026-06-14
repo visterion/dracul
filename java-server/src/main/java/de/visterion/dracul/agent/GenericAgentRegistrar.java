@@ -11,8 +11,6 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.ObjectMapper;
-
 import java.util.Objects;
 
 @Component
@@ -25,20 +23,17 @@ public class GenericAgentRegistrar {
     private final AgentDefinitionStore store;
     private final AgentToolCatalog catalog;
     private final AppSettingsRepository settings;
-    private final ObjectMapper mapper;
     private final String publicUrl;
     private final TokenResolver tokenResolver;
 
     public GenericAgentRegistrar(VistierieClient vistierie, AgentDefinitionStore store,
                                  AgentToolCatalog catalog, AppSettingsRepository settings,
-                                 ObjectMapper mapper,
                                  @Value("${dracul.public-url}") String publicUrl,
                                  TokenResolver tokenResolver) {
         this.vistierie = vistierie;
         this.store = store;
         this.catalog = catalog;
         this.settings = settings;
-        this.mapper = mapper;
         this.publicUrl = publicUrl.endsWith("/")
                 ? publicUrl.substring(0, publicUrl.length() - 1) : publicUrl;
         this.tokenResolver = tokenResolver;
@@ -67,6 +62,10 @@ public class GenericAgentRegistrar {
     }
 
     private void registerOne(AgentDefinition def) {
+        if (!def.enabled()) {
+            log.info("{} is disabled — skipping registration", def.name());
+            return;
+        }
         var desired = buildRequest(def);
         var existing = vistierie.getAgent(def.name());
         if (existing.isEmpty()) {
@@ -123,7 +122,7 @@ public class GenericAgentRegistrar {
     /**
      * Checks whether the existing Vistierie agent matches the desired state.
      *
-     * <p>Streaming agents deliberately omit tool comparison (mirroring DaywalkerRegistrar):
+     * <p>Streaming agents deliberately omit tool comparison (mirroring the former DaywalkerRegistrar):
      * {@link AgentDetail} carries no streaming fields, so changes to streaming-only fields
      * cannot be detected here and require a manual re-register. v1 accepts this limitation.
      */

@@ -42,7 +42,7 @@ class GenericAgentRegistrarTest {
         when(store.find("strigoi-echo")).thenReturn(Optional.of(echo()));
         var settings = mock(AppSettingsRepository.class);
         when(settings.getLanguage()).thenReturn("en");
-        return new GenericAgentRegistrar(client, store, catalog(), settings, json,
+        return new GenericAgentRegistrar(client, store, catalog(), settings,
                 "https://dracul.example.com", name -> "tok-" + name);
     }
 
