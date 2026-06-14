@@ -154,11 +154,12 @@ async function onReset() {
   background-color: var(--crypt-black-elevated); padding: var(--space-6);
   border-radius: 4px; border: 1px solid rgba(184, 148, 92, 0.2);
   display: flex; flex-direction: column; gap: var(--space-4);
+  max-height: 90vh;
 }
 .ae-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); }
 .ae-title { font-size: var(--text-body); color: var(--bone-ivory); letter-spacing: 0.02em; }
 .ae-reset { background: transparent; border: 1px solid var(--ash-gray); color: var(--bone-ivory); border-radius: 4px; padding: var(--space-1) var(--space-3); cursor: pointer; }
-.ae-body { display: flex; flex-direction: column; gap: var(--space-4); }
+.ae-body { display: flex; flex-direction: column; gap: var(--space-4); flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 .ae-section-label { font-size: var(--text-body-sm); color: var(--ash-gray); margin-bottom: var(--space-2); }
 .ae-error { color: var(--blood-crimson); font-size: var(--text-micro); margin: 0; }
 .ae-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
