@@ -37,6 +37,8 @@ Both documents are required reading before implementing any view.
 | 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
+| 9 | Portfolio | `/portfolio` | Held positions with P&L and Groparul's latest exit-signal badge | Medium | ✅ |
+| 10 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context | Low (prose) | ✅ |
 
 > **Vistierie (Schatzkammer):** Vistierie no longer has a standalone route. It is an
 > embeddable component (`VistierieView` with an `embedded` prop) hosted admin-only
@@ -228,6 +230,33 @@ The comparison is computed entirely in the browser from `GET /api/watchlist`
 (which already returns every user's items with an `owner` field) — there is no
 dedicated compare endpoint. The toggle is disabled when no other user keeps a
 watchlist.
+
+##### Portfolio and exit signals
+
+**Portfolio** (`/portfolio`): lists the held positions — the watchlist items
+that carry an `entryPrice` and a `shareCount` — as `PositionRow` cards. Each row
+shows the ticker, company, entry/size/current numbers, a live P&L readout
+(`(currentPrice − entryPrice) / entryPrice × 100`, colored pos/neg), the thesis
+status, and **Groparul's latest exit-signal badge** (`SELL` / `TRIM` / `HOLD`, or
+"kein Signal" when none has fired). You add a position by symbol via the
+`PositionDialog` (the new item is created with the `HELD` tag, then its
+entry/size are PATCHed in), edit a position's entry/size, or clear it (the clear
+control confirms, then PATCHes the position fields back to `null`). Rows that
+have a signal are clickable and route to the exit detail.
+
+> **Transitional duplication:** held positions still also appear in the Watchlist
+> (which already surfaces a per-item position panel). The Portfolio view reads
+> the same watchlist data; a later de-conflation slice will separate the two
+> surfaces so a position lives in exactly one place.
+
+**Exit Signal Detail** (`/exit-signal/:id`): the deep-read for one signal. It
+renders the `action` badge, the full `rationale` prose, the `firedRules[]` as a
+list with plain-text explanations (`exitSignal.rules.<rule>` i18n keys, falling
+back to the raw rule key), the `thesisStatus` (INTACT / WEAKENING / INVALIDATED),
+the `confidence` as a `ConfidenceBar`, the position context (entry / size /
+current / P&L), and — when the underlying position carries a `verdictId` — a link
+through to the verdict detail. A back control (`exit-back`) returns to
+`/portfolio`.
 
 **View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
 approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
