@@ -87,8 +87,9 @@ class YahooMarketDataAdapterTest {
     @Test
     void dailyOhlcHistoryReturnsBarsOldestFirst() {
         // Yahoo returns oldest-first; adapter must NOT reverse
+        // days=260 > 252 → maps to "2y"
         wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
-                .withQueryParam("range", equalTo("1y"))
+                .withQueryParam("range", equalTo("2y"))
                 .withQueryParam("interval", equalTo("1d"))
                 .willReturn(okJson("""
                     {"chart":{"result":[{
@@ -115,8 +116,9 @@ class YahooMarketDataAdapterTest {
 
     @Test
     void dailyOhlcHistorySkipsNullCloseEntries() {
+        // days=260 > 252 → maps to "2y"
         wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
-                .withQueryParam("range", equalTo("1y"))
+                .withQueryParam("range", equalTo("2y"))
                 .willReturn(okJson("""
                     {"chart":{"result":[{
                         "timestamp":[1749600000,1749686400,1749772800],
@@ -142,8 +144,9 @@ class YahooMarketDataAdapterTest {
 
     @Test
     void dailyOhlcHistoryThrowsUnavailableOn500() {
+        // days=260 > 252 → maps to "2y"
         wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
-                .withQueryParam("range", equalTo("1y"))
+                .withQueryParam("range", equalTo("2y"))
                 .willReturn(aResponse().withStatus(500)));
 
         assertThatThrownBy(() -> adapter.dailyOhlcHistory("AAPL", 260))

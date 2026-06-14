@@ -73,13 +73,23 @@ public class YahooMarketDataAdapter implements MarketDataPort {
         return new MarketData(name, price, history);
     }
 
+    /** Maps a requested trading-day count to the closest Yahoo Finance range string. */
+    private static String yahooRange(int days) {
+        if (days <= 63)  return "3mo";
+        if (days <= 126) return "6mo";
+        if (days <= 252) return "1y";
+        if (days <= 504) return "2y";
+        return "5y";
+    }
+
     @Override
     public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+        String range = yahooRange(days);
         JsonNode body;
         try {
             body = client.get()
                     .uri(uri -> uri.path("/v8/finance/chart/{symbol}")
-                            .queryParam("range", "1y")
+                            .queryParam("range", range)
                             .queryParam("interval", "1d")
                             .build(symbol))
                     .retrieve()
