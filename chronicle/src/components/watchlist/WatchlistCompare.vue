@@ -95,13 +95,7 @@ function fmtPrice(n: number): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-function posLabel(item: WatchlistItem): string {
-  if (item.entryPrice !== null) {
-    return t('watchlist.compare.held', {
-      shares: item.shareCount ?? '—',
-      entry: fmtPrice(item.entryPrice),
-    })
-  }
+function posLabel(_item: WatchlistItem): string {
   return t('watchlist.compare.tracking')
 }
 
