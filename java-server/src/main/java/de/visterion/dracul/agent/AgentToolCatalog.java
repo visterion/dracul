@@ -13,10 +13,12 @@ public class AgentToolCatalog {
 
     private final Map<String, ToolCatalogEntry> byName = new LinkedHashMap<>();
 
-    public AgentToolCatalog(List<ToolCatalogEntry> entries) {
-        for (var e : entries) {
-            if (byName.putIfAbsent(e.toolName(), e) != null) {
-                throw new IllegalStateException("duplicate tool in catalog: " + e.toolName());
+    public AgentToolCatalog(List<AgentDefaultProvider> providers) {
+        for (var provider : providers) {
+            for (var e : provider.catalogEntries()) {
+                if (byName.putIfAbsent(e.toolName(), e) != null) {
+                    throw new IllegalStateException("duplicate tool in catalog: " + e.toolName());
+                }
             }
         }
     }
