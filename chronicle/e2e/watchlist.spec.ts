@@ -115,4 +115,25 @@ test.describe('Watchlist View (/watchlist)', () => {
     await expect(foreign).toBeVisible()
     await expect(foreign.locator('[data-testid^="wl-delete-"]')).toHaveCount(0)
   })
+
+  test('typing an unknown ticker shows an add CTA that opens the dialog prefilled', async ({ page }) => {
+    await page.locator('.watch-search input').fill('TSLA')
+    const cta = page.getByTestId('wl-search-add')
+    await expect(cta).toBeVisible()
+    await cta.click()
+    await expect(page.getByTestId('wl-add-symbol')).toHaveValue('TSLA')
+  })
+
+  test('typing a non-ticker search term shows no add CTA', async ({ page }) => {
+    await page.locator('.watch-search input').fill('nonexistent company')
+    await expect(page.locator('.em-text')).toBeVisible()
+    await expect(page.getByTestId('wl-search-add')).toHaveCount(0)
+  })
+
+  test('a ticker hidden by the active filter shows no add CTA', async ({ page }) => {
+    // MSFT is TRACKING with no entryPrice, so the "Positionen gehalten" tab hides it.
+    await page.click('.watch-tab:has-text("gehalten")')
+    await page.locator('.watch-search input').fill('MSFT')
+    await expect(page.getByTestId('wl-search-add')).toHaveCount(0)
+  })
 })

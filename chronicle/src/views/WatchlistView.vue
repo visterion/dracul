@@ -89,7 +89,7 @@
               <button class="watchlist__dialog-cancel" @click="addOpen = false">{{ t('watchlist.dialog.cancel') }}</button>
               <button
                 class="watchlist__dialog-submit"
-                :disabled="!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(addSymbol) || addSubmitting"
+                :disabled="!TICKER_RE.test(addSymbol) || addSubmitting"
                 data-testid="wl-add-submit"
                 @click="onAddSymbol"
               >{{ t('watchlist.dialog.add') }}</button>
@@ -107,7 +107,17 @@
         </template>
 
         <div v-else-if="filteredItems.length === 0" class="empty small">
-          <div class="em-text">{{ t('watchlist.empty') }}</div>
+          <template v-if="addableSymbol">
+            <div class="em-text">{{ t('watchlist.search.notFound', { symbol: addableSymbol }) }}</div>
+            <button
+              class="btn btn-crimson-ghost wl-search-add"
+              data-testid="wl-search-add"
+              @click="onAddFromSearch"
+            >
+              {{ t('watchlist.search.addCta', { symbol: addableSymbol }) }}
+            </button>
+          </template>
+          <div v-else class="em-text">{{ t('watchlist.empty') }}</div>
         </div>
 
         <div v-else class="watch-rows">
@@ -310,6 +320,9 @@ const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
 const searchQuery = ref('')
+// Valid ticker shape: leading letter, then up to 9 of letter/digit/dot/hyphen.
+// Shared by the add dialog's submit guard, onAddSymbol, and the search CTA.
+const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/
 const activeFilter = ref<'all' | 'held' | 'tracking' | 'alerts'>('all')
 const mode = ref<'list' | 'compare'>('list')
 const compareWith = ref<string | null>(null)
@@ -374,6 +387,17 @@ const filteredItems = computed(() =>
       return item.ticker.toLowerCase().includes(q) || item.companyName.toLowerCase().includes(q)
     })
 )
+
+// The uppercased search query if it is a valid ticker NOT already on the
+// watchlist; otherwise null. Used to offer an "add this ticker" CTA when the
+// filter is empty. Returns null when the ticker exists (even if hidden by the
+// active filter tab) so we never claim a held/tracked ticker is missing.
+const addableSymbol = computed<string | null>(() => {
+  const q = searchQuery.value.trim().toUpperCase()
+  if (!TICKER_RE.test(q)) return null
+  if (items.value.some(i => i.ticker.toUpperCase() === q)) return null
+  return q
+})
 
 function dotClass(status: WatchlistStatus): 'positive' | 'warning' | 'danger' {
   if (status === 'calm') return 'positive'
@@ -487,7 +511,7 @@ const addError = ref<string | null>(null)
 const rowBusyId = ref<string | null>(null)
 
 async function onAddSymbol() {
-  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(addSymbol.value)) return
+  if (!TICKER_RE.test(addSymbol.value)) return
   addSubmitting.value = true
   addError.value = null
   try {
@@ -501,6 +525,13 @@ async function onAddSymbol() {
   } finally {
     addSubmitting.value = false
   }
+}
+
+function onAddFromSearch() {
+  if (!addableSymbol.value) return
+  addSymbol.value = addableSymbol.value
+  addTag.value = 'TRACKING'
+  addOpen.value = true
 }
 
 async function onToggleTag(item: WatchlistItem) {
