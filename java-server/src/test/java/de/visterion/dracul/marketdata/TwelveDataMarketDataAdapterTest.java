@@ -91,4 +91,39 @@ class TwelveDataMarketDataAdapterTest {
                 .isInstanceOfSatisfying(MarketDataException.class, ex ->
                         assertThat(ex.kind()).isEqualTo(MarketDataException.Kind.NOT_FOUND));
     }
+
+    @Test void dailyOhlcHistoryReturnsBarsOldestFirst() {
+        // TwelveData API returns newest-first; adapter must reverse to oldest-first
+        wm.stubFor(get(urlPathEqualTo("/time_series"))
+                .withQueryParam("symbol", equalTo("AAPL"))
+                .withQueryParam("interval", equalTo("1day"))
+                .withQueryParam("outputsize", equalTo("260"))
+                .willReturn(okJson("""
+                    {"values":[
+                        {"datetime":"2026-06-13 00:00:00","open":"11.0","high":"11.5","low":"10.8","close":"11.2","volume":"3000"},
+                        {"datetime":"2026-06-12 00:00:00","open":"10.5","high":"11.0","low":"10.2","close":"10.8","volume":"2000"},
+                        {"datetime":"2026-06-11 00:00:00","open":"10.0","high":"11.0","low":"9.5","close":"10.5","volume":"1000"}
+                    ],"status":"ok"}
+                    """)));
+
+        var bars = adapter.dailyOhlcHistory("AAPL", 260);
+
+        assertThat(bars).hasSize(3);
+        assertThat(bars.get(0).date()).isBefore(bars.get(2).date());
+        assertThat(bars.get(0).date().toString()).isEqualTo("2026-06-11");
+        assertThat(bars.get(2).date().toString()).isEqualTo("2026-06-13");
+        assertThat(bars.get(0).close()).isEqualByComparingTo("10.5");
+        assertThat(bars.get(0).high()).isEqualByComparingTo("11.0");
+        assertThat(bars.get(0).volume()).isEqualTo(1000L);
+        assertThat(bars.get(2).close()).isEqualByComparingTo("11.2");
+    }
+
+    @Test void dailyOhlcHistoryThrowsUnavailableOn500() {
+        wm.stubFor(get(urlPathEqualTo("/time_series"))
+                .willReturn(aResponse().withStatus(500)));
+
+        assertThatThrownBy(() -> adapter.dailyOhlcHistory("AAPL", 260))
+                .isInstanceOfSatisfying(MarketDataException.class, ex ->
+                        assertThat(ex.kind()).isEqualTo(MarketDataException.Kind.UNAVAILABLE));
+    }
 }

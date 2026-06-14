@@ -6,6 +6,9 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -68,5 +71,74 @@ public class YahooMarketDataAdapter implements MarketDataPort {
             }
         }
         return new MarketData(name, price, history);
+    }
+
+    @Override
+    public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+        JsonNode body;
+        try {
+            body = client.get()
+                    .uri(uri -> uri.path("/v8/finance/chart/{symbol}")
+                            .queryParam("range", "1y")
+                            .queryParam("interval", "1d")
+                            .build(symbol))
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientResponseException e) {
+            throw new MarketDataException(
+                    MarketDataException.Kind.UNAVAILABLE,
+                    "Yahoo Finance OHLC history returned HTTP " + e.getStatusCode(), e);
+        } catch (Exception e) {
+            throw new MarketDataException(
+                    MarketDataException.Kind.UNAVAILABLE,
+                    "Yahoo Finance OHLC history unreachable: " + e.getMessage(), e);
+        }
+
+        if (body == null) {
+            throw new MarketDataException(
+                    MarketDataException.Kind.UNAVAILABLE,
+                    "Empty body from Yahoo Finance OHLC history");
+        }
+
+        JsonNode result = body.path("chart").path("result");
+        if (!result.isArray() || result.isEmpty() || result.get(0).isNull()) {
+            throw new MarketDataException(
+                    MarketDataException.Kind.NOT_FOUND,
+                    "Symbol " + symbol + " not found in Yahoo OHLC history");
+        }
+
+        JsonNode r0 = result.get(0);
+        JsonNode timestamps = r0.path("timestamp");
+        JsonNode quote = r0.path("indicators").path("quote").path(0);
+        JsonNode opens   = quote.path("open");
+        JsonNode highs   = quote.path("high");
+        JsonNode lows    = quote.path("low");
+        JsonNode closes  = quote.path("close");
+        JsonNode volumes = quote.path("volume");
+
+        List<OhlcBar> out = new ArrayList<>();
+        if (timestamps.isArray()) {
+            for (int i = 0; i < timestamps.size(); i++) {
+                JsonNode closeNode = closes.path(i);
+                if (closeNode.isNull() || closeNode.isMissingNode()) continue;
+
+                LocalDate date = Instant.ofEpochSecond(timestamps.get(i).asLong())
+                        .atOffset(ZoneOffset.UTC).toLocalDate();
+                BigDecimal open   = bd(opens.path(i));
+                BigDecimal high   = bd(highs.path(i));
+                BigDecimal low    = bd(lows.path(i));
+                BigDecimal close  = bd(closeNode);
+                long volume = volumes.path(i).asLong(0);
+
+                out.add(new OhlcBar(date, open, high, low, close, volume));
+            }
+        }
+        // Yahoo returns oldest-first already — no reverse needed
+        return out;
+    }
+
+    private static BigDecimal bd(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) return BigDecimal.ZERO;
+        try { return new BigDecimal(node.asText("0")); } catch (NumberFormatException e) { return BigDecimal.ZERO; }
     }
 }

@@ -81,6 +81,48 @@ public class TwelveDataMarketDataAdapter implements MarketDataPort {
         return out;
     }
 
+    @Override
+    public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+        JsonNode ts;
+        try {
+            ts = client.get()
+                    .uri(uri -> uri.path("/time_series")
+                            .queryParam("symbol", symbol)
+                            .queryParam("interval", "1day")
+                            .queryParam("outputsize", days)
+                            .queryParam("apikey", apiKey)
+                            .build())
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (Exception e) {
+            throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE,
+                    "Twelve Data history unreachable: " + e.getMessage(), e);
+        }
+        if (ts == null) throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE,
+                "Twelve Data history returned empty body for " + symbol, null);
+        List<OhlcBar> out = new ArrayList<>();
+        JsonNode values = ts.path("values");
+        if (values.isArray()) {
+            for (JsonNode v : values) {                       // API is newest-first
+                String dt = v.path("datetime").asText("");
+                BigDecimal o = parseBd(v.path("open")), h = parseBd(v.path("high")),
+                           l = parseBd(v.path("low")), c = parseBd(v.path("close"));
+                if (dt.length() < 10 || o == null || h == null || l == null || c == null) continue;
+                java.time.LocalDate date;
+                try { date = java.time.LocalDate.parse(dt.substring(0, 10)); }
+                catch (Exception e) { continue; }
+                out.add(new OhlcBar(date, o, h, l, c, v.path("volume").asLong(0)));
+            }
+            Collections.reverse(out);                         // -> oldest-first
+        }
+        return out;
+    }
+
+    private static BigDecimal parseBd(JsonNode n) {
+        if (n == null || n.isNull() || n.isMissingNode()) return null;
+        try { return new BigDecimal(n.asText()); } catch (NumberFormatException e) { return null; }
+    }
+
     private JsonNode getQuoteJson(String symbol) {
         try {
             return client.get()

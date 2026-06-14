@@ -83,4 +83,71 @@ class YahooMarketDataAdapterTest {
         MarketData md = adapter.resolve("BRK-B");
         assertThat(md.companyName()).isEqualTo("Berkshire Hathaway B");
     }
+
+    @Test
+    void dailyOhlcHistoryReturnsBarsOldestFirst() {
+        // Yahoo returns oldest-first; adapter must NOT reverse
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
+                .withQueryParam("range", equalTo("1y"))
+                .withQueryParam("interval", equalTo("1d"))
+                .willReturn(okJson("""
+                    {"chart":{"result":[{
+                        "timestamp":[1749600000,1749686400,1749772800],
+                        "indicators":{"quote":[{
+                            "open":[10.0,10.5,11.0],
+                            "high":[11.0,11.0,11.5],
+                            "low":[9.5,10.2,10.8],
+                            "close":[10.5,10.8,11.2],
+                            "volume":[1000,2000,3000]
+                        }]}
+                    }],"error":null}}
+                    """)));
+
+        var bars = adapter.dailyOhlcHistory("AAPL", 260);
+
+        assertThat(bars).hasSize(3);
+        assertThat(bars.get(0).date()).isBefore(bars.get(2).date());
+        assertThat(bars.get(2).close()).isEqualByComparingTo("11.2");
+        assertThat(bars.get(2).high()).isEqualByComparingTo("11.5");
+        assertThat(bars.get(0).close()).isEqualByComparingTo("10.5");
+        assertThat(bars.get(0).volume()).isEqualTo(1000L);
+    }
+
+    @Test
+    void dailyOhlcHistorySkipsNullCloseEntries() {
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
+                .withQueryParam("range", equalTo("1y"))
+                .willReturn(okJson("""
+                    {"chart":{"result":[{
+                        "timestamp":[1749600000,1749686400,1749772800],
+                        "indicators":{"quote":[{
+                            "open":[10.0,null,11.0],
+                            "high":[11.0,null,11.5],
+                            "low":[9.5,null,10.8],
+                            "close":[10.5,null,11.2],
+                            "volume":[1000,null,3000]
+                        }]}
+                    }],"error":null}}
+                    """)));
+
+        var bars = adapter.dailyOhlcHistory("AAPL", 260);
+
+        assertThat(bars).hasSize(2);
+        // Verify that the correct bars survived (index 0 and 2 — the middle null bar must be gone)
+        assertThat(bars.get(0).close()).isEqualByComparingTo("10.5");
+        assertThat(bars.get(1).close()).isEqualByComparingTo("11.2");
+        // Dates must be the first and third timestamps (1749600000 = 2025-06-11, 1749772800 = 2025-06-13)
+        assertThat(bars.get(0).date()).isBefore(bars.get(1).date());
+    }
+
+    @Test
+    void dailyOhlcHistoryThrowsUnavailableOn500() {
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
+                .withQueryParam("range", equalTo("1y"))
+                .willReturn(aResponse().withStatus(500)));
+
+        assertThatThrownBy(() -> adapter.dailyOhlcHistory("AAPL", 260))
+                .isInstanceOfSatisfying(MarketDataException.class, ex ->
+                        assertThat(ex.kind()).isEqualTo(MarketDataException.Kind.UNAVAILABLE));
+    }
 }
