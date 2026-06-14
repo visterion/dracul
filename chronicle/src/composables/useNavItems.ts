@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 
 /** Must be kept in sync with the route `name`s defined in the router. */
 export type NavName =
-  | 'chronicle' | 'watchlist' | 'pattern-library'
+  | 'chronicle' | 'watchlist' | 'portfolio' | 'pattern-library'
   | 'backtest' | 'settings'
 
 export interface NavItem {
@@ -20,6 +20,7 @@ export function useNavItems() {
   return computed<NavItem[]>(() => [
     { name: 'chronicle',       label: t('app.nav.chronicle'),      icon: 'ph-scroll' },
     { name: 'watchlist',       label: t('app.nav.watchlist'),      icon: 'ph-eye' },
+    { name: 'portfolio',       label: t('app.nav.portfolio'),      icon: 'ph-vault' },
     { name: 'pattern-library', label: t('app.nav.patternLibrary'), icon: 'ph-book-open' },
     { name: 'backtest',        label: t('app.nav.backtest'),       icon: 'ph-chart-line-up' },
     { name: 'settings',        label: t('app.nav.settings'),       icon: 'ph-gear-six' },
