@@ -229,6 +229,16 @@ Discards any runtime edits and restores the agent's definition to the code defau
 
 Returns `404` if the agent name is unknown, `200` with the restored definition on success.
 
+### `GET /api/settings/agents/tools`
+
+Returns the available tool catalog (every tool any agent could be bound to),
+sorted by `toolName`. Feeds the agent-config edit UI's tool checklist.
+
+| field | type | notes |
+|---|---|---|
+| `toolName` | string | catalog tool id (e.g. `fetch_recent_merger_candidates`) |
+| `defaultDescription` | string | the tool's default description (used when a binding sets no override) |
+
 ## Settings — Data Sources
 
 ### `GET /api/settings/data-sources`

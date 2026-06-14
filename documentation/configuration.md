@@ -281,6 +281,21 @@ The following remain **code-bound** and require a redeploy to change:
 - Tool routing (which webhook path handles which tool call)
 - The agent roster itself (which `AgentDefaultProvider` beans exist)
 
+## Agent tool-fetch cache
+
+Results of the agent `/tools/fetch-*` webhooks are cached (keyed by tool + request
+params) so repeated tool calls within a run — or quick re-triggers — do not re-hit
+upstream providers (EDGAR / Yahoo / market-data).
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `DRACUL_AGENT_TOOL_FETCH_CACHE_TTL_SECONDS` (`dracul.agent.tool-fetch.cache-ttl-seconds`) | `300` | Global default TTL (seconds) for cached tool-fetch results. `0` disables caching globally. |
+
+Per-tool overrides are **code-bound** on each `ToolCatalogEntry`: a tool may set
+`cacheable=false` (never cache — for freshness-critical tools) or its own
+`cacheTtlSeconds` (overrides the global default). All existing tools default to
+`cacheable=true` at the global TTL.
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the
