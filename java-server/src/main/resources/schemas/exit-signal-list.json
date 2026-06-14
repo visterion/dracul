@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "symbol": { "type": "string" },
+          "action": { "type": "string", "enum": ["SELL", "TRIM", "HOLD"] },
+          "fired_rules": { "type": "array", "items": { "type": "string" } },
+          "gain_loss_pct": { "type": ["number", "null"] },
+          "thesis_status": { "type": "string", "enum": ["INTACT", "WEAKENING", "INVALIDATED"] },
+          "rationale": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["symbol", "action", "rationale", "confidence"]
+      }
+    }
+  },
+  "required": ["signals"]
+}
