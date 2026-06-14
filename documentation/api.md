@@ -185,6 +185,44 @@ via Vistierie and returns the updated row. `404` if the agent is unknown.
 Pause/resume is **durable** — the Dracul registrars do not re-assert `paused`
 on startup, so a paused agent stays paused across deploys.
 
+### `GET /api/settings/agents/{name}/definition`
+
+Returns the current (DB-stored) definition for a single agent.
+
+| field | type | notes |
+|---|---|---|
+| `name` | string | agent name (e.g. `strigoi-echo`) |
+| `prompt` | string | full system-prompt text |
+| `schedule` | string | cron expression |
+| `modelPurpose` | string | `routine` or `reasoning` |
+| `enabled` | boolean | whether the agent is registered with Vistierie |
+| `maxTurns` | integer | max LLM turns per run (positive, required) |
+| `maxRunSeconds` | integer | run timeout in seconds (positive, required) |
+| `tools` | array | list of `{ toolName, description }` tool bindings |
+
+Returns `404` if the agent name is unknown.
+
+### `PUT /api/settings/agents/{name}/definition`
+
+Updates the stored definition for an agent. On success, re-registers the agent with Vistierie immediately (no restart required).
+
+Editable fields: `prompt`, `schedule`, `modelPurpose`, `enabled`, `maxTurns`, `maxRunSeconds`, and the `tools` array (each entry: `toolName`, `description`).
+
+Validation:
+- `prompt` must be non-empty
+- `schedule` must be a valid cron expression
+- `modelPurpose` must be `routine` or `reasoning`
+- `maxTurns` and `maxRunSeconds` must be positive integers within acceptable ranges
+- every `toolName` in the `tools` array must exist in the `AgentToolCatalog`
+
+Returns `400` on any validation failure (with an `error` field describing the problem), `404` if the agent name is unknown, `200` with the updated definition on success.
+
+### `POST /api/settings/agents/{name}/definition/reset`
+
+Discards any runtime edits and restores the agent's definition to the code default (as declared by its `AgentDefaultProvider` bean). The DB row is overwritten and the agent is immediately re-registered with Vistierie.
+
+Returns `404` if the agent name is unknown, `200` with the restored definition on success.
+
 ## Settings — Data Sources
 
 ### `GET /api/settings/data-sources`

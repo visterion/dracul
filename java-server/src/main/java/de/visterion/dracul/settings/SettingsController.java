@@ -1,5 +1,6 @@
 package de.visterion.dracul.settings;
 
+import de.visterion.dracul.agent.AgentDefaultProvider;
 import de.visterion.dracul.i18n.LanguageChangedEvent;
 import de.visterion.dracul.vistierie.BudgetPatch;
 import de.visterion.dracul.vistierie.BudgetStatus;
@@ -16,32 +17,38 @@ import java.util.Set;
 @RequestMapping("/api/settings")
 public class SettingsController {
 
-    private static final List<String> STRIGOI_NAMES = List.of(
-            "strigoi-spin", "strigoi-insider", "strigoi-echo",
-            "strigoi-lazarus", "strigoi-index", "strigoi-merger"
-    );
-
     private static final Set<String> ALLOWED_LANGUAGES = Set.of("de", "en");
 
     private final VistierieClient client;
     private final AppSettingsRepository settings;
     private final ApplicationEventPublisher events;
     private final DataSourceHealthService dataSourceHealth;
+    private final List<AgentDefaultProvider> agentProviders;
 
     public SettingsController(VistierieClient client,
                               AppSettingsRepository settings,
                               ApplicationEventPublisher events,
-                              DataSourceHealthService dataSourceHealth) {
+                              DataSourceHealthService dataSourceHealth,
+                              List<AgentDefaultProvider> agentProviders) {
         this.client = client;
         this.settings = settings;
         this.events = events;
         this.dataSourceHealth = dataSourceHealth;
+        this.agentProviders = agentProviders;
+    }
+
+    List<String> strigoiNames() {
+        return agentProviders.stream()
+                .map(p -> p.defaultDefinition().name())
+                .filter(n -> n.startsWith("strigoi-"))
+                .sorted()
+                .toList();
     }
 
     @GetMapping("/budgets")
     public SettingsBudgetData getBudgets() {
         var tenant = client.getTenantBudget();
-        var agents = STRIGOI_NAMES.stream()
+        var agents = strigoiNames().stream()
                 .map(name -> new SettingsBudgetData.AgentBudget(name, client.getAgentBudget(name)))
                 .toList();
         return new SettingsBudgetData(tenant, agents);

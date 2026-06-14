@@ -243,6 +243,23 @@ The language setting controls the language directive appended to every agent's
 Daywalker) to re-register immediately with the updated prompt. No restart is
 required.
 
+## Runtime-editable agent definitions
+
+An agent's **prompt, schedule, model purpose (`routine`/`reasoning`), enabled flag, turn limit, run timeout, and per-tool descriptions** are stored in the `agent_definition` / `agent_tool_binding` DB tables (V10) and can be changed at runtime via:
+
+- `GET /api/settings/agents/{name}/definition` — read current definition
+- `PUT /api/settings/agents/{name}/definition` — update; re-registers with Vistierie immediately
+- `POST /api/settings/agents/{name}/definition/reset` — restore code default from the `AgentDefaultProvider` bean
+
+Code defaults are seeded from `prompts/<agent-name>.md` (prompt) and the `AgentDefaultProvider` bean (schedule, model purpose, tools) by `AgentDefinitionBootstrap` on startup using insert-if-absent. Manual edits survive redeployment.
+
+**No new configuration keys** were added for this mechanism. Webhook tokens are still read from the existing per-agent environment variables (e.g. `STRIGOI_ECHO_TOKEN`, `DRACUL_DAYWALKER_TOKEN`) — these are not editable at runtime.
+
+The following remain **code-bound** and require a redeploy to change:
+- Output schema (JSON structure the agent's completion webhook expects)
+- Tool routing (which webhook path handles which tool call)
+- The agent roster itself (which `AgentDefaultProvider` beans exist)
+
 ## Budget limits
 
 Budget enforcement is delegated to Vistierie. Set tier budgets in the
