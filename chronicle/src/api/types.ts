@@ -324,6 +324,42 @@ export interface AgentConfigRow {
   primaryProvider: string | null
 }
 
+export interface ToolBinding {
+  toolName: string
+  description: string | null
+}
+
+export interface AgentDefinition {
+  name: string
+  modelPurpose: string
+  promptText: string
+  outputSchema: unknown
+  schedule: string | null
+  maxTurns: number
+  maxRunSeconds: number
+  completionPath: string
+  eventSourcePath: string | null
+  sessionDurationSeconds: number | null
+  pollIntervalSeconds: number | null
+  enabled: boolean
+  tools: ToolBinding[]
+}
+
+export interface ToolCatalogView {
+  toolName: string
+  defaultDescription: string
+}
+
+export interface AgentDefinitionEdit {
+  prompt: string
+  schedule: string
+  modelPurpose: string
+  enabled: boolean
+  maxTurns: number
+  maxRunSeconds: number
+  tools: { toolName: string; description: string | null }[]
+}
+
 // ── Settings / Data Sources ────────────────────────────────────
 
 export interface DataSourceHealth {

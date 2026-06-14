@@ -5,6 +5,7 @@ import type {
   VerdictDecision, VerdictNote, DecisionResponse,
   CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting,
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit,
 } from './types'
 
 export interface ApiClient {
@@ -32,6 +33,10 @@ export interface ApiClient {
   setLanguage(language: string): Promise<LanguageSetting>
   getAgents(): Promise<AgentConfigRow[]>
   setAgentPaused(name: string, paused: boolean): Promise<AgentConfigRow>
+  getAgentDefinition(name: string): Promise<AgentDefinition>
+  getToolCatalog(): Promise<ToolCatalogView[]>
+  putAgentDefinition(name: string, edit: AgentDefinitionEdit): Promise<AgentDefinition>
+  resetAgentDefinition(name: string): Promise<AgentDefinition>
   getDataSources(refresh?: boolean): Promise<DataSourceHealth[]>
   getMe(): Promise<Me>
 }
