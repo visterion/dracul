@@ -30,4 +30,9 @@ public class AgentToolCatalog {
     public boolean contains(String toolName) {
         return byName.containsKey(toolName);
     }
+
+    /** Every registered tool entry (for the catalog REST endpoint). */
+    public List<ToolCatalogEntry> all() {
+        return List.copyOf(byName.values());
+    }
 }

@@ -8,5 +8,13 @@ public record ToolCatalogEntry(
         String defaultDescription,
         JsonNode inputSchema,
         String callbackPath,
-        int timeoutSeconds
-) {}
+        int timeoutSeconds,
+        boolean cacheable,
+        Integer cacheTtlSeconds
+) {
+    /** Convenience: cacheable at the global default TTL. Keeps existing call sites unchanged. */
+    public ToolCatalogEntry(String toolName, String defaultDescription,
+                            JsonNode inputSchema, String callbackPath, int timeoutSeconds) {
+        this(toolName, defaultDescription, inputSchema, callbackPath, timeoutSeconds, true, null);
+    }
+}
