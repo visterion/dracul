@@ -1,5 +1,7 @@
 package de.visterion.dracul.gropar;
 
+import de.visterion.dracul.agent.AgentToolCatalog;
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.MarketDataPort;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.notify.TelegramNotifier;
@@ -46,10 +48,12 @@ class GroparWebhookControllerTest {
         var indicatorService = new ExitIndicatorService(
                 new ExitIndicatorService.Params(22, new BigDecimal("3.0"), 50, 200, 250));
 
+        var cache = new ToolFetchCache(new AgentToolCatalog(java.util.List.of()), 0);
+
         controller = new GroparWebhookController(
                 "tok",
                 watchlistRepo, verdictRepo, marketData, exitSignalRepo, telegram,
-                indicatorService,
+                indicatorService, cache,
                 260,  // historyDays
                 40.0, // profitTargetPct
                 15.0  // stopLossPct
