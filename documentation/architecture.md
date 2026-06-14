@@ -208,6 +208,18 @@ directly without triggering any market-data call.
 - index `idx_pattern_evidence_pattern` on `pattern_id`
 - Surfaced via `GET /api/patterns/{id}/cases` (cases ordered by `occurred_at` DESC); seeded with evidence for the 3 pending patterns.
 
+**Agent definition tables (V10):**
+
+Two new tables under the `dracul` schema hold runtime-editable agent definitions:
+
+- `agent_definition` — one row per agent: `name` (TEXT PK), `prompt` (TEXT NOT NULL), `schedule` (TEXT), `model_purpose` (TEXT), `enabled` (BOOLEAN), `max_turns` (INTEGER, nullable), `max_run_seconds` (INTEGER, nullable), `updated_at` (TIMESTAMPTZ)
+- `agent_tool_binding` — one row per tool binding: `agent_name` (TEXT NOT NULL, FK → `agent_definition(name)` ON DELETE CASCADE), `tool_name` (TEXT NOT NULL), `description` (TEXT), PK `(agent_name, tool_name)`
+
+**Agent bootstrap and registration flow:**
+
+1. `AgentDefinitionBootstrap` (runs at startup, `@EventListener(ApplicationReadyEvent)`) iterates all `AgentDefaultProvider` beans and upserts each default into `agent_definition` + `agent_tool_binding` using insert-if-absent semantics. Rows that already exist (from a previous deploy or runtime edit via the REST API) are not overwritten, so manual customisations survive redeploys.
+2. `GenericAgentRegistrar` reads all agent definitions from the DB, builds a `CreateAgentRequest` for each, prepends `dracul.public-url` to all webhook callback paths, appends the current language directive to the system prompt, and registers or updates the agent with Vistierie. It re-runs whenever an `AgentDefinitionChangedEvent` or `LanguageChangedEvent` is published (e.g. after a `PUT /api/settings/agents/{name}/definition` or `PUT /api/settings/language`), making definition changes effective immediately without a restart.
+
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness. Schema changes require a Flyway migration and
 an update to this document.

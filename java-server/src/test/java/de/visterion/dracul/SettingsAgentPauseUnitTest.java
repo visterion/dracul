@@ -21,7 +21,7 @@ class SettingsAgentPauseUnitTest {
 
     private final VistierieClient client = mock(VistierieClient.class);
     private final SettingsController controller =
-            new SettingsController(client, mock(AppSettingsRepository.class), null, mock(DataSourceHealthService.class));
+            new SettingsController(client, mock(AppSettingsRepository.class), null, mock(DataSourceHealthService.class), List.of());
 
     @Test
     void patchPausesAgentAndReturnsUpdatedRow() {
