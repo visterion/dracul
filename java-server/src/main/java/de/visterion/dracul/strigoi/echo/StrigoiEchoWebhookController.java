@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.yahoo.YahooEarningsAdapter;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -25,14 +26,16 @@ public class StrigoiEchoWebhookController extends HuntController {
             @Value("${dracul.strigoi.echo.webhook-token}") String token,
             YahooEarningsAdapter yahoo,
             EchoPeadScreener screener,
-            PreyRepository preyRepo) {
-        super(token, preyRepo);
+            PreyRepository preyRepo,
+            ToolFetchCache cache) {
+        super(token, preyRepo, cache);
         this.yahoo = yahoo;
         this.screener = screener;
     }
 
     @Override protected String agentName() { return "strigoi-echo"; }
     @Override protected String defaultAnomalyType() { return "PEAD"; }
+    @Override protected String toolName() { return "fetch_recent_pead_candidates"; }
 
     @Override
     protected List<?> hunt(Map<String, Object> body) {

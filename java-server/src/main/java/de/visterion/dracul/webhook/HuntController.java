@@ -1,5 +1,6 @@
 package de.visterion.dracul.webhook;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.prey.PreyRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,10 +23,12 @@ public abstract class HuntController {
     private final BearerTokenVerifier verifier;
     private final PreyRepository preyRepo;
     private final PreyMapper preyMapper = new PreyMapper();
+    private final ToolFetchCache cache;
 
-    protected HuntController(String token, PreyRepository preyRepo) {
+    protected HuntController(String token, PreyRepository preyRepo, ToolFetchCache cache) {
         this.verifier = new BearerTokenVerifier(token);
         this.preyRepo = preyRepo;
+        this.cache = cache;
     }
 
     protected abstract String agentName();
@@ -36,6 +39,9 @@ public abstract class HuntController {
 
     /** Key used in the fetch response envelope, e.g. "candidates" or "clusters". */
     protected String fetchOutputKey() { return "candidates"; }
+
+    /** The fetch tool name (matches the *Defaults FETCH constant), used as the cache key. */
+    protected abstract String toolName();
 
     /** Clamp lookback_days from the tool input. */
     protected int lookbackDays(Map<String, Object> body, int def, int min, int max) {
@@ -49,7 +55,13 @@ public abstract class HuntController {
     /** Subclasses call this from their own @PostMapping("/tools/...") method. */
     protected ResponseEntity<Map<String, Object>> handleFetch(String auth, Map<String, Object> body) {
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
-        return ResponseEntity.ok(Map.of("output", Map.of(fetchOutputKey(), hunt(body))));
+        String paramsKey = "default";
+        if (body != null && body.get("input") instanceof Map<?, ?> in && in.get("lookback_days") != null) {
+            paramsKey = String.valueOf(in.get("lookback_days"));
+        }
+        Map<String, Object> out = cache.get(toolName(), paramsKey,
+                () -> Map.of("output", Map.of(fetchOutputKey(), hunt(body))));
+        return ResponseEntity.ok(out);
     }
 
     @PostMapping("/complete")

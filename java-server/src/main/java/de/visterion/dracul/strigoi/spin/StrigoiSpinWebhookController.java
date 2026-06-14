@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.spin;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.edgar.EdgarSpinoffAdapter;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -27,8 +28,9 @@ public class StrigoiSpinWebhookController extends HuntController {
             EdgarSpinoffAdapter edgar,
             SpinoffScreener screener,
             PreyRepository preyRepo,
+            ToolFetchCache cache,
             @Value("${dracul.strigoi.spin.lookback-days:60}") int defaultLookback) {
-        super(token, preyRepo);
+        super(token, preyRepo, cache);
         this.edgar = edgar;
         this.screener = screener;
         this.defaultLookback = defaultLookback;
@@ -38,6 +40,7 @@ public class StrigoiSpinWebhookController extends HuntController {
     @Override protected String defaultAnomalyType() { return "SPINOFF"; }
     @Override protected String defaultHorizon() { return "6m"; }
     @Override protected boolean skipBlankSymbol() { return true; }
+    @Override protected String toolName() { return "fetch_recent_spinoff_candidates"; }
 
     @Override
     protected List<?> hunt(Map<String, Object> body) {

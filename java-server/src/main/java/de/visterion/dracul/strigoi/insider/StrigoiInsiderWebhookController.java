@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.insider;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -25,8 +26,9 @@ public class StrigoiInsiderWebhookController extends HuntController {
             @Value("${dracul.strigoi.insider.webhook-token}") String token,
             EdgarFormFourAdapter edgar,
             InsiderClusterScreener screener,
-            PreyRepository preyRepo) {
-        super(token, preyRepo);
+            PreyRepository preyRepo,
+            ToolFetchCache cache) {
+        super(token, preyRepo, cache);
         this.edgar = edgar;
         this.screener = screener;
     }
@@ -34,6 +36,7 @@ public class StrigoiInsiderWebhookController extends HuntController {
     @Override protected String agentName() { return "strigoi-insider"; }
     @Override protected String defaultAnomalyType() { return "INSIDER_CLUSTER"; }
     @Override protected String fetchOutputKey() { return "clusters"; }
+    @Override protected String toolName() { return "fetch_recent_clusters"; }
 
     @Override
     protected List<?> hunt(Map<String, Object> body) {
