@@ -28,6 +28,8 @@ const router = createRouter({
       name: 'watchlist',
       component: () => import('../views/WatchlistView.vue'),
     },
+    { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
+    { path: '/exit-signal/:id', name: 'exit-signal-detail', component: () => import('../views/ExitSignalDetailView.vue') },
     {
       path: '/patterns',
       name: 'pattern-library',
