@@ -89,7 +89,7 @@ backend stores only the raw inputs.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/exit-signals` | Returns latest exit signals for HELD watchlist positions; each entry includes `symbol`, `verdict` (SELL / TRIM / HOLD), `rationale`, `confidence`, and `createdAt` |
+| GET | `/api/exit-signals` | Returns the latest exit signal per HELD watchlist position; each entry includes `id`, `watchlistItemId`, `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
 
 ## Daywalker Alerts
 
