@@ -127,6 +127,14 @@ Groparul is the first agent built end-to-end via the **generic add-an-agent reci
 `AgentDefaultProvider` (`GroparDefaults` bean) for DB-driven registration and a bespoke
 `GroparWebhookController` (bearer-token auth, `@ConditionalOnProperty`). No custom registrar.
 
+**Position guard.** Groparul only does useful work over held positions, so Dracul auto-pauses
+it at Vistierie whenever the held-position count is zero and unpauses it as soon as a held
+position exists — Vistierie skips a paused agent's cron, so empty runs never fire. The guard is
+driven by watchlist changes (`WatchlistController` publishes a `WatchlistChangedEvent` after every
+mutation) and reconciled once at startup; see `GroparPauseReconciler`. Groparul's pause is therefore
+**system-managed**: turn the agent on or off via its `dracul.gropar.enabled` flag, not the manual
+pause toggle (which the guard would overwrite on the next watchlist change).
+
 ## Voievod (weekly reviewer)
 
 Not a hunter — the referee after the battle. The Voievod runs every
