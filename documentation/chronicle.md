@@ -189,7 +189,9 @@ row, info/other plain rows.
 **View 4 — Watchlist** (`/watchlist`): Fully implemented and wired to the real API, full CRUD
 (`POST`, `PATCH`, `DELETE /api/watchlist/{id}`) plus the position PATCH
 (`PATCH /api/watchlist/{id}/position`) wired. Master/detail layout (`.watch-grid`,
-420px list pane / fluid detail pane). Left pane: search input (filters ticker/company),
+420px list pane / fluid detail pane). Left pane: search input (filters ticker/company;
+when the filter is empty and the query is a ticker not already on the list, an
+"‚{symbol}' hinzufügen" CTA opens the add dialog prefilled with that symbol),
 tabs (Alle / Positionen gehalten / Urteile verfolgt / Aktuelle Alarme — counts derived
 from real items: positions = `entryPrice != null`, tracked = `tag === 'TRACKING'`,
 alerts = `alerts.length > 0`), add-to-watchlist dialog, and `.watch-row` rows showing
