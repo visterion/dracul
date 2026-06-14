@@ -20,14 +20,13 @@ test.describe('Watchlist Compare (/watchlist)', () => {
 
   test('shared ticker lands in the BOTH bucket', async ({ page }) => {
     await page.getByTestId('wl-mode-compare').click()
-    await expect(page.getByTestId('compare-both-NVDA')).toBeVisible()
+    await expect(page.getByTestId('compare-both-MELI')).toBeVisible()
   })
 
   test('my-only ticker lands in the ONLY-ME bucket', async ({ page }) => {
     await page.getByTestId('wl-mode-compare').click()
-    await expect(page.getByTestId('compare-mine-AVGO')).toBeVisible()
-    // NVDA is shared, so it must NOT appear as mine-only
-    await expect(page.getByTestId('compare-mine-NVDA')).toHaveCount(0)
+    await expect(page.getByTestId('compare-mine-CRM')).toBeVisible()
+    await expect(page.getByTestId('compare-mine-MELI')).toHaveCount(0)
   })
 
   test('their-only ticker lands in the ONLY-THEIRS bucket', async ({ page }) => {
