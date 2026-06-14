@@ -53,7 +53,7 @@ dracul:
     schedule: ${DRACUL_VOIEVOD_SCHEDULE:0 0 8 * * 1-5}
   gropar:
     enabled: ${DRACUL_GROPAR_ENABLED:false}
-    webhook-token: ${DRACUL_GROPAR_WEBHOOK_TOKEN:}
+    webhook-token: ${DRACUL_GROPAR_WEBHOOK_TOKEN:dev-token-change-me}
     schedule: ${DRACUL_GROPAR_SCHEDULE:0 0 22 * * 1-5}
     history-days: ${DRACUL_GROPAR_HISTORY_DAYS:260}
     atr-period: ${DRACUL_GROPAR_ATR_PERIOD:22}
