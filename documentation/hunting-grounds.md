@@ -39,6 +39,7 @@ never see vendor-specific schemas.
 | strigoi-index | Wikipedia S&P 500 (main constituents table, Date added column) |
 | strigoi-merger | edgar-adapter (`EDGAR EFTS forms=DEFM14A,SC TO-T (deal filings, metadata-only)`) |
 | daywalker | prices-adapter (5-min polling) + news-adapter + edgar-adapter (Form-4) |
+| gropar | prices-adapter (daily OHLC history for indicator calculation) |
 
 ## Cost considerations
 
@@ -77,6 +78,12 @@ The primary provider behind the fallback decorator. Requires a Twelve Data API k
 2. `GET /time_series?interval=1day&outputsize=30` — retrieves 30 daily closes.
 
 Returns `MarketData(companyName, currentPrice, dayChangePercent, priceHistory30d)`.
+
+**Daily OHLC history (gropar):** Gropar requests longer OHLC series for exit-indicator
+calculation via `GET /time_series?interval=1day&outputsize=N` where N is controlled by
+`DRACUL_GROPAR_HISTORY_DAYS` (default 260, ≈ 1 trading year). The Yahoo fallback for
+this path uses `range=1y&interval=1d`. History fetches are per-position and run during
+the nightly gropar agent run, not on the read path.
 
 **`quotes(symbols)`** — batch price refresh for the watchlist on-read path:
 

@@ -51,6 +51,17 @@ dracul:
     enabled: ${DRACUL_VOIEVOD_ENABLED:false}
     webhook-token: ${DRACUL_VOIEVOD_TOKEN:dev-token-change-me}
     schedule: ${DRACUL_VOIEVOD_SCHEDULE:0 0 8 * * 1-5}
+  gropar:
+    enabled: ${DRACUL_GROPAR_ENABLED:false}
+    webhook-token: ${DRACUL_GROPAR_WEBHOOK_TOKEN:}
+    schedule: ${DRACUL_GROPAR_SCHEDULE:0 0 22 * * 1-5}
+    history-days: ${DRACUL_GROPAR_HISTORY_DAYS:260}
+    atr-period: ${DRACUL_GROPAR_ATR_PERIOD:22}
+    atr-multiple: ${DRACUL_GROPAR_ATR_MULTIPLE:3.0}
+    ma-fast: ${DRACUL_GROPAR_MA_FAST:50}
+    ma-slow: ${DRACUL_GROPAR_MA_SLOW:200}
+    profit-target-pct: ${DRACUL_GROPAR_PROFIT_TARGET_PCT:40}
+    stop-loss-pct: ${DRACUL_GROPAR_STOP_LOSS_PCT:15}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
