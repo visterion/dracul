@@ -339,10 +339,17 @@ with inline save buttons.
 #### Agent config
 
 Lists every Dracul agent with its runtime config (tier, schedule, next run,
-today's budget usage, provider) **read-only** — these come from code
-(config-as-code) and are not edited here. The one available action is
-**pause / resume** per agent (durable across deploys). Budgets are edited in
-the separate Budgets section; multi-user agent ownership is Phase 2.
+today's budget usage, provider). Each row also exposes an **Edit** action that
+opens a modal to edit the agent's prompt and its tool selection (with an
+optional per-tool description override). Under an **Advanced** disclosure the
+modal edits model purpose, schedule, max turns and max run seconds, plus an
+**enabled** toggle and a **Reset to default** action (which persists
+immediately). Note that `enabled` (whether the agent is registered with
+Vistierie at all) is distinct from the row's **pause / resume** (which only
+skips scheduled runs while keeping the registration). The remaining row config
+(tier, next run, today's budget usage, provider) stays read-only — it comes
+from code (config-as-code). Budgets are edited in the separate Budgets section;
+multi-user agent ownership is Phase 2.
 
 #### Data sources
 

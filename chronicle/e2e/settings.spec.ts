@@ -103,4 +103,36 @@ test.describe('Settings View (/settings)', () => {
     expect(roleTexts.some((tx) => tx.includes('Index-Aufnahme'))).toBe(true)
     expect(roleTexts.every((tx) => !tx.includes('INDEX'))).toBe(true)
   })
+
+  test('opens the agent edit dialog with prompt + tools populated and saves', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.locator('[data-testid="agent-edit-strigoi-spin"]').click()
+    const dialog = page.locator('[data-testid="agent-edit-dialog"]')
+    await expect(dialog).toBeVisible()
+    const prompt = dialog.locator('textarea').first()
+    await expect(prompt).not.toHaveValue('')
+    await prompt.fill('New prompt for spin')
+    await dialog.locator('[data-testid="tool-toggle-fetch_recent_clusters"]').click()
+    await dialog.locator('[data-testid="agent-edit-save"]').click()
+    await expect(dialog).toBeHidden()
+  })
+
+  test('advanced section reveals schedule', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.locator('[data-testid="agent-edit-strigoi-spin"]').click()
+    const dialog = page.locator('[data-testid="agent-edit-dialog"]')
+    await dialog.locator('[data-testid="schema-form-advanced"]').click()
+    await expect(dialog.locator('#sf-schedule')).toBeVisible()
+  })
+
+  test('reset repopulates the form to the default prompt', async ({ page }) => {
+    page.on('dialog', d => d.accept())
+    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.locator('[data-testid="agent-edit-strigoi-spin"]').click()
+    const dialog = page.locator('[data-testid="agent-edit-dialog"]')
+    const prompt = dialog.locator('textarea').first()
+    await prompt.fill('temporary text')
+    await dialog.locator('[data-testid="agent-edit-reset"]').click()
+    await expect(prompt).not.toHaveValue('temporary text')
+  })
 })
