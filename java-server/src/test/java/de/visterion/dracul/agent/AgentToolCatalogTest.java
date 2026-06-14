@@ -40,4 +40,24 @@ class AgentToolCatalogTest {
                         providerWith(entry("dup"))
                 )));
     }
+
+    @Test
+    void allReturnsEveryEntryAndDefaultsCacheableTrue() {
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        var legacy = new ToolCatalogEntry("t_legacy", "d", json.createObjectNode(), "/p", 30);
+        var explicit = new ToolCatalogEntry("t_explicit", "d", json.createObjectNode(), "/p", 30, false, 60);
+        AgentDefaultProvider stub = new AgentDefaultProvider() {
+            @Override public AgentDefinition defaultDefinition() { return null; }
+            @Override public java.util.List<ToolCatalogEntry> catalogEntries() {
+                return java.util.List.of(legacy, explicit);
+            }
+        };
+        var catalog = new AgentToolCatalog(java.util.List.of(stub));
+        assertThat(catalog.all()).extracting(ToolCatalogEntry::toolName)
+                .containsExactlyInAnyOrder("t_legacy", "t_explicit");
+        assertThat(catalog.find("t_legacy").orElseThrow().cacheable()).isTrue();
+        assertThat(catalog.find("t_legacy").orElseThrow().cacheTtlSeconds()).isNull();
+        assertThat(catalog.find("t_explicit").orElseThrow().cacheable()).isFalse();
+        assertThat(catalog.find("t_explicit").orElseThrow().cacheTtlSeconds()).isEqualTo(60);
+    }
 }
