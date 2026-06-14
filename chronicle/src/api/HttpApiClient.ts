@@ -5,6 +5,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -201,6 +202,40 @@ export class HttpApiClient implements ApiClient {
     )
     if (!res.ok) throw new Error(`setAgentPaused failed: ${res.status}`)
     return res.json() as Promise<AgentConfigRow>
+  }
+
+  async getAgentDefinition(name: string): Promise<AgentDefinition> {
+    const res = await fetch(`${this.baseUrl}/api/settings/agents/${encodeURIComponent(name)}/definition`)
+    if (!res.ok) throw new Error(`getAgentDefinition failed: ${res.status}`)
+    return res.json() as Promise<AgentDefinition>
+  }
+
+  async getToolCatalog(): Promise<ToolCatalogView[]> {
+    const res = await fetch(`${this.baseUrl}/api/settings/agents/tools`)
+    if (!res.ok) throw new Error(`getToolCatalog failed: ${res.status}`)
+    return res.json() as Promise<ToolCatalogView[]>
+  }
+
+  async putAgentDefinition(name: string, edit: AgentDefinitionEdit): Promise<AgentDefinition> {
+    const res = await fetch(
+      `${this.baseUrl}/api/settings/agents/${encodeURIComponent(name)}/definition`,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(edit) },
+    )
+    if (!res.ok) {
+      let msg = `putAgentDefinition failed: ${res.status}`
+      try { const b = await res.json(); if (b?.error) msg = b.error as string } catch { /* ignore */ }
+      throw new Error(msg)
+    }
+    return res.json() as Promise<AgentDefinition>
+  }
+
+  async resetAgentDefinition(name: string): Promise<AgentDefinition> {
+    const res = await fetch(
+      `${this.baseUrl}/api/settings/agents/${encodeURIComponent(name)}/definition/reset`,
+      { method: 'POST' },
+    )
+    if (!res.ok) throw new Error(`resetAgentDefinition failed: ${res.status}`)
+    return res.json() as Promise<AgentDefinition>
   }
 
   async getDataSources(refresh = false): Promise<DataSourceHealth[]> {

@@ -5,6 +5,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -251,6 +252,65 @@ export class MockApiClient implements ApiClient {
     a.paused = paused
     a.state = paused ? 'paused' : (a.state === 'paused' ? 'resting' : a.state)
     return { ...a }
+  }
+
+  private agentDefs = new Map<string, AgentDefinition>()
+
+  private toolCatalog: ToolCatalogView[] = [
+    { toolName: 'fetch_recent_spinoff_candidates', defaultDescription: 'Recent SEC spin-off filings' },
+    { toolName: 'fetch_recent_clusters', defaultDescription: 'Recent insider buy clusters' },
+    { toolName: 'fetch_recent_pead_candidates', defaultDescription: 'Recent post-earnings drift candidates' },
+    { toolName: 'fetch_quality_at_low_candidates', defaultDescription: 'Quality names at 52-week lows' },
+    { toolName: 'fetch_recent_index_additions', defaultDescription: 'Recent index-inclusion additions' },
+    { toolName: 'fetch_recent_merger_candidates', defaultDescription: 'Recent merger-arbitrage filings' },
+  ]
+
+  private mockToolFor(name: string): string {
+    const m: Record<string, string> = {
+      'strigoi-spin': 'fetch_recent_spinoff_candidates',
+      'strigoi-insider': 'fetch_recent_clusters',
+      'strigoi-echo': 'fetch_recent_pead_candidates',
+      'strigoi-lazarus': 'fetch_quality_at_low_candidates',
+      'strigoi-index': 'fetch_recent_index_additions',
+      'strigoi-merger': 'fetch_recent_merger_candidates',
+    }
+    return m[name] ?? 'fetch_recent_spinoff_candidates'
+  }
+
+  private defaultDef(name: string): AgentDefinition {
+    return {
+      name, modelPurpose: 'reasoning',
+      promptText: `You are ${name}. Hunt your pattern and report candidates.`,
+      outputSchema: {}, schedule: '0 0 22 * * 1-5', maxTurns: 25, maxRunSeconds: 1800,
+      completionPath: `/api/${name}/complete`, eventSourcePath: null,
+      sessionDurationSeconds: null, pollIntervalSeconds: null, enabled: true,
+      tools: [{ toolName: this.mockToolFor(name), description: null }],
+    }
+  }
+
+  async getAgentDefinition(name: string): Promise<AgentDefinition> {
+    return { ...(this.agentDefs.get(name) ?? this.defaultDef(name)) }
+  }
+
+  async getToolCatalog(): Promise<ToolCatalogView[]> {
+    return this.toolCatalog.map(t => ({ ...t }))
+  }
+
+  async putAgentDefinition(name: string, edit: AgentDefinitionEdit): Promise<AgentDefinition> {
+    const def: AgentDefinition = {
+      ...(this.agentDefs.get(name) ?? this.defaultDef(name)),
+      promptText: edit.prompt, modelPurpose: edit.modelPurpose, schedule: edit.schedule,
+      maxTurns: edit.maxTurns, maxRunSeconds: edit.maxRunSeconds, enabled: edit.enabled,
+      tools: edit.tools.map(t => ({ toolName: t.toolName, description: t.description })),
+    }
+    this.agentDefs.set(name, def)
+    return { ...def }
+  }
+
+  async resetAgentDefinition(name: string): Promise<AgentDefinition> {
+    const def = this.defaultDef(name)
+    this.agentDefs.set(name, def)
+    return { ...def }
   }
 
   async getMe(): Promise<Me> {
