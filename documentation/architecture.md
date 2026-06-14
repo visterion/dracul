@@ -212,8 +212,8 @@ directly without triggering any market-data call.
 
 Two new tables under the `dracul` schema hold runtime-editable agent definitions:
 
-- `agent_definition` — one row per agent: `name` (TEXT PK), `prompt` (TEXT NOT NULL), `schedule` (TEXT), `model_purpose` (TEXT), `enabled` (BOOLEAN), `max_turns` (INTEGER, nullable), `max_run_seconds` (INTEGER, nullable), `updated_at` (TIMESTAMPTZ)
-- `agent_tool_binding` — one row per tool binding: `agent_name` (TEXT NOT NULL, FK → `agent_definition(name)` ON DELETE CASCADE), `tool_name` (TEXT NOT NULL), `description` (TEXT), PK `(agent_name, tool_name)`
+- `agent_definition` — one row per agent: `name` (TEXT PK), `model_purpose` (TEXT NOT NULL), `prompt_text` (TEXT NOT NULL), `output_schema` (JSONB NOT NULL), `schedule` (TEXT), `max_turns` (INT NOT NULL), `max_run_seconds` (INT NOT NULL), `completion_path` (TEXT NOT NULL), `event_source_path` (TEXT), `session_duration_seconds` (INT), `poll_interval_seconds` (INT), `enabled` (BOOLEAN NOT NULL DEFAULT TRUE), `updated_at` (TIMESTAMPTZ NOT NULL DEFAULT now())
+- `agent_tool_binding` — one row per tool binding: `agent_name` (TEXT NOT NULL, FK → `agent_definition(name)` ON DELETE CASCADE), `tool_name` (TEXT NOT NULL), `description` (TEXT), `default_params` (JSONB), `ordinal` (INT NOT NULL DEFAULT 0), PK `(agent_name, tool_name)`; index `idx_agent_tool_binding_agent` on `agent_name`
 
 **Agent bootstrap and registration flow:**
 
