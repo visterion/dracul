@@ -184,6 +184,11 @@
                 :data-testid="`agent-pause-${row.name}`"
                 @click="togglePause(row)"
               >{{ row.paused ? t('settings.agentConfig.resume') : t('settings.agentConfig.pause') }}</button>
+              <button
+                class="btn btn-secondary agent-row__edit"
+                :data-testid="`agent-edit-${row.name}`"
+                @click="openEdit(row.name)"
+              >{{ t('settings.agentConfig.edit.open') }}</button>
             </div>
           </div>
 
@@ -191,6 +196,10 @@
             <div class="em-icon"><BatGlyph :size="28" :dim="false" /></div>
             <div class="em-text">{{ t('settings.agentConfig.empty') }}</div>
           </div>
+
+          <AgentEditDialog
+            v-model="editOpen" :agent-name="editAgent" @saved="loadAgents"
+          />
         </template>
 
         <!-- Data sources -->
@@ -258,6 +267,7 @@ import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import ProviderCard from '../components/common/ProviderCard.vue'
+import AgentEditDialog from '../components/settings/AgentEditDialog.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
 
@@ -394,6 +404,13 @@ const agentData = ref<AgentConfigRow[] | null>(null)
 const agentsLoading = ref(false)
 const agentError = ref<string | null>(null)
 const pausing = ref<string | null>(null)
+const editOpen = ref(false)
+const editAgent = ref('')
+
+function openEdit(name: string) {
+  editAgent.value = name
+  editOpen.value = true
+}
 
 async function loadAgents() {
   agentsLoading.value = true
