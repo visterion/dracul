@@ -390,6 +390,8 @@ export default {
   watchlist: {
     search: {
       placeholder: 'Ticker oder Unternehmen suchen …',
+      notFound: "‚{symbol}' ist nicht in deiner Watchlist.",
+      addCta: "‚{symbol}' hinzufügen",
     },
     filter: {
       all: 'Alle ({n})',
