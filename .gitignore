@@ -20,3 +20,5 @@ java-server/src/main/resources/static/
 .playwright-mcp/
 /PLAN.md
 /*-preview.png
+# Added by code-review-graph
+.code-review-graph/
