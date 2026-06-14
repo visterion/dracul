@@ -1,5 +1,6 @@
 package de.visterion.dracul.agent;
 
+import de.visterion.dracul.i18n.LanguageChangedEvent;
 import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.vistierie.*;
 import org.junit.jupiter.api.Test;
@@ -89,6 +90,33 @@ class GenericAgentRegistrarTest {
 
         verify(client).updateAgent(eq("strigoi-echo"), any(UpdateAgentRequest.class));
         verify(client, never()).registerAgent(any());
+    }
+
+    @Test
+    void languageChangedEventReRegistersAllEnabledAgents() {
+        var client = mock(VistierieClient.class);
+        when(client.getAgent("strigoi-echo")).thenReturn(Optional.empty());
+
+        newRegistrar(client).onLanguageChanged(new LanguageChangedEvent("de"));
+
+        verify(client).registerAgent(any(CreateAgentRequest.class));
+    }
+
+    @Test
+    void agentDefinitionChangedEventReRegistersSingleAgent() {
+        var client = mock(VistierieClient.class);
+        when(client.getAgent("strigoi-echo")).thenReturn(Optional.empty());
+        when(client.getAgent("ghost")).thenReturn(Optional.empty());
+
+        var registrar = newRegistrar(client);
+
+        // known agent → should register
+        registrar.onChanged(new AgentDefinitionChangedEvent("strigoi-echo"));
+        verify(client, times(1)).registerAgent(any(CreateAgentRequest.class));
+
+        // unknown agent (store.find returns empty) → must NOT call registerAgent again
+        registrar.onChanged(new AgentDefinitionChangedEvent("ghost"));
+        verify(client, times(1)).registerAgent(any(CreateAgentRequest.class));
     }
 
     @Test
