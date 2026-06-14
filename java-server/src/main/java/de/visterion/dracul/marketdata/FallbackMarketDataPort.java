@@ -33,6 +33,16 @@ public class FallbackMarketDataPort implements MarketDataPort {
     }
 
     @Override
+    public java.util.List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+        try {
+            return primary.dailyOhlcHistory(symbol, days);
+        } catch (RuntimeException e) {
+            log.warn("Primary OHLC history failed for {} ({}); falling back", symbol, e.toString());
+            return fallback.dailyOhlcHistory(symbol, days);
+        }
+    }
+
+    @Override
     public Map<String, Quote> quotes(Collection<String> symbols) {
         Map<String, Quote> result = new LinkedHashMap<>();
         try {
