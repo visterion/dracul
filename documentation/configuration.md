@@ -223,6 +223,27 @@ Voievod reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared
 price adapter (graceful on failure). The `dracul.voievod.*` properties correspond
 to these env vars via Spring's relaxed-binding rules.
 
+## Gropar (exit-timing agent)
+
+Disabled by default (`enabled=false`). Enable by setting `DRACUL_GROPAR_ENABLED=true` and providing a `DRACUL_GROPAR_WEBHOOK_TOKEN`.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `DRACUL_GROPAR_ENABLED` | `false` | Register the gropar agent + activate the webhook controller (`@ConditionalOnProperty`). |
+| `DRACUL_GROPAR_WEBHOOK_TOKEN` | _(blank)_ | Bearer token shared with Vistierie for the tool + completion webhooks. **Required when enabled; set in production.** |
+| `DRACUL_GROPAR_SCHEDULE` | `0 0 22 * * 1-5` | Spring cron (sec min hour dom month dow) for the daily exit-signal run. Default: 22:00 UTC on weekdays (after US close). |
+| `DRACUL_GROPAR_HISTORY_DAYS` | `260` | Days of daily OHLC history fetched per position for indicator calculation (≈ 1 trading year). |
+| `DRACUL_GROPAR_ATR_PERIOD` | `22` | ATR look-back period for the Chandelier Exit stop (trading days). |
+| `DRACUL_GROPAR_ATR_MULTIPLE` | `3.0` | ATR multiple for the Chandelier Exit stop level. |
+| `DRACUL_GROPAR_MA_FAST` | `50` | Fast simple moving-average period (days) for the MA-cross indicator. |
+| `DRACUL_GROPAR_MA_SLOW` | `200` | Slow simple moving-average period (days) for the MA-cross indicator. |
+| `DRACUL_GROPAR_PROFIT_TARGET_PCT` | `40` | Unrealised-gain threshold (%) above which the gain indicator fires. |
+| `DRACUL_GROPAR_STOP_LOSS_PCT` | `15` | Unrealised-loss threshold (%) below which the loss indicator fires. |
+
+All exit-rule thresholds (`atr-multiple`, `ma-fast`, `ma-slow`, `profit-target-pct`, `stop-loss-pct`, `history-days`) are operator-tunable via env var without a code change.
+
+Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
+
 ## Wikipedia
 
 | Env var | Default | Purpose |

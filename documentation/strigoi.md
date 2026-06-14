@@ -101,6 +101,32 @@ On startup `AgentDefinitionBootstrap` iterates all `AgentDefaultProvider` beans 
 
 Add one `@ConditionalOnProperty` guard (e.g. `dracul.strigoi.<name>.enabled`) and one webhook-token property (e.g. `dracul.strigoi.<name>.webhook-token`). Document both in `documentation/configuration.md`. No new `dracul.agents.*` namespace — each agent owns its own property prefix.
 
+## Groparul (exit-timing agent)
+
+**Implemented 2026-06-14.** Dracul's exit-timing agent. Groparul ("the gravedigger")
+monitors HELD watchlist positions daily and advises when to exit — SELL, TRIM, or HOLD.
+It is advisory only: it never executes trades.
+
+Groparul runs once per day after the US close (default cron: `0 0 22 * * 1-5`, UTC).
+On each run:
+
+1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls all HELD watchlist items
+   with their entry price and share count.
+2. `ExitIndicatorService` computes technical indicators deterministically for each position:
+   - **ATR Chandelier Stop** — 22-period ATR × 3.0 multiple (Chandelier Exit)
+   - **MA Cross** — 50-period vs 200-period simple moving average
+   - **52-week proximity** — distance to 52-week low/high
+   - **Gain/loss thresholds** — unrealised gain ≥ 40% or unrealised loss ≥ 15%
+   - **Time stop** — based on position age
+3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
+   `verdict` (SELL / TRIM / HOLD), `rationale`, and `confidence`.
+4. `POST /api/gropar/complete` — completion webhook persists signals to `dracul.exit_signals` (V11).
+5. Results are served via `GET /api/exit-signals`. A Telegram push fires for SELL/TRIM signals.
+
+Groparul is the first agent built end-to-end via the **generic add-an-agent recipe**: it uses
+`AgentDefaultProvider` (`GroparDefaults` bean) for DB-driven registration and a bespoke
+`GroparWebhookController` (bearer-token auth, `@ConditionalOnProperty`). No custom registrar.
+
 ## Voievod (weekly reviewer)
 
 Not a hunter — the referee after the battle. The Voievod runs every

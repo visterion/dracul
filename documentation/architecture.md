@@ -208,6 +208,11 @@ directly without triggering any market-data call.
 - index `idx_pattern_evidence_pattern` on `pattern_id`
 - Surfaced via `GET /api/patterns/{id}/cases` (cases ordered by `occurred_at` DESC); seeded with evidence for the 3 pending patterns.
 
+**Exit signals table (V11):**
+- `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default')
+- index on `(user_id, symbol, created_at DESC)`
+- Gropar data flow: HELD watchlist positions → daily OHLC history (TwelveData `/time_series outputsize=N`, Yahoo `range=1y&interval=1d`) → `ExitIndicatorService` (ATR/Chandelier stop, MA cross, 52-week proximity, gain/loss thresholds, time stop) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts.
+
 **Agent definition tables (V10):**
 
 Two new tables under the `dracul` schema hold runtime-editable agent definitions:

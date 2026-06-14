@@ -85,6 +85,12 @@ Response (200): the updated `WatchlistItem`.
 Client-side P&L is derived as `(currentPrice − entryPrice) × shareCount`; the
 backend stores only the raw inputs.
 
+## Exit Signals
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/exit-signals` | Returns latest exit signals for HELD watchlist positions; each entry includes `symbol`, `verdict` (SELL / TRIM / HOLD), `rationale`, `confidence`, and `createdAt` |
+
 ## Daywalker Alerts
 
 | Method | Path | Purpose |
@@ -566,6 +572,54 @@ Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: .
 On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
 `anomalyType=MERGER_ARB`, `discoveredBy=strigoi-merger`. Prey without a `symbol` are
 skipped. Returns 204; non-success / empty prey acknowledged without persisting.
+
+## Gropar Webhooks
+
+Called by Vistierie during a `gropar` agent run (exit timing for HELD positions).
+Both require `Authorization: Bearer <DRACUL_GROPAR_WEBHOOK_TOKEN>`. They are only
+registered when `DRACUL_GROPAR_ENABLED=true`.
+
+### `POST /api/gropar/tools/fetch-held-positions`
+
+Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher. Returns
+all HELD watchlist items with their entry price, share count, and current price.
+
+Request: `{ "run_id": "...", "tool_name": "fetch_held_positions", "input": {} }`
+
+Response:
+```json
+{ "output": { "positions": [
+  { "symbol": "ACME", "companyName": "Acme Corp",
+    "entryPrice": 100.0, "shareCount": 50, "currentPrice": 142.5,
+    "unrealisedGainPct": 42.5,
+    "indicators": {
+      "chandelier_stop": 128.0,
+      "ma_fast": 135.0, "ma_slow": 121.0, "ma_cross": "BULLISH",
+      "week52Low": 89.0, "week52High": 155.0,
+      "atr22": 4.2
+    }
+  }
+] } }
+```
+
+### `POST /api/gropar/complete`
+
+Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher` when the
+agent run finishes. Persists exit signals to `dracul.exit_signals`.
+
+Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: <run-id>`.
+
+Request body:
+```json
+{ "run_id": "...", "status": "succeeded",
+  "output": { "signals": [
+    { "symbol": "ACME", "verdict": "SELL", "rationale": "...", "confidence": 0.8 }
+  ] } }
+```
+
+Returns 204. If `status != "succeeded"` or the `output.signals` array is absent,
+the endpoint acknowledges (204) without persisting and logs the run-id. SELL or
+TRIM verdicts also trigger a best-effort Telegram push.
 
 ## Voievod Webhooks
 
