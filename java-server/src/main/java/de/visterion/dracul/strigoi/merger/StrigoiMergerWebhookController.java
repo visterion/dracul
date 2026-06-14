@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.merger;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.edgar.EdgarMergerAdapter;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -27,8 +28,9 @@ public class StrigoiMergerWebhookController extends HuntController {
             EdgarMergerAdapter edgar,
             MergerScreener screener,
             PreyRepository preyRepo,
+            ToolFetchCache cache,
             @Value("${dracul.strigoi.merger.lookback-days:45}") int defaultLookback) {
-        super(token, preyRepo);
+        super(token, preyRepo, cache);
         this.edgar = edgar;
         this.screener = screener;
         this.defaultLookback = defaultLookback;
@@ -37,6 +39,7 @@ public class StrigoiMergerWebhookController extends HuntController {
     @Override protected String agentName() { return "strigoi-merger"; }
     @Override protected String defaultAnomalyType() { return "MERGER_ARB"; }
     @Override protected boolean skipBlankSymbol() { return true; }
+    @Override protected String toolName() { return "fetch_recent_merger_candidates"; }
 
     @Override
     protected List<?> hunt(Map<String, Object> body) {

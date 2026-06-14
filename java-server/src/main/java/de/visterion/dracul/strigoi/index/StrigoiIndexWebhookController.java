@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.index;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.wikipedia.WikipediaSp500Adapter;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -26,8 +27,9 @@ public class StrigoiIndexWebhookController extends HuntController {
             WikipediaSp500Adapter wikipedia,
             IndexScreener screener,
             PreyRepository preyRepo,
+            ToolFetchCache cache,
             @Value("${dracul.strigoi.index.lookback-days:30}") int defaultLookback) {
-        super(token, preyRepo);
+        super(token, preyRepo, cache);
         this.wikipedia = wikipedia;
         this.screener = screener;
         this.defaultLookback = defaultLookback;
@@ -37,6 +39,7 @@ public class StrigoiIndexWebhookController extends HuntController {
     @Override protected String defaultAnomalyType() { return "INDEX_INCLUSION"; }
     @Override protected String defaultHorizon() { return "1m"; }
     @Override protected boolean skipBlankSymbol() { return true; }
+    @Override protected String toolName() { return "fetch_recent_index_additions"; }
 
     @Override
     protected List<?> hunt(Map<String, Object> body) {

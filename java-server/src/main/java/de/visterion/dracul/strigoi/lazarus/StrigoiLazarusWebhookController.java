@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.lazarus;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.finnhub.FinnhubFundamentalsAdapter;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
@@ -34,9 +35,10 @@ public class StrigoiLazarusWebhookController extends HuntController {
             FinnhubFundamentalsAdapter fundamentals,
             LazarusScreener screener,
             PreyRepository preyRepo,
+            ToolFetchCache cache,
             @Value("${dracul.strigoi.lazarus.max-above-low:0.10}") double maxAboveLow,
             @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity) {
-        super(token, preyRepo);
+        super(token, preyRepo, cache);
         this.watchlist = watchlist;
         this.fundamentals = fundamentals;
         this.screener = screener;
@@ -48,6 +50,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     @Override protected String defaultAnomalyType() { return "QUALITY_52W_LOW"; }
     @Override protected String defaultHorizon() { return "12m"; }
     @Override protected boolean skipBlankSymbol() { return true; }
+    @Override protected String toolName() { return "fetch_quality_at_low_candidates"; }
 
     @Override
     protected List<?> hunt(Map<String, Object> body) {
