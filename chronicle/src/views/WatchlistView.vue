@@ -27,7 +27,7 @@
 
     <WatchlistCompare
       v-if="mode === 'compare' && compareWith"
-      :items="items"
+      :items="trackingItems"
       :me="me"
       :compare-with="compareWith"
     />
@@ -80,10 +80,6 @@
               data-testid="wl-add-symbol"
               @input="addSymbol = addSymbol.toUpperCase()"
             />
-            <div class="watchlist__dialog-tag">
-              <label><input type="radio" v-model="addTag" value="TRACKING" /> {{ t('watchlist.dialog.tagTracking') }}</label>
-              <label><input type="radio" v-model="addTag" value="HELD" /> {{ t('watchlist.dialog.tagHeld') }}</label>
-            </div>
             <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
             <div class="watchlist__dialog-actions">
               <button class="watchlist__dialog-cancel" @click="addOpen = false">{{ t('watchlist.dialog.cancel') }}</button>
@@ -149,14 +145,6 @@
               </span>
             </div>
             <div class="wr-meta">
-              <button
-                v-if="isMine(item)"
-                class="wr-tag-toggle"
-                :class="`wr-tag-toggle--${item.tag.toLowerCase()}`"
-                :data-testid="`wl-tag-${item.id}`"
-                :disabled="rowBusyId === item.id"
-                @click.stop="onToggleTag(item)"
-              >{{ item.tag === 'HELD' ? t('watchlist.tagLabel.held') : t('watchlist.tagLabel.tracking') }}</button>
               <span class="wr-dot" :class="`dot-${dotClass(item.status)}`" />
               <button
                 v-if="isMine(item)"
@@ -198,71 +186,6 @@
                 {{ selectedItem.dayChangePercent >= 0 ? '+' : '' }}{{ selectedItem.dayChangePercent.toFixed(1) }}% {{ t('watchlist.detail.today') }}
               </span>
             </div>
-          </div>
-
-          <!-- POSITION PANEL — backend-backed, editable entry price -->
-          <SectionHeader :label="t('watchlist.sections.position')" />
-          <div v-if="selectedItem.entryPrice !== null" class="wd-position-card">
-            <div class="wd-pos-fields">
-              <label class="wd-field">
-                <span class="wd-field-k">{{ t('watchlist.position.entry') }}</span>
-                <span class="wd-input-wrap">
-                  <span class="wd-curr">$</span>
-                  <input
-                    v-model.number="entryPriceInput"
-                    class="wd-input mono"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    data-testid="wl-entry-price"
-                    @blur="onPositionBlur"
-                  />
-                </span>
-                <span class="wd-field-hint mono">{{ t('watchlist.position.currentHint', { price: fmtPrice(selectedItem.currentPrice) }) }}</span>
-              </label>
-              <label class="wd-field">
-                <span class="wd-field-k">{{ t('watchlist.position.size') }}</span>
-                <span class="wd-input-wrap">
-                  <input
-                    v-model.number="shareCountInput"
-                    class="wd-input mono"
-                    type="number"
-                    step="1"
-                    min="0"
-                    data-testid="wl-share-count"
-                    @blur="onPositionBlur"
-                  />
-                </span>
-                <span class="wd-field-hint mono">{{ t('watchlist.position.valueHint', { value: fmtInt((shareCountInput || 0) * selectedItem.currentPrice) }) }}</span>
-              </label>
-              <div class="wd-field">
-                <span class="wd-field-k">{{ t('watchlist.position.pnl') }}</span>
-                <span class="wd-pnl mono" :class="pnlAbs >= 0 ? 'pos' : 'neg'" data-testid="wl-pnl-abs">
-                  {{ pnlAbs >= 0 ? '+' : '−' }}${{ fmtInt(Math.abs(pnlAbs)) }}
-                </span>
-                <span class="wd-field-hint mono" :class="pnlPct >= 0 ? 'pos' : 'neg'" data-testid="wl-pnl-pct">
-                  {{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(1) }}%
-                </span>
-              </div>
-            </div>
-            <div class="wd-pos-foot">
-              <span class="wd-pos-note mono">
-                <i class="ph ph-cloud-check" aria-hidden="true" />
-                {{ t('watchlist.position.note') }}
-              </span>
-              <button class="wd-pos-remove" data-testid="wl-remove-position" @click="onRemovePosition">
-                {{ t('watchlist.position.remove') }}
-              </button>
-            </div>
-          </div>
-          <div v-else class="wd-addpos">
-            <div class="wd-addpos-text">
-              <span>{{ t('watchlist.position.none') }}</span>
-              <span class="wd-addpos-sub mono">{{ t('watchlist.position.noneHint', { price: fmtPrice(selectedItem.currentPrice) }) }}</span>
-            </div>
-            <button class="btn btn-primary" data-testid="wl-add-position" @click="onAddPosition">
-              <i class="ph ph-plus" aria-hidden="true" /> {{ t('watchlist.position.capture') }}
-            </button>
           </div>
 
           <!-- ALERT FEED -->
@@ -309,7 +232,7 @@ import AlertRow from '../components/common/AlertRow.vue'
 import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
-import type { WatchlistItem, WatchlistStatus, WatchlistTag } from '../api/types'
+import type { WatchlistItem, WatchlistStatus } from '../api/types'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
@@ -323,13 +246,17 @@ const searchQuery = ref('')
 // Valid ticker shape: leading letter, then up to 9 of letter/digit/dot/hyphen.
 // Shared by the add dialog's submit guard, onAddSymbol, and the search CTA.
 const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/
-const activeFilter = ref<'all' | 'held' | 'tracking' | 'alerts'>('all')
+const activeFilter = ref<'all' | 'alerts'>('all')
 const mode = ref<'list' | 'compare'>('list')
 const compareWith = ref<string | null>(null)
 
+// Tracking-only watchlist: items with no captured entry price. Positions
+// (entryPrice != null) live in the separate /portfolio view.
+const trackingItems = computed(() => items.value.filter(i => i.entryPrice == null))
+
 // Distinct owners other than me — drives the compare picker.
 const otherOwners = computed(() =>
-  [...new Set(items.value.map(i => i.owner))].filter(o => o && o !== me.value).sort()
+  [...new Set(trackingItems.value.map(i => i.owner))].filter(o => o && o !== me.value).sort()
 )
 
 // Keep the compare target valid: if the selected owner disappears (e.g. their
@@ -347,7 +274,7 @@ onMounted(async () => {
     items.value = await api.getWatchlistItems()
     // Desktop: auto-select the first item so the right pane is populated.
     // Mobile (drill-in): keep the list as the entry point — no auto-select.
-    if (items.value.length > 0 && !smAndDown.value) selectedId.value = items.value[0].id
+    if (trackingItems.value.length > 0 && !smAndDown.value) selectedId.value = trackingItems.value[0].id
     if (otherOwners.value.length > 0) compareWith.value = otherOwners.value[0]
   } finally {
     loading.value = false
@@ -360,24 +287,18 @@ const selectedItem = computed(() =>
 )
 
 const counts = computed(() => ({
-  all: items.value.length,
-  held: items.value.filter(i => i.entryPrice !== null).length,
-  tracking: items.value.filter(i => i.tag === 'TRACKING').length,
-  alerts: items.value.filter(i => i.alerts.length > 0).length,
+  all: trackingItems.value.length,
+  alerts: trackingItems.value.filter(i => i.alerts.length > 0).length,
 }))
 
 const filters = computed(() => [
   { key: 'all' as const, label: t('watchlist.filter.all', { n: counts.value.all }) },
-  { key: 'held' as const, label: t('watchlist.filter.held', { n: counts.value.held }) },
-  { key: 'tracking' as const, label: t('watchlist.filter.tracking', { n: counts.value.tracking }) },
   { key: 'alerts' as const, label: t('watchlist.filter.alerts', { n: counts.value.alerts }) },
 ])
 
 const filteredItems = computed(() =>
-  items.value
+  trackingItems.value
     .filter(item => {
-      if (activeFilter.value === 'held') return item.entryPrice !== null
-      if (activeFilter.value === 'tracking') return item.tag === 'TRACKING'
       if (activeFilter.value === 'alerts') return item.alerts.length > 0
       return true
     })
@@ -408,103 +329,10 @@ function dotClass(status: WatchlistStatus): 'positive' | 'warning' | 'danger' {
 function fmtPrice(n: number): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-function fmtInt(n: number): string {
-  return n.toLocaleString('en-US', { maximumFractionDigits: 0 })
-}
 
-// ── Position editing (backend-backed via patchWatchlistPosition) ──
-const entryPriceInput = ref<number>(0)
-const shareCountInput = ref<number>(0)
-
-// Sync local inputs from the selected item whenever selection changes.
-watch(selectedItem, (item) => {
-  entryPriceInput.value = item?.entryPrice ?? 0
-  shareCountInput.value = item?.shareCount ?? 0
-}, { immediate: true })
-
-const pnlAbs = computed(() => {
-  const item = selectedItem.value
-  if (!item) return 0
-  return (item.currentPrice - entryPriceInput.value) * (shareCountInput.value || 0)
-})
-const pnlPct = computed(() => {
-  const item = selectedItem.value
-  if (!item || !entryPriceInput.value) return 0
-  return ((item.currentPrice - entryPriceInput.value) / entryPriceInput.value) * 100
-})
-
-async function onAddPosition() {
-  const item = selectedItem.value
-  if (!item) return
-  // Snapshot the current price as the (editable) entry; default size 100 shares.
-  // Prefill the (now-revealed) inputs immediately — the computed selectedItem keeps
-  // the same object reference, so the watcher won't re-fire on this mutation.
-  entryPriceInput.value = item.currentPrice
-  shareCountInput.value = 100
-  await persistPosition(item, item.currentPrice, 100)
-}
-
-async function onPositionBlur() {
-  const item = selectedItem.value
-  // No existing position → nothing to persist on blur.
-  if (!item || item.entryPrice === null) return
-  // v-model.number yields NaN for a cleared field. Reject NaN, non-positive
-  // entry prices, and negative share counts — to clear a position the user
-  // uses the explicit "remove position" control, not an emptied input.
-  const rawEntry = entryPriceInput.value
-  const rawShares = shareCountInput.value
-  if (
-    Number.isNaN(rawEntry) ||
-    Number.isNaN(rawShares) ||
-    rawEntry <= 0 ||
-    rawShares < 0
-  ) {
-    entryPriceInput.value = item.entryPrice ?? 0
-    shareCountInput.value = item.shareCount ?? 0
-    return
-  }
-  const entry = rawEntry
-  const shares = rawShares
-  // No-op short-circuit with float tolerance (exact === misfires on FP rounding).
-  if (
-    Math.abs(entry - (item.entryPrice ?? 0)) < 0.0001 &&
-    Math.abs(shares - (item.shareCount ?? 0)) < 0.0001
-  ) return
-  await persistPosition(item, entry, shares)
-}
-
-async function onRemovePosition() {
-  const item = selectedItem.value
-  if (!item) return
-  await persistPosition(item, null, null)
-}
-
-async function persistPosition(
-  item: WatchlistItem,
-  entryPrice: number | null,
-  shareCount: number | null,
-) {
-  const prevEntry = item.entryPrice
-  const prevShares = item.shareCount
-  // Optimistic update so P&L reflects immediately.
-  item.entryPrice = entryPrice
-  item.shareCount = shareCount
-  try {
-    const updated = await api.patchWatchlistPosition(item.id, { entryPrice, shareCount })
-    item.entryPrice = updated.entryPrice
-    item.shareCount = updated.shareCount
-  } catch {
-    item.entryPrice = prevEntry
-    item.shareCount = prevShares
-    entryPriceInput.value = prevEntry ?? 0
-    shareCountInput.value = prevShares ?? 0
-  }
-}
-
-// ── Add / tag / delete (preserved real features) ──
+// ── Add / delete (preserved real features) ──
 const addOpen = ref(false)
 const addSymbol = ref('')
-const addTag = ref<WatchlistTag>('TRACKING')
 const addSubmitting = ref(false)
 const addError = ref<string | null>(null)
 
@@ -515,11 +343,10 @@ async function onAddSymbol() {
   addSubmitting.value = true
   addError.value = null
   try {
-    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: addTag.value })
+    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING' })
     items.value = [created, ...items.value.filter(i => i.id !== created.id)]
     addOpen.value = false
     addSymbol.value = ''
-    addTag.value = 'TRACKING'
   } catch (e) {
     addError.value = (e as Error).message
   } finally {
@@ -530,23 +357,8 @@ async function onAddSymbol() {
 function onAddFromSearch() {
   if (!addableSymbol.value) return
   addSymbol.value = addableSymbol.value
-  addTag.value = 'TRACKING'
   addError.value = null
   addOpen.value = true
-}
-
-async function onToggleTag(item: WatchlistItem) {
-  const newTag: WatchlistTag = item.tag === 'HELD' ? 'TRACKING' : 'HELD'
-  const prev = item.tag
-  item.tag = newTag
-  rowBusyId.value = item.id
-  try {
-    await api.patchWatchlistItem(item.id, { tag: newTag })
-  } catch {
-    item.tag = prev
-  } finally {
-    rowBusyId.value = null
-  }
 }
 
 async function onDelete(item: WatchlistItem) {
