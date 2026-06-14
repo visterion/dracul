@@ -141,6 +141,20 @@ public class WatchlistRepository {
                 .findFirst();
     }
 
+    /** Count of fully-held positions (tag HELD with both entry price and share count). */
+    public long countHeldByUser(String userId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM watchlist_items
+                WHERE user_id = :userId
+                  AND tag = 'HELD'
+                  AND entry_price IS NOT NULL
+                  AND share_count IS NOT NULL
+                """)
+                .param("userId", userId)
+                .query(Long.class)
+                .single();
+    }
+
     public Optional<WatchlistItem> findById(String id) {
         UUID uuid;
         try { uuid = UUID.fromString(id); }
