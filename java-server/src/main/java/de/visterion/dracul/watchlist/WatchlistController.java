@@ -5,6 +5,7 @@ import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataPort;
 import de.visterion.dracul.verdict.VerdictRepository;
 import jakarta.validation.Valid;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,13 +20,16 @@ public class WatchlistController {
     private final WatchlistRepository repo;
     private final MarketDataPort marketData;
     private final VerdictRepository verdictRepo;
+    private final ApplicationEventPublisher events;
 
     public WatchlistController(WatchlistRepository repo,
                                 MarketDataPort marketData,
-                                VerdictRepository verdictRepo) {
+                                VerdictRepository verdictRepo,
+                                ApplicationEventPublisher events) {
         this.repo = repo;
         this.marketData = marketData;
         this.verdictRepo = verdictRepo;
+        this.events = events;
     }
 
     @GetMapping("/api/watchlist")
@@ -46,6 +50,7 @@ public class WatchlistController {
         if (existing.isPresent()) {
             WatchlistItem merged = repo.mergeVerdictIdIfNull(
                     existing.get().id(), req.sourceVerdictId());
+            events.publishEvent(new WatchlistChangedEvent());
             return ResponseEntity.ok(merged);
         }
 
@@ -55,6 +60,7 @@ public class WatchlistController {
                 user, req.symbol(), md.companyName(),
                 md.currentPrice().doubleValue(), hist,
                 req.tag(), req.sourceVerdictId());
+        events.publishEvent(new WatchlistChangedEvent());
         return ResponseEntity.status(201).body(created);
     }
 
@@ -65,6 +71,7 @@ public class WatchlistController {
         if (!repo.updateTag(id, req.tag())) {
             throw new NoSuchElementException("watchlist item " + id);
         }
+        events.publishEvent(new WatchlistChangedEvent());
         return repo.findById(id).orElseThrow();
     }
 
@@ -75,6 +82,7 @@ public class WatchlistController {
         if (!repo.updatePosition(id, req.entryPrice(), req.shareCount())) {
             throw new NoSuchElementException("watchlist item " + id);
         }
+        events.publishEvent(new WatchlistChangedEvent());
         return repo.findById(id).orElseThrow();
     }
 
@@ -84,6 +92,7 @@ public class WatchlistController {
         if (!repo.deleteById(id)) {
             throw new NoSuchElementException("watchlist item " + id);
         }
+        events.publishEvent(new WatchlistChangedEvent());
         return ResponseEntity.noContent().build();
     }
 
