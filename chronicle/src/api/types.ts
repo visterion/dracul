@@ -209,6 +209,20 @@ export interface WatchlistItem {
   owner: string
 }
 
+export interface ExitSignal {
+  id: string
+  watchlistItemId: string | null
+  symbol: string
+  action: 'SELL' | 'TRIM' | 'HOLD'
+  firedRules: string[]
+  gainLossPct: number | null
+  thesisStatus: 'INTACT' | 'WEAKENING' | 'INVALIDATED' | null
+  rationale: string | null
+  confidence: number | null
+  vistierieRunId: string | null
+  runAt: string
+}
+
 export interface Me { email: string }
 
 export interface PatchPositionRequest {

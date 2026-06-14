@@ -5,7 +5,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
-  AgentDefinition, ToolCatalogView, AgentDefinitionEdit,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -18,6 +18,7 @@ import { mockStrigoiDetails } from '../mocks/strigoiDetails'
 import { mockWatchlistItems as initialWatchlist } from '../mocks/watchlistItems'
 import { mockVerdictNotes } from '../mocks/verdictNotes'
 import { mockProviders } from '../mocks/providers'
+import { mockExitSignals } from '../mocks/exitSignals'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -315,6 +316,11 @@ export class MockApiClient implements ApiClient {
 
   async getMe(): Promise<Me> {
     return { email: 'you@dracul.local' }
+  }
+
+  async getExitSignals(): Promise<ExitSignal[]> {
+    await delay(50)
+    return mockExitSignals.map(s => ({ ...s }))
   }
 
   async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {

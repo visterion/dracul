@@ -5,7 +5,7 @@ import type {
   VerdictDecision, VerdictNote, DecisionResponse,
   CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting,
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
-  AgentDefinition, ToolCatalogView, AgentDefinitionEdit,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
 } from './types'
 
 export interface ApiClient {
@@ -39,4 +39,5 @@ export interface ApiClient {
   resetAgentDefinition(name: string): Promise<AgentDefinition>
   getDataSources(refresh?: boolean): Promise<DataSourceHealth[]>
   getMe(): Promise<Me>
+  getExitSignals(): Promise<ExitSignal[]>
 }
