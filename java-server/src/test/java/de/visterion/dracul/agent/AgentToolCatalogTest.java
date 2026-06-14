@@ -14,9 +14,19 @@ class AgentToolCatalogTest {
                 JsonMapper.builder().build().createObjectNode(), "/api/x/tools/y", 30);
     }
 
+    private AgentDefaultProvider providerWith(ToolCatalogEntry... entries) {
+        return new AgentDefaultProvider() {
+            @Override public AgentDefinition defaultDefinition() { return null; }
+            @Override public List<ToolCatalogEntry> catalogEntries() { return List.of(entries); }
+        };
+    }
+
     @Test
     void findsRegisteredToolByName() {
-        var catalog = new AgentToolCatalog(List.of(entry("fetch_a"), entry("fetch_b")));
+        var catalog = new AgentToolCatalog(List.of(
+                providerWith(entry("fetch_a")),
+                providerWith(entry("fetch_b"))
+        ));
         assertThat(catalog.find("fetch_a")).map(ToolCatalogEntry::toolName).contains("fetch_a");
         assertThat(catalog.contains("fetch_b")).isTrue();
         assertThat(catalog.find("nope")).isEmpty();
@@ -25,6 +35,9 @@ class AgentToolCatalogTest {
     @Test
     void rejectsDuplicateToolNames() {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
-                () -> new AgentToolCatalog(List.of(entry("dup"), entry("dup"))));
+                () -> new AgentToolCatalog(List.of(
+                        providerWith(entry("dup")),
+                        providerWith(entry("dup"))
+                )));
     }
 }
