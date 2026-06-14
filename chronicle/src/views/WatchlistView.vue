@@ -531,6 +531,7 @@ function onAddFromSearch() {
   if (!addableSymbol.value) return
   addSymbol.value = addableSymbol.value
   addTag.value = 'TRACKING'
+  addError.value = null
   addOpen.value = true
 }
 
