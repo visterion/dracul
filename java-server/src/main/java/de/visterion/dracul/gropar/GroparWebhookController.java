@@ -1,5 +1,6 @@
 package de.visterion.dracul.gropar;
 
+import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.MarketDataPort;
 import de.visterion.dracul.notify.TelegramNotifier;
@@ -40,6 +41,7 @@ public class GroparWebhookController {
     private final ExitSignalRepository exitSignalRepo;
     private final TelegramNotifier telegram;
     private final ExitIndicatorService indicatorService;
+    private final ToolFetchCache cache;
 
     private final int historyDays;
     private final double profitTargetPct;
@@ -53,6 +55,7 @@ public class GroparWebhookController {
             ExitSignalRepository exitSignalRepo,
             TelegramNotifier telegram,
             ExitIndicatorService indicatorService,
+            ToolFetchCache cache,
             @Value("${dracul.gropar.history-days:260}") int historyDays,
             @Value("${dracul.gropar.profit-target-pct:40}") double profitTargetPct,
             @Value("${dracul.gropar.stop-loss-pct:15}") double stopLossPct) {
@@ -64,6 +67,7 @@ public class GroparWebhookController {
         this.exitSignalRepo = exitSignalRepo;
         this.telegram = telegram;
         this.indicatorService = indicatorService;
+        this.cache = cache;
         this.historyDays = historyDays;
         this.profitTargetPct = profitTargetPct;
         this.stopLossPct = stopLossPct;
@@ -77,67 +81,69 @@ public class GroparWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
-        var held = watchlistRepo.findAllByUser(USER).stream()
-                .filter(this::isHeld)
-                .toList();
+        Map<String, Object> out = cache.get("fetch_held_positions", "default", () -> {
+            var held = watchlistRepo.findAllByUser(USER).stream()
+                    .filter(this::isHeld)
+                    .toList();
 
-        var views = new ArrayList<HeldPositionView>();
-        for (WatchlistItem item : held) {
-            try {
-                var bars = marketData.dailyOhlcHistory(item.ticker(), historyDays);
+            var views = new ArrayList<HeldPositionView>();
+            for (WatchlistItem item : held) {
+                try {
+                    var bars = marketData.dailyOhlcHistory(item.ticker(), historyDays);
 
-                // Resolve verdict data for horizon / thesis
-                String verdictCreatedAt = null;
-                String horizon = null;
-                Map<String, Object> thesis = null;
+                    // Resolve verdict data for horizon / thesis
+                    String verdictCreatedAt = null;
+                    String horizon = null;
+                    Map<String, Object> thesis = null;
 
-                if (item.verdictId() != null) {
-                    var detail = verdictRepo.findDetailById(item.verdictId());
-                    if (detail.isPresent()) {
-                        var vd = detail.get();
-                        verdictCreatedAt = vd.createdAt();
-                        horizon = vd.horizon();
-                        thesis = new HashMap<>();
-                        thesis.put("summary", vd.summary());
-                        thesis.put("signals", vd.signals());
-                        thesis.put("risks", vd.risks());
-                        thesis.put("anomalyTypes", vd.anomalyTypes());
-                        thesis.put("horizon", vd.horizon());
+                    if (item.verdictId() != null) {
+                        var detail = verdictRepo.findDetailById(item.verdictId());
+                        if (detail.isPresent()) {
+                            var vd = detail.get();
+                            verdictCreatedAt = vd.createdAt();
+                            horizon = vd.horizon();
+                            thesis = new HashMap<>();
+                            thesis.put("summary", vd.summary());
+                            thesis.put("signals", vd.signals());
+                            thesis.put("risks", vd.risks());
+                            thesis.put("anomalyTypes", vd.anomalyTypes());
+                            thesis.put("horizon", vd.horizon());
+                        }
                     }
+
+                    var ind = indicatorService.compute(bars,
+                            BigDecimal.valueOf(item.entryPrice()),
+                            verdictCreatedAt, horizon);
+
+                    // Build fired rules: copy from indicator, then add controller-side rules
+                    var firedRules = new ArrayList<>(ind.firedRules());
+                    if (ind.gainLossPct() != null
+                            && ind.gainLossPct().doubleValue() >= profitTargetPct) {
+                        firedRules.add(ExitRules.PROFIT_TARGET);
+                    }
+                    if (ind.gainLossPct() != null
+                            && ind.gainLossPct().doubleValue() <= -stopLossPct) {
+                        firedRules.add(ExitRules.STOP_LOSS);
+                    }
+
+                    views.add(new HeldPositionView(
+                            item.ticker(),
+                            item.companyName(),
+                            item.entryPrice(),
+                            item.shareCount(),
+                            item.currentPrice(),
+                            ind,
+                            firedRules,
+                            thesis));
+
+                } catch (MarketDataException e) {
+                    log.warn("gropar: market data unavailable for {} — skipping: {}",
+                            item.ticker(), e.getMessage());
                 }
-
-                var ind = indicatorService.compute(bars,
-                        BigDecimal.valueOf(item.entryPrice()),
-                        verdictCreatedAt, horizon);
-
-                // Build fired rules: copy from indicator, then add controller-side rules
-                var firedRules = new ArrayList<>(ind.firedRules());
-                if (ind.gainLossPct() != null
-                        && ind.gainLossPct().doubleValue() >= profitTargetPct) {
-                    firedRules.add(ExitRules.PROFIT_TARGET);
-                }
-                if (ind.gainLossPct() != null
-                        && ind.gainLossPct().doubleValue() <= -stopLossPct) {
-                    firedRules.add(ExitRules.STOP_LOSS);
-                }
-
-                views.add(new HeldPositionView(
-                        item.ticker(),
-                        item.companyName(),
-                        item.entryPrice(),
-                        item.shareCount(),
-                        item.currentPrice(),
-                        ind,
-                        firedRules,
-                        thesis));
-
-            } catch (MarketDataException e) {
-                log.warn("gropar: market data unavailable for {} — skipping: {}",
-                        item.ticker(), e.getMessage());
             }
-        }
-
-        return ResponseEntity.ok(Map.of("output", Map.of("positions", views)));
+            return Map.of("output", Map.of("positions", views));
+        });
+        return ResponseEntity.ok(out);
     }
 
     /** Completion webhook: persists LLM exit signals and fires Telegram for non-HOLD actions. */
