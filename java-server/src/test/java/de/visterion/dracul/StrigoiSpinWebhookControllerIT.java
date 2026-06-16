@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.edgar.EdgarSpinoffAdapter;
 import de.visterion.dracul.hunting.edgar.SpinoffFiling;
 import org.junit.jupiter.api.*;
@@ -49,13 +50,15 @@ class StrigoiSpinWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
                 .build();
-        when(edgarSpinoff.recentSpinoffs(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of());
+        when(edgarSpinoff.recentSpinoffs(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("edgar", List.of()));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(edgarSpinoff.recentSpinoffs(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of(
-                new SpinoffFiling("SPN", "Acme Spinco Inc", "10-12B", LocalDate.of(2026, 5, 20), "http://sec/u1")));
+        when(edgarSpinoff.recentSpinoffs(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("edgar", List.of(
+                        new SpinoffFiling("SPN", "Acme Spinco Inc", "10-12B", LocalDate.of(2026, 5, 20), "http://sec/u1"))));
 
         JsonNode resp = rest.post().uri("/api/strigoi-spin/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-spin-token")
@@ -150,5 +153,33 @@ class StrigoiSpinWebhookControllerIT {
             return;
         }
         fail("Expected 401");
+    }
+
+    @Test
+    void unavailableSourceSurfacesAndIsNotCached() {
+        org.mockito.Mockito.when(edgarSpinoff.recentSpinoffs(
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(DataSourceResult.unavailable("edgar", "edgar: 503"));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-spin/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-spin-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail", "tool_name", "fetch_recent_spinoff_candidates",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
+
+        // second identical call — must NOT be served from cache
+        rest.post().uri("/api/strigoi-spin/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-spin-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail-2", "tool_name", "fetch_recent_spinoff_candidates",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().body(JsonNode.class);
+
+        org.mockito.Mockito.verify(edgarSpinoff, org.mockito.Mockito.times(2))
+                .recentSpinoffs(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 }
