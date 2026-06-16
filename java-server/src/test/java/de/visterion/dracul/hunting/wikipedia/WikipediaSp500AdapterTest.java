@@ -1,11 +1,11 @@
 package de.visterion.dracul.hunting.wikipedia;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.junit.jupiter.api.*;
 import org.springframework.web.client.RestClient;
 
 import java.time.LocalDate;
-import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
@@ -47,33 +47,47 @@ class WikipediaSp500AdapterTest {
     }
 
     @Test
-    void parsesConstituentsTable() {
+    void returnsHealthyWithConstituents() {
         wm.stubFor(get(urlPathEqualTo("/w/api.php")).willReturn(okJson(
                 "{\"parse\":{\"title\":\"List of S&P 500 companies\",\"pageid\":1,\"wikitext\":"
                 + jsonString(WIKITEXT) + "}}")));
 
-        List<Sp500Constituent> out = adapter.recentConstituents();
+        DataSourceResult<Sp500Constituent> r = adapter.recentConstituents();
 
-        assertThat(out).extracting(Sp500Constituent::symbol)
+        assertThat(r.health().status()).isEqualTo("healthy");
+        assertThat(r.health().source()).isEqualTo("wikipedia");
+        assertThat(r.items()).extracting(Sp500Constituent::symbol)
                 .containsExactlyInAnyOrder("MMM", "NEWO", "BRK.B");
-        var newo = out.stream().filter(c -> c.symbol().equals("NEWO")).findFirst().orElseThrow();
+        var newo = r.items().stream().filter(c -> c.symbol().equals("NEWO")).findFirst().orElseThrow();
         assertThat(newo.companyName()).isEqualTo("NewCo");
         assertThat(newo.dateAdded()).isEqualTo(LocalDate.of(2026, 5, 20));   // <ref> stripped
-        var brk = out.stream().filter(c -> c.symbol().equals("BRK.B")).findFirst().orElseThrow();
+        var brk = r.items().stream().filter(c -> c.symbol().equals("BRK.B")).findFirst().orElseThrow();
         assertThat(brk.dateAdded()).isEqualTo(LocalDate.of(2010, 2, 16));
-        assertThat(out).noneMatch(c -> c.symbol().equals("NODATE"));
+        assertThat(r.items()).noneMatch(c -> c.symbol().equals("NODATE"));
     }
 
     @Test
-    void returnsEmptyOnServerError() {
+    void fetchErrorIsUnavailable() {
         wm.stubFor(get(urlPathEqualTo("/w/api.php")).willReturn(aResponse().withStatus(500)));
-        assertThat(adapter.recentConstituents()).isEmpty();
+
+        DataSourceResult<Sp500Constituent> r = adapter.recentConstituents();
+
+        assertThat(r.health().status()).isEqualTo("unavailable");
+        assertThat(r.health().detail()).contains("wikipedia");
+        assertThat(r.items()).isEmpty();
     }
 
     @Test
-    void returnsEmptyWhenWikitextAbsent() {
-        wm.stubFor(get(urlPathEqualTo("/w/api.php")).willReturn(okJson("{\"parse\":{\"title\":\"x\"}}")));
-        assertThat(adapter.recentConstituents()).isEmpty();
+    void parseFailureIsUnavailable() {
+        // Non-textual wikitext node: JSON object instead of string triggers the non-textual branch.
+        wm.stubFor(get(urlPathEqualTo("/w/api.php")).willReturn(okJson(
+                "{\"parse\":{\"title\":\"x\"}}")));
+
+        DataSourceResult<Sp500Constituent> r = adapter.recentConstituents();
+
+        assertThat(r.health().status()).isEqualTo("unavailable");
+        assertThat(r.health().detail()).contains("wikipedia");
+        assertThat(r.items()).isEmpty();
     }
 
     // Minimal JSON string encoder for the wikitext literal.

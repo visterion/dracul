@@ -43,8 +43,8 @@ public class StrigoiIndexWebhookController extends HuntController {
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
-        return de.visterion.dracul.hunting.DataSourceResult.healthy("wikipedia",
-                screener.screen(wikipedia.recentConstituents(), lookback));
+        var raw = wikipedia.recentConstituents();
+        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items(), lookback), raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")
