@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
@@ -398,5 +399,62 @@ public class HttpVistierieClient implements VistierieClient {
                 .body(AgentDetail.class);
         if (body == null) throw new RuntimeException("updateAgent returned null");
         return body;
+    }
+
+    @Override
+    public List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
+            List<String> status, Instant from, Instant to, int limit, int offset) {
+        try {
+            var body = tenantClient.get().uri(uriBuilder -> {
+                uriBuilder.path("/runs/search").queryParam("q", q)
+                        .queryParam("limit", limit).queryParam("offset", offset);
+                if (agent != null) uriBuilder.queryParam("agent", agent);
+                if (hasError != null) uriBuilder.queryParam("has_error", hasError);
+                if (status != null) for (String s : status) uriBuilder.queryParam("status", s);
+                if (from != null) uriBuilder.queryParam("from", from.toString());
+                if (to != null) uriBuilder.queryParam("to", to.toString());
+                return uriBuilder.build();
+            }).retrieve().body(JsonNode.class);
+            if (body == null || !body.path("items").isArray()) return List.of();
+            var result = new ArrayList<RunSearchHit>();
+            for (var n : body.path("items")) {
+                result.add(new RunSearchHit(
+                        n.path("runId").asText(),
+                        n.path("agent").asText(),
+                        n.path("status").asText(),
+                        n.path("hasError").asBoolean(false),
+                        n.path("startedAt").isNull() ? null : Instant.parse(n.path("startedAt").asText()),
+                        n.path("rank").asDouble(0.0),
+                        n.path("snippet").isNull() ? null : n.path("snippet").asText()));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Vistierie searchRuns failed: {}", e.toString());
+            return List.of();
+        }
+    }
+
+    @Override
+    public JsonNode getRunTranscript(String runId, String view) {
+        try {
+            return tenantClient.get()
+                    .uri(b -> b.path("/runs/{id}/transcript").queryParam("view", view).build(runId))
+                    .retrieve().body(JsonNode.class);
+        } catch (Exception e) {
+            log.warn("Vistierie getRunTranscript failed for {}: {}", runId, e.toString());
+            return null;
+        }
+    }
+
+    @Override
+    public JsonNode getRunToolCall(String runId, String toolUseId) {
+        try {
+            return tenantClient.get()
+                    .uri("/runs/{id}/tool-calls/{tid}", runId, toolUseId)
+                    .retrieve().body(JsonNode.class);
+        } catch (Exception e) {
+            log.warn("Vistierie getRunToolCall failed for {}/{}: {}", runId, toolUseId, e.toString());
+            return null;
+        }
     }
 }

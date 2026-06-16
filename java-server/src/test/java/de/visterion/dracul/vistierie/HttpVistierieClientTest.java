@@ -661,4 +661,50 @@ class HttpVistierieClientTest {
         assertThat(kill.reason()).isEqualTo("manual stop");
         assertThat(kill.setBy()).isEqualTo("admin");
     }
+
+    // -------------------------------------------------------------------------
+    // searchRuns / getRunTranscript / getRunToolCall
+    // -------------------------------------------------------------------------
+
+    @Test void searchRunsParsesHitsAndSendsTenantHeaders() {
+        wm.stubFor(get(urlPathEqualTo("/runs/search"))
+                .willReturn(okJson("""
+                    {"items":[{"runId":"R1","agent":"strigoi-spin","status":"failed",
+                      "hasError":true,"startedAt":"2026-06-16T00:00:00Z","rank":0.5,
+                      "snippet":"tool_error 503"}],"limit":20,"offset":0}""")));
+        var hits = client.searchRuns("strigoi-spin", "tool_error", Boolean.TRUE, null, null, null, 20, 0);
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).runId()).isEqualTo("R1");
+        assertThat(hits.get(0).hasError()).isTrue();
+        assertThat(hits.get(0).snippet()).contains("503");
+        wm.verify(getRequestedFor(urlPathEqualTo("/runs/search"))
+                .withHeader("X-Tenant-Id", equalTo("dracul"))
+                .withHeader("Authorization", equalTo("Bearer tenant-tkn")));
+    }
+
+    @Test void getRunTranscriptReturnsJson() {
+        wm.stubFor(get(urlPathEqualTo("/runs/R1/transcript"))
+                .willReturn(okJson("{\"run_id\":\"R1\",\"turn_count\":2,\"turns\":[]}")));
+        var t = client.getRunTranscript("R1", "compact");
+        assertThat(t.path("turn_count").asInt()).isEqualTo(2);
+        wm.verify(getRequestedFor(urlPathEqualTo("/runs/R1/transcript"))
+                .withQueryParam("view", equalTo("compact")));
+    }
+
+    @Test void getRunToolCallReturnsJson() {
+        wm.stubFor(get(urlPathEqualTo("/runs/R1/tool-calls/toolu_1"))
+                .willReturn(okJson("{\"tool_use_id\":\"toolu_1\",\"name\":\"finnhub\",\"is_error\":false}")));
+        var tc = client.getRunToolCall("R1", "toolu_1");
+        assertThat(tc.path("name").asText()).isEqualTo("finnhub");
+    }
+
+    @Test void searchRunsReturnsEmptyOnError() {
+        wm.stubFor(get(urlPathEqualTo("/runs/search")).willReturn(aResponse().withStatus(503)));
+        assertThat(client.searchRuns(null, "x", null, null, null, null, 20, 0)).isEmpty();
+    }
+
+    @Test void getRunTranscriptReturnsNullOnError() {
+        wm.stubFor(get(urlPathEqualTo("/runs/Rx/transcript")).willReturn(aResponse().withStatus(404)));
+        assertThat(client.getRunTranscript("Rx", "digest")).isNull();
+    }
 }

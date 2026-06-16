@@ -224,6 +224,23 @@ public class MockVistierieClient implements VistierieClient {
     );
 
     @Override
+    public java.util.List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
+            java.util.List<String> status, java.time.Instant from, java.time.Instant to,
+            int limit, int offset) {
+        return java.util.List.of();
+    }
+
+    @Override
+    public tools.jackson.databind.JsonNode getRunTranscript(String runId, String view) {
+        return null;
+    }
+
+    @Override
+    public tools.jackson.databind.JsonNode getRunToolCall(String runId, String toolUseId) {
+        return null;
+    }
+
+    @Override
     public java.util.Optional<AgentDetail> getAgent(String name) {
         return java.util.Optional.ofNullable(agents.get(name));
     }
