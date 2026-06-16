@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -30,9 +31,21 @@ public class ToolFetchCache {
     }
 
     /** Returns the cached payload for (toolName, paramsKey) if fresh; otherwise computes,
-     *  stores (when the tool is cacheable with ttl &gt; 0) and returns. */
+     *  stores (when the tool is cacheable with ttl &gt; 0) and returns.
+     *  All computed results are cached (equivalent to passing {@code p -> true} as predicate). */
     public Map<String, Object> get(String toolName, String paramsKey,
                                    Supplier<Map<String, Object>> compute) {
+        return get(toolName, paramsKey, compute, p -> true);
+    }
+
+    /** Returns the cached payload for (toolName, paramsKey) if fresh; otherwise computes
+     *  and, if {@code shouldCache} returns {@code true} for the result, stores it.
+     *  If the predicate returns {@code false} the result is returned but not cached, so the
+     *  next call will recompute (useful for transient failures such as
+     *  {@code data_source_health.status == "unavailable"}). */
+    public Map<String, Object> get(String toolName, String paramsKey,
+                                   Supplier<Map<String, Object>> compute,
+                                   Predicate<Map<String, Object>> shouldCache) {
         long ttlNanos = resolveTtlNanos(toolName);
         if (ttlNanos <= 0) {
             return compute.get();
@@ -44,7 +57,9 @@ public class ToolFetchCache {
             return cached.payload();
         }
         Map<String, Object> payload = compute.get();
-        store.put(key, new Cached(payload, now + ttlNanos));
+        if (shouldCache.test(payload)) {
+            store.put(key, new Cached(payload, now + ttlNanos));
+        }
         return payload;
     }
 
