@@ -45,8 +45,8 @@ public class StrigoiSpinWebhookController extends HuntController {
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
         var to = LocalDate.now();
-        return de.visterion.dracul.hunting.DataSourceResult.healthy("edgar",
-                screener.screen(edgar.recentSpinoffs(to.minusDays(lookback), to)));
+        var raw = edgar.recentSpinoffs(to.minusDays(lookback), to);
+        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items()), raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")
