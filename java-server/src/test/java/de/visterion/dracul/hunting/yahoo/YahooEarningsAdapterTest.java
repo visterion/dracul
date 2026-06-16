@@ -1,11 +1,11 @@
 package de.visterion.dracul.hunting.yahoo;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.junit.jupiter.api.*;
 import org.springframework.web.client.RestClient;
 
 import java.time.LocalDate;
-import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
@@ -33,7 +33,7 @@ class YahooEarningsAdapterTest {
     }
 
     @Test
-    void parsesPositiveSurpriseRow() {
+    void returnsHealthyWithEvents() {
         wm.stubFor(get(urlPathEqualTo("/v1/finance/calendar/earnings"))
                 .willReturn(okJson("""
                     {"rows":[
@@ -43,11 +43,13 @@ class YahooEarningsAdapterTest {
                     ]}
                     """)));
 
-        List<EarningsEvent> events = adapter.recentEarnings(
+        DataSourceResult<EarningsEvent> r = adapter.recentEarnings(
                 LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
 
-        assertThat(events).hasSize(1);
-        var e = events.get(0);
+        assertThat(r.health().status()).isEqualTo("healthy");
+        assertThat(r.health().source()).isEqualTo("yahoo");
+        assertThat(r.items()).hasSize(1);
+        var e = r.items().get(0);
         assertThat(e.symbol()).isEqualTo("AAPL");
         assertThat(e.companyName()).isEqualTo("Apple Inc.");
         assertThat(e.reportDate()).isEqualTo(LocalDate.of(2026, 5, 20));
@@ -57,12 +59,29 @@ class YahooEarningsAdapterTest {
     }
 
     @Test
-    void returnsEmptyListOnServerError() {
+    void unavailableWhenRetriesExhausted() {
+        // Stub both attempts (fetchWithRetry tries up to 2 times)
         wm.stubFor(get(urlPathEqualTo("/v1/finance/calendar/earnings"))
                 .willReturn(aResponse().withStatus(500)));
 
-        assertThat(adapter.recentEarnings(
-                LocalDate.now().minusDays(1), LocalDate.now())).isEmpty();
+        DataSourceResult<EarningsEvent> r = adapter.recentEarnings(
+                LocalDate.now().minusDays(1), LocalDate.now());
+
+        assertThat(r.health().status()).isEqualTo("unavailable");
+        assertThat(r.health().detail()).contains("yahoo");
+        assertThat(r.items()).isEmpty();
+    }
+
+    @Test
+    void returnsHealthyEmptyOnNoRows() {
+        wm.stubFor(get(urlPathEqualTo("/v1/finance/calendar/earnings"))
+                .willReturn(okJson("{\"rows\":[]}")));
+
+        DataSourceResult<EarningsEvent> r = adapter.recentEarnings(
+                LocalDate.now().minusDays(1), LocalDate.now());
+
+        assertThat(r.health().status()).isEqualTo("healthy");
+        assertThat(r.items()).isEmpty();
     }
 
     @Test
@@ -75,8 +94,11 @@ class YahooEarningsAdapterTest {
                     ]}
                     """)));
 
-        assertThat(adapter.recentEarnings(
-                LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21))).isEmpty();
+        DataSourceResult<EarningsEvent> r = adapter.recentEarnings(
+                LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
+
+        assertThat(r.health().status()).isEqualTo("healthy");
+        assertThat(r.items()).isEmpty();
     }
 
     @Test
@@ -89,10 +111,12 @@ class YahooEarningsAdapterTest {
                     ]}
                     """)));
 
-        var events = adapter.recentEarnings(
+        DataSourceResult<EarningsEvent> r = adapter.recentEarnings(
                 LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
-        assertThat(events).hasSize(1);
-        assertThat(events.get(0).epsActual()).isNull();
-        assertThat(events.get(0).surprisePercent()).isNull();
+
+        assertThat(r.health().status()).isEqualTo("healthy");
+        assertThat(r.items()).hasSize(1);
+        assertThat(r.items().get(0).epsActual()).isNull();
+        assertThat(r.items().get(0).surprisePercent()).isNull();
     }
 }

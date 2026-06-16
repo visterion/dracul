@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.yahoo;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -27,17 +28,17 @@ public class YahooEarningsAdapter {
         this.client = yahooRestClient;
     }
 
-    public List<EarningsEvent> recentEarnings(LocalDate from, LocalDate to) {
+    public DataSourceResult<EarningsEvent> recentEarnings(LocalDate from, LocalDate to) {
         JsonNode body = fetchWithRetry(from, to);
-        if (body == null) return List.of();
+        if (body == null) return DataSourceResult.unavailable("yahoo", "yahoo: fetch failed after retries");
         JsonNode rows = body.path("rows");
-        if (!rows.isArray() || rows.isEmpty()) return List.of();
+        if (!rows.isArray() || rows.isEmpty()) return DataSourceResult.healthy("yahoo", List.of());
         List<EarningsEvent> out = new ArrayList<>();
         for (JsonNode row : rows) {
             EarningsEvent ev = parseRow(row);
             if (ev != null) out.add(ev);
         }
-        return out;
+        return DataSourceResult.healthy("yahoo", out);
     }
 
     private JsonNode fetchWithRetry(LocalDate from, LocalDate to) {
