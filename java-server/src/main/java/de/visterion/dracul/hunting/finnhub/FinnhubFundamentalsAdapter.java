@@ -37,6 +37,10 @@ public class FinnhubFundamentalsAdapter {
         this.apiKey = apiKey;
     }
 
+    public boolean configured() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
     public BasicFinancials basicFinancials(String symbol) {
         if (apiKey.isBlank()) return null;
         JsonNode body;
