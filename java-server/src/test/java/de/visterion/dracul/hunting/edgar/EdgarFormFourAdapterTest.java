@@ -1,12 +1,12 @@
 package de.visterion.dracul.hunting.edgar;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.junit.jupiter.api.*;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.List;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
@@ -37,7 +37,7 @@ class EdgarFormFourAdapterTest {
     }
 
     @Test
-    void parsesPurchaseTransactionFromSearchAndFiling() {
+    void returnsHealthyWithFilings() {
         wm.stubFor(get(urlPathEqualTo("/LATEST/search-index"))
                 .willReturn(okJson("""
                     {"hits":{"total":{"value":1},"hits":[
@@ -70,10 +70,12 @@ class EdgarFormFourAdapterTest {
                             </ownershipDocument>
                             """)));
 
-        List<Form4Filing> filings = adapter.recentFilings(LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
+        DataSourceResult<Form4Filing> result = adapter.recentFilings(LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
 
-        assertThat(filings).hasSize(1);
-        var f = filings.get(0);
+        assertThat(result.health().status()).isEqualTo("healthy");
+        assertThat(result.health().source()).isEqualTo("edgar");
+        assertThat(result.items()).hasSize(1);
+        var f = result.items().get(0);
         assertThat(f.ticker()).isEqualTo("AAPL");
         assertThat(f.filerName()).isEqualTo("Doe John");
         assertThat(f.transactionCode()).isEqualTo("P");
@@ -82,10 +84,14 @@ class EdgarFormFourAdapterTest {
     }
 
     @Test
-    void emptySearchReturnsEmptyList() {
+    void emptySearchReturnsHealthyEmpty() {
         wm.stubFor(get(urlPathEqualTo("/LATEST/search-index"))
                 .willReturn(okJson("{\"hits\":{\"total\":{\"value\":0},\"hits\":[]}}")));
-        assertThat(adapter.recentFilings(LocalDate.now().minusDays(7), LocalDate.now())).isEmpty();
+
+        DataSourceResult<Form4Filing> result = adapter.recentFilings(LocalDate.now().minusDays(7), LocalDate.now());
+
+        assertThat(result.health().status()).isEqualTo("healthy");
+        assertThat(result.items()).isEmpty();
     }
 
     @Test
@@ -99,15 +105,23 @@ class EdgarFormFourAdapterTest {
                     """)));
         wm.stubFor(get(urlPathMatching("/Archives/.+/bad\\.xml"))
                 .willReturn(aResponse().withStatus(200).withBody("<<not xml>>")));
-        assertThat(adapter.recentFilings(LocalDate.of(2026,5,18), LocalDate.of(2026,5,21))).isEmpty();
+
+        DataSourceResult<Form4Filing> result = adapter.recentFilings(LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
+
+        assertThat(result.health().status()).isEqualTo("healthy");
+        assertThat(result.items()).isEmpty();
     }
 
     @Test
-    void throwsEdgarExceptionOn5xx() {
+    void searchFailureIsUnavailable() {
         wm.stubFor(get(urlPathEqualTo("/LATEST/search-index"))
                 .willReturn(aResponse().withStatus(503)));
-        assertThatThrownBy(() -> adapter.recentFilings(LocalDate.now().minusDays(1), LocalDate.now()))
-                .isInstanceOf(EdgarException.class);
+
+        DataSourceResult<Form4Filing> result = adapter.recentFilings(LocalDate.now().minusDays(7), LocalDate.now());
+
+        assertThat(result.health().status()).isEqualTo("unavailable");
+        assertThat(result.health().source()).isEqualTo("edgar");
+        assertThat(result.items()).isEmpty();
     }
 
     @Test
@@ -148,8 +162,11 @@ class EdgarFormFourAdapterTest {
                       </nonDerivativeTable>
                     </ownershipDocument>
                     """)));
-        var filings = adapter.recentFilings(LocalDate.of(2026,5,18), LocalDate.of(2026,5,21));
-        assertThat(filings).hasSize(1);
-        assertThat(filings.get(0).transactionCode()).isEqualTo("S");
+
+        DataSourceResult<Form4Filing> result = adapter.recentFilings(LocalDate.of(2026, 5, 18), LocalDate.of(2026, 5, 21));
+
+        assertThat(result.health().status()).isEqualTo("healthy");
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().get(0).transactionCode()).isEqualTo("S");
     }
 }

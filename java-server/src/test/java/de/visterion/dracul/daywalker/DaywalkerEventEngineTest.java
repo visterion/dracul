@@ -2,6 +2,7 @@ package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.daywalker.detect.TriggerEvent;
 import de.visterion.dracul.daywalker.detect.TriggerType;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
 import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
 import de.visterion.dracul.hunting.yahoo.IntradayCandles;
@@ -48,7 +49,7 @@ class DaywalkerEventEngineTest {
         when(ya.intradayCandles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(fh.companyNews(eq("ACME"), any(), any())).thenReturn(List.of());
         when(fh.recommendationTrend("ACME")).thenReturn(List.of());
-        when(ed.recentFilings(any(), any())).thenReturn(List.of());
+        when(ed.recentFilings(any(), any())).thenReturn(DataSourceResult.healthy("edgar", List.of()));
         when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
         var now = Instant.parse("2026-06-03T18:00:00Z");

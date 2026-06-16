@@ -41,8 +41,8 @@ public class StrigoiInsiderWebhookController extends HuntController {
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
-        return de.visterion.dracul.hunting.DataSourceResult.healthy("edgar",
-                screener.cluster(edgar.recentFilings(to.minusDays(lookback), to)));
+        var raw = edgar.recentFilings(to.minusDays(lookback), to);
+        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.cluster(raw.items()), raw.health());
     }
 
     @PostMapping("/tools/fetch-clusters")
