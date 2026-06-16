@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.wikipedia.Sp500Constituent;
 import de.visterion.dracul.hunting.wikipedia.WikipediaSp500Adapter;
 import org.junit.jupiter.api.*;
@@ -48,13 +49,13 @@ class StrigoiIndexWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
                 .build();
-        when(wikipedia.recentConstituents()).thenReturn(List.of());
+        when(wikipedia.recentConstituents()).thenReturn(DataSourceResult.healthy("wikipedia", List.of()));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(wikipedia.recentConstituents()).thenReturn(List.of(
-                new Sp500Constituent("NEWO", "NewCo", LocalDate.now().minusDays(5))));
+        when(wikipedia.recentConstituents()).thenReturn(DataSourceResult.healthy("wikipedia", List.of(
+                new Sp500Constituent("NEWO", "NewCo", LocalDate.now().minusDays(5)))));
 
         JsonNode resp = rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-index-token")
@@ -144,5 +145,32 @@ class StrigoiIndexWebhookControllerIT {
             return;
         }
         fail("Expected 401");
+    }
+
+    @Test
+    void unavailableSourceSurfacesAndIsNotCached() {
+        org.mockito.Mockito.when(wikipedia.recentConstituents())
+                .thenReturn(DataSourceResult.unavailable("wikipedia", "wikipedia: 503"));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-index-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail", "tool_name", "fetch_recent_index_additions",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
+
+        // second identical call — must NOT be served from cache
+        rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-index-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail-2", "tool_name", "fetch_recent_index_additions",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().body(JsonNode.class);
+
+        org.mockito.Mockito.verify(wikipedia, org.mockito.Mockito.times(2))
+                .recentConstituents();
     }
 }

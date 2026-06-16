@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.wikipedia;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,7 +51,7 @@ public class WikipediaSp500Adapter {
         this.pageTitle = pageTitle;
     }
 
-    public List<Sp500Constituent> recentConstituents() {
+    public DataSourceResult<Sp500Constituent> recentConstituents() {
         JsonNode body;
         try {
             body = http.get()
@@ -65,16 +66,16 @@ public class WikipediaSp500Adapter {
                     .body(JsonNode.class);
         } catch (Exception e) {
             log.warn("Wikipedia S&P 500 fetch failed: {}", e.getMessage());
-            return List.of();
+            return DataSourceResult.unavailable("wikipedia", "wikipedia: " + e.getMessage());
         }
-        if (body == null) return List.of();
+        if (body == null) return DataSourceResult.unavailable("wikipedia", "wikipedia: empty response");
         JsonNode wt = body.path("parse").path("wikitext");
-        if (!wt.isTextual()) return List.of();
+        if (!wt.isTextual()) return DataSourceResult.unavailable("wikipedia", "wikipedia: empty response");
         try {
-            return parse(wt.asText());
+            return DataSourceResult.healthy("wikipedia", parse(wt.asText()));
         } catch (Exception e) {
             log.warn("Wikipedia S&P 500 parse failed: {}", e.getMessage());
-            return List.of();
+            return DataSourceResult.unavailable("wikipedia", "wikipedia: parse failed");
         }
     }
 
