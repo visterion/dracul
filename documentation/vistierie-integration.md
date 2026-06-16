@@ -90,6 +90,44 @@ publishes a `LanguageChangedEvent`. Every registrar listens for this event via
 `@EventListener(LanguageChangedEvent.class)` and immediately re-registers the
 agent with the updated (re-localised) prompt.
 
+## Run observability reads
+
+`VistierieClient` exposes three read methods that wrap Vistierie's
+SP-V run-observability endpoints. All calls are scoped to the `dracul`
+tenant and degrade gracefully on error (empty list or `null`).
+
+| Method | Vistierie endpoint | Returns on error |
+|---|---|---|
+| `searchRuns(query, …)` | `GET /runs/search` | empty list |
+| `getRunTranscript(runId, view)` | `GET /runs/{id}/transcript?view=digest\|compact\|full` | `null` |
+| `getRunToolCall(runId, toolUseId)` | `GET /runs/{id}/tool-calls/{toolUseId}` | `null` |
+
+### Method details
+
+**`searchRuns(query, ...)`** — ranked full-text search across run
+transcripts. Returns a list of snippet hits (run ID, score, excerpt).
+Useful for surfacing past runs that mention a specific ticker or filing.
+
+**`getRunTranscript(runId, view)`** — retrieves a single run's transcript
+at one of three verbosity levels:
+
+| `view` value | Content |
+|---|---|
+| `digest` | One-paragraph summary of the run |
+| `compact` | Key messages and tool calls, condensed |
+| `full` | Complete message history |
+
+**`getRunToolCall(runId, toolUseId)`** — retrieves the raw input/output
+of a single tool-call event within a run. Used to inspect what a Strigoi
+passed to and received from a tool webhook.
+
+### Error handling
+
+All three methods catch any `RestClient` exception, log a warning, and
+return the degraded value listed in the table above. Chronicle views that
+call these methods must handle empty / `null` gracefully; no exception
+propagates to the caller.
+
 ## What Vistierie owns vs what Dracul owns
 
 | Vistierie owns | Dracul owns |

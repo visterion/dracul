@@ -215,6 +215,79 @@ Strigoi-Index resolves recently-added S&P 500 constituents via `WikipediaSp500Ad
   columns) returns an empty list (logged) — the bee never dies on a Wikipedia
   hiccup.
 
+## Data-source health
+
+Every prey-producing Strigoi tool endpoint wraps its result in an output
+envelope that includes a `data_source_health` object:
+
+```json
+{
+  "output": {
+    "candidates": [...],
+    "data_source_health": {
+      "status": "healthy",
+      "source": "edgar",
+      "detail": "2 filings fetched",
+      "checked_at": "2026-06-16T02:14:07Z"
+    }
+  }
+}
+```
+
+(The top-level array key varies per Strigoi: `candidates`, `clusters`, etc.)
+
+### Field reference
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `"healthy"` \| `"unavailable"` | Whether the external source was reachable |
+| `source` | string | Logical source name (`edgar`, `yahoo`, `finnhub`, `wikipedia`) |
+| `detail` | string | Human-readable summary (count, error message, …) |
+| `checked_at` | ISO-8601 UTC | Timestamp of the check |
+
+### Healthy vs unavailable
+
+- **`healthy`** — the fetch completed. The source was reachable and the
+  request succeeded. The result array may still be empty (nothing matched
+  the screen criteria).
+- **`unavailable`** — the fetch could not complete: blank API key, HTTP
+  error, or parse failure. The result array will be empty, but for a
+  different reason than `healthy`+empty.
+
+**Key distinction:** `healthy`+empty (source worked, nothing found) is not
+the same as `unavailable`+empty (source broke). Consumers should surface
+`unavailable` as an infrastructure alert rather than treating it as a
+quiet night.
+
+### Caching
+
+`unavailable` results are **not cached**. A transient failure will not
+persist as an empty result until the next TTL expiry.
+
+### Per-Strigoi source mapping
+
+| Strigoi | `source` value |
+|---|---|
+| strigoi-spin | `edgar` |
+| strigoi-merger | `edgar` |
+| strigoi-insider | `edgar` |
+| strigoi-echo | `yahoo` |
+| strigoi-lazarus | `finnhub` |
+| strigoi-index | `wikipedia` |
+
+Voievod (no external source) and Daywalker (outside the audit scope) do
+not emit `data_source_health`.
+
+### Known limitations (v1)
+
+- **strigoi-lazarus:** only a blank `FINNHUB_API_KEY` surfaces as
+  `unavailable`. Finnhub HTTP outages currently degrade to
+  `healthy`-with-fewer-candidates rather than `unavailable`, because the
+  adapter's per-symbol graceful-degradation returns `null` silently.
+- **strigoi-index / wikipedia:** an empty result is always reported as
+  `unavailable`. The Wikipedia constituents page always lists ~500
+  companies; an empty parse result can only mean a fetch or parse failure.
+
 ## Edgar parsing notes
 
 SEC EDGAR Atom feeds surface new filings within minutes of acceptance.
