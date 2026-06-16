@@ -19,6 +19,11 @@ public interface VistierieClient {
     List<VistierieRunDetail> listRuns();
     VistierieRunDetail triggerRun(String agentName);
     List<VistierieRunEvent> getRunEvents(String runId);
+    java.util.List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
+            java.util.List<String> status, java.time.Instant from, java.time.Instant to,
+            int limit, int offset);
+    tools.jackson.databind.JsonNode getRunTranscript(String runId, String view);
+    tools.jackson.databind.JsonNode getRunToolCall(String runId, String toolUseId);
 
     // ── budget ────────────────────────────────────────────────────
     BudgetStatus getTenantBudget();
