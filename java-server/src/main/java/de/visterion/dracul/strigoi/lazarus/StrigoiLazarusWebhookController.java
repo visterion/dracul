@@ -53,6 +53,9 @@ public class StrigoiLazarusWebhookController extends HuntController {
 
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
+        if (!fundamentals.configured()) {
+            return de.visterion.dracul.hunting.DataSourceResult.unavailable("finnhub", "finnhub: api key missing");
+        }
         var items = watchlist.findAllByUser(USER);
         var raws = new ArrayList<LazarusRaw>();
         for (WatchlistItem item : items) {

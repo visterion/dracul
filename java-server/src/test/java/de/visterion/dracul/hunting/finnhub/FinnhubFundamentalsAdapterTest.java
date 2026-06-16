@@ -83,4 +83,11 @@ class FinnhubFundamentalsAdapterTest {
         assertThat(noKey.basicFinancials("ACME")).isNull();
         wm.verify(0, getRequestedFor(urlPathEqualTo("/stock/metric")));
     }
+
+    @Test void configuredReflectsApiKey() {
+        var withKey = new FinnhubFundamentalsAdapter(RestClient.builder().baseUrl(wm.baseUrl()).build(), "key-123");
+        var blank = new FinnhubFundamentalsAdapter(RestClient.builder().baseUrl(wm.baseUrl()).build(), "");
+        assertThat(withKey.configured()).isTrue();
+        assertThat(blank.configured()).isFalse();
+    }
 }

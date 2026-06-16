@@ -50,6 +50,7 @@ class StrigoiLazarusWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
                 .build();
+        when(fundamentals.configured()).thenReturn(true);
         when(fundamentals.basicFinancials(anyString())).thenReturn(null);
     }
 
@@ -132,6 +133,25 @@ class StrigoiLazarusWebhookControllerIT {
         for (JsonNode p : chronicle.path("prey")) {
             assertThat(p.path("companyName").asText()).isNotEqualTo("BlankCo Lazarus");
         }
+    }
+
+    @Test
+    void blankKeySurfacesUnavailable() {
+        org.mockito.Mockito.when(fundamentals.configured()).thenReturn(false);
+
+        // Use a distinct lookback_days to get a fresh cache slot (avoids hitting the
+        // healthy result cached by the happy-path test under the "default" key).
+        JsonNode resp = rest.post().uri("/api/strigoi-lazarus/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-blank", "tool_name", "fetch_quality_at_low_candidates",
+                        "input", Map.of("lookback_days", 999)))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
+        assertThat(resp.path("output").path("data_source_health").path("detail").asText())
+                .contains("api key missing");
     }
 
     @Test
