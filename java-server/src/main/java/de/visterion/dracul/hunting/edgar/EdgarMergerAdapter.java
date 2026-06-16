@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.edgar;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +46,7 @@ public class EdgarMergerAdapter {
         this.archiveBase = archiveBase;
     }
 
-    public List<MergerFiling> recentDeals(LocalDate from, LocalDate to) {
+    public DataSourceResult<MergerFiling> recentDeals(LocalDate from, LocalDate to) {
         JsonNode search;
         try {
             search = http.get()
@@ -59,11 +60,11 @@ public class EdgarMergerAdapter {
                     .body(JsonNode.class);
         } catch (Exception e) {
             log.warn("EDGAR merger search failed: {}", e.getMessage());
-            return List.of();
+            return DataSourceResult.unavailable("edgar", "edgar: " + e.getMessage());
         }
-        if (search == null) return List.of();
+        if (search == null) return DataSourceResult.healthy("edgar", List.of());
         JsonNode hits = search.path("hits").path("hits");
-        if (!hits.isArray() || hits.isEmpty()) return List.of();
+        if (!hits.isArray() || hits.isEmpty()) return DataSourceResult.healthy("edgar", List.of());
 
         List<MergerFiling> out = new ArrayList<>();
         for (JsonNode hit : hits) {
@@ -74,7 +75,7 @@ public class EdgarMergerAdapter {
                 // skip malformed individual hit
             }
         }
-        return out;
+        return DataSourceResult.healthy("edgar", out);
     }
 
     private MergerFiling parseHit(JsonNode hit) {

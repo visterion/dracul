@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.edgar.EdgarMergerAdapter;
 import de.visterion.dracul.hunting.edgar.MergerFiling;
 import org.junit.jupiter.api.*;
@@ -49,13 +50,15 @@ class StrigoiMergerWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
                 .build();
-        when(edgarMerger.recentDeals(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of());
+        when(edgarMerger.recentDeals(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("edgar", List.of()));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(edgarMerger.recentDeals(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of(
-                new MergerFiling("TGT", "Target Corp", "DEFM14A", LocalDate.of(2026, 5, 20), "http://sec/u1")));
+        when(edgarMerger.recentDeals(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("edgar", List.of(
+                        new MergerFiling("TGT", "Target Corp", "DEFM14A", LocalDate.of(2026, 5, 20), "http://sec/u1"))));
 
         JsonNode resp = rest.post().uri("/api/strigoi-merger/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-merger-token")
@@ -145,5 +148,33 @@ class StrigoiMergerWebhookControllerIT {
             return;
         }
         fail("Expected 401");
+    }
+
+    @Test
+    void unavailableSourceSurfacesAndIsNotCached() {
+        org.mockito.Mockito.when(edgarMerger.recentDeals(
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(DataSourceResult.unavailable("edgar", "edgar: 503"));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-merger/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-merger-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail", "tool_name", "fetch_recent_merger_candidates",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
+
+        // second identical call — must NOT be served from cache
+        rest.post().uri("/api/strigoi-merger/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-merger-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail-2", "tool_name", "fetch_recent_merger_candidates",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().body(JsonNode.class);
+
+        org.mockito.Mockito.verify(edgarMerger, org.mockito.Mockito.times(2))
+                .recentDeals(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 }
