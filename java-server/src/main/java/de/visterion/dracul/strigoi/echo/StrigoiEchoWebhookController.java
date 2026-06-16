@@ -11,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -38,10 +37,11 @@ public class StrigoiEchoWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_recent_pead_candidates"; }
 
     @Override
-    protected List<?> hunt(Map<String, Object> body) {
+    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
-        return screener.screen(yahoo.recentEarnings(to.minusDays(lookback), to));
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("yahoo",
+                screener.screen(yahoo.recentEarnings(to.minusDays(lookback), to)));
     }
 
     @PostMapping("/tools/fetch-candidates")

@@ -11,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -39,10 +38,11 @@ public class StrigoiInsiderWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_recent_clusters"; }
 
     @Override
-    protected List<?> hunt(Map<String, Object> body) {
+    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
-        return screener.cluster(edgar.recentFilings(to.minusDays(lookback), to));
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("edgar",
+                screener.cluster(edgar.recentFilings(to.minusDays(lookback), to)));
     }
 
     @PostMapping("/tools/fetch-clusters")

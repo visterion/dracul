@@ -10,7 +10,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -42,9 +41,10 @@ public class StrigoiIndexWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_recent_index_additions"; }
 
     @Override
-    protected List<?> hunt(Map<String, Object> body) {
+    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
-        return screener.screen(wikipedia.recentConstituents(), lookback);
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("wikipedia",
+                screener.screen(wikipedia.recentConstituents(), lookback));
     }
 
     @PostMapping("/tools/fetch-candidates")
