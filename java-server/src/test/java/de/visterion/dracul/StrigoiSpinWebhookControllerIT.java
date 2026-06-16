@@ -68,6 +68,11 @@ class StrigoiSpinWebhookControllerIT {
         boolean found = false;
         for (JsonNode c : cands) if ("SPN".equals(c.path("symbol").asText())) found = true;
         assertThat(found).as("SPN candidate returned").isTrue();
+
+        JsonNode health = resp.path("output").path("data_source_health");
+        org.assertj.core.api.Assertions.assertThat(health.path("status").asText()).isEqualTo("healthy");
+        org.assertj.core.api.Assertions.assertThat(health.path("source").asText()).isEqualTo("edgar");
+        org.assertj.core.api.Assertions.assertThat(health.has("checked_at")).isTrue();
     }
 
     @Test

@@ -13,7 +13,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -53,15 +52,15 @@ public class StrigoiLazarusWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_quality_at_low_candidates"; }
 
     @Override
-    protected List<?> hunt(Map<String, Object> body) {
+    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         var items = watchlist.findAllByUser(USER);
         var raws = new ArrayList<LazarusRaw>();
         for (WatchlistItem item : items) {
-            raws.add(new LazarusRaw(
-                    item.ticker(), item.companyName(),
+            raws.add(new LazarusRaw(item.ticker(), item.companyName(),
                     item.currentPrice(), fundamentals.basicFinancials(item.ticker())));
         }
-        return screener.screen(raws, maxAboveLow, maxDebtEquity);
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("finnhub",
+                screener.screen(raws, maxAboveLow, maxDebtEquity));
     }
 
     @PostMapping("/tools/fetch-candidates")

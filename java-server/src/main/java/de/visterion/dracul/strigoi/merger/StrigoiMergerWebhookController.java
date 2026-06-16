@@ -11,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -42,10 +41,11 @@ public class StrigoiMergerWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_recent_merger_candidates"; }
 
     @Override
-    protected List<?> hunt(Map<String, Object> body) {
+    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 120);
         var to = LocalDate.now();
-        return screener.screen(edgar.recentDeals(to.minusDays(lookback), to));
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("edgar",
+                screener.screen(edgar.recentDeals(to.minusDays(lookback), to)));
     }
 
     @PostMapping("/tools/fetch-candidates")

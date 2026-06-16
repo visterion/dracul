@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import tools.jackson.databind.JsonNode;
 
-import java.util.List;
 import java.util.Map;
 
 /** Base for the 6 prey-producing hunters. Subclasses declare their own
@@ -32,7 +31,7 @@ public abstract class HuntController {
     }
 
     protected abstract String agentName();
-    protected abstract List<?> hunt(Map<String, Object> input);
+    protected abstract de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> input);
     protected abstract String defaultAnomalyType();
     protected String defaultHorizon() { return "3m"; }
     protected boolean skipBlankSymbol() { return false; }
@@ -60,8 +59,33 @@ public abstract class HuntController {
             paramsKey = String.valueOf(in.get("lookback_days"));
         }
         Map<String, Object> out = cache.get(toolName(), paramsKey,
-                () -> Map.of("output", Map.of(fetchOutputKey(), hunt(body))));
+                () -> {
+                    de.visterion.dracul.hunting.DataSourceResult<?> r = hunt(body);
+                    Map<String, Object> output = new java.util.HashMap<>();
+                    output.put(fetchOutputKey(), r.items());
+                    output.put("data_source_health", healthMap(r.health()));
+                    return Map.of("output", output);
+                },
+                HuntController::isHealthyPayload);
         return ResponseEntity.ok(out);
+    }
+
+    private static Map<String, Object> healthMap(de.visterion.dracul.hunting.DataSourceHealth h) {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("status", h.status());
+        m.put("source", h.source());
+        m.put("detail", h.detail());          // nullable
+        m.put("checked_at", h.checkedAt().toString());
+        return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean isHealthyPayload(Map<String, Object> payload) {
+        Object output = payload.get("output");
+        if (!(output instanceof Map<?, ?> o)) return true;
+        Object health = o.get("data_source_health");
+        if (!(health instanceof Map<?, ?> hm)) return true;
+        return "healthy".equals(hm.get("status"));
     }
 
     @PostMapping("/complete")
