@@ -94,4 +94,42 @@ class ToolFetchCacheTest {
         assertThat(calls.get()).isEqualTo(2);
         assertThat(ok).isEqualTo(Map.of("v", 1));
     }
+
+    @Test
+    void resultRejectedByPredicateIsNotCached() {
+        var cache = new ToolFetchCache(catalogWith(entry("t", true, null)), 300);
+        var calls = new AtomicInteger();
+        java.util.function.Supplier<Map<String, Object>> compute = () -> {
+            calls.incrementAndGet();
+            return Map.of("output", Map.of("data_source_health",
+                    Map.of("status", "unavailable")));
+        };
+        java.util.function.Predicate<Map<String, Object>> cacheable =
+                p -> "healthy".equals(((java.util.Map<?, ?>) ((java.util.Map<?, ?>) p.get("output"))
+                        .get("data_source_health")).get("status"));
+
+        cache.get("t", "k", compute, cacheable);
+        cache.get("t", "k", compute, cacheable);
+
+        assertThat(calls.get()).isEqualTo(2);   // not cached → recomputed
+    }
+
+    @Test
+    void healthyResultIsCached() {
+        var cache = new ToolFetchCache(catalogWith(entry("t", true, null)), 300);
+        var calls = new AtomicInteger();
+        java.util.function.Supplier<Map<String, Object>> compute = () -> {
+            calls.incrementAndGet();
+            return Map.of("output", Map.of("data_source_health",
+                    Map.of("status", "healthy")));
+        };
+        java.util.function.Predicate<Map<String, Object>> cacheable =
+                p -> "healthy".equals(((java.util.Map<?, ?>) ((java.util.Map<?, ?>) p.get("output"))
+                        .get("data_source_health")).get("status"));
+
+        cache.get("t", "k", compute, cacheable);
+        cache.get("t", "k", compute, cacheable);
+
+        assertThat(calls.get()).isEqualTo(1);   // cached → computed once
+    }
 }
