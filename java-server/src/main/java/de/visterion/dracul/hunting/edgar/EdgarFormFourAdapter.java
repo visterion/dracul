@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.edgar;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -37,7 +38,7 @@ public class EdgarFormFourAdapter {
         this.archiveBase = archiveBase;
     }
 
-    public List<Form4Filing> recentFilings(LocalDate from, LocalDate to) {
+    public DataSourceResult<Form4Filing> recentFilings(LocalDate from, LocalDate to) {
         JsonNode search;
         try {
             search = http.get()
@@ -50,11 +51,11 @@ public class EdgarFormFourAdapter {
                     .retrieve()
                     .body(JsonNode.class);
         } catch (Exception e) {
-            throw new EdgarException("EDGAR search failed", e);
+            return DataSourceResult.unavailable("edgar", "edgar: " + e.getMessage());
         }
-        if (search == null) return List.of();
+        if (search == null) return DataSourceResult.healthy("edgar", List.of());
         JsonNode hits = search.path("hits").path("hits");
-        if (!hits.isArray() || hits.isEmpty()) return List.of();
+        if (!hits.isArray() || hits.isEmpty()) return DataSourceResult.healthy("edgar", List.of());
 
         List<Form4Filing> out = new ArrayList<>();
         for (JsonNode hit : hits) {
@@ -64,7 +65,7 @@ public class EdgarFormFourAdapter {
                 // Skip malformed individual filings; continue
             }
         }
-        return out;
+        return DataSourceResult.healthy("edgar", out);
     }
 
     private void parseHit(JsonNode hit, List<Form4Filing> out) throws Exception {

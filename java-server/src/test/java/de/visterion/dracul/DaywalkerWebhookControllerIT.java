@@ -69,7 +69,7 @@ class DaywalkerWebhookControllerIT {
         when(yahoo.intradayCandles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
         when(finnhub.companyNews(anyString(), any(), any())).thenReturn(List.of());
         when(finnhub.recommendationTrend(anyString())).thenReturn(List.of());
-        when(edgar.recentFilings(any(), any())).thenReturn(List.of());
+        when(edgar.recentFilings(any(), any())).thenReturn(de.visterion.dracul.hunting.DataSourceResult.healthy("edgar", List.of()));
     }
 
     @Test

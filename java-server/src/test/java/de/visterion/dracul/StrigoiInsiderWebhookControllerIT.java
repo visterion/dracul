@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +24,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
 @SpringBootTest(webEnvironment = RANDOM_PORT)
@@ -51,7 +52,8 @@ class StrigoiInsiderWebhookControllerIT {
                     c.add(new MappingJackson2HttpMessageConverter(objectMapper));
                 })
                 .build();
-        when(edgar.recentFilings(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of());
+        when(edgar.recentFilings(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("edgar", List.of()));
     }
 
     @Test
@@ -77,6 +79,25 @@ class StrigoiInsiderWebhookControllerIT {
             return;
         }
         fail("Expected 401");
+    }
+
+    @Test
+    void unavailableSourceSurfacesAndIsNotCached() {
+        when(edgar.recentFilings(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.unavailable("edgar", "edgar: 503"));
+
+        for (int i = 0; i < 2; i++) {
+            JsonNode resp = rest.post().uri("/api/strigoi-insider/tools/fetch-clusters")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer test-token-abc")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("run_id", "r-unavail-" + i, "tool_name", "fetch_recent_clusters",
+                                "input", Map.of("lookback_days", 7)))
+                    .retrieve().body(JsonNode.class);
+            assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                    .isEqualTo("unavailable");
+        }
+
+        verify(edgar, times(2)).recentFilings(any(LocalDate.class), any(LocalDate.class));
     }
 
     @Test

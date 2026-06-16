@@ -71,7 +71,7 @@ public class DaywalkerEventEngine {
 
         List<Form4Filing> filings;
         try {
-            filings = edgar.recentFilings(fromDate, toDate);
+            filings = edgar.recentFilings(fromDate, toDate).items();
         } catch (Exception e) {
             log.warn("EDGAR fetch failed during Daywalker poll: {}", e.getMessage());
             filings = List.of();
