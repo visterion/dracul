@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.yahoo.YahooEarningsAdapter;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,7 +52,8 @@ class StrigoiEchoWebhookControllerIT {
                     c.add(new MappingJackson2HttpMessageConverter(objectMapper));
                 })
                 .build();
-        when(yahoo.recentEarnings(any(LocalDate.class), any(LocalDate.class))).thenReturn(List.of());
+        when(yahoo.recentEarnings(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("yahoo", List.of()));
     }
 
     @Test
@@ -139,5 +141,33 @@ class StrigoiEchoWebhookControllerIT {
                             "error", "LLM timeout"))
                 .retrieve().toBodilessEntity();
         assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void unavailableSourceSurfacesAndIsNotCached() {
+        org.mockito.Mockito.when(yahoo.recentEarnings(
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(DataSourceResult.unavailable("yahoo", "yahoo: 503"));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail", "tool_name", "fetch_recent_pead_candidates",
+                        "input", Map.of("lookback_days", 7)))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
+
+        // second identical call — must NOT be served from cache
+        rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail-2", "tool_name", "fetch_recent_pead_candidates",
+                        "input", Map.of("lookback_days", 7)))
+                .retrieve().body(JsonNode.class);
+
+        org.mockito.Mockito.verify(yahoo, org.mockito.Mockito.times(2))
+                .recentEarnings(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 }
