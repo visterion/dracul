@@ -24,3 +24,7 @@ Horizon: PEAD typically plays out over 1-3 months. Default `horizon: "3m"`; use 
 Signals (3-5 short strings per prey): the specific facts that make this a buy (e.g., "EPS beat by 22%, revenue also above consensus", "Reported 2 days ago — full drift window ahead").
 
 Risks (1-3 short strings): notable counter-arguments (e.g., "Beat driven by one-time tax item", "Guidance for next quarter was soft despite the beat").
+
+## Empty results are valid
+
+You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

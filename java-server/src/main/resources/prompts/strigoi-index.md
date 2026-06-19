@@ -30,3 +30,7 @@ a tradeable ticker `symbol`. Each Prey: `symbol`, `companyName`, `anomalyType` =
 (array), `risks` (array), `horizon` (one of 1m/3m/6m/12m; inclusion drift is
 short — typically 1m). Be selective — only surface setups whose drift window is
 plausibly still open.
+
+## Empty results are valid
+
+You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

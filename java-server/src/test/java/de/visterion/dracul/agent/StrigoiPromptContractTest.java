@@ -1,0 +1,32 @@
+package de.visterion.dracul.agent;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Guards the empty-result contract in every Strigoi prompt. Root cause of the
+ * recurring {@code output_schema: required property 'prey' not found} run
+ * failures (echo/insider): when the screener returns zero candidates the LLM
+ * improvised a non-conforming output (prose / a custom "no_signals" object)
+ * instead of {@code {"prey": []}}. Every Strigoi prompt must instruct the model
+ * to always return an (possibly empty) {@code prey} array.
+ */
+class StrigoiPromptContractTest {
+
+    private static final List<String> STRIGOI = List.of(
+            "strigoi-spin", "strigoi-merger", "strigoi-insider",
+            "strigoi-echo", "strigoi-lazarus", "strigoi-index");
+
+    @Test
+    void everyStrigoiPromptDeclaresEmptyResultContract() {
+        for (String name : STRIGOI) {
+            String prompt = AgentResources.classpath("prompts/" + name + ".md");
+            assertThat(prompt)
+                    .as("%s prompt must tell the model to return {\"prey\": []} when there are no candidates", name)
+                    .contains("{\"prey\": []}");
+        }
+    }
+}
