@@ -33,3 +33,7 @@ decline, structural impairment, deteriorating fundamentals). Each Prey:
 `thesis` (1–2 sentences), `signals` (array), `risks` (array), `horizon` (one of
 1m/3m/6m/12m; mean-reversion of quality-at-low is typically 6m–12m). Be
 selective — only surface high-conviction setups.
+
+## Empty results are valid
+
+You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

@@ -24,3 +24,7 @@ Horizon: insider-cluster signals typically play out over 3-6 months. Default `ho
 Signals (3-5 short strings per prey): the specific facts that make this a buy (e.g., "CEO + CFO both bought within 5 days", "$3.2M total purchases, largest in 18 months").
 
 Risks (1-3 short strings): notable counter-arguments (e.g., "Stock down 40% YTD — buying could be value trap", "Filings predate Q3 earnings — recent results may have changed picture").
+
+## Empty results are valid
+
+You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.
