@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.visterion.dracul.marketdata.StubFxServiceConfig;
 import de.visterion.dracul.marketdata.StubMarketDataPort;
 import de.visterion.dracul.marketdata.StubMarketDataPortConfig;
 import org.junit.jupiter.api.*;
@@ -25,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
 @SpringBootTest(webEnvironment = RANDOM_PORT)
-@Import({ContainerConfig.class, StubMarketDataPortConfig.class})
+@Import({ContainerConfig.class, StubMarketDataPortConfig.class, StubFxServiceConfig.class})
 @ActiveProfiles("dev")
 class WatchlistPositionControllerIT {
 
