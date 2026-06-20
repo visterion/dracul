@@ -217,7 +217,8 @@ public class GroparWebhookController {
             if (!HOLD.equals(action)) {
                 // "EXIT" is the triggerType label; owner is prefixed so the single
                 // operator channel stays attributable across users.
-                telegram.notifyAlert(symbol, "EXIT", action, "[" + owner + "] " + rationale);
+                telegram.notifyAlert(symbol, "EXIT", action,
+                        "[" + owner + "] " + (rationale == null ? "" : rationale));
             }
         }
 

@@ -205,7 +205,34 @@ class GroparWebhookControllerTest {
     }
 
     // =========================================================================
-    // Test 5: complete with non-done status → no persist
+    // Test 5: complete with null rationale → no "null" literal in Telegram text
+    // =========================================================================
+
+    @Test
+    void complete_sellSignalWithNullRationale_noNullLiteralInTelegram() throws Exception {
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "signals": [
+                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL", "confidence": 0.7 }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        controller.complete(BEARER, "run-46", body);
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"),
+                argThat(text -> text != null && !text.contains("null")));
+    }
+
+    // =========================================================================
+    // Test 6: complete with non-done status → no persist (was Test 5)
     // =========================================================================
 
     @Test
