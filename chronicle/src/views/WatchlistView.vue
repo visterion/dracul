@@ -139,7 +139,7 @@
               </span>
             </div>
             <div class="wr-price">
-              <span class="wr-px mono">${{ fmtPrice(item.currentPrice) }}</span>
+              <span class="wr-px mono">{{ formatMoney(item.currentPrice, item.currency, locale) }}</span>
               <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
                 {{ item.dayChangePercent >= 0 ? '+' : '' }}{{ item.dayChangePercent.toFixed(1) }}%
               </span>
@@ -181,7 +181,7 @@
               </div>
             </div>
             <div class="wd-quote">
-              <span class="wd-px mono">${{ fmtPrice(selectedItem.currentPrice) }}</span>
+              <span class="wd-px mono">{{ formatMoney(selectedItem.currentPrice, selectedItem.currency, locale) }}</span>
               <span class="wd-chg mono" :class="selectedItem.dayChangePercent >= 0 ? 'pos' : 'neg'">
                 {{ selectedItem.dayChangePercent >= 0 ? '+' : '' }}{{ selectedItem.dayChangePercent.toFixed(1) }}% {{ t('watchlist.detail.today') }}
               </span>
@@ -233,6 +233,7 @@ import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
+import { formatMoney } from '../utils/currency'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
@@ -324,10 +325,6 @@ function dotClass(status: WatchlistStatus): 'positive' | 'warning' | 'danger' {
   if (status === 'calm') return 'positive'
   if (status === 'elevated') return 'warning'
   return 'danger'
-}
-
-function fmtPrice(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 // ── Add / delete (preserved real features) ──
