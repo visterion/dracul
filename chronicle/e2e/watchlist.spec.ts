@@ -56,6 +56,21 @@ test.describe('Watchlist View (/watchlist)', () => {
     await expect(page.locator('.alert-item').first()).toBeVisible()
   })
 
+  test('EUR-native rows hide the native original (no origPrice token)', async ({ page }) => {
+    // SP-2: MoneyDisplay hides the native parenthetical when native currency ==
+    // display currency. Every tracking row in the watchlist list is EUR-native
+    // displayed in EUR (the lone USD-native item, AVGO, is a position and lives
+    // in /portfolio, not in this list). App boots in German -> token 'urspr.'.
+    // NVDA (wl-2) is EUR-native -> native line hidden in its row.
+    const nvdaRow = page.locator('[data-testid="watchlist-item"]:has-text("NVDA")').first()
+    await expect(nvdaRow).toBeVisible()
+    await expect(nvdaRow.locator('.wr-price .money')).toBeVisible()
+    await expect(nvdaRow.locator('.wr-price').getByText('urspr.', { exact: false })).toHaveCount(0)
+
+    // No row in the list should surface the native parenthetical at all.
+    await expect(page.locator('.watch-rows .wr-price').getByText('urspr.', { exact: false })).toHaveCount(0)
+  })
+
   test('watchlist rows show an owner badge', async ({ page }) => {
     await expect(page.locator('[data-testid^="wl-owner-"]').first()).toBeVisible()
   })
