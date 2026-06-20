@@ -65,7 +65,7 @@ public class VerdictRepository {
                 SELECT id, symbol, company_name, contributing_strigoi, consensus_score,
                        summary, created_at, anomaly_types, current_price, avg_confidence,
                        horizon, signals, risks, contributing_details,
-                       decision, decided_at
+                       decision, decided_at, currency
                 FROM verdicts
                 WHERE id = :id
                 """)
@@ -86,7 +86,8 @@ public class VerdictRepository {
                         readList(rs.getString("risks")),
                         readDetails(rs.getString("contributing_details")),
                         rs.getString("decision"),
-                        rs.getString("decided_at")
+                        rs.getString("decided_at"),
+                        rs.getString("currency") == null ? "USD" : rs.getString("currency")
                 ))
                 .optional();
     }
@@ -155,7 +156,7 @@ public class VerdictRepository {
     public String insertSynthesized(
             String symbol, String companyName, List<String> contributingStrigoi,
             double consensusScore, String summary, List<String> anomalyTypes,
-            BigDecimal currentPrice, double avgConfidence, String horizon,
+            BigDecimal currentPrice, String currency, double avgConfidence, String horizon,
             List<String> signals, List<String> risks,
             List<ContributingStrigoiDetail> contributingDetails,
             List<String> contributingPreyIds, String userId) {
@@ -163,13 +164,13 @@ public class VerdictRepository {
         jdbc.sql("""
                 INSERT INTO verdicts
                   (id, symbol, company_name, contributing_strigoi, consensus_score, summary,
-                   created_at, anomaly_types, current_price, avg_confidence, horizon,
+                   created_at, anomaly_types, current_price, currency, avg_confidence, horizon,
                    signals, risks, contributing_details, user_id, contributing_prey_ids)
-                VALUES (?::uuid, ?, ?, ?::jsonb, ?, ?, now(), ?::jsonb, ?, ?, ?,
+                VALUES (?::uuid, ?, ?, ?::jsonb, ?, ?, now(), ?::jsonb, ?, ?, ?, ?,
                         ?::jsonb, ?::jsonb, ?::jsonb, ?, ?::jsonb)
                 """)
                 .params(id, symbol, companyName, json(contributingStrigoi), consensusScore, summary,
-                        json(anomalyTypes), currentPrice, avgConfidence, horizon,
+                        json(anomalyTypes), currentPrice, currency, avgConfidence, horizon,
                         json(signals), json(risks), json(contributingDetails), userId,
                         json(contributingPreyIds))
                 .update();
@@ -180,20 +181,20 @@ public class VerdictRepository {
     public void updateSynthesized(
             String id, String companyName, List<String> contributingStrigoi,
             double consensusScore, String summary, List<String> anomalyTypes,
-            BigDecimal currentPrice, double avgConfidence, String horizon,
+            BigDecimal currentPrice, String currency, double avgConfidence, String horizon,
             List<String> signals, List<String> risks,
             List<ContributingStrigoiDetail> contributingDetails,
             List<String> contributingPreyIds, String userId) {
         jdbc.sql("""
                 UPDATE verdicts SET
                   company_name = ?, contributing_strigoi = ?::jsonb, consensus_score = ?,
-                  summary = ?, anomaly_types = ?::jsonb, current_price = ?, avg_confidence = ?,
-                  horizon = ?, signals = ?::jsonb, risks = ?::jsonb,
+                  summary = ?, anomaly_types = ?::jsonb, current_price = ?, currency = ?,
+                  avg_confidence = ?, horizon = ?, signals = ?::jsonb, risks = ?::jsonb,
                   contributing_details = ?::jsonb, contributing_prey_ids = ?::jsonb
                 WHERE id = ?::uuid
                 """)
                 .params(companyName, json(contributingStrigoi), consensusScore, summary,
-                        json(anomalyTypes), currentPrice, avgConfidence, horizon,
+                        json(anomalyTypes), currentPrice, currency, avgConfidence, horizon,
                         json(signals), json(risks), json(contributingDetails),
                         json(contributingPreyIds), id)
                 .update();

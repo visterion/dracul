@@ -32,7 +32,7 @@ class VerdictRepositoryIT {
         return repo.insertSynthesized(
                 symbol, "Test Co", List.of("strigoi-spin", "strigoi-insider"),
                 0.88, summary, List.of("SPINOFF", "INSIDER"),
-                new BigDecimal("123.4500"), 0.65, "6m",
+                new BigDecimal("123.4500"), "USD", 0.65, "6m",
                 List.of("signal A"), List.of("risk A"),
                 List.of(new ContributingStrigoiDetail("strigoi-spin", 0.7, "t1"),
                         new ContributingStrigoiDetail("strigoi-insider", 0.6, "t2")),
@@ -53,13 +53,16 @@ class VerdictRepositoryIT {
         repo.updateDecision(id, "TRACK");
         repo.updateSynthesized(id, "Test Co", List.of("strigoi-spin", "strigoi-insider"),
                 0.9, "new summary", List.of("SPINOFF"),
-                new BigDecimal("200.0000"), 0.7, "3m",
+                new BigDecimal("200.0000"), "USD", 0.7, "3m",
                 List.of("signal B"), List.of("risk B"),
                 List.of(new ContributingStrigoiDetail("strigoi-spin", 0.8, "t3")),
                 List.of("p1", "p2", "p3"), "default");
         var detail = repo.findDetailById(id).orElseThrow();
         assertThat(detail.summary()).isEqualTo("new summary");
         assertThat(detail.decision()).isEqualTo("TRACK");
+        assertThat(detail.currency()).isEqualTo("USD");
+        assertThat(detail.nativeCurrency()).isEqualTo("USD");
+        assertThat(detail.nativeCurrentPrice()).isEqualTo(200.0);
         var active = repo.findActiveBySymbol("RTUP", "default").orElseThrow();
         assertThat(active.contributingPreyIds()).containsExactlyInAnyOrder("p1", "p2", "p3");
     }

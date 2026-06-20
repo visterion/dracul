@@ -19,6 +19,8 @@ public class VerdictSynthesizer {
 
     public enum Result { INSERTED, UPDATED, NOOP_UNCHANGED, SKIPPED_DECIDED }
 
+    private record PricePoint(BigDecimal price, String currency) {}
+
     private final VerdictRepository verdictRepo;
     private final MarketDataPort marketData;
 
@@ -42,7 +44,7 @@ public class VerdictSynthesizer {
                 .toList();
         var preyIds = prey.stream().map(Prey::id).toList();
         String horizon = Horizons.longest(prey.stream().map(Prey::horizon).toList());
-        BigDecimal price = resolvePrice(symbol);
+        PricePoint pp = resolvePrice(symbol);
 
         var active = verdictRepo.findActiveBySymbol(symbol, userId);
         if (active.isPresent()) {
@@ -55,23 +57,24 @@ public class VerdictSynthesizer {
                 return Result.NOOP_UNCHANGED;
             }
             verdictRepo.updateSynthesized(a.id(), cluster.companyName(), contributingStrigoi,
-                    consensusScore, summary, anomalyTypes, price, avgConfidence, horizon,
-                    signals, risks, details, preyIds, userId);
+                    consensusScore, summary, anomalyTypes, pp.price(), pp.currency(), avgConfidence,
+                    horizon, signals, risks, details, preyIds, userId);
             return Result.UPDATED;
         }
         verdictRepo.insertSynthesized(symbol, cluster.companyName(), contributingStrigoi,
-                consensusScore, summary, anomalyTypes, price, avgConfidence, horizon,
-                signals, risks, details, preyIds, userId);
+                consensusScore, summary, anomalyTypes, pp.price(), pp.currency(), avgConfidence,
+                horizon, signals, risks, details, preyIds, userId);
         return Result.INSERTED;
     }
 
-    private BigDecimal resolvePrice(String symbol) {
+    private PricePoint resolvePrice(String symbol) {
         try {
             var md = marketData.resolve(symbol);
-            return md == null ? null : md.currentPrice();
+            if (md == null) return new PricePoint(null, null);
+            return new PricePoint(md.currentPrice(), md.currency());
         } catch (RuntimeException e) {
             log.warn("voievod: price lookup for {} failed: {}", symbol, e.getMessage());
-            return null;
+            return new PricePoint(null, null);
         }
     }
 
