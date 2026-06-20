@@ -31,7 +31,6 @@ import java.util.UUID;
 public class GroparWebhookController {
 
     private static final Logger log = LoggerFactory.getLogger(GroparWebhookController.class);
-    private static final String USER = "default";
     private static final String HOLD = "HOLD";
 
     private final BearerTokenVerifier verifier;
@@ -81,8 +80,8 @@ public class GroparWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
-        Map<String, Object> out = cache.get("fetch_held_positions", "default", () -> {
-            var held = watchlistRepo.findAllByUser(USER).stream()
+        Map<String, Object> out = cache.get("fetch_held_positions", "all", () -> {
+            var held = watchlistRepo.findAll().stream()
                     .filter(this::isHeld)
                     .toList();
 
@@ -127,6 +126,7 @@ public class GroparWebhookController {
                     }
 
                     views.add(new HeldPositionView(
+                            item.id(),
                             item.ticker(),
                             item.companyName(),
                             item.entryPrice(),
@@ -168,15 +168,16 @@ public class GroparWebhookController {
             return ResponseEntity.noContent().build();
         }
 
-        // Build symbol → watchlist-item-id map for held items
-        Map<String, String> itemIdBySymbol = new HashMap<>();
-        for (WatchlistItem item : watchlistRepo.findAllByUser(USER)) {
+        // Build positionId → owner map for held items across all users
+        Map<String, String> ownerByPosition = new HashMap<>();
+        for (WatchlistItem item : watchlistRepo.findAll()) {
             if (isHeld(item)) {
-                itemIdBySymbol.put(item.ticker(), item.id());
+                ownerByPosition.put(item.id(), item.owner());
             }
         }
 
         for (JsonNode node : signals) {
+            String positionId   = node.path("position_id").asText("");
             String symbol       = node.path("symbol").asText("");
             String action       = node.path("action").asText(HOLD);
             String thesisStatus = node.path("thesis_status").asText(null);
@@ -185,8 +186,11 @@ public class GroparWebhookController {
             Double confidence  = nullableDouble(node, "confidence");
             Double gainLossPct = nullableDouble(node, "gain_loss_pct");
 
-            if (!itemIdBySymbol.containsKey(symbol)) {
-                log.warn("gropar: signal for unknown/non-held symbol {} — persisting without watchlist link", symbol);
+            String owner = ownerByPosition.get(positionId);
+            if (owner == null) {
+                log.warn("gropar: signal for unknown/non-held position_id {} (symbol {}) — skipping",
+                        positionId, symbol);
+                continue;
             }
 
             var firedRules = new ArrayList<String>();
@@ -197,7 +201,7 @@ public class GroparWebhookController {
 
             var signal = new ExitSignal(
                     UUID.randomUUID().toString(),
-                    itemIdBySymbol.get(symbol),
+                    positionId,
                     symbol,
                     action,
                     firedRules,
@@ -208,11 +212,13 @@ public class GroparWebhookController {
                     runId,
                     Instant.now().toString());
 
-            exitSignalRepo.insert(signal, USER);
+            exitSignalRepo.insert(signal, owner);
 
             if (!HOLD.equals(action)) {
-                // "EXIT" is the triggerType label shown in the Telegram alert
-                telegram.notifyAlert(symbol, "EXIT", action, rationale);
+                // "EXIT" is the triggerType label; owner is prefixed so the single
+                // operator channel stays attributable across users.
+                telegram.notifyAlert(symbol, "EXIT", action,
+                        "[" + owner + "] " + (rationale == null ? "" : rationale));
             }
         }
 

@@ -22,21 +22,21 @@ class GroparPauseReconcilerTest {
 
     @Test
     void pausesWhenNoHeldPositions() {
-        when(repo.countHeldByUser("default")).thenReturn(0L);
+        when(repo.countHeldAll()).thenReturn(0L);
         reconciler.reconcile();
         verify(vistierie).patchAgent("gropar", true);
     }
 
     @Test
     void unpausesWhenHeldPositionsExist() {
-        when(repo.countHeldByUser("default")).thenReturn(2L);
+        when(repo.countHeldAll()).thenReturn(2L);
         reconciler.reconcile();
         verify(vistierie).patchAgent("gropar", false);
     }
 
     @Test
     void suppressesRedundantPatchWhenStateUnchanged() {
-        when(repo.countHeldByUser("default")).thenReturn(0L);
+        when(repo.countHeldAll()).thenReturn(0L);
         reconciler.reconcile();
         reconciler.reconcile();
         verify(vistierie, times(1)).patchAgent("gropar", true);
@@ -44,7 +44,7 @@ class GroparPauseReconcilerTest {
 
     @Test
     void retriesAfterPatchFailure() {
-        when(repo.countHeldByUser("default")).thenReturn(0L);
+        when(repo.countHeldAll()).thenReturn(0L);
         doThrow(new RuntimeException("vistierie down"))
                 .doNothing()
                 .when(vistierie).patchAgent("gropar", true);

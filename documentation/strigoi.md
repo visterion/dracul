@@ -111,7 +111,8 @@ Groparul runs once per day after the US close (default cron: `0 0 22 * * 1-5`, U
 On each run:
 
 1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls all HELD watchlist items
-   with their entry price and share count.
+   **across all users** with their entry price and share count. Each position carries an opaque
+   `positionId` (the watchlist-item id) the LLM echoes back so signals can be routed to their owner.
 2. `ExitIndicatorService` computes technical indicators deterministically for each position:
    - **ATR Chandelier Stop** — 22-period ATR × 3.0 multiple (Chandelier Exit)
    - **MA Cross** — 50-period vs 200-period simple moving average
@@ -120,16 +121,20 @@ On each run:
    - **Time stop** — based on position age
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
    `verdict` (SELL / TRIM / HOLD), `rationale`, and `confidence`.
-4. `POST /api/gropar/complete` — completion webhook persists signals to `dracul.exit_signals` (V11).
-5. Results are served via `GET /api/exit-signals`. A Telegram push fires for SELL/TRIM signals.
+4. `POST /api/gropar/complete` — completion webhook persists each signal to `dracul.exit_signals`
+   (V11), scoped to the owner resolved from its `position_id`; signals with an unknown id are
+   skipped. `GET /api/exit-signals` then serves each user only their own signals.
+5. A Telegram push fires for SELL/TRIM signals on the single operator channel, with the owner
+   email prefixed into the alert text.
 
 Groparul is the first agent built end-to-end via the **generic add-an-agent recipe**: it uses
 `AgentDefaultProvider` (`GroparDefaults` bean) for DB-driven registration and a bespoke
 `GroparWebhookController` (bearer-token auth, `@ConditionalOnProperty`). No custom registrar.
 
 **Position guard.** Groparul only does useful work over held positions, so Dracul auto-pauses
-it at Vistierie whenever the held-position count is zero and unpauses it as soon as a held
-position exists — Vistierie skips a paused agent's cron, so empty runs never fire. The guard is
+it at Vistierie whenever the held-position count across **all** users is zero and unpauses it as
+soon as any user holds a position — Vistierie skips a paused agent's cron, so empty runs never
+fire. The guard is
 driven by watchlist changes (`WatchlistController` publishes a `WatchlistChangedEvent` after every
 mutation) and reconciled once at startup; see `GroparPauseReconciler`. Groparul's pause is therefore
 **system-managed**: turn the agent on or off via its `dracul.gropar.enabled` flag, not the manual
