@@ -10,9 +10,9 @@
       <span class="pf-row__name">{{ item.companyName }}</span>
     </div>
     <div class="pf-row__nums mono">
-      <span>{{ t('portfolio.cols.entry') }} ${{ fmt(item.entryPrice) }}</span>
+      <span>{{ t('portfolio.cols.entry') }} {{ formatMoney(item.entryPrice, item.currency, locale) }}</span>
       <span>{{ t('portfolio.cols.size') }} {{ fmt(item.shareCount) }}</span>
-      <span>{{ t('portfolio.cols.current') }} ${{ fmt(item.currentPrice) }}</span>
+      <span>{{ t('portfolio.cols.current') }} {{ formatMoney(item.currentPrice, item.currency, locale) }}</span>
       <span class="pf-row__pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(1) }}%</span>
     </div>
     <span v-if="signal?.thesisStatus" class="pf-row__thesis mono">{{ signal.thesisStatus }}</span>
@@ -32,10 +32,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TagPill from '../common/TagPill.vue'
 import type { WatchlistItem, ExitSignal } from '../../api/types'
+import { formatMoney } from '../../utils/currency'
 
 const props = defineProps<{ item: WatchlistItem; signal: ExitSignal | null }>()
 const emit = defineEmits<{ open: [string]; edit: [WatchlistItem]; delete: [WatchlistItem] }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const pnlPct = computed(() => {
   const e = props.item.entryPrice
