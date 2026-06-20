@@ -27,7 +27,6 @@ import static org.mockito.Mockito.*;
 class GroparWebhookControllerTest {
 
     private static final String BEARER = "Bearer tok";
-    private static final String USER = "default";
 
     private WatchlistRepository watchlistRepo;
     private VerdictRepository verdictRepo;
@@ -74,11 +73,11 @@ class GroparWebhookControllerTest {
     // -------------------------------------------------------------------------
 
     private WatchlistItem item(String id, String ticker, String tag,
-                                Double entryPrice, Double shareCount) {
+                                Double entryPrice, Double shareCount, String owner) {
         return new WatchlistItem(id, ticker, ticker + " Corp",
                 110.0, 1.0, "calm", "2025-01-01", tag,
                 null, List.of(), List.of(),
-                entryPrice, shareCount, USER, null, null);
+                entryPrice, shareCount, owner, null, null);
     }
 
     // =========================================================================
@@ -87,11 +86,11 @@ class GroparWebhookControllerTest {
 
     @Test
     void fetchHeldPositions_returnsOnlyFullyHeldItems() throws Exception {
-        var heldFull     = item("id-1", "ACME", "HELD",     100.0, 10.0);
-        var trackingItem = item("id-2", "FOO",  "TRACKING", 50.0,  5.0);
-        var heldNoEntry  = item("id-3", "BAR",  "HELD",     null,  null);
+        var heldFull     = item("id-1", "ACME", "HELD",     100.0, 10.0, "alice@x");
+        var trackingItem = item("id-2", "FOO",  "TRACKING", 50.0,  5.0,  "alice@x");
+        var heldNoEntry  = item("id-3", "BAR",  "HELD",     null,  null, "bob@x");
 
-        when(watchlistRepo.findAllByUser(USER))
+        when(watchlistRepo.findAll())
                 .thenReturn(List.of(heldFull, trackingItem, heldNoEntry));
         when(marketData.dailyOhlcHistory(eq("ACME"), anyInt()))
                 .thenReturn(oneBar());
@@ -106,32 +105,32 @@ class GroparWebhookControllerTest {
         var positions = (List<?>) output.get("positions");
 
         assertThat(positions).hasSize(1);
+        assertThat(((HeldPositionView) positions.get(0)).positionId()).isEqualTo("id-1");
         verify(marketData, times(1)).dailyOhlcHistory(eq("ACME"), anyInt());
         verify(marketData, never()).dailyOhlcHistory(eq("FOO"),  anyInt());
         verify(marketData, never()).dailyOhlcHistory(eq("BAR"),  anyInt());
     }
 
     // =========================================================================
-    // Test 2: complete with SELL → persists ExitSignal + fires Telegram
+    // Test 2: complete routes each signal to its owner, even for the same symbol
     // =========================================================================
 
     @Test
-    void complete_sellSignal_persistsAndFiresTelegram() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0);
-        when(watchlistRepo.findAllByUser(USER)).thenReturn(List.of(heldItem));
+    void complete_routesEachSignalToItsOwner_evenSameSymbol() throws Exception {
+        // Two users both hold AAPL — routing must be by position_id, not symbol.
+        var aliceAapl = item("pos-alice", "AAPL", "HELD", 100.0, 10.0, "alice@x");
+        var bobAapl   = item("pos-bob",   "AAPL", "HELD", 200.0,  5.0, "bob@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(aliceAapl, bobAapl));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      {
-                        "symbol": "ACME",
-                        "action": "SELL",
-                        "rationale": "r",
-                        "confidence": 0.8,
-                        "fired_rules": ["DEATH_CROSS"]
-                      }
+                      { "position_id": "pos-alice", "symbol": "AAPL", "action": "SELL",
+                        "rationale": "alice exit", "confidence": 0.8, "fired_rules": ["DEATH_CROSS"] },
+                      { "position_id": "pos-bob", "symbol": "AAPL", "action": "HOLD",
+                        "rationale": "bob holds", "confidence": 0.6 }
                     ]
                   }
                 }
@@ -141,8 +140,10 @@ class GroparWebhookControllerTest {
         var resp = controller.complete(BEARER, "run-42", body);
 
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
-        verify(exitSignalRepo).insert(any(ExitSignal.class), eq(USER));
-        verify(telegram).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"), any());
+        verify(exitSignalRepo).insert(any(ExitSignal.class), eq("alice@x"));
+        verify(exitSignalRepo).insert(any(ExitSignal.class), eq("bob@x"));
+        verify(telegram).notifyAlert(eq("AAPL"), eq("EXIT"), eq("SELL"), contains("alice@x"));
+        verify(telegram, never()).notifyAlert(any(), any(), eq("HOLD"), any());
     }
 
     // =========================================================================
@@ -151,20 +152,16 @@ class GroparWebhookControllerTest {
 
     @Test
     void complete_holdSignal_persistsButNoTelegram() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0);
-        when(watchlistRepo.findAllByUser(USER)).thenReturn(List.of(heldItem));
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      {
-                        "symbol": "ACME",
-                        "action": "HOLD",
-                        "rationale": "all good",
-                        "thesis_status": "INTACT"
-                      }
+                      { "position_id": "id-1", "symbol": "ACME", "action": "HOLD",
+                        "rationale": "all good", "thesis_status": "INTACT" }
                     ]
                   }
                 }
@@ -174,12 +171,68 @@ class GroparWebhookControllerTest {
         var resp = controller.complete(BEARER, "run-43", body);
 
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
-        verify(exitSignalRepo).insert(any(ExitSignal.class), eq(USER));
+        verify(exitSignalRepo).insert(any(ExitSignal.class), eq("alice@x"));
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
     }
 
     // =========================================================================
-    // Test 4: complete with non-done status → no persist
+    // Test 4: complete with unknown position_id → skip persist
+    // =========================================================================
+
+    @Test
+    void complete_unknownPositionId_skipsPersist() throws Exception {
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "signals": [
+                      { "position_id": "ghost", "symbol": "ACME", "action": "SELL",
+                        "rationale": "hallucinated", "confidence": 0.9 }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        var resp = controller.complete(BEARER, "run-45", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(exitSignalRepo, never()).insert(any(), any());
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    // =========================================================================
+    // Test 5: complete with null rationale → no "null" literal in Telegram text
+    // =========================================================================
+
+    @Test
+    void complete_sellSignalWithNullRationale_noNullLiteralInTelegram() throws Exception {
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "signals": [
+                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL", "confidence": 0.7 }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        controller.complete(BEARER, "run-46", body);
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"),
+                argThat(text -> text != null && !text.contains("null")));
+    }
+
+    // =========================================================================
+    // Test 6: complete with non-done status → no persist (was Test 5)
     // =========================================================================
 
     @Test
