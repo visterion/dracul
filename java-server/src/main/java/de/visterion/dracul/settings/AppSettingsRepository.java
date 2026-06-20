@@ -9,6 +9,9 @@ public class AppSettingsRepository {
     private static final String LANGUAGE_KEY = "language";
     private static final String DEFAULT_LANGUAGE = "de";
 
+    private static final String DISPLAY_CURRENCY_KEY = "display_currency";
+    private static final String DEFAULT_DISPLAY_CURRENCY = "EUR";
+
     private final JdbcClient jdbc;
 
     public AppSettingsRepository(JdbcClient jdbc) {
@@ -31,6 +34,25 @@ public class AppSettingsRepository {
                 """)
                 .param("key", LANGUAGE_KEY)
                 .param("value", language)
+                .update();
+    }
+
+    public String getDisplayCurrency() {
+        return jdbc.sql("SELECT value FROM app_settings WHERE key = :key")
+                .param("key", DISPLAY_CURRENCY_KEY)
+                .query(String.class)
+                .optional()
+                .orElse(DEFAULT_DISPLAY_CURRENCY);
+    }
+
+    public void setDisplayCurrency(String currency) {
+        jdbc.sql("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (:key, :value, now())
+                ON CONFLICT (key) DO UPDATE SET value = :value, updated_at = now()
+                """)
+                .param("key", DISPLAY_CURRENCY_KEY)
+                .param("value", currency)
                 .update();
     }
 }
