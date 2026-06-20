@@ -14,6 +14,7 @@ export interface ApiClient {
   getVerdictDetail(id: string): Promise<VerdictDetail | null>
   getStrigoiDetail(name: string): Promise<StrigoiDetail | null>
   getWatchlistItems(): Promise<WatchlistItem[]>
+  getPortfolio(): Promise<WatchlistItem[]>
   getPatterns(): Promise<Pattern[]>
   getPatternCases(id: string): Promise<PatternCase[]>
   getProviders(): Promise<LlmProvider[]>

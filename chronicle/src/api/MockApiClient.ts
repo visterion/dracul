@@ -58,6 +58,13 @@ export class MockApiClient implements ApiClient {
     return this.watchlist.map(i => ({ ...i, currency: this._currency }))
   }
 
+  async getPortfolio(): Promise<WatchlistItem[]> {
+    await delay(50)
+    return this.watchlist
+      .filter(i => i.owner === 'you@dracul.local' && i.entryPrice != null && i.shareCount != null)
+      .map(i => ({ ...i, currency: this._currency }))
+  }
+
   async getPatterns(): Promise<Pattern[]> {
     await delay(50)
     return mockPatterns
@@ -336,7 +343,15 @@ export class MockApiClient implements ApiClient {
 
   async getExitSignals(): Promise<ExitSignal[]> {
     await delay(50)
-    return mockExitSignals.map(s => ({ ...s }))
+    const mineIds = new Set(
+      this.watchlist.filter(i => i.owner === 'you@dracul.local').map(i => i.id),
+    )
+    const mineTickers = new Set(
+      this.watchlist.filter(i => i.owner === 'you@dracul.local').map(i => i.ticker),
+    )
+    return mockExitSignals
+      .filter(s => (s.watchlistItemId != null && mineIds.has(s.watchlistItemId)) || mineTickers.has(s.symbol))
+      .map(s => ({ ...s }))
   }
 
   async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {
