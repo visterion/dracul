@@ -18,6 +18,7 @@ import java.util.Set;
 public class SettingsController {
 
     private static final Set<String> ALLOWED_LANGUAGES = Set.of("de", "en");
+    private static final Set<String> ALLOWED_CURRENCIES = Set.of("EUR", "USD", "GBP", "CHF");
 
     private final VistierieClient client;
     private final AppSettingsRepository settings;
@@ -122,6 +123,22 @@ public class SettingsController {
     public BudgetStatus patchAgentBudget(@PathVariable String name,
                                           @RequestBody BudgetPatch patch) {
         return client.patchAgentBudget(name, patch);
+    }
+
+    @GetMapping("/currency")
+    public CurrencySetting getCurrency() {
+        return new CurrencySetting(settings.getDisplayCurrency());
+    }
+
+    @PutMapping("/currency")
+    public ResponseEntity<?> putCurrency(@RequestBody CurrencySetting body) {
+        String cur = body.currency() == null ? "" : body.currency().strip().toUpperCase();
+        if (!ALLOWED_CURRENCIES.contains(cur)) {
+            return ResponseEntity.badRequest()
+                    .body(java.util.Map.of("error", "unsupported currency: " + body.currency()));
+        }
+        settings.setDisplayCurrency(cur);
+        return ResponseEntity.ok(new CurrencySetting(cur));
     }
 
     @GetMapping("/language")
