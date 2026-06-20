@@ -29,7 +29,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public class GroparPauseReconciler {
 
     private static final Logger log = LoggerFactory.getLogger(GroparPauseReconciler.class);
-    private static final String USER = "default";
     private static final String AGENT = "gropar";
 
     private final WatchlistRepository watchlistRepo;
@@ -55,7 +54,7 @@ public class GroparPauseReconciler {
 
     /** Recompute desired pause state from held count and apply it if it changed. */
     public void reconcile() {
-        boolean desiredPaused = watchlistRepo.countHeldByUser(USER) == 0;
+        boolean desiredPaused = watchlistRepo.countHeldAll() == 0;
         if (Boolean.valueOf(desiredPaused).equals(lastApplied.get())) {
             return; // no change — avoid a redundant Vistierie call
         }
