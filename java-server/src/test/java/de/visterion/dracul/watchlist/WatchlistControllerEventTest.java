@@ -22,6 +22,7 @@ class WatchlistControllerEventTest {
     private VerdictRepository verdictRepo;
     private ApplicationEventPublisher events;
     private AppSettingsRepository settings;
+    private WatchlistCurrencyMapper mapper;
     private WatchlistController controller;
 
     private static final String USER = "default";
@@ -34,7 +35,9 @@ class WatchlistControllerEventTest {
         events = mock(ApplicationEventPublisher.class);
         settings = mock(AppSettingsRepository.class);
         when(settings.getDisplayCurrency()).thenReturn("EUR");
-        controller = new WatchlistController(repo, marketData, verdictRepo, events, settings);
+        mapper = mock(WatchlistCurrencyMapper.class);
+        when(mapper.toDisplay(any(), any())).thenAnswer(inv -> inv.getArgument(0));
+        controller = new WatchlistController(repo, marketData, verdictRepo, events, settings, mapper);
         CurrentUserHolder.set(USER);
     }
 

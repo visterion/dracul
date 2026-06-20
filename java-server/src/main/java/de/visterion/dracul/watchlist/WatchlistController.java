@@ -23,23 +23,29 @@ public class WatchlistController {
     private final VerdictRepository verdictRepo;
     private final ApplicationEventPublisher events;
     private final AppSettingsRepository settings;
+    private final WatchlistCurrencyMapper mapper;
 
     public WatchlistController(WatchlistRepository repo,
                                 MarketDataPort marketData,
                                 VerdictRepository verdictRepo,
                                 ApplicationEventPublisher events,
-                                AppSettingsRepository settings) {
+                                AppSettingsRepository settings,
+                                WatchlistCurrencyMapper mapper) {
         this.repo = repo;
         this.marketData = marketData;
         this.verdictRepo = verdictRepo;
         this.events = events;
         this.settings = settings;
+        this.mapper = mapper;
     }
 
     @GetMapping("/api/watchlist")
     public List<WatchlistItem> watchlist() {
         // Prices are kept fresh by WatchlistPriceRefresher; serve stored values (no per-load call).
-        return repo.findAll();
+        String display = settings.getDisplayCurrency();
+        return repo.findAll().stream()
+                .map(i -> mapper.toDisplay(i, display))
+                .toList();
     }
 
     @PostMapping("/api/watchlist")
@@ -55,7 +61,7 @@ public class WatchlistController {
             WatchlistItem merged = repo.mergeVerdictIdIfNull(
                     existing.get().id(), req.sourceVerdictId());
             events.publishEvent(new WatchlistChangedEvent());
-            return ResponseEntity.ok(merged);
+            return ResponseEntity.ok(mapper.toDisplay(merged, settings.getDisplayCurrency()));
         }
 
         MarketData md = marketData.resolve(req.symbol());
@@ -65,7 +71,7 @@ public class WatchlistController {
                 md.currentPrice().doubleValue(), hist,
                 req.tag(), req.sourceVerdictId(), md.currency());
         events.publishEvent(new WatchlistChangedEvent());
-        return ResponseEntity.status(201).body(created);
+        return ResponseEntity.status(201).body(mapper.toDisplay(created, settings.getDisplayCurrency()));
     }
 
     @PatchMapping("/api/watchlist/{id}")
@@ -88,7 +94,7 @@ public class WatchlistController {
             throw new NoSuchElementException("watchlist item " + id);
         }
         events.publishEvent(new WatchlistChangedEvent());
-        return repo.findById(id).orElseThrow();
+        return mapper.toDisplay(repo.findById(id).orElseThrow(), settings.getDisplayCurrency());
     }
 
     @DeleteMapping("/api/watchlist/{id}")
