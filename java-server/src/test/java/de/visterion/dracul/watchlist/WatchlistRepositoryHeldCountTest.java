@@ -39,4 +39,23 @@ class WatchlistRepositoryHeldCountTest {
         repo.insert(user, "WATCHONLY", "Watch Only", 10.0, List.of(10.0), "WATCH", null, null);
         assertThat(repo.countHeldByUser(user)).isZero();
     }
+
+    @Test
+    void countHeldAll_countsFullyHeldPositionsAcrossUsers() {
+        long before = repo.countHeldAll();
+
+        String alice = "all-alice-" + java.util.UUID.randomUUID();
+        String bob   = "all-bob-"   + java.util.UUID.randomUUID();
+
+        var aliceHeld = repo.insert(alice, "AAH", "Alice Held", 100.0, List.of(100.0), "HELD", null, null);
+        repo.updatePosition(aliceHeld.id(), 90.0, 10.0, null);
+
+        var bobHeld = repo.insert(bob, "BBH", "Bob Held", 50.0, List.of(50.0), "HELD", null, null);
+        repo.updatePosition(bobHeld.id(), 45.0, 5.0, null);
+
+        // a HELD with no position (no entry/share) must NOT count
+        repo.insert(bob, "BNP", "Bob No Pos", 30.0, List.of(30.0), "HELD", null, null);
+
+        assertThat(repo.countHeldAll()).isEqualTo(before + 2);
+    }
 }
