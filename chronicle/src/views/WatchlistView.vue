@@ -139,7 +139,7 @@
               </span>
             </div>
             <div class="wr-price">
-              <span class="wr-px mono">{{ formatMoney(item.currentPrice, item.currency, locale) }}</span>
+              <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
               <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
                 {{ item.dayChangePercent >= 0 ? '+' : '' }}{{ item.dayChangePercent.toFixed(1) }}%
               </span>
@@ -181,7 +181,7 @@
               </div>
             </div>
             <div class="wd-quote">
-              <span class="wd-px mono">{{ formatMoney(selectedItem.currentPrice, selectedItem.currency, locale) }}</span>
+              <span class="wd-px mono"><MoneyDisplay :amount="selectedItem.currentPrice" :currency="selectedItem.currency" :native-amount="selectedItem.nativeCurrentPrice" :native-currency="selectedItem.nativeCurrency" /></span>
               <span class="wd-chg mono" :class="selectedItem.dayChangePercent >= 0 ? 'pos' : 'neg'">
                 {{ selectedItem.dayChangePercent >= 0 ? '+' : '' }}{{ selectedItem.dayChangePercent.toFixed(1) }}% {{ t('watchlist.detail.today') }}
               </span>
@@ -230,10 +230,10 @@ import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import AlertRow from '../components/common/AlertRow.vue'
 import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
+import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
-import { formatMoney } from '../utils/currency'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()

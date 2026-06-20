@@ -14,7 +14,7 @@
       <div class="wcmp-shared-head">
         <span class="wcmp-ticker mono">{{ row.ticker }}</span>
         <span class="wcmp-name">{{ row.companyName }}</span>
-        <span class="wcmp-px mono">${{ fmtPrice(row.currentPrice) }}</span>
+        <span class="wcmp-px mono"><MoneyDisplay :amount="row.currentPrice" :currency="row.mine.currency" :native-amount="row.mine.nativeCurrentPrice" :native-currency="row.mine.nativeCurrency" /></span>
         <span class="wcmp-chg mono" :class="row.dayChangePercent >= 0 ? 'pos' : 'neg'">
           {{ row.dayChangePercent >= 0 ? '+' : '' }}{{ row.dayChangePercent.toFixed(1) }}%
         </span>
@@ -43,7 +43,7 @@
     >
       <span class="wcmp-ticker mono">{{ item.ticker }}</span>
       <span class="wcmp-name">{{ item.companyName }}</span>
-      <span class="wcmp-px mono">${{ fmtPrice(item.currentPrice) }}</span>
+      <span class="wcmp-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
       <span class="wcmp-dot" :class="`dot-${dotClass(item.status)}`" />
       <span class="wcmp-pos">{{ posLabel(item) }}</span>
     </div>
@@ -58,7 +58,7 @@
     >
       <span class="wcmp-ticker mono">{{ item.ticker }}</span>
       <span class="wcmp-name">{{ item.companyName }}</span>
-      <span class="wcmp-px mono">${{ fmtPrice(item.currentPrice) }}</span>
+      <span class="wcmp-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
       <span class="wcmp-dot" :class="`dot-${dotClass(item.status)}`" />
       <span class="wcmp-pos">{{ posLabel(item) }}</span>
     </div>
@@ -69,6 +69,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SectionHeader from '../common/SectionHeader.vue'
+import MoneyDisplay from '../common/MoneyDisplay.vue'
 import { buildComparison } from '../../lib/watchlistComparison'
 import type { WatchlistItem, WatchlistStatus } from '../../api/types'
 
@@ -89,10 +90,6 @@ function dotClass(status: WatchlistStatus): 'positive' | 'warning' | 'danger' {
   if (status === 'calm') return 'positive'
   if (status === 'elevated') return 'warning'
   return 'danger'
-}
-
-function fmtPrice(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function posLabel(_item: WatchlistItem): string {

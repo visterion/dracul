@@ -110,7 +110,7 @@
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.currentPrice') }}</span>
-              <span class="kv-v mono">${{ verdict.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</span>
+              <span class="kv-v mono"><MoneyDisplay :amount="verdict.currentPrice" :currency="verdict.currency" :native-amount="verdict.nativeCurrentPrice" :native-currency="verdict.nativeCurrency" /></span>
             </div>
           </div>
         </div>
@@ -179,6 +179,7 @@ import PageHead from '../components/common/PageHead.vue'
 import TagPill from '../components/common/TagPill.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import ConsensusRing from '../components/common/ConsensusRing.vue'
+import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 
 const { t } = useI18n()
 const { anomalyTypeLabel, horizonLabel } = useEnumLabels()
