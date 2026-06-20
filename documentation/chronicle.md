@@ -159,6 +159,12 @@ amounts) are shown in the operator's configured display currency.
   result cached per session) and stamps each watchlist/portfolio item with its
   effective `currency` code. The frontend renders the value using
   `Intl.NumberFormat` with that code — it never applies a client-side conversion.
+- **Native original price**: when a price was stored in a currency that differs
+  from the display currency, the original pre-conversion value is shown in
+  parentheses after the converted amount — e.g. `1.147,70 € (urspr. $1,247.50)`.
+  The parenthetical is hidden when the native currency equals the display currency
+  (no conversion needed). This applies to all converted-price surfaces: watchlist
+  current price, portfolio entry/current price, and verdict current price.
 - **LLM costs**: agent run costs are always shown in USD regardless of the
   display-currency setting (Vistierie's cost ledger is USD-denominated).
 

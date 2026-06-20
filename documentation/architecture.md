@@ -214,6 +214,9 @@ directly without triggering any market-data call.
 - Gropar data flow: HELD watchlist positions → daily OHLC history (TwelveData `/time_series outputsize=N`, Yahoo `range=1y&interval=1d`) → `ExitIndicatorService` (ATR/Chandelier stop, MA cross, 52-week proximity, gain/loss thresholds, time stop) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts.
 - Gropar position guard: `WatchlistController` publishes a `WatchlistChangedEvent` after every watchlist mutation. `GroparPauseReconciler` (present only when `dracul.gropar.enabled=true`, `@Order(30)` so it runs after `GenericAgentRegistrar`) listens to that event and to `ApplicationReadyEvent`, counts held positions (`WatchlistRepository.countHeldByUser`), and calls `VistierieClient.patchAgent("gropar", heldCount == 0)`. An in-memory last-applied state suppresses redundant Vistierie calls; a failed patch is logged and retried on the next event. gropar's pause is thus system-managed (operator uses the `enabled` flag, not the manual pause toggle).
 
+**Verdict native currency (V13):**
+- `verdicts.currency` (TEXT, nullable) — ISO 4217 code of the native currency in which `current_price` was recorded (e.g. `"USD"`). Added by `V13__verdict_currency.sql`. Conversion to the operator's display currency happens at read time in `VerdictController` via `VerdictCurrencyMapper`, mirroring the watchlist path's `WatchlistCurrencyMapper`. When `currency` equals the display currency no conversion is applied and the native fields in the API response are null.
+
 **Agent definition tables (V10):**
 
 Two new tables under the `dracul` schema hold runtime-editable agent definitions:
