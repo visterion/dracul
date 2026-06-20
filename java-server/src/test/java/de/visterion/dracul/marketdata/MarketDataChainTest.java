@@ -20,7 +20,7 @@ class MarketDataChainTest {
             if (!resolveOk || !data.containsKey(symbol))
                 throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "no");
             Quote q = data.get(symbol);
-            return new MarketData(symbol, q.price(), q.dayChangePercent(), List.of());
+            return new MarketData(symbol, q.price(), q.dayChangePercent(), "USD", List.of());
         }
         public Map<String, Quote> quotes(Collection<String> symbols) {
             Map<String, Quote> out = new java.util.LinkedHashMap<>();

@@ -51,7 +51,7 @@ public class TwelveDataMarketDataAdapter implements MarketDataPort {
             }
             Collections.reverse(history); // API is newest-first; MarketData expects oldest-first
         }
-        return new MarketData(name, price, change, history);
+        return new MarketData(name, price, change, "USD", history);
     }
 
     @Override

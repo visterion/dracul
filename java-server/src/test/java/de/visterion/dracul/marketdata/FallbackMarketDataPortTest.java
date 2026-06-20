@@ -14,7 +14,7 @@ class FallbackMarketDataPortTest {
         final Map<String, MarketData> data = new HashMap<>();
         boolean alwaysFail = false;
         FakePort put(String s, double price, double change) {
-            data.put(s, new MarketData(s + " Inc", BigDecimal.valueOf(price), BigDecimal.valueOf(change), List.of()));
+            data.put(s, new MarketData(s + " Inc", BigDecimal.valueOf(price), BigDecimal.valueOf(change), "USD", List.of()));
             return this;
         }
         @Override public MarketData resolve(String symbol) {
