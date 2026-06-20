@@ -252,16 +252,21 @@ watchlist.
 
 ##### Portfolio and exit signals
 
-**Portfolio** (`/portfolio`): lists the held positions — the watchlist items
-that carry an `entryPrice` and a `shareCount` — as `PositionRow` cards. Each row
-shows the ticker, company, entry/size/current numbers, a live P&L readout
+**Portfolio** (`/portfolio`): lists **your own** held positions — the watchlist
+items that carry an `entryPrice` and a `shareCount` — as `PositionRow` cards. The
+portfolio is user-scoped: it shows only positions belonging to the logged-in user,
+backed by `GET /api/portfolio` (not `GET /api/watchlist`). In contrast, the
+Watchlist remains the shared, collaborative board across all users.
+
+Each row shows the ticker, company, entry/size/current numbers, a live P&L readout
 (`(currentPrice − entryPrice) / entryPrice × 100`, colored pos/neg), the thesis
 status, and **Groparul's latest exit-signal badge** (`SELL` / `TRIM` / `HOLD`, or
-"kein Signal" when none has fired). You add a position by symbol via the
-`PositionDialog` (the new item is created with the `HELD` tag, then its
-entry/size are PATCHed in), edit a position's entry/size, or clear it (the clear
-control confirms, then PATCHes the position fields back to `null`). Rows that
-have a signal are clickable and route to the exit detail.
+"kein Signal" when none has fired). Exit signals are likewise scoped to the current
+user. You add a position by symbol via the `PositionDialog` (the new item is
+created with the `HELD` tag, then its entry/size are PATCHed in), edit a
+position's entry/size, or clear it (the clear control confirms, then PATCHes the
+position fields back to `null`). Rows that have a signal are clickable and route
+to the exit detail.
 
 Positions live in exactly one place: the Portfolio holds them (`entryPrice != null`),
 the Watchlist holds tracked candidates (`entryPrice == null`). The two surfaces are
