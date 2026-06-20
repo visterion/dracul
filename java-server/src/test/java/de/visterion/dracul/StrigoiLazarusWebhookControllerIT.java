@@ -56,7 +56,7 @@ class StrigoiLazarusWebhookControllerIT {
 
     @Test
     void toolEndpointReturnsCandidatesNearLow() {
-        watchlist.insert("default", "ACME", "Acme Inc", 10.50, List.of(), "lazarus-it", null);
+        watchlist.insert("default", "ACME", "Acme Inc", 10.50, List.of(), "lazarus-it", null, null);
         when(fundamentals.basicFinancials("ACME")).thenReturn(new BasicFinancials(
                 10.0, 40.0, 5.0, 1.8, 0.4, 35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3));
 

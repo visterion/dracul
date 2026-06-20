@@ -9,4 +9,5 @@ public record WatchlistItem(
         String verdictId, List<WatchlistAlert> alerts,
         List<Double> priceHistory30d,
         Double entryPrice, Double shareCount,
-        String owner) {}
+        String owner,
+        String currency, String entryCurrency) {}

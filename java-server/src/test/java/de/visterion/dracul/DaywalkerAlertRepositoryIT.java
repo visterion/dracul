@@ -34,7 +34,7 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void insertResolvesWatchlistItemAndCooldownQuery() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null);
+                50.0, List.of(50.0), "", null, null);
 
         assertThat(alerts.resolveWatchlistItemId("default", "DWA")).contains(item.id());
         assertThat(alerts.lastAlertAt("default", "DWA", "PRICE_SPIKE")).isEmpty();
@@ -54,7 +54,7 @@ class DaywalkerAlertRepositoryIT {
     @org.junit.jupiter.api.Test
     void insertPersistsNotificationSentFlag() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, java.util.List.of(50.0), "", null);
+                50.0, java.util.List.of(50.0), "", null, null);
 
         alerts.insert("default", item.id(), "DWA", "INSIDER_SELL",
                 "CRITICAL", "Cluster of insider sales.", new java.math.BigDecimal("0.800"),
