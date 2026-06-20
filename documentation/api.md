@@ -116,11 +116,29 @@ native code equals the display `currency`):
 
 These fields are purely additive — existing consumers that ignore them are unaffected.
 
+### `GET /api/portfolio`
+
+Returns the current user's **held positions** — watchlist items that have both an
+`entryPrice` and a `shareCount` set — with all prices currency-converted to the
+operator's configured display currency. This endpoint is user-scoped: it returns
+only the calling user's positions, not those of other users.
+
+This is distinct from `GET /api/watchlist`, which returns the collaborative
+all-users board (tracking candidates, all owners).
+
+Response: `WatchlistItem[]` (same shape as `/api/watchlist`, filtered to held
+positions of the current user).
+
 ## Exit Signals
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/exit-signals` | Returns the latest exit signal per HELD watchlist position; each entry includes `id`, `watchlistItemId`, `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
+| GET | `/api/exit-signals` | Returns the latest exit signal per HELD watchlist position for the **current user**; each entry includes `id`, `watchlistItemId`, `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
+
+> **Note:** `GET /api/exit-signals` is scoped to the current user
+> (`CurrentUserHolder.get()`). It was previously hardcoded to the user
+> `"default"` — a bug that caused signals to be invisible after the legacy
+> owner migration. Prod signals now correctly resolve against the primary user.
 
 ## Daywalker Alerts
 
