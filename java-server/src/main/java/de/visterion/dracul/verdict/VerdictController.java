@@ -1,5 +1,6 @@
 package de.visterion.dracul.verdict;
 
+import de.visterion.dracul.settings.AppSettingsRepository;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,12 +11,20 @@ import java.util.NoSuchElementException;
 public class VerdictController {
 
     private final VerdictRepository repo;
+    private final AppSettingsRepository settings;
+    private final VerdictCurrencyMapper mapper;
 
-    public VerdictController(VerdictRepository repo) { this.repo = repo; }
+    public VerdictController(VerdictRepository repo, AppSettingsRepository settings,
+                             VerdictCurrencyMapper mapper) {
+        this.repo = repo;
+        this.settings = settings;
+        this.mapper = mapper;
+    }
 
     @GetMapping("/api/verdict/{id}")
     public ResponseEntity<VerdictDetail> verdictDetail(@PathVariable String id) {
         return repo.findDetailById(id)
+                .map(d -> mapper.toDisplay(d, settings.getDisplayCurrency()))
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
