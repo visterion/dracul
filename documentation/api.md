@@ -27,8 +27,8 @@ fields are included alongside them:
 | Field | Type | Description |
 |---|---|---|
 | `currency` | `string` | Display currency code (ISO 4217) — the converted value's currency |
-| `nativeCurrentPrice` | `number \| null` | Current price in the instrument's native currency; null when native equals display currency |
-| `nativeCurrency` | `string \| null` | ISO 4217 code of the native currency (e.g. `"USD"`); null when native equals display currency |
+| `nativeCurrentPrice` | `number \| null` | Current price in the instrument's native currency (always sent when a price exists; equals `currentPrice` when native == display) |
+| `nativeCurrency` | `string` | ISO 4217 code of the native currency (e.g. `"USD"`); equals `currency` when native == display. The UI hides the native parenthetical when this equals `currency` |
 
 Conversion happens at read time in `VerdictController` via `VerdictCurrencyMapper`,
 mirroring the watchlist path's `WatchlistCurrencyMapper`.
@@ -103,15 +103,16 @@ backend stores only the raw inputs.
 #### Display-currency and native-price fields (SP-2)
 
 `currentPrice`, `entryPrice`, and `currency` are the **converted display values**
-(in the operator's configured display currency). Three additive native-currency
-fields are present alongside them:
+(in the operator's configured display currency). Four additive native-currency
+fields are present alongside them (the UI hides each native parenthetical when the
+native code equals the display `currency`):
 
 | Field | Type | Description |
 |---|---|---|
-| `nativeCurrentPrice` | `number \| null` | Current price in the instrument's native currency; null when native equals display currency |
-| `nativeCurrency` | `string \| null` | ISO 4217 code of the native currency (e.g. `"USD"`); null when native equals display currency |
-| `nativeEntryPrice` | `number \| null` | Entry price in its native currency; null until a position is set or when native equals display currency |
-| `entryCurrency` | `string \| null` | ISO 4217 code of the entry price's native currency; null when native equals display currency |
+| `nativeCurrentPrice` | `number` | Current price in the instrument's native currency (equals `currentPrice` when native == display) |
+| `nativeCurrency` | `string` | ISO 4217 code of the native currency (e.g. `"USD"`); equals `currency` when native == display |
+| `nativeEntryPrice` | `number \| null` | Entry price in its native currency; null until a position is set (equals `entryPrice` when native == display) |
+| `entryCurrency` | `string` | ISO 4217 code of the entry price's native currency; equals `currency` when native == display |
 
 These fields are purely additive — existing consumers that ignore them are unaffected.
 
