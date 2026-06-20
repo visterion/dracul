@@ -14,6 +14,7 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 
 import java.util.HashMap;
@@ -32,6 +33,7 @@ class WatchlistPositionControllerIT {
     @Autowired ObjectMapper om;
     @Autowired StubMarketDataPort stub;
     @Autowired de.visterion.dracul.watchlist.WatchlistRepository watchlistRepo;
+    @Autowired AppSettingsRepository settingsRepo;
     RestClient rest;
 
     @BeforeEach
@@ -44,12 +46,15 @@ class WatchlistPositionControllerIT {
         stub.reset();
         deleteIfExists("TSLA");
         deleteIfExists("AAPL");
+        deleteIfExists("NVDA");
     }
 
     @AfterEach
     void cleanUp() {
         deleteIfExists("TSLA");
         deleteIfExists("AAPL");
+        deleteIfExists("NVDA");
+        settingsRepo.setDisplayCurrency("EUR");
     }
 
     private void deleteIfExists(String ticker) {
@@ -163,5 +168,28 @@ class WatchlistPositionControllerIT {
         var item = watchlistRepo.findById(id).orElseThrow();
         assertThat(item.currency()).isEqualTo("USD");
         assertThat(item.entryCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void watchlistResponseCarriesDisplayCurrency() {
+        // Use USD as display so native==display => identity conversion, no real FX call needed
+        settingsRepo.setDisplayCurrency("USD");
+        stub.register("NVDA", "Nvidia", 500.0, "USD");
+
+        // create NVDA
+        rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "NVDA", "tag", "TRACKING"))
+                .retrieve().body(JsonNode.class);
+
+        // GET /api/watchlist, find NVDA item
+        JsonNode list = rest.get().uri("/api/watchlist").retrieve().body(JsonNode.class);
+        JsonNode nvda = StreamSupport.stream(list.spliterator(), false)
+                .filter(n -> "NVDA".equals(n.get("ticker").asText()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("NVDA not found in watchlist"));
+
+        assertThat(nvda.get("currency").asText()).isEqualTo("USD");
+        assertThat(nvda.get("currentPrice").asDouble()).isEqualTo(500.0);
     }
 }
