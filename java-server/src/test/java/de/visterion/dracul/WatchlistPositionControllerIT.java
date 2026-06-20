@@ -43,11 +43,13 @@ class WatchlistPositionControllerIT {
                 .build();
         stub.reset();
         deleteIfExists("TSLA");
+        deleteIfExists("AAPL");
     }
 
     @AfterEach
     void cleanUp() {
         deleteIfExists("TSLA");
+        deleteIfExists("AAPL");
     }
 
     private void deleteIfExists(String ticker) {
@@ -161,8 +163,5 @@ class WatchlistPositionControllerIT {
         var item = watchlistRepo.findById(id).orElseThrow();
         assertThat(item.currency()).isEqualTo("USD");
         assertThat(item.entryCurrency()).isEqualTo("EUR");
-
-        // cleanup
-        rest.delete().uri("/api/watchlist/" + id).retrieve().toBodilessEntity();
     }
 }
