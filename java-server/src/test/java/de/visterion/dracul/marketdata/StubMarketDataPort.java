@@ -11,9 +11,13 @@ public class StubMarketDataPort implements MarketDataPort {
     private boolean unavailable = false;
 
     public StubMarketDataPort register(String symbol, String name, double price) {
+        return register(symbol, name, price, "USD");
+    }
+
+    public StubMarketDataPort register(String symbol, String name, double price, String currency) {
         entries.put(symbol, new MarketData(
-                name, BigDecimal.valueOf(price),
-                List.of(BigDecimal.valueOf(price))));
+                name, BigDecimal.valueOf(price), BigDecimal.ZERO,
+                currency, List.of(BigDecimal.valueOf(price))));
         return this;
     }
 

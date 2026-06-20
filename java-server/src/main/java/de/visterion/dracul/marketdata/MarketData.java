@@ -7,10 +7,11 @@ public record MarketData(
         String companyName,
         BigDecimal currentPrice,
         BigDecimal dayChangePercent,
+        String currency,
         List<BigDecimal> priceHistory30d) {
 
-    /** Convenience constructor for callers without a day-change figure (defaults to 0). */
+    /** Back-compat: no day-change, currency defaults to USD. */
     public MarketData(String companyName, BigDecimal currentPrice, List<BigDecimal> priceHistory30d) {
-        this(companyName, currentPrice, BigDecimal.ZERO, priceHistory30d);
+        this(companyName, currentPrice, BigDecimal.ZERO, "USD", priceHistory30d);
     }
 }

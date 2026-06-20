@@ -61,6 +61,7 @@ public class YahooMarketDataAdapter implements MarketDataPort {
             name = meta.path("shortName").asText(symbol);
         }
         BigDecimal price = new BigDecimal(meta.path("regularMarketPrice").asText("0"));
+        String currency = meta.path("currency").asText("USD");
 
         JsonNode closes = result.get(0).path("indicators")
                 .path("quote").path(0).path("close");
@@ -70,7 +71,7 @@ public class YahooMarketDataAdapter implements MarketDataPort {
                 if (!n.isNull()) history.add(new BigDecimal(n.asText()));
             }
         }
-        return new MarketData(name, price, history);
+        return new MarketData(name, price, BigDecimal.ZERO, currency, history);
     }
 
     /** Maps a requested trading-day count to the closest Yahoo Finance range string. */

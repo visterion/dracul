@@ -85,6 +85,15 @@ class YahooMarketDataAdapterTest {
     }
 
     @Test
+    void readsNativeCurrencyFromMeta() {
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL")).willReturn(okJson("""
+            {"chart":{"result":[{"meta":{"regularMarketPrice":190.5,"longName":"Apple Inc.","currency":"USD"},
+             "indicators":{"quote":[{"close":[180.0,190.5]}]}}],"error":null}}""")));
+        MarketData md = adapter.resolve("AAPL");
+        assertThat(md.currency()).isEqualTo("USD");
+    }
+
+    @Test
     void dailyOhlcHistoryReturnsBarsOldestFirst() {
         // Yahoo returns oldest-first; adapter must NOT reverse
         // days=260 > 252 → maps to "2y"
