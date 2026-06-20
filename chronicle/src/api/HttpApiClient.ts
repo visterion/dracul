@@ -43,6 +43,12 @@ export class HttpApiClient implements ApiClient {
     return res.json() as Promise<WatchlistItem[]>
   }
 
+  async getPortfolio(): Promise<WatchlistItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/portfolio`)
+    if (!res.ok) throw new Error(`getPortfolio failed: HTTP ${res.status}`)
+    return res.json() as Promise<WatchlistItem[]>
+  }
+
   async getPatterns(): Promise<Pattern[]> {
     const res = await fetch(`${this.baseUrl}/api/patterns`)
     if (!res.ok) throw new Error(`getPatterns failed: HTTP ${res.status}`)

@@ -62,7 +62,7 @@ function signalFor(item: WatchlistItem): ExitSignal | null {
 async function load() {
   loading.value = true; error.value = null
   try {
-    const [its, sigs] = await Promise.all([api.getWatchlistItems(), api.getExitSignals()])
+    const [its, sigs] = await Promise.all([api.getPortfolio(), api.getExitSignals()])
     items.value = its
     signals.value = sigs
   } catch (e) {
