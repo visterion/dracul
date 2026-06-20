@@ -17,6 +17,21 @@ are relative to the context root of `dracul-app`.
 | GET | `/api/verdicts` | List verdicts; query params: `from`, `to`, `minConsensus`, `page`, `size`, `includeDismissed` (default false) |
 | GET | `/api/verdicts/{id}` | Single verdict with all contributing prey |
 | PUT | `/api/verdict/{id}/decision` | Set/clear verdict decision (TRACK / INTERESTING / DISMISS / ACTED / null) |
+
+### `VerdictDetail` response (SP-2 additions)
+
+`GET /api/verdicts/{id}` returns the verdict with its contributing prey. `currentPrice`
+and `currency` are the **converted display values**. Three additive native-currency
+fields are included alongside them:
+
+| Field | Type | Description |
+|---|---|---|
+| `currency` | `string` | Display currency code (ISO 4217) — the converted value's currency |
+| `nativeCurrentPrice` | `number \| null` | Current price in the instrument's native currency; null when native equals display currency |
+| `nativeCurrency` | `string \| null` | ISO 4217 code of the native currency (e.g. `"USD"`); null when native equals display currency |
+
+Conversion happens at read time in `VerdictController` via `VerdictCurrencyMapper`,
+mirroring the watchlist path's `WatchlistCurrencyMapper`.
 | POST | `/api/verdict/{id}/notes` | Append a note to a verdict timeline |
 | GET | `/api/verdict/{id}/notes` | List notes for a verdict (DESC by createdAt) |
 
@@ -84,6 +99,21 @@ Response (200): the updated `WatchlistItem`.
 
 Client-side P&L is derived as `(currentPrice − entryPrice) × shareCount`; the
 backend stores only the raw inputs.
+
+#### Display-currency and native-price fields (SP-2)
+
+`currentPrice`, `entryPrice`, and `currency` are the **converted display values**
+(in the operator's configured display currency). Three additive native-currency
+fields are present alongside them:
+
+| Field | Type | Description |
+|---|---|---|
+| `nativeCurrentPrice` | `number \| null` | Current price in the instrument's native currency; null when native equals display currency |
+| `nativeCurrency` | `string \| null` | ISO 4217 code of the native currency (e.g. `"USD"`); null when native equals display currency |
+| `nativeEntryPrice` | `number \| null` | Entry price in its native currency; null until a position is set or when native equals display currency |
+| `entryCurrency` | `string \| null` | ISO 4217 code of the entry price's native currency; null when native equals display currency |
+
+These fields are purely additive — existing consumers that ignore them are unaffected.
 
 ## Exit Signals
 
