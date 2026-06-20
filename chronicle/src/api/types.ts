@@ -100,6 +100,9 @@ export interface VerdictDetail extends Verdict {
   signals: string[]
   risks: string[]
   contributingDetails: ContributingStrigoiDetail[]
+  currency: string                  // display currency code
+  nativeCurrentPrice: number | null // original price before conversion
+  nativeCurrency: string            // original currency of currentPrice
 }
 
 export type VerdictDecision = 'TRACK' | 'INTERESTING' | 'DISMISS' | 'ACTED'
@@ -207,7 +210,11 @@ export interface WatchlistItem {
   entryPrice: number | null
   shareCount: number | null
   owner: string
-  currency: string
+  currency: string                  // display currency code (converted value's code)
+  entryCurrency: string             // native currency the entry price was entered in
+  nativeCurrentPrice: number        // original current price, before conversion
+  nativeCurrency: string            // original currency of currentPrice
+  nativeEntryPrice: number | null   // original entry price, before conversion
 }
 
 export interface ExitSignal {

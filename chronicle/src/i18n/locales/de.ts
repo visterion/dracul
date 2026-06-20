@@ -1,6 +1,7 @@
 export default {
   common: {
     language: 'Sprache',
+    origPrice: 'urspr.',
   },
   time: {
     justNow: 'gerade eben',

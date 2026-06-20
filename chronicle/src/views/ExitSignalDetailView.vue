@@ -46,9 +46,9 @@
       <template v-if="position">
         <SectionHeader :label="t('exitSignal.position')" />
         <div class="ed-pos mono">
-          <span>{{ t('exitSignal.posEntry') }} ${{ fmt(position.entryPrice) }}</span>
+          <span>{{ t('exitSignal.posEntry') }} <MoneyDisplay :amount="position.entryPrice" :currency="position.currency" :native-amount="position.nativeEntryPrice" :native-currency="position.entryCurrency" /></span>
           <span>{{ t('exitSignal.posSize') }} {{ fmt(position.shareCount) }}</span>
-          <span>{{ t('exitSignal.posCurrent') }} ${{ fmt(position.currentPrice) }}</span>
+          <span>{{ t('exitSignal.posCurrent') }} <MoneyDisplay :amount="position.currentPrice" :currency="position.currency" :native-amount="position.nativeCurrentPrice" :native-currency="position.nativeCurrency" /></span>
           <span class="ed-pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(1) }}%</span>
         </div>
         <router-link
@@ -68,6 +68,7 @@ import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import ConfidenceBar from '../components/common/ConfidenceBar.vue'
 import TagPill from '../components/common/TagPill.vue'
+import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import type { WatchlistItem, ExitSignal } from '../api/types'
 

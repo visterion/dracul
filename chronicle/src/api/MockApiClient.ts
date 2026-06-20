@@ -198,6 +198,10 @@ export class MockApiClient implements ApiClient {
       shareCount: null,
       owner: 'you@dracul.local',
       currency: this._currency,
+      entryCurrency: this._currency,
+      nativeCurrentPrice: 0,
+      nativeCurrency: this._currency,
+      nativeEntryPrice: null,
     }
     this.watchlist.unshift(item)
     return { ...item }
