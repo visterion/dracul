@@ -36,6 +36,13 @@ test.describe('Portfolio View (/portfolio)', () => {
     await expect(row).toContainText('€')
   })
 
+  test('AVGO row shows native USD original price (urspr. token + de-formatted amount)', async ({ page }) => {
+    const row = page.locator('[data-testid="portfolio-row"][data-symbol="AVGO"]')
+    await expect(row).toBeVisible()
+    await expect(row).toContainText('urspr.')
+    await expect(row).toContainText('1.247,50')
+  })
+
   test('can clear a position after confirm', async ({ page }) => {
     page.on('dialog', d => d.accept())
     const row = page.locator('[data-testid="portfolio-row"][data-symbol="AVGO"]')
