@@ -21,6 +21,6 @@ public class WatchlistCurrencyMapper {
         var current = fx.convert(BigDecimal.valueOf(i.currentPrice()), nativeCur, display);
         var entry   = i.entryPrice() == null ? null
                 : fx.convert(BigDecimal.valueOf(i.entryPrice()), entryCur, display);
-        return i.withConverted(current, entry, display);
+        return i.withConverted(current, entry, display, nativeCur);
     }
 }
