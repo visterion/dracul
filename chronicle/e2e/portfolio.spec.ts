@@ -43,6 +43,13 @@ test.describe('Portfolio View (/portfolio)', () => {
     await expect(row).toContainText('1.247,50')
   })
 
+  test('shows only the logged-in user own held positions, not foreign ones', async ({ page }) => {
+    // own held position (you@dracul.local) is visible
+    await expect(page.locator('[data-testid="portfolio-row"][data-symbol="AVGO"]')).toBeVisible()
+    // foreign held position (daniel@dracul.local, MELI) must not appear
+    await expect(page.locator('[data-testid="portfolio-row"][data-symbol="MELI"]')).toHaveCount(0)
+  })
+
   test('can clear a position after confirm', async ({ page }) => {
     page.on('dialog', d => d.accept())
     const row = page.locator('[data-testid="portfolio-row"][data-symbol="AVGO"]')
