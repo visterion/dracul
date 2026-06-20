@@ -3,6 +3,7 @@ package de.visterion.dracul.watchlist;
 import de.visterion.dracul.auth.CurrentUserHolder;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import jakarta.validation.Valid;
 import org.springframework.context.ApplicationEventPublisher;
@@ -21,15 +22,18 @@ public class WatchlistController {
     private final MarketDataPort marketData;
     private final VerdictRepository verdictRepo;
     private final ApplicationEventPublisher events;
+    private final AppSettingsRepository settings;
 
     public WatchlistController(WatchlistRepository repo,
                                 MarketDataPort marketData,
                                 VerdictRepository verdictRepo,
-                                ApplicationEventPublisher events) {
+                                ApplicationEventPublisher events,
+                                AppSettingsRepository settings) {
         this.repo = repo;
         this.marketData = marketData;
         this.verdictRepo = verdictRepo;
         this.events = events;
+        this.settings = settings;
     }
 
     @GetMapping("/api/watchlist")
@@ -59,7 +63,7 @@ public class WatchlistController {
         WatchlistItem created = repo.insert(
                 user, req.symbol(), md.companyName(),
                 md.currentPrice().doubleValue(), hist,
-                req.tag(), req.sourceVerdictId());
+                req.tag(), req.sourceVerdictId(), md.currency());
         events.publishEvent(new WatchlistChangedEvent());
         return ResponseEntity.status(201).body(created);
     }
@@ -79,7 +83,8 @@ public class WatchlistController {
     public WatchlistItem patchPosition(@PathVariable String id,
                                        @Valid @RequestBody PatchPositionRequest req) {
         requireOwner(id);
-        if (!repo.updatePosition(id, req.entryPrice(), req.shareCount())) {
+        if (!repo.updatePosition(id, req.entryPrice(), req.shareCount(),
+                settings.getDisplayCurrency())) {
             throw new NoSuchElementException("watchlist item " + id);
         }
         events.publishEvent(new WatchlistChangedEvent());

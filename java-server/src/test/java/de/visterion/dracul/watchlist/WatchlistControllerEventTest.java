@@ -2,6 +2,7 @@ package de.visterion.dracul.watchlist;
 
 import de.visterion.dracul.auth.CurrentUserHolder;
 import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,7 @@ class WatchlistControllerEventTest {
     private MarketDataPort marketData;
     private VerdictRepository verdictRepo;
     private ApplicationEventPublisher events;
+    private AppSettingsRepository settings;
     private WatchlistController controller;
 
     private static final String USER = "default";
@@ -30,7 +32,9 @@ class WatchlistControllerEventTest {
         marketData = mock(MarketDataPort.class);
         verdictRepo = mock(VerdictRepository.class);
         events = mock(ApplicationEventPublisher.class);
-        controller = new WatchlistController(repo, marketData, verdictRepo, events);
+        settings = mock(AppSettingsRepository.class);
+        when(settings.getDisplayCurrency()).thenReturn("EUR");
+        controller = new WatchlistController(repo, marketData, verdictRepo, events, settings);
         CurrentUserHolder.set(USER);
     }
 
@@ -42,14 +46,14 @@ class WatchlistControllerEventTest {
     private WatchlistItem heldItem(String id) {
         return new WatchlistItem(id, "ACME", "Acme", 100.0, 0.0, "calm",
                 "2026-06-01", "HELD", null, List.of(), List.of(100.0),
-                90.0, 10.0, USER);
+                90.0, 10.0, USER, null, null);
     }
 
     @Test
     void positionUpdatePublishesChangedEvent() {
         var item = heldItem("11111111-1111-1111-1111-111111111111");
         when(repo.findById(item.id())).thenReturn(Optional.of(item));
-        when(repo.updatePosition(item.id(), 90.0, 10.0)).thenReturn(true);
+        when(repo.updatePosition(item.id(), 90.0, 10.0, "EUR")).thenReturn(true);
 
         controller.patchPosition(item.id(), new PatchPositionRequest(90.0, 10.0));
 

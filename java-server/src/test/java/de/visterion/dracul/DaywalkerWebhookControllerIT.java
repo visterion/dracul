@@ -74,7 +74,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void eventsEndpointReturnsDetectedEvents() {
-        watchlist.insert("default", "SPK", "Spike Co", 100.0, List.of(100.0), "", null);
+        watchlist.insert("default", "SPK", "Spike Co", 100.0, List.of(100.0), "", null, null);
         when(yahoo.intradayCandles("SPK")).thenReturn(
                 new IntradayCandles(List.of(new BigDecimal("100"), new BigDecimal("106")), List.of()));
 
@@ -109,7 +109,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completeEndpointPersistsAlert() {
-        watchlist.insert("default", "CMP", "Complete Co", 80.0, List.of(80.0), "", null);
+        watchlist.insert("default", "CMP", "Complete Co", 80.0, List.of(80.0), "", null, null);
 
         var resp = rest.post().uri("/api/daywalker/complete")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
@@ -167,7 +167,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void criticalCompletionPushesAndMarksNotificationSent() {
-        watchlist.insert("default", "CRT", "Critical Co", 70.0, List.of(70.0), "", null);
+        watchlist.insert("default", "CRT", "Critical Co", 70.0, List.of(70.0), "", null, null);
 
         var resp = rest.post().uri("/api/daywalker/complete")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
@@ -189,7 +189,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void infoCompletionDoesNotPush() {
-        watchlist.insert("default", "INF", "Info Co", 40.0, List.of(40.0), "", null);
+        watchlist.insert("default", "INF", "Info Co", 40.0, List.of(40.0), "", null, null);
 
         rest.post().uri("/api/daywalker/complete")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")

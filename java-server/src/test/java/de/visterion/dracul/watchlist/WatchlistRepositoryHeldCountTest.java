@@ -22,13 +22,13 @@ class WatchlistRepositoryHeldCountTest {
     void countsOnlyFullyHeldPositionsForUser() {
         String user = "count-user-" + java.util.UUID.randomUUID();
 
-        var held = repo.insert(user, "HELDCO", "Held Co", 100.0, List.of(100.0), "HELD", null);
-        repo.updatePosition(held.id(), 90.0, 10.0);
+        var held = repo.insert(user, "HELDCO", "Held Co", 100.0, List.of(100.0), "HELD", null, null);
+        repo.updatePosition(held.id(), 90.0, 10.0, null);
 
-        repo.insert(user, "NOPOS", "No Pos Co", 50.0, List.of(50.0), "HELD", null);
+        repo.insert(user, "NOPOS", "No Pos Co", 50.0, List.of(50.0), "HELD", null, null);
 
-        var watch = repo.insert(user, "WATCHCO", "Watch Co", 20.0, List.of(20.0), "WATCH", null);
-        repo.updatePosition(watch.id(), 18.0, 5.0);
+        var watch = repo.insert(user, "WATCHCO", "Watch Co", 20.0, List.of(20.0), "WATCH", null, null);
+        repo.updatePosition(watch.id(), 18.0, 5.0, null);
 
         assertThat(repo.countHeldByUser(user)).isEqualTo(1L);
     }
@@ -36,7 +36,7 @@ class WatchlistRepositoryHeldCountTest {
     @Test
     void returnsZeroWhenNoneHeld() {
         String user = "empty-user-" + java.util.UUID.randomUUID();
-        repo.insert(user, "WATCHONLY", "Watch Only", 10.0, List.of(10.0), "WATCH", null);
+        repo.insert(user, "WATCHONLY", "Watch Only", 10.0, List.of(10.0), "WATCH", null, null);
         assertThat(repo.countHeldByUser(user)).isZero();
     }
 }

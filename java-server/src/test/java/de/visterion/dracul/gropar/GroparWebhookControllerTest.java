@@ -78,7 +78,7 @@ class GroparWebhookControllerTest {
         return new WatchlistItem(id, ticker, ticker + " Corp",
                 110.0, 1.0, "calm", "2025-01-01", tag,
                 null, List.of(), List.of(),
-                entryPrice, shareCount, USER);
+                entryPrice, shareCount, USER, null, null);
     }
 
     // =========================================================================

@@ -26,7 +26,7 @@ public class WatchlistRepository {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count, user_id
+                       entry_price, share_count, user_id, currency, entry_currency
                 FROM watchlist_items
                 ORDER BY added_at DESC
                 """)
@@ -61,7 +61,7 @@ public class WatchlistRepository {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count, user_id
+                       entry_price, share_count, user_id, currency, entry_currency
                 FROM watchlist_items
                 WHERE user_id = :userId
                 ORDER BY added_at DESC
@@ -114,7 +114,9 @@ public class WatchlistRepository {
                     readDoubleList(rs.getString("price_history_30d")),
                     ep == null ? null : ep.doubleValue(),
                     sc == null ? null : sc.doubleValue(),
-                    rs.getString("user_id")
+                    rs.getString("user_id"),
+                    rs.getString("currency"),
+                    rs.getString("entry_currency")
             );
         };
     }
@@ -130,7 +132,8 @@ public class WatchlistRepository {
                         alertsByItem.getOrDefault(item.id(), List.of()),
                         item.priceHistory30d(),
                         item.entryPrice(), item.shareCount(),
-                        item.owner()
+                        item.owner(),
+                        item.currency(), item.entryCurrency()
                 ))
                 .toList();
     }
@@ -163,7 +166,7 @@ public class WatchlistRepository {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count, user_id
+                       entry_price, share_count, user_id, currency, entry_currency
                 FROM watchlist_items
                 WHERE id = :id
                 """)
@@ -199,7 +202,7 @@ public class WatchlistRepository {
 
     public WatchlistItem insert(String userId, String ticker, String companyName,
                                 double currentPrice, java.util.List<Double> history,
-                                String tag, String sourceVerdictId) {
+                                String tag, String sourceVerdictId, String currency) {
         UUID id = UUID.randomUUID();
         UUID verdictUuid = sourceVerdictId == null ? null : UUID.fromString(sourceVerdictId);
         String historyJson;
@@ -209,15 +212,15 @@ public class WatchlistRepository {
         jdbc.sql("""
                 INSERT INTO watchlist_items
                   (id, ticker, company_name, current_price, day_change_percent,
-                   status, added_at, tag, verdict_id, price_history_30d, user_id)
+                   status, added_at, tag, verdict_id, price_history_30d, user_id, currency)
                 VALUES
                   (:id, :ticker, :name, :price, 0,
-                   'calm', CURRENT_DATE, :tag, :vid, CAST(:hist AS jsonb), :userId)
+                   'calm', CURRENT_DATE, :tag, :vid, CAST(:hist AS jsonb), :userId, :currency)
                 """)
                 .param("id", id).param("ticker", ticker).param("name", companyName)
                 .param("price", currentPrice).param("tag", tag == null ? "" : tag)
                 .param("vid", verdictUuid).param("hist", historyJson)
-                .param("userId", userId)
+                .param("userId", userId).param("currency", currency)
                 .update();
 
         return findById(id.toString()).orElseThrow();
@@ -247,16 +250,20 @@ public class WatchlistRepository {
         return rows > 0;
     }
 
-    public boolean updatePosition(String id, Double entryPrice, Double shareCount) {
+    public boolean updatePosition(String id, Double entryPrice, Double shareCount,
+                                   String entryCurrency) {
         UUID uuid;
         try { uuid = UUID.fromString(id); }
         catch (IllegalArgumentException e) { return false; }
         int rows = jdbc.sql("""
-                UPDATE watchlist_items SET entry_price = :entryPrice, share_count = :shareCount
-                WHERE id = :id
+                UPDATE watchlist_items
+                   SET entry_price = :entryPrice, share_count = :shareCount,
+                       entry_currency = :entryCurrency
+                 WHERE id = :id
                 """)
                 .param("entryPrice", entryPrice)
                 .param("shareCount", shareCount)
+                .param("entryCurrency", entryCurrency)
                 .param("id", uuid)
                 .update();
         return rows > 0;

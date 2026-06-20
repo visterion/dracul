@@ -14,6 +14,8 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
+import de.visterion.dracul.watchlist.WatchlistRepository;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.StreamSupport;
@@ -29,6 +31,7 @@ class WatchlistPositionControllerIT {
     @LocalServerPort int port;
     @Autowired ObjectMapper om;
     @Autowired StubMarketDataPort stub;
+    @Autowired de.visterion.dracul.watchlist.WatchlistRepository watchlistRepo;
     RestClient rest;
 
     @BeforeEach
@@ -135,5 +138,31 @@ class WatchlistPositionControllerIT {
                 .body(Map.of("entryPrice", 1.0, "shareCount", 1.0))
                 .exchange((req, res) -> res.getStatusCode().value());
         assertThat(resp).isEqualTo(404);
+    }
+
+    @Test
+    void storesNativeAndEntryCurrency() {
+        stub.register("AAPL", "Apple Inc", 190.0, "USD");
+
+        // create AAPL
+        JsonNode created = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "AAPL", "tag", "HELD"))
+                .retrieve().body(JsonNode.class);
+        String id = created.get("id").asText();
+
+        // set position
+        rest.patch().uri("/api/watchlist/" + id + "/position")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("entryPrice", 180.0, "shareCount", 5.0))
+                .retrieve().toBodilessEntity();
+
+        // assert via repository
+        var item = watchlistRepo.findById(id).orElseThrow();
+        assertThat(item.currency()).isEqualTo("USD");
+        assertThat(item.entryCurrency()).isEqualTo("EUR");
+
+        // cleanup
+        rest.delete().uri("/api/watchlist/" + id).retrieve().toBodilessEntity();
     }
 }
