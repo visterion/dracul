@@ -22,6 +22,7 @@ class AppSettingsRepositoryIT {
     @AfterEach
     void restore() {
         repo.setLanguage("de");
+        repo.setDisplayCurrency("EUR");
     }
 
     @Test
@@ -39,5 +40,16 @@ class AppSettingsRepositoryIT {
     void getLanguageFallsBackToDeWhenRowMissing() {
         jdbc.sql("DELETE FROM app_settings WHERE key = 'language'").update();
         assertThat(repo.getLanguage()).isEqualTo("de");
+    }
+
+    @Test
+    void displayCurrencyDefaultsToEur() {
+        assertThat(repo.getDisplayCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void setDisplayCurrencyPersists() {
+        repo.setDisplayCurrency("USD");
+        assertThat(repo.getDisplayCurrency()).isEqualTo("USD");
     }
 }
