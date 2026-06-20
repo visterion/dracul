@@ -46,6 +46,10 @@ export default {
       german: 'German',
       english: 'English',
     },
+    currency: {
+      title: 'Currency',
+      subtitle: 'Display currency for prices, P/L and valuations',
+    },
     title: 'Settings',
     adminBadge: 'Admin',
     stubSub: 'This section will be expanded in a future iteration.',
@@ -59,6 +63,7 @@ export default {
       multiUser: 'Multi-User Settings',
       backup: 'Backup & Export',
       language: 'Language',
+      currency: 'Currency',
       about: 'About Dracul',
     },
     providers: {

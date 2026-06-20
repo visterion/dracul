@@ -46,6 +46,10 @@ export default {
       german: 'Deutsch',
       english: 'Englisch',
     },
+    currency: {
+      title: 'Währung',
+      subtitle: 'Anzeigewährung für Kurse, G/V und Bewertungen',
+    },
     title: 'Einstellungen',
     adminBadge: 'Admin',
     stubSub: 'Dieser Bereich wird in einer kommenden Iteration ausgebaut.',
@@ -59,6 +63,7 @@ export default {
       multiUser: 'Multi-User Settings',
       backup: 'Backup & Export',
       language: 'Sprache',
+      currency: 'Währung',
       about: 'About Dracul',
     },
     providers: {
