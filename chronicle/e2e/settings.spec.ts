@@ -49,6 +49,14 @@ test.describe('Settings View (/settings)', () => {
     await expect(page.locator('.set-budget-agent:has-text("strigoi-spin")').first()).toBeVisible()
   })
 
+  test('currency switch in settings', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Währung"), .set-nav-item:has-text("Currency")')
+    const select = page.locator('[data-testid="currency-select"]')
+    await expect(select).toBeVisible()
+    await select.selectOption('USD')
+    await expect(select).toHaveValue('USD')
+  })
+
   test('language switch changes the interface language', async ({ page }) => {
     await page.click('.set-nav-item:has-text("Sprache"), .set-nav-item:has-text("Language")')
     const select = page.locator('[data-testid="language-select"]')
