@@ -155,6 +155,26 @@
           </div>
         </template>
 
+        <!-- Currency -->
+        <template v-else-if="active === 'currency'">
+          <PageHead :title="t('settings.currency.title')" :sub="t('settings.currency.subtitle')" />
+          <div class="set-language" data-testid="currency-section">
+            <label class="set-budget-label" for="currency-select">{{ t('settings.currency.title') }}</label>
+            <select
+              id="currency-select"
+              class="set-language-select"
+              data-testid="currency-select"
+              :value="currency"
+              @change="changeCurrency(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="EUR">EUR</option>
+              <option value="USD">USD</option>
+              <option value="GBP">GBP</option>
+              <option value="CHF">CHF</option>
+            </select>
+          </div>
+        </template>
+
         <!-- Agent config -->
         <template v-else-if="active === 'agent-config'">
           <PageHead :title="t('settings.agentConfig.title')" :sub="t('settings.agentConfig.subtitle')" />
@@ -270,6 +290,7 @@ import ProviderCard from '../components/common/ProviderCard.vue'
 import AgentEditDialog from '../components/settings/AgentEditDialog.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
+import { useDisplayCurrencyStore } from '../stores/displayCurrency'
 
 const { t, locale } = useI18n()
 const { agentRoleLabel, agentTierLabel, agentStateLabel } = useEnumLabels()
@@ -292,6 +313,7 @@ const navItems = computed(() => [
   { id: 'multi-user',   icon: 'ph-users',         label: t('settings.nav.multiUser'),    admin: false, disabled: true,  badge: 'Phase 2' },
   { id: 'backup',       icon: 'ph-floppy-disk',   label: t('settings.nav.backup'),       admin: false, disabled: false, badge: null as string | null },
   { id: 'language',     icon: 'ph-globe',         label: t('settings.nav.language'),     admin: false, disabled: false, badge: null as string | null },
+  { id: 'currency',     icon: 'ph-currency-circle-dollar', label: t('settings.nav.currency'), admin: false, disabled: false, badge: null as string | null },
   { id: 'about',        icon: 'ph-info',          label: t('settings.nav.about'),        admin: false, disabled: false, badge: null as string | null },
 ])
 
@@ -316,6 +338,14 @@ async function changeLanguage(lang: string) {
   } finally {
     languageSaving.value = false
   }
+}
+
+// ── Currency ───────────────────────────────────────────────────
+const currencyStore = useDisplayCurrencyStore()
+const currency = computed(() => currencyStore.currency)
+
+async function changeCurrency(c: string) {
+  await currencyStore.setCurrency(c)
 }
 
 // ── Budgets ────────────────────────────────────────────────────
@@ -490,6 +520,7 @@ onMounted(async () => {
     language.value = lang
     setLocale(lang)
   } catch { /* keep current locale */ }
+  await currencyStore.load()
 })
 </script>
 
