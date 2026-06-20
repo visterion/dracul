@@ -3,7 +3,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse,
-  CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting,
+  CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting, CurrencySetting,
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
 } from './types'
@@ -31,6 +31,8 @@ export interface ApiClient {
   deleteWatchlistItem(id: string): Promise<void>
   getLanguage(): Promise<LanguageSetting>
   setLanguage(language: string): Promise<LanguageSetting>
+  getDisplayCurrency(): Promise<CurrencySetting>
+  setDisplayCurrency(currency: string): Promise<CurrencySetting>
   getAgents(): Promise<AgentConfigRow[]>
   setAgentPaused(name: string, paused: boolean): Promise<AgentConfigRow>
   getAgentDefinition(name: string): Promise<AgentDefinition>

@@ -207,6 +207,7 @@ export interface WatchlistItem {
   entryPrice: number | null
   shareCount: number | null
   owner: string
+  currency: string
 }
 
 export interface ExitSignal {
@@ -321,6 +322,10 @@ export type PatternAction = 'approve' | 'reject' | 'deactivate' | 'defer'
 
 export interface LanguageSetting {
   language: string
+}
+
+export interface CurrencySetting {
+  currency: string
 }
 
 // ── Agent Config ───────────────────────────────────────────────

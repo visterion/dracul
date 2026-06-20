@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
+  PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
 } from './types'
 
@@ -183,6 +183,22 @@ export class HttpApiClient implements ApiClient {
     })
     if (!res.ok) throw new Error(`setLanguage failed: HTTP ${res.status}`)
     return res.json() as Promise<LanguageSetting>
+  }
+
+  async getDisplayCurrency(): Promise<CurrencySetting> {
+    const res = await fetch(`${this.baseUrl}/api/settings/currency`)
+    if (!res.ok) throw new Error(`getDisplayCurrency failed: HTTP ${res.status}`)
+    return res.json() as Promise<CurrencySetting>
+  }
+
+  async setDisplayCurrency(currency: string): Promise<CurrencySetting> {
+    const res = await fetch(`${this.baseUrl}/api/settings/currency`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currency }),
+    })
+    if (!res.ok) throw new Error(`setDisplayCurrency failed: HTTP ${res.status}`)
+    return res.json() as Promise<CurrencySetting>
   }
 
   async getAgents(): Promise<AgentConfigRow[]> {
