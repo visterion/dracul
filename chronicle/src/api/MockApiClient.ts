@@ -4,7 +4,7 @@ import type {
   WatchlistItem, Pattern, LlmProvider, VistierieData,
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
-  PatchPositionRequest, LanguageSetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
+  PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
 } from './types'
 import { mockPrey } from '../mocks/prey'
@@ -27,6 +27,7 @@ export class MockApiClient implements ApiClient {
   private decisions = new Map<string, DecisionResponse>()
   private watchlist: WatchlistItem[] = initialWatchlist.map(i => ({ ...i }))
   private _language = 'de'
+  private _currency = 'EUR'
   async getChronicle(): Promise<ChronicleData> {
     await delay(50)
     return {
@@ -54,7 +55,7 @@ export class MockApiClient implements ApiClient {
 
   async getWatchlistItems(): Promise<WatchlistItem[]> {
     await delay(50)
-    return [...this.watchlist]
+    return this.watchlist.map(i => ({ ...i, currency: this._currency }))
   }
 
   async getPatterns(): Promise<Pattern[]> {
@@ -196,6 +197,7 @@ export class MockApiClient implements ApiClient {
       entryPrice: null,
       shareCount: null,
       owner: 'you@dracul.local',
+      currency: this._currency,
     }
     this.watchlist.unshift(item)
     return { ...item }
@@ -232,6 +234,16 @@ export class MockApiClient implements ApiClient {
   async setLanguage(language: string): Promise<LanguageSetting> {
     this._language = language === 'en' ? 'en' : 'de'
     return { language: this._language }
+  }
+
+  async getDisplayCurrency(): Promise<CurrencySetting> {
+    return { currency: this._currency }
+  }
+
+  async setDisplayCurrency(currency: string): Promise<CurrencySetting> {
+    const valid = ['EUR', 'USD', 'GBP', 'CHF']
+    if (valid.includes(currency)) this._currency = currency
+    return { currency: this._currency }
   }
 
   private agents: AgentConfigRow[] = [

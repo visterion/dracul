@@ -30,6 +30,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: 1190.00,
     shareCount: 8,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-2',
@@ -49,6 +50,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: 146.00,
     shareCount: 30,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-3',
@@ -65,6 +67,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-4',
@@ -81,6 +84,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'daniel@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-5',
@@ -99,6 +103,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: 154.20,
     shareCount: 40,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-6',
@@ -115,6 +120,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-7',
@@ -133,6 +139,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-8',
@@ -149,6 +156,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'you@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-daniel-nvda',
@@ -165,6 +173,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'daniel@dracul.local',
+    currency: 'EUR',
   },
   {
     id: 'wl-daniel-meli',
@@ -181,5 +190,6 @@ export const mockWatchlistItems: WatchlistItem[] = [
     entryPrice: null,
     shareCount: null,
     owner: 'daniel@dracul.local',
+    currency: 'EUR',
   },
 ]
