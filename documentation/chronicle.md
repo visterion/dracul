@@ -143,6 +143,25 @@ The Chronicle GUI is multilingual: German (default) and English, powered by
   vue-i18n treats `@` as a special linked-message character — never put a literal
   `@` in a label string.
 
+## Display currency
+
+All portfolio and watchlist market values (entry price, current price, P&L
+amounts) are shown in the operator's configured display currency.
+
+- **Startup**: the app calls `GET /api/settings/currency` to load the active
+  currency from the backend. On network failure it falls back to EUR.
+- **Live switching**: Settings → "Währung" / "Currency" lets the operator
+  choose a display currency without a page reload. The choice is persisted via
+  `PUT /api/settings/currency` (accepted values: `EUR`, `USD`, `GBP`, `CHF`).
+- **Default**: EUR.
+- **FX conversion**: the backend converts stored USD prices to the target
+  currency at the current FX rate (Yahoo Finance `/v8/finance/chart/{from}{to}=X`,
+  result cached per session) and stamps each watchlist/portfolio item with its
+  effective `currency` code. The frontend renders the value using
+  `Intl.NumberFormat` with that code — it never applies a client-side conversion.
+- **LLM costs**: agent run costs are always shown in USD regardless of the
+  display-currency setting (Vistierie's cost ledger is USD-denominated).
+
 ## Development
 
 ```bash

@@ -31,6 +31,11 @@ test.describe('Portfolio View (/portfolio)', () => {
     await expect(page.locator('[data-testid="portfolio-row"][data-symbol="TSLA"]')).toBeVisible()
   })
 
+  test('position rows render prices in the default display currency (EUR → €)', async ({ page }) => {
+    const row = page.locator('[data-testid="portfolio-row"]').first()
+    await expect(row).toContainText('€')
+  })
+
   test('can clear a position after confirm', async ({ page }) => {
     page.on('dialog', d => d.accept())
     const row = page.locator('[data-testid="portfolio-row"][data-symbol="AVGO"]')

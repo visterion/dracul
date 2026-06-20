@@ -258,6 +258,34 @@ Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 |---|---|---|---|---|
 | `language` | DB — table `app_settings`, key `language` | `de` | `de`, `en` | `PUT /api/settings/language` with body `{"language":"en"}` |
 
+## Display currency
+
+| Setting | Storage | Default | Allowed values | How to change |
+|---|---|---|---|---|
+| `display_currency` | DB — table `app_settings`, key `display_currency` | `EUR` | `EUR`, `USD`, `GBP`, `CHF` | `PUT /api/settings/currency` with body `{"currency":"USD"}` |
+
+**REST endpoints:**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/settings/currency` | Returns `{"currency":"EUR"}` (or current value) |
+| `PUT /api/settings/currency` | Persists new currency; returns `{"currency":"<value>"}` |
+
+**Data model columns affected:**
+
+| Column | Table | Notes |
+|---|---|---|
+| `currency` | `watchlist_items` | Effective display currency stamped on each item by the read path |
+| `entry_currency` | `watchlist_items` | Original currency in which the entry price was recorded (always the native ticker currency, currently USD for US equities) |
+
+**FX source:** Yahoo Finance `/v8/finance/chart/{from}{to}=X` (e.g. `USDEUR=X`
+for USD→EUR). The rate is fetched once per conversion pair per request cycle and
+cached for the session. If the FX request fails the stored price is returned
+unconverted and the `currency` field reflects the fallback value.
+
+**LLM cost budgets** remain denominated in USD regardless of the display-currency
+setting (Vistierie's cost ledger is USD-only).
+
 The language setting controls the language directive appended to every agent's
 `system_prompt` at registration time. Changing it via the API publishes a
 `LanguageChangedEvent`, which causes all registrars (all Strigoi, Voievod, and
