@@ -6,6 +6,7 @@
       "items": {
         "type": "object",
         "properties": {
+          "position_id": { "type": "string" },
           "symbol": { "type": "string" },
           "action": { "type": "string", "enum": ["SELL", "TRIM", "HOLD"] },
           "fired_rules": { "type": "array", "items": { "type": "string" } },
@@ -14,7 +15,7 @@
           "rationale": { "type": "string" },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
         },
-        "required": ["symbol", "action", "rationale", "confidence"]
+        "required": ["position_id", "symbol", "action", "rationale", "confidence"]
       }
     }
   },
