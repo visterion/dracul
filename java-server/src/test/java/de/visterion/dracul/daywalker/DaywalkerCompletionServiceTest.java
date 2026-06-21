@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
-import java.util.Optional;
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -22,7 +22,7 @@ class DaywalkerCompletionServiceTest {
     void criticalNotifiesPersistsSentTrueAndPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
-        when(alerts.resolveWatchlistItemId("default", "AAPL")).thenReturn(Optional.of("wid-1"));
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new DaywalkerAlertRepository.OwnerItem("default", "wid-1")));
         when(notifier.notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis")).thenReturn(true);
 
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
@@ -39,7 +39,7 @@ class DaywalkerCompletionServiceTest {
     void infoDoesNotNotifyPersistsSentFalseAndPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
-        when(alerts.resolveWatchlistItemId("default", "AAPL")).thenReturn(Optional.of("wid-1"));
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new DaywalkerAlertRepository.OwnerItem("default", "wid-1")));
 
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "INFO",
                 "thesis", null, "run-2");
@@ -55,7 +55,7 @@ class DaywalkerCompletionServiceTest {
     void unknownSymbolNeitherNotifiesInsertsNorPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
-        when(alerts.resolveWatchlistItemId("default", "GHOST")).thenReturn(Optional.empty());
+        when(alerts.findOwnersBySymbol("GHOST")).thenReturn(List.of());
 
         service(alerts, notifier).persistAssessment("GHOST", "PRICE_SPIKE", "CRITICAL",
                 "thesis", null, "run-4");
