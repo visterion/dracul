@@ -16,6 +16,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,12 +48,18 @@ class GroparWebhookControllerTest {
         var indicatorService = new ExitIndicatorService(
                 new ExitIndicatorService.Params(22, new BigDecimal("3.0"), 50, 200, 250));
 
+        var riskService = new RiskMetricsService(new RiskMetricsService.Params(
+                new java.math.BigDecimal("3.0"), new java.math.BigDecimal("1.5"),
+                new java.math.BigDecimal("0.35"), new java.math.BigDecimal("2.0")));
+
         var cache = new ToolFetchCache(new AgentToolCatalog(java.util.List.of()), 0);
+
+        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
 
         controller = new GroparWebhookController(
                 "tok",
                 watchlistRepo, verdictRepo, marketData, exitSignalRepo, telegram,
-                indicatorService, cache,
+                indicatorService, riskService, cache,
                 260,  // historyDays
                 40.0, // profitTargetPct
                 15.0  // stopLossPct
@@ -252,5 +259,47 @@ class GroparWebhookControllerTest {
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
         verify(exitSignalRepo, never()).insert(any(), any());
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    // =========================================================================
+    // Test 7: feed includes risk metrics and lazily freezes initial stop
+    // =========================================================================
+
+    /** 23 bars (22 TR values) — enough for ATR to be available with atrPeriod=22. */
+    private List<OhlcBar> multiBars() {
+        var bars = new ArrayList<OhlcBar>();
+        for (int i = 0; i < 23; i++) {
+            var c = new BigDecimal("100");
+            var h = new BigDecimal("105");
+            var l = new BigDecimal("95");
+            bars.add(new OhlcBar(LocalDate.of(2025, 1, 1).plusDays(i), h, h, l, c, 1_000));
+        }
+        return bars;
+    }
+
+    @Test
+    void feedIncludesRiskMetricsAndFreezesStop() throws Exception {
+        var heldItem = item("id-r", "RSK", "HELD", 100.0, 10.0, "alice@x");
+
+        // No stored stop yet → riskService will derive one from ATR (derivedNow = true)
+        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(marketData.dailyOhlcHistory(eq("RSK"), anyInt())).thenReturn(multiBars());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) output.get("positions");
+
+        assertThat(positions).hasSize(1);
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.risk()).isNotNull();
+        assertThat(view.risk().initialStop()).isNotNull();
+
+        verify(watchlistRepo).updateInitialStop(eq("id-r"), any());
     }
 }
