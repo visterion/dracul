@@ -70,6 +70,16 @@ require ownership — editing another user's item returns **403**.
 | PATCH | `/api/watchlist/{id}/position` | Set or clear the operator position (entry price + share count) |
 | DELETE | `/api/watchlist/{id}` | Remove watchlist item |
 
+### `POST /api/watchlist`
+
+Request body: `{ "symbol": "3750.HK", "tag": "HELD" | "TRACKING", "sourceVerdictId"?: "<uuid>" }`.
+
+`symbol` must match `^[A-Z0-9][A-Z0-9.\-]{0,11}$` — uppercase, 1–12 chars, starting
+with a letter or digit, then letters/digits/`.`/`-`. This admits exchange-suffixed
+tickers (`3750.HK`, `300750.SZ`, `ABBN.SW`, `BRK.B`) alongside plain US symbols.
+Adding an already-present ticker (same owner) merges instead of duplicating. On an
+unknown symbol the market-data provider returns `422 MARKET_DATA_NOT_FOUND`.
+
 ### `PATCH /api/watchlist/{id}/position`
 
 Records or clears the operator's position for a watchlist item. Both fields are
