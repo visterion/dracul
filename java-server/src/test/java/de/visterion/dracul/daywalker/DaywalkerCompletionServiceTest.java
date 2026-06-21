@@ -22,7 +22,7 @@ class DaywalkerCompletionServiceTest {
     }
 
     @Test
-    void criticalNotifiesOnceAndPersistsPerOwner() {
+    void criticalNotifiesOncePersistsAndPublishesPerOwner() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
@@ -38,12 +38,15 @@ class DaywalkerCompletionServiceTest {
                 eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true));
         verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), eq("AAPL"), eq("PRICE_SPIKE"),
                 eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true));
-        verify(events, times(1)).publishEvent(
-                new DaywalkerAlertCreatedEvent("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
+        verify(events, times(2)).publishEvent(any(DaywalkerAlertCreatedEvent.class));
+        verify(events).publishEvent(
+                new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
+        verify(events).publishEvent(
+                new DaywalkerAlertCreatedEvent("u2@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
     }
 
     @Test
-    void infoDoesNotNotifyPersistsSentFalseAndPublishesOnce() {
+    void infoDoesNotNotifyPersistsSentFalseAndPublishesPerOwner() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1")));
@@ -56,11 +59,11 @@ class DaywalkerCompletionServiceTest {
         verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
                 eq("INFO"), eq("thesis"), isNull(), eq("run-2"), eq(false));
         verify(events, times(1)).publishEvent(
-                new DaywalkerAlertCreatedEvent("AAPL", "PRICE_SPIKE", "INFO", "thesis"));
+                new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "INFO", "thesis"));
     }
 
     @Test
-    void ownerInCooldownIsSkipped() {
+    void ownerInCooldownGetsNeitherRowNorEvent() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
@@ -75,6 +78,10 @@ class DaywalkerCompletionServiceTest {
         verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), eq("AAPL"), eq("PRICE_SPIKE"),
                 eq("CRITICAL"), eq("thesis"), isNull(), eq("run-3"), anyBoolean());
         verify(events, times(1)).publishEvent(any(DaywalkerAlertCreatedEvent.class));
+        verify(events).publishEvent(
+                new DaywalkerAlertCreatedEvent("u2@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
+        verify(events, never()).publishEvent(
+                new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
     }
 
     @Test

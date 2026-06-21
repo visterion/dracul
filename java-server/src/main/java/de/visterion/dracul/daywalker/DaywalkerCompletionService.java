@@ -62,7 +62,12 @@ public class DaywalkerCompletionService {
             alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
                     severity, thesis, confidence, runId, sent);
         }
-        events.publishEvent(new DaywalkerAlertCreatedEvent(symbol, triggerType, severity, thesis));
+        // Publish only after all rows are persisted (invariant from 7ee36ef), one event per owner
+        // so the SSE bridge can deliver the live toast to exactly that owner.
+        for (var o : eligible) {
+            events.publishEvent(new DaywalkerAlertCreatedEvent(
+                    o.userId(), symbol, triggerType, severity, thesis));
+        }
         log.info("daywalker run {} persisted {} alert(s) for {} ({}), notified={}",
                 runId, eligible.size(), symbol, triggerType, sent);
     }
