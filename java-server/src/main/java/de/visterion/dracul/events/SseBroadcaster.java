@@ -26,26 +26,32 @@ public class SseBroadcaster {
     private final List<OwnedEmitter> emitters = new CopyOnWriteArrayList<>();
 
     public SseEmitter subscribe(String owner) {
-        SseEmitter emitter = register(owner, new SseEmitter(TIMEOUT_MS));
+        OwnedEmitter owned = add(owner, new SseEmitter(TIMEOUT_MS));
         // Send a comment immediately so the HTTP response headers flush to the client before any
         // real event arrives (otherwise clients hang on connect until the first event). Real
         // connection path only — register() stays a pure registration seam for tests.
         try {
-            emitter.send(SseEmitter.event().comment("connected"));
+            owned.emitter().send(SseEmitter.event().comment("connected"));
         } catch (IOException | IllegalStateException e) {
-            emitters.removeIf(oe -> oe.emitter() == emitter);
+            emitters.remove(owned);
         }
-        return emitter;
+        return owned.emitter();
     }
 
     /** Package-private: register an emitter for an owner (wires removal callbacks, no I/O). */
     SseEmitter register(String owner, SseEmitter emitter) {
+        return add(owner, emitter).emitter();
+    }
+
+    /** Wires the removal callbacks and stores the owned emitter; returns it so callers can
+     *  remove the exact same instance on a later failure (uniform with the callback removals). */
+    private OwnedEmitter add(String owner, SseEmitter emitter) {
         OwnedEmitter owned = new OwnedEmitter(owner, emitter);
         emitter.onCompletion(() -> emitters.remove(owned));
         emitter.onTimeout(() -> emitters.remove(owned));
         emitter.onError(t -> emitters.remove(owned));
         emitters.add(owned);
-        return emitter;
+        return owned;
     }
 
     /** Sends a named event only to streams opened by the given owner. */
