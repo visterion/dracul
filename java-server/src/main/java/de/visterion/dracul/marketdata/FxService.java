@@ -14,43 +14,43 @@ import java.util.concurrent.ConcurrentHashMap;
 public class FxService {
 
     private static final Logger log = LoggerFactory.getLogger(FxService.class);
-    private static final long TTL_NANOS = 3600L * 1_000_000_000L; // 1h
 
     private final RestClient client;
-    private record Cached(BigDecimal rate, long expiresAt) {}
-    private final ConcurrentHashMap<String, Cached> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, BigDecimal> cache = new ConcurrentHashMap<>();
 
     public FxService(RestClient yahooRestClient) {
         this.client = yahooRestClient;
     }
 
-    /** Convert amount from -> to at the current rate; identity on same currency or on failure. */
+    /** Convert from -> to using only cached rates; never performs a live fetch.
+     *  Identity on null amount, same currency, or a cache miss. */
     public BigDecimal convert(BigDecimal amount, String from, String to) {
         if (amount == null) return null;
         if (from == null || to == null || from.equalsIgnoreCase(to)) return amount;
-        BigDecimal rate = rate(from.toUpperCase(), to.toUpperCase());
-        if (rate == null) return amount; // graceful: unconverted rather than crash
+        BigDecimal rate = cache.get(pair(from, to));
+        if (rate == null) return amount; // not yet warmed: serve unconverted rather than block
         return amount.multiply(rate).setScale(4, RoundingMode.HALF_UP);
     }
 
-    private BigDecimal rate(String from, String to) {
-        String pair = from + to + "=X";
-        long now = System.nanoTime();
-        Cached c = cache.get(pair);
-        if (c != null && now < c.expiresAt()) return c.rate();
+    /** Fetch the latest from -> to rate and cache it. Called by the background refresher.
+     *  Never throws; on failure logs and keeps the last-known rate. */
+    public void warm(String from, String to) {
+        if (from == null || to == null || from.equalsIgnoreCase(to)) return;
+        String pair = pair(from, to);
         try {
             JsonNode body = client.get()
                     .uri("/v8/finance/chart/" + pair)
                     .retrieve().body(JsonNode.class);
-            JsonNode meta = body.path("chart").path("result").path(0).path("meta");
-            String px = meta.path("regularMarketPrice").asText(null);
+            String px = body.path("chart").path("result").path(0).path("meta")
+                    .path("regularMarketPrice").asText(null);
             if (px == null) throw new IllegalStateException("no regularMarketPrice for " + pair);
-            BigDecimal rate = new BigDecimal(px);
-            cache.put(pair, new Cached(rate, now + TTL_NANOS));
-            return rate;
+            cache.put(pair, new BigDecimal(px));
         } catch (Exception e) {
-            log.warn("FX rate fetch failed for {}: {} — leaving amount unconverted", pair, e.toString());
-            return c != null ? c.rate() : null; // last-known if any, else null (identity)
+            log.warn("FX warm failed for {}: {} — keeping last-known", pair, e.toString());
         }
+    }
+
+    private static String pair(String from, String to) {
+        return from.toUpperCase() + to.toUpperCase() + "=X";
     }
 }
