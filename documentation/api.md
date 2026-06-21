@@ -309,8 +309,10 @@ the cache. Each entry: `id`, `label`, `configured`, `status` (`ok` /
 
 `GET /api/events` is a Server-Sent-Events stream (`text/event-stream`). The
 Chronicle frontend connects via `EventSource` and updates live without polling.
-Unauthenticated, consistent with the read API (a browser `EventSource` cannot
-send an `Authorization` header).
+The path runs through Cloudflare Access (the browser `EventSource` GET carries the
+CF cookie / injected JWT), so the stream is **authenticated and scoped to the
+connecting user** — each stream receives only that user's events. Multiple tabs of
+one user are all served.
 
 **v1 emits only `alert.new`** — a new Daywalker alert:
 
@@ -318,6 +320,10 @@ send an `Authorization` header).
 event: alert.new
 data: {"symbol":"AAPL","trigger_type":"PRICE_SPIKE","severity":"CRITICAL","thesis":"…","ts":"2026-06-04T18:00:00Z"}
 ```
+
+An `alert.new` event is delivered only to the owners for whom an alert row was
+persisted (watchlist owner of the symbol, outside the per-`(owner, symbol,
+trigger-type)` cooldown) — the same boundary as the persisted alert list.
 
 The stream is generic; `verdict.new` and `strigoi.status` are planned and will
 attach to the same stream once their sources exist. No replay / Last-Event-ID in
