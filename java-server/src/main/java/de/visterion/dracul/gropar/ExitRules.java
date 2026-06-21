@@ -7,5 +7,7 @@ public final class ExitRules {
     public static final String TIME_STOP       = "TIME_STOP";
     public static final String PROFIT_TARGET   = "PROFIT_TARGET";
     public static final String STOP_LOSS       = "STOP_LOSS";
+    public static final String INITIAL_STOP    = "INITIAL_STOP";
+    public static final String GIVEBACK        = "GIVEBACK";
     private ExitRules() {}
 }
