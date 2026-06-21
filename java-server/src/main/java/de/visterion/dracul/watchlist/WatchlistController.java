@@ -93,6 +93,9 @@ public class WatchlistController {
                 settings.getDisplayCurrency())) {
             throw new NoSuchElementException("watchlist item " + id);
         }
+        if (req.entryDate() != null) {
+            repo.updateEntryDate(id, req.entryDate());
+        }
         events.publishEvent(new WatchlistChangedEvent());
         return mapper.toDisplay(repo.findById(id).orElseThrow(), settings.getDisplayCurrency());
     }

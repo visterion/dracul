@@ -223,4 +223,49 @@ class WatchlistPositionControllerIT {
                 .exchange((req, res) -> res.getStatusCode().value());
         assertThat(status).isEqualTo(400);
     }
+
+    @Test
+    void patchPositionPersistsEntryDate() {
+        stub.register("TSLA", "Tesla Inc", 950.0);
+        JsonNode created = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "TSLA", "tag", "HELD"))
+                .retrieve().body(JsonNode.class);
+        String id = created.get("id").asText();
+
+        rest.patch().uri("/api/watchlist/" + id + "/position")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("entryPrice", 10.0, "shareCount", 2.0, "entryDate", "2024-03-01"))
+                .retrieve().toBodilessEntity();
+
+        var risk = watchlistRepo.positionRiskByItemId().get(id);
+        assertThat(risk).isNotNull();
+        assertThat(risk.entryDate()).isEqualTo("2024-03-01");
+    }
+
+    @Test
+    void patchPositionWithoutEntryDateLeavesEntryDateUnchanged() {
+        stub.register("TSLA", "Tesla Inc", 950.0);
+        JsonNode created = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "TSLA", "tag", "HELD"))
+                .retrieve().body(JsonNode.class);
+        String id = created.get("id").asText();
+
+        // first patch: set entryDate
+        rest.patch().uri("/api/watchlist/" + id + "/position")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("entryPrice", 10.0, "shareCount", 2.0, "entryDate", "2024-03-01"))
+                .retrieve().toBodilessEntity();
+
+        // second patch: no entryDate — must not overwrite the stored value
+        rest.patch().uri("/api/watchlist/" + id + "/position")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("entryPrice", 15.0, "shareCount", 3.0))
+                .retrieve().toBodilessEntity();
+
+        var risk = watchlistRepo.positionRiskByItemId().get(id);
+        assertThat(risk).isNotNull();
+        assertThat(risk.entryDate()).isEqualTo("2024-03-01");
+    }
 }
