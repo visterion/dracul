@@ -39,8 +39,10 @@ public class DaywalkerCompletionService {
 
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId) {
-        var wid = alerts.resolveWatchlistItemId(USER, symbol);
-        if (wid.isEmpty()) {
+        var owners = alerts.findOwnersBySymbol(symbol).stream()
+                .filter(o -> USER.equals(o.userId()))
+                .toList();
+        if (owners.isEmpty()) {
             log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
             return;
         }
@@ -48,7 +50,7 @@ public class DaywalkerCompletionService {
         if (rank(severity) >= notifyRank) {
             sent = notifier.notifyAlert(symbol, triggerType, severity, thesis);
         }
-        alerts.insert(USER, wid.get(), symbol, triggerType, severity, thesis, confidence, runId, sent);
+        alerts.insert(USER, owners.get(0).watchlistItemId(), symbol, triggerType, severity, thesis, confidence, runId, sent);
         events.publishEvent(new DaywalkerAlertCreatedEvent(symbol, triggerType, severity, thesis));
         log.info("daywalker run {} persisted alert for {} ({}), notified={}",
                 runId, symbol, triggerType, sent);
