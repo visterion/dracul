@@ -143,7 +143,7 @@ positions of the current user).
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/exit-signals` | Returns the latest exit signal per HELD watchlist position for the **current user**; each entry includes `id`, `watchlistItemId`, `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
+| GET | `/api/exit-signals` | Returns the latest exit signal per HELD watchlist position for the **current user**; each entry includes `id`, `watchlistItemId`, `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED / NONE), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
 
 > **Note:** `GET /api/exit-signals` is scoped to the current user
 > (`CurrentUserHolder.get()`). It was previously hardcoded to the user
