@@ -34,7 +34,7 @@ class MarketDataConfigTest {
                     """)));
 
         String ua = "Mozilla/5.0 (Test) Chrome/124.0.0.0";
-        RestClient client = new MarketDataConfig().yahooRestClient(wm.baseUrl(), ua);
+        RestClient client = new MarketDataConfig().yahooRestClient(wm.baseUrl(), ua, 5000L);
         new YahooMarketDataAdapter(client).resolve("AAPL");
 
         wm.verify(getRequestedFor(urlPathEqualTo("/v8/finance/chart/AAPL"))
