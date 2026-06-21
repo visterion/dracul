@@ -7,7 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Repository
 public class WatchlistRepository {
@@ -315,6 +317,43 @@ public class WatchlistRepository {
                 .param("id", uuid).update();
         int rows = jdbc.sql("DELETE FROM watchlist_items WHERE id = :id")
                 .param("id", uuid).update();
+        return rows > 0;
+    }
+
+    /** Risk fields (entry_date as ISO string, initial_stop) keyed by item id — for gropar
+     *  (intentionally across all owners: gropar is a system agent that routes signals to
+     *  owners by position id, mirroring fetchHeldPositions' findAll() usage). */
+    public Map<String, PositionRisk> positionRiskByItemId() {
+        return jdbc.sql("SELECT id, entry_date, initial_stop FROM watchlist_items")
+                .query((rs, rowNum) -> new PositionRisk(
+                        rs.getString("id"),
+                        rs.getString("entry_date"),
+                        rs.getBigDecimal("initial_stop")))
+                .list()
+                .stream()
+                .collect(Collectors.toMap(PositionRisk::id, r -> r));
+    }
+
+    /** Freezes the initial stop once. Returns true only if it was previously null. */
+    public boolean updateInitialStop(String id, BigDecimal stop) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return false; }
+        int rows = jdbc.sql("""
+                UPDATE watchlist_items SET initial_stop = :stop
+                 WHERE id = :id AND initial_stop IS NULL
+                """)
+                .param("stop", stop).param("id", uuid).update();
+        return rows > 0;
+    }
+
+    /** Sets the real entry/purchase date. isoDate is yyyy-MM-dd. */
+    public boolean updateEntryDate(String id, String isoDate) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return false; }
+        int rows = jdbc.sql("UPDATE watchlist_items SET entry_date = CAST(:d AS DATE) WHERE id = :id")
+                .param("d", isoDate).param("id", uuid).update();
         return rows > 0;
     }
 
