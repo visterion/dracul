@@ -9,7 +9,7 @@ public record ExitSignal(
         String action,            // SELL | TRIM | HOLD
         List<String> firedRules,
         Double gainLossPct,
-        String thesisStatus,      // INTACT | WEAKENING | INVALIDATED
+        String thesisStatus,      // INTACT | WEAKENING | INVALIDATED | NONE
         String rationale,
         Double confidence,
         String vistierieRunId,
