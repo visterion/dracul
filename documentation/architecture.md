@@ -268,11 +268,15 @@ verdict that already carries a user decision (`decision` IS NOT NULL) is never
 overwritten. The new column `contributing_prey_ids` (JSONB, V6) captures the
 exact prey UUIDs used for each upsert, enabling future outcome analysis.
 
-**Live alerts (SSE):** `DaywalkerCompletionService` publishes a
-`DaywalkerAlertCreatedEvent` after persisting an alert → an `@EventListener`
-bridge calls `SseBroadcaster.broadcast("alert.new", …)` → `GET /api/events`
-fans it out to connected `EventSource` clients (Chronicle live panel). The
-broadcaster is domain-agnostic; new event types attach with one `broadcast` call.
+**Live alerts (SSE):** after persisting an alert, `DaywalkerCompletionService`
+publishes one `DaywalkerAlertCreatedEvent` **per eligible owner** (carrying that
+owner's email) → an `@EventListener` bridge calls
+`SseBroadcaster.sendToOwner(owner, "alert.new", …)` → `GET /api/events` delivers it
+only to the streams that owner has open (Chronicle live panel). Each emitter is
+tagged at connect time with the connecting user's email (`CurrentUserHolder`, set
+by `CloudflareAccessFilter`), so the transient toast respects the same per-owner
+boundary as the persisted rows. The broadcaster retains a generic `broadcast`
+(all streams) seam for future global event types.
 
 ## Authentication & multi-user
 
