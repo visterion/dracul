@@ -14,13 +14,13 @@ class AlertSseBridgeTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void broadcastsAlertNewWithPayload() {
+    void routesAlertNewToOwnerWithPayload() {
         var broadcaster = mock(SseBroadcaster.class);
         new AlertSseBridge(broadcaster).onAlertCreated(
-                new DaywalkerAlertCreatedEvent("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis text"));
+                new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis text"));
 
         var cap = ArgumentCaptor.forClass(Map.class);
-        verify(broadcaster).broadcast(eq("alert.new"), cap.capture());
+        verify(broadcaster).sendToOwner(eq("u1@x.com"), eq("alert.new"), cap.capture());
         Map<String, Object> p = cap.getValue();
         assertThat(p).containsEntry("symbol", "AAPL")
                 .containsEntry("trigger_type", "PRICE_SPIKE")
