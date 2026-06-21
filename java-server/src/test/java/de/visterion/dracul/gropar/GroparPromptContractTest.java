@@ -42,4 +42,18 @@ class GroparPromptContractTest {
                 .as("gropar prompt must anchor German rationale output")
                 .contains("German");
     }
+
+    @Test
+    void promptDeclaresRFrameworkRules() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt)
+                .as("prompt must define the INITIAL_STOP rule")
+                .contains("INITIAL_STOP");
+        assertThat(prompt)
+                .as("prompt must define the GIVEBACK rule")
+                .contains("GIVEBACK");
+        assertThat(prompt)
+                .as("prompt must explain gain in R")
+                .contains("gain_in_R");
+    }
 }
