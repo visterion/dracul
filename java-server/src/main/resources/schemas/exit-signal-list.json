@@ -11,7 +11,7 @@
           "action": { "type": "string", "enum": ["SELL", "TRIM", "HOLD"] },
           "fired_rules": { "type": "array", "items": { "type": "string" } },
           "gain_loss_pct": { "type": ["number", "null"] },
-          "thesis_status": { "type": "string", "enum": ["INTACT", "WEAKENING", "INVALIDATED"] },
+          "thesis_status": { "type": "string", "enum": ["INTACT", "WEAKENING", "INVALIDATED", "NONE"] },
           "rationale": { "type": "string" },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
         },
