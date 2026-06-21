@@ -224,7 +224,7 @@ export interface ExitSignal {
   action: 'SELL' | 'TRIM' | 'HOLD'
   firedRules: string[]
   gainLossPct: number | null
-  thesisStatus: 'INTACT' | 'WEAKENING' | 'INVALIDATED' | null
+  thesisStatus: 'INTACT' | 'WEAKENING' | 'INVALIDATED' | 'NONE' | null
   rationale: string | null
   confidence: number | null
   vistierieRunId: string | null
