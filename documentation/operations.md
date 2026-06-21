@@ -35,6 +35,41 @@ gates which users may log in. If `DRACUL_CLOUDFLARE_TEAM_DOMAIN` or
 profiles a blank CF config enables bypass mode instead: an `X-Dev-User` request
 header sets the current user (fallback: `default`).
 
+## Local access (Cloudflare-bypass)
+
+Operator-facing endpoints sit behind Cloudflare Access. For automation (curl, headless browser)
+that reaches Dracul **directly** (not through Cloudflare — e.g. `http://<host-lan-ip>:8080`), an
+opt-in local-access path bypasses the Cloudflare JWT check when a shared secret is presented.
+
+**Off by default.** Enable by setting BOTH (a blank token keeps it disabled, fail-safe):
+
+    DRACUL_LOCAL_ACCESS_ENABLED=true
+    DRACUL_LOCAL_ACCESS_TOKEN=<a-strong-secret>
+
+A request authenticated this way acts as `dracul.primary-user-email` (same identity as a
+Cloudflare login).
+
+- **curl / programmatic (preferred for automation):** send the token in the `X-Local-Access-Token` header:
+
+      curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+        http://<host-lan-ip>:8080/api/settings/agents/gropar/definition/reset
+
+- **Browser / Playwright:** navigate once to `http://<host-lan-ip>:8080/?lat=$TOKEN`. The server
+  sets an HttpOnly `DRACUL_LAT` cookie and 302-redirects to `/` (token stripped from the URL);
+  subsequent same-origin requests carry the cookie.
+
+**Security:**
+
+- The cookie is `HttpOnly` + `SameSite=Lax`; `Secure` is set only when the request itself is over
+  https. The direct route is typically plain http over the LAN/tailscale and is not
+  internet-exposed (Cloudflare fronts the public hostname; `:8080` direct is reachable only on the
+  local network).
+- Prefer the header (or cookie) over the `?lat=` query param for non-interactive use: a query-param
+  token is recorded in reverse-proxy / servlet access logs. The browser bootstrap accepts it for
+  convenience and immediately exchanges it for the cookie + a clean URL.
+- The attack surface widens only to a party that can both reach `:8080` directly AND holds the
+  token. Leave it off unless needed; enabling requires a container restart.
+
 ## Building and starting the stack
 
 The image is a multi-stage build (`java-server/Dockerfile`):
