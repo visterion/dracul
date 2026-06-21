@@ -55,6 +55,7 @@ class WatchlistPositionControllerIT {
         deleteIfExists("TSLA");
         deleteIfExists("AAPL");
         deleteIfExists("NVDA");
+        deleteIfExists("3750.HK");
         settingsRepo.setDisplayCurrency("EUR");
     }
 
@@ -192,5 +193,34 @@ class WatchlistPositionControllerIT {
 
         assertThat(nvda.get("currency").asText()).isEqualTo("USD");
         assertThat(nvda.get("currentPrice").asDouble()).isEqualTo(500.0);
+    }
+
+    @Test
+    void acceptsDigitLeadingExchangeSymbol() {
+        stub.register("3750.HK", "Contemporary Amperex", 700.0, "HKD");
+        var status = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "3750.HK", "tag", "HELD"))
+                .exchange((req, res) -> res.getStatusCode().value());
+        assertThat(status).isEqualTo(201);
+        deleteIfExists("3750.HK");
+    }
+
+    @Test
+    void rejectsLowercaseSymbol() {
+        var status = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "abc", "tag", "HELD"))
+                .exchange((req, res) -> res.getStatusCode().value());
+        assertThat(status).isEqualTo(400);
+    }
+
+    @Test
+    void rejectsTooLongSymbol() {
+        var status = rest.post().uri("/api/watchlist")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("symbol", "ABCDEFGHIJKLM", "tag", "HELD")) // 13 chars
+                .exchange((req, res) -> res.getStatusCode().value());
+        assertThat(status).isEqualTo(400);
     }
 }
