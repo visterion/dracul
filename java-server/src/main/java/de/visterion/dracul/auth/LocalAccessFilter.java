@@ -87,6 +87,10 @@ public class LocalAccessFilter extends OncePerRequestFilter {
             c.setHttpOnly(true);
             c.setPath("/");
             c.setAttribute("SameSite", "Lax");
+            // Secure mirrors the request: hardened over https, but NOT forced — the local-access
+            // route is intentionally reachable over plain http on the LAN (see operations.md), where
+            // a forced Secure flag would suppress the cookie and break the browser flow.
+            c.setSecure(req.isSecure());
             res.addCookie(c);
             res.sendRedirect(pathWithoutLat(req));
             return;
