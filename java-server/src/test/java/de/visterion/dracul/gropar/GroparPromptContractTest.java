@@ -31,4 +31,15 @@ class GroparPromptContractTest {
                 .as("thesis_status enum must add NONE for positions without an original thesis")
                 .containsExactlyInAnyOrder("INTACT", "WEAKENING", "INVALIDATED", "NONE");
     }
+
+    @Test
+    void promptInstructsNoneAndGermanRationale() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt)
+                .as("gropar prompt must define NONE thesis_status for positions without a thesis")
+                .contains("NONE");
+        assertThat(prompt)
+                .as("gropar prompt must anchor German rationale output")
+                .contains("German");
+    }
 }
