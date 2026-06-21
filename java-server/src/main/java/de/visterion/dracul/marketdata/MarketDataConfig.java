@@ -5,7 +5,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 @Configuration
 class MarketDataConfig {
@@ -13,8 +17,13 @@ class MarketDataConfig {
     @Bean
     RestClient yahooRestClient(
             @Value("${dracul.marketdata.yahoo.base-url:https://query1.finance.yahoo.com}") String baseUrl,
-            @Value("${dracul.marketdata.yahoo.user-agent:Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36}") String userAgent) {
-        return RestClient.builder().baseUrl(baseUrl)
+            @Value("${dracul.marketdata.yahoo.user-agent:Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36}") String userAgent,
+            @Value("${dracul.marketdata.yahoo.timeout-ms:5000}") long timeoutMs) {
+        var httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(timeoutMs)).build();
+        var factory = new JdkClientHttpRequestFactory(httpClient);
+        factory.setReadTimeout(Duration.ofMillis(timeoutMs));
+        return RestClient.builder().requestFactory(factory).baseUrl(baseUrl)
                 .defaultHeader("User-Agent", userAgent).build();
     }
 
