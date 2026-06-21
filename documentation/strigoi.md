@@ -164,22 +164,28 @@ as additional prompt context, closing the feedback loop.
 sub-project 2 of 4). Not a scheduled agent — Vistierie opens a window-bounded
 session at market open and polls Dracul's event-source webhook every 5 minutes.
 
-1. `POST /api/daywalker/events` runs deterministic detection over the active
-   watchlist (no LLM) and returns trigger events.
-2. Vistierie spawns one reasoning-tier (Sonnet) child run per event; the run
-   judges severity and returns `{severity, thesis, confidence}`.
-3. `POST /api/daywalker/complete` persists each assessment to
-   `dracul.daywalker_alerts`.
+1. `POST /api/daywalker/events` runs deterministic detection across **all users'**
+   watchlists (no LLM) and returns trigger events. Each trigger type is evaluated
+   **once per distinct ticker** — price/volume spikes, negative news, insider sells,
+   and analyst downgrades are market-wide signals, so a single market-data fetch per
+   ticker serves every user who watches it.
+2. Vistierie spawns one reasoning-tier (Sonnet) child run per triggered symbol; the
+   run judges severity and returns `{severity, thesis, confidence}`.
+3. `POST /api/daywalker/complete` fans out the assessment to **every owner** of that
+   symbol — one `dracul.daywalker_alerts` row is written per owner whose
+   `(owner, symbol, trigger_type)` cooldown has not yet elapsed.
 
 CRITICAL alerts also fire a best-effort Telegram push (configurable via
-`DRACUL_DAYWALKER_NOTIFY_LEVEL`); the delivery outcome is recorded in
+`DRACUL_DAYWALKER_NOTIFY_LEVEL`); the push fires **once per symbol event** on the
+single operator channel (not once per owner). The delivery outcome is recorded in
 `daywalker_alerts.notification_sent`.
 
 New alerts also stream live to the Chronicle frontend over SSE (`GET /api/events`,
-`alert.new`), surfaced in the live-alert panel.
+`alert.new`), surfaced in the live-alert panel. The SSE event fires **once per
+symbol event** on the global live stream, not per owner.
 
-A per-`(symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
-condition from spawning a run on every poll.
+A per-`(owner, symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
+condition from generating repeat rows for the same owner on every poll.
 
 ### Trigger types (v1)
 

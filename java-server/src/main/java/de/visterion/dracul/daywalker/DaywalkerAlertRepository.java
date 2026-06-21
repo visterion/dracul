@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,16 +18,18 @@ public class DaywalkerAlertRepository {
         this.jdbc = jdbc;
     }
 
-    /** Resolves a watchlist item id (UUID string) by ticker, or empty if unknown. */
-    public Optional<String> resolveWatchlistItemId(String userId, String symbol) {
-        var ids = jdbc.sql("""
-                SELECT id FROM watchlist_items
-                WHERE user_id = :u AND ticker = :t
-                LIMIT 1
+    /** A watchlist item's owner and id, for fanning a symbol's alert out to every owner. */
+    public record OwnerItem(String userId, String watchlistItemId) {}
+
+    /** All (owner, watchlist-item-id) pairs that hold a ticker, across all users. */
+    public List<OwnerItem> findOwnersBySymbol(String symbol) {
+        return jdbc.sql("""
+                SELECT user_id, id FROM watchlist_items
+                WHERE ticker = :t
                 """)
-                .param("u", userId).param("t", symbol)
-                .query(String.class).list();
-        return ids.isEmpty() ? Optional.empty() : Optional.of(ids.get(0));
+                .param("t", symbol)
+                .query((rs, n) -> new OwnerItem(rs.getString("user_id"), rs.getString("id")))
+                .list();
     }
 
     /** Most recent alert time for a (symbol, trigger_type), used for cooldown. */
