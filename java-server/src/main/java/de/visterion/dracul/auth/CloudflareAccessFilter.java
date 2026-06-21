@@ -78,6 +78,12 @@ public class CloudflareAccessFilter extends OncePerRequestFilter {
             chain.doFilter(req, res);
             return;
         }
+        if (Boolean.TRUE.equals(req.getAttribute(LocalAccessFilter.ATTR))) {
+            // Authenticated by LocalAccessFilter (ran earlier) — skip the Cloudflare JWT check.
+            // CurrentUserHolder is owned (set + cleared) by LocalAccessFilter, so do not touch it.
+            chain.doFilter(req, res);
+            return;
+        }
         try {
             if (bypass) {
                 String dev = req.getHeader("X-Dev-User");
