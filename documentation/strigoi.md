@@ -120,7 +120,9 @@ On each run:
    - **Gain/loss thresholds** — unrealised gain ≥ 40% or unrealised loss ≥ 15%
    - **Time stop** — based on position age
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
-   `verdict` (SELL / TRIM / HOLD), `rationale`, and `confidence`.
+   `verdict` (SELL / TRIM / HOLD), `thesis_status` (INTACT / WEAKENING / INVALIDATED / NONE —
+   `NONE` means the position has no original thesis, e.g. a manually-added position, so gropar
+   judges it on technical indicators alone), `rationale` (German), and `confidence`.
 4. `POST /api/gropar/complete` — completion webhook persists each signal to `dracul.exit_signals`
    (V11), scoped to the owner resolved from its `position_id`; signals with an unknown id are
    skipped. `GET /api/exit-signals` then serves each user only their own signals.
