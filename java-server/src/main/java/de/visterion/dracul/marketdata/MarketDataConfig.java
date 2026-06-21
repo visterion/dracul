@@ -11,8 +11,11 @@ import org.springframework.web.client.RestClient;
 class MarketDataConfig {
 
     @Bean
-    RestClient yahooRestClient(@Value("${dracul.marketdata.yahoo.base-url:https://query1.finance.yahoo.com}") String baseUrl) {
-        return RestClient.builder().baseUrl(baseUrl).build();
+    RestClient yahooRestClient(
+            @Value("${dracul.marketdata.yahoo.base-url:https://query1.finance.yahoo.com}") String baseUrl,
+            @Value("${dracul.marketdata.yahoo.user-agent:Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36}") String userAgent) {
+        return RestClient.builder().baseUrl(baseUrl)
+                .defaultHeader("User-Agent", userAgent).build();
     }
 
     @Bean
