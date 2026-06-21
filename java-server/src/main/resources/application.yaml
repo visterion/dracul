@@ -13,6 +13,11 @@ dracul:
     # Browser origin(s) allowed to call /api/** (comma-separated). Must be the public
     # SPA origin in prod (e.g. https://dracul.ufelmann.com), NOT public-url (internal).
     allowed-origins: ${DRACUL_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  local-access:
+    # Opt-in Cloudflare-bypass for direct (non-CF) access. OFF unless BOTH are set:
+    # enabled=true AND a non-blank token. See documentation/operations.md.
+    enabled: ${DRACUL_LOCAL_ACCESS_ENABLED:false}
+    token: ${DRACUL_LOCAL_ACCESS_TOKEN:}
   edgar:
     user-agent: ${DRACUL_EDGAR_USER_AGENT:dracul-research/1.0 contact@example.com}
   strigoi:
