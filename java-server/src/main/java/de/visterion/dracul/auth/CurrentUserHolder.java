@@ -1,7 +1,8 @@
 package de.visterion.dracul.auth;
 
-/** Request-thread holder for the authenticated user's email. Set by CloudflareAccessFilter,
- *  cleared at the end of each request. "default" when running in bypass mode with no X-Dev-User. */
+/** Request-thread holder for the authenticated user's email. Set by CloudflareAccessFilter
+ *  (or LocalAccessFilter when local access is enabled), cleared at the end of each request.
+ *  "default" when running in bypass mode with no X-Dev-User. */
 public final class CurrentUserHolder {
 
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
