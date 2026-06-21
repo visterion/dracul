@@ -19,7 +19,7 @@ public class AlertSseBridge {
     }
 
     // Runs synchronously on the webhook thread (default Spring @EventListener).
-    // Keep this body total and exception-free — broadcast() already swallows
+    // Keep this body total and exception-free — sendToOwner() already swallows
     // per-emitter I/O errors — so it can never break the /complete 204 contract.
     // Future verdict.new / strigoi.status bridges should preserve that property.
     @EventListener
@@ -30,6 +30,6 @@ public class AlertSseBridge {
         payload.put("severity", e.severity());
         payload.put("thesis", e.thesis());
         payload.put("ts", Instant.now().toString());
-        broadcaster.broadcast("alert.new", payload);
+        broadcaster.sendToOwner(e.owner(), "alert.new", payload);
     }
 }
