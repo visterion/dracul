@@ -14,6 +14,7 @@ public record HeldPositionView(
         double shareCount,
         double currentPrice,
         ExitIndicators indicators,
+        RiskMetrics risk,
         List<String> firedRules,
         Map<String, Object> thesis   // {summary, signals, risks, anomalyTypes, horizon} or null
 ) {}

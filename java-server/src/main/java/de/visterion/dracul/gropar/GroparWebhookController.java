@@ -17,8 +17,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import tools.jackson.databind.JsonNode;
 
+import de.visterion.dracul.watchlist.PositionRisk;
+
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -40,6 +43,7 @@ public class GroparWebhookController {
     private final ExitSignalRepository exitSignalRepo;
     private final TelegramNotifier telegram;
     private final ExitIndicatorService indicatorService;
+    private final RiskMetricsService riskService;
     private final ToolFetchCache cache;
 
     private final int historyDays;
@@ -54,6 +58,7 @@ public class GroparWebhookController {
             ExitSignalRepository exitSignalRepo,
             TelegramNotifier telegram,
             ExitIndicatorService indicatorService,
+            RiskMetricsService riskService,
             ToolFetchCache cache,
             @Value("${dracul.gropar.history-days:260}") int historyDays,
             @Value("${dracul.gropar.profit-target-pct:40}") double profitTargetPct,
@@ -66,6 +71,7 @@ public class GroparWebhookController {
         this.exitSignalRepo = exitSignalRepo;
         this.telegram = telegram;
         this.indicatorService = indicatorService;
+        this.riskService = riskService;
         this.cache = cache;
         this.historyDays = historyDays;
         this.profitTargetPct = profitTargetPct;
@@ -84,6 +90,8 @@ public class GroparWebhookController {
             var held = watchlistRepo.findAll().stream()
                     .filter(this::isHeld)
                     .toList();
+
+            var riskByItem = watchlistRepo.positionRiskByItemId();
 
             var views = new ArrayList<HeldPositionView>();
             for (WatchlistItem item : held) {
@@ -114,6 +122,29 @@ public class GroparWebhookController {
                             BigDecimal.valueOf(item.entryPrice()),
                             verdictCreatedAt, horizon);
 
+                    PositionRisk pr = riskByItem.get(item.id());
+                    BigDecimal storedStop = pr == null ? null : pr.initialStop();
+                    LocalDate entryDate = null;
+                    if (pr != null && pr.entryDate() != null) {
+                        try {
+                            entryDate = LocalDate.parse(pr.entryDate());
+                        } catch (java.time.format.DateTimeParseException e) {
+                            log.warn("gropar: unparseable entry_date '{}' for {} — ignoring",
+                                    pr.entryDate(), item.ticker());
+                        }
+                    }
+                    var risk = riskService.compute(bars,
+                            BigDecimal.valueOf(item.entryPrice()), entryDate, storedStop,
+                            ind.atr(), ind.atrAvailable());
+                    if (risk.derivedNow() && risk.initialStop() != null) {
+                        try {
+                            watchlistRepo.updateInitialStop(item.id(), risk.initialStop());
+                        } catch (Exception e) {
+                            log.warn("gropar: failed to freeze initial stop for {}: {}",
+                                    item.ticker(), e.getMessage());
+                        }
+                    }
+
                     // Build fired rules: copy from indicator, then add controller-side rules
                     var firedRules = new ArrayList<>(ind.firedRules());
                     if (ind.gainLossPct() != null
@@ -124,6 +155,8 @@ public class GroparWebhookController {
                             && ind.gainLossPct().doubleValue() <= -stopLossPct) {
                         firedRules.add(ExitRules.STOP_LOSS);
                     }
+                    if (risk.initialStopBreached()) firedRules.add(ExitRules.INITIAL_STOP);
+                    if (risk.givebackBreached())    firedRules.add(ExitRules.GIVEBACK);
 
                     views.add(new HeldPositionView(
                             item.id(),
@@ -133,6 +166,7 @@ public class GroparWebhookController {
                             item.shareCount(),
                             item.currentPrice(),
                             ind,
+                            risk,
                             firedRules,
                             thesis));
 
