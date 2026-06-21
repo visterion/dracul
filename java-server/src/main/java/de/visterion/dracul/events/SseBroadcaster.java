@@ -8,10 +8,11 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Domain-agnostic Server-Sent-Events broadcaster. Holds the connected emitters
- * and fans out named events to all of them. Dead emitters are removed on the
- * next broadcast or via the completion/timeout/error callbacks. Event types
- * other than "alert.new" attach simply by calling broadcast(...).
+ * Domain-agnostic Server-Sent-Events broadcaster. Each connected emitter is tagged with the
+ * email of the user who opened the stream, so events can be delivered to a single owner
+ * ({@link #sendToOwner}) — multiple tabs of one user are all matched. Dead emitters are removed
+ * on the next send or via the completion/timeout/error callbacks. {@link #broadcast} remains as
+ * a generic broadcast-to-all seam for future global events; alert.new uses sendToOwner.
  */
 @Component
 public class SseBroadcaster {
@@ -19,37 +20,53 @@ public class SseBroadcaster {
     /** EventSource auto-reconnects, so a finite per-connection timeout is fine. */
     private static final long TIMEOUT_MS = 30 * 60 * 1000L;
 
-    private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
+    /** An emitter together with the email of the user who opened the stream. */
+    private record OwnedEmitter(String owner, SseEmitter emitter) {}
 
-    public SseEmitter subscribe() {
-        SseEmitter emitter = register(new SseEmitter(TIMEOUT_MS));
-        // Send a comment immediately so the HTTP response headers flush to the
-        // client before any real event arrives (otherwise clients hang on
-        // connect until the first event). Real connection path only —
-        // register() stays a pure registration seam for tests.
+    private final List<OwnedEmitter> emitters = new CopyOnWriteArrayList<>();
+
+    public SseEmitter subscribe(String owner) {
+        SseEmitter emitter = register(owner, new SseEmitter(TIMEOUT_MS));
+        // Send a comment immediately so the HTTP response headers flush to the client before any
+        // real event arrives (otherwise clients hang on connect until the first event). Real
+        // connection path only — register() stays a pure registration seam for tests.
         try {
             emitter.send(SseEmitter.event().comment("connected"));
         } catch (IOException | IllegalStateException e) {
-            emitters.remove(emitter);
+            emitters.removeIf(oe -> oe.emitter() == emitter);
         }
         return emitter;
     }
 
-    /** Package-private: register an emitter (wires removal callbacks, no I/O). */
-    SseEmitter register(SseEmitter emitter) {
-        emitter.onCompletion(() -> emitters.remove(emitter));
-        emitter.onTimeout(() -> emitters.remove(emitter));
-        emitter.onError(t -> emitters.remove(emitter));
-        emitters.add(emitter);
+    /** Package-private: register an emitter for an owner (wires removal callbacks, no I/O). */
+    SseEmitter register(String owner, SseEmitter emitter) {
+        OwnedEmitter owned = new OwnedEmitter(owner, emitter);
+        emitter.onCompletion(() -> emitters.remove(owned));
+        emitter.onTimeout(() -> emitters.remove(owned));
+        emitter.onError(t -> emitters.remove(owned));
+        emitters.add(owned);
         return emitter;
     }
 
-    public void broadcast(String type, Object data) {
-        for (SseEmitter emitter : emitters) {
+    /** Sends a named event only to streams opened by the given owner. */
+    public void sendToOwner(String owner, String type, Object data) {
+        for (OwnedEmitter oe : emitters) {
+            if (!oe.owner().equals(owner)) continue;
             try {
-                emitter.send(SseEmitter.event().name(type).data(data));
+                oe.emitter().send(SseEmitter.event().name(type).data(data));
             } catch (IOException | IllegalStateException e) {
-                emitters.remove(emitter);
+                emitters.remove(oe);
+            }
+        }
+    }
+
+    /** Generic broadcast-to-all seam (unused by alert.new; kept for future global events). */
+    public void broadcast(String type, Object data) {
+        for (OwnedEmitter oe : emitters) {
+            try {
+                oe.emitter().send(SseEmitter.event().name(type).data(data));
+            } catch (IOException | IllegalStateException e) {
+                emitters.remove(oe);
             }
         }
     }
