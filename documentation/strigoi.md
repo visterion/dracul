@@ -119,6 +119,7 @@ On each run:
    - **52-week proximity** — distance to 52-week low/high
    - **Gain/loss thresholds** — unrealised gain ≥ 40% or unrealised loss ≥ 15%
    - **Time stop** — based on position age
+   - **R-framework** — frozen ATR initial stop, risk unit R, gain in R, MFE since entry, and a giveback (peak-drawdown) guard (`INITIAL_STOP` / `GIVEBACK` rules)
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
    `verdict` (SELL / TRIM / HOLD), `thesis_status` (INTACT / WEAKENING / INVALIDATED / NONE —
    `NONE` means the position has no original thesis, e.g. a manually-added position, so gropar

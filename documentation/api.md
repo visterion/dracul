@@ -87,13 +87,14 @@ nullable — send `null` to remove the position.
 
 Request body:
 ```json
-{ "entryPrice": 142.50, "shareCount": 100 }
+{ "entryPrice": 142.50, "shareCount": 100, "entryDate": "2026-06-01" }
 ```
 
 Constraints:
 - `entryPrice`: `>= 0` or `null`
 - `shareCount`: `>= 0` or `null`
-- Both `null` clears the position (P&L section reverts to the "add position" state)
+- `entryDate`: ISO date string (`yyyy-MM-dd`), optional — the position's real purchase date used by gropar's MFE/giveback. Omitting it (or sending `null`) leaves the stored `entry_date` unchanged. New rows default `entry_date` to the creation date (`CURRENT_DATE`); existing rows were backfilled to `added_at`.
+- Both `entryPrice` and `shareCount` `null` clears the position (P&L section reverts to the "add position" state)
 - 400 on negative values; 404 if the item id is unknown
 
 Response (200): the updated `WatchlistItem`.

@@ -217,6 +217,10 @@ directly without triggering any market-data call.
 **Verdict native currency (V13):**
 - `verdicts.currency` (TEXT, nullable) — ISO 4217 code of the native currency in which `current_price` was recorded (e.g. `"USD"`). Added by `V13__verdict_currency.sql`. Conversion to the operator's display currency happens at read time in `VerdictController` via `VerdictCurrencyMapper`, mirroring the watchlist path's `WatchlistCurrencyMapper`. When `currency` equals the display currency no conversion is applied and the native fields in the API response are null.
 
+**Watchlist position columns (V14):**
+- `entry_date` (DATE, nullable, default `CURRENT_DATE`) — real purchase date, backfilled to `added_at` for existing rows; surfaced as `entryDate` on the read/write API.
+- `initial_stop` (NUMERIC(12,4), nullable) — frozen native-currency ATR stop computed at entry (`entry_price − initial_stop_atr_multiple × ATR22`); used by the Groparul R-framework to derive the risk unit R and the giveback guard.
+
 **Agent definition tables (V10):**
 
 Two new tables under the `dracul` schema hold runtime-editable agent definitions:

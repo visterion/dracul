@@ -252,8 +252,12 @@ Disabled by default (`enabled=false`). Enable by setting `DRACUL_GROPAR_ENABLED=
 | `DRACUL_GROPAR_MA_SLOW` | `200` | Slow simple moving-average period (days) for the MA-cross indicator. |
 | `DRACUL_GROPAR_PROFIT_TARGET_PCT` | `40` | Unrealised-gain threshold (%) above which the gain indicator fires. |
 | `DRACUL_GROPAR_STOP_LOSS_PCT` | `15` | Unrealised-loss threshold (%) below which the loss indicator fires. |
+| `DRACUL_GROPAR_INITIAL_STOP_ATR_MULTIPLE` | `3.0` | k in `entry − k·ATR` for the **frozen initial stop** (computed once at entry, never updated). Lower values tighten the stop; higher values give the position more room. |
+| `DRACUL_GROPAR_GIVEBACK_ACTIVATION_R` | `1.5` | Minimum peak gain in R (multiples of the initial risk unit) before the giveback rule can fire. Prevents premature exits while a position is still building. |
+| `DRACUL_GROPAR_GIVEBACK_THRESHOLD_PCT` | `35` | Fraction (percent) of the peak gain given back that fires the `GIVEBACK` rule (e.g. 35 means a 35% retracement of peak unrealised gain triggers an exit signal). |
+| `DRACUL_GROPAR_GIVEBACK_ATR_MULTIPLE` | `2.0` | Alternative giveback trigger: drawdown from the peak in ATR multiples. Whichever of the two giveback conditions fires first (`threshold-pct` or `atr-multiple`) triggers the `GIVEBACK` rule. |
 
-All exit-rule thresholds (`atr-multiple`, `ma-fast`, `ma-slow`, `profit-target-pct`, `stop-loss-pct`, `history-days`) are operator-tunable via env var without a code change.
+All exit-rule thresholds (`atr-multiple`, `ma-fast`, `ma-slow`, `profit-target-pct`, `stop-loss-pct`, `history-days`, `initial-stop-atr-multiple`, `giveback-activation-r`, `giveback-threshold-pct`, `giveback-atr-multiple`) are operator-tunable via env var without a code change.
 
 Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
