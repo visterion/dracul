@@ -57,12 +57,12 @@ public class DaywalkerCompletionService {
 
         boolean sent = rank(severity) >= notifyRank
                 && notifier.notifyAlert(symbol, triggerType, severity, thesis);
-        events.publishEvent(new DaywalkerAlertCreatedEvent(symbol, triggerType, severity, thesis));
 
         for (var o : eligible) {
             alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
                     severity, thesis, confidence, runId, sent);
         }
+        events.publishEvent(new DaywalkerAlertCreatedEvent(symbol, triggerType, severity, thesis));
         log.info("daywalker run {} persisted {} alert(s) for {} ({}), notified={}",
                 runId, eligible.size(), symbol, triggerType, sent);
     }
