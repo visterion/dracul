@@ -58,7 +58,7 @@ class WatchlistControllerEventTest {
         when(repo.findById(item.id())).thenReturn(Optional.of(item));
         when(repo.updatePosition(item.id(), 90.0, 10.0, "EUR")).thenReturn(true);
 
-        controller.patchPosition(item.id(), new PatchPositionRequest(90.0, 10.0));
+        controller.patchPosition(item.id(), new PatchPositionRequest(90.0, 10.0, null));
 
         verify(events).publishEvent(any(WatchlistChangedEvent.class));
     }
