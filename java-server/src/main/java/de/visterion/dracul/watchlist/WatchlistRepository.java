@@ -288,6 +288,12 @@ public class WatchlistRepository {
                 .list();
     }
 
+    public java.util.List<String> distinctCurrencies() {
+        return jdbc.sql("SELECT DISTINCT currency FROM watchlist_items WHERE currency IS NOT NULL")
+                .query(String.class)
+                .list();
+    }
+
     /** Update price + day-change for every row of a ticker; returns rows affected. */
     public int updatePriceByTicker(String ticker, double price, double dayChangePercent) {
         return jdbc.sql("""

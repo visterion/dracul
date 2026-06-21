@@ -200,6 +200,12 @@ public class VerdictRepository {
                 .update();
     }
 
+    public java.util.List<String> distinctCurrencies() {
+        return jdbc.sql("SELECT DISTINCT currency FROM verdicts WHERE currency IS NOT NULL")
+                .query(String.class)
+                .list();
+    }
+
     private String json(Object value) {
         try {
             return mapper.writeValueAsString(value);
