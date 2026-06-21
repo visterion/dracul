@@ -22,10 +22,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Deterministic detection over the active watchlist. Fetches shared EDGAR
- * filings once per poll, then per symbol runs the four detectors and applies a
- * per-(symbol, trigger_type) cooldown. All external fetches degrade to empty on
- * failure — the poll never crashes the Vistierie scheduler tick.
+ * Deterministic detection over all users' watchlists. Fetches shared EDGAR
+ * filings once per poll, runs the four detectors once per distinct ticker
+ * (triggers are market-wide), and emits a trigger only when at least one owner
+ * of that ticker is outside its per-(owner, symbol, trigger_type) cooldown. All
+ * external fetches degrade to empty on failure — the poll never crashes the
+ * Vistierie scheduler tick.
  */
 @Component
 public class DaywalkerEventEngine {
