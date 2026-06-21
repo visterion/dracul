@@ -36,7 +36,8 @@ class DaywalkerAlertRepositoryIT {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
                 50.0, List.of(50.0), "", null, null);
 
-        assertThat(alerts.resolveWatchlistItemId("default", "DWA")).contains(item.id());
+        assertThat(alerts.findOwnersBySymbol("DWA"))
+                .containsExactly(new DaywalkerAlertRepository.OwnerItem("default", item.id()));
         assertThat(alerts.lastAlertAt("default", "DWA", "PRICE_SPIKE")).isEmpty();
 
         alerts.insert("default", item.id(), "DWA", "PRICE_SPIKE",
@@ -47,8 +48,20 @@ class DaywalkerAlertRepositoryIT {
     }
 
     @Test
-    void resolveReturnsEmptyForUnknownSymbol() {
-        assertThat(alerts.resolveWatchlistItemId("default", "NOPE")).isEmpty();
+    void findOwnersReturnsEmptyForUnknownSymbol() {
+        assertThat(alerts.findOwnersBySymbol("NOPE")).isEmpty();
+    }
+
+    @Test
+    void findOwnersBySymbolReturnsAllOwnersAcrossUsers() {
+        var a = watchlist.insert("u1@x.com", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "", null, null);
+        var b = watchlist.insert("u2@x.com", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "", null, null);
+        assertThat(alerts.findOwnersBySymbol("DWA"))
+                .containsExactlyInAnyOrder(
+                        new DaywalkerAlertRepository.OwnerItem("u1@x.com", a.id()),
+                        new DaywalkerAlertRepository.OwnerItem("u2@x.com", b.id()));
     }
 
     @org.junit.jupiter.api.Test

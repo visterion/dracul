@@ -16,19 +16,23 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Deterministic detection over the active watchlist. Fetches shared EDGAR
- * filings once per poll, then per symbol runs the four detectors and applies a
- * per-(symbol, trigger_type) cooldown. All external fetches degrade to empty on
- * failure — the poll never crashes the Vistierie scheduler tick.
+ * Deterministic detection over all users' watchlists. Fetches shared EDGAR
+ * filings once per poll, runs the four detectors once per distinct ticker
+ * (triggers are market-wide), and emits a trigger only when at least one owner
+ * of that ticker is outside its per-(owner, symbol, trigger_type) cooldown. All
+ * external fetches degrade to empty on failure — the poll never crashes the
+ * Vistierie scheduler tick.
  */
 @Component
 public class DaywalkerEventEngine {
 
     private static final Logger log = LoggerFactory.getLogger(DaywalkerEventEngine.class);
-    private static final String USER = "default";
 
     private final WatchlistRepository watchlist;
     private final YahooIntradayAdapter yahoo;
@@ -62,8 +66,16 @@ public class DaywalkerEventEngine {
     }
 
     public List<TriggerEvent> detect(Instant since, Instant now) {
-        var items = watchlist.findAllByUser(USER);
+        var items = watchlist.findAll();
         if (items.isEmpty()) return List.of();
+
+        // Detect once per distinct ticker (triggers are market-wide); track owners for cooldown.
+        Map<String, WatchlistItem> repByTicker = new LinkedHashMap<>();
+        Map<String, List<String>> ownersByTicker = new HashMap<>();
+        for (WatchlistItem it : items) {
+            repByTicker.putIfAbsent(it.ticker(), it);
+            ownersByTicker.computeIfAbsent(it.ticker(), k -> new ArrayList<>()).add(it.owner());
+        }
 
         Instant effectiveSince = since != null ? since : now.minusSeconds(3600);
         LocalDate fromDate = effectiveSince.atZone(ZoneOffset.UTC).toLocalDate();
@@ -78,7 +90,7 @@ public class DaywalkerEventEngine {
         }
 
         var out = new ArrayList<TriggerEvent>();
-        for (WatchlistItem item : items) {
+        for (WatchlistItem item : repByTicker.values()) {
             var candidates = new ArrayList<TriggerEvent>();
             candidates.addAll(priceVolume.detect(item,
                     yahoo.intradayCandles(item.ticker()), priceThreshold, volumeMultiplier));
@@ -86,16 +98,22 @@ public class DaywalkerEventEngine {
             news.detect(item, finnhub.companyNews(item.ticker(), fromDate, toDate)).ifPresent(candidates::add);
             downgrade.detect(item, finnhub.recommendationTrend(item.ticker())).ifPresent(candidates::add);
 
+            var owners = ownersByTicker.get(item.ticker());
             for (TriggerEvent ev : candidates) {
-                if (!inCooldown(item.ticker(), ev.triggerType(), now)) out.add(ev);
+                if (anyOwnerOutsideCooldown(owners, item.ticker(), ev.triggerType(), now)) out.add(ev);
             }
         }
         return out;
     }
 
-    private boolean inCooldown(String symbol, TriggerType type, Instant now) {
-        return alerts.lastAlertAt(USER, symbol, type.name())
-                .map(last -> last.isAfter(now.minusSeconds(cooldownSeconds)))
-                .orElse(false);
+    /** True if at least one owner of the ticker is outside cooldown for this (symbol, type). */
+    private boolean anyOwnerOutsideCooldown(List<String> owners, String symbol, TriggerType type, Instant now) {
+        for (String owner : owners) {
+            boolean inCooldown = alerts.lastAlertAt(owner, symbol, type.name())
+                    .map(last -> last.isAfter(now.minusSeconds(cooldownSeconds)))
+                    .orElse(false);
+            if (!inCooldown) return true;
+        }
+        return false;
     }
 }
