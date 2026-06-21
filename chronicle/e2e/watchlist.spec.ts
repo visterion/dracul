@@ -100,4 +100,10 @@ test.describe('Watchlist View (/watchlist)', () => {
     await page.locator('.watch-search input').fill('CRM')
     await expect(page.getByTestId('wl-search-add')).toHaveCount(0)
   })
+
+  test('add button enables for a digit-leading exchange symbol', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('3750.HK')
+    await expect(page.getByTestId('wl-add-submit')).toBeEnabled()
+  })
 })
