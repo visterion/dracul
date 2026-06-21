@@ -246,7 +246,7 @@ const selectedId = ref<string | null>(null)
 const searchQuery = ref('')
 // Valid ticker shape: leading letter, then up to 9 of letter/digit/dot/hyphen.
 // Shared by the add dialog's submit guard, onAddSymbol, and the search CTA.
-const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/
+const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/
 const activeFilter = ref<'all' | 'alerts'>('all')
 const mode = ref<'list' | 'compare'>('list')
 const compareWith = ref<string | null>(null)
