@@ -72,6 +72,13 @@ of N symbols costs N credits. The default 120-second cache ensures at most one
 fresh batch call per window; a watchlist larger than ~8 tickers may exceed the
 8-credit/min limit on a cold load (chunking is deferred).
 
+## Yahoo Finance (fallback price / FX / intraday / earnings adapter)
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_MARKETDATA_YAHOO_BASE_URL` (`dracul.marketdata.yahoo.base-url`) | `https://query1.finance.yahoo.com` | Base URL for all Yahoo Finance requests. Override for tests. |
+| `DRACUL_MARKETDATA_YAHOO_USER_AGENT` (`dracul.marketdata.yahoo.user-agent`) | `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36` | User-Agent sent on all Yahoo Finance requests (market-data resolve/quotes, FX, intraday, earnings). Yahoo returns HTTP 429 to requests without a browser-like User-Agent; override via env if Yahoo changes its heuristics. |
+
 ## Notifications
 
 | Variable | Default | Purpose |
