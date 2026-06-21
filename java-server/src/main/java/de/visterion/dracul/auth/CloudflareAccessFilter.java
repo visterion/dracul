@@ -36,7 +36,7 @@ import java.util.Set;
 public class CloudflareAccessFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(CloudflareAccessFilter.class);
-    private static final List<String> EXCLUDED =
+    static final List<String> EXCLUDED =
             List.of("/api/strigoi-", "/api/voievod", "/api/gropar", "/api/daywalker", "/actuator/health");
 
     private final boolean bypass;
@@ -75,6 +75,12 @@ public class CloudflareAccessFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String path = req.getRequestURI();
         if (EXCLUDED.stream().anyMatch(path::startsWith)) {
+            chain.doFilter(req, res);
+            return;
+        }
+        if (Boolean.TRUE.equals(req.getAttribute(LocalAccessFilter.ATTR))) {
+            // Authenticated by LocalAccessFilter (ran earlier) — skip the Cloudflare JWT check.
+            // CurrentUserHolder is owned (set + cleared) by LocalAccessFilter, so do not touch it.
             chain.doFilter(req, res);
             return;
         }

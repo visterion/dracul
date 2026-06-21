@@ -123,4 +123,13 @@ class CloudflareAccessFilterTest {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
                 () -> new CloudflareAccessFilter("", "", prodEnv));
     }
+
+    @Test void localAccessAttributeSkipsJwt() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv()); // configured (not bypass)
+        var req = new MockHttpServletRequest("GET", "/api/watchlist");
+        req.setAttribute(LocalAccessFilter.ATTR, Boolean.TRUE);             // no JWT header present
+        var r = run(filter, req);
+        assertThat(r[1]).isEqualTo(200);   // would be 401 without the attribute (cf. missingTokenIs401)
+        assertThat(r[0]).isEqualTo("default"); // CF filter did not set a user
+    }
 }
