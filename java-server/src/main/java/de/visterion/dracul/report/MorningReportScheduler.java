@@ -49,7 +49,7 @@ public class MorningReportScheduler {
                 telegram.notifyDigest(render(owner, report));
             }
         } catch (RuntimeException e) {
-            log.warn("morning report failed: {}", e.getMessage());
+            log.warn("morning report failed", e);
         }
     }
 
