@@ -134,6 +134,16 @@ columns to `prey`). Standard Postgres backup / restore is sufficient.
   driver. Key events: Strigoi run start/end, Prey written, Verdict
   created, Daywalker trigger, Telegram notification sent.
 
+## Morning report digest
+
+To enable the daily Telegram morning-report digest:
+
+1. Ensure Telegram is already configured for gropar (i.e. `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set — same credentials reused).
+2. Set `DRACUL_REPORT_MORNING_ENABLED=true` (default `false`).
+3. Optionally override the send time via `DRACUL_REPORT_MORNING_CRON` (default `0 0 7 * * 1-5`, zone Europe/Berlin).
+
+The digest is a **Dracul-internal cron** — it does **not** register a Vistierie agent. No Vistierie budget change or agent reset is required (unlike a new scheduled Strigoi or Gropar itself).
+
 ## Branch images
 
 PRs and `slice-*` branches produce tagged images
