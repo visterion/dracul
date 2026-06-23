@@ -261,6 +261,15 @@ All exit-rule thresholds (`atr-multiple`, `ma-fast`, `ma-slow`, `profit-target-p
 
 Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
+## Morning Report (daily digest)
+
+A daily Telegram digest of the morning report. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured for the gropar notifications (i.e. `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_REPORT_MORNING_ENABLED` (`dracul.report.morning.enabled`) | `false` | Enables the scheduled morning-report Telegram digest. Set to `true` to activate. Requires Telegram bot-token + chat-id to be configured. |
+| `DRACUL_REPORT_MORNING_CRON` (`dracul.report.morning.cron`) | `0 0 7 * * 1-5` | Spring cron (zone: Europe/Berlin) for the digest send. Default: 07:00 Berlin time on weekdays. |
+
 ## Wikipedia
 
 | Env var | Default | Purpose |

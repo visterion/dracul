@@ -151,6 +151,93 @@ positions of the current user).
 > `"default"` — a bug that caused signals to be invisible after the legacy
 > owner migration. Prod signals now correctly resolve against the primary user.
 
+## Morning Report
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/morning-report` | Returns the current user's morning report: a projection over the persisted per-position risk snapshot (written by gropar's last `fetch_held_positions` run) combined with the latest exit signal per HELD position |
+
+Read-only; no market-data calls are made at request time. Scoped to the current user.
+
+### `GET /api/morning-report` response
+
+```json
+{
+  "generatedAt": "2026-06-23T07:00:00Z",
+  "sellCount": 1,
+  "trimCount": 0,
+  "holdCount": 2,
+  "positions": [
+    {
+      "symbol": "ACME",
+      "companyName": "Acme Corp",
+      "shareCount": 50,
+      "entryPrice": 100.0,
+      "currentClose": 142.5,
+      "activeStop": 128.0,
+      "nextTarget2r": 160.0,
+      "distanceToStopPct": -10.2,
+      "action": "HOLD",
+      "thesisStatus": "INTACT",
+      "confidence": 0.75,
+      "rationale": "Position above stop; MA cross bullish; no giveback.",
+      "ticket": {
+        "side": "SELL",
+        "symbol": "ACME",
+        "shares": 50,
+        "limitReference": 142.5,
+        "stop": 128.0,
+        "target": 160.0
+      }
+    }
+  ]
+}
+```
+
+Top-level fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `generatedAt` | string (ISO instant) | Timestamp when the report was assembled |
+| `sellCount` | integer | Number of positions with action = SELL |
+| `trimCount` | integer | Number of positions with action = TRIM |
+| `holdCount` | integer | Number of positions with action = HOLD |
+| `positions` | array | One entry per HELD position that has a persisted snapshot |
+
+Per-position fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `symbol` | string | Ticker |
+| `companyName` | string | Company name |
+| `shareCount` | number | Operator share count |
+| `entryPrice` | number | Operator entry price |
+| `currentClose` | `number \| null` | Last close written by gropar's fetch; null if gropar has not run yet |
+| `activeStop` | `number \| null` | Chandelier-Exit stop level; null until gropar has run |
+| `nextTarget2r` | `number \| null` | 2R price target (`entryPrice + 2 × initialRisk`); null until initial stop is frozen |
+| `distanceToStopPct` | `number \| null` | `(currentClose − activeStop) / currentClose × 100`; negative means price is below stop |
+| `action` | string | Latest gropar verdict: SELL / TRIM / HOLD |
+| `thesisStatus` | string | INTACT / WEAKENING / INVALIDATED / NONE |
+| `confidence` | number | Gropar confidence (0–1) |
+| `rationale` | string | Gropar rationale text |
+| `ticket` | object | Informational order ticket (see below); **Dracul places no orders** |
+
+Order ticket fields (`ticket`):
+
+| Field | Type | Description |
+|---|---|---|
+| `side` | string | BUY / SELL |
+| `symbol` | string | Ticker |
+| `shares` | number | Share count |
+| `limitReference` | `number \| null` | Reference price for a limit order (last close) |
+| `stop` | `number \| null` | Stop-loss reference level |
+| `target` | `number \| null` | Profit-target reference level |
+
+> **Important:** The order ticket is **informational only**. Dracul is a
+> read-only research assistant. It surfaces suggested action parameters so the
+> operator can decide whether and how to act — it does **not** route, submit, or
+> manage orders with any broker or exchange.
+
 ## Daywalker Alerts
 
 | Method | Path | Purpose |
