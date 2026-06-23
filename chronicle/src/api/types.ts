@@ -231,6 +231,39 @@ export interface ExitSignal {
   runAt: string
 }
 
+export interface OrderTicket {
+  side: 'SELL' | 'TRIM' | 'HOLD'
+  symbol: string
+  shares: number
+  limitReference: number | null
+  stop: number | null
+  target: number | null
+}
+
+export interface MorningReportLine {
+  symbol: string
+  companyName: string
+  shareCount: number
+  entryPrice: number
+  currentClose: number | null
+  activeStop: number | null
+  nextTarget2r: number | null
+  distanceToStopPct: number | null
+  action: 'SELL' | 'TRIM' | 'HOLD'
+  thesisStatus: 'INTACT' | 'WEAKENING' | 'INVALIDATED' | 'NONE' | null
+  confidence: number | null
+  rationale: string | null
+  ticket: OrderTicket
+}
+
+export interface MorningReport {
+  generatedAt: string
+  sellCount: number
+  trimCount: number
+  holdCount: number
+  positions: MorningReportLine[]
+}
+
 export interface Me { email: string }
 
 export interface PatchPositionRequest {

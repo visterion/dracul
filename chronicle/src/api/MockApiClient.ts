@@ -5,7 +5,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
-  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -19,6 +19,7 @@ import { mockWatchlistItems as initialWatchlist } from '../mocks/watchlistItems'
 import { mockVerdictNotes } from '../mocks/verdictNotes'
 import { mockProviders } from '../mocks/providers'
 import { mockExitSignals } from '../mocks/exitSignals'
+import { mockMorningReport } from '../mocks/morningReport'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -352,6 +353,11 @@ export class MockApiClient implements ApiClient {
     return mockExitSignals
       .filter(s => (s.watchlistItemId != null && mineIds.has(s.watchlistItemId)) || mineTickers.has(s.symbol))
       .map(s => ({ ...s }))
+  }
+
+  async getMorningReport(): Promise<MorningReport> {
+    await delay(50)
+    return structuredClone(mockMorningReport)
   }
 
   async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {
