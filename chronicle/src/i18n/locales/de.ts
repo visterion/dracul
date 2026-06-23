@@ -476,6 +476,7 @@ export default {
   },
   report: {
     title: 'Morgen-Report',
+    eyebrow: 'Morgen-Report',
     subtitle: 'Stops & Ziele für jede offene Position',
     readonlyNote: 'Nur informativ — Dracul platziert keine Orders.',
     empty: 'Noch keine gehaltenen Positionen.',
