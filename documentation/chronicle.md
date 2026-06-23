@@ -60,7 +60,7 @@ a connection status. Active only against a real backend (disabled in mock mode).
 Present on every view:
 
 - **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center
-  (6 destinations: Chronicle, Watchlist, Portfolio, Pattern Library, Backtest, Settings),
+  (7 destinations: Chronicle, Watchlist, Portfolio, Report, Pattern Library, Backtest, Settings),
   moon-icon + avatar placeholder right.
 - **Bottom status bar (32px)**: operational summary from `useStatusStore` —
   `☾ 6 strigoi · 2 hunting · daywalker active · $0.43 today`
@@ -79,7 +79,7 @@ and desktop keep the desktop shell. The JS switch is Vuetify
 Below 960px:
 
 - The centered top-bar nav is replaced by **`AppBottomNav`** — a fixed,
-  horizontally scrollable bottom tab bar with all six destinations (no "More"
+  horizontally scrollable bottom tab bar with all seven destinations (no "More"
   overflow), the active tab in `--blood-crimson`. It reserves
   `env(safe-area-inset-bottom)` and uses ≥44px tap targets. Both navs draw their
   entries from a shared `useNavItems()` composable.
