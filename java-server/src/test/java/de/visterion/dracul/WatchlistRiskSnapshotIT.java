@@ -40,6 +40,27 @@ class WatchlistRiskSnapshotIT {
     }
 
     @Test
+    void secondUpdateOverwritesPriorSnapshot() {
+        WatchlistItem item = repo.insert("overwrite@x.com", "OVW", "Overwrite Corp",
+                50.0, List.of(), "WATCHED", null, "USD");
+        repo.updateTag(item.id(), "HELD");
+
+        repo.updateRiskSnapshot(item.id(),
+                new BigDecimal("100.0000"), new BigDecimal("120.0000"),
+                new BigDecimal("110.0000"), Instant.parse("2026-06-22T18:00:00Z"));
+
+        boolean updated = repo.updateRiskSnapshot(item.id(),
+                new BigDecimal("95.0000"), new BigDecimal("130.0000"),
+                new BigDecimal("115.0000"), Instant.parse("2026-06-22T22:00:00Z"));
+        assertThat(updated).isTrue();
+
+        PositionRisk pr = repo.positionRiskByItemId().get(item.id());
+        assertThat(pr.activeStop()).isEqualByComparingTo("95.00");
+        assertThat(pr.nextTarget2r()).isEqualByComparingTo("130.00");
+        assertThat(pr.currentClose()).isEqualByComparingTo("115.00");
+    }
+
+    @Test
     void updateRiskSnapshotRejectsNonUuid() {
         assertThat(repo.updateRiskSnapshot("not-a-uuid", null, null, null, Instant.now()))
                 .isFalse();
