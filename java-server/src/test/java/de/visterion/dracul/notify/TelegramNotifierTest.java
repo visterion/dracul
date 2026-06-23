@@ -68,4 +68,21 @@ class TelegramNotifierTest {
         wm.stubFor(post(urlPathEqualTo("/bottkn123/sendMessage")).willReturn(aResponse().withStatus(500)));
         assertThat(notifier("tkn123", "99").notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "x")).isFalse();
     }
+
+    @Test
+    void notifyDigestPostsWhenConfigured() {
+        wm.stubFor(post(urlPathEqualTo("/botTOKEN/sendMessage")).willReturn(okJson("{\"ok\":true}")));
+
+        boolean ok = notifier("TOKEN", "CHAT").notifyDigest("Morgen-Report\nAAA HOLD");
+
+        assertThat(ok).isTrue();
+        wm.verify(postRequestedFor(urlPathEqualTo("/botTOKEN/sendMessage"))
+                .withRequestBody(matchingJsonPath("$.chat_id", equalTo("CHAT")))
+                .withRequestBody(matchingJsonPath("$.text", containing("Morgen-Report"))));
+    }
+
+    @Test
+    void notifyDigestNoOpsOnBlankToken() {
+        assertThat(notifier("", "CHAT").notifyDigest("x")).isFalse();
+    }
 }
