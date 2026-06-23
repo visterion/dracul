@@ -40,19 +40,30 @@ class MorningReportScopeIT {
     }
 
     @Test
-    void reportContainsOnlyHeldPositions() {
-        // dev profile: no X-Dev-User header → CurrentUserHolder.get() returns "default"
-        WatchlistItem item = watchlist.insert("default", "MRA", "Mra Inc",
+    void reportIsScopedToCurrentUser() {
+        // Seed a HELD position for alice
+        WatchlistItem aliceItem = watchlist.insert("alice@x.com", "MRA", "Mra Inc",
                 100.0, List.of(), "WATCHED", null, "USD");
-        // isHeld() requires tag=HELD + entryPrice != null + shareCount != null
-        watchlist.updatePosition(item.id(), 90.0, 10.0, "USD");
-        watchlist.updateTag(item.id(), "HELD");
-        watchlist.updateRiskSnapshot(item.id(), new BigDecimal("80"),
+        watchlist.updatePosition(aliceItem.id(), 90.0, 10.0, "USD");
+        watchlist.updateTag(aliceItem.id(), "HELD");
+        watchlist.updateRiskSnapshot(aliceItem.id(), new BigDecimal("80"),
                 new BigDecimal("160"), new BigDecimal("95"), Instant.now());
 
+        // Seed a HELD position for bob
+        WatchlistItem bobItem = watchlist.insert("bob@x.com", "MRB", "Mrb Inc",
+                200.0, List.of(), "WATCHED", null, "USD");
+        watchlist.updatePosition(bobItem.id(), 180.0, 5.0, "USD");
+        watchlist.updateTag(bobItem.id(), "HELD");
+        watchlist.updateRiskSnapshot(bobItem.id(), new BigDecimal("160"),
+                new BigDecimal("320"), new BigDecimal("190"), Instant.now());
+
+        // Request the morning report AS alice
         MorningReport r = rest.get().uri("/api/morning-report")
+                .header("X-Dev-User", "alice@x.com")
                 .retrieve().body(MorningReport.class);
 
+        // Alice sees her own position but not bob's
         assertThat(r.positions()).extracting("symbol").contains("MRA");
+        assertThat(r.positions()).extracting("symbol").doesNotContain("MRB");
     }
 }
