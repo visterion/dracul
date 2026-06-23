@@ -1,16 +1,22 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Top-bar navigation', () => {
-  test('top nav has exactly 6 destinations', async ({ page }) => {
+  test('top nav has exactly 7 destinations', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('a.top-bar__tab')).toHaveCount(6)
+    await expect(page.locator('a.top-bar__tab')).toHaveCount(7)
   })
 
   test('top nav includes the portfolio destination', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
     await expect(page.locator('a.top-bar__tab', { hasText: 'portfolio' })).toHaveCount(1)
+  })
+
+  test('top nav includes the report destination', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('a.top-bar__tab', { hasText: 'report' })).toHaveCount(1)
   })
 
   test('top nav does not contain a vistierie destination', async ({ page }) => {
