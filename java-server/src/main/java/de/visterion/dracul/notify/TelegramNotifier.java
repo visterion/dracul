@@ -44,13 +44,22 @@ public class TelegramNotifier {
 
     /** Returns true only on a successful send; false if disabled or on any error. */
     public boolean notifyAlert(String symbol, String triggerType, String severity, String thesis) {
-        if (botToken.isBlank() || chatId.isBlank()) return false;
         // Plain text — NO parse_mode. trigger types contain underscores (PRICE_SPIKE,
         // INSIDER_SELL, …) which Telegram's Markdown parser treats as unbalanced italic
         // entities and rejects with HTTP 400. Plain text is robust against any dynamic
         // content (symbol / trigger / thesis) without escaping.
         String text = String.format("🔴 %s — %s (%s)%n%s",
                 severity, symbol, triggerType, thesis == null ? "" : thesis);
+        return send(text);
+    }
+
+    /** Sends a pre-rendered digest (the morning report). Plain text — no parse_mode. */
+    public boolean notifyDigest(String text) {
+        return send(text);
+    }
+
+    private boolean send(String text) {
+        if (botToken.isBlank() || chatId.isBlank()) return false;
         try {
             // Token is concatenated (not a URI variable) so its ':' is not percent-encoded.
             http.post()
@@ -61,7 +70,7 @@ public class TelegramNotifier {
                     .toBodilessEntity();
             return true;
         } catch (Exception e) {
-            log.warn("Telegram push failed for {} ({}): {}", symbol, triggerType, e.getMessage());
+            log.warn("Telegram push failed: {}", e.getMessage());
             return false;
         }
     }
