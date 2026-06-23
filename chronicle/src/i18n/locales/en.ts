@@ -476,6 +476,7 @@ export default {
   },
   report: {
     title: 'Morning Report',
+    eyebrow: 'Morning Report',
     subtitle: 'Stops & targets for every open position',
     readonlyNote: 'Informational only — Dracul places no orders.',
     empty: 'No held positions yet.',

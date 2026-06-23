@@ -39,6 +39,7 @@ Both documents are required reading before implementing any view.
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
 | 9 | Portfolio | `/portfolio` | Held positions with P&L and Groparul's latest exit-signal badge | Medium | ✅ |
 | 10 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context | Low (prose) | ✅ |
+| 11 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
 
 > **Vistierie (Schatzkammer):** Vistierie no longer has a standalone route. It is an
 > embeddable component (`VistierieView` with an `embedded` prop) hosted admin-only
@@ -281,6 +282,27 @@ current / P&L), and — when the underlying position carries a `verdictId` — a
 through to the verdict detail. A back control (`exit-back`) returns to
 `/portfolio`.
 
+**View 11 — Morning Report** (`/report`): Fully implemented and wired to `GET /api/morning-report`.
+A read-only daily digest fed by Groparul's projection of all held positions.
+Each position renders as a `.report-row` card showing:
+
+- **Action pill** (`SELL` / `TRIM` / `HOLD`) — colour-coded crimson / gold / ash.
+- **Symbol and company name**.
+- **Metric bar**: active stop, next +2R target, current close price, distance-to-stop (%).
+- **Rationale** — short Groparul prose for the recommended action.
+- **Order ticket** (`OrderTicketCard`, `data-testid="order-ticket"`) — side, shares, limit
+  reference, stop, and target rendered read-only. The ticket is purely informational:
+  Dracul places no orders.
+
+A read-only note at the top of the view makes the informational intent explicit
+("Nur informativ — Dracul platziert keine Orders." / "Informational only — Dracul places
+no orders."). When there are no held positions the view renders an empty state
+(`data-testid="report-empty"`).
+
+The view is reachable from the primary nav ("Report") at route `/report`
+(Vue Router name `morning-report`). It is the intended morning entry point after
+checking the Chronicle dashboard.
+
 **View 5 — Pattern Library** (`/patterns`): Fully implemented and wired to the real API;
 approve/reject/defer/deactivate all call `PATCH /api/patterns/{id}`.
 Single-pane max-width 960px. Pending section: Voievod-proposed lesson cards with gold
@@ -303,10 +325,10 @@ pointer-events: none) with a Phase 2 badge.
 
 ## Navigation structure
 
-The six top-level nav destinations (Chronicle, Watchlist, Portfolio, Pattern Library,
-Backtest, Settings) are available from both the desktop top-bar and the mobile
-bottom tab bar. Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail)
-are not in the nav but are reachable via in-app links.
+The seven top-level nav destinations (Chronicle, Watchlist, Portfolio, Report,
+Pattern Library, Backtest, Settings) are available from both the desktop top-bar
+and the mobile bottom tab bar. Deep-linked views (Verdict Detail, Strigoi Detail,
+Prey Detail) are not in the nav but are reachable via in-app links.
 
 - **Chronicle** is the home page. Most navigation starts here.
 - **Verdict Detail** and **Strigoi Detail** are deep-linked from Chronicle items.
@@ -314,6 +336,8 @@ are not in the nav but are reachable via in-app links.
   (`/prey/:id`) is resolved client-side from the chronicle store.
 - **Watchlist** receives items via the "Track on Watchlist" action in Verdict
   Detail (button rendered, not yet wired).
+- **Report** is the daily Morning Report — the intended first stop each morning
+  to review Groparul's stop/target/action summary for every held position.
 - **Pattern Library** is reviewed periodically when the Voievod proposes new patterns.
 - **Backtest** is a reference view; the compute engine is deferred to Stufe 5.
 - **Settings** holds utility config plus the admin-only embedded Schatzkammer
@@ -429,7 +453,7 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 
 ## E2E Test Suite (Etappe 15)
 
-**Playwright E2E tests** (`chronicle/e2e/`): 10 spec files covering all 8 views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+**Playwright E2E tests** (`chronicle/e2e/`): 15 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
 
 Run locally: `cd chronicle && npm run test:e2e`
 

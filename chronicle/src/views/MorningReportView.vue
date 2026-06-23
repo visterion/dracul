@@ -3,7 +3,7 @@
     <PageHead :sub="t('report.subtitle')">
       <template #eyebrow>
         <span class="eb-glyph"><BatGlyph :size="13" /></span>
-        {{ t('nav.report') }}
+        {{ t('report.eyebrow') }}
       </template>
       <template #title>{{ t('report.title') }}</template>
     </PageHead>
