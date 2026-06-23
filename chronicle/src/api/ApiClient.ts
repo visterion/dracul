@@ -5,7 +5,7 @@ import type {
   VerdictDecision, VerdictNote, DecisionResponse,
   CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting, CurrencySetting,
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
-  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
 } from './types'
 
 export interface ApiClient {
@@ -43,4 +43,5 @@ export interface ApiClient {
   getDataSources(refresh?: boolean): Promise<DataSourceHealth[]>
   getMe(): Promise<Me>
   getExitSignals(): Promise<ExitSignal[]>
+  getMorningReport(): Promise<MorningReport>
 }

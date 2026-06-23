@@ -5,7 +5,7 @@ import type {
   BudgetStatus, BudgetPatch, SettingsBudgetData, PatternAction,
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
-  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal,
+  AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -276,5 +276,11 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/exit-signals`)
     if (!res.ok) throw new Error(`getExitSignals failed: HTTP ${res.status}`)
     return res.json() as Promise<ExitSignal[]>
+  }
+
+  async getMorningReport(): Promise<MorningReport> {
+    const res = await fetch(`${this.baseUrl}/api/morning-report`)
+    if (!res.ok) throw new Error(`getMorningReport failed: HTTP ${res.status}`)
+    return res.json() as Promise<MorningReport>
   }
 }
