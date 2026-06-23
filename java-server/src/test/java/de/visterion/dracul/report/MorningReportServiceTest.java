@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.Mockito.*;
 
 class MorningReportServiceTest {
@@ -90,6 +91,22 @@ class MorningReportServiceTest {
         assertThat(line.activeStop()).isNull();
         assertThat(line.distanceToStopPct()).isNull();
         assertThat(line.ticket().shares()).isEqualTo(0.0); // HOLD ticket
+    }
+
+    @Test
+    void computesSignedDistanceToStop() {
+        // price above stop: (95-80)/95*100 = 15.789...
+        var a = held("1", "AAA", 100, 30);
+        var riskAbove = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95")));
+        var line = svc(List.of(a), riskAbove, List.of()).build("u@x.com").positions().get(0);
+        assertThat(line.distanceToStopPct()).isCloseTo(15.789, within(0.01));
+
+        // price below stop: (70-80)/70*100 = -14.285... (sign-inversion guard)
+        var riskBelow = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("70")));
+        var line2 = svc(List.of(a), riskBelow, List.of()).build("u@x.com").positions().get(0);
+        assertThat(line2.distanceToStopPct()).isCloseTo(-14.285, within(0.01));
     }
 
     @Test
