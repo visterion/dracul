@@ -225,7 +225,7 @@ directly without triggering any market-data call.
 
 Four nullable columns added to `watchlist_items` to persist the per-position risk snapshot written by gropar's `fetch_held_positions` tool call (overwritten on every gropar run) and read by the morning report:
 
-- `active_stop` (NUMERIC(12,4), nullable) — current Chandelier-Exit trailing stop level
+- `active_stop` (NUMERIC(12,4), nullable) — active trailing stop = `max(initial_stop, chandelier)`
 - `next_target_2r` (NUMERIC(12,4), nullable) — 2R price target (`entryPrice + 2 × initialRisk`)
 - `current_close` (NUMERIC(12,4), nullable) — last close price at the time of the gropar run
 - `risk_snapshot_at` (TIMESTAMPTZ, nullable) — timestamp of the most recent gropar snapshot write
