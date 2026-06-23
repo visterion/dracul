@@ -23,6 +23,7 @@ export default {
       chronicle: 'chronicle',
       watchlist: 'watchlist',
       portfolio: 'portfolio',
+      report: 'Report',
       patternLibrary: 'pattern library',
       backtest: 'backtest',
       settings: 'settings',
@@ -472,6 +473,14 @@ export default {
     noSelection: 'Select an item from the list.',
     confirmDelete: 'Remove {ticker} from watchlist?',
     back: 'Watchlist',
+  },
+  report: {
+    title: 'Morning Report',
+    subtitle: 'Stops & targets for every open position',
+    readonlyNote: 'Informational only — Dracul places no orders.',
+    empty: 'No held positions yet.',
+    cols: { action: 'Action', symbol: 'Symbol', stop: 'Active stop', target: 'Next +2R', price: 'Price', distance: 'Dist. to stop' },
+    ticket: { title: 'Order ticket', shares: 'Shares', stop: 'Stop', target: 'Target' },
   },
   portfolio: {
     title: 'Portfolio',
