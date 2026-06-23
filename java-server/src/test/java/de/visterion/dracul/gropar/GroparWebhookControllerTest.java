@@ -14,7 +14,11 @@ import org.springframework.http.ResponseEntity;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import de.visterion.dracul.watchlist.PositionRisk;
+import org.mockito.ArgumentCaptor;
+
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -301,5 +305,73 @@ class GroparWebhookControllerTest {
         assertThat(view.risk().initialStop()).isNotNull();
 
         verify(watchlistRepo).updateInitialStop(eq("id-r"), any());
+    }
+
+    // =========================================================================
+    // Test 8: fetchHeldPositions persists risk snapshot (active-stop/+2R/close)
+    // =========================================================================
+
+    /** 23 bars with high=105/low=95/close=100 + frozen initial stop at 70
+     *  → R = entry(100) - stop(70) = 30 → next_target_2r = 100 + 2*30 = 160.
+     *  Chandelier will be computed from ATR; active_stop = max(70, chandelier). */
+    @Test
+    void fetchPersistsRiskSnapshot() throws Exception {
+        var heldItem = item("id-snap", "SNAP", "HELD", 100.0, 10.0, "alice@x");
+
+        // Provide a frozen stop of 70 so R is available
+        var pr = new PositionRisk("id-snap", "2025-01-01", new BigDecimal("70"),
+                null, null, null);
+        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of("id-snap", pr));
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(marketData.dailyOhlcHistory(eq("SNAP"), anyInt())).thenReturn(multiBars());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) ((Map<String, Object>)
+                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
+        assertThat(positions).hasSize(1);
+
+        // Capture the updateRiskSnapshot call
+        ArgumentCaptor<BigDecimal> stopCaptor   = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> tgtCaptor    = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> closeCaptor  = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(watchlistRepo).updateRiskSnapshot(
+                eq("id-snap"), stopCaptor.capture(), tgtCaptor.capture(),
+                closeCaptor.capture(), any(Instant.class));
+
+        // next_target_2r = 100 + 2*30 = 160
+        assertThat(tgtCaptor.getValue()).isEqualByComparingTo("160");
+        // active_stop >= initial stop of 70 (may be higher if chandelier > 70)
+        assertThat(stopCaptor.getValue().compareTo(new BigDecimal("70"))).isGreaterThanOrEqualTo(0);
+        // close must be present (bars all close at 100)
+        assertThat(closeCaptor.getValue()).isEqualByComparingTo("100");
+    }
+
+    // =========================================================================
+    // Test 9: snapshot write failure is swallowed — fetch still returns 200
+    // =========================================================================
+
+    @Test
+    void fetchSwallowsSnapshotWriteFailure() throws Exception {
+        var heldItem = item("id-fail", "FAIL", "HELD", 100.0, 10.0, "alice@x");
+
+        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(marketData.dailyOhlcHistory(eq("FAIL"), anyInt())).thenReturn(multiBars());
+
+        doThrow(new RuntimeException("db down"))
+                .when(watchlistRepo).updateRiskSnapshot(any(), any(), any(), any(), any());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) ((Map<String, Object>)
+                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
+        assertThat(positions).hasSize(1);
     }
 }
