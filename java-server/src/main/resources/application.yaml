@@ -81,6 +81,10 @@ dracul:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}
       cron:    ${DRACUL_WATCHLIST_PRICE_REFRESH_CRON:0 * 13-20 * * MON-FRI}
+  report:
+    morning:
+      enabled: ${DRACUL_REPORT_MORNING_ENABLED:false}
+      cron:    ${DRACUL_REPORT_MORNING_CRON:0 0 7 * * 1-5}
   finnhub:
     api-key: ${FINNHUB_API_KEY:}
     base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
