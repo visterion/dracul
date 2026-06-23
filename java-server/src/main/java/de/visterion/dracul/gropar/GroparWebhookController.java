@@ -145,6 +145,32 @@ public class GroparWebhookController {
                         }
                     }
 
+                    // Slice 2a: persist the per-position risk snapshot for the
+                    // morning report. active_stop = max(initial, chandelier); the
+                    // morning report reads this (0 market-data calls at report time).
+                    BigDecimal activeStop = null;
+                    if (risk.initialStopAvailable() && risk.initialStop() != null
+                            && ind.chandelierStop() != null) {
+                        activeStop = risk.initialStop().max(ind.chandelierStop());
+                    } else if (risk.initialStopAvailable() && risk.initialStop() != null) {
+                        activeStop = risk.initialStop();
+                    } else if (ind.chandelierStop() != null) {
+                        activeStop = ind.chandelierStop();
+                    }
+                    BigDecimal nextTarget2r = null;
+                    if (risk.rAvailable() && risk.r() != null) {
+                        nextTarget2r = BigDecimal.valueOf(item.entryPrice())
+                                .add(risk.r().multiply(BigDecimal.valueOf(2)));
+                    }
+                    BigDecimal currentClose = ind.currentClose();
+                    try {
+                        watchlistRepo.updateRiskSnapshot(item.id(), activeStop,
+                                nextTarget2r, currentClose, Instant.now());
+                    } catch (Exception e) {
+                        log.warn("gropar: failed to persist risk snapshot for {}: {}",
+                                item.ticker(), e.getMessage());
+                    }
+
                     // Build fired rules: copy from indicator, then add controller-side rules
                     var firedRules = new ArrayList<>(ind.firedRules());
                     if (ind.gainLossPct() != null
