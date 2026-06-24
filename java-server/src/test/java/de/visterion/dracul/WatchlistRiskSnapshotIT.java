@@ -30,7 +30,7 @@ class WatchlistRiskSnapshotIT {
 
         boolean updated = repo.updateRiskSnapshot(item.id(),
                 new BigDecimal("182.4000"), new BigDecimal("240.0000"),
-                new BigDecimal("178.1000"), Instant.parse("2026-06-22T22:00:00Z"));
+                new BigDecimal("178.1000"), null, Instant.parse("2026-06-22T22:00:00Z"));
         assertThat(updated).isTrue();
 
         PositionRisk pr = repo.positionRiskByItemId().get(item.id());
@@ -47,11 +47,11 @@ class WatchlistRiskSnapshotIT {
 
         repo.updateRiskSnapshot(item.id(),
                 new BigDecimal("100.0000"), new BigDecimal("120.0000"),
-                new BigDecimal("110.0000"), Instant.parse("2026-06-22T18:00:00Z"));
+                new BigDecimal("110.0000"), null, Instant.parse("2026-06-22T18:00:00Z"));
 
         boolean updated = repo.updateRiskSnapshot(item.id(),
                 new BigDecimal("95.0000"), new BigDecimal("130.0000"),
-                new BigDecimal("115.0000"), Instant.parse("2026-06-22T22:00:00Z"));
+                new BigDecimal("115.0000"), null, Instant.parse("2026-06-22T22:00:00Z"));
         assertThat(updated).isTrue();
 
         PositionRisk pr = repo.positionRiskByItemId().get(item.id());
@@ -62,7 +62,21 @@ class WatchlistRiskSnapshotIT {
 
     @Test
     void updateRiskSnapshotRejectsNonUuid() {
-        assertThat(repo.updateRiskSnapshot("not-a-uuid", null, null, null, Instant.now()))
+        assertThat(repo.updateRiskSnapshot("not-a-uuid", null, null, null, null, Instant.now()))
                 .isFalse();
+    }
+
+    @Test
+    void snapshotPersistsAndReadsAtr() {
+        WatchlistItem item = repo.insert("atr@x.com", "ATR", "Atr Inc",
+                100.0, List.of(), "WATCHED", null, "USD");
+        repo.updateTag(item.id(), "HELD");
+
+        repo.updateRiskSnapshot(item.id(), new BigDecimal("100.0000"),
+                new BigDecimal("130.0000"), new BigDecimal("105.0000"),
+                new BigDecimal("8.5000"), Instant.now());
+
+        PositionRisk pr = repo.positionRiskByItemId().get(item.id());
+        assertThat(pr.atr()).isEqualByComparingTo("8.5000");
     }
 }

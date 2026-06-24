@@ -165,7 +165,7 @@ public class GroparWebhookController {
                     BigDecimal currentClose = ind.currentClose();
                     try {
                         watchlistRepo.updateRiskSnapshot(item.id(), activeStop,
-                                nextTarget2r, currentClose, Instant.now());
+                                nextTarget2r, currentClose, null, Instant.now());
                     } catch (Exception e) {
                         log.warn("gropar: failed to persist risk snapshot for {}: {}",
                                 item.ticker(), e.getMessage());

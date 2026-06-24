@@ -47,7 +47,7 @@ class MorningReportScopeIT {
         watchlist.updatePosition(aliceItem.id(), 90.0, 10.0, "USD");
         watchlist.updateTag(aliceItem.id(), "HELD");
         watchlist.updateRiskSnapshot(aliceItem.id(), new BigDecimal("80"),
-                new BigDecimal("160"), new BigDecimal("95"), Instant.now());
+                new BigDecimal("160"), new BigDecimal("95"), null, Instant.now());
 
         // Seed a HELD position for bob
         WatchlistItem bobItem = watchlist.insert("bob@x.com", "MRB", "Mrb Inc",
@@ -55,7 +55,7 @@ class MorningReportScopeIT {
         watchlist.updatePosition(bobItem.id(), 180.0, 5.0, "USD");
         watchlist.updateTag(bobItem.id(), "HELD");
         watchlist.updateRiskSnapshot(bobItem.id(), new BigDecimal("160"),
-                new BigDecimal("320"), new BigDecimal("190"), Instant.now());
+                new BigDecimal("320"), new BigDecimal("190"), null, Instant.now());
 
         // Request the morning report AS alice
         MorningReport r = rest.get().uri("/api/morning-report")
