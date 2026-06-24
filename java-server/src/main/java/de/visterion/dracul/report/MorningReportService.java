@@ -76,6 +76,20 @@ public class MorningReportService {
                     .doubleValue();
         }
 
+        // Deterministic stop-breach fallback: a position whose close is below its
+        // active stop is objectively stopped out. If the LLM signal is absent or
+        // HOLD, surface SELL so the forcing-function never hides a breach behind a
+        // default HOLD. An explicit LLM SELL/TRIM is preserved.
+        String thesisStatus = sig == null ? null : sig.thesisStatus();
+        String rationale    = sig == null ? null : sig.rationale();
+        boolean stopBreached = close != null && activeStop != null
+                && close.compareTo(activeStop) < 0;
+        if (stopBreached && "HOLD".equals(action)) {
+            action = "SELL";
+            thesisStatus = null;
+            rationale = "Kurs unter aktivem Stop (deterministische Regel)";
+        }
+
         double shares = item.shareCount();
         double ticketShares = switch (action) {
             case "SELL" -> shares;
@@ -92,9 +106,9 @@ public class MorningReportService {
                 item.ticker(), item.companyName(), shares, item.entryPrice(),
                 close, activeStop, target, distancePct,
                 action,
-                sig == null ? null : sig.thesisStatus(),
+                thesisStatus,
                 sig == null ? null : sig.confidence(),
-                sig == null ? null : sig.rationale(),
+                rationale,
                 ticket, targetReached);
     }
 
