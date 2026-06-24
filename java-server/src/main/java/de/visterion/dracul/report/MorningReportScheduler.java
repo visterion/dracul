@@ -46,6 +46,9 @@ public class MorningReportScheduler {
             if (owners.isEmpty()) return;  // no held positions → no push
             for (String owner : owners) {
                 MorningReport report = service.build(owner);
+                // Stay silent on a nothing-to-do day: only push when there is at
+                // least one actionable position (SELL or TRIM).
+                if (report.sellCount() + report.trimCount() == 0) continue;
                 telegram.notifyDigest(render(owner, report));
             }
         } catch (RuntimeException e) {
@@ -61,6 +64,8 @@ public class MorningReportScheduler {
           .append(r.trimCount()).append(" TRIM / ")
           .append(r.holdCount()).append(" HOLD\n");
         for (MorningReportLine l : r.positions()) {
+            // Actionable-only body: list SELL/TRIM lines, omit HOLD.
+            if (!"SELL".equals(l.action()) && !"TRIM".equals(l.action())) continue;
             String marker = switch (l.action()) {
                 case "SELL" -> "🔴"; case "TRIM" -> "🟡"; default -> "⚪";
             };

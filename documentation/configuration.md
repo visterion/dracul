@@ -279,6 +279,8 @@ Reuses `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `TELEGRAM_BASE_URL` — no ad
 
 A daily Telegram digest of the morning report. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured for the gropar notifications (i.e. `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change.
 
+The digest only sends on days with at least one **actionable** position (`SELL` or `TRIM`): when every held position is `HOLD` the push is skipped entirely, and on action days the digest body lists only the actionable positions (the `GET /api/morning-report` endpoint and the `/report` view still show all held positions, including HOLD).
+
 | Env var / property | Default | Purpose |
 |---|---|---|
 | `DRACUL_REPORT_MORNING_ENABLED` (`dracul.report.morning.enabled`) | `false` | Enables the scheduled morning-report Telegram digest. Set to `true` to activate. Requires Telegram bot-token + chat-id to be configured. |
