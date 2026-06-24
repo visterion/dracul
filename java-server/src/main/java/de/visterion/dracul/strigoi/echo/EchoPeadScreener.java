@@ -1,6 +1,5 @@
 package de.visterion.dracul.strigoi.echo;
 
-import de.visterion.dracul.hunting.yahoo.EarningsEvent;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.MarketDataPort;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,8 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Deterministic long-only PEAD pre-screen. Keeps an earnings event only if the
- * actual EPS beat the estimate, the surprise clears the configured threshold,
+ * Deterministic long-only PEAD pre-screen. Keeps an earnings observation only if
+ * the actual EPS beat the estimate, the surprise clears the configured threshold,
  * and the symbol's current price clears the configured liquidity floor.
  */
 @Component
@@ -31,13 +30,13 @@ public class EchoPeadScreener {
         this.minPrice = minPrice;
     }
 
-    public List<PeadCandidate> screen(List<EarningsEvent> events) {
+    public List<PeadCandidate> screen(List<EarningsObservation> events) {
         List<PeadCandidate> out = new ArrayList<>();
-        for (EarningsEvent e : events) {
+        for (EarningsObservation e : events) {
             if (e.epsActual() == null || e.epsEstimate() == null) continue;
             if (e.epsActual().compareTo(e.epsEstimate()) <= 0) continue;          // positive only
-            if (e.surprisePercent() == null
-                    || e.surprisePercent().compareTo(minSurprisePercent) < 0) continue;
+            if (e.epsSurprisePercent() == null
+                    || e.epsSurprisePercent().compareTo(minSurprisePercent) < 0) continue;
             BigDecimal price;
             try {
                 price = marketData.resolve(e.symbol()).currentPrice();
@@ -47,7 +46,8 @@ public class EchoPeadScreener {
             if (price.compareTo(minPrice) < 0) continue;
             out.add(new PeadCandidate(
                     e.symbol(), e.companyName(), e.reportDate(),
-                    e.epsActual(), e.epsEstimate(), e.surprisePercent(), price));
+                    e.epsActual(), e.epsEstimate(), e.epsSurprisePercent(),
+                    e.revenueActual(), e.revenueEstimate(), price));
         }
         return out;
     }

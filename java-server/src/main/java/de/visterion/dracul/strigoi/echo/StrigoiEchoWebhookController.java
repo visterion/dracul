@@ -41,7 +41,14 @@ public class StrigoiEchoWebhookController extends HuntController {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
         var raw = yahoo.recentEarnings(to.minusDays(lookback), to);
-        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items()), raw.health());
+        // TODO(Task 10): replace with EarningsSourceRouter + enrichment
+        var observations = raw.items().stream()
+                .map(e -> new EarningsObservation(
+                        e.symbol(), e.companyName(), e.reportDate(),
+                        e.epsActual(), e.epsEstimate(), e.surprisePercent(),
+                        null, null))
+                .toList();
+        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(observations), raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")
