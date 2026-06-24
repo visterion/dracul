@@ -1,6 +1,7 @@
 package de.visterion.dracul.marketdata;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import org.junit.jupiter.api.*;
 import org.springframework.web.client.RestClient;
 
@@ -161,5 +162,40 @@ class YahooMarketDataAdapterTest {
         assertThatThrownBy(() -> adapter.dailyOhlcHistory("AAPL", 260))
                 .isInstanceOfSatisfying(MarketDataException.class, ex ->
                         assertThat(ex.kind()).isEqualTo(MarketDataException.Kind.UNAVAILABLE));
+    }
+
+    @Test
+    void retriesOhlcHistoryOn429ThenSucceeds() {
+        // fast retry: 0ms base delay so the test does not actually sleep
+        var fast = new YahooMarketDataAdapter(
+                RestClient.builder().baseUrl(wm.baseUrl()).build(), 0L);
+
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
+                .inScenario("rl").whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(429))
+                .willSetStateTo("second"));
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/AAPL"))
+                .inScenario("rl").whenScenarioStateIs("second")
+                .willReturn(okJson("""
+                    {"chart":{"result":[{
+                        "timestamp":[1717200000],
+                        "indicators":{"quote":[{"open":[1.0],"high":[2.0],"low":[0.5],"close":[1.5],"volume":[100]}]}
+                    }],"error":null}}
+                    """)));
+
+        var bars = fast.dailyOhlcHistory("AAPL", 30);
+        assertThat(bars).hasSize(1);
+    }
+
+    @Test
+    void givesUpAfterMaxRetriesOn429() {
+        var fast = new YahooMarketDataAdapter(
+                RestClient.builder().baseUrl(wm.baseUrl()).build(), 0L);
+        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/ZZZZ"))
+                .willReturn(aResponse().withStatus(429)));
+
+        assertThatThrownBy(() -> fast.dailyOhlcHistory("ZZZZ", 30))
+                .isInstanceOfSatisfying(MarketDataException.class, ex ->
+                    assertThat(ex.kind()).isEqualTo(MarketDataException.Kind.UNAVAILABLE));
     }
 }

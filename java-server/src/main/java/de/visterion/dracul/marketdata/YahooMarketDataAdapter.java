@@ -15,10 +15,40 @@ import java.util.List;
 @Component
 public class YahooMarketDataAdapter implements MarketDataPort {
 
+    private static final int MAX_RETRIES = 3;
     private final RestClient client;
+    private final long retryBaseMs;
 
     public YahooMarketDataAdapter(RestClient yahooRestClient) {
+        this(yahooRestClient, 500L);
+    }
+
+    // Test/tuning constructor: explicit backoff base (0 = no real sleep).
+    YahooMarketDataAdapter(RestClient yahooRestClient, long retryBaseMs) {
         this.client = yahooRestClient;
+        this.retryBaseMs = retryBaseMs;
+    }
+
+    /** Runs the Yahoo GET, retrying on HTTP 429/503 with exponential backoff. */
+    private JsonNode getWithRetry(java.util.function.Supplier<JsonNode> call) {
+        RestClientResponseException last = null;
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return call.get();
+            } catch (RestClientResponseException e) {
+                int status = e.getStatusCode().value();
+                if (status != 429 && status != 503) throw e;
+                last = e;
+                if (attempt == MAX_RETRIES) break;
+                try {
+                    Thread.sleep(retryBaseMs * (1L << attempt)); // 0,1x,2x,4x base
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw last;
     }
 
     @Override
@@ -88,13 +118,13 @@ public class YahooMarketDataAdapter implements MarketDataPort {
         String range = yahooRange(days);
         JsonNode body;
         try {
-            body = client.get()
+            body = getWithRetry(() -> client.get()
                     .uri(uri -> uri.path("/v8/finance/chart/{symbol}")
                             .queryParam("range", range)
                             .queryParam("interval", "1d")
                             .build(symbol))
                     .retrieve()
-                    .body(JsonNode.class);
+                    .body(JsonNode.class));
         } catch (RestClientResponseException e) {
             throw new MarketDataException(
                     MarketDataException.Kind.UNAVAILABLE,
