@@ -40,7 +40,7 @@ test.describe('Live alert panel (SSE)', () => {
   test('streamed STOP_BREACHED alert renders the localized label', async ({ page }) => {
     const body =
       'event: alert.new\n' +
-      'data: {"symbol":"AAA","trigger_type":"STOP_BREACHED","severity":"CRITICAL","thesis":"Stop gerissen: AAA Kurs 96 ≤ Stop 100 — handeln","ts":"2026-06-24T14:30:00Z"}\n\n'
+      'data: {"symbol":"AAA","trigger_type":"STOP_BREACHED","severity":"CRITICAL","thesis":"e2e injected stop alert","ts":"2026-06-24T14:30:00Z"}\n\n'
     await page.route('**/api/events', route =>
       route.fulfill({
         status: 200,
