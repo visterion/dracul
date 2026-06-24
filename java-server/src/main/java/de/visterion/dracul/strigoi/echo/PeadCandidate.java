@@ -10,5 +10,7 @@ public record PeadCandidate(
         BigDecimal epsActual,
         BigDecimal epsEstimate,
         BigDecimal surprisePercent,
+        BigDecimal revenueActual,
+        BigDecimal revenueEstimate,
         BigDecimal currentPrice
 ) {}
