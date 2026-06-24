@@ -338,9 +338,10 @@ class GroparWebhookControllerTest {
         ArgumentCaptor<BigDecimal> stopCaptor   = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> tgtCaptor    = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> closeCaptor  = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> atrCaptor    = ArgumentCaptor.forClass(BigDecimal.class);
         verify(watchlistRepo).updateRiskSnapshot(
                 eq("id-snap"), stopCaptor.capture(), tgtCaptor.capture(),
-                closeCaptor.capture(), any(), any(Instant.class));
+                closeCaptor.capture(), atrCaptor.capture(), any(Instant.class));
 
         // next_target_2r = 100 + 2*30 = 160
         assertThat(tgtCaptor.getValue()).isEqualByComparingTo("160");
@@ -348,6 +349,8 @@ class GroparWebhookControllerTest {
         assertThat(stopCaptor.getValue().compareTo(new BigDecimal("70"))).isGreaterThanOrEqualTo(0);
         // close must be present (bars all close at 100)
         assertThat(closeCaptor.getValue()).isEqualByComparingTo("100");
+        // ATR: 23 bars, H=105/L=95/C=100 → TR=10 for every bar → ATR(22) = 10
+        assertThat(atrCaptor.getValue()).isEqualByComparingTo("10");
     }
 
     // =========================================================================
