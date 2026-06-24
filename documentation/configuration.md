@@ -261,6 +261,20 @@ All exit-rule thresholds (`atr-multiple`, `ma-fast`, `ma-slow`, `profit-target-p
 
 Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
+## Stop-Proximity Watcher
+
+Deterministic intraday watcher that checks every held position's live price against its persisted `active_stop` and ATR every ~15 minutes during the US session. Emits `STOP_PROXIMITY` (WARNING) and `STOP_BREACHED` (CRITICAL) alerts via the daywalker alert store, SSE panel, and Telegram. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured (same `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` as gropar / morning report). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change or `definition/reset`.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_STOPGUARD_ENABLED` (`dracul.stopguard.enabled`) | `false` | Enables the `StopProximityWatcher` scheduled poll. Set to `true` to activate. Requires Telegram bot-token + chat-id. |
+| `DRACUL_STOPGUARD_CRON` (`dracul.stopguard.cron`) | `0 */15 9-16 * * 1-5` | Spring cron (zone: America/New_York) for the intraday poll. Default: every 15 min from 09:00–16:59 NY time on weekdays. |
+| `DRACUL_STOPGUARD_ATR_MULTIPLE` (`dracul.stopguard.atr-multiple`) | `0.5` | Width of the proximity zone as a fraction of ATR. A position is in the proximity zone when `active_stop < price ≤ active_stop + atr-multiple × ATR`. |
+| `DRACUL_STOPGUARD_COOLDOWN` (`dracul.stopguard.cooldown`) | `82800` | Per-`(owner, symbol, zone)` re-alert suppression window in seconds. Default: 82800 s ≈ 23 h (≈ once per trading day). `STOP_PROXIMITY` and `STOP_BREACHED` have independent cooldowns so a breach escalates immediately even if a proximity alert was recently sent. |
+| `DRACUL_STOPGUARD_NOTIFY_LEVEL` (`dracul.stopguard.notify-level`) | `WARNING` | Minimum alert severity that triggers a Telegram push (`WARNING` or `CRITICAL`). Default `WARNING` sends both proximity and breach alerts. |
+
+Reuses `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `TELEGRAM_BASE_URL` — no additional Telegram config is needed.
+
 ## Morning Report (daily digest)
 
 A daily Telegram digest of the morning report. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured for the gropar notifications (i.e. `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change.

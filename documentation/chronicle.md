@@ -55,6 +55,15 @@ live-alert panel. The panel subscribes to `GET /api/events` over SSE and lists
 incoming Daywalker alerts (severity, symbol, trigger, thesis) newest-first, with
 a connection status. Active only against a real backend (disabled in mock mode).
 
+Two additional trigger types emitted by the stop-proximity watcher now appear in the live panel and the persistent alert list:
+
+| Trigger type | Localized label (de) | Severity | When |
+|---|---|---|---|
+| `STOP_PROXIMITY` | Stop-Nähe | WARNING | Live price has entered the stop-proximity zone (`active_stop < price ≤ stop + 0.5·ATR`) |
+| `STOP_BREACHED` | Stop gerissen | CRITICAL | Live price is at or below `active_stop` |
+
+Both types are routed through the existing `useEnumLabels()` composable (see `enums.*` i18n keys) and rendered with the same severity colour coding as all other alert types (WARNING = gold, CRITICAL = crimson).
+
 ## Application shell
 
 Present on every view:
