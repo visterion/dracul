@@ -31,7 +31,7 @@
         </div>
         <div class="report-metrics mono">
           <span><span class="metric-label">{{ t('report.cols.stop') }}</span> {{ fmt(line.activeStop) }}</span>
-          <span><span class="metric-label">{{ t('report.cols.target') }}</span> {{ fmt(line.nextTarget2r) }}</span>
+          <span><span class="metric-label">{{ t('report.cols.target') }}</span> {{ line.targetReached ? t('report.targetReached') : fmt(line.nextTarget2r) }}</span>
           <span><span class="metric-label">{{ t('report.cols.price') }}</span> {{ fmt(line.currentClose) }}</span>
           <span><span class="metric-label">{{ t('report.cols.distance') }}</span> {{ pct(line.distanceToStopPct) }}</span>
         </div>

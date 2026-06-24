@@ -300,6 +300,7 @@ Each position renders as a `.report-row` card showing:
 - **Action pill** (`SELL` / `TRIM` / `HOLD`) — colour-coded crimson / gold / ash.
 - **Symbol and company name**.
 - **Metric bar**: active stop, next +2R target, current close price, distance-to-stop (%).
+  When a position's trailing stop has risen above its static +2R target, the target column shows `✓ übertroffen` ("✓ exceeded") instead of a target value below the stop.
 - **Rationale** — short Groparul prose for the recommended action.
 - **Order ticket** (`OrderTicketCard`, `data-testid="order-ticket"`) — side, shares, limit
   reference, stop, and target rendered read-only. The ticket is purely informational:

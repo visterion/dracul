@@ -249,6 +249,7 @@ export interface MorningReportLine {
   activeStop: number | null
   nextTarget2r: number | null
   distanceToStopPct: number | null
+  targetReached: boolean
   action: 'SELL' | 'TRIM' | 'HOLD'
   thesisStatus: 'INTACT' | 'WEAKENING' | 'INVALIDATED' | 'NONE' | null
   confidence: number | null
