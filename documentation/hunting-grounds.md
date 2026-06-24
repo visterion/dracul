@@ -128,8 +128,9 @@ earnings source (`dracul.strigoi.echo.earnings-source`, default `finnhub`).
 
 - `GET /calendar/earnings?from=…&to=…` (free tier ≈ 60 calls/min, US). Auth via
   `FINNHUB_API_KEY` query token.
-- Normalises rows to `EarningsEvent(symbol, companyName, reportDate, epsActual,
-  epsEstimate, surprisePercent)`.
+- Normalises rows to `EarningsObservation(symbol, companyName, reportDate,
+  epsActual, epsEstimate, epsSurprisePercent, revenueActual, revenueEstimate)`
+  (Finnhub populates the revenue fields).
 - **Graceful degradation:** a blank `FINNHUB_API_KEY` or any error returns an
   empty list (logged) — the bee never dies on a Finnhub hiccup.
 
@@ -141,8 +142,9 @@ config-selectable fallback (`earnings-source=yahoo`):
 - HTTPS GET against Yahoo's (unofficial) earnings calendar endpoint
   (`/v1/finance/calendar/earnings?startdt=…&enddt=…`), reusing the shared
   `yahooRestClient`. No API key, no official SLA.
-- Normalises rows to `EarningsEvent(symbol, companyName, reportDate, epsActual,
-  epsEstimate, surprisePercent)` using Yahoo's documented field names
+- Normalises rows to `EarningsObservation(symbol, companyName, reportDate,
+  epsActual, epsEstimate, epsSurprisePercent, revenueActual, revenueEstimate)`
+  (revenue fields left null) using Yahoo's documented field names
   (`ticker`, `companyshortname`, `startdatetime`, `epsestimate`, `epsactual`,
   `epssurprisepct`).
 - **Graceful degradation:** the endpoint is fragile, so any failure returns an

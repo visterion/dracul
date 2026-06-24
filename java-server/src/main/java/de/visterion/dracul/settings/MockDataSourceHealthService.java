@@ -31,11 +31,11 @@ public class MockDataSourceHealthService implements DataSourceHealthService {
     private static List<DataSourceHealth> build(String now) {
         return List.of(
                 new DataSourceHealth("edgar", "SEC EDGAR", true, "ok", 200, null, 142L,
-                        List.of("strigoi-spin", "strigoi-insider", "strigoi-merger", "daywalker"), "10 req/s", now),
+                        List.of("strigoi-spin", "strigoi-insider", "strigoi-merger", "strigoi-echo", "daywalker"), "10 req/s", now),
                 new DataSourceHealth("yahoo", "Yahoo Finance", true, "rate_limited", 429, "Too Many Requests", 88L,
                         List.of("strigoi-echo", "daywalker"), "unofficial / scraped", now),
                 new DataSourceHealth("finnhub", "Finnhub", true, "ok", 200, null, 210L,
-                        List.of("strigoi-lazarus", "daywalker"), "provider-dependent (free tier)", now),
+                        List.of("strigoi-lazarus", "strigoi-echo", "daywalker"), "provider-dependent (free tier)", now),
                 new DataSourceHealth("wikipedia", "Wikipedia", true, "ok", 200, null, 175L,
                         List.of("strigoi-index"), "MediaWiki UA policy", now));
     }

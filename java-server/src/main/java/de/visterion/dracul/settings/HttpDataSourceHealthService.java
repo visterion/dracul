@@ -53,11 +53,11 @@ public class HttpDataSourceHealthService implements DataSourceHealthService {
         this.wikipedia = timedBuilder(wikipediaBase).defaultHeader("User-Agent", wikipediaUserAgent).build();
         this.sources = List.of(
                 new Source("edgar", "SEC EDGAR",
-                        "/LATEST/search-index?q=test", List.of("strigoi-spin", "strigoi-insider", "strigoi-merger", "daywalker"), "10 req/s"),
+                        "/LATEST/search-index?q=test", List.of("strigoi-spin", "strigoi-insider", "strigoi-merger", "strigoi-echo", "daywalker"), "10 req/s"),
                 new Source("yahoo", "Yahoo Finance",
                         "/v8/finance/chart/AAPL", List.of("strigoi-echo", "daywalker"), "unofficial / scraped"),
                 new Source("finnhub", "Finnhub",
-                        "/quote?symbol=AAPL", List.of("strigoi-lazarus", "daywalker"), "provider-dependent (free tier)"),
+                        "/quote?symbol=AAPL", List.of("strigoi-lazarus", "strigoi-echo", "daywalker"), "provider-dependent (free tier)"),
                 new Source("wikipedia", "Wikipedia",
                         "/w/api.php?action=query&meta=siteinfo&format=json", List.of("strigoi-index"), "MediaWiki UA policy"));
     }
