@@ -3,7 +3,10 @@ package de.visterion.dracul;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
-import de.visterion.dracul.hunting.yahoo.YahooEarningsAdapter;
+import de.visterion.dracul.strigoi.echo.EarningsObservation;
+import de.visterion.dracul.strigoi.echo.EarningsSourceRouter;
+import de.visterion.dracul.strigoi.echo.EchoEnrichmentService;
+import de.visterion.dracul.strigoi.echo.EnrichedPeadCandidate;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -18,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +43,8 @@ class StrigoiEchoWebhookControllerIT {
 
     @LocalServerPort int port;
     @Autowired ObjectMapper objectMapper;
-    @MockitoBean YahooEarningsAdapter yahoo;
+    @MockitoBean EarningsSourceRouter earnings;
+    @MockitoBean EchoEnrichmentService enrichment;
 
     RestClient rest;
 
@@ -52,19 +57,36 @@ class StrigoiEchoWebhookControllerIT {
                     c.add(new MappingJackson2HttpMessageConverter(objectMapper));
                 })
                 .build();
-        when(yahoo.recentEarnings(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("yahoo", List.of()));
+        var aapl = new EarningsObservation(
+                "AAPL", "Apple Inc.", LocalDate.now().minusDays(2),
+                new BigDecimal("1.65"), new BigDecimal("1.50"), new BigDecimal("10.0"),
+                new BigDecimal("1000"), new BigDecimal("900"));
+        when(earnings.recent(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("finnhub", List.of(aapl)));
+        // Deterministic enrichment: one AAPL candidate, SUE unavailable, revenue-beat present.
+        var enriched = new EnrichedPeadCandidate(
+                "AAPL", "Apple Inc.", LocalDate.now().minusDays(2), 2,
+                new BigDecimal("1.65"), new BigDecimal("1.50"), new BigDecimal("10.0"),
+                null, null, false, false,
+                new BigDecimal("11.111100"), true, null, new BigDecimal("190.00"));
+        when(enrichment.enrich(any())).thenReturn(List.of(enriched));
     }
 
     @Test
-    void toolEndpointReturns200WithValidBearer() {
-        var resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
+    void toolEndpointReturns200WithEnrichedCandidate() {
+        JsonNode resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("run_id", "r1", "tool_name", "fetch_recent_pead_candidates",
                             "input", Map.of("lookback_days", 7)))
-                .retrieve().toBodilessEntity();
-        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+                .retrieve().body(JsonNode.class);
+
+        JsonNode c0 = resp.path("output").path("candidates").path(0);
+        assertThat(c0.path("symbol").asText()).isEqualTo("AAPL");
+        assertThat(c0.has("sueAvailable")).isTrue();
+        assertThat(c0.has("revenueSurprisePercent")).isTrue();
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("healthy");
     }
 
     @Test
@@ -145,9 +167,9 @@ class StrigoiEchoWebhookControllerIT {
 
     @Test
     void unavailableSourceSurfacesAndIsNotCached() {
-        org.mockito.Mockito.when(yahoo.recentEarnings(
+        org.mockito.Mockito.when(earnings.recent(
                         org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(DataSourceResult.unavailable("yahoo", "yahoo: 503"));
+                .thenReturn(DataSourceResult.unavailable("finnhub", "finnhub: 503"));
 
         JsonNode resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")
@@ -167,7 +189,7 @@ class StrigoiEchoWebhookControllerIT {
                         "input", Map.of("lookback_days", 7)))
                 .retrieve().body(JsonNode.class);
 
-        org.mockito.Mockito.verify(yahoo, org.mockito.Mockito.times(2))
-                .recentEarnings(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(earnings, org.mockito.Mockito.times(2))
+                .recent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 }
