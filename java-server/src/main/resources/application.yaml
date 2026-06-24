@@ -85,6 +85,12 @@ dracul:
     morning:
       enabled: ${DRACUL_REPORT_MORNING_ENABLED:false}
       cron:    ${DRACUL_REPORT_MORNING_CRON:0 0 7 * * 1-5}
+  stopguard:
+    enabled:      ${DRACUL_STOPGUARD_ENABLED:false}
+    cron:         ${DRACUL_STOPGUARD_CRON:0 */15 9-16 * * 1-5}
+    atr-multiple: ${DRACUL_STOPGUARD_ATR_MULTIPLE:0.5}
+    cooldown:     ${DRACUL_STOPGUARD_COOLDOWN:82800}
+    notify-level: ${DRACUL_STOPGUARD_NOTIFY_LEVEL:WARNING}
   finnhub:
     api-key: ${FINNHUB_API_KEY:}
     base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
