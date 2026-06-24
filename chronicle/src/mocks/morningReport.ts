@@ -24,11 +24,11 @@ export const mockMorningReport: MorningReport = {
     },
     {
       symbol: 'AAA', companyName: 'Alpha AG', shareCount: 30, entryPrice: 100,
-      currentClose: 95, activeStop: 80, nextTarget2r: 160, distanceToStopPct: 15.79,
+      currentClose: 180, activeStop: 165, nextTarget2r: 160, distanceToStopPct: 8.33,
       targetReached: true,
       action: 'HOLD', thesisStatus: 'INTACT', confidence: 0.8,
-      rationale: 'These intakt, Stop fern.',
-      ticket: { side: 'HOLD', symbol: 'AAA', shares: 0, limitReference: 95, stop: 80, target: 160 },
+      rationale: 'These intakt — Trailing-Stop über das 2R-Ziel gezogen.',
+      ticket: { side: 'HOLD', symbol: 'AAA', shares: 0, limitReference: 180, stop: 165, target: 160 },
     },
   ],
 }
