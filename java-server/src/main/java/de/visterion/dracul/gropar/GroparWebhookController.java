@@ -49,6 +49,7 @@ public class GroparWebhookController {
     private final int historyDays;
     private final double profitTargetPct;
     private final double stopLossPct;
+    private final long fetchThrottleMs;
 
     public GroparWebhookController(
             @Value("${dracul.gropar.webhook-token}") String token,
@@ -62,7 +63,8 @@ public class GroparWebhookController {
             ToolFetchCache cache,
             @Value("${dracul.gropar.history-days:260}") int historyDays,
             @Value("${dracul.gropar.profit-target-pct:40}") double profitTargetPct,
-            @Value("${dracul.gropar.stop-loss-pct:15}") double stopLossPct) {
+            @Value("${dracul.gropar.stop-loss-pct:15}") double stopLossPct,
+            @Value("${dracul.gropar.fetch-throttle-ms:250}") long fetchThrottleMs) {
 
         this.verifier = new BearerTokenVerifier(token);
         this.watchlistRepo = watchlistRepo;
@@ -76,6 +78,7 @@ public class GroparWebhookController {
         this.historyDays = historyDays;
         this.profitTargetPct = profitTargetPct;
         this.stopLossPct = stopLossPct;
+        this.fetchThrottleMs = fetchThrottleMs;
     }
 
     /** Tool callback: returns all held positions enriched with exit indicators. */
@@ -96,6 +99,10 @@ public class GroparWebhookController {
             var views = new ArrayList<HeldPositionView>();
             for (WatchlistItem item : held) {
                 try {
+                    if (fetchThrottleMs > 0 && !views.isEmpty()) {
+                        try { Thread.sleep(fetchThrottleMs); }
+                        catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    }
                     var bars = marketData.dailyOhlcHistory(item.ticker(), historyDays);
 
                     // Resolve verdict data for horizon / thesis

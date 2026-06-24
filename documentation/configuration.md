@@ -246,6 +246,7 @@ Disabled by default (`enabled=false`). Enable by setting `DRACUL_GROPAR_ENABLED=
 | `DRACUL_GROPAR_WEBHOOK_TOKEN` | _(blank)_ | Bearer token shared with Vistierie for the tool + completion webhooks. **Required when enabled; set in production.** |
 | `DRACUL_GROPAR_SCHEDULE` | `0 0 22 * * 1-5` | Spring cron (sec min hour dom month dow) for the daily exit-signal run. Default: 22:00 UTC on weekdays (after US close). |
 | `DRACUL_GROPAR_HISTORY_DAYS` | `260` | Days of daily OHLC history fetched per position for indicator calculation (≈ 1 trading year). |
+| `DRACUL_GROPAR_FETCH_THROTTLE_MS` | `250` | Pause (ms) between per-ticker OHLC fetches in the gropar held-positions tool, to avoid bursting the market-data provider and triggering HTTP 429 rate-limits. `0` disables the pause (used in tests). |
 | `DRACUL_GROPAR_ATR_PERIOD` | `22` | ATR look-back period for the Chandelier Exit stop (trading days). |
 | `DRACUL_GROPAR_ATR_MULTIPLE` | `3.0` | ATR multiple for the Chandelier Exit stop level. |
 | `DRACUL_GROPAR_MA_FAST` | `50` | Fast simple moving-average period (days) for the MA-cross indicator. |
