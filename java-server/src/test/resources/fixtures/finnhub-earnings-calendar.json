@@ -1,4 +1,5 @@
 { "earningsCalendar": [
   { "symbol": "AAPL", "date": "2026-05-01", "epsActual": 1.65, "epsEstimate": 1.50, "revenueActual": 95000000000, "revenueEstimate": 92000000000, "quarter": 2, "year": 2026 },
-  { "symbol": "NODATA", "date": "2026-05-02", "epsActual": null, "epsEstimate": null, "revenueActual": null, "revenueEstimate": null, "quarter": 2, "year": 2026 }
+  { "symbol": "NODATA", "date": "2026-05-02", "epsActual": null, "epsEstimate": null, "revenueActual": null, "revenueEstimate": null, "quarter": 2, "year": 2026 },
+  { "symbol": "BADDATE", "date": "", "epsActual": 2.00, "epsEstimate": 1.80, "revenueActual": 1000, "revenueEstimate": 900, "quarter": 2, "year": 2026 }
 ] }

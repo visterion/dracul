@@ -65,7 +65,12 @@ public class FinnhubEarningsAdapter {
                         .multiply(BigDecimal.valueOf(100));
             String symbol = row.path("symbol").asText("").toUpperCase();
             if (symbol.isEmpty()) continue;
-            LocalDate date = LocalDate.parse(row.path("date").asText());
+            LocalDate date;
+            try {
+                date = LocalDate.parse(row.path("date").asText());
+            } catch (Exception e) {
+                continue; // skip rows with a missing/malformed date
+            }
             out.add(new EarningsObservation(symbol, symbol, date, actual, estimate, surprisePct,
                     dec(row, "revenueActual"), dec(row, "revenueEstimate")));
         }
