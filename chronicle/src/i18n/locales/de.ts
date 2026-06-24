@@ -478,6 +478,7 @@ export default {
     title: 'Morgen-Report',
     eyebrow: 'Morgen-Report',
     subtitle: 'Stops & Ziele für jede offene Position',
+    targetReached: '✓ übertroffen',
     readonlyNote: 'Nur informativ — Dracul platziert keine Orders.',
     empty: 'Noch keine gehaltenen Positionen.',
     cols: { action: 'Aktion', symbol: 'Symbol', stop: 'Aktiver Stop', target: 'Nächstes +2R', price: 'Kurs', distance: 'Dist. z. Stop' },
