@@ -16,7 +16,7 @@ import java.util.List;
 
 /** Finnhub /calendar/earnings -> EarningsObservation. Free tier: 60 calls/min, US coverage. */
 @Component
-public class FinnhubEarningsAdapter {
+public class FinnhubEarningsAdapter implements de.visterion.dracul.strigoi.echo.PeadEarningsSource {
 
     private final RestClient http;
     private final String apiKey;
@@ -35,6 +35,10 @@ public class FinnhubEarningsAdapter {
         this.apiKey = apiKey;
     }
 
+    @Override
+    public String id() { return "finnhub"; }
+
+    @Override
     public DataSourceResult<EarningsObservation> recent(LocalDate from, LocalDate to) {
         if (apiKey == null || apiKey.isBlank()) {
             return DataSourceResult.unavailable("finnhub", "finnhub: no api key");
