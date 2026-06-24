@@ -110,6 +110,48 @@ class MorningReportServiceTest {
     }
 
     @Test
+    void breachedPositionWithoutSignalBecomesSell() {
+        var a = held("1", "AAA", 100, 30);          // close 72 < stop 98 -> breached
+        var risk = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("64"),
+                new BigDecimal("98"), new BigDecimal("169"), new BigDecimal("72"), null));
+        var line = svc(List.of(a), risk, List.of()).build("u@x.com").positions().get(0);
+        assertThat(line.action()).isEqualTo("SELL");
+        assertThat(line.rationale()).contains("aktivem Stop");
+        assertThat(line.ticket().shares()).isEqualTo(30.0); // full SELL ticket
+    }
+
+    @Test
+    void breachedPositionWithHoldSignalIsOverriddenToSell() {
+        var a = held("1", "AAA", 100, 30);
+        var risk = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("64"),
+                new BigDecimal("98"), new BigDecimal("169"), new BigDecimal("72"), null));
+        var hold = List.of(new ExitSignal("h", "1", "AAA", "HOLD", List.of(), -28.0,
+                "INTACT", "halten", 0.5, "run", "2026-06-22T22:00:00Z"));
+        var line = svc(List.of(a), risk, hold).build("u@x.com").positions().get(0);
+        assertThat(line.action()).isEqualTo("SELL");
+    }
+
+    @Test
+    void breachedPositionWithLlmTrimKeepsTrim() {
+        var a = held("1", "AAA", 100, 30);
+        var risk = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("64"),
+                new BigDecimal("98"), new BigDecimal("169"), new BigDecimal("72"), null));
+        var trim = List.of(new ExitSignal("t", "1", "AAA", "TRIM", List.of(), -28.0,
+                "WEAKENING", "teilverkauf", 0.6, "run", "2026-06-22T22:00:00Z"));
+        var line = svc(List.of(a), risk, trim).build("u@x.com").positions().get(0);
+        assertThat(line.action()).isEqualTo("TRIM");
+    }
+
+    @Test
+    void unbreachedHoldStaysHold() {
+        var a = held("1", "AAA", 100, 30);          // close 95 > stop 80 -> not breached
+        var risk = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95"), null));
+        var line = svc(List.of(a), risk, List.of()).build("u@x.com").positions().get(0);
+        assertThat(line.action()).isEqualTo("HOLD");
+    }
+
+    @Test
     void nonHeldAndOtherOwnersExcluded() {
         WatchlistItem watched = mock(WatchlistItem.class);
         when(watched.id()).thenReturn("9");
