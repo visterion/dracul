@@ -327,7 +327,7 @@ public class WatchlistRepository {
     public Map<String, PositionRisk> positionRiskByItemId() {
         return jdbc.sql("""
                 SELECT id, entry_date, initial_stop,
-                       active_stop, next_target_2r, current_close
+                       active_stop, next_target_2r, current_close, atr
                   FROM watchlist_items
                 """)
                 .query((rs, rowNum) -> new PositionRisk(
@@ -336,7 +336,8 @@ public class WatchlistRepository {
                         rs.getBigDecimal("initial_stop"),
                         rs.getBigDecimal("active_stop"),
                         rs.getBigDecimal("next_target_2r"),
-                        rs.getBigDecimal("current_close")))
+                        rs.getBigDecimal("current_close"),
+                        rs.getBigDecimal("atr")))
                 .list()
                 .stream()
                 .collect(Collectors.toMap(PositionRisk::id, r -> r));
@@ -346,19 +347,21 @@ public class WatchlistRepository {
      *  stop moves — NOT freeze-once). Any field may be null when unavailable.
      *  snapshotAt is stamped by the caller. Returns true if a row was updated. */
     public boolean updateRiskSnapshot(String id, BigDecimal activeStop,
-            BigDecimal nextTarget2r, BigDecimal currentClose, java.time.Instant snapshotAt) {
+            BigDecimal nextTarget2r, BigDecimal currentClose, BigDecimal atr,
+            java.time.Instant snapshotAt) {
         UUID uuid;
         try { uuid = UUID.fromString(id); }
         catch (IllegalArgumentException e) { return false; }
         int rows = jdbc.sql("""
                 UPDATE watchlist_items
                    SET active_stop = :stop, next_target_2r = :tgt,
-                       current_close = :close, risk_snapshot_at = :ts
+                       current_close = :close, atr = :atr, risk_snapshot_at = :ts
                  WHERE id = :id
                 """)
                 .param("stop", activeStop)
                 .param("tgt", nextTarget2r)
                 .param("close", currentClose)
+                .param("atr", atr)
                 .param("ts", java.sql.Timestamp.from(snapshotAt))
                 .param("id", uuid)
                 .update();

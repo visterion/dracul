@@ -320,7 +320,7 @@ class GroparWebhookControllerTest {
 
         // Provide a frozen stop of 70 so R is available
         var pr = new PositionRisk("id-snap", "2025-01-01", new BigDecimal("70"),
-                null, null, null);
+                null, null, null, null);
         when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of("id-snap", pr));
         when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
         when(marketData.dailyOhlcHistory(eq("SNAP"), anyInt())).thenReturn(multiBars());
@@ -340,7 +340,7 @@ class GroparWebhookControllerTest {
         ArgumentCaptor<BigDecimal> closeCaptor  = ArgumentCaptor.forClass(BigDecimal.class);
         verify(watchlistRepo).updateRiskSnapshot(
                 eq("id-snap"), stopCaptor.capture(), tgtCaptor.capture(),
-                closeCaptor.capture(), any(Instant.class));
+                closeCaptor.capture(), any(), any(Instant.class));
 
         // next_target_2r = 100 + 2*30 = 160
         assertThat(tgtCaptor.getValue()).isEqualByComparingTo("160");
@@ -363,7 +363,7 @@ class GroparWebhookControllerTest {
         when(marketData.dailyOhlcHistory(eq("FAIL"), anyInt())).thenReturn(multiBars());
 
         doThrow(new RuntimeException("db down"))
-                .when(watchlistRepo).updateRiskSnapshot(any(), any(), any(), any(), any());
+                .when(watchlistRepo).updateRiskSnapshot(any(), any(), any(), any(), any(), any());
 
         var resp = controller.fetchHeldPositions(BEARER, null);
 

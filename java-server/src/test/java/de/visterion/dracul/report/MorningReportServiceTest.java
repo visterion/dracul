@@ -46,11 +46,11 @@ class MorningReportServiceTest {
         var c = held("3", "CCC", 20, 100);  // HOLD, close 21 stop 20 -> dist 4.76% (closer)
         var risk = Map.of(
                 "1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
-                        new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95")),
+                        new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95"), null),
                 "2", new PositionRisk("2", "2026-01-01", new BigDecimal("40"),
-                        new BigDecimal("45"), new BigDecimal("70"), new BigDecimal("48")),
+                        new BigDecimal("45"), new BigDecimal("70"), new BigDecimal("48"), null),
                 "3", new PositionRisk("3", "2026-01-01", new BigDecimal("15"),
-                        new BigDecimal("20"), new BigDecimal("30"), new BigDecimal("21")));
+                        new BigDecimal("20"), new BigDecimal("30"), new BigDecimal("21"), null));
         var signals = List.of(
                 new ExitSignal("s2", "2", "BBB", "SELL", List.of(), -4.0, "INVALIDATED",
                         "raus", 0.9, "run", "2026-06-22T22:00:00Z"));
@@ -68,7 +68,7 @@ class MorningReportServiceTest {
     void trimTicketIsOneThirdSellTicketIsFull() {
         var s = held("1", "AAA", 100, 30);
         var risk = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
-                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95")));
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95"), null));
         var trim = List.of(new ExitSignal("x", "1", "AAA", "TRIM", List.of(), 5.0,
                 "WEAKENING", "teilverkauf", 0.6, "run", "2026-06-22T22:00:00Z"));
 
@@ -98,13 +98,13 @@ class MorningReportServiceTest {
         // price above stop: (95-80)/95*100 = 15.789...
         var a = held("1", "AAA", 100, 30);
         var riskAbove = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
-                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95")));
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95"), null));
         var line = svc(List.of(a), riskAbove, List.of()).build("u@x.com").positions().get(0);
         assertThat(line.distanceToStopPct()).isCloseTo(15.789, within(0.01));
 
         // price below stop: (70-80)/70*100 = -14.285... (sign-inversion guard)
         var riskBelow = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
-                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("70")));
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("70"), null));
         var line2 = svc(List.of(a), riskBelow, List.of()).build("u@x.com").positions().get(0);
         assertThat(line2.distanceToStopPct()).isCloseTo(-14.285, within(0.01));
     }
