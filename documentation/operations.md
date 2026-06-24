@@ -144,6 +144,23 @@ To enable the daily Telegram morning-report digest:
 
 The digest is a **Dracul-internal cron** — it does **not** register a Vistierie agent. No Vistierie budget change or agent reset is required (unlike a new scheduled Strigoi or Gropar itself).
 
+## Stop-proximity watcher
+
+To enable the intraday stop-proximity watcher in production:
+
+1. Ensure Telegram is already configured (same `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as gropar / morning report — no new credentials needed).
+2. Add `DRACUL_STOPGUARD_ENABLED=true` to `docker-compose.host.yml` under `app.environment`.
+3. Recreate the container (`docker compose ... up -d app`).
+
+The watcher is a **Dracul-internal cron** (`StopProximityWatcher`, `@Scheduled`). It is **not** a Vistierie agent — no Vistierie budget, no `definition/reset`, and the Vistierie kill switch does not affect it (unlike gropar, Daywalker, and the Strigoi). To stop it in prod, set `DRACUL_STOPGUARD_ENABLED=false` (or remove the env var) and recreate the container.
+
+Optionally tune the proximity band width and Telegram verbosity:
+
+    DRACUL_STOPGUARD_ATR_MULTIPLE=0.5          # width of proximity zone (fraction of ATR)
+    DRACUL_STOPGUARD_NOTIFY_LEVEL=WARNING       # WARNING = both proximity + breach; CRITICAL = breach only
+
+See [configuration.md](./configuration.md) for the full knob reference.
+
 ## Branch images
 
 PRs and `slice-*` branches produce tagged images

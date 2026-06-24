@@ -232,6 +232,22 @@ Four nullable columns added to `watchlist_items` to persist the per-position ris
 
 These columns are `null` until gropar has run at least once after V15 is applied. `GET /api/morning-report` reads them to build the report projection without issuing any market-data calls.
 
+**Watchlist ATR column (V16):**
+
+- `atr` (NUMERIC(12,4), nullable) — Average True Range (ATR22) of the position at the time of the most recent gropar run. Written by gropar's `fetch_held_positions` tool call alongside the V15 snapshot columns. Used by `StopProximityWatcher` to derive the stop-proximity zone width (`active_stop + atr-multiple × ATR`). `null` until gropar has run at least once after V16 is applied.
+
+**Stop-proximity watcher (`StopProximityWatcher`):**
+
+A deterministic, intraday `@Scheduled` cron (no LLM, no Vistierie agent) in package `de.visterion.dracul.stopguard`. Disabled by default (`dracul.stopguard.enabled=false`). When enabled it fires every ~15 minutes during the US session (`0 */15 9-16 * * 1-5`, zone America/New_York), loads all held positions with their persisted V15/V16 snapshot, batch-fetches live prices via the `@Primary` MarketDataPort (TwelveData → Yahoo, using the existing adapter cache), and classifies each position via `StopZoneEvaluator`:
+
+| Condition | Zone | Severity |
+|---|---|---|
+| `price ≤ active_stop` | `STOP_BREACHED` | CRITICAL |
+| `active_stop < price ≤ active_stop + atr-multiple × ATR` | `STOP_PROXIMITY` | WARNING |
+| above proximity band, or stop/ATR null | no alert | — |
+
+`StopAlertEmitter` persists qualifying alerts to the existing `daywalker_alerts` store, broadcasts `alert.new` over SSE to the live panel, and sends a German-language Telegram push. Re-alert cooldown is per `(owner, symbol, zone)` (default ≈ 23 h); `STOP_PROXIMITY` and `STOP_BREACHED` have independent cooldowns so a price breach triggers an immediate escalation alert even if a proximity alert was already sent today.
+
 **Agent definition tables (V10):**
 
 Two new tables under the `dracul` schema hold runtime-editable agent definitions:
