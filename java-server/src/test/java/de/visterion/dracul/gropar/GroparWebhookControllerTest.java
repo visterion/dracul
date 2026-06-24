@@ -66,7 +66,8 @@ class GroparWebhookControllerTest {
                 indicatorService, riskService, cache,
                 260,  // historyDays
                 40.0, // profitTargetPct
-                15.0  // stopLossPct
+                15.0, // stopLossPct
+                0L    // fetchThrottleMs (no sleep in tests)
         );
     }
 
