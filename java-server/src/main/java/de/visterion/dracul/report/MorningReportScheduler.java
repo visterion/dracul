@@ -74,7 +74,7 @@ public class MorningReportScheduler {
             if (l.ticket().shares() > 0) sb.append(' ')
               .append((long) l.ticket().shares()).append(" Stk");
             sb.append(" — Stop ").append(fmt(l.activeStop()))
-              .append(" / Ziel ").append(fmt(l.nextTarget2r()))
+              .append(" / Ziel ").append(l.targetReached() ? "✓" : fmt(l.nextTarget2r()))
               .append(" / Kurs ").append(fmt(l.currentClose()));
             if (l.distanceToStopPct() != null) {
                 sb.append(String.format(" (%+.1f%% z. Stop)", l.distanceToStopPct()));

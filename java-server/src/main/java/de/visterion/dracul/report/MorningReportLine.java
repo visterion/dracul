@@ -18,5 +18,6 @@ public record MorningReportLine(
         String thesisStatus,        // INTACT | WEAKENING | INVALIDATED | NONE | null
         Double confidence,
         String rationale,
-        OrderTicket ticket
+        OrderTicket ticket,
+        boolean targetReached       // true when nextTarget2r <= activeStop (2R target overtaken by trailing stop)
 ) {}
