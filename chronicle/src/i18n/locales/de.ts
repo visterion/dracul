@@ -548,6 +548,8 @@ export default {
       INSIDER_SELL: 'Insider-Verkauf',
       NEGATIVE_NEWS: 'Negative Nachricht',
       ANALYST_DOWNGRADE: 'Analysten-Abstufung',
+      STOP_PROXIMITY: 'Stop-Nähe',
+      STOP_BREACHED: 'Stop gerissen',
     },
     severity: {
       INFO: 'Info',

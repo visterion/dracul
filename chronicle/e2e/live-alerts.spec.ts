@@ -36,4 +36,27 @@ test.describe('Live alert panel (SSE)', () => {
     await expect(item).not.toContainText('CRITICAL')
     await expect(item).not.toContainText('PRICE_SPIKE')
   })
+
+  test('streamed STOP_BREACHED alert renders the localized label', async ({ page }) => {
+    const body =
+      'event: alert.new\n' +
+      'data: {"symbol":"AAA","trigger_type":"STOP_BREACHED","severity":"CRITICAL","thesis":"Stop gerissen: AAA Kurs 96 ≤ Stop 100 — handeln","ts":"2026-06-24T14:30:00Z"}\n\n'
+    await page.route('**/api/events', route =>
+      route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: { 'Cache-Control': 'no-cache' },
+        body,
+      }),
+    )
+
+    await page.goto('/')
+    await page.locator('[data-testid="live-toggle"]').click()
+    await expect(page.locator('[data-testid="live-alert-panel"]')).toBeVisible()
+
+    const item = page.locator('[data-testid="live-alert-item"]').first()
+    await expect(item).toContainText('AAA')
+    await expect(item).toContainText('Stop gerissen')
+    await expect(item).not.toContainText('STOP_BREACHED')
+  })
 })
