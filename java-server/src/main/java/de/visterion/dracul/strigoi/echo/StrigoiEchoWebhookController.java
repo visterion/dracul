@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.agent.ToolFetchCache;
-import de.visterion.dracul.hunting.yahoo.YahooEarningsAdapter;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,18 +18,21 @@ import java.util.Map;
 @RequestMapping("/api/strigoi-echo")
 public class StrigoiEchoWebhookController extends HuntController {
 
-    private final YahooEarningsAdapter yahoo;
+    private final EarningsSourceRouter earnings;
     private final EchoPeadScreener screener;
+    private final EchoEnrichmentService enrichment;
 
     public StrigoiEchoWebhookController(
             @Value("${dracul.strigoi.echo.webhook-token}") String token,
-            YahooEarningsAdapter yahoo,
+            EarningsSourceRouter earnings,
             EchoPeadScreener screener,
+            EchoEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache) {
         super(token, preyRepo, cache);
-        this.yahoo = yahoo;
+        this.earnings = earnings;
         this.screener = screener;
+        this.enrichment = enrichment;
     }
 
     @Override protected String agentName() { return "strigoi-echo"; }
@@ -37,18 +40,12 @@ public class StrigoiEchoWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_recent_pead_candidates"; }
 
     @Override
-    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
+    protected DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
-        var raw = yahoo.recentEarnings(to.minusDays(lookback), to);
-        // TODO(Task 10): replace with EarningsSourceRouter + enrichment
-        var observations = raw.items().stream()
-                .map(e -> new EarningsObservation(
-                        e.symbol(), e.companyName(), e.reportDate(),
-                        e.epsActual(), e.epsEstimate(), e.surprisePercent(),
-                        null, null))
-                .toList();
-        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(observations), raw.health());
+        var raw = earnings.recent(to.minusDays(lookback), to);
+        var enriched = enrichment.enrich(screener.screen(raw.items()));
+        return new DataSourceResult<>(enriched, raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")
