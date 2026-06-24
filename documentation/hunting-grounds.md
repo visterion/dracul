@@ -34,7 +34,7 @@ never see vendor-specific schemas.
 |---|---|
 | strigoi-spin | edgar-adapter (Form-10, 10-12B) |
 | strigoi-insider | edgar-adapter (Form-4) |
-| strigoi-echo | calendar-adapter (earnings) + prices-adapter |
+| strigoi-echo | Finnhub `/calendar/earnings` (primary) → Yahoo earnings calendar (fallback) + SEC EDGAR companyconcept (EPS history for SUE) + prices-adapter |
 | strigoi-lazarus | watchlist + Finnhub /stock/metric (52w-low + fundamentals) |
 | strigoi-index | Wikipedia S&P 500 (main constituents table, Date added column) |
 | strigoi-merger | edgar-adapter (`EDGAR EFTS forms=DEFM14A,SC TO-T (deal filings, metadata-only)`) |
@@ -119,8 +119,24 @@ Polygon) can be added without touching consumers.
 
 ## Earnings calendar adapter
 
-Strigoi-Echo (PEAD) resolves recent earnings reports and surprises via
-`YahooEarningsAdapter` (`de.visterion.dracul.hunting.yahoo`):
+Strigoi-Echo (PEAD) resolves recent earnings announcements via a config-selectable
+earnings source (`dracul.strigoi.echo.earnings-source`, default `finnhub`).
+
+### Finnhub earnings calendar (primary)
+
+`FinnhubEarningsAdapter` (`de.visterion.dracul.hunting.finnhub`):
+
+- `GET /calendar/earnings?from=…&to=…` (free tier ≈ 60 calls/min, US). Auth via
+  `FINNHUB_API_KEY` query token.
+- Normalises rows to `EarningsEvent(symbol, companyName, reportDate, epsActual,
+  epsEstimate, surprisePercent)`.
+- **Graceful degradation:** a blank `FINNHUB_API_KEY` or any error returns an
+  empty list (logged) — the bee never dies on a Finnhub hiccup.
+
+### Yahoo earnings calendar (fallback)
+
+`YahooEarningsAdapter` (`de.visterion.dracul.hunting.yahoo`) — now the
+config-selectable fallback (`earnings-source=yahoo`):
 
 - HTTPS GET against Yahoo's (unofficial) earnings calendar endpoint
   (`/v1/finance/calendar/earnings?startdt=…&enddt=…`), reusing the shared
@@ -130,9 +146,24 @@ Strigoi-Echo (PEAD) resolves recent earnings reports and surprises via
   (`ticker`, `companyshortname`, `startdatetime`, `epsestimate`, `epsactual`,
   `epssurprisepct`).
 - **Graceful degradation:** the endpoint is fragile, so any failure returns an
-  empty list (after one retry) and logs a warning — the bee never dies on a
-  Yahoo hiccup. If the endpoint proves unreliable in production, the fallback is
-  a configured ticker-list universe (deferred).
+  empty list (after one retry) and logs a warning.
+
+## SEC EDGAR companyconcept (EPS history for SUE)
+
+Strigoi-Echo's enrichment layer computes time-series SUE from a company's
+quarterly diluted-EPS history fetched from SEC EDGAR companyconcept:
+
+- `GET data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/EarningsPerShareDiluted.json`
+  — free, **requires a `User-Agent` header** (reuses `dracul.edgar.user-agent` /
+  `DRACUL_EDGAR_USER_AGENT`). Yields the historical quarterly diluted-EPS series
+  used for the Foster seasonal-random-walk model and the year-ago EPS comparison.
+- The ticker→CIK map is resolved from `www.sec.gov/files/company_tickers.json`
+  (free, same User-Agent).
+- SUE values are ranked cross-sectionally into deciles (z-band fallback for thin
+  batches); seasonal alignment is date-based so it is robust to gaps in the EDGAR
+  series.
+- **Graceful degradation:** a missing CIK, empty series, or any fetch error skips
+  the SUE signal for that symbol rather than failing the run.
 
 ## Yahoo intraday adapter
 

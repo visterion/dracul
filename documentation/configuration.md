@@ -169,11 +169,16 @@ dracul:
 | `STRIGOI_ECHO_ENABLED` | `false` | Enable agent registration on Dracul startup (controller + registrar `@ConditionalOnProperty`) |
 | `STRIGOI_ECHO_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
 | `DRACUL_ECHO_SCHEDULE` | `0 0 22 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 22:00 UTC weekdays, after US close. |
+| `ECHO_EARNINGS_SOURCE` (`dracul.strigoi.echo.earnings-source`) | `finnhub` | Earnings-announcement source for the pre-screen. Allowed: `finnhub` (primary — Finnhub `/calendar/earnings`) or `yahoo` (fallback — Yahoo earnings calendar). |
 | `ECHO_MIN_SURPRISE` | `5.0` | Minimum positive earnings-surprise percent for the pre-screen. |
 | `ECHO_MIN_PRICE` | `5.0` | Minimum current share price (USD) liquidity floor for the pre-screen. |
 
-Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared Yahoo
-market-data client. It needs no API key.
+Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared price /
+Yahoo market-data client. Its v2 signal data (academic PEAD signals: time-series
+SUE deciles, revenue-surprise / double-beat, consecutive beats) additionally
+requires **`FINNHUB_API_KEY`** (earnings announcements when
+`earnings-source=finnhub`) and **`DRACUL_EDGAR_USER_AGENT`** (SEC EDGAR
+companyconcept quarterly diluted-EPS history + ticker→CIK map for SUE).
 
 ## Strigoi Spin
 
