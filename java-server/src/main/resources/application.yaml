@@ -31,6 +31,7 @@ dracul:
       schedule: ${DRACUL_ECHO_SCHEDULE:0 0 22 * * 1-5}
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
+      earnings-source: ${ECHO_EARNINGS_SOURCE:finnhub}
     spin:
       enabled: ${STRIGOI_SPIN_ENABLED:false}
       webhook-token: ${STRIGOI_SPIN_TOKEN:dev-token-change-me}
