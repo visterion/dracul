@@ -3,7 +3,9 @@ package de.visterion.dracul.hunting.edgar;
 import de.visterion.dracul.strigoi.echo.QuarterlyEps;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -12,6 +14,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.anything;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class EdgarEpsHistoryTest {
@@ -33,6 +36,37 @@ class EdgarEpsHistoryTest {
         assertThat(q.get(0).periodEnd()).hasToString("2026-03-28");
         assertThat(q).extracting(e -> e.eps().toPlainString())
                 .containsExactly("1.80", "2.55", "1.55", "1.40", "1.65", "2.40");
+    }
+
+    @Test
+    void returnsEmptyOnHttpError() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://data.sec.gov");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(ExpectedCount.manyTimes(), anything())
+                .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        var history = new EdgarEpsHistory(builder.build(), new StubCik(Optional.of("0000320193")));
+        assertThat(history.quarterlyEps("AAPL", 10)).isEmpty();
+    }
+
+    @Test
+    void fallsBackToBasicWhenDilutedEmpty() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://data.sec.gov");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        // First request (Diluted) → no units; second request (Basic) → one quarterly row.
+        String basic = "{ \"units\": { \"USD/shares\": [ "
+                + "{ \"start\": \"2025-12-28\", \"end\": \"2026-03-28\", \"val\": 1.80, "
+                + "\"fy\": 2026, \"fp\": \"Q2\", \"form\": \"10-Q\" } ] } }";
+        server.expect(ExpectedCount.once(), anything())
+                .andRespond(withSuccess("{ \"units\": {} }", MediaType.APPLICATION_JSON));
+        server.expect(ExpectedCount.once(), anything())
+                .andRespond(withSuccess(basic, MediaType.APPLICATION_JSON));
+
+        var history = new EdgarEpsHistory(builder.build(), new StubCik(Optional.of("0000320193")));
+        List<QuarterlyEps> q = history.quarterlyEps("AAPL", 10);
+
+        assertThat(q).hasSize(1);
+        assertThat(q.get(0).eps()).isEqualByComparingTo("1.80");
     }
 
     @Test

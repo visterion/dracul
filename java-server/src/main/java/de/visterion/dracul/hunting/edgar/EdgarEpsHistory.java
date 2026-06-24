@@ -74,14 +74,18 @@ public class EdgarEpsHistory implements EpsHistoryPort {
         Map<LocalDate, BigDecimal> byEnd = new LinkedHashMap<>();
         for (JsonNode unit : body.path("units")) {        // iterate unit arrays (e.g. "USD/shares")
             for (JsonNode row : unit) {
-                String start = row.path("start").asText("");
-                String end = row.path("end").asText("");
-                if (start.isEmpty() || end.isEmpty() || row.path("val").isMissingNode()) continue;
-                LocalDate s = LocalDate.parse(start);
-                LocalDate e = LocalDate.parse(end);
-                long days = ChronoUnit.DAYS.between(s, e);
-                if (days < MIN_QUARTER_DAYS || days > MAX_QUARTER_DAYS) continue; // quarterly only
-                byEnd.put(e, new BigDecimal(row.path("val").asText()));
+                try {
+                    String start = row.path("start").asText("");
+                    String end = row.path("end").asText("");
+                    if (start.isEmpty() || end.isEmpty() || row.path("val").isMissingNode()) continue;
+                    LocalDate s = LocalDate.parse(start);
+                    LocalDate e = LocalDate.parse(end);
+                    long days = ChronoUnit.DAYS.between(s, e);
+                    if (days < MIN_QUARTER_DAYS || days > MAX_QUARTER_DAYS) continue; // quarterly only
+                    byEnd.put(e, row.path("val").decimalValue());
+                } catch (Exception rowError) {
+                    // skip malformed row, keep the rest
+                }
             }
         }
         List<QuarterlyEps> out = new ArrayList<>();
