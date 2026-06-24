@@ -293,6 +293,8 @@ through to the verdict detail. A back control (`exit-back`) returns to
 
 **View 11 — Morning Report** (`/report`): Fully implemented and wired to `GET /api/morning-report`.
 A read-only daily digest fed by Groparul's projection of all held positions.
+(The view and endpoint always show **all** held positions — SELL, TRIM, and HOLD;
+only the scheduled Telegram digest is actionable-only, staying silent on all-HOLD days.)
 Each position renders as a `.report-row` card showing:
 
 - **Action pill** (`SELL` / `TRIM` / `HOLD`) — colour-coded crimson / gold / ash.

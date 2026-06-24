@@ -53,4 +53,43 @@ class MorningReportSchedulerTest {
 
         verifyNoInteractions(tg);
     }
+
+    @Test
+    void skipsPushWhenAllPositionsHold() {
+        WatchlistRepository wl = mock(WatchlistRepository.class);
+        TelegramNotifier tg = mock(TelegramNotifier.class);
+        MorningReportService svc = mock(MorningReportService.class);
+        when(wl.findAll()).thenReturn(List.of(held("1", "u@x.com")));
+        when(svc.build("u@x.com")).thenReturn(
+                new MorningReport("t", 0, 0, 1,
+                        List.of(new MorningReportLine("AAA", "Aaa", 10, 100,
+                                null, null, null, null, "HOLD", null, null, null,
+                                new OrderTicket("HOLD", "AAA", 0, null, null, null)))));
+
+        new MorningReportScheduler(wl, svc, tg).run();
+
+        verify(svc).build("u@x.com");
+        verify(tg, never()).notifyDigest(anyString());
+    }
+
+    @Test
+    void pushesOnlyActionableLines() {
+        WatchlistRepository wl = mock(WatchlistRepository.class);
+        TelegramNotifier tg = mock(TelegramNotifier.class);
+        MorningReportService svc = mock(MorningReportService.class);
+        when(wl.findAll()).thenReturn(List.of(held("1", "u@x.com")));
+        when(svc.build("u@x.com")).thenReturn(
+                new MorningReport("t", 1, 0, 1, List.of(
+                        new MorningReportLine("BBB", "Bbb", 10, 100,
+                                null, null, null, null, "SELL", null, null, null,
+                                new OrderTicket("SELL", "BBB", 10, null, null, null)),
+                        new MorningReportLine("AAA", "Aaa", 10, 100,
+                                null, null, null, null, "HOLD", null, null, null,
+                                new OrderTicket("HOLD", "AAA", 0, null, null, null)))));
+
+        new MorningReportScheduler(wl, svc, tg).run();
+
+        // pushes once, body lists the actionable SELL symbol but omits the HOLD symbol
+        verify(tg).notifyDigest(argThat(s -> s.contains("BBB") && !s.contains("AAA")));
+    }
 }
