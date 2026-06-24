@@ -1,6 +1,7 @@
 package de.visterion.dracul.marketdata;
 
 import tools.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -19,6 +20,7 @@ public class YahooMarketDataAdapter implements MarketDataPort {
     private final RestClient client;
     private final long retryBaseMs;
 
+    @Autowired
     public YahooMarketDataAdapter(RestClient yahooRestClient) {
         this(yahooRestClient, 500L);
     }
