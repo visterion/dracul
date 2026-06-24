@@ -85,6 +85,9 @@ public class MorningReportService {
         OrderTicket ticket = new OrderTicket(action, item.ticker(), ticketShares,
                 close, activeStop, target);
 
+        boolean targetReached = target != null && activeStop != null
+                && target.compareTo(activeStop) <= 0;
+
         return new MorningReportLine(
                 item.ticker(), item.companyName(), shares, item.entryPrice(),
                 close, activeStop, target, distancePct,
@@ -92,7 +95,7 @@ public class MorningReportService {
                 sig == null ? null : sig.thesisStatus(),
                 sig == null ? null : sig.confidence(),
                 sig == null ? null : sig.rationale(),
-                ticket);
+                ticket, targetReached);
     }
 
     private boolean isHeld(WatchlistItem item) {
