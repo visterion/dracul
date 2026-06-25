@@ -56,4 +56,18 @@ class GroparPromptContractTest {
                 .as("prompt must explain gain in R")
                 .contains("gain_in_R");
     }
+
+    @Test
+    void promptInstructsObjectEnvelopeNotBareArray() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt)
+                .as("prompt must demand a single object wrapping the signals array")
+                .contains("single JSON object");
+        assertThat(prompt)
+                .as("prompt must show the empty-result skeleton")
+                .contains("{\"signals\": []}");
+        assertThat(prompt)
+                .as("prompt must explicitly forbid a bare top-level array")
+                .contains("Never return a bare array");
+    }
 }
