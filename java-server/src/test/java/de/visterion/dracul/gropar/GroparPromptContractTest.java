@@ -13,7 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Guards gropar's exit-signal output contract: the thesis_status enum must
  * include NONE (for manually-added positions with no original thesis), and the
- * prompt must instruct the model to use NONE and to write the rationale in German.
+ * prompt must instruct the model to use NONE, to write the rationale in German,
+ * and to always wrap signals in a JSON object envelope (never a bare array).
  */
 class GroparPromptContractTest {
 
