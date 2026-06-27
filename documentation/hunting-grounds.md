@@ -211,9 +211,18 @@ Strigoi-Lazarus resolves 52-week range and health ratios via
 - Auth via `FINNHUB_API_KEY` query token.
 - **Graceful degradation:** a blank `FINNHUB_API_KEY` or any error → returns
   `null`; strigoi-lazarus skips that symbol entirely.
-- **`/stock/metric` (metric=all)** — used by Strigoi-Echo SP2 for `beta`, `marketCapitalization`
-  and the 52-week range.
-- **`/stock/profile2`** — used by Strigoi-Echo SP2 for `finnhubIndustry` (sector).
+
+### Finnhub equity-metrics adapter
+
+`FinnhubEquityMetrics` (a separate `@Component` from the fundamentals adapter) supplies
+Strigoi-Echo's SP2 size/liquidity context:
+
+- **`/stock/metric` (metric=all)** — `beta`, `marketCapitalization`, and the 52-week range.
+- **`/stock/profile2`** — `finnhubIndustry` (sector).
+
+It degrades gracefully: a blank key or a `/stock/metric` failure yields
+`EquityMetrics.unavailable()`; a `/stock/profile2` failure yields a null sector with the
+rest of the metrics intact.
 
 ## Finnhub news adapter
 
