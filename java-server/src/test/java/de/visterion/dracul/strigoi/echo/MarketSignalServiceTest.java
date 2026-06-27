@@ -80,6 +80,7 @@ class MarketSignalServiceTest {
 
         assertThat(sig.momentum6_12m()).isEqualByComparingTo("0.10"); // 110/100 - 1
         assertThat(sig.adv()).isEqualByComparingTo("100000.00");      // last 20 bars: 100 * 1000
+        assertThat(sig.carAvailable()).isTrue(); // d0 resolves even when d0 < n-1
     }
 
     @Test
