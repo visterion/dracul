@@ -2,6 +2,8 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.marketdata.MarketDataPort;
 import de.visterion.dracul.marketdata.OhlcBar;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +20,8 @@ import java.util.List;
  *  Every external lookup is wrapped so a failure degrades one field, never the whole run. */
 @Component
 public class EchoEnrichmentService {
+
+    private static final Logger log = LoggerFactory.getLogger(EchoEnrichmentService.class);
 
     private final SueEngine sueEngine;
     private final EpsHistoryPort epsHistory;
@@ -50,7 +54,12 @@ public class EchoEnrichmentService {
         List<Double> sueValues = new ArrayList<>();
 
         for (PeadCandidate c : candidates) {
-            List<QuarterlyEps> hist = epsHistory.quarterlyEps(c.symbol(), 16);
+            List<QuarterlyEps> hist;
+            try {
+                hist = epsHistory.quarterlyEps(c.symbol(), 16);
+            } catch (Exception e) {
+                hist = List.of();
+            }
             Sue sue = sueEngine.timeSeriesSue(c.epsActual(), c.reportDate(), hist);
             if (sue.available() && sue.value() != null) sueValues.add(sue.value());
             partials.add(new Partial(c, sue, hist));
@@ -68,10 +77,13 @@ public class EchoEnrichmentService {
             boolean approximate = p.sue().approximate();
             if (p.sue().available() && p.sue().value() != null) {
                 decile = sueEngine.decile(p.sue().value(), sueValues, thin);
-                approximate = thin;
+                approximate = thin || p.sue().approximate();
             }
             BigDecimal revSurprise = revenueSurprise(c.revenueActual(), c.revenueEstimate());
-            boolean doubleBeat = revSurprise != null && revSurprise.signum() > 0;
+            // double beat = both EPS and revenue beat (EPS beat is already guaranteed by
+            // the pre-screen, but make the semantics explicit and robust here).
+            boolean doubleBeat = revSurprise != null && revSurprise.signum() > 0
+                    && c.surprisePercent() != null && c.surprisePercent().signum() > 0;
             Integer consecutive = p.hist().isEmpty() ? null : sueEngine.seasonalBeatStreak(p.hist());
 
             EquityMetrics em = safeMetrics(c.symbol());
@@ -95,6 +107,7 @@ public class EchoEnrichmentService {
         try {
             return marketData.dailyOhlcHistory(symbol, historyDays);
         } catch (Exception e) {
+            log.debug("echo enrichment: OHLC unavailable for {}: {}", symbol, e.getMessage());
             return List.of();
         }
     }
@@ -103,6 +116,7 @@ public class EchoEnrichmentService {
         try {
             return equityMetrics.metrics(symbol);
         } catch (Exception e) {
+            log.debug("echo enrichment: equity metrics unavailable for {}: {}", symbol, e.getMessage());
             return EquityMetrics.unavailable();
         }
     }
