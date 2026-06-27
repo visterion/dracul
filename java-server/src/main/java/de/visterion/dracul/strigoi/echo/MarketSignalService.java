@@ -17,6 +17,17 @@ import java.util.Map;
  * abnormal report-day volume, 6-12 month price momentum, and average daily dollar
  * volume. No Spring state, no I/O — fully unit-tested. Missing data degrades to a
  * null field / {@link MarketSignals#empty()}, never an exception.
+ *
+ * <p>Window anchoring is deliberate and differs per signal:
+ * <ul>
+ *   <li><b>CAR</b> and <b>abnormal volume</b> are anchored to the report day (d0 =
+ *       the first bar on/after {@code reportDate}) — they measure the announcement
+ *       reaction. CAR needs a bar before d0 (d0 == 0 ⇒ no prior close ⇒ unavailable).</li>
+ *   <li><b>Momentum</b> and <b>ADV</b> are anchored to the most recent bar (the end of
+ *       the supplied series, i.e. "now"): momentum is the stock's trailing 6-12 month
+ *       price momentum and ADV is current liquidity/capturability. Callers fetch OHLC
+ *       up to the present, so the latest bar is today.</li>
+ * </ul>
  */
 @Component
 public class MarketSignalService {
@@ -50,7 +61,7 @@ public class MarketSignalService {
         // --- CAR ---
         BigDecimal car1d = null, car3d = null;
         boolean carAvailable = false;
-        if (d0 > 0) {
+        if (d0 > 0) { // d0 == 0 ⇒ no prior close ⇒ CAR unavailable
             BigDecimal abn0 = abnormalReturn(stockBars, marketBars, mIdx, d0, effBeta);
             if (abn0 != null) {
                 car1d = abn0.setScale(SCALE, RoundingMode.HALF_UP);
@@ -116,7 +127,8 @@ public class MarketSignalService {
 
         if (market == null) return null;
         Integer mj = mIdx.get(stock.get(i).date());
-        if (mj == null || mj <= 0) return null;
+        if (mj == null) return null; // no market bar for this date
+        if (mj <= 0) return null;    // market bar is first in series ⇒ no prior close
         BigDecimal mPrev = market.get(mj - 1).close();
         BigDecimal mCur = market.get(mj).close();
         if (mPrev.signum() == 0) return null;
