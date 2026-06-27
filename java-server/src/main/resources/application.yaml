@@ -32,6 +32,9 @@ dracul:
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
       earnings-source: ${ECHO_EARNINGS_SOURCE:finnhub}
+      ohlc-history-days: ${ECHO_OHLC_HISTORY_DAYS:320}
+      car:
+        market-proxy: ${ECHO_CAR_PROXY:SPY}
     spin:
       enabled: ${STRIGOI_SPIN_ENABLED:false}
       webhook-token: ${STRIGOI_SPIN_TOKEN:dev-token-change-me}

@@ -85,6 +85,10 @@ calculation via `GET /time_series?interval=1day&outputsize=N` where N is control
 this path uses `range=1y&interval=1d`. History fetches are per-position and run during
 the nightly gropar agent run, not on the read path.
 
+- Strigoi-Echo SP2 also consumes daily OHLC (via `MarketDataPort.dailyOhlcHistory`) for the
+  candidate and the market proxy (SPY) to compute announcement-CAR, abnormal volume,
+  6-12 month momentum and average daily dollar volume.
+
 **`quotes(symbols)`** — batch price refresh for the watchlist on-read path:
 
 - Single call: `GET /quote?symbol=A,B,C` — returns current price and day-change
@@ -207,6 +211,9 @@ Strigoi-Lazarus resolves 52-week range and health ratios via
 - Auth via `FINNHUB_API_KEY` query token.
 - **Graceful degradation:** a blank `FINNHUB_API_KEY` or any error → returns
   `null`; strigoi-lazarus skips that symbol entirely.
+- **`/stock/metric` (metric=all)** — used by Strigoi-Echo SP2 for `beta`, `marketCapitalization`
+  and the 52-week range.
+- **`/stock/profile2`** — used by Strigoi-Echo SP2 for `finnhubIndustry` (sector).
 
 ## Finnhub news adapter
 
