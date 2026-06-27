@@ -1,6 +1,7 @@
 package de.visterion.dracul.hunting.finnhub;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.http.Fault;
 import de.visterion.dracul.strigoi.echo.EquityMetrics;
 import org.junit.jupiter.api.*;
 import org.springframework.web.client.RestClient;
@@ -69,5 +70,26 @@ class FinnhubEquityMetricsTest {
         var noKey = new FinnhubEquityMetrics(RestClient.builder().baseUrl(wm.baseUrl()).build(), "");
         assertThat(noKey.metrics("X").available()).isFalse();
         wm.verify(0, getRequestedFor(urlPathEqualTo("/stock/metric")));
+    }
+
+    @Test
+    void connectionFaultOnMetricBecomesUnavailable() {
+        wm.stubFor(get(urlPathEqualTo("/stock/metric"))
+                .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
+        assertThat(adapter.metrics("X").available()).isFalse();
+    }
+
+    @Test
+    void profileWithoutIndustryFieldYieldsNullSector() {
+        wm.stubFor(get(urlPathEqualTo("/stock/metric")).willReturn(okJson("""
+            {"symbol":"X","metric":{"beta":1.0}}
+            """)));
+        wm.stubFor(get(urlPathEqualTo("/stock/profile2")).willReturn(okJson("{}")));
+
+        EquityMetrics m = adapter.metrics("X");
+
+        assertThat(m.available()).isTrue();
+        assertThat(m.beta()).isEqualTo(1.0);
+        assertThat(m.sector()).isNull();
     }
 }
