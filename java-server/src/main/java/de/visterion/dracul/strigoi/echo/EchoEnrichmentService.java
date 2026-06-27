@@ -1,5 +1,8 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.OhlcBar;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -9,17 +12,36 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Deterministic SP1 enrichment: SUE (+decile across the batch), revenue-surprise, double-beat,
- *  consecutive seasonal beats. Pure orchestration over SueEngine + EpsHistoryPort. */
+/** Deterministic PEAD enrichment. SP1: SUE (+decile across the batch), revenue-surprise,
+ *  double-beat, consecutive seasonal beats. SP2: market-adjusted announcement-CAR, abnormal
+ *  volume, momentum and ADV (from OHLC vs the market proxy) plus beta/marketCap/sector.
+ *  Every external lookup is wrapped so a failure degrades one field, never the whole run. */
 @Component
 public class EchoEnrichmentService {
 
     private final SueEngine sueEngine;
     private final EpsHistoryPort epsHistory;
+    private final MarketDataPort marketData;
+    private final MarketSignalService marketSignals;
+    private final EquityMetricsPort equityMetrics;
+    private final String marketProxy;
+    private final int historyDays;
 
-    public EchoEnrichmentService(SueEngine sueEngine, EpsHistoryPort epsHistory) {
+    public EchoEnrichmentService(
+            SueEngine sueEngine,
+            EpsHistoryPort epsHistory,
+            MarketDataPort marketData,
+            MarketSignalService marketSignals,
+            EquityMetricsPort equityMetrics,
+            @Value("${dracul.strigoi.echo.car.market-proxy:SPY}") String marketProxy,
+            @Value("${dracul.strigoi.echo.ohlc-history-days:320}") int historyDays) {
         this.sueEngine = sueEngine;
         this.epsHistory = epsHistory;
+        this.marketData = marketData;
+        this.marketSignals = marketSignals;
+        this.equityMetrics = equityMetrics;
+        this.marketProxy = marketProxy;
+        this.historyDays = historyDays;
     }
 
     public List<EnrichedPeadCandidate> enrich(List<PeadCandidate> candidates) {
@@ -35,9 +57,13 @@ public class EchoEnrichmentService {
         }
         boolean thin = sueValues.size() < 20;
 
+        // Market proxy OHLC fetched once for the whole batch (CAR denominator).
+        List<OhlcBar> marketBars = ohlc(marketProxy);
+
         List<EnrichedPeadCandidate> out = new ArrayList<>();
         for (Partial p : partials) {
             PeadCandidate c = p.c();
+
             Integer decile = null;
             boolean approximate = p.sue().approximate();
             if (p.sue().available() && p.sue().value() != null) {
@@ -48,15 +74,37 @@ public class EchoEnrichmentService {
             boolean doubleBeat = revSurprise != null && revSurprise.signum() > 0;
             Integer consecutive = p.hist().isEmpty() ? null : sueEngine.seasonalBeatStreak(p.hist());
 
+            EquityMetrics em = safeMetrics(c.symbol());
+            List<OhlcBar> stockBars = ohlc(c.symbol());
+            MarketSignals ms = marketSignals.compute(stockBars, marketBars, c.reportDate(), em.beta());
+
             out.add(new EnrichedPeadCandidate(
                     c.symbol(), c.companyName(), c.reportDate(),
                     ChronoUnit.DAYS.between(c.reportDate(), LocalDate.now()),
                     c.epsActual(), c.epsEstimate(), c.surprisePercent(),
                     p.sue().value(), decile, approximate, p.sue().available(),
                     revSurprise, doubleBeat, consecutive, c.currentPrice(),
-                    null, null, false, null, null, null, null, null, null, false));
+                    ms.announcementCar1d(), ms.announcementCar3d(), ms.carAvailable(),
+                    ms.abnormalVolume(), ms.momentum6_12m(), ms.adv(),
+                    em.marketCap(), em.beta(), em.sector(), em.available()));
         }
         return out;
+    }
+
+    private List<OhlcBar> ohlc(String symbol) {
+        try {
+            return marketData.dailyOhlcHistory(symbol, historyDays);
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private EquityMetrics safeMetrics(String symbol) {
+        try {
+            return equityMetrics.metrics(symbol);
+        } catch (Exception e) {
+            return EquityMetrics.unavailable();
+        }
     }
 
     private static BigDecimal revenueSurprise(BigDecimal actual, BigDecimal estimate) {
