@@ -69,7 +69,9 @@ class StrigoiEchoWebhookControllerIT {
                 new BigDecimal("1.65"), new BigDecimal("1.50"), new BigDecimal("10.0"),
                 null, null, false, false,
                 new BigDecimal("11.111100"), true, null, new BigDecimal("190.00"),
-                null, null, false, null, null, null, null, null, null, false);
+                new BigDecimal("0.031000"), new BigDecimal("0.045000"), true,
+                new BigDecimal("2.100000"), new BigDecimal("0.150000"), new BigDecimal("120000000.00"),
+                2_500_000.0, 1.1, "Technology", true);
         when(enrichment.enrich(any())).thenReturn(List.of(enriched));
     }
 
@@ -86,6 +88,10 @@ class StrigoiEchoWebhookControllerIT {
         assertThat(c0.path("symbol").asText()).isEqualTo("AAPL");
         assertThat(c0.has("sueAvailable")).isTrue();
         assertThat(c0.has("revenueSurprisePercent")).isTrue();
+        assertThat(c0.has("announcementCar1d")).isTrue();
+        assertThat(c0.path("carAvailable").asBoolean()).isTrue();
+        assertThat(c0.has("marketCap")).isTrue();
+        assertThat(c0.path("sector").asText()).isEqualTo("Technology");
         assertThat(resp.path("output").path("data_source_health").path("status").asText())
                 .isEqualTo("healthy");
     }
