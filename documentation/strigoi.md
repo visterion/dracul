@@ -22,10 +22,28 @@ logic and the hunt pattern.
 |---|---|
 | strigoi-spin | **implemented 2026-06-05** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted) |
 | strigoi-insider | **implemented 2026-05-25** — Form-4 cluster screener, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases) |
-| strigoi-echo | **implemented 2026-06-02; signal upgrade (v2 SP1) 2026-06-24** — Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (current price ≥ $5). Earnings announcements come from **Finnhub `/calendar/earnings`** (primary), with the Yahoo earnings calendar demoted to a config-selectable fallback. A deterministic enrichment layer replaces the old raw-5%-surprise signal with academic PEAD signals: **time-series SUE** (Foster seasonal-random-walk, from SEC EDGAR quarterly diluted-EPS history with date-based seasonal alignment) ranked cross-sectionally into **deciles** (z-band fallback for thin batches), **revenue-surprise / double-beat**, and **consecutive seasonal beats**. The LLM applies a SUE-based confidence rubric (not a fixed 5% threshold); each emitted prey echoes its numeric **SUE + decile** in `signals`. Long-only. |
+| strigoi-echo | **implemented 2026-06-02; signal upgrade (v2 SP1) 2026-06-24; market-reaction signals (v2 SP2) 2026-06-27** — Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (current price ≥ $5). Earnings announcements come from **Finnhub `/calendar/earnings`** (primary), with the Yahoo earnings calendar demoted to a config-selectable fallback. A deterministic enrichment layer replaces the old raw-5%-surprise signal with academic PEAD signals: **time-series SUE** (Foster seasonal-random-walk, from SEC EDGAR quarterly diluted-EPS history with date-based seasonal alignment) ranked cross-sectionally into **deciles** (z-band fallback for thin batches), **revenue-surprise / double-beat**, and **consecutive seasonal beats**. SP2 further enriches surviving candidates with market-reaction signals from daily OHLC and Finnhub metrics (see SP2 section below). The LLM applies a SUE-based confidence rubric (not a fixed 5% threshold); each emitted prey echoes its numeric **SUE + decile** in `signals`. Long-only. |
 | strigoi-lazarus | **implemented 2026-06-05** — watchlist-scoped; screens watchlist names within ~10% of their 52-week low with a light solvency gate (positive ROA or free cash flow, modest leverage); the reasoning-tier LLM applies Piotroski's F-Score judgement and emits `QUALITY_52W_LOW` Prey |
 | strigoi-index | **implemented 2026-06-06** — Wikipedia S&P 500 main constituents table (`Date added` column), routine tier (model_purpose `routine`), agent registered with Vistierie on startup; surfaces recently-added S&P 500 constituents; the routine-tier LLM judges whether the inclusion-drift window is still open and emits `INDEX_INCLUSION` Prey |
 | strigoi-merger | **implemented 2026-06-05** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey |
+
+### Strigoi-Echo SP2: market-reaction signals
+
+**SP2 market-reaction signals (deterministic, added 2026-06-27).** Each surviving
+candidate is further enriched from daily OHLC and Finnhub metrics:
+
+- `announcementCar1d` / `announcementCar3d` — market-adjusted abnormal return around the
+  report day, computed vs the market proxy (default SPY) and beta-adjusted when beta is
+  known. A positive CAR with the same sign as the surprise is the strongest confirming
+  signal; a negative CAR (the market already faded the beat) is a hard counter-argument.
+- `abnormalVolume` — report-day volume / trailing 20-day average volume.
+- `momentum6_12m` — price return over the 6-12 month window (price + earnings momentum
+  compound).
+- `adv`, `marketCap`, `beta`, `sector` — liquidity and size, used to dampen confidence on
+  large, heavily-arbitraged names.
+
+Every SP2 field carries an availability flag (`carAvailable`, `metricsAvailable`); missing
+OHLC or metrics degrade the affected field conservatively and never abort the run.
 
 ## Hunt Pattern
 

@@ -172,6 +172,8 @@ dracul:
 | `ECHO_EARNINGS_SOURCE` (`dracul.strigoi.echo.earnings-source`) | `finnhub` | Earnings-announcement source for the pre-screen. Allowed: `finnhub` (primary — Finnhub `/calendar/earnings`) or `yahoo` (fallback — Yahoo earnings calendar). |
 | `ECHO_MIN_SURPRISE` | `5.0` | Minimum positive earnings-surprise percent for the pre-screen. |
 | `ECHO_MIN_PRICE` | `5.0` | Minimum current share price (USD) liquidity floor for the pre-screen. |
+| `ECHO_OHLC_HISTORY_DAYS` (`dracul.strigoi.echo.ohlc-history-days`) | `320` | Trading days of daily OHLC fetched per symbol/proxy for SP2 CAR, momentum and ADV. |
+| `ECHO_CAR_PROXY` (`dracul.strigoi.echo.car.market-proxy`) | `SPY` | Market proxy symbol used as the CAR market-adjustment benchmark. |
 
 Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared price /
 Yahoo market-data client. Its v2 signal data (academic PEAD signals: time-series
