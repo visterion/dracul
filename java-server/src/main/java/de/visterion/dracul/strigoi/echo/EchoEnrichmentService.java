@@ -53,7 +53,8 @@ public class EchoEnrichmentService {
                     ChronoUnit.DAYS.between(c.reportDate(), LocalDate.now()),
                     c.epsActual(), c.epsEstimate(), c.surprisePercent(),
                     p.sue().value(), decile, approximate, p.sue().available(),
-                    revSurprise, doubleBeat, consecutive, c.currentPrice()));
+                    revSurprise, doubleBeat, consecutive, c.currentPrice(),
+                    null, null, false, null, null, null, null, null, null, false));
         }
         return out;
     }

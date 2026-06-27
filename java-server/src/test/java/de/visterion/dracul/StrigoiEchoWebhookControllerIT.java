@@ -68,7 +68,8 @@ class StrigoiEchoWebhookControllerIT {
                 "AAPL", "Apple Inc.", LocalDate.now().minusDays(2), 2,
                 new BigDecimal("1.65"), new BigDecimal("1.50"), new BigDecimal("10.0"),
                 null, null, false, false,
-                new BigDecimal("11.111100"), true, null, new BigDecimal("190.00"));
+                new BigDecimal("11.111100"), true, null, new BigDecimal("190.00"),
+                null, null, false, null, null, null, null, null, null, false);
         when(enrichment.enrich(any())).thenReturn(List.of(enriched));
     }
 
