@@ -170,6 +170,8 @@ quarterly diluted-EPS history fetched from SEC EDGAR companyconcept:
   series.
 - **Graceful degradation:** a missing CIK, empty series, or any fetch error skips
   the SUE signal for that symbol rather than failing the run.
+- **`companyconcept` NetIncomeLoss / NetCashProvidedByUsedInOperatingActivities / Assets** — used by
+  Strigoi-Echo SP3 (`EdgarFundamentals`) for the Sloan accrual ratio.
 
 ## Yahoo intraday adapter
 
@@ -235,6 +237,9 @@ The Daywalker resolves material news and analyst-rating shifts via
 - **Graceful degradation:** a blank `FINNHUB_API_KEY` short-circuits to an empty
   list (no HTTP); any error also returns empty. Negativity / downgrade severity
   is judged by the LLM child run, not the adapter.
+- Strigoi-Echo SP3 also uses Finnhub `/company-news` (confounder keyword screen, `FinnhubEventScreen`),
+  `/stock/recommendation` (analyst-revision proxy, `FinnhubRevisions`), and `/calendar/earnings`
+  forward window (next-earnings timing, `FinnhubNextEarnings`).
 
 ## EDGAR merger adapter
 
