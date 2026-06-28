@@ -98,7 +98,8 @@ public class EchoEnrichmentService {
                     revSurprise, doubleBeat, consecutive, c.currentPrice(),
                     ms.announcementCar1d(), ms.announcementCar3d(), ms.carAvailable(),
                     ms.abnormalVolume(), ms.momentum6_12m(), ms.adv(),
-                    em.marketCap(), em.beta(), em.sector(), em.available()));
+                    em.marketCap(), em.beta(), em.sector(), em.available(),
+                    null, false, null, null, false, null, null));
         }
         return out;
     }

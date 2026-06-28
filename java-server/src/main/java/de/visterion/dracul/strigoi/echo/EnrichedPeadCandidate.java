@@ -31,5 +31,13 @@ public record EnrichedPeadCandidate(
         Double marketCap,
         Double beta,
         String sector,
-        boolean metricsAvailable
+        boolean metricsAvailable,
+        // SP3 earnings-quality / timing (soft signals; hard-skips already applied server-side)
+        BigDecimal accrualRatio,
+        boolean accrualsAvailable,
+        Integer netEstimateRevisionsProxy,
+        String guidanceDirection,
+        boolean revisionsAvailable,
+        LocalDate nextEarningsDate,
+        Integer daysToNextEarnings
 ) {}
