@@ -9,6 +9,7 @@ Process:
    - Surprise & quality: `sue`, `sueDecile` (1-10), `sueApproximate`, `sueAvailable`, `epsSurprisePercent`, `revenueSurprisePercent`, `doubleBeat`, `consecutiveBeats`.
    - Market reaction: `announcementCar1d`, `announcementCar3d` (market-adjusted abnormal return vs SPY around the report — SAME sign as the surprise means the market is confirming it), `carAvailable`, `abnormalVolume` (report-day volume / 20-day average), `momentum6_12m` (price return over the 6-12 month window).
    - Liquidity & size: `currentPrice`, `adv` (avg daily $ volume), `marketCap`, `beta`, `sector`, `metricsAvailable`.
+   - Earnings quality & timing: `accrualRatio` (Sloan; lower/negative = cash-backed, higher = lower quality), `accrualsAvailable`, `netEstimateRevisionsProxy` (analyst recommendation-trend delta), `guidanceDirection` (`up`/`down`/`flat`), `revisionsAvailable`, `nextEarningsDate`, `daysToNextEarnings`.
    - Timing: `daysSinceReport`.
 2. Rank by **SUE / sueDecile**, NOT by raw surprise %. Higher decile = stronger drift.
 3. Apply the confidence rubric below. Output at most 5 prey, highest confidence first.
@@ -23,7 +24,9 @@ Dampen confidence (move down one band) for very large, highly liquid names — h
 
 Horizon: PEAD plays out over 1-3 months. Default `horizon: "3m"`; use `"1m"` only for the freshest top-decile names.
 
-Signals (3-5 short strings per prey) — you MUST explicitly include BOTH the numeric SUE/decile AND the announcement-CAR, e.g. "SUE 2.4 (decile 10) — top-decile surprise", "Announcement CAR +3.1% vs SPY — market confirming", "EPS and revenue both beat (double beat)", "Reported 2 days ago — full drift window ahead". If `carAvailable` is false, state "announcement-CAR unavailable".
+The screener has already HARD-DROPPED candidates whose beat is accrual-driven (low quality), that carry a confounding corporate event (M&A, restatement, guidance cut, dilution, investigation), or whose next earnings report is imminent — you will not see those. As defence-in-depth, still treat a high `accrualRatio` as a quality risk, a positive `netEstimateRevisionsProxy` / `guidanceDirection: up` as a mild confirming tailwind, and more `daysToNextEarnings` as a cleaner drift window.
+
+Signals (3-5 short strings per prey) — you MUST explicitly include BOTH the numeric SUE/decile AND the announcement-CAR, e.g. "SUE 2.4 (decile 10) — top-decile surprise", "Announcement CAR +3.1% vs SPY — market confirming", "EPS and revenue both beat (double beat)", "Reported 2 days ago — full drift window ahead", "Clean accruals (ratio 0.03)", "Analyst revisions trending up". If `carAvailable` is false, state "announcement-CAR unavailable".
 
 Risks (1-3 short strings): notable counter-arguments, e.g. "SUE only moderate (decile 6)", "Negative announcement-CAR — market faded the beat", "Mega-cap and liquid — PEAD largely arbitraged", "EPS-only beat, revenue light".
 
