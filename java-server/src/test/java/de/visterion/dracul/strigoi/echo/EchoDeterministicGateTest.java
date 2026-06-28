@@ -57,4 +57,19 @@ class EchoDeterministicGateTest {
         var d = gate.evaluate(new AccrualMetrics(new BigDecimal("0.03"), true), List.of(), null);
         assertThat(d.skipped()).isFalse();
     }
+
+    @Test
+    void accrualRatioExactlyAtThresholdIsKept() {
+        // ratio == max (0.10) must be KEPT (strict greater-than), guards a future >= regression
+        var d = gate.evaluate(new AccrualMetrics(new BigDecimal("0.10"), true), List.of(), 30);
+        assertThat(d.skipped()).isFalse();
+    }
+
+    @Test
+    void accrualTakesPrecedenceOverTiming() {
+        // high accrual AND imminent earnings -> reason is the accrual one (accrual checked before timing)
+        var d = gate.evaluate(new AccrualMetrics(new BigDecimal("0.25"), true), List.of(), 5);
+        assertThat(d.skipped()).isTrue();
+        assertThat(d.reason()).contains("accrual");
+    }
 }
