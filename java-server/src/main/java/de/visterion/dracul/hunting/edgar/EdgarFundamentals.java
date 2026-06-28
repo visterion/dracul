@@ -53,25 +53,29 @@ public class EdgarFundamentals implements FundamentalsPort {
     // Test constructor.
     EdgarFundamentals(RestClient http, EdgarCikResolver cik) { this.http = http; this.cik = cik; }
 
+    private record Dated(LocalDate end, BigDecimal value) {}
+
     @Override
     public AccrualMetrics accruals(String symbol) {
         Optional<String> cikOpt = cik.cik(symbol);
         if (cikOpt.isEmpty()) return AccrualMetrics.unavailable();
         String c = cikOpt.get();
 
-        BigDecimal netIncome = latestAnnualDuration(c, "NetIncomeLoss");
-        BigDecimal opCashFlow = latestAnnualDuration(c, "NetCashProvidedByUsedInOperatingActivities");
+        Dated netIncome = latestAnnualDuration(c, "NetIncomeLoss");
+        Dated opCashFlow = latestAnnualDuration(c, "NetCashProvidedByUsedInOperatingActivities");
         BigDecimal assets = latestInstant(c, "Assets");
 
-        if (netIncome == null || opCashFlow == null || assets == null || assets.signum() == 0) {
+        if (netIncome == null || opCashFlow == null || assets == null || assets.signum() == 0
+                || !netIncome.end().equals(opCashFlow.end())) {   // both flows must cover the same fiscal period
             return AccrualMetrics.unavailable();
         }
-        BigDecimal ratio = netIncome.subtract(opCashFlow).divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
+        BigDecimal ratio = netIncome.value().subtract(opCashFlow.value())
+                .divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
         return new AccrualMetrics(ratio, true);
     }
 
     /** Most recent ~annual (350-380d) duration fact value for the tag, by period end; null if none. */
-    private BigDecimal latestAnnualDuration(String paddedCik, String tag) {
+    private Dated latestAnnualDuration(String paddedCik, String tag) {
         JsonNode body = fetch(paddedCik, tag);
         if (body == null) return null;
         LocalDate bestEnd = null;
@@ -92,7 +96,7 @@ public class EdgarFundamentals implements FundamentalsPort {
                 }
             }
         }
-        return bestVal;
+        return bestVal == null ? null : new Dated(bestEnd, bestVal);
     }
 
     /** Most recent instant fact value (no start, has end) for the tag, by end; null if none. */
