@@ -58,4 +58,12 @@ class FinnhubEventScreenTest {
         wm.stubFor(get(urlPathEqualTo("/company-news")).willReturn(okJson("[]")));
         assertThat(adapter.confounders("ACME", LocalDate.now().minusDays(5))).isEmpty();
     }
+
+    @Test
+    void flagsAcquiresHeadlineForm() {
+        wm.stubFor(get(urlPathEqualTo("/company-news")).willReturn(okJson("""
+            [{"headline":"Acme acquires Beta Corp","summary":"","datetime":1900000000}]
+            """)));
+        assertThat(adapter.confounders("ACME", java.time.LocalDate.now().minusDays(5))).containsExactly("m&a");
+    }
 }
