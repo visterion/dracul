@@ -67,6 +67,30 @@ class EdgarFundamentalsTest {
     }
 
     @Test
+    void mismatchedAnnualPeriodsAreUnavailable() {
+        // NI for FY2025, OCF only for FY2024 -> periods differ -> unavailable
+        wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/NetIncomeLoss.json"))
+                .willReturn(okJson("{\"units\":{\"USD\":[" + annualFact("2025-12-31","2025-01-01",200.0) + "]}}")));
+        wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/NetCashProvidedByUsedInOperatingActivities.json"))
+                .willReturn(okJson("{\"units\":{\"USD\":[" + annualFact("2024-12-31","2024-01-01",150.0) + "]}}")));
+        wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/Assets.json"))
+                .willReturn(okJson("{\"units\":{\"USD\":[" + instantFact("2025-12-31",1000.0) + "]}}")));
+        assertThat(adapter.accruals("ACME").available()).isFalse();
+    }
+
+    @Test
+    void durationRowInAssetsIsIgnoredForInstant() {
+        // Assets has a duration row (with start) that must be ignored; only the instant counts.
+        wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/NetIncomeLoss.json"))
+                .willReturn(okJson("{\"units\":{\"USD\":[" + annualFact("2025-12-31","2025-01-01",200.0) + "]}}")));
+        wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/NetCashProvidedByUsedInOperatingActivities.json"))
+                .willReturn(okJson("{\"units\":{\"USD\":[" + annualFact("2025-12-31","2025-01-01",150.0) + "]}}")));
+        wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/Assets.json"))
+                .willReturn(okJson("{\"units\":{\"USD\":[" + annualFact("2025-12-31","2025-01-01",999999.0) + "," + instantFact("2025-12-31",1000.0) + "]}}")));
+        assertThat(adapter.accruals("ACME").accrualRatio()).isEqualByComparingTo("0.05");
+    }
+
+    @Test
     void zeroAssetsIsUnavailable() {
         wm.stubFor(get(urlPathEqualTo("/api/xbrl/companyconcept/CIK0000000123/us-gaap/NetIncomeLoss.json"))
                 .willReturn(okJson("{\"units\":{\"USD\":[" + annualFact("2025-12-31","2025-01-01",200.0) + "]}}")));
