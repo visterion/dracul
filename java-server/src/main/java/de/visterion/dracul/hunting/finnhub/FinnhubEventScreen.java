@@ -23,13 +23,13 @@ public class FinnhubEventScreen implements EventScreenPort {
     private record Category(String flag, String[] keywords) {}
 
     private static final List<Category> CATEGORIES = List.of(
-            new Category("m&a", new String[]{"merger", "acquisition", "to acquire", "acquire ", "buyout", "takeover"}),
+            new Category("m&a", new String[]{"merger", "acquisition", "to acquire", "acquire ", "acquires", "buyout", "takeover"}),
             new Category("restatement", new String[]{"restate", "restatement"}),
             new Category("guidance-cut", new String[]{"cuts guidance", "lowers guidance", "cuts forecast",
                     "lowers outlook", "guidance cut", "slashes forecast"}),
             new Category("dilution", new String[]{"public offering", "share offering", "stock offering", "dilution",
                     "secondary offering"}),
-            new Category("investigation", new String[]{"sec investigation", "probe", "fraud"}));
+            new Category("investigation", new String[]{"sec investigation", "sec probe", "fraud"}));
 
     private final FinnhubNewsAdapter news;
 
