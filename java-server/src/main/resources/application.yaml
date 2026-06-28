@@ -35,6 +35,9 @@ dracul:
       ohlc-history-days: ${ECHO_OHLC_HISTORY_DAYS:320}
       car:
         market-proxy: ${ECHO_CAR_PROXY:SPY}
+      gate:
+        max-accrual-ratio: ${ECHO_MAX_ACCRUAL:0.10}
+        min-days-to-next-earnings: ${ECHO_MIN_DAYS_NEXT:10}
     spin:
       enabled: ${STRIGOI_SPIN_ENABLED:false}
       webhook-token: ${STRIGOI_SPIN_TOKEN:dev-token-change-me}

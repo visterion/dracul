@@ -174,6 +174,8 @@ dracul:
 | `ECHO_MIN_PRICE` | `5.0` | Minimum current share price (USD) liquidity floor for the pre-screen. |
 | `ECHO_OHLC_HISTORY_DAYS` (`dracul.strigoi.echo.ohlc-history-days`) | `320` | Trading days of daily OHLC fetched per symbol/proxy for SP2 CAR, momentum and ADV. |
 | `ECHO_CAR_PROXY` (`dracul.strigoi.echo.car.market-proxy`) | `SPY` | Market proxy symbol used as the CAR market-adjustment benchmark. |
+| `dracul.strigoi.echo.gate.max-accrual-ratio` | `ECHO_MAX_ACCRUAL` | `0.10` | Sloan accrual ratio above which an earnings beat is treated as accrual-driven and the candidate is dropped. |
+| `dracul.strigoi.echo.gate.min-days-to-next-earnings` | `ECHO_MIN_DAYS_NEXT` | `10` | Drop a candidate whose next earnings report is fewer than this many days away. |
 
 Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared price /
 Yahoo market-data client. Its v2 signal data (academic PEAD signals: time-series

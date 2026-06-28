@@ -45,6 +45,24 @@ candidate is further enriched from daily OHLC and Finnhub metrics:
 Every SP2 field carries an availability flag (`carAvailable`, `metricsAvailable`); missing
 OHLC or metrics degrade the affected field conservatively and never abort the run.
 
+### Strigoi-Echo SP3: earnings-quality + event/timing gate
+
+**SP3 earnings-quality + event/timing gate (deterministic, added 2026-06-27).** Before a
+candidate reaches the LLM it must pass a server-side hard gate:
+
+- **Sloan accrual ratio** `(netIncome − operatingCashFlow) / totalAssets` from EDGAR. Above
+  `echo.gate.max-accrual-ratio` (default 0.10) the beat is accrual-driven (not cash-backed) and
+  the candidate is dropped.
+- **Confounder screen** over Finnhub company news since the report date (M&A, restatement,
+  guidance cut, dilution, investigation). Any hit drops the candidate — the announcement-CAR is
+  then not the drift signal. (EDGAR 8-K item-code parsing is a deferred refinement.)
+- **Timing gate** — if the next earnings report is within `echo.gate.min-days-to-next-earnings`
+  (default 10) the candidate is dropped (next-report event risk overlays the drift).
+
+Survivors carry soft signals for the LLM: `accrualRatio`, `netEstimateRevisionsProxy` /
+`guidanceDirection` (analyst recommendation-trend delta), and `nextEarningsDate` /
+`daysToNextEarnings`. All SP3 lookups degrade gracefully (availability flags) and never abort a run.
+
 ## Hunt Pattern
 
 Every Strigoi follows the same three-step shape:
