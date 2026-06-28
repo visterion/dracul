@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,17 +32,13 @@ class EchoEnrichmentServiceTest {
         return h;
     }
 
-    private EpsHistoryPort historyPort(List<QuarterlyEps> q) {
-        return (symbol, max) -> q;
-    }
+    private EpsHistoryPort historyPort(List<QuarterlyEps> q) { return (symbol, max) -> q; }
 
-    /** 25 consecutive-day bars ending today; report at index 22 (d0) so CAR + abnormal
-     *  volume are available. Stock +5% on report day; SPY flat. */
     private static List<OhlcBar> stockBars() {
         List<OhlcBar> out = new ArrayList<>();
         LocalDate start = LocalDate.now().minusDays(24);
         for (int i = 0; i < 25; i++) {
-            double close = (i == 22 || i == 23 || i == 24) ? 199.5 : 190.0; // +~5% from idx21 (190) to idx22
+            double close = (i == 22 || i == 23 || i == 24) ? 199.5 : 190.0;
             BigDecimal c = BigDecimal.valueOf(close);
             out.add(new OhlcBar(start.plusDays(i), c, c, c, c, 1_000L * (i == 22 ? 2 : 1)));
         }
@@ -60,9 +57,7 @@ class EchoEnrichmentServiceTest {
 
     private MarketDataPort marketData() {
         return new MarketDataPort() {
-            @Override public MarketData resolve(String symbol) {
-                throw new UnsupportedOperationException("not used");
-            }
+            @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
             @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
                 return "SPY".equals(symbol) ? spyBars() : stockBars();
             }
@@ -73,58 +68,80 @@ class EchoEnrichmentServiceTest {
         return symbol -> new EquityMetrics(1.0, 2_500_000.0, 150.0, 260.0, "Technology", true);
     }
 
-    private EchoEnrichmentService service(EpsHistoryPort hist) {
-        return new EchoEnrichmentService(new SueEngine(), hist, marketData(),
-                new MarketSignalService(), equityMetrics(), "SPY", 320);
+    // --- SP3 stubs (configurable per test) ---
+    private FundamentalsPort fundamentals(BigDecimal ratio) {
+        return symbol -> ratio == null ? AccrualMetrics.unavailable() : new AccrualMetrics(ratio, true);
+    }
+    private RevisionPort revisions(int proxy, String dir) {
+        return symbol -> new EarningsRevisions(proxy, dir, true);
+    }
+    private NextEarningsPort nextEarnings(Integer daysAhead) {
+        return symbol -> daysAhead == null ? Optional.empty()
+                : Optional.of(LocalDate.now().plusDays(daysAhead));
+    }
+    private EventScreenPort eventScreen(List<String> flags) {
+        return (symbol, since) -> flags;
+    }
+
+    private EchoEnrichmentService service(EpsHistoryPort hist, FundamentalsPort f, RevisionPort r,
+                                          NextEarningsPort n, EventScreenPort ev) {
+        return new EchoEnrichmentService(new SueEngine(), hist, marketData(), new MarketSignalService(),
+                equityMetrics(), "SPY", 320,
+                f, r, n, ev, new EchoDeterministicGate(new BigDecimal("0.10"), 10));
     }
 
     @Test
-    void enrichesWithSp1AndSp2Signals() {
-        var c = cand("AAPL", 1.80);
-        var out = service(historyPort(historyFor(REPORT))).enrich(List.of(c));
+    void enrichesCleanCandidateWithSp3SoftFields() {
+        var svc = service(historyPort(historyFor(REPORT)),
+                fundamentals(new BigDecimal("0.04")), revisions(7, "up"),
+                nextEarnings(40), eventScreen(List.of()));
+        var out = svc.enrich(List.of(cand("AAPL", 1.80)));
         assertThat(out).hasSize(1);
         var e = out.get(0);
-        // SP1 unchanged
-        assertThat(e.sueAvailable()).isTrue();
-        assertThat(e.revenueSurprisePercent()).isGreaterThan(BigDecimal.ZERO);
-        assertThat(e.doubleBeat()).isTrue();
-        assertThat(e.consecutiveBeats()).isEqualTo(4);
-        // SP2
-        assertThat(e.carAvailable()).isTrue();
-        assertThat(e.announcementCar1d()).isNotNull().isGreaterThan(BigDecimal.ZERO);
-        assertThat(e.abnormalVolume()).isEqualByComparingTo("2"); // report-day vol 2x
-        assertThat(e.metricsAvailable()).isTrue();
-        assertThat(e.beta()).isEqualTo(1.0);
-        assertThat(e.marketCap()).isEqualTo(2_500_000.0);
-        assertThat(e.sector()).isEqualTo("Technology");
+        assertThat(e.accrualsAvailable()).isTrue();
+        assertThat(e.accrualRatio()).isEqualByComparingTo("0.04");
+        assertThat(e.netEstimateRevisionsProxy()).isEqualTo(7);
+        assertThat(e.guidanceDirection()).isEqualTo("up");
+        assertThat(e.revisionsAvailable()).isTrue();
+        assertThat(e.nextEarningsDate()).isEqualTo(LocalDate.now().plusDays(40));
+        assertThat(e.daysToNextEarnings()).isEqualTo(40);
     }
 
     @Test
-    void degradesWhenNoHistory() {
-        var out = service(historyPort(List.of())).enrich(List.of(cand("ZZZ", 1.80)));
-        assertThat(out.get(0).sueAvailable()).isFalse();
-        assertThat(out.get(0).sueDecile()).isNull();
-        assertThat(out.get(0).consecutiveBeats()).isNull();
-        // SP2 still computed (OHLC + metrics independent of EPS history)
+    void dropsAccrualDrivenCandidate() {
+        var svc = service(historyPort(historyFor(REPORT)),
+                fundamentals(new BigDecimal("0.25")), revisions(1, "up"),
+                nextEarnings(40), eventScreen(List.of()));
+        assertThat(svc.enrich(List.of(cand("BAD", 1.80)))).isEmpty();
+    }
+
+    @Test
+    void dropsConfoundedCandidate() {
+        var svc = service(historyPort(historyFor(REPORT)),
+                fundamentals(new BigDecimal("0.03")), revisions(1, "up"),
+                nextEarnings(40), eventScreen(List.of("m&a")));
+        assertThat(svc.enrich(List.of(cand("MNA", 1.80)))).isEmpty();
+    }
+
+    @Test
+    void dropsCandidateWithImminentNextEarnings() {
+        var svc = service(historyPort(historyFor(REPORT)),
+                fundamentals(new BigDecimal("0.03")), revisions(1, "up"),
+                nextEarnings(5), eventScreen(List.of()));
+        assertThat(svc.enrich(List.of(cand("SOON", 1.80)))).isEmpty();
+    }
+
+    @Test
+    void degradesWhenSp3SourcesUnavailableButStillKeeps() {
+        var svc = service(historyPort(List.of()),
+                fundamentals(null), symbol -> EarningsRevisions.unavailable(),
+                nextEarnings(null), eventScreen(List.of()));
+        var out = svc.enrich(List.of(cand("ZZZ", 1.80)));
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).accrualsAvailable()).isFalse();
+        assertThat(out.get(0).revisionsAvailable()).isFalse();
+        assertThat(out.get(0).daysToNextEarnings()).isNull();
+        // SP1/SP2 still present
         assertThat(out.get(0).carAvailable()).isTrue();
-        assertThat(out.get(0).metricsAvailable()).isTrue();
-    }
-
-    @Test
-    void degradesWhenMarketDataThrows() {
-        MarketDataPort throwing = new MarketDataPort() {
-            @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
-            @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
-                throw new de.visterion.dracul.marketdata.MarketDataException(
-                        de.visterion.dracul.marketdata.MarketDataException.Kind.UNAVAILABLE, "boom", null);
-            }
-        };
-        var svc = new EchoEnrichmentService(new SueEngine(), historyPort(historyFor(REPORT)),
-                throwing, new MarketSignalService(),
-                s -> EquityMetrics.unavailable(), "SPY", 320);
-        var e = svc.enrich(List.of(cand("AAPL", 1.80))).get(0);
-        assertThat(e.carAvailable()).isFalse();
-        assertThat(e.announcementCar1d()).isNull();
-        assertThat(e.metricsAvailable()).isFalse();
     }
 }

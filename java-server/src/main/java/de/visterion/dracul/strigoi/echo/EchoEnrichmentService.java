@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /** Deterministic PEAD enrichment. SP1: SUE (+decile across the batch), revenue-surprise,
  *  double-beat, consecutive seasonal beats. SP2: market-adjusted announcement-CAR, abnormal
@@ -30,6 +31,11 @@ public class EchoEnrichmentService {
     private final EquityMetricsPort equityMetrics;
     private final String marketProxy;
     private final int historyDays;
+    private final FundamentalsPort fundamentals;
+    private final RevisionPort revisions;
+    private final NextEarningsPort nextEarnings;
+    private final EventScreenPort eventScreen;
+    private final EchoDeterministicGate gate;
 
     public EchoEnrichmentService(
             SueEngine sueEngine,
@@ -38,7 +44,12 @@ public class EchoEnrichmentService {
             MarketSignalService marketSignals,
             EquityMetricsPort equityMetrics,
             @Value("${dracul.strigoi.echo.car.market-proxy:SPY}") String marketProxy,
-            @Value("${dracul.strigoi.echo.ohlc-history-days:320}") int historyDays) {
+            @Value("${dracul.strigoi.echo.ohlc-history-days:320}") int historyDays,
+            FundamentalsPort fundamentals,
+            RevisionPort revisions,
+            NextEarningsPort nextEarnings,
+            EventScreenPort eventScreen,
+            EchoDeterministicGate gate) {
         this.sueEngine = sueEngine;
         this.epsHistory = epsHistory;
         this.marketData = marketData;
@@ -46,6 +57,11 @@ public class EchoEnrichmentService {
         this.equityMetrics = equityMetrics;
         this.marketProxy = marketProxy;
         this.historyDays = historyDays;
+        this.fundamentals = fundamentals;
+        this.revisions = revisions;
+        this.nextEarnings = nextEarnings;
+        this.eventScreen = eventScreen;
+        this.gate = gate;
     }
 
     public List<EnrichedPeadCandidate> enrich(List<PeadCandidate> candidates) {
@@ -90,6 +106,18 @@ public class EchoEnrichmentService {
             List<OhlcBar> stockBars = ohlc(c.symbol());
             MarketSignals ms = marketSignals.compute(stockBars, marketBars, c.reportDate(), em.beta());
 
+            AccrualMetrics accr = safeAccruals(c.symbol());
+            List<String> confounders = safeConfounders(c.symbol(), c.reportDate());
+            Optional<LocalDate> nextEarn = safeNextEarnings(c.symbol());
+            Integer daysToNext = nextEarn.map(d -> (int) ChronoUnit.DAYS.between(LocalDate.now(), d)).orElse(null);
+
+            GateDecision decision = gate.evaluate(accr, confounders, daysToNext);
+            if (decision.skipped()) {
+                log.debug("echo gate dropped {}: {}", c.symbol(), decision.reason());
+                continue;
+            }
+            EarningsRevisions rev = safeRevisions(c.symbol());
+
             out.add(new EnrichedPeadCandidate(
                     c.symbol(), c.companyName(), c.reportDate(),
                     ChronoUnit.DAYS.between(c.reportDate(), LocalDate.now()),
@@ -99,7 +127,9 @@ public class EchoEnrichmentService {
                     ms.announcementCar1d(), ms.announcementCar3d(), ms.carAvailable(),
                     ms.abnormalVolume(), ms.momentum6_12m(), ms.adv(),
                     em.marketCap(), em.beta(), em.sector(), em.available(),
-                    null, false, null, null, false, null, null));
+                    accr.accrualRatio(), accr.available(),
+                    rev.netProxy(), rev.direction(), rev.available(),
+                    nextEarn.orElse(null), daysToNext));
         }
         return out;
     }
@@ -120,6 +150,26 @@ public class EchoEnrichmentService {
             log.debug("echo enrichment: equity metrics unavailable for {}: {}", symbol, e.getMessage());
             return EquityMetrics.unavailable();
         }
+    }
+
+    private AccrualMetrics safeAccruals(String symbol) {
+        try { return fundamentals.accruals(symbol); }
+        catch (Exception e) { log.debug("echo: accruals unavailable for {}: {}", symbol, e.getMessage()); return AccrualMetrics.unavailable(); }
+    }
+
+    private EarningsRevisions safeRevisions(String symbol) {
+        try { return revisions.revisions(symbol); }
+        catch (Exception e) { log.debug("echo: revisions unavailable for {}: {}", symbol, e.getMessage()); return EarningsRevisions.unavailable(); }
+    }
+
+    private List<String> safeConfounders(String symbol, LocalDate since) {
+        try { return eventScreen.confounders(symbol, since); }
+        catch (Exception e) { log.debug("echo: event screen failed for {}: {}", symbol, e.getMessage()); return List.of(); }
+    }
+
+    private Optional<LocalDate> safeNextEarnings(String symbol) {
+        try { return nextEarnings.nextEarningsDate(symbol); }
+        catch (Exception e) { log.debug("echo: next-earnings unavailable for {}: {}", symbol, e.getMessage()); return Optional.empty(); }
     }
 
     private static BigDecimal revenueSurprise(BigDecimal actual, BigDecimal estimate) {

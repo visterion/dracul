@@ -72,7 +72,8 @@ class StrigoiEchoWebhookControllerIT {
                 new BigDecimal("0.031000"), new BigDecimal("0.045000"), true,
                 new BigDecimal("2.100000"), new BigDecimal("0.150000"), new BigDecimal("120000000.00"),
                 2_500_000.0, 1.1, "Technology", true,
-                null, false, null, null, false, null, null);
+                new BigDecimal("0.040000"), true, 5, "up", true,
+                java.time.LocalDate.now().plusDays(40), 40);
         when(enrichment.enrich(any())).thenReturn(List.of(enriched));
     }
 
@@ -93,6 +94,10 @@ class StrigoiEchoWebhookControllerIT {
         assertThat(c0.path("carAvailable").asBoolean()).isTrue();
         assertThat(c0.has("marketCap")).isTrue();
         assertThat(c0.path("sector").asText()).isEqualTo("Technology");
+        assertThat(c0.has("accrualRatio")).isTrue();
+        assertThat(c0.path("accrualsAvailable").asBoolean()).isTrue();
+        assertThat(c0.path("guidanceDirection").asText()).isEqualTo("up");
+        assertThat(c0.path("daysToNextEarnings").asInt()).isEqualTo(40);
         assertThat(resp.path("output").path("data_source_health").path("status").asText())
                 .isEqualTo("healthy");
     }
