@@ -71,7 +71,8 @@ class StrigoiEchoWebhookControllerIT {
                 new BigDecimal("11.111100"), true, null, new BigDecimal("190.00"),
                 new BigDecimal("0.031000"), new BigDecimal("0.045000"), true,
                 new BigDecimal("2.100000"), new BigDecimal("0.150000"), new BigDecimal("120000000.00"),
-                2_500_000.0, 1.1, "Technology", true);
+                2_500_000.0, 1.1, "Technology", true,
+                null, false, null, null, false, null, null);
         when(enrichment.enrich(any())).thenReturn(List.of(enriched));
     }
 
