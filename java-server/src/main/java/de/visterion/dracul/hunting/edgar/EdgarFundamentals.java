@@ -57,21 +57,26 @@ public class EdgarFundamentals implements FundamentalsPort {
 
     @Override
     public AccrualMetrics accruals(String symbol) {
-        Optional<String> cikOpt = cik.cik(symbol);
-        if (cikOpt.isEmpty()) return AccrualMetrics.unavailable();
-        String c = cikOpt.get();
+        try {
+            Optional<String> cikOpt = cik.cik(symbol);
+            if (cikOpt.isEmpty()) return AccrualMetrics.unavailable();
+            String c = cikOpt.get();
 
-        Dated netIncome = latestAnnualDuration(c, "NetIncomeLoss");
-        Dated opCashFlow = latestAnnualDuration(c, "NetCashProvidedByUsedInOperatingActivities");
-        BigDecimal assets = latestInstant(c, "Assets");
+            Dated netIncome = latestAnnualDuration(c, "NetIncomeLoss");
+            Dated opCashFlow = latestAnnualDuration(c, "NetCashProvidedByUsedInOperatingActivities");
+            BigDecimal assets = latestInstant(c, "Assets");
 
-        if (netIncome == null || opCashFlow == null || assets == null || assets.signum() == 0
-                || !netIncome.end().equals(opCashFlow.end())) {   // both flows must cover the same fiscal period
+            if (netIncome == null || opCashFlow == null || assets == null || assets.signum() == 0
+                    || !netIncome.end().equals(opCashFlow.end())) {   // both flows must cover the same fiscal period
+                return AccrualMetrics.unavailable();
+            }
+            BigDecimal ratio = netIncome.value().subtract(opCashFlow.value())
+                    .divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
+            return new AccrualMetrics(ratio, true);
+        } catch (Exception e) {
+            log.debug("EDGAR accruals failed for {}: {}", symbol, e.getMessage());
             return AccrualMetrics.unavailable();
         }
-        BigDecimal ratio = netIncome.value().subtract(opCashFlow.value())
-                .divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
-        return new AccrualMetrics(ratio, true);
     }
 
     /** Most recent ~annual (350-380d) duration fact value for the tag, by period end; null if none. */
