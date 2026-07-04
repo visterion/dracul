@@ -50,7 +50,7 @@ class MarketDataConfigTest {
 
         String ua = "Mozilla/5.0 (Test) Chrome/124.0.0.0";
         RestClient client = new MarketDataConfig().yahooRestClient(wm.baseUrl(), ua, 5000L);
-        new YahooMarketDataAdapter(client).resolve("AAPL");
+        client.get().uri("/v8/finance/chart/AAPL").retrieve().body(String.class);
 
         wm.verify(getRequestedFor(urlPathEqualTo("/v8/finance/chart/AAPL"))
                 .withHeader("User-Agent", equalTo(ua)));
@@ -61,7 +61,7 @@ class MarketDataConfigTest {
         stubChart();
 
         RestClient client = new MarketDataConfig().yahooRestClient(wm.baseUrl(), "", 5000L);
-        new YahooMarketDataAdapter(client).resolve("AAPL");
+        client.get().uri("/v8/finance/chart/AAPL").retrieve().body(String.class);
 
         wm.verify(getRequestedFor(urlPathEqualTo("/v8/finance/chart/AAPL"))
                 .withHeader("User-Agent", equalTo(MarketDataConfig.DEFAULT_YAHOO_USER_AGENT)));
