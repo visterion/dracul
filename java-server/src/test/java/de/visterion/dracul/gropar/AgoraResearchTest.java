@@ -47,6 +47,7 @@ class AgoraResearchTest {
         JsonNode args = cap.getValue();
         assertThat(args.get("symbol").asString()).isEqualTo("AAPL");
         assertThat(args.get("period").asInt()).isEqualTo(22);
+        assertThat(new java.math.BigDecimal(args.get("multiple").asString())).isEqualByComparingTo("3.0");
         assertThat(args.get("maFast").asInt()).isEqualTo(50);
         assertThat(args.get("maSlow").asInt()).isEqualTo(200);
         assertThat(args.get("minBars52w").asInt()).isEqualTo(250);

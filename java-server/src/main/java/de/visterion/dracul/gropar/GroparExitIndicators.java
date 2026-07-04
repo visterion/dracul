@@ -3,6 +3,7 @@ package de.visterion.dracul.gropar;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -16,6 +17,7 @@ import java.util.List;
 /** Assembles ExitIndicators from Agora TA (get_indicators via AgoraResearch) + gropar domain logic
  *  (gainLossPct vs entry, horizon/TIME_STOP, firedRules). Replaces the removed ExitIndicatorService. */
 @Component
+@ConditionalOnProperty(value = "dracul.gropar.enabled", havingValue = "true")
 public class GroparExitIndicators {
 
     private static final MathContext MC = MathContext.DECIMAL64;
