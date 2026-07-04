@@ -133,10 +133,17 @@ propagates to the caller.
 | Vistierie owns | Dracul owns |
 |---|---|
 | Bee/Strigoi runtime, schedule, recursion, context shielding | Strigoi domain logic and prompts |
-| Provider plugins, tier-based routing, cost ledger, kill switch | Market-data adapters (EDGAR, prices, news, calendar) |
+| Provider plugins, tier-based routing, cost ledger, kill switch | Market-data adapters (EDGAR, news, calendar); prices/OHLC consumed from Agora over MCP |
 | Run history, audit, batch API | Pre-screen logic (deterministic filters before LLM) |
 | Webhook completion delivery | `Prey` / `Verdict` / `Pattern` / `Alert` domain, persistence, frontend, backtest |
 | StreamingBee lifecycle | Daywalker trigger logic and alert assessment |
 
 Spotting investment terms (Prey, Verdict, Strigoi, Pattern Library) inside
 Vistierie's codebase is a layer-violation bug and must be moved to Dracul.
+
+**Prices / OHLC via Agora:** Dracul no longer runs its own Yahoo / Twelve Data /
+Finnhub price adapters. Quotes and daily OHLC come from the co-located **Agora**
+service, consumed over Agora's MCP front-door (`get_quote` / `get_ohlc`) via the
+generic `AgoraClient` and the `AgoraMarketData` facade. Agora owns provider
+fallback and rate-limit handling; Dracul just maps the tool output to its
+`MarketData` / `Quote` / `OhlcBar` DTOs. Agora must be deployed before Dracul.

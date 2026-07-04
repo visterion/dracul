@@ -487,8 +487,8 @@ endpoint returns notes in descending order by createdAt.
 tickers manually or by reference to a verdict. POST is idempotent — adding an
 existing symbol returns the existing item; the source verdict link is merged in
 only when previously null. Symbol metadata (company name, current price, 30-day
-history) is resolved synchronously via the new MarketDataPort (Yahoo Finance
-v1 adapter).
+history) is resolved synchronously via `AgoraMarketData` (Agora `get_quote` /
+`get_ohlc` over MCP).
 
 **Watchlist prices are server-refreshed in the background.** A
 `WatchlistPriceRefresher` (`@Scheduled`, US market hours) updates

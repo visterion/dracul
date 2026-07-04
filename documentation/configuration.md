@@ -59,25 +59,38 @@ Cloudflare.
 | `FINNHUB_API_KEY` | Finnhub news and quote adapter |
 | `NEWSAPI_KEY` | NewsAPI news adapter (optional) |
 
-## Twelve Data (primary price adapter)
+## Agora (prices / OHLC provider)
+
+Dracul no longer talks to price providers directly. All quotes and daily OHLC
+history come from **Agora** — a co-located service Dracul consumes over Agora's
+MCP front-door (Streamable-HTTP + Bearer) via the generic `AgoraClient` and the
+`AgoraMarketData` facade (`get_quote` / `get_ohlc`). Agora performs provider
+fallback (Finnhub / Twelve Data / Yahoo) internally, so there is no Dracul-side
+adapter chain any more.
 
 | Env var / property | Default | Purpose |
 |---|---|---|
-| `DRACUL_MARKETDATA_TWELVEDATA_API_KEY` (`dracul.marketdata.twelvedata.api-key`) | _(blank)_ | **Required for live prices.** Twelve Data API key. If blank, Twelve Data rejects calls with a status-error response; the watchlist gracefully serves stored prices instead. |
-| `DRACUL_MARKETDATA_TWELVEDATA_BASE_URL` (`dracul.marketdata.twelvedata.base-url`) | `https://api.twelvedata.com` | Base URL for all Twelve Data requests. Override for tests. |
-| `DRACUL_MARKETDATA_TWELVEDATA_CACHE_SECONDS` (`dracul.marketdata.twelvedata.cache-seconds`) | `120` | TTL (seconds) for the in-adapter batch-quote cache. Repeated watchlist loads within the window cost zero provider credits. |
+| `DRACUL_AGORA_BASE_URL` (`dracul.agora.base-url`) | `http://agora:8080` | Base URL of Agora's MCP front-door (in-cluster). |
+| `DRACUL_AGORA_TOKEN` (`dracul.agora.token`) | _(blank)_ | Bearer token sent on every Agora MCP request. |
+| `DRACUL_AGORA_TIMEOUT_MS` (`dracul.agora.timeout-ms`) | `8000` | Request timeout (ms) on the Agora MCP client. |
 
-**Free-tier note:** Twelve Data free tier = 8 API credits/min. A batch `/quote`
-of N symbols costs N credits. The default 120-second cache ensures at most one
-fresh batch call per window; a watchlist larger than ~8 tickers may exceed the
-8-credit/min limit on a cold load (chunking is deferred).
+**Deploy-ordering prerequisite:** Agora must be up **before** Dracul so the
+first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
+`quotes(...)` returns an empty map (the watchlist keeps its stored prices) and
+`resolve` / `dailyOhlcHistory` throw `MarketDataException(UNAVAILABLE)` — the
+same degradation contract as the old adapter chain, so scheduled refreshes never
+crash.
 
-## Yahoo Finance (fallback price / FX / intraday / earnings adapter)
+## Yahoo Finance (FX / intraday / earnings adapter)
+
+Yahoo is no longer a price/OHLC provider (Agora hosts those). The
+`yahooRestClient` bean and the keys below remain in use for FX, intraday, and
+the earnings-calendar fallback.
 
 | Env var / property | Default | Purpose |
 |---|---|---|
 | `DRACUL_MARKETDATA_YAHOO_BASE_URL` (`dracul.marketdata.yahoo.base-url`) | `https://query1.finance.yahoo.com` | Base URL for all Yahoo Finance requests. Override for tests. |
-| `DRACUL_MARKETDATA_YAHOO_USER_AGENT` (`dracul.marketdata.yahoo.user-agent`) | `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36` | User-Agent sent on all Yahoo Finance requests (market-data resolve/quotes, FX, intraday, earnings). Yahoo returns HTTP 429 to a **Linux**-Chrome UA (`X11; Linux x86_64`) even though it is browser-like, so the default is a **Windows**-Chrome UA; both return 200. Override via env only if Yahoo changes its heuristics. |
+| `DRACUL_MARKETDATA_YAHOO_USER_AGENT` (`dracul.marketdata.yahoo.user-agent`) | `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36` | User-Agent sent on all Yahoo Finance requests (FX, intraday, earnings). Yahoo returns HTTP 429 to a **Linux**-Chrome UA (`X11; Linux x86_64`) even though it is browser-like, so the default is a **Windows**-Chrome UA; both return 200. Override via env only if Yahoo changes its heuristics. |
 | `DRACUL_MARKETDATA_YAHOO_TIMEOUT_MS` (`dracul.marketdata.yahoo.timeout-ms`) | `5000` | Connect + read timeout (ms) on the Yahoo client so a slow Yahoo can't stall a request. |
 | `DRACUL_MARKETDATA_FX_REFRESH_ENABLED` (`dracul.marketdata.fx-refresh.enabled`) | `true` | Background FX-rate warm-up. Watchlist/portfolio currency conversion is served from this warmed cache and never does a live fetch in the request path. |
 | `DRACUL_MARKETDATA_FX_REFRESH_INITIAL_DELAY_MS` (`dracul.marketdata.fx-refresh.initial-delay-ms`) | `0` | Delay (ms) before the first FX warm-up run after startup. |
