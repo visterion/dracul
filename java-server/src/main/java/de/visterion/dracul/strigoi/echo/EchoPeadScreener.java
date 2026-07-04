@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.marketdata.MarketDataException;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -17,12 +17,12 @@ import java.util.List;
 @Component
 public class EchoPeadScreener {
 
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
     private final BigDecimal minSurprisePercent;
     private final BigDecimal minPrice;
 
     public EchoPeadScreener(
-            MarketDataPort marketData,
+            AgoraMarketData marketData,
             @Value("${dracul.strigoi.echo.min-surprise-percent:5.0}") BigDecimal minSurprisePercent,
             @Value("${dracul.strigoi.echo.min-price:5.0}") BigDecimal minPrice) {
         this.marketData = marketData;

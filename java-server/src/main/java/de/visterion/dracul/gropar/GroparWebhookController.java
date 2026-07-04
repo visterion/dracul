@@ -2,7 +2,7 @@ package de.visterion.dracul.gropar;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.MarketDataException;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.verdict.VerdictRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
@@ -39,7 +39,7 @@ public class GroparWebhookController {
     private final BearerTokenVerifier verifier;
     private final WatchlistRepository watchlistRepo;
     private final VerdictRepository verdictRepo;
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
     private final ExitSignalRepository exitSignalRepo;
     private final TelegramNotifier telegram;
     private final ExitIndicatorService indicatorService;
@@ -55,7 +55,7 @@ public class GroparWebhookController {
             @Value("${dracul.gropar.webhook-token}") String token,
             WatchlistRepository watchlistRepo,
             VerdictRepository verdictRepo,
-            MarketDataPort marketData,
+            AgoraMarketData marketData,
             ExitSignalRepository exitSignalRepo,
             TelegramNotifier telegram,
             ExitIndicatorService indicatorService,

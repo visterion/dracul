@@ -1,6 +1,6 @@
 package de.visterion.dracul.strigoi.echo;
 
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +26,7 @@ public class EchoEnrichmentService {
 
     private final SueEngine sueEngine;
     private final EpsHistoryPort epsHistory;
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
     private final MarketSignalService marketSignals;
     private final EquityMetricsPort equityMetrics;
     private final String marketProxy;
@@ -40,7 +40,7 @@ public class EchoEnrichmentService {
     public EchoEnrichmentService(
             SueEngine sueEngine,
             EpsHistoryPort epsHistory,
-            MarketDataPort marketData,
+            AgoraMarketData marketData,
             MarketSignalService marketSignals,
             EquityMetricsPort equityMetrics,
             @Value("${dracul.strigoi.echo.car.market-proxy:SPY}") String marketProxy,

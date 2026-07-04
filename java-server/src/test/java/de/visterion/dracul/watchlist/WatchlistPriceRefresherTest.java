@@ -1,6 +1,6 @@
 package de.visterion.dracul.watchlist;
 
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
 import org.junit.jupiter.api.Test;
 
@@ -15,7 +15,7 @@ class WatchlistPriceRefresherTest {
     @Test
     void updatesOnlyResolvedTickers() {
         var repo = mock(WatchlistRepository.class);
-        var port = mock(MarketDataPort.class);
+        var port = mock(AgoraMarketData.class);
         when(repo.distinctTickers()).thenReturn(List.of("AVGO", "NVDA"));
         when(port.quotes(List.of("AVGO", "NVDA")))
                 .thenReturn(Map.of("AVGO", new Quote(new BigDecimal("382.07"), new BigDecimal("-0.9"))));
@@ -29,7 +29,7 @@ class WatchlistPriceRefresherTest {
     @Test
     void noTickersDoesNothing() {
         var repo = mock(WatchlistRepository.class);
-        var port = mock(MarketDataPort.class);
+        var port = mock(AgoraMarketData.class);
         when(repo.distinctTickers()).thenReturn(List.of());
 
         new WatchlistPriceRefresher(repo, port).refresh();
@@ -41,7 +41,7 @@ class WatchlistPriceRefresherTest {
     @Test
     void providerExceptionIsSwallowed() {
         var repo = mock(WatchlistRepository.class);
-        var port = mock(MarketDataPort.class);
+        var port = mock(AgoraMarketData.class);
         when(repo.distinctTickers()).thenReturn(List.of("AVGO"));
         when(port.quotes(anyCollection())).thenThrow(new RuntimeException("provider down"));
 

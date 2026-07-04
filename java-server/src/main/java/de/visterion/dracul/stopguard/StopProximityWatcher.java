@@ -1,6 +1,6 @@
 package de.visterion.dracul.stopguard;
 
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
 import de.visterion.dracul.watchlist.PositionRisk;
 import de.visterion.dracul.watchlist.WatchlistItem;
@@ -29,11 +29,11 @@ public class StopProximityWatcher {
     private static final Logger log = LoggerFactory.getLogger(StopProximityWatcher.class);
 
     private final WatchlistRepository watchlist;
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
     private final StopAlertEmitter emitter;
     private final double atrMultiple;
 
-    public StopProximityWatcher(WatchlistRepository watchlist, MarketDataPort marketData,
+    public StopProximityWatcher(WatchlistRepository watchlist, AgoraMarketData marketData,
             StopAlertEmitter emitter,
             @Value("${dracul.stopguard.atr-multiple:0.5}") double atrMultiple) {
         this.watchlist = watchlist;

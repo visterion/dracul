@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "cwd": "/root/dracul",
+      "type": "stdio",
+      "env": {
+        "CRG_MAX_IMPACT_NODES": "2000"
+      }
+    }
+  }
+}

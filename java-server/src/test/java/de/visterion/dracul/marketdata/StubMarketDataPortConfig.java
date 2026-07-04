@@ -9,5 +9,5 @@ public class StubMarketDataPortConfig {
 
     @Bean
     @Primary
-    public StubMarketDataPort stubMarketDataPort() { return new StubMarketDataPort(); }
+    public AgoraMarketData stubMarketDataPort() { return new StubMarketDataPort(); }
 }
