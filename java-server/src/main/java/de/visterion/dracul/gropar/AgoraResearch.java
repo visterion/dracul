@@ -2,6 +2,7 @@ package de.visterion.dracul.gropar;
 
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -11,6 +12,7 @@ import java.math.BigDecimal;
 
 /** Fetches Agora's bundled get_indicators for gropar and maps it to a neutral ExitTa. Never throws. */
 @Component
+@ConditionalOnProperty(value = "dracul.gropar.enabled", havingValue = "true")
 public class AgoraResearch {
 
     private final AgoraClient agora;
