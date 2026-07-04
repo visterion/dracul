@@ -51,7 +51,7 @@ class GroparWebhookControllerTest {
 
         AgoraResearch research = mock(AgoraResearch.class);
         when(research.exitTa(any(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
-                .thenReturn(new ExitTa(null, new BigDecimal("2"), true, new BigDecimal("25"), false,
+                .thenReturn(new ExitTa(new BigDecimal("2"), true, new BigDecimal("25"), false,
                         new BigDecimal("105"), true, new BigDecimal("100"), true, "BULLISH",
                         new BigDecimal("120"), new BigDecimal("90"), true));
         var indicatorService = new GroparExitIndicators(research, 22, new BigDecimal("3.0"), 50, 200, 250);
