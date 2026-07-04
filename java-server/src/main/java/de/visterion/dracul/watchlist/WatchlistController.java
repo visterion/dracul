@@ -66,6 +66,7 @@ public class WatchlistController {
 
         MarketData md = marketData.resolve(req.symbol());
         List<Double> hist = md.priceHistory30d().stream().map(BigDecimal::doubleValue).toList();
+        // NOTE(7b): Agora get_quote returns no company name → md.companyName() is the ticker (display fallback).
         WatchlistItem created = repo.insert(
                 user, req.symbol(), md.companyName(),
                 md.currentPrice().doubleValue(), hist,

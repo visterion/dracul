@@ -61,6 +61,7 @@ public class StopProximityWatcher {
             if (tickers.isEmpty()) return;
 
             Map<String, Quote> quotes;
+            // AgoraMarketData.quotes() returns an empty map on Agora failure (never throws); this catch is defensive.
             try {
                 quotes = marketData.quotes(tickers);
             } catch (Exception e) {

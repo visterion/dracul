@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * Refreshes watchlist prices in the background so the watchlist read can serve fresh stored
- * values. Runs every minute during US market hours; quotes come from the Finnhub-first chain.
+ * values. Runs every minute during US market hours; quotes come from Agora via {@code AgoraMarketData.quotes()}.
  * Symbols a provider cannot resolve keep their stored price (no overwrite). Never throws out of
  * the scheduled method — a failure must not kill the scheduler thread.
  */
