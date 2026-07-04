@@ -49,8 +49,12 @@ class GroparWebhookControllerTest {
         exitSignalRepo   = mock(ExitSignalRepository.class);
         telegram         = mock(TelegramNotifier.class);
 
-        var indicatorService = new ExitIndicatorService(
-                new ExitIndicatorService.Params(22, new BigDecimal("3.0"), 50, 200, 250));
+        AgoraResearch research = mock(AgoraResearch.class);
+        when(research.exitTa(any(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
+                .thenReturn(new ExitTa(null, new BigDecimal("2"), true, new BigDecimal("25"), false,
+                        new BigDecimal("105"), true, new BigDecimal("100"), true, "BULLISH",
+                        new BigDecimal("120"), new BigDecimal("90"), true));
+        var indicatorService = new GroparExitIndicators(research, 22, new BigDecimal("3.0"), 50, 200, 250);
 
         var riskService = new RiskMetricsService(new RiskMetricsService.Params(
                 new java.math.BigDecimal("3.0"), new java.math.BigDecimal("1.5"),
@@ -350,8 +354,8 @@ class GroparWebhookControllerTest {
         assertThat(stopCaptor.getValue().compareTo(new BigDecimal("70"))).isGreaterThanOrEqualTo(0);
         // close must be present (bars all close at 100)
         assertThat(closeCaptor.getValue()).isEqualByComparingTo("100");
-        // ATR: 23 bars, H=105/L=95/C=100 → TR=10 for every bar → ATR(22) = 10
-        assertThat(atrCaptor.getValue()).isEqualByComparingTo("10");
+        // ATR now sourced from Agora (get_indicators) via the mocked AgoraResearch stub → 2
+        assertThat(atrCaptor.getValue()).isEqualByComparingTo("2");
     }
 
     // =========================================================================
