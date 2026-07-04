@@ -20,6 +20,10 @@ dracul:
     token: ${DRACUL_LOCAL_ACCESS_TOKEN:}
   edgar:
     user-agent: ${DRACUL_EDGAR_USER_AGENT:dracul-research/1.0 contact@example.com}
+  agora:
+    base-url: ${DRACUL_AGORA_BASE_URL:http://agora:8080}
+    token: ${DRACUL_AGORA_TOKEN:}
+    timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:8000}
   strigoi:
     insider:
       enabled: ${STRIGOI_INSIDER_ENABLED:false}
