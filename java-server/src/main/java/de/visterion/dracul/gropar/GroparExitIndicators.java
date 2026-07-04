@@ -15,7 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Assembles ExitIndicators from Agora TA (get_indicators via AgoraResearch) + gropar domain logic
- *  (gainLossPct vs entry, horizon/TIME_STOP, firedRules). Replaces the removed ExitIndicatorService. */
+ *  (gainLossPct vs entry, horizon/TIME_STOP, firedRules). Gropar's sole exit-indicator assembler. */
 @Component
 @ConditionalOnProperty(value = "dracul.gropar.enabled", havingValue = "true")
 public class GroparExitIndicators {
@@ -81,7 +81,7 @@ public class GroparExitIndicators {
                 List.copyOf(firedRules));
     }
 
-    // --- ported verbatim from ExitIndicatorService ---
+    // --- horizon helpers (gropar domain logic) ---
     private static boolean computeHorizonElapsed(String verdictCreatedAt, String horizon, LocalDate lastBarDate) {
         if (verdictCreatedAt == null || horizon == null || lastBarDate == null) return false;
         try {

@@ -149,13 +149,18 @@ On each run:
 1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls all HELD watchlist items
    **across all users** with their entry price and share count. Each position carries an opaque
    `positionId` (the watchlist-item id) the LLM echoes back so signals can be routed to their owner.
-2. `ExitIndicatorService` computes technical indicators deterministically for each position:
+2. `GroparExitIndicators` assembles the exit-indicator bundle for each position. The technical
+   indicators are sourced from Agora's bundled `get_indicators` MCP tool (one call per position)
+   via the `AgoraResearch` facade — Dracul no longer computes them locally:
    - **ATR Chandelier Stop** — 22-period ATR × 3.0 multiple (Chandelier Exit)
    - **MA Cross** — 50-period vs 200-period simple moving average
    - **52-week proximity** — distance to 52-week low/high
-   - **Gain/loss thresholds** — unrealised gain ≥ 40% or unrealised loss ≥ 15%
-   - **Time stop** — based on position age
-   - **R-framework** — frozen ATR initial stop, risk unit R, gain in R, MFE since entry, and a giveback (peak-drawdown) guard (`INITIAL_STOP` / `GIVEBACK` rules)
+   - **Gain/loss thresholds** — unrealised gain ≥ 40% or unrealised loss ≥ 15% (derived in Dracul
+     from the position's entry price and Agora's current close)
+   - **Time stop** — based on position age (derived in Dracul from the verdict horizon)
+   - **R-framework** — `RiskMetricsService` (retained, position-domain) is fed Agora's ATR to derive
+     the frozen ATR initial stop, risk unit R, gain in R, MFE since entry, and a giveback
+     (peak-drawdown) guard (`INITIAL_STOP` / `GIVEBACK` rules)
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
    `verdict` (SELL / TRIM / HOLD), `thesis_status` (INTACT / WEAKENING / INVALIDATED / NONE —
    `NONE` means the position has no original thesis, e.g. a manually-added position, so gropar
