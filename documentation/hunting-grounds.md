@@ -39,7 +39,7 @@ never see vendor-specific schemas.
 | strigoi-index | Wikipedia S&P 500 (main constituents table, Date added column) |
 | strigoi-merger | edgar-adapter (`EDGAR EFTS forms=DEFM14A,SC TO-T (deal filings, metadata-only)`) |
 | daywalker | Yahoo intraday (5-min polling) + news-adapter + edgar-adapter (Form-4) |
-| gropar | Agora `get_ohlc` (daily OHLC history for indicator calculation) |
+| gropar | Agora `get_ohlc` (daily OHLC history, for RiskMetrics + currentClose) + Agora `get_indicators` (bundled exit TA per position via `AgoraResearch`) |
 
 ## Cost considerations
 
