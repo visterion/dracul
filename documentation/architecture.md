@@ -57,7 +57,7 @@ dracul/
 │
 ├── dracul-hunting-grounds/     # Market-data adapters
 │   ├── edgar-adapter/          # SEC EDGAR (Form 10, 4, 8-K)
-│   ├── prices-adapter/         # Yahoo / Alpha Vantage / Polygon
+│   ├── agora-market-data/      # prices / OHLC via Agora (MCP: get_quote/get_ohlc)
 │   ├── news-adapter/           # Finnhub / NewsAPI
 │   └── calendar-adapter/       # Earnings, index reconstitutions
 │
@@ -177,8 +177,8 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 `@EnableScheduling`). It runs every minute during US market hours (default cron:
 `0 * 13-20 * * MON-FRI`, UTC; configurable via
 `dracul.watchlist.price-refresh.cron`). On each tick it calls
-`WatchlistPriceRepository.distinctTickers()`, fetches live quotes via the
-Finnhub → Twelve Data → Yahoo chain, and writes `current_price` /
+`WatchlistPriceRepository.distinctTickers()`, fetches live quotes from **Agora**
+(`get_quote` over MCP, via `AgoraMarketData`), and writes `current_price` /
 `day_change_percent` back via `updatePriceByTicker()`. The refresh is
 independent of read traffic: `GET /api/watchlist` serves the stored values
 directly without triggering any market-data call.
@@ -211,7 +211,7 @@ directly without triggering any market-data call.
 **Exit signals table (V11):**
 - `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default')
 - index on `(user_id, symbol, created_at DESC)`
-- Gropar data flow: HELD watchlist positions → daily OHLC history (TwelveData `/time_series outputsize=N`, Yahoo `range=1y&interval=1d`) → `ExitIndicatorService` (ATR/Chandelier stop, MA cross, 52-week proximity, gain/loss thresholds, time stop) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts.
+- Gropar data flow: HELD watchlist positions → daily OHLC history (Agora `get_ohlc`, via `AgoraMarketData.dailyOhlcHistory`) → `ExitIndicatorService` (ATR/Chandelier stop, MA cross, 52-week proximity, gain/loss thresholds, time stop) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts.
 - Gropar position guard: `WatchlistController` publishes a `WatchlistChangedEvent` after every watchlist mutation. `GroparPauseReconciler` (present only when `dracul.gropar.enabled=true`, `@Order(30)` so it runs after `GenericAgentRegistrar`) listens to that event and to `ApplicationReadyEvent`, counts held positions (`WatchlistRepository.countHeldByUser`), and calls `VistierieClient.patchAgent("gropar", heldCount == 0)`. An in-memory last-applied state suppresses redundant Vistierie calls; a failed patch is logged and retried on the next event. gropar's pause is thus system-managed (operator uses the `enabled` flag, not the manual pause toggle).
 
 **Verdict native currency (V13):**
@@ -238,7 +238,7 @@ These columns are `null` until gropar has run at least once after V15 is applied
 
 **Stop-proximity watcher (`StopProximityWatcher`):**
 
-A deterministic, intraday `@Scheduled` cron (no LLM, no Vistierie agent) in package `de.visterion.dracul.stopguard`. Disabled by default (`dracul.stopguard.enabled=false`). When enabled it fires every ~15 minutes during the US session (`0 */15 9-16 * * 1-5`, zone America/New_York), loads all held positions with their persisted V15/V16 snapshot, batch-fetches live prices via the `@Primary` MarketDataPort (TwelveData → Yahoo, using the existing adapter cache), and classifies each position via `StopZoneEvaluator`:
+A deterministic, intraday `@Scheduled` cron (no LLM, no Vistierie agent) in package `de.visterion.dracul.stopguard`. Disabled by default (`dracul.stopguard.enabled=false`). When enabled it fires every ~15 minutes during the US session (`0 */15 9-16 * * 1-5`, zone America/New_York), loads all held positions with their persisted V15/V16 snapshot, batch-fetches live prices from Agora (`get_quote` via `AgoraMarketData`), and classifies each position via `StopZoneEvaluator`:
 
 | Condition | Zone | Severity |
 |---|---|---|
