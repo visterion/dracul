@@ -4,7 +4,6 @@ import java.math.BigDecimal;
 
 /** Neutral bundle of technical indicators from Agora get_indicators. *Available=false when unavailable. */
 public record ExitTa(
-        BigDecimal currentClose,
         BigDecimal atr, boolean atrAvailable,
         BigDecimal chandelierStop, boolean chandelierBreached,
         BigDecimal maFast, boolean maFastAvailable,
@@ -14,7 +13,7 @@ public record ExitTa(
 
     /** All-unavailable fallback (Agora unreachable or available:false). */
     public static ExitTa unavailable() {
-        return new ExitTa(null, null, false, null, false, null, false, null, false,
+        return new ExitTa(null, false, null, false, null, false, null, false,
                 "NEUTRAL", null, null, false);
     }
 }

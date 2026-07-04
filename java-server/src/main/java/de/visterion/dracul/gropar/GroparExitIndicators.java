@@ -51,6 +51,8 @@ public class GroparExitIndicators {
                     null, false, "NEUTRAL", null, null, false, null, false, List.of());
         }
         OhlcBar last = bars.get(bars.size() - 1);
+        // currentClose for gainLossPct + the snapshot comes from the get_ohlc bars (the same series
+        // RiskMetrics uses), NOT from get_indicators — one price source keeps gain/loss and risk consistent.
         BigDecimal currentClose = last.close();
 
         ExitTa ta = research.exitTa(symbol, atrPeriod, atrMultiple, maFast, maSlow, minBars52w);

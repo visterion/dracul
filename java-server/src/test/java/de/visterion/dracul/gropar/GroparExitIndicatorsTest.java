@@ -26,7 +26,7 @@ class GroparExitIndicatorsTest {
     }
 
     private ExitTa ta(String atr, String chandelier, boolean breached, String crossState) {
-        return new ExitTa(null, atr == null ? null : new BigDecimal(atr), atr != null,
+        return new ExitTa(atr == null ? null : new BigDecimal(atr), atr != null,
                 chandelier == null ? null : new BigDecimal(chandelier), breached,
                 new BigDecimal("105"), true, new BigDecimal("100"), true, crossState,
                 new BigDecimal("120"), new BigDecimal("90"), true);

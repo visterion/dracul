@@ -36,7 +36,6 @@ public class AgoraResearch {
             return ExitTa.unavailable();
         }
         return new ExitTa(
-                bd(r, "currentClose"),
                 bd(r, "atr"), r.path("atrAvailable").asBoolean(false),
                 bd(r, "chandelierStop"), r.path("chandelierBreached").asBoolean(false),
                 bd(r, "maFast"), r.path("maFastAvailable").asBoolean(false),
