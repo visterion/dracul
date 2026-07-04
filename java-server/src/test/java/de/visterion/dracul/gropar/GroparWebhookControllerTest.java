@@ -2,7 +2,7 @@ package de.visterion.dracul.gropar;
 
 import de.visterion.dracul.agent.AgentToolCatalog;
 import de.visterion.dracul.agent.ToolFetchCache;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.verdict.VerdictRepository;
@@ -35,7 +35,7 @@ class GroparWebhookControllerTest {
 
     private WatchlistRepository watchlistRepo;
     private VerdictRepository verdictRepo;
-    private MarketDataPort marketData;
+    private AgoraMarketData marketData;
     private ExitSignalRepository exitSignalRepo;
     private TelegramNotifier telegram;
 
@@ -45,7 +45,7 @@ class GroparWebhookControllerTest {
     void setUp() {
         watchlistRepo    = mock(WatchlistRepository.class);
         verdictRepo      = mock(VerdictRepository.class);
-        marketData       = mock(MarketDataPort.class);
+        marketData       = mock(AgoraMarketData.class);
         exitSignalRepo   = mock(ExitSignalRepository.class);
         telegram         = mock(TelegramNotifier.class);
 

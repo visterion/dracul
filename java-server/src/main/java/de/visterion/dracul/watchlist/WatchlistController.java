@@ -2,7 +2,7 @@ package de.visterion.dracul.watchlist;
 
 import de.visterion.dracul.auth.CurrentUserHolder;
 import de.visterion.dracul.marketdata.MarketData;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import jakarta.validation.Valid;
@@ -19,14 +19,14 @@ import java.util.Optional;
 public class WatchlistController {
 
     private final WatchlistRepository repo;
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
     private final VerdictRepository verdictRepo;
     private final ApplicationEventPublisher events;
     private final AppSettingsRepository settings;
     private final WatchlistCurrencyMapper mapper;
 
     public WatchlistController(WatchlistRepository repo,
-                                MarketDataPort marketData,
+                                AgoraMarketData marketData,
                                 VerdictRepository verdictRepo,
                                 ApplicationEventPublisher events,
                                 AppSettingsRepository settings,

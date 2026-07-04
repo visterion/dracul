@@ -1,6 +1,6 @@
 package de.visterion.dracul.stopguard;
 
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
 import de.visterion.dracul.watchlist.PositionRisk;
 import de.visterion.dracul.watchlist.WatchlistItem;
@@ -18,7 +18,7 @@ import static org.mockito.Mockito.*;
 class StopProximityWatcherTest {
 
     private final WatchlistRepository watchlist = mock(WatchlistRepository.class);
-    private final MarketDataPort marketData = mock(MarketDataPort.class);
+    private final AgoraMarketData marketData = mock(AgoraMarketData.class);
     private final StopAlertEmitter emitter = mock(StopAlertEmitter.class);
     private final StopProximityWatcher watcher =
             new StopProximityWatcher(watchlist, marketData, emitter, 0.5);

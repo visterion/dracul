@@ -1,6 +1,6 @@
 package de.visterion.dracul.voievod;
 
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.verdict.ContributingStrigoiDetail;
 import de.visterion.dracul.verdict.VerdictRepository;
@@ -22,9 +22,9 @@ public class VerdictSynthesizer {
     private record PricePoint(BigDecimal price, String currency) {}
 
     private final VerdictRepository verdictRepo;
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
 
-    public VerdictSynthesizer(VerdictRepository verdictRepo, MarketDataPort marketData) {
+    public VerdictSynthesizer(VerdictRepository verdictRepo, AgoraMarketData marketData) {
         this.verdictRepo = verdictRepo;
         this.marketData = marketData;
     }

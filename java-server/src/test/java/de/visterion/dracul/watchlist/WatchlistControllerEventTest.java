@@ -1,7 +1,7 @@
 package de.visterion.dracul.watchlist;
 
 import de.visterion.dracul.auth.CurrentUserHolder;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -18,7 +18,7 @@ import static org.mockito.Mockito.*;
 class WatchlistControllerEventTest {
 
     private WatchlistRepository repo;
-    private MarketDataPort marketData;
+    private AgoraMarketData marketData;
     private VerdictRepository verdictRepo;
     private ApplicationEventPublisher events;
     private AppSettingsRepository settings;
@@ -30,7 +30,7 @@ class WatchlistControllerEventTest {
     @BeforeEach
     void setUp() {
         repo = mock(WatchlistRepository.class);
-        marketData = mock(MarketDataPort.class);
+        marketData = mock(AgoraMarketData.class);
         verdictRepo = mock(VerdictRepository.class);
         events = mock(ApplicationEventPublisher.class);
         settings = mock(AppSettingsRepository.class);

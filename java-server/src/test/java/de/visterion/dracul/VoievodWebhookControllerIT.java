@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
@@ -52,7 +52,7 @@ class VoievodWebhookControllerIT {
     @Autowired PreyRepository preyRepo;
     @Autowired VerdictRepository verdictRepo;
     @Autowired JdbcClient jdbc;
-    @MockitoBean MarketDataPort marketData;
+    @MockitoBean AgoraMarketData marketData;
 
     RestClient rest;
 

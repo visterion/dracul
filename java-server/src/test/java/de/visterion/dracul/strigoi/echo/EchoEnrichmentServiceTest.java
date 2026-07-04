@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.marketdata.MarketData;
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.junit.jupiter.api.Test;
 
@@ -55,8 +55,8 @@ class EchoEnrichmentServiceTest {
         return out;
     }
 
-    private MarketDataPort marketData() {
-        return new MarketDataPort() {
+    private AgoraMarketData marketData() {
+        return new AgoraMarketData(null) {
             @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
             @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
                 return "SPY".equals(symbol) ? spyBars() : stockBars();

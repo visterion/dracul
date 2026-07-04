@@ -1,6 +1,6 @@
 package de.visterion.dracul.watchlist;
 
-import de.visterion.dracul.marketdata.MarketDataPort;
+import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,9 +24,9 @@ public class WatchlistPriceRefresher {
     private static final Logger log = LoggerFactory.getLogger(WatchlistPriceRefresher.class);
 
     private final WatchlistRepository repo;
-    private final MarketDataPort marketData;
+    private final AgoraMarketData marketData;
 
-    public WatchlistPriceRefresher(WatchlistRepository repo, MarketDataPort marketData) {
+    public WatchlistPriceRefresher(WatchlistRepository repo, AgoraMarketData marketData) {
         this.repo = repo;
         this.marketData = marketData;
     }
