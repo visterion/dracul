@@ -79,6 +79,8 @@ class AgoraMarketDataTest {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
         AgoraMarketData md = new AgoraMarketData(client);
-        assertThatThrownBy(() -> md.resolve("ZZZZ")).isInstanceOf(MarketDataException.class);
+        assertThatThrownBy(() -> md.resolve("ZZZZ"))
+                .isInstanceOfSatisfying(MarketDataException.class,
+                        e -> assertThat(e.kind()).isEqualTo(MarketDataException.Kind.NOT_FOUND));
     }
 }

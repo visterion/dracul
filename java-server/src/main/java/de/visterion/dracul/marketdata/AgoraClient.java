@@ -12,6 +12,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -29,19 +30,22 @@ public class AgoraClient {
 
     private final String baseUrl;
     private final String token;
+    private final long timeoutMs;
     private volatile McpSyncClient client;
 
     public AgoraClient(@Value("${dracul.agora.base-url:http://agora:8080}") String baseUrl,
-                       @Value("${dracul.agora.token:}") String token) {
+                       @Value("${dracul.agora.token:}") String token,
+                       @Value("${dracul.agora.timeout-ms:8000}") long timeoutMs) {
         this.baseUrl = baseUrl;
         this.token = token;
+        this.timeoutMs = timeoutMs;
     }
 
     /** Call an Agora tool by name with JSON args; returns the tool's output JSON. Never returns null. */
     public synchronized JsonNode callTool(String name, JsonNode args) {
         Map<String, Object> argsMap = args == null ? Map.of() : MAPPER.convertValue(args, MAP_TYPE);
         try {
-            return invoke(name, argsMap);
+            return attempt(name, argsMap);
         } catch (AgoraUnavailableException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -49,14 +53,18 @@ public class AgoraClient {
             log.warn("Agora call {} failed ({}); reconnecting", name, e.toString());
             closeQuietly();
             try {
-                return invoke(name, argsMap);
+                return attempt(name, argsMap);
             } catch (RuntimeException e2) {
                 throw new AgoraUnavailableException("Agora unreachable for " + name + ": " + e2.getMessage(), e2);
             }
         }
     }
 
-    private JsonNode invoke(String name, Map<String, Object> argsMap) {
+    /**
+     * One attempt: ensure the client, call the tool, extract + parse its text payload. Package-private
+     * so the reconnect-once logic in {@link #callTool} can be exercised with a stubbed seam in tests.
+     */
+    JsonNode attempt(String name, Map<String, Object> argsMap) {
         McpSyncClient c = ensureClient();
         McpSchema.CallToolResult res = c.callTool(new McpSchema.CallToolRequest(name, argsMap));
         boolean isError = Boolean.TRUE.equals(res.isError());
@@ -72,10 +80,13 @@ public class AgoraClient {
         if (local != null) return local;
         var transport = HttpClientStreamableHttpTransport.builder(baseUrl)
                 .endpoint("/mcp")
+                .connectTimeout(Duration.ofMillis(timeoutMs))
                 .httpRequestCustomizer((b, method, uri, body, ctx) ->
                         b.setHeader("Authorization", "Bearer " + token))
                 .build();
-        McpSyncClient built = McpClient.sync(transport).build();
+        McpSyncClient built = McpClient.sync(transport)
+                .requestTimeout(Duration.ofMillis(timeoutMs))
+                .build();
         built.initialize();
         client = built;
         return built;
@@ -85,7 +96,7 @@ public class AgoraClient {
         McpSyncClient local = client;
         client = null;
         if (local != null) {
-            try { local.closeGracefully(); } catch (RuntimeException ignored) { /* best effort */ }
+            try { local.closeGracefully(); } catch (Exception ignored) { /* best effort */ }
         }
     }
 
