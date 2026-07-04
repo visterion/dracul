@@ -42,7 +42,7 @@ public class GroparWebhookController {
     private final AgoraMarketData marketData;
     private final ExitSignalRepository exitSignalRepo;
     private final TelegramNotifier telegram;
-    private final ExitIndicatorService indicatorService;
+    private final GroparExitIndicators indicatorService;
     private final RiskMetricsService riskService;
     private final ToolFetchCache cache;
 
@@ -58,7 +58,7 @@ public class GroparWebhookController {
             AgoraMarketData marketData,
             ExitSignalRepository exitSignalRepo,
             TelegramNotifier telegram,
-            ExitIndicatorService indicatorService,
+            GroparExitIndicators indicatorService,
             RiskMetricsService riskService,
             ToolFetchCache cache,
             @Value("${dracul.gropar.history-days:260}") int historyDays,
@@ -125,7 +125,7 @@ public class GroparWebhookController {
                         }
                     }
 
-                    var ind = indicatorService.compute(bars,
+                    var ind = indicatorService.compute(item.ticker(), bars,
                             BigDecimal.valueOf(item.entryPrice()),
                             verdictCreatedAt, horizon);
 

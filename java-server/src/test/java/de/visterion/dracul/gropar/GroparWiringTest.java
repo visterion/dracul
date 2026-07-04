@@ -23,13 +23,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GroparWiringTest {
 
     @Autowired GroparWebhookController controller;
-    @Autowired ExitIndicatorService indicatorService;
+    @Autowired GroparExitIndicators indicatorService;
+    @Autowired AgoraResearch agoraResearch;
     @Autowired List<AgentDefaultProvider> providers;
 
     @Test
     void groparBeansWireAndProviderRegistered() {
         assertThat(controller).isNotNull();
         assertThat(indicatorService).isNotNull();
+        assertThat(agoraResearch).isNotNull();
         assertThat(providers).anySatisfy(p ->
                 assertThat(p.defaultDefinition().name()).isEqualTo("gropar"));
     }
