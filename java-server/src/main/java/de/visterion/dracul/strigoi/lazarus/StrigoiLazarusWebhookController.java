@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.agent.ToolFetchCache;
-import de.visterion.dracul.hunting.finnhub.FinnhubFundamentalsAdapter;
+import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
@@ -23,7 +23,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private static final String USER = "default";
 
     private final WatchlistRepository watchlist;
-    private final FinnhubFundamentalsAdapter fundamentals;
+    private final AgoraCompanyData companyData;
     private final LazarusScreener screener;
     private final double maxAboveLow;
     private final double maxDebtEquity;
@@ -31,7 +31,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     public StrigoiLazarusWebhookController(
             @Value("${dracul.strigoi.lazarus.webhook-token}") String token,
             WatchlistRepository watchlist,
-            FinnhubFundamentalsAdapter fundamentals,
+            AgoraCompanyData companyData,
             LazarusScreener screener,
             PreyRepository preyRepo,
             ToolFetchCache cache,
@@ -39,7 +39,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
             @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity) {
         super(token, preyRepo, cache);
         this.watchlist = watchlist;
-        this.fundamentals = fundamentals;
+        this.companyData = companyData;
         this.screener = screener;
         this.maxAboveLow = maxAboveLow;
         this.maxDebtEquity = maxDebtEquity;
@@ -53,16 +53,26 @@ public class StrigoiLazarusWebhookController extends HuntController {
 
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
-        if (!fundamentals.configured()) {
-            return de.visterion.dracul.hunting.DataSourceResult.unavailable("finnhub", "finnhub: api key missing");
-        }
         var items = watchlist.findAllByUser(USER);
+
+        // Single upfront reachability check (mirrors the old configured()-key guard: one check per
+        // hunt, not per symbol). fundamentals() alone can't tell "Agora is down" apart from "no data
+        // for this symbol" — it collapses both to null — so a total outage would otherwise report
+        // healthy with all-null financials.
+        if (!items.isEmpty()) {
+            var probe = companyData.fundamentalsResult(items.get(0).ticker());
+            if (!probe.health().isHealthy()) {
+                return de.visterion.dracul.hunting.DataSourceResult.unavailable(
+                        "agora", probe.health().detail());
+            }
+        }
+
         var raws = new ArrayList<LazarusRaw>();
         for (WatchlistItem item : items) {
-            raws.add(new LazarusRaw(item.ticker(), item.companyName(),
-                    item.currentPrice(), fundamentals.basicFinancials(item.ticker())));
+            raws.add(new LazarusRaw(item.ticker(), item.companyName(), item.currentPrice(),
+                    BasicFinancialsExtractor.extract(companyData.fundamentals(item.ticker()))));
         }
-        return de.visterion.dracul.hunting.DataSourceResult.healthy("finnhub",
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("agora",
                 screener.screen(raws, maxAboveLow, maxDebtEquity));
     }
 

@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.DataSourceResult;
+import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,13 +19,13 @@ import java.util.Map;
 @RequestMapping("/api/strigoi-echo")
 public class StrigoiEchoWebhookController extends HuntController {
 
-    private final EarningsSourceRouter earnings;
+    private final AgoraEarnings earnings;
     private final EchoPeadScreener screener;
     private final EchoEnrichmentService enrichment;
 
     public StrigoiEchoWebhookController(
             @Value("${dracul.strigoi.echo.webhook-token}") String token,
-            EarningsSourceRouter earnings,
+            AgoraEarnings earnings,
             EchoPeadScreener screener,
             EchoEnrichmentService enrichment,
             PreyRepository preyRepo,

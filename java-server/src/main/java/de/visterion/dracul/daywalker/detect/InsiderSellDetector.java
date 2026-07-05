@@ -1,6 +1,6 @@
 package de.visterion.dracul.daywalker.detect;
 
-import de.visterion.dracul.hunting.edgar.Form4Filing;
+import de.visterion.dracul.hunting.agora.Form4Filing;
 import de.visterion.dracul.watchlist.WatchlistItem;
 
 import java.math.BigDecimal;

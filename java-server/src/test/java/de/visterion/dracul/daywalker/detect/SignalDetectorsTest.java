@@ -1,8 +1,8 @@
 package de.visterion.dracul.daywalker.detect;
 
-import de.visterion.dracul.hunting.edgar.Form4Filing;
-import de.visterion.dracul.hunting.finnhub.NewsHeadline;
-import de.visterion.dracul.hunting.finnhub.RecommendationTrend;
+import de.visterion.dracul.hunting.agora.Form4Filing;
+import de.visterion.dracul.hunting.agora.NewsHeadline;
+import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import org.junit.jupiter.api.Test;
 

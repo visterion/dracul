@@ -3,8 +3,8 @@ package de.visterion.dracul;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
-import de.visterion.dracul.hunting.edgar.EdgarMergerAdapter;
-import de.visterion.dracul.hunting.edgar.MergerFiling;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.MergerFiling;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -40,7 +40,7 @@ class StrigoiMergerWebhookControllerIT {
 
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
-    @MockitoBean EdgarMergerAdapter edgarMerger;
+    @MockitoBean AgoraFilings filings;
 
     RestClient rest;
 
@@ -50,14 +50,14 @@ class StrigoiMergerWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
-        when(edgarMerger.recentDeals(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("edgar", List.of()));
+        when(filings.searchMergers(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("agora", List.of()));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(edgarMerger.recentDeals(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("edgar", List.of(
+        when(filings.searchMergers(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
                         new MergerFiling("TGT", "Target Corp", "DEFM14A", LocalDate.of(2026, 5, 20), "http://sec/u1"))));
 
         JsonNode resp = rest.post().uri("/api/strigoi-merger/tools/fetch-candidates")
@@ -152,9 +152,9 @@ class StrigoiMergerWebhookControllerIT {
 
     @Test
     void unavailableSourceSurfacesAndIsNotCached() {
-        org.mockito.Mockito.when(edgarMerger.recentDeals(
+        org.mockito.Mockito.when(filings.searchMergers(
                         org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(DataSourceResult.unavailable("edgar", "edgar: 503"));
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: 503"));
 
         JsonNode resp = rest.post().uri("/api/strigoi-merger/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-merger-token")
@@ -174,7 +174,7 @@ class StrigoiMergerWebhookControllerIT {
                         "input", Map.of("lookback_days", 30)))
                 .retrieve().body(JsonNode.class);
 
-        org.mockito.Mockito.verify(edgarMerger, org.mockito.Mockito.times(2))
-                .recentDeals(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(filings, org.mockito.Mockito.times(2))
+                .searchMergers(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 }

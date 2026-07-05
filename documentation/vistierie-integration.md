@@ -133,7 +133,7 @@ propagates to the caller.
 | Vistierie owns | Dracul owns |
 |---|---|
 | Bee/Strigoi runtime, schedule, recursion, context shielding | Strigoi domain logic and prompts |
-| Provider plugins, tier-based routing, cost ledger, kill switch | Market-data adapters (EDGAR, news, calendar); prices/OHLC consumed from Agora over MCP |
+| Provider plugins, tier-based routing, cost ledger, kill switch | Hunting fetch + prices/OHLC consumed from Agora over MCP via six facades (`AgoraMarketData`, `AgoraFilings`, `AgoraCompanyData`, `AgoraEarnings`, `AgoraReference`, `AgoraIntraday`) |
 | Run history, audit, batch API | Pre-screen logic (deterministic filters before LLM) |
 | Webhook completion delivery | `Prey` / `Verdict` / `Pattern` / `Alert` domain, persistence, frontend, backtest |
 | StreamingBee lifecycle | Daywalker trigger logic and alert assessment |
@@ -146,4 +146,16 @@ Finnhub price adapters. Quotes and daily OHLC come from the co-located **Agora**
 service, consumed over Agora's MCP front-door (`get_quote` / `get_ohlc`) via the
 generic `AgoraClient` and the `AgoraMarketData` facade. Agora owns provider
 fallback and rate-limit handling; Dracul just maps the tool output to its
-`MarketData` / `Quote` / `OhlcBar` DTOs. Agora must be deployed before Dracul.
+`MarketData` / `Quote` / `OhlcBar` DTOs.
+
+**Hunting fetch via Agora (slice 7c):** the same principle extends to all
+hunting-ground fetch — filings, news, recommendations, fundamentals,
+earnings, index constituents, and intraday candles are consumed from Agora
+over MCP via five domain facades in `de.visterion.dracul.hunting.agora`
+(`AgoraFilings`, `AgoraCompanyData`, `AgoraEarnings`, `AgoraReference`,
+`AgoraIntraday`). The direct EDGAR / Finnhub / Yahoo / Wikipedia hunting
+adapters have been removed entirely; Agora owns provider selection, fallback,
+and rate-limit handling for hunting fetch just as it does for prices/OHLC.
+
+Agora must be deployed — with `get_company_profile` and `get_earnings_window`
+available — before Dracul-7c.

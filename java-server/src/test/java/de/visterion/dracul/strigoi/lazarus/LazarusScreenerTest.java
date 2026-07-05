@@ -1,6 +1,5 @@
 package de.visterion.dracul.strigoi.lazarus;
 
-import de.visterion.dracul.hunting.finnhub.BasicFinancials;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

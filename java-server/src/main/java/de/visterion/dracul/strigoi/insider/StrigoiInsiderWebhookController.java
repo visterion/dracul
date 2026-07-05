@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.insider;
 
 import de.visterion.dracul.agent.ToolFetchCache;
-import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,17 +18,17 @@ import java.util.Map;
 @RequestMapping("/api/strigoi-insider")
 public class StrigoiInsiderWebhookController extends HuntController {
 
-    private final EdgarFormFourAdapter edgar;
+    private final AgoraFilings filings;
     private final InsiderClusterScreener screener;
 
     public StrigoiInsiderWebhookController(
             @Value("${dracul.strigoi.insider.webhook-token}") String token,
-            EdgarFormFourAdapter edgar,
+            AgoraFilings filings,
             InsiderClusterScreener screener,
             PreyRepository preyRepo,
             ToolFetchCache cache) {
         super(token, preyRepo, cache);
-        this.edgar = edgar;
+        this.filings = filings;
         this.screener = screener;
     }
 
@@ -41,7 +41,7 @@ public class StrigoiInsiderWebhookController extends HuntController {
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
-        var raw = edgar.recentFilings(to.minusDays(lookback), to);
+        var raw = filings.recentForm4(to.minusDays(lookback), to);
         return new de.visterion.dracul.hunting.DataSourceResult<>(screener.cluster(raw.items()), raw.health());
     }
 
