@@ -1,6 +1,6 @@
 package de.visterion.dracul.strigoi.index;
 
-import de.visterion.dracul.hunting.wikipedia.Sp500Constituent;
+import de.visterion.dracul.hunting.agora.Sp500Constituent;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;

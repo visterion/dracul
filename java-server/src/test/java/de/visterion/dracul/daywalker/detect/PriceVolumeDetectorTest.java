@@ -1,6 +1,6 @@
 package de.visterion.dracul.daywalker.detect;
 
-import de.visterion.dracul.hunting.yahoo.IntradayCandles;
+import de.visterion.dracul.hunting.agora.IntradayCandles;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import org.junit.jupiter.api.Test;
 

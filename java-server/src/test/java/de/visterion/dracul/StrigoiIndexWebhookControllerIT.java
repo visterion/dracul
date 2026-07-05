@@ -3,8 +3,8 @@ package de.visterion.dracul;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
-import de.visterion.dracul.hunting.wikipedia.Sp500Constituent;
-import de.visterion.dracul.hunting.wikipedia.WikipediaSp500Adapter;
+import de.visterion.dracul.hunting.agora.AgoraReference;
+import de.visterion.dracul.hunting.agora.Sp500Constituent;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -39,7 +39,7 @@ class StrigoiIndexWebhookControllerIT {
 
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
-    @MockitoBean WikipediaSp500Adapter wikipedia;
+    @MockitoBean AgoraReference reference;
 
     RestClient rest;
 
@@ -49,12 +49,12 @@ class StrigoiIndexWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
-        when(wikipedia.recentConstituents()).thenReturn(DataSourceResult.healthy("wikipedia", List.of()));
+        when(reference.constituents()).thenReturn(DataSourceResult.healthy("agora", List.of()));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(wikipedia.recentConstituents()).thenReturn(DataSourceResult.healthy("wikipedia", List.of(
+        when(reference.constituents()).thenReturn(DataSourceResult.healthy("agora", List.of(
                 new Sp500Constituent("NEWO", "NewCo", LocalDate.now().minusDays(5)))));
 
         JsonNode resp = rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
@@ -149,8 +149,8 @@ class StrigoiIndexWebhookControllerIT {
 
     @Test
     void unavailableSourceSurfacesAndIsNotCached() {
-        org.mockito.Mockito.when(wikipedia.recentConstituents())
-                .thenReturn(DataSourceResult.unavailable("wikipedia", "wikipedia: 503"));
+        org.mockito.Mockito.when(reference.constituents())
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: 503"));
 
         JsonNode resp = rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-index-token")
@@ -170,7 +170,7 @@ class StrigoiIndexWebhookControllerIT {
                         "input", Map.of("lookback_days", 30)))
                 .retrieve().body(JsonNode.class);
 
-        org.mockito.Mockito.verify(wikipedia, org.mockito.Mockito.times(2))
-                .recentConstituents();
+        org.mockito.Mockito.verify(reference, org.mockito.Mockito.times(2))
+                .constituents();
     }
 }

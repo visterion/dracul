@@ -3,7 +3,7 @@ package de.visterion.dracul;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
-import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,7 +39,7 @@ class StrigoiInsiderWebhookControllerIT {
 
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
-    @MockitoBean EdgarFormFourAdapter edgar;
+    @MockitoBean AgoraFilings filings;
 
     RestClient rest;
 
@@ -52,8 +52,8 @@ class StrigoiInsiderWebhookControllerIT {
                     c.add(new JacksonJsonHttpMessageConverter(objectMapper));
                 })
                 .build();
-        when(edgar.recentFilings(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("edgar", List.of()));
+        when(filings.recentForm4(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("agora", List.of()));
     }
 
     @Test
@@ -83,8 +83,8 @@ class StrigoiInsiderWebhookControllerIT {
 
     @Test
     void unavailableSourceSurfacesAndIsNotCached() {
-        when(edgar.recentFilings(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.unavailable("edgar", "edgar: 503"));
+        when(filings.recentForm4(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: 503"));
 
         for (int i = 0; i < 2; i++) {
             JsonNode resp = rest.post().uri("/api/strigoi-insider/tools/fetch-clusters")
@@ -97,7 +97,7 @@ class StrigoiInsiderWebhookControllerIT {
                     .isEqualTo("unavailable");
         }
 
-        verify(edgar, times(2)).recentFilings(any(LocalDate.class), any(LocalDate.class));
+        verify(filings, times(2)).recentForm4(any(LocalDate.class), any(LocalDate.class));
     }
 
     @Test

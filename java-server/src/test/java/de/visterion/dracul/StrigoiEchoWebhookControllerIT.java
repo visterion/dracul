@@ -3,8 +3,8 @@ package de.visterion.dracul;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
+import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.strigoi.echo.EarningsObservation;
-import de.visterion.dracul.strigoi.echo.EarningsSourceRouter;
 import de.visterion.dracul.strigoi.echo.EchoEnrichmentService;
 import de.visterion.dracul.strigoi.echo.EnrichedPeadCandidate;
 import org.junit.jupiter.api.*;
@@ -43,7 +43,7 @@ class StrigoiEchoWebhookControllerIT {
 
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
-    @MockitoBean EarningsSourceRouter earnings;
+    @MockitoBean AgoraEarnings earnings;
     @MockitoBean EchoEnrichmentService enrichment;
 
     RestClient rest;
@@ -62,7 +62,7 @@ class StrigoiEchoWebhookControllerIT {
                 new BigDecimal("1.65"), new BigDecimal("1.50"), new BigDecimal("10.0"),
                 new BigDecimal("1000"), new BigDecimal("900"));
         when(earnings.recent(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("finnhub", List.of(aapl)));
+                .thenReturn(DataSourceResult.healthy("agora", List.of(aapl)));
         // Deterministic enrichment: one AAPL candidate, SUE unavailable, revenue-beat present.
         var enriched = new EnrichedPeadCandidate(
                 "AAPL", "Apple Inc.", LocalDate.now().minusDays(2), 2,
@@ -182,7 +182,7 @@ class StrigoiEchoWebhookControllerIT {
     void unavailableSourceSurfacesAndIsNotCached() {
         org.mockito.Mockito.when(earnings.recent(
                         org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(DataSourceResult.unavailable("finnhub", "finnhub: 503"));
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: 503"));
 
         JsonNode resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")

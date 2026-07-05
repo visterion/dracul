@@ -1,5 +1,8 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.hunting.agora.AgoraEarnings;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.ConceptSeries;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
@@ -12,6 +15,11 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class EchoEnrichmentServiceTest {
 
@@ -31,8 +39,6 @@ class EchoEnrichmentServiceTest {
         }
         return h;
     }
-
-    private EpsHistoryPort historyPort(List<QuarterlyEps> q) { return (symbol, max) -> q; }
 
     private static List<OhlcBar> stockBars() {
         List<OhlcBar> out = new ArrayList<>();
@@ -64,37 +70,66 @@ class EchoEnrichmentServiceTest {
         };
     }
 
-    private EquityMetricsPort equityMetrics() {
-        return symbol -> new EquityMetrics(1.0, 2_500_000.0, 150.0, 260.0, "Technology", true);
+    // --- stubbed helpers/facades (configurable per test) ---
+
+    private AgoraFilings filings() {
+        AgoraFilings f = mock(AgoraFilings.class);
+        when(f.epsHistory(anyString())).thenReturn(ConceptSeries.empty("eps"));
+        return f;
     }
 
-    // --- SP3 stubs (configurable per test) ---
-    private FundamentalsPort fundamentals(BigDecimal ratio) {
-        return symbol -> ratio == null ? AccrualMetrics.unavailable() : new AccrualMetrics(ratio, true);
-    }
-    private RevisionPort revisions(int proxy, String dir) {
-        return symbol -> new EarningsRevisions(proxy, dir, true);
-    }
-    private NextEarningsPort nextEarnings(Integer daysAhead) {
-        return symbol -> daysAhead == null ? Optional.empty()
-                : Optional.of(LocalDate.now().plusDays(daysAhead));
-    }
-    private EventScreenPort eventScreen(List<String> flags) {
-        return (symbol, since) -> flags;
+    private EpsHistoryShaper shaper(List<QuarterlyEps> hist) {
+        EpsHistoryShaper s = mock(EpsHistoryShaper.class);
+        when(s.quarterly(any(), anyInt())).thenReturn(hist);
+        return s;
     }
 
-    private EchoEnrichmentService service(EpsHistoryPort hist, FundamentalsPort f, RevisionPort r,
-                                          NextEarningsPort n, EventScreenPort ev) {
-        return new EchoEnrichmentService(new SueEngine(), hist, marketData(), new MarketSignalService(),
-                equityMetrics(), "SPY", 320,
-                f, r, n, ev, new EchoDeterministicGate(new BigDecimal("0.10"), 10));
+    private EquityMetricsExtractor equityMetrics() {
+        EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
+        when(m.metrics(anyString()))
+                .thenReturn(new EquityMetrics(1.0, 2_500_000.0, 150.0, 260.0, "Technology", true));
+        return m;
+    }
+
+    private SloanAccrualCalculator accruals(BigDecimal ratio) {
+        SloanAccrualCalculator a = mock(SloanAccrualCalculator.class);
+        when(a.accruals(anyString())).thenReturn(
+                ratio == null ? AccrualMetrics.unavailable() : new AccrualMetrics(ratio, true));
+        return a;
+    }
+
+    private RevisionsProxy revisions(Integer proxy, String dir) {
+        RevisionsProxy r = mock(RevisionsProxy.class);
+        when(r.revisions(anyString())).thenReturn(
+                proxy == null ? EarningsRevisions.unavailable() : new EarningsRevisions(proxy, dir, true));
+        return r;
+    }
+
+    private AgoraEarnings nextEarnings(Integer daysAhead) {
+        AgoraEarnings e = mock(AgoraEarnings.class);
+        when(e.nextEarningsDate(anyString())).thenReturn(
+                daysAhead == null ? Optional.empty() : Optional.of(LocalDate.now().plusDays(daysAhead)));
+        return e;
+    }
+
+    private ConfounderScreen confounders(List<String> flags) {
+        ConfounderScreen c = mock(ConfounderScreen.class);
+        when(c.confounders(anyString(), any())).thenReturn(flags);
+        return c;
+    }
+
+    private EchoEnrichmentService service(List<QuarterlyEps> hist, SloanAccrualCalculator a,
+                                          RevisionsProxy r, AgoraEarnings n, ConfounderScreen ev) {
+        return new EchoEnrichmentService(new SueEngine(), filings(), shaper(hist), marketData(),
+                new MarketSignalService(), equityMetrics(), "SPY", 320,
+                a, r, n, ev, new EchoDeterministicGate(new BigDecimal("0.10"), 10));
     }
 
     @Test
     void enrichesCleanCandidateWithSp3SoftFields() {
-        var svc = service(historyPort(historyFor(REPORT)),
-                fundamentals(new BigDecimal("0.04")), revisions(7, "up"),
-                nextEarnings(40), eventScreen(List.of()));
+        var svc = service(historyFor(REPORT),
+                accruals(new BigDecimal("0.04")), revisions(7, "up"),
+                nextEarnings(40), confounders(List.of()));
         var out = svc.enrich(List.of(cand("AAPL", 1.80)));
         assertThat(out).hasSize(1);
         var e = out.get(0);
@@ -109,33 +144,33 @@ class EchoEnrichmentServiceTest {
 
     @Test
     void dropsAccrualDrivenCandidate() {
-        var svc = service(historyPort(historyFor(REPORT)),
-                fundamentals(new BigDecimal("0.25")), revisions(1, "up"),
-                nextEarnings(40), eventScreen(List.of()));
+        var svc = service(historyFor(REPORT),
+                accruals(new BigDecimal("0.25")), revisions(1, "up"),
+                nextEarnings(40), confounders(List.of()));
         assertThat(svc.enrich(List.of(cand("BAD", 1.80)))).isEmpty();
     }
 
     @Test
     void dropsConfoundedCandidate() {
-        var svc = service(historyPort(historyFor(REPORT)),
-                fundamentals(new BigDecimal("0.03")), revisions(1, "up"),
-                nextEarnings(40), eventScreen(List.of("m&a")));
+        var svc = service(historyFor(REPORT),
+                accruals(new BigDecimal("0.03")), revisions(1, "up"),
+                nextEarnings(40), confounders(List.of("m&a")));
         assertThat(svc.enrich(List.of(cand("MNA", 1.80)))).isEmpty();
     }
 
     @Test
     void dropsCandidateWithImminentNextEarnings() {
-        var svc = service(historyPort(historyFor(REPORT)),
-                fundamentals(new BigDecimal("0.03")), revisions(1, "up"),
-                nextEarnings(5), eventScreen(List.of()));
+        var svc = service(historyFor(REPORT),
+                accruals(new BigDecimal("0.03")), revisions(1, "up"),
+                nextEarnings(5), confounders(List.of()));
         assertThat(svc.enrich(List.of(cand("SOON", 1.80)))).isEmpty();
     }
 
     @Test
     void degradesWhenSp3SourcesUnavailableButStillKeeps() {
-        var svc = service(historyPort(List.of()),
-                fundamentals(null), symbol -> EarningsRevisions.unavailable(),
-                nextEarnings(null), eventScreen(List.of()));
+        var svc = service(List.of(),
+                accruals(null), revisions(null, null),
+                nextEarnings(null), confounders(List.of()));
         var out = svc.enrich(List.of(cand("ZZZ", 1.80)));
         assertThat(out).hasSize(1);
         assertThat(out.get(0).accrualsAvailable()).isFalse();
