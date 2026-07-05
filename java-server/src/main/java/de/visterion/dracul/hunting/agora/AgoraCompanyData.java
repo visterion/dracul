@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.agora;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.springframework.stereotype.Component;
@@ -86,6 +87,25 @@ public class AgoraCompanyData {
             return (m.isMissingNode() || m.isNull()) ? null : m;
         } catch (AgoraUnavailableException e) {
             return null;
+        }
+    }
+
+    /**
+     * Health-aware variant of {@link #fundamentals(String)}: tells "Agora is unreachable" apart
+     * from "no data for this symbol", which the raw method collapses to null. Used by callers
+     * (currently strigoi-lazarus) that need to surface a real outage as unavailable rather than
+     * silently degrading; {@link #fundamentals(String)} keeps its existing null-on-any-failure
+     * contract for other consumers (e.g. the echo hunter).
+     */
+    public DataSourceResult<JsonNode> fundamentalsResult(String symbol) {
+        try {
+            ObjectNode args = mapper.createObjectNode();
+            args.put("symbol", symbol);
+            JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
+            JsonNode value = (m.isMissingNode() || m.isNull()) ? null : m;
+            return DataSourceResult.healthy("agora", value == null ? List.of() : List.of(value));
+        } catch (AgoraUnavailableException e) {
+            return DataSourceResult.unavailable("agora", "agora: " + e.getMessage());
         }
     }
 

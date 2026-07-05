@@ -54,6 +54,19 @@ public class StrigoiLazarusWebhookController extends HuntController {
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         var items = watchlist.findAllByUser(USER);
+
+        // Single upfront reachability check (mirrors the old configured()-key guard: one check per
+        // hunt, not per symbol). fundamentals() alone can't tell "Agora is down" apart from "no data
+        // for this symbol" — it collapses both to null — so a total outage would otherwise report
+        // healthy with all-null financials.
+        if (!items.isEmpty()) {
+            var probe = companyData.fundamentalsResult(items.get(0).ticker());
+            if (!probe.health().isHealthy()) {
+                return de.visterion.dracul.hunting.DataSourceResult.unavailable(
+                        "agora", probe.health().detail());
+            }
+        }
+
         var raws = new ArrayList<LazarusRaw>();
         for (WatchlistItem item : items) {
             raws.add(new LazarusRaw(item.ticker(), item.companyName(), item.currentPrice(),

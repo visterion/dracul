@@ -2,6 +2,7 @@ package de.visterion.dracul;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
@@ -50,6 +51,7 @@ class StrigoiLazarusWebhookControllerIT {
                 .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
         when(companyData.fundamentals(anyString())).thenReturn(null);
+        when(companyData.fundamentalsResult(anyString())).thenReturn(DataSourceResult.healthy("agora", List.of()));
     }
 
     @Test
@@ -72,6 +74,26 @@ class StrigoiLazarusWebhookControllerIT {
         boolean found = false;
         for (JsonNode c : cands) if ("ACME".equals(c.path("symbol").asText())) found = true;
         assertThat(found).as("ACME candidate returned").isTrue();
+    }
+
+    @Test
+    void toolEndpointSurfacesUnavailableWhenAgoraDown() {
+        watchlist.insert("default", "DOWN", "DownCo Inc", 5.0, List.of(), "lazarus-it", null, null);
+        // Stub every symbol (not just "DOWN"): other IT tests in this class share the same
+        // Postgres testcontainer/watchlist rows for user "default", so the reachability probe may
+        // land on whichever watchlist item happens to be first depending on test execution order.
+        when(companyData.fundamentalsResult(anyString()))
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: down"));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-lazarus/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-unavail", "tool_name", "fetch_quality_at_low_candidates",
+                        "input", Map.of()))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
     }
 
     @Test
