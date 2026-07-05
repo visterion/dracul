@@ -1,4 +1,4 @@
-package de.visterion.dracul.hunting.wikipedia;
+package de.visterion.dracul.hunting.agora;
 
 import java.time.LocalDate;
 
