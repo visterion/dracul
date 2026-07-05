@@ -86,11 +86,12 @@ test.describe('Settings View (/settings)', () => {
     ).toHaveText('pausiert')
   })
 
-  test('Data sources section lists sources with health', async ({ page }) => {
+  test('Data sources section lists the single Agora source with health', async ({ page }) => {
     await page.click('.set-nav-item:has-text("Data Sources")')
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
-    await expect(page.locator('.ds-row[data-source="yahoo"] .ds-row__status')).toHaveAttribute('data-status', 'rate_limited')
-    await expect(page.locator('.ds-row[data-source="edgar"]')).toBeVisible()
+    await expect(page.locator('.ds-row')).toHaveCount(1)
+    await expect(page.locator('.ds-row[data-source="agora"]')).toBeVisible()
+    await expect(page.locator('.ds-row[data-source="agora"] .ds-row__status')).toBeVisible()
   })
 
   test('Re-check reloads data sources', async ({ page }) => {
@@ -98,7 +99,7 @@ test.describe('Settings View (/settings)', () => {
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
     await page.click('[data-testid="ds-recheck"]')
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
-    await expect(page.locator('.ds-row[data-source="edgar"]')).toBeVisible()
+    await expect(page.locator('.ds-row[data-source="agora"]')).toBeVisible()
   })
 
   test('agent config rows show localized role + state labels', async ({ page }) => {

@@ -18,8 +18,6 @@ dracul:
     # enabled=true AND a non-blank token. See documentation/operations.md.
     enabled: ${DRACUL_LOCAL_ACCESS_ENABLED:false}
     token: ${DRACUL_LOCAL_ACCESS_TOKEN:}
-  edgar:
-    user-agent: ${DRACUL_EDGAR_USER_AGENT:dracul-research/1.0 contact@example.com}
   agora:
     base-url: ${DRACUL_AGORA_BASE_URL:http://agora:8080}
     token: ${DRACUL_AGORA_TOKEN:}
@@ -101,12 +99,6 @@ dracul:
     atr-multiple: ${DRACUL_STOPGUARD_ATR_MULTIPLE:0.5}
     cooldown:     ${DRACUL_STOPGUARD_COOLDOWN:82800}
     notify-level: ${DRACUL_STOPGUARD_NOTIFY_LEVEL:WARNING}
-  finnhub:
-    api-key: ${FINNHUB_API_KEY:}
-    base-url: ${FINNHUB_BASE_URL:https://finnhub.io/api/v1}
-  wikipedia:
-    base-url: ${WIKIPEDIA_BASE_URL:https://en.wikipedia.org}
-    user-agent: ${WIKIPEDIA_USER_AGENT:Dracul/1.0 (research; contact via repo)}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}
