@@ -1,5 +1,7 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.hunting.agora.AgoraEarnings;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.slf4j.Logger;
@@ -18,6 +20,7 @@ import java.util.Optional;
 /** Deterministic PEAD enrichment. SP1: SUE (+decile across the batch), revenue-surprise,
  *  double-beat, consecutive seasonal beats. SP2: market-adjusted announcement-CAR, abnormal
  *  volume, momentum and ADV (from OHLC vs the market proxy) plus beta/marketCap/sector.
+ *  All external data comes from the Agora facades; the shaping helpers hold the interpretation.
  *  Every external lookup is wrapped so a failure degrades one field, never the whole run. */
 @Component
 public class EchoEnrichmentService {
@@ -25,41 +28,44 @@ public class EchoEnrichmentService {
     private static final Logger log = LoggerFactory.getLogger(EchoEnrichmentService.class);
 
     private final SueEngine sueEngine;
-    private final EpsHistoryPort epsHistory;
+    private final AgoraFilings filings;
+    private final EpsHistoryShaper epsShaper;
     private final AgoraMarketData marketData;
     private final MarketSignalService marketSignals;
-    private final EquityMetricsPort equityMetrics;
+    private final EquityMetricsExtractor equityMetrics;
     private final String marketProxy;
     private final int historyDays;
-    private final FundamentalsPort fundamentals;
-    private final RevisionPort revisions;
-    private final NextEarningsPort nextEarnings;
-    private final EventScreenPort eventScreen;
+    private final SloanAccrualCalculator accruals;
+    private final RevisionsProxy revisions;
+    private final AgoraEarnings earnings;
+    private final ConfounderScreen eventScreen;
     private final EchoDeterministicGate gate;
 
     public EchoEnrichmentService(
             SueEngine sueEngine,
-            EpsHistoryPort epsHistory,
+            AgoraFilings filings,
+            EpsHistoryShaper epsShaper,
             AgoraMarketData marketData,
             MarketSignalService marketSignals,
-            EquityMetricsPort equityMetrics,
+            EquityMetricsExtractor equityMetrics,
             @Value("${dracul.strigoi.echo.car.market-proxy:SPY}") String marketProxy,
             @Value("${dracul.strigoi.echo.ohlc-history-days:320}") int historyDays,
-            FundamentalsPort fundamentals,
-            RevisionPort revisions,
-            NextEarningsPort nextEarnings,
-            EventScreenPort eventScreen,
+            SloanAccrualCalculator accruals,
+            RevisionsProxy revisions,
+            AgoraEarnings earnings,
+            ConfounderScreen eventScreen,
             EchoDeterministicGate gate) {
         this.sueEngine = sueEngine;
-        this.epsHistory = epsHistory;
+        this.filings = filings;
+        this.epsShaper = epsShaper;
         this.marketData = marketData;
         this.marketSignals = marketSignals;
         this.equityMetrics = equityMetrics;
         this.marketProxy = marketProxy;
         this.historyDays = historyDays;
-        this.fundamentals = fundamentals;
+        this.accruals = accruals;
         this.revisions = revisions;
-        this.nextEarnings = nextEarnings;
+        this.earnings = earnings;
         this.eventScreen = eventScreen;
         this.gate = gate;
     }
@@ -72,7 +78,7 @@ public class EchoEnrichmentService {
         for (PeadCandidate c : candidates) {
             List<QuarterlyEps> hist;
             try {
-                hist = epsHistory.quarterlyEps(c.symbol(), 16);
+                hist = epsShaper.quarterly(filings.epsHistory(c.symbol()), 16);
             } catch (Exception e) {
                 hist = List.of();
             }
@@ -153,7 +159,7 @@ public class EchoEnrichmentService {
     }
 
     private AccrualMetrics safeAccruals(String symbol) {
-        try { return fundamentals.accruals(symbol); }
+        try { return accruals.accruals(symbol); }
         catch (Exception e) { log.debug("echo: accruals unavailable for {}: {}", symbol, e.getMessage()); return AccrualMetrics.unavailable(); }
     }
 
@@ -168,7 +174,7 @@ public class EchoEnrichmentService {
     }
 
     private Optional<LocalDate> safeNextEarnings(String symbol) {
-        try { return nextEarnings.nextEarningsDate(symbol); }
+        try { return earnings.nextEarningsDate(symbol); }
         catch (Exception e) { log.debug("echo: next-earnings unavailable for {}: {}", symbol, e.getMessage()); return Optional.empty(); }
     }
 
