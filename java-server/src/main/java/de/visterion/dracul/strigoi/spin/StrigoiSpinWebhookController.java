@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.spin;
 
 import de.visterion.dracul.agent.ToolFetchCache;
-import de.visterion.dracul.hunting.edgar.EdgarSpinoffAdapter;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,19 +18,19 @@ import java.util.Map;
 @RequestMapping("/api/strigoi-spin")
 public class StrigoiSpinWebhookController extends HuntController {
 
-    private final EdgarSpinoffAdapter edgar;
+    private final AgoraFilings filings;
     private final SpinoffScreener screener;
     private final int defaultLookback;
 
     public StrigoiSpinWebhookController(
             @Value("${dracul.strigoi.spin.webhook-token}") String token,
-            EdgarSpinoffAdapter edgar,
+            AgoraFilings filings,
             SpinoffScreener screener,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             @Value("${dracul.strigoi.spin.lookback-days:60}") int defaultLookback) {
         super(token, preyRepo, cache);
-        this.edgar = edgar;
+        this.filings = filings;
         this.screener = screener;
         this.defaultLookback = defaultLookback;
     }
@@ -45,7 +45,7 @@ public class StrigoiSpinWebhookController extends HuntController {
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
         var to = LocalDate.now();
-        var raw = edgar.recentSpinoffs(to.minusDays(lookback), to);
+        var raw = filings.searchSpinoffs(to.minusDays(lookback), to);
         return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items()), raw.health());
     }
 
