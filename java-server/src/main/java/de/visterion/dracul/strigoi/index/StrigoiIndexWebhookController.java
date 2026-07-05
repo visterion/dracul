@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.index;
 
 import de.visterion.dracul.agent.ToolFetchCache;
-import de.visterion.dracul.hunting.wikipedia.WikipediaSp500Adapter;
+import de.visterion.dracul.hunting.agora.AgoraReference;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,19 +17,19 @@ import java.util.Map;
 @RequestMapping("/api/strigoi-index")
 public class StrigoiIndexWebhookController extends HuntController {
 
-    private final WikipediaSp500Adapter wikipedia;
+    private final AgoraReference reference;
     private final IndexScreener screener;
     private final int defaultLookback;
 
     public StrigoiIndexWebhookController(
             @Value("${dracul.strigoi.index.webhook-token}") String token,
-            WikipediaSp500Adapter wikipedia,
+            AgoraReference reference,
             IndexScreener screener,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             @Value("${dracul.strigoi.index.lookback-days:30}") int defaultLookback) {
         super(token, preyRepo, cache);
-        this.wikipedia = wikipedia;
+        this.reference = reference;
         this.screener = screener;
         this.defaultLookback = defaultLookback;
     }
@@ -43,7 +43,7 @@ public class StrigoiIndexWebhookController extends HuntController {
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
-        var raw = wikipedia.recentConstituents();
+        var raw = reference.constituents();
         return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items(), lookback), raw.health());
     }
 

@@ -1,7 +1,6 @@
 package de.visterion.dracul.hunting.agora;
 
 import de.visterion.dracul.hunting.DataSourceResult;
-import de.visterion.dracul.hunting.wikipedia.Sp500Constituent;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.springframework.stereotype.Component;
