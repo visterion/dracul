@@ -1,6 +1,6 @@
 package de.visterion.dracul.strigoi.merger;
 
-import de.visterion.dracul.hunting.edgar.MergerFiling;
+import de.visterion.dracul.hunting.agora.MergerFiling;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
