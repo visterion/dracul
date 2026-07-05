@@ -2,8 +2,7 @@ package de.visterion.dracul;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-import de.visterion.dracul.hunting.finnhub.BasicFinancials;
-import de.visterion.dracul.hunting.finnhub.FinnhubFundamentalsAdapter;
+import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +39,7 @@ class StrigoiLazarusWebhookControllerIT {
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
     @Autowired WatchlistRepository watchlist;
-    @MockitoBean FinnhubFundamentalsAdapter fundamentals;
+    @MockitoBean AgoraCompanyData companyData;
 
     RestClient rest;
 
@@ -50,15 +49,17 @@ class StrigoiLazarusWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
-        when(fundamentals.configured()).thenReturn(true);
-        when(fundamentals.basicFinancials(anyString())).thenReturn(null);
+        when(companyData.fundamentals(anyString())).thenReturn(null);
     }
 
     @Test
     void toolEndpointReturnsCandidatesNearLow() {
         watchlist.insert("default", "ACME", "Acme Inc", 10.50, List.of(), "lazarus-it", null, null);
-        when(fundamentals.basicFinancials("ACME")).thenReturn(new BasicFinancials(
-                10.0, 40.0, 5.0, 1.8, 0.4, 35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3));
+        when(companyData.fundamentals("ACME")).thenReturn(objectMapper.readTree(
+                "{\"52WeekLow\":10.0,\"52WeekHigh\":40.0,\"roaTTM\":5.0,\"currentRatioQuarterly\":1.8," +
+                "\"totalDebt/totalEquityQuarterly\":0.4,\"grossMarginTTM\":35.0,\"netProfitMarginTTM\":8.0," +
+                "\"revenueGrowthTTMYoy\":4.0,\"epsGrowthTTMYoy\":3.0,\"pbAnnual\":1.2,\"peTTM\":11.0," +
+                "\"freeCashFlowPerShareTTM\":2.3}"));
 
         JsonNode resp = rest.post().uri("/api/strigoi-lazarus/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
@@ -133,25 +134,6 @@ class StrigoiLazarusWebhookControllerIT {
         for (JsonNode p : chronicle.path("prey")) {
             assertThat(p.path("companyName").asText()).isNotEqualTo("BlankCo Lazarus");
         }
-    }
-
-    @Test
-    void blankKeySurfacesUnavailable() {
-        org.mockito.Mockito.when(fundamentals.configured()).thenReturn(false);
-
-        // Use a distinct lookback_days to get a fresh cache slot (avoids hitting the
-        // healthy result cached by the happy-path test under the "default" key).
-        JsonNode resp = rest.post().uri("/api/strigoi-lazarus/tools/fetch-candidates")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("run_id", "r-blank", "tool_name", "fetch_quality_at_low_candidates",
-                        "input", Map.of("lookback_days", 999)))
-                .retrieve().body(JsonNode.class);
-
-        assertThat(resp.path("output").path("data_source_health").path("status").asText())
-                .isEqualTo("unavailable");
-        assertThat(resp.path("output").path("data_source_health").path("detail").asText())
-                .contains("api key missing");
     }
 
     @Test

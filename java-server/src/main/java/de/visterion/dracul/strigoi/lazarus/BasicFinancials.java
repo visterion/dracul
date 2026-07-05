@@ -1,4 +1,4 @@
-package de.visterion.dracul.hunting.finnhub;
+package de.visterion.dracul.strigoi.lazarus;
 
 /**
  * Subset of Finnhub's basic-financials ("metric") object. All fields are boxed
