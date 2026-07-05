@@ -107,7 +107,6 @@ dracul:
   wikipedia:
     base-url: ${WIKIPEDIA_BASE_URL:https://en.wikipedia.org}
     user-agent: ${WIKIPEDIA_USER_AGENT:Dracul/1.0 (research; contact via repo)}
-    sp500-page: ${WIKIPEDIA_SP500_PAGE:List of S&P 500 companies}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}

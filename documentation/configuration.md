@@ -51,22 +51,35 @@ Cloudflare.
 
 ## Market-data adapters
 
+As of slice 7c, hunting fetch (filings, news, recommendations, fundamentals,
+earnings, index constituents, intraday) no longer uses any direct-provider
+adapter — it routes through Agora (see "Agora (hunting fetch + prices/OHLC)"
+below). The rows below now feed **only** the Settings → Data-Sources health
+probe (`HttpDataSourceHealthService`), which still pings these providers
+directly for a health signal; this probe is flagged stale and slated for
+realignment to probe Agora in 7d.
+
 | Variable | Purpose |
 |---|---|
-| `EDGAR_USER_AGENT` | Required by SEC EDGAR (`Name email@example.com`) |
-| `ALPHAVANTAGE_API_KEY` | Alpha Vantage prices adapter (optional; free tier = 5 calls/min) |
-| `POLYGON_API_KEY` | Polygon.io prices adapter (optional; paid, higher limits) |
-| `FINNHUB_API_KEY` | Finnhub news and quote adapter |
-| `NEWSAPI_KEY` | NewsAPI news adapter (optional) |
+| `EDGAR_USER_AGENT` / `DRACUL_EDGAR_USER_AGENT` | User-Agent for the health probe's direct EDGAR ping only. Hunting fetch no longer reads it. |
+| `FINNHUB_API_KEY` | Auth for the health probe's direct Finnhub ping only. Hunting fetch no longer reads it. |
 
-## Agora (prices / OHLC provider)
+## Agora (hunting fetch + prices/OHLC provider)
 
-Dracul no longer talks to price providers directly. All quotes and daily OHLC
-history come from **Agora** — a co-located service Dracul consumes over Agora's
-MCP front-door (Streamable-HTTP + Bearer) via the generic `AgoraClient` and the
-`AgoraMarketData` facade (`get_quote` / `get_ohlc`). Agora performs provider
-fallback (Finnhub / Twelve Data / Yahoo) internally, so there is no Dracul-side
-adapter chain any more.
+Dracul no longer talks to market-data or hunting-ground providers directly.
+All quotes, daily OHLC history, filings, news, recommendations, fundamentals,
+earnings, index constituents, and intraday candles come from **Agora** — a
+co-located service Dracul consumes over Agora's MCP front-door
+(Streamable-HTTP + Bearer):
+
+- Prices/OHLC: the generic `AgoraClient` and the `AgoraMarketData` facade
+  (`get_quote` / `get_ohlc`).
+- Hunting fetch: the five domain facades in `de.visterion.dracul.hunting.agora`
+  (`AgoraFilings`, `AgoraCompanyData`, `AgoraEarnings`, `AgoraReference`,
+  `AgoraIntraday`).
+
+Agora performs provider fallback (EDGAR / Finnhub / Twelve Data / Yahoo /
+Wikipedia) internally, so there is no Dracul-side adapter chain any more.
 
 | Env var / property | Default | Purpose |
 |---|---|---|
@@ -81,16 +94,18 @@ first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
 same degradation contract as the old adapter chain, so scheduled refreshes never
 crash.
 
-## Yahoo Finance (FX / intraday / earnings adapter)
+## Yahoo Finance (FX adapter)
 
-Yahoo is no longer a price/OHLC provider (Agora hosts those). The
-`yahooRestClient` bean and the keys below remain in use for FX, intraday, and
-the earnings-calendar fallback.
+Yahoo is no longer a price/OHLC provider (Agora hosts those), and as of
+slice 7c is no longer used for intraday or earnings-calendar fetch either
+(both now route through Agora's `AgoraIntraday` / `AgoraEarnings` facades).
+The `yahooRestClient` bean and the keys below remain in use for FX only
+(out of scope for slice 7c — deferred, see spec §9).
 
 | Env var / property | Default | Purpose |
 |---|---|---|
-| `DRACUL_MARKETDATA_YAHOO_BASE_URL` (`dracul.marketdata.yahoo.base-url`) | `https://query1.finance.yahoo.com` | Base URL for all Yahoo Finance requests. Override for tests. |
-| `DRACUL_MARKETDATA_YAHOO_USER_AGENT` (`dracul.marketdata.yahoo.user-agent`) | `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36` | User-Agent sent on all Yahoo Finance requests (FX, intraday, earnings). Yahoo returns HTTP 429 to a **Linux**-Chrome UA (`X11; Linux x86_64`) even though it is browser-like, so the default is a **Windows**-Chrome UA; both return 200. Override via env only if Yahoo changes its heuristics. |
+| `DRACUL_MARKETDATA_YAHOO_BASE_URL` (`dracul.marketdata.yahoo.base-url`) | `https://query1.finance.yahoo.com` | Base URL for FX requests. Override for tests. |
+| `DRACUL_MARKETDATA_YAHOO_USER_AGENT` (`dracul.marketdata.yahoo.user-agent`) | `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36` | User-Agent sent on FX requests. Yahoo returns HTTP 429 to a **Linux**-Chrome UA (`X11; Linux x86_64`) even though it is browser-like, so the default is a **Windows**-Chrome UA; both return 200. Override via env only if Yahoo changes its heuristics. |
 | `DRACUL_MARKETDATA_YAHOO_TIMEOUT_MS` (`dracul.marketdata.yahoo.timeout-ms`) | `5000` | Connect + read timeout (ms) on the Yahoo client so a slow Yahoo can't stall a request. |
 | `DRACUL_MARKETDATA_FX_REFRESH_ENABLED` (`dracul.marketdata.fx-refresh.enabled`) | `true` | Background FX-rate warm-up. Watchlist/portfolio currency conversion is served from this warmed cache and never does a live fetch in the request path. |
 | `DRACUL_MARKETDATA_FX_REFRESH_INITIAL_DELAY_MS` (`dracul.marketdata.fx-refresh.initial-delay-ms`) | `0` | Delay (ms) before the first FX warm-up run after startup. |
@@ -136,10 +151,15 @@ deferred.
 
 ## Finnhub
 
+Daywalker's news + recommendation triggers now fetch via Agora
+(`AgoraCompanyData.news` / `recommendations`), not Finnhub directly. The
+variables below feed **only** the Settings → Data-Sources health probe
+(flagged stale, slated for 7d realignment to probe Agora).
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `FINNHUB_API_KEY` | _(blank)_ | Finnhub token for Daywalker news + recommendation triggers. Blank → those triggers degrade to no-op. |
-| `FINNHUB_BASE_URL` | `https://finnhub.io/api/v1` | Override for tests. |
+| `FINNHUB_API_KEY` | _(blank)_ | Auth for the health probe's direct Finnhub ping only. |
+| `FINNHUB_BASE_URL` | `https://finnhub.io/api/v1` | Health-probe Finnhub base URL override (tests). |
 
 ## Strigoi schedules
 
@@ -173,7 +193,10 @@ dracul:
 | `STRIGOI_INSIDER_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
 | `DRACUL_INSIDER_SCHEDULE` | `0 0 21 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 21:00 UTC weekdays. |
 | `DRACUL_PUBLIC_URL` | `http://localhost:8080` | Base URL Vistierie uses to call back into Dracul (tool + completion webhooks). Must be reachable from the Vistierie container. |
-| `DRACUL_EDGAR_USER_AGENT` | `dracul-research/1.0 contact@example.com` | SEC requires identifying User-Agent on EDGAR requests. Use a real contact in production. |
+
+Insider reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
+Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
+needed.
 
 ## Strigoi Echo
 
@@ -182,7 +205,6 @@ dracul:
 | `STRIGOI_ECHO_ENABLED` | `false` | Enable agent registration on Dracul startup (controller + registrar `@ConditionalOnProperty`) |
 | `STRIGOI_ECHO_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
 | `DRACUL_ECHO_SCHEDULE` | `0 0 22 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 22:00 UTC weekdays, after US close. |
-| `ECHO_EARNINGS_SOURCE` (`dracul.strigoi.echo.earnings-source`) | `finnhub` | Earnings-announcement source for the pre-screen. Allowed: `finnhub` (primary — Finnhub `/calendar/earnings`) or `yahoo` (fallback — Yahoo earnings calendar). |
 | `ECHO_MIN_SURPRISE` | `5.0` | Minimum positive earnings-surprise percent for the pre-screen. |
 | `ECHO_MIN_PRICE` | `5.0` | Minimum current share price (USD) liquidity floor for the pre-screen. |
 | `ECHO_OHLC_HISTORY_DAYS` (`dracul.strigoi.echo.ohlc-history-days`) | `320` | Trading days of daily OHLC fetched per symbol/proxy for SP2 CAR, momentum and ADV. |
@@ -190,12 +212,11 @@ dracul:
 | `dracul.strigoi.echo.gate.max-accrual-ratio` | `ECHO_MAX_ACCRUAL` | `0.10` | Sloan accrual ratio above which an earnings beat is treated as accrual-driven and the candidate is dropped. |
 | `dracul.strigoi.echo.gate.min-days-to-next-earnings` | `ECHO_MIN_DAYS_NEXT` | `10` | Drop a candidate whose next earnings report is fewer than this many days away. |
 
-Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared price /
-Yahoo market-data client. Its v2 signal data (academic PEAD signals: time-series
-SUE deciles, revenue-surprise / double-beat, consecutive beats) additionally
-requires **`FINNHUB_API_KEY`** (earnings announcements when
-`earnings-source=finnhub`) and **`DRACUL_EDGAR_USER_AGENT`** (SEC EDGAR
-companyconcept quarterly diluted-EPS history + ticker→CIK map for SUE).
+Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
+Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
+needed. Its v2 signal data (academic PEAD signals: time-series SUE deciles,
+revenue-surprise / double-beat, consecutive beats) is computed Dracul-side
+from Agora's earnings-window and EPS-history facade output.
 
 ## Strigoi Spin
 
@@ -206,8 +227,9 @@ companyconcept quarterly diluted-EPS history + ticker→CIK map for SUE).
 | `DRACUL_SPIN_SCHEDULE` | `0 0 4 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 04:00 UTC weekdays. |
 | `SPIN_LOOKBACK_DAYS` | `60` | Default Form-10-12B lookback window (days) for the pre-screen. |
 
-Spin reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared EDGAR
-User-Agent. It needs no API key.
+Spin reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
+Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
+needed.
 
 ## Strigoi Lazarus
 
@@ -219,9 +241,10 @@ User-Agent. It needs no API key.
 | `LAZARUS_MAX_ABOVE_LOW` | `0.10` | Maximum fraction above the 52-week low to pass the price-proximity screen (default: within 10%). |
 | `LAZARUS_MAX_DEBT_EQUITY` | `3.0` | Leverage cap for the solvency gate; candidates above this ratio are excluded. |
 
-Lazarus reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and `FINNHUB_API_KEY`
-(fundamentals adapter). A blank API key degrades gracefully — symbols without
-fundamentals are skipped by the screener.
+Lazarus reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
+Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
+needed. An Agora failure degrades gracefully — symbols without fundamentals are
+skipped by the screener.
 
 ## Strigoi Merger
 
@@ -232,8 +255,9 @@ fundamentals are skipped by the screener.
 | `DRACUL_MERGER_SCHEDULE` | `0 0 5 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 05:00 UTC weekdays. |
 | `MERGER_LOOKBACK_DAYS` | `45` | Default DEFM14A / SC TO-T lookback window (days) for the pre-screen (1–120). |
 
-Merger reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared EDGAR
-User-Agent. It needs no API key.
+Merger reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
+Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
+needed.
 
 ## Strigoi Index
 
@@ -244,7 +268,9 @@ User-Agent. It needs no API key.
 | `DRACUL_INDEX_SCHEDULE` | `0 0 7 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 07:00 UTC weekdays. |
 | `INDEX_LOOKBACK_DAYS` | `30` | Default S&P 500 `Date added` lookback window (days) for the pre-screen (1–90). |
 
-Index reuses `DRACUL_PUBLIC_URL` (webhook callback base URL). It needs no API key.
+Index reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
+Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
+needed.
 
 ## Voievod (consensus synthesizer)
 
@@ -311,11 +337,15 @@ The digest only sends on days with at least one **actionable** position (`SELL` 
 
 ## Wikipedia
 
+Strigoi-Index resolves S&P 500 constituents via Agora
+(`AgoraReference.constituents`), not Wikipedia directly. The variables below
+feed **only** the Settings → Data-Sources health probe (flagged stale,
+slated for 7d realignment to probe Agora).
+
 | Env var | Default | Purpose |
 |---|---|---|
-| `WIKIPEDIA_BASE_URL` | `https://en.wikipedia.org` | MediaWiki API base URL. Override for tests. |
-| `WIKIPEDIA_USER_AGENT` | `Dracul/1.0 (research; contact via repo)` | `User-Agent` header sent on all Wikipedia requests. MediaWiki policy requires a descriptive UA. |
-| `WIKIPEDIA_SP500_PAGE` | `List of S&P 500 companies` | MediaWiki page title passed as `page=` to `action=parse`. Override if the page is renamed. |
+| `WIKIPEDIA_BASE_URL` | `https://en.wikipedia.org` | Health-probe Wikipedia base URL. |
+| `WIKIPEDIA_USER_AGENT` | `Dracul/1.0 (research; contact via repo)` | `User-Agent` header sent on the health probe's Wikipedia ping. MediaWiki policy requires a descriptive UA. |
 
 ## Language / i18n
 
@@ -378,7 +408,7 @@ The following remain **code-bound** and require a redeploy to change:
 
 Results of the agent `/tools/fetch-*` webhooks are cached (keyed by tool + request
 params) so repeated tool calls within a run — or quick re-triggers — do not re-hit
-upstream providers (EDGAR / Yahoo / market-data).
+Agora (hunting fetch + market-data).
 
 | Env var | Default | Purpose |
 |---|---|---|

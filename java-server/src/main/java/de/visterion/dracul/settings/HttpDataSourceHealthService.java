@@ -30,6 +30,8 @@ public class HttpDataSourceHealthService implements DataSourceHealthService {
 
     private record Source(String id, String label, String probePath, List<String> usedBy, String rateLimitNote) {}
 
+    // NOTE (7c): these probes still hit EDGAR/Yahoo/Finnhub/Wikipedia directly; hunting fetch now
+    // routes through Agora. Kept as-is per slice-7c spec §9; realigned to probe Agora in 7d.
     // Probe paths are cheap, representative calls. Symbols are arbitrary liquid tickers.
     private final List<Source> sources;
     private final RestClient edgar, yahoo, finnhub, wikipedia;
@@ -39,7 +41,7 @@ public class HttpDataSourceHealthService implements DataSourceHealthService {
     private record Cached(Instant at, List<DataSourceHealth> results) {}
 
     public HttpDataSourceHealthService(
-            @Value("${dracul.edgar.user-agent}") String edgarUserAgent,
+            @Value("${dracul.edgar.user-agent:dracul-research/1.0 contact@example.com}") String edgarUserAgent,
             @Value("${dracul.edgar.efts-base:https://efts.sec.gov}") String edgarBase,
             @Value("${dracul.yahoo.base-url:https://query1.finance.yahoo.com}") String yahooBase,
             @Value("${dracul.finnhub.base-url:https://finnhub.io/api/v1}") String finnhubBase,

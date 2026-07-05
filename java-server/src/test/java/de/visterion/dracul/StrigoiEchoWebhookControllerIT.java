@@ -182,7 +182,7 @@ class StrigoiEchoWebhookControllerIT {
     void unavailableSourceSurfacesAndIsNotCached() {
         org.mockito.Mockito.when(earnings.recent(
                         org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(DataSourceResult.unavailable("finnhub", "finnhub: 503"));
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: 503"));
 
         JsonNode resp = rest.post().uri("/api/strigoi-echo/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-echo-token")

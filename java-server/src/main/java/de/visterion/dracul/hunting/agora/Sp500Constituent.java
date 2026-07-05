@@ -2,7 +2,7 @@ package de.visterion.dracul.hunting.agora;
 
 import java.time.LocalDate;
 
-/** A parsed row of the Wikipedia "List of S&P 500 companies" main constituents table. */
+/** A row of the S&P 500 index constituents list, fetched via Agora. */
 public record Sp500Constituent(
         String symbol,
         String companyName,
