@@ -39,13 +39,13 @@ class SettingsDataSourceControllerIT {
                 .filter(n -> n.get("id").asText().equals(id)).findFirst().orElseThrow();
     }
 
-    @Test void getDataSourcesReturnsFourSources() {
+    @Test void getDataSourcesReturnsSingleAgoraRow() {
         var body = rest.get().uri("/api/settings/data-sources").retrieve().body(JsonNode.class);
         assertThat(body).isNotNull();
         assertThat(body.isArray()).isTrue();
-        assertThat(body).hasSize(4);
-        assertThat(row(body, "yahoo").get("status").asText()).isEqualTo("rate_limited");
-        assertThat(row(body, "edgar").get("usedBy").isArray()).isTrue();
+        assertThat(body).hasSize(1);
+        assertThat(row(body, "agora").get("status").asText()).isEqualTo("ok");
+        assertThat(row(body, "agora").get("usedBy").isArray()).isTrue();
     }
 
     @Test void cacheHoldsUnlessRefresh() {

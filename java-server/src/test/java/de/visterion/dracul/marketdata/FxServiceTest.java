@@ -1,52 +1,76 @@
 package de.visterion.dracul.marketdata;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import org.junit.jupiter.api.*;
-import org.springframework.web.client.RestClient;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
-import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class FxServiceTest {
-    static WireMockServer wm;
-    FxService fx;
 
-    @BeforeAll static void start() { wm = new WireMockServer(options().dynamicPort()); wm.start(); }
-    @AfterAll  static void stop()  { wm.stop(); }
-    @BeforeEach void setUp() {
-        wm.resetAll();
-        fx = new FxService(RestClient.builder().baseUrl(wm.baseUrl()).build());
+    private final ObjectMapper mapper = new ObjectMapper();
+    private JsonNode json(String s) { return mapper.readTree(s); }
+
+    @Test void sameCurrencyIsIdentityAndNeverCallsAgora() {
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+        FxService fx = new FxService(agora);
+        assertThat(fx.convert(new BigDecimal("100"), "USD", "USD")).isEqualByComparingTo("100");
+        verify(agora, never()).callTool(any(), any());
     }
 
-    @Test void identityWhenSameCurrency() {
-        assertThat(fx.convert(new BigDecimal("100"), "EUR", "EUR")).isEqualByComparingTo("100");
-    }
-
-    @Test void convertWithoutWarmIsIdentityAndDoesNoHttp() {
+    @Test void convertWithoutWarmIsIdentityAndDoesNoFetch() {
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+        FxService fx = new FxService(agora);
         assertThat(fx.convert(new BigDecimal("100"), "USD", "EUR")).isEqualByComparingTo("100");
-        wm.verify(0, getRequestedFor(urlPathEqualTo("/v8/finance/chart/USDEUR=X")));
+        verify(agora, never()).callTool(any(), any());
     }
 
-    @Test void warmThenConvertUsesWarmedRate() {
-        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/USDEUR=X")).willReturn(okJson("""
-            {"chart":{"result":[{"meta":{"regularMarketPrice":0.90}}],"error":null}}""")));
+    @Test void warmThenConvertUsesAgoraRate() {
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+        when(agora.callTool(eq("get_fx_rate"), any()))
+                .thenReturn(json("{\"from\":\"USD\",\"to\":\"EUR\",\"rate\":0.90}"));
+        FxService fx = new FxService(agora);
         fx.warm("USD", "EUR");
-        assertThat(fx.convert(new BigDecimal("100"), "USD", "EUR")).isEqualByComparingTo("90.00");
+        // 100 USD * 0.90 = 90.00 (scale 4)
+        assertThat(fx.convert(new BigDecimal("100"), "USD", "EUR")).isEqualByComparingTo("90.0000");
+        verify(agora, times(1)).callTool(eq("get_fx_rate"), any());
     }
 
-    @Test void warmFetchesOnce_convertDoesNotRefetch() {
-        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/USDEUR=X")).willReturn(okJson("""
-            {"chart":{"result":[{"meta":{"regularMarketPrice":0.90}}],"error":null}}""")));
-        fx.warm("USD", "EUR");
-        fx.convert(new BigDecimal("1"), "USD", "EUR");
-        fx.convert(new BigDecimal("1"), "USD", "EUR");
-        wm.verify(1, getRequestedFor(urlPathEqualTo("/v8/finance/chart/USDEUR=X")));
+    @Test void warmPassesFromAndToArgs() {
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+        when(agora.callTool(eq("get_fx_rate"), any()))
+                .thenReturn(json("{\"from\":\"USD\",\"to\":\"EUR\",\"rate\":0.90}"));
+        var cap = org.mockito.ArgumentCaptor.forClass(JsonNode.class);
+        new FxService(agora).warm("usd", "eur");
+        verify(agora).callTool(eq("get_fx_rate"), cap.capture());
+        assertThat(cap.getValue().get("from").asString()).isEqualTo("usd");
+        assertThat(cap.getValue().get("to").asString()).isEqualTo("eur");
     }
 
-    @Test void warmFailureLeavesIdentity() {
-        wm.stubFor(get(urlPathEqualTo("/v8/finance/chart/USDEUR=X")).willReturn(aResponse().withStatus(500)));
+    @Test void warmKeepsLastKnownOnAgoraUnavailable() {
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+        // first warm succeeds, caches 0.90
+        when(agora.callTool(eq("get_fx_rate"), any()))
+                .thenReturn(json("{\"from\":\"USD\",\"to\":\"EUR\",\"rate\":0.90}"))
+                .thenThrow(new AgoraUnavailableException("agora down"));
+        FxService fx = new FxService(agora);
         fx.warm("USD", "EUR");
+        fx.warm("USD", "EUR"); // throws internally, must not propagate, keeps 0.90
+        assertThat(fx.convert(new BigDecimal("100"), "USD", "EUR")).isEqualByComparingTo("90.0000");
+    }
+
+    @Test void nullClientIsSafeForConvert() {
+        // the @Primary test stub uses new FxService(null); convert must not touch the client
+        FxService fx = new FxService(null);
         assertThat(fx.convert(new BigDecimal("100"), "USD", "EUR")).isEqualByComparingTo("100");
     }
 }
