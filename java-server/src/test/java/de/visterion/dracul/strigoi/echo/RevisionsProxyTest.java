@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
-import de.visterion.dracul.hunting.finnhub.RecommendationTrend;
+import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

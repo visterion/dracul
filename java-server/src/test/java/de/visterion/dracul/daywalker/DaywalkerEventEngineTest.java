@@ -3,10 +3,10 @@ package de.visterion.dracul.daywalker;
 import de.visterion.dracul.daywalker.detect.TriggerEvent;
 import de.visterion.dracul.daywalker.detect.TriggerType;
 import de.visterion.dracul.hunting.DataSourceResult;
-import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
-import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
-import de.visterion.dracul.hunting.yahoo.IntradayCandles;
-import de.visterion.dracul.hunting.yahoo.YahooIntradayAdapter;
+import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.AgoraIntraday;
+import de.visterion.dracul.hunting.agora.IntradayCandles;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.Test;
@@ -31,104 +31,104 @@ class DaywalkerEventEngineTest {
         return java.util.Arrays.stream(v).mapToObj(BigDecimal::valueOf).toList();
     }
 
-    private DaywalkerEventEngine engine(WatchlistRepository wl, YahooIntradayAdapter ya,
-                                        FinnhubNewsAdapter fh, EdgarFormFourAdapter ed,
+    private DaywalkerEventEngine engine(WatchlistRepository wl, AgoraIntraday in,
+                                        AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al) {
-        return new DaywalkerEventEngine(wl, ya, fh, ed, al, 0.03, 3.0, 3600);
+        return new DaywalkerEventEngine(wl, in, cd, fi, al, 0.03, 3.0, 3600);
     }
 
     @Test
     void emitsPriceSpikeAndAppliesCooldown() {
         var wl = mock(WatchlistRepository.class);
-        var ya = mock(YahooIntradayAdapter.class);
-        var fh = mock(FinnhubNewsAdapter.class);
-        var ed = mock(EdgarFormFourAdapter.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
         var al = mock(DaywalkerAlertRepository.class);
 
         when(wl.findAll()).thenReturn(List.of(item("id-1", "ACME", "u1@x.com")));
-        when(ya.intradayCandles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
-        when(fh.companyNews(eq("ACME"), any(), any())).thenReturn(List.of());
-        when(fh.recommendationTrend("ACME")).thenReturn(List.of());
-        when(ed.recentFilings(any(), any())).thenReturn(DataSourceResult.healthy("edgar", List.of()));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
         var now = Instant.parse("2026-06-03T18:00:00Z");
-        List<TriggerEvent> events = engine(wl, ya, fh, ed, al).detect(null, now);
+        List<TriggerEvent> events = engine(wl, in, cd, fi, al).detect(null, now);
 
         assertThat(events).extracting(TriggerEvent::triggerType)
                 .containsExactly(TriggerType.PRICE_SPIKE);
 
         when(al.lastAlertAt("u1@x.com", "ACME", "PRICE_SPIKE"))
                 .thenReturn(Optional.of(now.minusSeconds(60)));
-        assertThat(engine(wl, ya, fh, ed, al).detect(null, now)).isEmpty();
+        assertThat(engine(wl, in, cd, fi, al).detect(null, now)).isEmpty();
     }
 
     @Test
     void dedupsSameTickerAcrossUsersAndFetchesMarketDataOnce() {
         var wl = mock(WatchlistRepository.class);
-        var ya = mock(YahooIntradayAdapter.class);
-        var fh = mock(FinnhubNewsAdapter.class);
-        var ed = mock(EdgarFormFourAdapter.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
         var al = mock(DaywalkerAlertRepository.class);
 
         when(wl.findAll()).thenReturn(List.of(
                 item("id-a", "AAPL", "u1@x.com"),
                 item("id-b", "AAPL", "u2@x.com")));
-        when(ya.intradayCandles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
-        when(fh.companyNews(eq("AAPL"), any(), any())).thenReturn(List.of());
-        when(fh.recommendationTrend("AAPL")).thenReturn(List.of());
-        when(ed.recentFilings(any(), any())).thenReturn(DataSourceResult.healthy("edgar", List.of()));
+        when(in.candles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("AAPL"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("AAPL")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
-        var events = engine(wl, ya, fh, ed, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+        var events = engine(wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
 
         assertThat(events).extracting(TriggerEvent::triggerType)
                 .containsExactly(TriggerType.PRICE_SPIKE);
-        verify(ya, times(1)).intradayCandles("AAPL");
+        verify(in, times(1)).candles("AAPL");
     }
 
     @Test
     void emitsWhenAnyOwnerFreeDropsWhenAllInCooldown() {
         var wl = mock(WatchlistRepository.class);
-        var ya = mock(YahooIntradayAdapter.class);
-        var fh = mock(FinnhubNewsAdapter.class);
-        var ed = mock(EdgarFormFourAdapter.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
         var al = mock(DaywalkerAlertRepository.class);
 
         when(wl.findAll()).thenReturn(List.of(
                 item("id-a", "AAPL", "u1@x.com"),
                 item("id-b", "AAPL", "u2@x.com")));
-        when(ya.intradayCandles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
-        when(fh.companyNews(eq("AAPL"), any(), any())).thenReturn(List.of());
-        when(fh.recommendationTrend("AAPL")).thenReturn(List.of());
-        when(ed.recentFilings(any(), any())).thenReturn(DataSourceResult.healthy("edgar", List.of()));
+        when(in.candles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("AAPL"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("AAPL")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
 
         var now = Instant.parse("2026-06-03T18:00:00Z");
         when(al.lastAlertAt("u1@x.com", "AAPL", "PRICE_SPIKE")).thenReturn(Optional.of(now.minusSeconds(60)));
         when(al.lastAlertAt("u2@x.com", "AAPL", "PRICE_SPIKE")).thenReturn(Optional.empty());
-        assertThat(engine(wl, ya, fh, ed, al).detect(null, now)).extracting(TriggerEvent::triggerType)
+        assertThat(engine(wl, in, cd, fi, al).detect(null, now)).extracting(TriggerEvent::triggerType)
                 .containsExactly(TriggerType.PRICE_SPIKE);
 
         when(al.lastAlertAt("u2@x.com", "AAPL", "PRICE_SPIKE")).thenReturn(Optional.of(now.minusSeconds(60)));
-        assertThat(engine(wl, ya, fh, ed, al).detect(null, now)).isEmpty();
+        assertThat(engine(wl, in, cd, fi, al).detect(null, now)).isEmpty();
     }
 
     @Test
-    void edgarFailureDegradesGracefully() {
+    void filingsFailureDegradesGracefully() {
         var wl = mock(WatchlistRepository.class);
-        var ya = mock(YahooIntradayAdapter.class);
-        var fh = mock(FinnhubNewsAdapter.class);
-        var ed = mock(EdgarFormFourAdapter.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
         var al = mock(DaywalkerAlertRepository.class);
 
         when(wl.findAll()).thenReturn(List.of(item("id-1", "ACME", "u1@x.com")));
-        when(ya.intradayCandles("ACME")).thenReturn(new IntradayCandles(List.of(), List.of()));
-        when(fh.companyNews(eq("ACME"), any(), any())).thenReturn(List.of());
-        when(fh.recommendationTrend("ACME")).thenReturn(List.of());
-        when(ed.recentFilings(any(), any())).thenThrow(new RuntimeException("EDGAR down"));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(List.of(), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenThrow(new RuntimeException("boom"));
         when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
-        var events = engine(wl, ya, fh, ed, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+        var events = engine(wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
         assertThat(events).isEmpty();
     }
 
@@ -136,8 +136,8 @@ class DaywalkerEventEngineTest {
     void emptyWatchlistReturnsNoEvents() {
         var wl = mock(WatchlistRepository.class);
         when(wl.findAll()).thenReturn(List.of());
-        var engine = engine(wl, mock(YahooIntradayAdapter.class), mock(FinnhubNewsAdapter.class),
-                mock(EdgarFormFourAdapter.class), mock(DaywalkerAlertRepository.class));
+        var engine = engine(wl, mock(AgoraIntraday.class), mock(AgoraCompanyData.class),
+                mock(AgoraFilings.class), mock(DaywalkerAlertRepository.class));
         assertThat(engine.detect(null, Instant.now())).isEmpty();
     }
 }

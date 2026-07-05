@@ -1,6 +1,6 @@
 package de.visterion.dracul.strigoi.insider;
 
-import de.visterion.dracul.hunting.edgar.Form4Filing;
+import de.visterion.dracul.hunting.agora.Form4Filing;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

@@ -1,7 +1,7 @@
 package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
-import de.visterion.dracul.hunting.finnhub.NewsHeadline;
+import de.visterion.dracul.hunting.agora.NewsHeadline;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;

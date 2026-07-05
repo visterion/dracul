@@ -1,4 +1,4 @@
-package de.visterion.dracul.hunting.edgar;
+package de.visterion.dracul.hunting.agora;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;

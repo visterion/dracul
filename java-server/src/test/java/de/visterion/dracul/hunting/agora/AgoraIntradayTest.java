@@ -1,6 +1,5 @@
 package de.visterion.dracul.hunting.agora;
 
-import de.visterion.dracul.hunting.yahoo.IntradayCandles;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
