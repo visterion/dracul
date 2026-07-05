@@ -1,7 +1,7 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.strigoi.echo.EarningsObservation;
 import de.visterion.dracul.strigoi.echo.EarningsSourceRouter;
@@ -14,7 +14,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -42,7 +42,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class StrigoiEchoWebhookControllerIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
     @MockitoBean EarningsSourceRouter earnings;
     @MockitoBean EchoEnrichmentService enrichment;
 
@@ -54,7 +54,7 @@ class StrigoiEchoWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> {
                     c.clear();
-                    c.add(new MappingJackson2HttpMessageConverter(objectMapper));
+                    c.add(new JacksonJsonHttpMessageConverter(objectMapper));
                 })
                 .build();
         var aapl = new EarningsObservation(

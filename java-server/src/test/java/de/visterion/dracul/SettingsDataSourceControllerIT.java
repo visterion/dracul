@@ -1,14 +1,14 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
@@ -23,14 +23,14 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class SettingsDataSourceControllerIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
     RestClient rest;
 
     @BeforeEach
     void setUp() {
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
+                .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
     }
 

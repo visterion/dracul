@@ -1,7 +1,7 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.marketdata.StubFxServiceConfig;
 import de.visterion.dracul.verdict.ContributingStrigoiDetail;
 import de.visterion.dracul.verdict.VerdictRepository;
@@ -11,7 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
@@ -27,7 +27,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class VerdictDetailCurrencyIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
     @Autowired VerdictRepository verdictRepo;
     RestClient rest;
 
@@ -37,7 +37,7 @@ class VerdictDetailCurrencyIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> {
                     c.clear();
-                    c.add(new MappingJackson2HttpMessageConverter(objectMapper));
+                    c.add(new JacksonJsonHttpMessageConverter(objectMapper));
                 })
                 .build();
     }

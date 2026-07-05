@@ -1,7 +1,7 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.marketdata.StubFxServiceConfig;
 import de.visterion.dracul.marketdata.StubMarketDataPort;
 import de.visterion.dracul.marketdata.StubMarketDataPortConfig;
@@ -12,7 +12,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
@@ -30,7 +30,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class WatchlistMutationControllerIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper om;
+    @Autowired JsonMapper om;
     @Autowired StubMarketDataPort stub;
     RestClient rest;
 
@@ -39,7 +39,7 @@ class WatchlistMutationControllerIT {
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear();
-                    c.add(new MappingJackson2HttpMessageConverter(om)); })
+                    c.add(new JacksonJsonHttpMessageConverter(om)); })
                 .build();
         stub.reset();
         deleteIfExists("TSLA");
