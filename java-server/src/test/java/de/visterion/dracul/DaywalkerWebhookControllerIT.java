@@ -1,7 +1,7 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
 import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
 import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
@@ -17,7 +17,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -45,7 +45,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class DaywalkerWebhookControllerIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
     @Autowired WatchlistRepository watchlist;
     @Autowired DaywalkerAlertRepository alerts;
 
@@ -64,7 +64,7 @@ class DaywalkerWebhookControllerIT {
         when(telegramNotifier.notifyAlert(anyString(), anyString(), anyString(), any())).thenReturn(true);
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
+                .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
         when(yahoo.intradayCandles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
         when(finnhub.companyNews(anyString(), any(), any())).thenReturn(List.of());

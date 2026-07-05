@@ -1,7 +1,7 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
@@ -16,7 +16,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -48,7 +48,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class VoievodWebhookControllerIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
     @Autowired PreyRepository preyRepo;
     @Autowired VerdictRepository verdictRepo;
     @Autowired JdbcClient jdbc;
@@ -60,7 +60,7 @@ class VoievodWebhookControllerIT {
     void setUp() {
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
+                .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
         when(marketData.resolve(anyString()))
                 .thenReturn(new MarketData("Resolved Co", new BigDecimal("123.45"), List.of()));
