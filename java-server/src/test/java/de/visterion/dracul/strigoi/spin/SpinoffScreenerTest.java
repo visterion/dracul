@@ -1,6 +1,6 @@
 package de.visterion.dracul.strigoi.spin;
 
-import de.visterion.dracul.hunting.edgar.SpinoffFiling;
+import de.visterion.dracul.hunting.agora.SpinoffFiling;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
