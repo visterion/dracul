@@ -35,7 +35,6 @@ dracul:
       schedule: ${DRACUL_ECHO_SCHEDULE:0 0 22 * * 1-5}
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
-      earnings-source: ${ECHO_EARNINGS_SOURCE:finnhub}
       ohlc-history-days: ${ECHO_OHLC_HISTORY_DAYS:320}
       car:
         market-proxy: ${ECHO_CAR_PROXY:SPY}
