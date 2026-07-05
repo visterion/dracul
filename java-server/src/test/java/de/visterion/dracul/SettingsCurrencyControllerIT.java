@@ -1,6 +1,6 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.settings.AppSettingsRepository;
 import de.visterion.dracul.settings.CurrencySetting;
 import org.junit.jupiter.api.AfterEach;
@@ -11,7 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
@@ -25,7 +25,7 @@ class SettingsCurrencyControllerIT {
 
     @LocalServerPort int port;
     @Autowired AppSettingsRepository repo;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
 
     RestClient rest;
 
@@ -33,7 +33,7 @@ class SettingsCurrencyControllerIT {
     void setUp() {
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
+                .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
         repo.setDisplayCurrency("EUR");
     }

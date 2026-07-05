@@ -1,7 +1,7 @@
 package de.visterion.dracul;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.edgar.EdgarSpinoffAdapter;
 import de.visterion.dracul.hunting.edgar.SpinoffFiling;
@@ -12,7 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -39,7 +39,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
 class StrigoiSpinWebhookControllerIT {
 
     @LocalServerPort int port;
-    @Autowired ObjectMapper objectMapper;
+    @Autowired JsonMapper objectMapper;
     @MockitoBean EdgarSpinoffAdapter edgarSpinoff;
 
     RestClient rest;
@@ -48,7 +48,7 @@ class StrigoiSpinWebhookControllerIT {
     void setUp() {
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
-                .messageConverters(c -> { c.clear(); c.add(new MappingJackson2HttpMessageConverter(objectMapper)); })
+                .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
         when(edgarSpinoff.recentSpinoffs(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("edgar", List.of()));
