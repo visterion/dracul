@@ -1,10 +1,10 @@
 package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.daywalker.detect.*;
-import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
-import de.visterion.dracul.hunting.edgar.Form4Filing;
-import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
-import de.visterion.dracul.hunting.yahoo.YahooIntradayAdapter;
+import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.AgoraIntraday;
+import de.visterion.dracul.hunting.agora.Form4Filing;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
@@ -22,12 +22,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Deterministic detection over all users' watchlists. Fetches shared EDGAR
- * filings once per poll, runs the four detectors once per distinct ticker
- * (triggers are market-wide), and emits a trigger only when at least one owner
- * of that ticker is outside its per-(owner, symbol, trigger_type) cooldown. All
- * external fetches degrade to empty on failure — the poll never crashes the
- * Vistierie scheduler tick.
+ * Deterministic detection over all users' watchlists. Fetches the shared market-wide Form-4
+ * window once per poll (via Agora), runs the four detectors once per distinct ticker
+ * (triggers are market-wide), and emits a trigger only when at least one owner of that
+ * ticker is outside its per-(owner, symbol, trigger_type) cooldown. All external fetches
+ * degrade to empty on failure — the poll never crashes the Vistierie scheduler tick.
  */
 @Component
 public class DaywalkerEventEngine {
@@ -35,9 +34,9 @@ public class DaywalkerEventEngine {
     private static final Logger log = LoggerFactory.getLogger(DaywalkerEventEngine.class);
 
     private final WatchlistRepository watchlist;
-    private final YahooIntradayAdapter yahoo;
-    private final FinnhubNewsAdapter finnhub;
-    private final EdgarFormFourAdapter edgar;
+    private final AgoraIntraday intraday;
+    private final AgoraCompanyData companyData;
+    private final AgoraFilings filings;
     private final DaywalkerAlertRepository alerts;
     private final double priceThreshold;
     private final double volumeMultiplier;
@@ -49,16 +48,16 @@ public class DaywalkerEventEngine {
     private final DowngradeDetector downgrade = new DowngradeDetector();
 
     public DaywalkerEventEngine(
-            WatchlistRepository watchlist, YahooIntradayAdapter yahoo,
-            FinnhubNewsAdapter finnhub, EdgarFormFourAdapter edgar,
+            WatchlistRepository watchlist, AgoraIntraday intraday,
+            AgoraCompanyData companyData, AgoraFilings filings,
             DaywalkerAlertRepository alerts,
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds) {
         this.watchlist = watchlist;
-        this.yahoo = yahoo;
-        this.finnhub = finnhub;
-        this.edgar = edgar;
+        this.intraday = intraday;
+        this.companyData = companyData;
+        this.filings = filings;
         this.alerts = alerts;
         this.priceThreshold = priceThreshold;
         this.volumeMultiplier = volumeMultiplier;
@@ -81,22 +80,22 @@ public class DaywalkerEventEngine {
         LocalDate fromDate = effectiveSince.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate toDate = now.atZone(ZoneOffset.UTC).toLocalDate();
 
-        List<Form4Filing> filings;
+        List<Form4Filing> form4;
         try {
-            filings = edgar.recentFilings(fromDate, toDate).items();
+            form4 = filings.recentForm4(fromDate, toDate).items();
         } catch (Exception e) {
-            log.warn("EDGAR fetch failed during Daywalker poll: {}", e.getMessage());
-            filings = List.of();
+            log.warn("Form-4 fetch failed during Daywalker poll: {}", e.getMessage());
+            form4 = List.of();
         }
 
         var out = new ArrayList<TriggerEvent>();
         for (WatchlistItem item : repByTicker.values()) {
             var candidates = new ArrayList<TriggerEvent>();
             candidates.addAll(priceVolume.detect(item,
-                    yahoo.intradayCandles(item.ticker()), priceThreshold, volumeMultiplier));
-            insiderSell.detect(item, filings).ifPresent(candidates::add);
-            news.detect(item, finnhub.companyNews(item.ticker(), fromDate, toDate)).ifPresent(candidates::add);
-            downgrade.detect(item, finnhub.recommendationTrend(item.ticker())).ifPresent(candidates::add);
+                    intraday.candles(item.ticker()), priceThreshold, volumeMultiplier));
+            insiderSell.detect(item, form4).ifPresent(candidates::add);
+            news.detect(item, companyData.news(item.ticker(), fromDate, toDate)).ifPresent(candidates::add);
+            downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
 
             var owners = ownersByTicker.get(item.ticker());
             for (TriggerEvent ev : candidates) {

@@ -1,6 +1,6 @@
 package de.visterion.dracul.daywalker.detect;
 
-import de.visterion.dracul.hunting.finnhub.NewsHeadline;
+import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.watchlist.WatchlistItem;
 
 import java.math.BigDecimal;

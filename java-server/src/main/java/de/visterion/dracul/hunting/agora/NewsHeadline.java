@@ -1,4 +1,4 @@
-package de.visterion.dracul.hunting.finnhub;
+package de.visterion.dracul.hunting.agora;
 
 import java.time.Instant;
 

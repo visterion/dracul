@@ -1,4 +1,4 @@
-package de.visterion.dracul.hunting.yahoo;
+package de.visterion.dracul.hunting.agora;
 
 import java.math.BigDecimal;
 import java.util.List;

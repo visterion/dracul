@@ -3,10 +3,10 @@ package de.visterion.dracul;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
-import de.visterion.dracul.hunting.edgar.EdgarFormFourAdapter;
-import de.visterion.dracul.hunting.finnhub.FinnhubNewsAdapter;
-import de.visterion.dracul.hunting.yahoo.IntradayCandles;
-import de.visterion.dracul.hunting.yahoo.YahooIntradayAdapter;
+import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.AgoraIntraday;
+import de.visterion.dracul.hunting.agora.IntradayCandles;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
@@ -49,9 +49,9 @@ class DaywalkerWebhookControllerIT {
     @Autowired WatchlistRepository watchlist;
     @Autowired DaywalkerAlertRepository alerts;
 
-    @MockitoBean YahooIntradayAdapter yahoo;
-    @MockitoBean FinnhubNewsAdapter finnhub;
-    @MockitoBean EdgarFormFourAdapter edgar;
+    @MockitoBean AgoraIntraday intraday;
+    @MockitoBean AgoraCompanyData companyData;
+    @MockitoBean AgoraFilings filings;
     @MockitoBean TelegramNotifier telegramNotifier;
     @Autowired JdbcClient jdbc;
 
@@ -66,16 +66,16 @@ class DaywalkerWebhookControllerIT {
                 .baseUrl("http://localhost:" + port)
                 .messageConverters(c -> { c.clear(); c.add(new JacksonJsonHttpMessageConverter(objectMapper)); })
                 .build();
-        when(yahoo.intradayCandles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
-        when(finnhub.companyNews(anyString(), any(), any())).thenReturn(List.of());
-        when(finnhub.recommendationTrend(anyString())).thenReturn(List.of());
-        when(edgar.recentFilings(any(), any())).thenReturn(de.visterion.dracul.hunting.DataSourceResult.healthy("edgar", List.of()));
+        when(intraday.candles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
+        when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
+        when(companyData.recommendations(anyString())).thenReturn(List.of());
+        when(filings.recentForm4(any(), any())).thenReturn(de.visterion.dracul.hunting.DataSourceResult.healthy("agora", List.of()));
     }
 
     @Test
     void eventsEndpointReturnsDetectedEvents() {
         watchlist.insert("default", "SPK", "Spike Co", 100.0, List.of(100.0), "", null, null);
-        when(yahoo.intradayCandles("SPK")).thenReturn(
+        when(intraday.candles("SPK")).thenReturn(
                 new IntradayCandles(List.of(new BigDecimal("100"), new BigDecimal("106")), List.of()));
 
         JsonNode resp = rest.post().uri("/api/daywalker/events")
