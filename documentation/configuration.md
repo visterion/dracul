@@ -240,11 +240,16 @@ needed.
 | `DRACUL_LAZARUS_SCHEDULE` | `0 0 6 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 06:00 UTC weekdays. |
 | `LAZARUS_MAX_ABOVE_LOW` | `0.10` | Maximum fraction above the 52-week low to pass the price-proximity screen (default: within 10%). |
 | `LAZARUS_MAX_DEBT_EQUITY` | `3.0` | Leverage cap for the solvency gate; candidates above this ratio are excluded. |
+| `dracul.strigoi.lazarus.max-price-to-book` | `2.0` | Max price-to-book ratio for the cheapness (valuation) gate; a candidate must be cheap by P/B or P/FCF to pass. |
+| `dracul.strigoi.lazarus.max-p-fcf` | `20` | Max price / free-cash-flow-per-share ratio for the cheapness (valuation) gate. |
 
 Lazarus reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
 Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
 needed. An Agora failure degrades gracefully — symbols without fundamentals are
-skipped by the screener.
+skipped by the screener. Lazarus computes a real Piotroski F-score via Agora's
+`get_fundamental_score` tool (strict scoring + coverage count), gated by the
+price-proximity/solvency/cheapness checks above plus a hard accruals drop, and
+ranks candidates by `fScore`, dampened when `fScoreCriteriaAvailable` is thin.
 
 ## Strigoi Merger
 
