@@ -27,6 +27,11 @@ class DaywalkerEventEngineTest {
                 "calm", "2026-06-01", "", null, List.of(), List.of(), null, null, owner, null, null);
     }
 
+    private static WatchlistItem heldItem(String id, String ticker, String owner, double entry) {
+        return new WatchlistItem(id, ticker, ticker + " Corp", 100.0, 0.0,
+                "calm", "2026-06-01", "HELD", null, List.of(), List.of(), entry, 30.0, owner, null, null);
+    }
+
     private static List<BigDecimal> closes(double... v) {
         return java.util.Arrays.stream(v).mapToObj(BigDecimal::valueOf).toList();
     }
@@ -46,6 +51,7 @@ class DaywalkerEventEngineTest {
         var al = mock(DaywalkerAlertRepository.class);
 
         when(wl.findAll()).thenReturn(List.of(item("id-1", "ACME", "u1@x.com")));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of());
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
@@ -74,6 +80,7 @@ class DaywalkerEventEngineTest {
         when(wl.findAll()).thenReturn(List.of(
                 item("id-a", "AAPL", "u1@x.com"),
                 item("id-b", "AAPL", "u2@x.com")));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of());
         when(in.candles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("AAPL"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("AAPL")).thenReturn(List.of());
@@ -98,6 +105,7 @@ class DaywalkerEventEngineTest {
         when(wl.findAll()).thenReturn(List.of(
                 item("id-a", "AAPL", "u1@x.com"),
                 item("id-b", "AAPL", "u2@x.com")));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of());
         when(in.candles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("AAPL"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("AAPL")).thenReturn(List.of());
@@ -122,6 +130,7 @@ class DaywalkerEventEngineTest {
         var al = mock(DaywalkerAlertRepository.class);
 
         when(wl.findAll()).thenReturn(List.of(item("id-1", "ACME", "u1@x.com")));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of());
         when(in.candles("ACME")).thenReturn(new IntradayCandles(List.of(), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
@@ -139,5 +148,56 @@ class DaywalkerEventEngineTest {
         var engine = engine(wl, mock(AgoraIntraday.class), mock(AgoraCompanyData.class),
                 mock(AgoraFilings.class), mock(DaywalkerAlertRepository.class));
         assertThat(engine.detect(null, Instant.now())).isEmpty();
+    }
+
+    @Test
+    void heldOwnerGetsPerPositionEventWithLevelsAndBreach() {
+        var wl = mock(WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(wl.findAll()).thenReturn(List.of(heldItem("id-h", "ACME", "u1@x.com", 100)));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of("id-h",
+                new de.visterion.dracul.watchlist.PositionRisk("id-h", "2026-06-01",
+                        new BigDecimal("96"), new BigDecimal("96"), new BigDecimal("120"),
+                        new BigDecimal("95"), new BigDecimal("2"))));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 95), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(1);
+        var ev = events.get(0);
+        assertThat(ev.positionId()).isEqualTo("id-h");
+        assertThat(ev.position()).isNotNull();
+        assertThat(ev.position().activeStop()).isEqualByComparingTo("96");
+        assertThat(ev.breachedLevel()).isEqualTo("STOP");
+    }
+
+    @Test
+    void watchOnlyItemStaysGeneric() {
+        var wl = mock(WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(wl.findAll()).thenReturn(List.of(item("id-w", "ACME", "u1@x.com")));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).positionId()).isNull();
+        assertThat(events.get(0).position()).isNull();
     }
 }
