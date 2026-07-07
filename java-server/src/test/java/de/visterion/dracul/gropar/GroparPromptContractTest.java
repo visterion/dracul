@@ -82,4 +82,10 @@ class GroparPromptContractTest {
                 .as("gropar prompt must define overextension guidance in German")
                 .containsIgnoringCase("überdehnt");
     }
+
+    @Test void promptMentionsScaleOutLadder() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt).contains("profitTargets");
+        assertThat(prompt).contains("+4R");
+    }
 }
