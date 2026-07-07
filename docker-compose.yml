@@ -4,6 +4,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: dracul
       POSTGRES_USER: dracul
@@ -18,6 +19,7 @@ services:
 
   app:
     image: ${DRACUL_IMAGE:-ghcr.io/visterion/dracul:main}
+    restart: unless-stopped
     build:
       context: .
       dockerfile: java-server/Dockerfile
