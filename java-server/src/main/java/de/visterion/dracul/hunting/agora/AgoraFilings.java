@@ -3,6 +3,7 @@ package de.visterion.dracul.hunting.agora;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import de.visterion.dracul.strigoi.lazarus.FundamentalScore;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -132,6 +133,30 @@ public class AgoraFilings {
             return ConceptSeries.empty("eps");
         }
         return series("eps", res.path("eps"));
+    }
+
+    /** Piotroski F-Score for a symbol via get_fundamental_score; unavailable on any failure. */
+    public FundamentalScore fundamentalScore(String symbol) {
+        JsonNode res;
+        try {
+            ObjectNode args = mapper.createObjectNode();
+            args.put("symbol", symbol);
+            res = agora.callTool("get_fundamental_score", args);
+        } catch (AgoraUnavailableException e) {
+            return FundamentalScore.unavailable();
+        }
+        JsonNode p = res.path("scores").path("piotroskiF");
+        if (p.isMissingNode() || p.isNull()) return FundamentalScore.unavailable();
+        JsonNode cfoGtNi = p.path("criteria").path("cfoExceedsNetIncome");
+        JsonNode accrNode = p.path("raw").path("accrualRatio");
+        BigDecimal accr = accrNode.isNumber() ? new BigDecimal(accrNode.asString("")) : null;
+        return new FundamentalScore(
+                p.path("score").asInt(0),
+                p.path("criteriaAvailable").asInt(0),
+                accr,
+                cfoGtNi.path("met").asBoolean(false),
+                cfoGtNi.path("available").asBoolean(false),
+                true);
     }
 
     private ObjectNode searchArgs(List<String> forms, LocalDate from, LocalDate to) {
