@@ -223,6 +223,12 @@ session at market open and polls Dracul's event-source webhook every 5 minutes.
    symbol — one `dracul.daywalker_alerts` row is written per owner whose
    `(owner, symbol, trigger_type)` cooldown has not yet elapsed.
 
+For HELD positions the Daywalker now judges each event against gropar's pre-set exit
+levels rather than abstract percentages: every trigger is fanned out per HELD position
+and carries `active_stop`, `next_target`, and `atr` plus a deterministic `breached_level`
+(STOP/TARGET). A level breach defaults to CRITICAL severity; the LLM may downgrade only
+with a stated reason. Watch-only tickers remain generic, purely technical assessments.
+
 CRITICAL alerts also fire a best-effort Telegram push (configurable via
 `DRACUL_DAYWALKER_NOTIFY_LEVEL`); the push fires **once per symbol event** on the
 single operator channel (not once per owner). The delivery outcome is recorded in
