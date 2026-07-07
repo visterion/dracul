@@ -7,7 +7,7 @@ import java.util.List;
 public record InsiderCluster(
         String ticker,
         String companyName,
-        List<String> filers,
+        List<InsiderFiler> filers,
         LocalDate windowStart,
         LocalDate windowEnd,
         BigDecimal totalDollarValue,

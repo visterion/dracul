@@ -136,7 +136,7 @@ class EchoEnrichmentServiceTest {
         assertThat(e.accrualsAvailable()).isTrue();
         assertThat(e.accrualRatio()).isEqualByComparingTo("0.04");
         assertThat(e.netEstimateRevisionsProxy()).isEqualTo(7);
-        assertThat(e.guidanceDirection()).isEqualTo("up");
+        assertThat(e.netEstimateRevisionsDirection()).isEqualTo("up");
         assertThat(e.revisionsAvailable()).isTrue();
         assertThat(e.nextEarningsDate()).isEqualTo(LocalDate.now().plusDays(40));
         assertThat(e.daysToNextEarnings()).isEqualTo(40);
