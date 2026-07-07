@@ -207,6 +207,45 @@ Sunday evening:
 Library view. Approved patterns are injected into the next Strigoi run
 as additional prompt context, closing the feedback loop.
 
+### Consensus annotation (payoff families)
+
+When the Voievod's `fetch_consensus_clusters` tool builds a cluster (symbols
+flagged by ≥2 distinct Strigoi), Dracul deterministically annotates it with a
+Dracul-domain payoff taxonomy — this is investment vocabulary, never Agora
+market data. Each prey's `anomalyType` is classified into a `payoffFamily`:
+**DRIFT** (PEAD, quality-at-52w-low, insider clusters, spin-offs — open-ended
+upside, gradual repricing, ~3–12 months) or **EVENT** (merger-arb,
+index-inclusion — capped payoff, cliff downside, short and event-terminated),
+falling back to **UNKNOWN** for unrecognised anomaly types. At the cluster
+level, Dracul also derives `crossFamily` (true when the contributing prey span
+more than one payoff family — a strong warning that the underlying theses
+imply incompatible price paths) and `discoverySpreadDays` (days between the
+earliest and latest `discoveredAt` in the cluster, a temporal-coherence hint
+for "is this the same episode?").
+
+**This annotation is advisory only — it never drops a cluster.** Every
+detected cluster is still surfaced to the Voievod's LLM call; Java only
+attaches the `payoffFamily` / `crossFamily` / `payoffFamilies` /
+`discoverySpreadDays` fields as extra signal. The endorse-or-drop decision
+remains entirely the LLM's.
+
+The Voievod's system prompt applies this signal through an ordered
+endorse-logic, evaluated gate by gate with the first failing gate dropping
+the cluster: (1) payoff/horizon compatibility — a `crossFamily` cluster is
+treated as contradictory and dropped unless a genuinely rare reinforcing
+reason can be named; (2) temporal coherence — a large `discoverySpreadDays`
+weakens the case that the signals describe the same episode; (3) independent
+mechanism — the agreeing Strigoi must reinforce each other for different
+reasons, or the agreement is redundant and dropped; (4) hunter reliability —
+insider and lazarus findings are structurally robust, while index-inclusion
+and merger-arb are heavily arbitraged, so agreement among only arbitraged
+hunters is kept but the summary language is dampened; (5) compounding risks —
+if the prey's `risks[]` confirm the same downside twice, that is grounds to
+drop despite bullish agreement. The prompt is **default-skeptical**: a shared
+ticker across hunters is treated as coincidence (multiple-testing / FDR
+concern) until a concrete independent mechanism is named, and an empty
+verdict list is treated as a valid, respectable outcome.
+
 ## Daywalker (streaming guardian)
 
 **Implemented 2026-06-04** as a Vistierie `StreamingBee` consumer (Daywalker
