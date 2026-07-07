@@ -798,6 +798,17 @@ whose prey are still open (`discoveredAt + horizon ≥ today`).
 
 Request: `{ "run_id": "...", "tool_name": "fetch_consensus_clusters", "input": {} }`
 
+Each cluster is deterministically annotated with a Dracul-domain payoff
+taxonomy (never Agora market data) that the Voievod prompt uses to judge
+corroboration: `crossFamily` (bool — the contributing prey span more than one
+payoff family, a contradiction warning), `payoffFamilies` (the distinct
+payoff families present among the cluster's prey: `DRIFT` / `EVENT` /
+`UNKNOWN`), and `discoverySpreadDays` (days between the earliest and latest
+`discoveredAt` in the cluster). Each prey also carries its own
+`payoffFamily` (`DRIFT` / `EVENT` / `UNKNOWN`, derived from `anomalyType`).
+This is advisory annotation only — it never drops a cluster; the LLM alone
+decides whether to endorse or drop.
+
 Response:
 ```json
 {
@@ -806,10 +817,14 @@ Response:
       {
         "symbol": "ACME",
         "companyName": "Acme Corp",
+        "crossFamily": false,
+        "payoffFamilies": ["DRIFT"],
+        "discoverySpreadDays": 2,
         "prey": [
           {
             "discoveredBy": "strigoi-insider",
             "anomalyType": "INSIDER_CLUSTER",
+            "payoffFamily": "DRIFT",
             "confidence": 0.75,
             "thesis": "...",
             "signals": [],
