@@ -50,7 +50,7 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
-| strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) |
+| strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScore` (`get_fundamental_score`) |
 | strigoi-index | `AgoraReference.constituents` (`get_index_constituents`) |
 | strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
@@ -115,7 +115,11 @@ consumed through five neutral domain facades in
 - **`AgoraFilings`** — `searchSpinoffs` (10-12B), `searchMergers` (DEFM14A,
   SC TO-T), `recentForm4` (Form-4 insider transactions), `concept` /
   `epsHistory` (SEC XBRL companyconcept series, used for the Sloan accrual
-  ratio and EPS-quarter shaping respectively).
+  ratio and EPS-quarter shaping respectively), `fundamentalScore`
+  (`get_fundamental_score` — a real Piotroski F-Score computed by Agora from
+  SEC companyfacts, with a strict pass/fail per criterion plus a
+  `fScoreCriteriaAvailable` coverage count; consumed by strigoi-lazarus's
+  enrichment step, degrading to "unavailable" on any Agora failure).
 - **`AgoraCompanyData`** — `news`, `recommendations`, `fundamentals`,
   `profile`.
 - **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates),

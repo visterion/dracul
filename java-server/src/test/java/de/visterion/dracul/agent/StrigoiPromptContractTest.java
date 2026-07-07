@@ -38,6 +38,13 @@ class StrigoiPromptContractTest {
     }
 
     @Test
+    void lazarusPromptRanksByFScore() {
+        String prompt = AgentResources.classpath("prompts/strigoi-lazarus.md");
+        assertThat(prompt).as("lazarus prompt must use the real fScore").contains("fScore");
+        assertThat(prompt).contains("fScoreCriteriaAvailable");
+    }
+
+    @Test
     void echoPromptUsesRevisionsDirectionNotGuidanceDirection() {
         String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
         assertThat(prompt)
