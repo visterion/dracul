@@ -16,7 +16,8 @@ import java.util.List;
 @Component
 public class LazarusScreener {
 
-    public List<LazarusCandidate> screen(List<LazarusRaw> raws, double maxAboveLow, double maxDebtEquity) {
+    public List<LazarusCandidate> screen(List<LazarusRaw> raws, double maxAboveLow, double maxDebtEquity,
+            double maxPriceToBook, double maxPFcf) {
         List<LazarusCandidate> out = new ArrayList<>();
         for (LazarusRaw r : raws) {
             BasicFinancials f = r.financials();
@@ -35,6 +36,12 @@ public class LazarusScreener {
 
             // leverage: exclude only when present and above the cap
             if (f.debtToEquity() != null && f.debtToEquity() >= maxDebtEquity) continue;
+
+            // valuation (cheapness) gate — Piotroski applies within the cheap universe.
+            boolean pbCheap = f.priceToBook() != null && f.priceToBook() > 0 && f.priceToBook() <= maxPriceToBook;
+            boolean fcfCheap = f.fcfPerShare() != null && f.fcfPerShare() > 0
+                    && (r.currentPrice() / f.fcfPerShare()) <= maxPFcf;
+            if (!pbCheap && !fcfCheap) continue;
 
             out.add(new LazarusCandidate(
                     r.symbol(), r.companyName(), r.currentPrice(),

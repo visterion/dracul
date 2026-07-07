@@ -72,8 +72,9 @@ public class StrigoiLazarusWebhookController extends HuntController {
             raws.add(new LazarusRaw(item.ticker(), item.companyName(), item.currentPrice(),
                     BasicFinancialsExtractor.extract(companyData.fundamentals(item.ticker()))));
         }
+        // TODO(slice-2b Task 3): wire real cheapness caps
         return de.visterion.dracul.hunting.DataSourceResult.healthy("agora",
-                screener.screen(raws, maxAboveLow, maxDebtEquity));
+                screener.screen(raws, maxAboveLow, maxDebtEquity, Double.MAX_VALUE, Double.MAX_VALUE));
     }
 
     @PostMapping("/tools/fetch-candidates")
