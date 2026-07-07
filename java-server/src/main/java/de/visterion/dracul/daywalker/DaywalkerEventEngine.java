@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -133,11 +134,11 @@ public class DaywalkerEventEngine {
         BigDecimal atr = pr == null ? null : pr.atr();
         BigDecimal entry = BigDecimal.valueOf(item.entryPrice());
         BigDecimal gainLossPct = (close != null && entry.signum() != 0)
-                ? close.subtract(entry).divide(entry, java.math.MathContext.DECIMAL64)
+                ? close.subtract(entry).divide(entry, MathContext.DECIMAL64)
                     .multiply(BigDecimal.valueOf(100)) : null;
         BigDecimal distToStopInAtr = (close != null && activeStop != null
                 && atr != null && atr.signum() != 0)
-                ? close.subtract(activeStop).divide(atr, java.math.MathContext.DECIMAL64) : null;
+                ? close.subtract(activeStop).divide(atr, MathContext.DECIMAL64) : null;
         var ctx = new PositionContext(entry, gainLossPct, activeStop, nextTarget, atr, distToStopInAtr);
         String breached = BreachedLevel.evaluate(close, activeStop, nextTarget);
         return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
