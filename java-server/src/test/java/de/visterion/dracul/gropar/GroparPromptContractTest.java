@@ -85,7 +85,11 @@ class GroparPromptContractTest {
 
     @Test void promptMentionsScaleOutLadder() {
         String prompt = AgentResources.classpath("prompts/gropar.md");
-        assertThat(prompt).contains("profitTargets");
-        assertThat(prompt).contains("+4R");
+        assertThat(prompt)
+                .as("gropar prompt must reference the profitTargets scale-out ladder")
+                .contains("profitTargets");
+        assertThat(prompt)
+                .as("gropar prompt must describe the +4R scale-out rung")
+                .contains("+4R");
     }
 }

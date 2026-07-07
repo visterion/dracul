@@ -184,9 +184,9 @@ mutation) and reconciled once at startup; see `GroparPauseReconciler`. Groparul'
 **system-managed**: turn the agent on or off via its `dracul.gropar.enabled` flag, not the manual
 pause toggle (which the guard would overwrite on the next watchlist change).
 
-gropar exponiert zusätzlich eine Scale-out-Leiter (`profitTargets` = [+2R, +4R],
-`scaleOutFractions`) und einen Überdehnungs-Indikator (`distToMa200InAtr`), der weite
-Abstände zur MA200 als TRIM-in-die-Stärke-Hinweis (Mean-Reversion) kennzeichnet.
+gropar also surfaces a scale-out ladder (`profitTargets` = [+2R, +4R] with
+`scaleOutFractions`) and an overextension indicator (`distToMa200InAtr`) that flags a
+wide distance above the MA200 as a mean-reversion „TRIM in die Stärke" hint.
 
 ## Voievod (weekly reviewer)
 
