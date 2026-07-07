@@ -18,6 +18,30 @@ class InsiderClusterScreenerTest {
                 BigDecimal.valueOf(shares), BigDecimal.valueOf(shares * price), "P");
     }
 
+    private static Form4Filing buyRole(String ticker, String filer, String role, LocalDate d, long shares, long price) {
+        return new Form4Filing(ticker, filer, role, d,
+                BigDecimal.valueOf(shares), BigDecimal.valueOf(shares * price), "P");
+    }
+
+    @Test
+    void clusterCarriesFilerRolesAndPrefersNonBlankRole() {
+        var filings = List.of(
+                buyRole("AAPL", "Alice", "Chief Executive Officer", LocalDate.of(2026,5,1), 1000, 200),
+                buyRole("AAPL", "Alice", "", LocalDate.of(2026,5,5), 1000, 200),
+                buyRole("AAPL", "Bob",   "", LocalDate.of(2026,5,10), 1000, 200),
+                buyRole("AAPL", "Carol", "Chief Financial Officer", LocalDate.of(2026,5,20), 1000, 200)
+        );
+        var clusters = screener.cluster(filings);
+        assertThat(clusters).hasSize(1);
+        var filers = clusters.get(0).filers();
+        assertThat(filers).extracting(InsiderFiler::name)
+                .containsExactlyInAnyOrder("Alice", "Bob", "Carol");
+        assertThat(filers).filteredOn(f -> f.name().equals("Alice"))
+                .extracting(InsiderFiler::role).containsExactly("Chief Executive Officer");
+        assertThat(filers).filteredOn(f -> f.name().equals("Bob"))
+                .extracting(InsiderFiler::role).containsExactly("");
+    }
+
     @Test
     void detectsClusterOfThreeBuyersInThirtyDays() {
         var filings = List.of(
@@ -29,7 +53,8 @@ class InsiderClusterScreenerTest {
         assertThat(clusters).hasSize(1);
         var c = clusters.get(0);
         assertThat(c.ticker()).isEqualTo("AAPL");
-        assertThat(c.filers()).containsExactlyInAnyOrder("Alice", "Bob", "Carol");
+        assertThat(c.filers()).extracting(InsiderFiler::name)
+                .containsExactlyInAnyOrder("Alice", "Bob", "Carol");
         assertThat(c.totalDollarValue()).isEqualByComparingTo(new BigDecimal("700000"));
     }
 
@@ -90,7 +115,8 @@ class InsiderClusterScreenerTest {
         );
         var clusters = screener.cluster(filings);
         assertThat(clusters).hasSize(1);
-        assertThat(clusters.get(0).filers()).containsExactlyInAnyOrder("Alice", "Bob", "Carol");
+        assertThat(clusters.get(0).filers()).extracting(InsiderFiler::name)
+                .containsExactlyInAnyOrder("Alice", "Bob", "Carol");
     }
 
     @Test

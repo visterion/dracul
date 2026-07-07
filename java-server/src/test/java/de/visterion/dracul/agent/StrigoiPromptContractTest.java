@@ -31,6 +31,13 @@ class StrigoiPromptContractTest {
     }
 
     @Test
+    void insiderPromptDocumentsFilerRole() {
+        String prompt = AgentResources.classpath("prompts/strigoi-insider.md");
+        assertThat(prompt).as("insider prompt must document the per-filer role field").contains("role");
+        assertThat(prompt).contains("officer title");
+    }
+
+    @Test
     void echoPromptUsesRevisionsDirectionNotGuidanceDirection() {
         String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
         assertThat(prompt)
