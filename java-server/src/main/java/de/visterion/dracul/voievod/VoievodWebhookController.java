@@ -48,19 +48,27 @@ public class VoievodWebhookController {
         var clusters = detector.detect(preyRepo.findAllByUser(USER), LocalDate.now());
         var wire = new ArrayList<Map<String, Object>>();
         for (var c : clusters) {
+            var ann = ClusterAnnotations.of(c);
             var preyWire = new ArrayList<Map<String, Object>>();
             for (Prey p : c.prey()) {
-                preyWire.add(Map.of(
-                        "discoveredBy", p.discoveredBy(),
-                        "anomalyType", p.anomalyType(),
-                        "confidence", p.confidence(),
-                        "thesis", p.thesis(),
-                        "signals", p.signals(),
-                        "risks", p.risks(),
-                        "horizon", p.horizon(),
-                        "discoveredAt", p.discoveredAt()));
+                preyWire.add(Map.ofEntries(
+                        Map.entry("discoveredBy", p.discoveredBy()),
+                        Map.entry("anomalyType", p.anomalyType()),
+                        Map.entry("payoffFamily", PayoffFamily.of(p.anomalyType()).name()),
+                        Map.entry("confidence", p.confidence()),
+                        Map.entry("thesis", p.thesis()),
+                        Map.entry("signals", p.signals()),
+                        Map.entry("risks", p.risks()),
+                        Map.entry("horizon", p.horizon()),
+                        Map.entry("discoveredAt", p.discoveredAt())));
             }
-            wire.add(Map.of("symbol", c.symbol(), "companyName", c.companyName(), "prey", preyWire));
+            wire.add(Map.of(
+                    "symbol", c.symbol(),
+                    "companyName", c.companyName(),
+                    "crossFamily", ann.crossFamily(),
+                    "payoffFamilies", ann.payoffFamilies().stream().map(Enum::name).toList(),
+                    "discoverySpreadDays", ann.discoverySpreadDays(),
+                    "prey", preyWire));
         }
         return ResponseEntity.ok(Map.of("output", Map.of("clusters", wire)));
     }
