@@ -36,7 +36,7 @@ public record EnrichedPeadCandidate(
         BigDecimal accrualRatio,
         boolean accrualsAvailable,
         Integer netEstimateRevisionsProxy,
-        String guidanceDirection,
+        String netEstimateRevisionsDirection,
         boolean revisionsAvailable,
         LocalDate nextEarningsDate,
         Integer daysToNextEarnings
