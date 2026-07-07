@@ -29,4 +29,15 @@ class StrigoiPromptContractTest {
                     .contains("{\"prey\": []}");
         }
     }
+
+    @Test
+    void echoPromptUsesRevisionsDirectionNotGuidanceDirection() {
+        String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
+        assertThat(prompt)
+                .as("echo prompt must reference the renamed field")
+                .contains("netEstimateRevisionsDirection");
+        assertThat(prompt)
+                .as("the misleading 'guidanceDirection' field name must be gone")
+                .doesNotContain("guidanceDirection");
+    }
 }
