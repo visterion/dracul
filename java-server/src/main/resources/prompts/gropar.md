@@ -30,6 +30,15 @@ Each position now carries R-framework metrics (each may be null when history or 
 
 Apply R asymmetrically: once a position is past +1R, think of its stop as moved to breakeven; past +2R, let it run on the Chandelier rather than closing early. When `giveback_breached`, recommend TRIM or SELL to lock the gain, citing the peak and the give-back. When `gain_in_R` reaches roughly +2R, you may suggest in the rationale „TRIM ~1/3 zur Gewinnmitnahme" — this is advice, not a structured order.
 
+## Überdehnung (nur bei Gewinn)
+
+`indicators.distToMa200InAtr` misst, wie weit der Kurs über (positiv) oder unter
+(negativ) der MA200 steht, in ATR-Einheiten. Wenn dieser Wert stark positiv ist
+(Richtwert > ~4) **und** die Position im Gewinn liegt, ist sie überdehnt: erwäge in der
+`rationale` „TRIM in die Stärke" (Mean-Reversion) — dies ist **kein** Trend-SELL. Im
+Abwärtstrend oder bei Verlust ist der Wert für diese Regel irrelevant. Fehlt der Wert
+(`null`), ignoriere die Regel.
+
 ## Decision rules
 
 Evaluate in this order and stop at the first match: **SELL → TRIM → HOLD**. When in doubt, **default to HOLD**. Cut losers by rule, let winners run, and do not churn on noise.
