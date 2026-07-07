@@ -48,7 +48,7 @@ public class GroparExitIndicators {
                                   BigDecimal entryPrice, String verdictCreatedAt, String horizon) {
         if (bars == null || bars.isEmpty()) {
             return new ExitIndicators(null, null, null, false, null, false, null, false,
-                    null, false, "NEUTRAL", null, null, false, null, false, List.of());
+                    null, false, "NEUTRAL", null, null, false, null, false, List.of(), null);
         }
         OhlcBar last = bars.get(bars.size() - 1);
         // currentClose for gainLossPct + the snapshot comes from the get_ohlc bars (the same series
@@ -70,6 +70,14 @@ public class GroparExitIndicators {
         if (ExitRules.DEATH_CROSS.equals(ta.maCrossState())) firedRules.add(ExitRules.DEATH_CROSS);
         if (horizonElapsed) firedRules.add(ExitRules.TIME_STOP);
 
+        BigDecimal distToMa200InAtr = null;
+        if (ta.maSlowAvailable() && ta.maSlow() != null
+                && ta.atrAvailable() && ta.atr() != null
+                && ta.atr().compareTo(BigDecimal.ZERO) != 0) {
+            distToMa200InAtr = currentClose.subtract(ta.maSlow())
+                    .divide(ta.atr(), MC).setScale(GAIN_SCALE, RoundingMode.HALF_UP);
+        }
+
         return new ExitIndicators(
                 currentClose, gainLossPct,
                 ta.atr(), ta.atrAvailable(),
@@ -80,7 +88,8 @@ public class GroparExitIndicators {
                 ta.high52w(), ta.low52w(), ta.window52wAvailable(),
                 null,                                   // daysHeld (v1)
                 horizonElapsed,
-                List.copyOf(firedRules));
+                List.copyOf(firedRules),
+                distToMa200InAtr);
     }
 
     // --- horizon helpers (gropar domain logic) ---

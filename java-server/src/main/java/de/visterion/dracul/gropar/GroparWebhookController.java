@@ -192,6 +192,10 @@ public class GroparWebhookController {
                     if (risk.initialStopBreached()) firedRules.add(ExitRules.INITIAL_STOP);
                     if (risk.givebackBreached())    firedRules.add(ExitRules.GIVEBACK);
 
+                    var profitTargets = ScaleOutLadder.profitTargets(
+                            BigDecimal.valueOf(item.entryPrice()),
+                            risk.rAvailable() ? risk.r() : null);
+
                     views.add(new HeldPositionView(
                             item.id(),
                             item.ticker(),
@@ -202,7 +206,9 @@ public class GroparWebhookController {
                             ind,
                             risk,
                             firedRules,
-                            thesis));
+                            thesis,
+                            profitTargets,
+                            ScaleOutLadder.SCALE_OUT_FRACTIONS));
 
                 } catch (MarketDataException e) {
                     log.warn("gropar: market data unavailable for {} — skipping: {}",

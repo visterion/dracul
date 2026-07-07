@@ -308,6 +308,14 @@ Disabled by default (`enabled=false`). Enable by setting `DRACUL_GROPAR_ENABLED=
 
 All exit-rule thresholds (`atr-multiple`, `ma-fast`, `ma-slow`, `profit-target-pct`, `stop-loss-pct`, `history-days`, `initial-stop-atr-multiple`, `giveback-activation-r`, `giveback-threshold-pct`, `giveback-atr-multiple`) are operator-tunable via env var without a code change.
 
+**Overextension threshold (prompt-only, not runtime-tunable):** gropar also treats a
+position as *überdehnt* (a mean-reversion TRIM hint) when its distance to the MA200
+(`indicators.distToMa200InAtr`) exceeds roughly **4 ATR** while the position is in
+profit. This ~4-ATR richtwert is **baked into the prompt** (`prompts/gropar.md`) — it is
+**not** a Spring/`@Value`-bound property and has **no env var**, so there is no
+`DRACUL_GROPAR_*` knob for it. Changing the threshold means editing the prompt (and
+propagating it via `definition/reset`), not setting an env var.
+
 Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
 ## Stop-Proximity Watcher

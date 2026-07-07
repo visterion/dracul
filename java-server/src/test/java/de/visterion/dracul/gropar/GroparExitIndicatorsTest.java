@@ -87,4 +87,19 @@ class GroparExitIndicatorsTest {
         assertThat(ind.atrAvailable()).isFalse();
         assertThat(ind.firedRules()).isEmpty();
     }
+
+    @Test void distToMa200InAtrComputed() {
+        // close = 130, ma200 = 100, atr = 2 → (130-100)/2 = 15
+        var bars = List.of(bar("2025-01-02", "130"));
+        var ind = withTa(ta("2", "125", false, "BULLISH"))
+                .compute("AAPL", bars, new BigDecimal("10"), null, null);
+        assertThat(ind.distToMa200InAtr()).isEqualByComparingTo("15");
+    }
+
+    @Test void distToMa200InAtrNullWhenAtrUnavailable() {
+        var bars = List.of(bar("2025-01-02", "130"));
+        var ind = withTa(ExitTa.unavailable())
+                .compute("AAPL", bars, new BigDecimal("10"), null, null);
+        assertThat(ind.distToMa200InAtr()).isNull();
+    }
 }

@@ -28,7 +28,22 @@ Each position now carries R-framework metrics (each may be null when history or 
 - `mfe_peak_gain_r` / `mfe_peak_gain_pct` — the best gain reached since entry (max favourable excursion).
 - `giveback_pct` and `giveback_breached` — how much of the peak gain has been handed back; `GIVEBACK` fires when a meaningful winner (≥ ~1.5R peak) gives back a large share of its gain.
 
-Apply R asymmetrically: once a position is past +1R, think of its stop as moved to breakeven; past +2R, let it run on the Chandelier rather than closing early. When `giveback_breached`, recommend TRIM or SELL to lock the gain, citing the peak and the give-back. When `gain_in_R` reaches roughly +2R, you may suggest in the rationale „TRIM ~1/3 zur Gewinnmitnahme" — this is advice, not a structured order.
+Apply R asymmetrically: once a position is past +1R, think of its stop as moved to breakeven; past +2R, let it run on the Chandelier rather than closing early. When `giveback_breached`, recommend TRIM or SELL to lock the gain, citing the peak and the give-back. When `gain_in_R` reaches roughly +2R, you may suggest in the rationale a first rung, e.g.
+„TRIM ~1/3 zur Gewinnmitnahme"; around +4R a further „TRIM ~1/3 bei +4R", with the rest
+left to trail on the Chandelier. The concrete price levels are in `profitTargets`
+(= [+2R, +4R]); `scaleOutFractions` holds the matching trim fractions (e.g. [0.3333, 0.3333]),
+not prices. This is advice, not a structured order.
+
+## Überdehnung (winners only)
+
+`indicators.distToMa200InAtr` measures how far the close sits above (positive) or below
+(negative) the MA200, in ATR units. When this value is strongly positive (richtwert
+> ~4) **and** the position is in profit (`gain_in_R` or `gain_loss_pct` positive), the
+position is overextended — überdehnt: consider a „TRIM in die Stärke" (mean-reversion
+profit-take) in the `rationale`, e.g. „+6 ATR über MA200, überdehnt — TRIM in die
+Stärke". This is **not** a trend SELL. In a downtrend (`maCrossState` = `DEATH_CROSS`)
+or at a loss the value is irrelevant to this rule. When the value is missing (`null`),
+ignore the rule.
 
 ## Decision rules
 

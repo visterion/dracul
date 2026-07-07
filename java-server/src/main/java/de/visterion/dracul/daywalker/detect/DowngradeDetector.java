@@ -19,7 +19,7 @@ public class DowngradeDetector {
         RecommendationTrend latest = trends.get(0);
         RecommendationTrend prior = trends.get(1);
         if (bearScore(latest) <= bearScore(prior)) return Optional.empty();
-        return Optional.of(new TriggerEvent(item.ticker(), item.companyName(),
+        return Optional.of(TriggerEvent.watchOnly(item.ticker(), item.companyName(),
                 TriggerType.ANALYST_DOWNGRADE, BigDecimal.valueOf(item.currentPrice()),
                 Map.of("period", latest.period(),
                         "sell", latest.sell() + latest.strongSell(),

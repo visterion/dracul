@@ -26,7 +26,7 @@ class DaywalkerCompletionServiceTest {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
-                new OwnerItem("u1@x.com", "wid-1"), new OwnerItem("u2@x.com", "wid-2")));
+                new OwnerItem("u1@x.com", "wid-1", false), new OwnerItem("u2@x.com", "wid-2", false)));
         when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
         when(notifier.notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis")).thenReturn(true);
 
@@ -49,7 +49,7 @@ class DaywalkerCompletionServiceTest {
     void infoDoesNotNotifyPersistsSentFalseAndPublishesPerOwner() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
-        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1")));
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
         when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "INFO",
@@ -67,7 +67,7 @@ class DaywalkerCompletionServiceTest {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
-                new OwnerItem("u1@x.com", "wid-1"), new OwnerItem("u2@x.com", "wid-2")));
+                new OwnerItem("u1@x.com", "wid-1", false), new OwnerItem("u2@x.com", "wid-2", false)));
         when(alerts.lastAlertAt("u1@x.com", "AAPL", "PRICE_SPIKE")).thenReturn(Optional.of(Instant.now()));
         when(alerts.lastAlertAt("u2@x.com", "AAPL", "PRICE_SPIKE")).thenReturn(Optional.empty());
 
@@ -88,7 +88,7 @@ class DaywalkerCompletionServiceTest {
     void allOwnersInCooldownNeitherNotifiesInsertsNorPublishes() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
-        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1")));
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
         when(alerts.lastAlertAt("u1@x.com", "AAPL", "PRICE_SPIKE")).thenReturn(Optional.of(Instant.now()));
 
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
@@ -113,5 +113,38 @@ class DaywalkerCompletionServiceTest {
         verify(alerts, never()).insert(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), any(), anyString(), anyBoolean());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    void positionIdRoutesToThatOwnerPositionOnly() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
+                new OwnerItem("u1@x.com", "wid-1", true),
+                new OwnerItem("u2@x.com", "wid-2", true)));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
+                "thesis", new BigDecimal("0.9"), "run-1", "wid-2");
+
+        verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), eq("AAPL"), eq("PRICE_SPIKE"),
+                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), anyBoolean());
+        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void nullPositionIdFansOutToWatchOnlyOwnersOnly() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
+                new OwnerItem("u1@x.com", "wid-1", true),
+                new OwnerItem("u2@x.com", "wid-2", false)));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "WARNING",
+                "thesis", null, "run-2", null);
+
+        verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
     }
 }
