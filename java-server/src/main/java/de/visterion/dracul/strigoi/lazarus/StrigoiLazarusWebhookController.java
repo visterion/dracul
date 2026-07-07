@@ -25,24 +25,33 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private final WatchlistRepository watchlist;
     private final AgoraCompanyData companyData;
     private final LazarusScreener screener;
+    private final LazarusEnrichmentService enrichment;
     private final double maxAboveLow;
     private final double maxDebtEquity;
+    private final double maxPriceToBook;
+    private final double maxPFcf;
 
     public StrigoiLazarusWebhookController(
             @Value("${dracul.strigoi.lazarus.webhook-token}") String token,
             WatchlistRepository watchlist,
             AgoraCompanyData companyData,
             LazarusScreener screener,
+            LazarusEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             @Value("${dracul.strigoi.lazarus.max-above-low:0.10}") double maxAboveLow,
-            @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity) {
+            @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity,
+            @Value("${dracul.strigoi.lazarus.max-price-to-book:2.0}") double maxPriceToBook,
+            @Value("${dracul.strigoi.lazarus.max-p-fcf:20}") double maxPFcf) {
         super(token, preyRepo, cache);
         this.watchlist = watchlist;
         this.companyData = companyData;
         this.screener = screener;
+        this.enrichment = enrichment;
         this.maxAboveLow = maxAboveLow;
         this.maxDebtEquity = maxDebtEquity;
+        this.maxPriceToBook = maxPriceToBook;
+        this.maxPFcf = maxPFcf;
     }
 
     @Override protected String agentName() { return "strigoi-lazarus"; }
@@ -72,8 +81,9 @@ public class StrigoiLazarusWebhookController extends HuntController {
             raws.add(new LazarusRaw(item.ticker(), item.companyName(), item.currentPrice(),
                     BasicFinancialsExtractor.extract(companyData.fundamentals(item.ticker()))));
         }
-        return de.visterion.dracul.hunting.DataSourceResult.healthy("agora",
-                screener.screen(raws, maxAboveLow, maxDebtEquity));
+        var screened = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
+        var enriched = enrichment.enrich(screened);
+        return de.visterion.dracul.hunting.DataSourceResult.healthy("agora", enriched);
     }
 
     @PostMapping("/tools/fetch-candidates")
