@@ -14,9 +14,10 @@ class DaywalkerPromptContractTest {
 
     @Test void mentionsPositionContextAndBreach() throws Exception {
         String p = prompt();
-        assertThat(p).contains("position");
-        assertThat(p).contains("breached_level");
-        assertThat(p).contains("position_id");
-        assertThat(p).contains("CRITICAL");
+        assertThat(p).as("position-levels list").contains("active_stop");
+        assertThat(p).as("breach signal field").contains("breached_level");
+        assertThat(p).as("position id echo").contains("position_id");
+        assertThat(p).as("breach = CRITICAL by default rule").contains("by default");
+        assertThat(p).as("downgrade caveat").contains("downgrade to WARNING");
     }
 }
