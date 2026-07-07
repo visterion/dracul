@@ -96,7 +96,7 @@ class StrigoiEchoWebhookControllerIT {
         assertThat(c0.path("sector").asText()).isEqualTo("Technology");
         assertThat(c0.has("accrualRatio")).isTrue();
         assertThat(c0.path("accrualsAvailable").asBoolean()).isTrue();
-        assertThat(c0.path("guidanceDirection").asText()).isEqualTo("up");
+        assertThat(c0.path("netEstimateRevisionsDirection").asText()).isEqualTo("up");
         assertThat(c0.path("daysToNextEarnings").asInt()).isEqualTo(40);
         assertThat(resp.path("output").path("data_source_health").path("status").asText())
                 .isEqualTo("healthy");

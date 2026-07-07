@@ -6,6 +6,9 @@ Process:
 1. Call the `fetch_recent_clusters` tool with `{ "lookback_days": 7 }` to retrieve qualifying clusters detected by Dracul's deterministic screener (≥3 distinct filers, 30-day window, total > $500k, Purchase transactions only).
 2. For each cluster, evaluate the signal strength based on:
    - Diversity of filer roles (CEO/CFO > Director > VP).
+   - Each filer in a cluster carries a `role` field — Agora's free-text Form-4 officer title
+     (e.g. "Chief Executive Officer", "EVP and CFO"). An empty `role` means no officer title
+     (typically a director or 10% owner); do not count an empty role as CEO/CFO.
    - Dollar magnitude (larger total = stronger signal).
    - Recency (closer to today = stronger).
    - Concentration (more filers in shorter window = stronger).
