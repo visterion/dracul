@@ -362,11 +362,10 @@ export class MockApiClient implements ApiClient {
 
   async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {
     const now = new Date().toISOString()
+    // After the 7a–7d Agora migration Dracul's only market-data dependency is Agora,
+    // so health is a single "agora" row mirroring AgoraDataSourceHealthService.
     return [
-      { id: 'edgar', label: 'SEC EDGAR', configured: true, status: 'ok', httpStatus: 200, detail: null, latencyMs: 142, usedBy: ['strigoi-spin', 'strigoi-insider', 'strigoi-merger', 'daywalker'], rateLimitNote: '10 req/s', checkedAt: now },
-      { id: 'yahoo', label: 'Yahoo Finance', configured: true, status: 'rate_limited', httpStatus: 429, detail: 'Too Many Requests', latencyMs: 88, usedBy: ['strigoi-echo', 'daywalker'], rateLimitNote: 'unofficial / scraped', checkedAt: now },
-      { id: 'finnhub', label: 'Finnhub', configured: true, status: 'ok', httpStatus: 200, detail: null, latencyMs: 210, usedBy: ['strigoi-lazarus', 'daywalker'], rateLimitNote: 'provider-dependent (free tier)', checkedAt: now },
-      { id: 'wikipedia', label: 'Wikipedia', configured: true, status: 'ok', httpStatus: 200, detail: null, latencyMs: 175, usedBy: ['strigoi-index'], rateLimitNote: 'MediaWiki UA policy', checkedAt: now },
+      { id: 'agora', label: 'Agora', configured: true, status: 'ok', httpStatus: null, detail: null, latencyMs: 34, usedBy: ['quotes', 'ohlc', 'filings', 'fundamentals', 'earnings', 'news', 'index', 'intraday', 'fx'], rateLimitNote: 'in-cluster MCP', checkedAt: now },
     ]
   }
 }
