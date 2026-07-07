@@ -120,6 +120,19 @@ class InsiderClusterScreenerTest {
     }
 
     @Test
+    void filerRoleResolvesWhenNonBlankAppearsInLaterTransaction() {
+        var filings = List.of(
+                buyRole("AAPL", "Dana", "", LocalDate.of(2026,5,1), 1000, 200),
+                buyRole("AAPL", "Dana", "President", LocalDate.of(2026,5,5), 1000, 200),
+                buyRole("AAPL", "Eve",  "Director", LocalDate.of(2026,5,10), 1000, 200),
+                buyRole("AAPL", "Frank","", LocalDate.of(2026,5,20), 1000, 200)
+        );
+        var filers = screener.cluster(filings).get(0).filers();
+        assertThat(filers).filteredOn(f -> f.name().equals("Dana"))
+                .extracting(InsiderFiler::role).containsExactly("President");
+    }
+
+    @Test
     void detectsClustersInDifferentTickersIndependently() {
         var filings = List.of(
                 buy("AAPL", "A1", LocalDate.of(2026,5,1), 1000, 200),

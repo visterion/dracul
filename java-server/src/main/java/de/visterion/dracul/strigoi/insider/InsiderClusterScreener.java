@@ -37,7 +37,7 @@ public class InsiderClusterScreener {
                     leftIdx = i;
                 }
                 var window = sorted.subList(leftIdx, rightIdx + 1);
-                java.util.LinkedHashMap<String, String> roleByFiler = new java.util.LinkedHashMap<>();
+                LinkedHashMap<String, String> roleByFiler = new LinkedHashMap<>();
                 for (Form4Filing f : window) {
                     roleByFiler.merge(f.filerName(),
                             f.filerRole() == null ? "" : f.filerRole().trim(),
