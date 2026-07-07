@@ -26,6 +26,7 @@ import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -67,9 +68,13 @@ class VoievodWebhookControllerIT {
     }
 
     private void seedPrey(String symbol, String discoveredBy, double confidence) {
+        seedPrey(symbol, discoveredBy, confidence, "ANOM");
+    }
+
+    private void seedPrey(String symbol, String discoveredBy, double confidence, String anomalyType) {
         String now = Instant.now().toString();
         preyRepo.insertAll(List.of(new Prey(
-                UUID.randomUUID().toString(), symbol, symbol + " Corp", "ANOM",
+                UUID.randomUUID().toString(), symbol, symbol + " Corp", anomalyType,
                 confidence, "thesis for " + discoveredBy,
                 List.of("signal-" + discoveredBy), List.of("risk-" + discoveredBy),
                 "6m", discoveredBy, now)));
@@ -187,6 +192,34 @@ class VoievodWebhookControllerIT {
         Integer nonNull = jdbc.sql("SELECT count(*) FROM verdicts WHERE symbol = 'NOPX' AND current_price IS NOT NULL")
                 .query(Integer.class).single();
         assertThat(nonNull).isZero();
+    }
+
+    @Test
+    void toolAnnotatesPayoffFamilyAndCrossFamily() {
+        seedPrey("XF", "strigoi-lazarus", 0.7, "QUALITY_52W_LOW");
+        seedPrey("XF", "strigoi-merger", 0.6, "MERGER_ARB");
+
+        JsonNode resp = rest.post().uri("/api/voievod/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-voievod-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("input", Map.of()))
+                .retrieve().body(JsonNode.class);
+
+        JsonNode xf = null;
+        for (JsonNode c : resp.path("output").path("clusters")) {
+            if ("XF".equals(c.path("symbol").asText())) xf = c;
+        }
+        assertThat(xf).as("XF cluster present").isNotNull();
+        assertThat(xf.path("crossFamily").asBoolean()).isTrue();
+        assertThat(xf.path("discoverySpreadDays").isNumber()).isTrue();
+
+        List<String> families = new ArrayList<>();
+        for (JsonNode f : xf.path("payoffFamilies")) families.add(f.asText());
+        assertThat(families).containsExactlyInAnyOrder("DRIFT", "EVENT");
+
+        for (JsonNode p : xf.path("prey")) {
+            assertThat(p.path("payoffFamily").asText()).isIn("DRIFT", "EVENT");
+        }
     }
 
     @Test
