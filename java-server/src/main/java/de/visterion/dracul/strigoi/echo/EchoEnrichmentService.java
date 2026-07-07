@@ -1,7 +1,9 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.slf4j.Logger;
@@ -37,6 +39,7 @@ public class EchoEnrichmentService {
     private final int historyDays;
     private final SloanAccrualCalculator accruals;
     private final RevisionsProxy revisions;
+    private final AgoraCompanyData companyData;
     private final AgoraEarnings earnings;
     private final ConfounderScreen eventScreen;
     private final EchoDeterministicGate gate;
@@ -52,6 +55,7 @@ public class EchoEnrichmentService {
             @Value("${dracul.strigoi.echo.ohlc-history-days:320}") int historyDays,
             SloanAccrualCalculator accruals,
             RevisionsProxy revisions,
+            AgoraCompanyData companyData,
             AgoraEarnings earnings,
             ConfounderScreen eventScreen,
             EchoDeterministicGate gate) {
@@ -65,6 +69,7 @@ public class EchoEnrichmentService {
         this.historyDays = historyDays;
         this.accruals = accruals;
         this.revisions = revisions;
+        this.companyData = companyData;
         this.earnings = earnings;
         this.eventScreen = eventScreen;
         this.gate = gate;
@@ -122,7 +127,9 @@ public class EchoEnrichmentService {
                 log.debug("echo gate dropped {}: {}", c.symbol(), decision.reason());
                 continue;
             }
-            EarningsRevisions rev = safeRevisions(c.symbol());
+            List<RecommendationTrend> recTrend = safeRecommendations(c.symbol());
+            EarningsRevisions rev = revisions.revisions(recTrend);
+            AnalystCoverage cov = AnalystCoverage.of(recTrend);
 
             out.add(new EnrichedPeadCandidate(
                     c.symbol(), c.companyName(), c.reportDate(),
@@ -135,7 +142,8 @@ public class EchoEnrichmentService {
                     em.marketCap(), em.beta(), em.sector(), em.available(),
                     accr.accrualRatio(), accr.available(),
                     rev.netProxy(), rev.direction(), rev.available(),
-                    nextEarn.orElse(null), daysToNext));
+                    nextEarn.orElse(null), daysToNext,
+                    cov.coverage(), cov.available()));
         }
         return out;
     }
@@ -163,9 +171,9 @@ public class EchoEnrichmentService {
         catch (Exception e) { log.debug("echo: accruals unavailable for {}: {}", symbol, e.getMessage()); return AccrualMetrics.unavailable(); }
     }
 
-    private EarningsRevisions safeRevisions(String symbol) {
-        try { return revisions.revisions(symbol); }
-        catch (Exception e) { log.debug("echo: revisions unavailable for {}: {}", symbol, e.getMessage()); return EarningsRevisions.unavailable(); }
+    private List<RecommendationTrend> safeRecommendations(String symbol) {
+        try { return companyData.recommendations(symbol); }
+        catch (Exception e) { log.debug("echo: recommendations unavailable for {}: {}", symbol, e.getMessage()); return List.of(); }
     }
 
     private List<String> safeConfounders(String symbol, LocalDate since) {

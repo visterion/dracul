@@ -39,5 +39,7 @@ public record EnrichedPeadCandidate(
         String netEstimateRevisionsDirection,
         boolean revisionsAvailable,
         LocalDate nextEarningsDate,
-        Integer daysToNextEarnings
+        Integer daysToNextEarnings,
+        Integer analystCoverage,
+        boolean coverageAvailable
 ) {}
