@@ -59,9 +59,10 @@ candidate reaches the LLM it must pass a server-side hard gate:
 - **Timing gate** — if the next earnings report is within `echo.gate.min-days-to-next-earnings`
   (default 10) the candidate is dropped (next-report event risk overlays the drift).
 
-Survivors carry soft signals for the LLM: `accrualRatio`, `netEstimateRevisionsProxy` /
-`guidanceDirection` (analyst recommendation-trend delta), and `nextEarningsDate` /
-`daysToNextEarnings`. All SP3 lookups degrade gracefully (availability flags) and never abort a run.
+Survivors carry soft signals for the LLM: `accrualRatio`, `netEstimateRevisionsProxy`
+(analyst recommendation-trend delta) / `netEstimateRevisionsDirection` (the sign of that
+proxy — the analyst recommendation-revision direction, not management guidance), and
+`nextEarningsDate` / `daysToNextEarnings`. All SP3 lookups degrade gracefully (availability flags) and never abort a run.
 
 ## Hunt Pattern
 
