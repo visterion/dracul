@@ -37,9 +37,15 @@ public class InsiderClusterScreener {
                     leftIdx = i;
                 }
                 var window = sorted.subList(leftIdx, rightIdx + 1);
-                Set<String> filers = window.stream()
-                        .map(Form4Filing::filerName)
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                java.util.LinkedHashMap<String, String> roleByFiler = new java.util.LinkedHashMap<>();
+                for (Form4Filing f : window) {
+                    roleByFiler.merge(f.filerName(),
+                            f.filerRole() == null ? "" : f.filerRole().trim(),
+                            (existing, incoming) -> existing.isBlank() ? incoming : existing);
+                }
+                List<InsiderFiler> filers = roleByFiler.entrySet().stream()
+                        .map(e -> new InsiderFiler(e.getKey(), e.getValue()))
+                        .toList();
                 BigDecimal totalDollar = window.stream()
                         .map(Form4Filing::dollarValue)
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -49,7 +55,7 @@ public class InsiderClusterScreener {
                 if (filers.size() >= MIN_FILERS && totalDollar.compareTo(MIN_DOLLAR) > 0) {
                     result.add(new InsiderCluster(
                             entry.getKey(), entry.getKey(),
-                            new ArrayList<>(filers),
+                            filers,
                             window.get(0).transactionDate(),
                             right,
                             totalDollar,
