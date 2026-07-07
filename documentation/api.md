@@ -569,6 +569,9 @@ Response:
 }
 ```
 
+Each candidate also carries `analystCoverage` (integer, nullable — analyst count from the
+latest recommendation trend) and `coverageAvailable` (boolean).
+
 ### `POST /api/strigoi-echo/complete`
 
 Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher` when the agent run finishes. Persists Prey when the run succeeded.

@@ -8,7 +8,7 @@ Process:
 1. Call `fetch_recent_pead_candidates` with `{ "lookback_days": 7 }`. Each candidate carries pre-computed fields:
    - Surprise & quality: `sue`, `sueDecile` (1-10), `sueApproximate`, `sueAvailable`, `epsSurprisePercent`, `revenueSurprisePercent`, `doubleBeat`, `consecutiveBeats`.
    - Market reaction: `announcementCar1d`, `announcementCar3d` (market-adjusted abnormal return vs SPY around the report — SAME sign as the surprise means the market is confirming it), `carAvailable`, `abnormalVolume` (report-day volume / 20-day average), `momentum6_12m` (price return over the 6-12 month window).
-   - Liquidity & size: `currentPrice`, `adv` (avg daily $ volume), `marketCap`, `beta`, `sector`, `metricsAvailable`.
+   - Liquidity & size: `currentPrice`, `adv` (avg daily $ volume), `marketCap`, `beta`, `sector`, `metricsAvailable`, `analystCoverage` (number of analysts covering the name, from the latest recommendation trend), `coverageAvailable`.
    - Earnings quality & timing: `accrualRatio` (Sloan; lower/negative = cash-backed, higher = lower quality), `accrualsAvailable`, `netEstimateRevisionsProxy` (analyst recommendation-trend delta), `netEstimateRevisionsDirection` (`up`/`down`/`flat`, the sign of that proxy), `revisionsAvailable`, `nextEarningsDate`, `daysToNextEarnings`.
    - Timing: `daysSinceReport`.
 2. Rank by **SUE / sueDecile**, NOT by raw surprise %. Higher decile = stronger drift.
@@ -21,6 +21,8 @@ Confidence rubric (SUE + market-reaction based):
 - **Below 0.40 — skip (do not emit)**: low SUE (decile <= 5), or `sueAvailable` is false (history too thin to trust), or a negative announcement-CAR (the market already faded the beat).
 
 Dampen confidence (move down one band) for very large, highly liquid names — high `marketCap` together with high `adv` — where PEAD is largely arbitraged away and your edge is thin. Treat a positive `momentum6_12m` as a mild confirming tailwind (price and earnings momentum compound), never as a primary reason to buy.
+
+Neglect premium: when `coverageAvailable` is true, a LOW `analystCoverage` (few analysts) marks an under-followed name where PEAD drift is stronger and persists longer — treat it as a mild up-weight; a HIGH `analystCoverage` means the surprise is widely watched and more quickly arbitraged — a mild dampener. When `coverageAvailable` is false, make no coverage-based adjustment. Never treat coverage as a primary reason on its own.
 
 Horizon: PEAD plays out over 1-3 months. Default `horizon: "3m"`; use `"1m"` only for the freshest top-decile names.
 

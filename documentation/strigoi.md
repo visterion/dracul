@@ -64,6 +64,11 @@ Survivors carry soft signals for the LLM: `accrualRatio`, `netEstimateRevisionsP
 proxy — the analyst recommendation-revision direction, not management guidance), and
 `nextEarningsDate` / `daysToNextEarnings`. All SP3 lookups degrade gracefully (availability flags) and never abort a run.
 
+Each candidate also carries `analystCoverage` (analyst count from the latest recommendation
+trend) and `coverageAvailable`. Low coverage marks an under-followed name where PEAD drift
+tends to be stronger and persist longer — the prompt treats it as a mild neglect-premium
+up-weight (high coverage is a mild dampener); it is advisory only, the LLM decides.
+
 ## Hunt Pattern
 
 Every Strigoi follows the same three-step shape:
