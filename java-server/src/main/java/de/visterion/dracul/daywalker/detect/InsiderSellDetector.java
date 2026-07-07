@@ -16,7 +16,7 @@ public class InsiderSellDetector {
                 .filter(f -> item.ticker().equalsIgnoreCase(f.ticker()))
                 .filter(f -> "S".equalsIgnoreCase(f.transactionCode()))
                 .findFirst()
-                .map(f -> new TriggerEvent(item.ticker(), item.companyName(),
+                .map(f -> TriggerEvent.watchOnly(item.ticker(), item.companyName(),
                         TriggerType.INSIDER_SELL, BigDecimal.valueOf(item.currentPrice()),
                         Map.of("filer_name", f.filerName(),
                                 "shares", f.sharesAcquired(),
