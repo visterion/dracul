@@ -20,12 +20,6 @@ public record TriggerEvent(
         PositionContext position,
         String breachedLevel) {
 
-    /** Watch-only trigger with no position context. */
-    public TriggerEvent(String symbol, String companyName, TriggerType triggerType,
-            BigDecimal currentPrice, Map<String, Object> detail) {
-        this(symbol, companyName, triggerType, currentPrice, detail, null, null, null);
-    }
-
     /** Convenience factory for a watch-only trigger (no position context). */
     public static TriggerEvent watchOnly(String symbol, String companyName,
             TriggerType type, BigDecimal price, Map<String, Object> detail) {

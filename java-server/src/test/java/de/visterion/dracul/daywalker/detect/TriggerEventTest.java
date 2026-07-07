@@ -11,7 +11,7 @@ class TriggerEventTest {
 
     @Test
     void toEventPayloadUsesSnakeCaseKeys() {
-        var ev = new TriggerEvent("ACME", "Acme Corp", TriggerType.PRICE_SPIKE,
+        var ev = TriggerEvent.watchOnly("ACME", "Acme Corp", TriggerType.PRICE_SPIKE,
                 new BigDecimal("104.0"), Map.of("price_change_pct", 0.05));
 
         Map<String, Object> payload = ev.toEventPayload();
