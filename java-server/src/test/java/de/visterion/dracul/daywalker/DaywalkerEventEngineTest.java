@@ -180,6 +180,68 @@ class DaywalkerEventEngineTest {
     }
 
     @Test
+    void mixedHeldAndWatchOnlySameTickerEmitsBoth() {
+        var wl = mock(WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(wl.findAll()).thenReturn(List.of(
+                heldItem("id-h", "ACME", "u1@x.com", 100),
+                item("id-w", "ACME", "u2@x.com")));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of("id-h",
+                new de.visterion.dracul.watchlist.PositionRisk("id-h", "2026-06-01",
+                        new BigDecimal("96"), new BigDecimal("96"), new BigDecimal("120"),
+                        new BigDecimal("95"), new BigDecimal("2"))));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 95), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(2);
+        assertThat(events).extracting(TriggerEvent::positionId).containsExactlyInAnyOrder("id-h", null);
+    }
+
+    @Test
+    void multiOwnerHeldEmitsPerOwnerEvents() {
+        var wl = mock(WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(wl.findAll()).thenReturn(List.of(
+                heldItem("id-1", "ACME", "u1@x.com", 100),
+                heldItem("id-2", "ACME", "u2@x.com", 100)));
+        when(wl.positionRiskByItemId()).thenReturn(java.util.Map.of(
+                "id-1", new de.visterion.dracul.watchlist.PositionRisk("id-1", "2026-06-01",
+                        new BigDecimal("96"), new BigDecimal("96"), new BigDecimal("120"),
+                        new BigDecimal("95"), new BigDecimal("2")),
+                "id-2", new de.visterion.dracul.watchlist.PositionRisk("id-2", "2026-06-01",
+                        new BigDecimal("96"), new BigDecimal("96"), new BigDecimal("120"),
+                        new BigDecimal("95"), new BigDecimal("2"))));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 95), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        var now = Instant.parse("2026-06-03T18:00:00Z");
+        var events = engine(wl, in, cd, fi, al).detect(null, now);
+        assertThat(events).hasSize(2);
+        assertThat(events).extracting(TriggerEvent::positionId).containsExactlyInAnyOrder("id-1", "id-2");
+
+        // Independent cooldown: u1 recently alerted, u2 free -> only id-2 emitted.
+        when(al.lastAlertAt("u1@x.com", "ACME", "PRICE_SPIKE")).thenReturn(Optional.of(now.minusSeconds(60)));
+        var events2 = engine(wl, in, cd, fi, al).detect(null, now);
+        assertThat(events2).extracting(TriggerEvent::positionId).containsExactly("id-2");
+    }
+
+    @Test
     void watchOnlyItemStaysGeneric() {
         var wl = mock(WatchlistRepository.class);
         var in = mock(AgoraIntraday.class);
