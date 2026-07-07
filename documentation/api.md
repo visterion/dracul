@@ -491,12 +491,16 @@ Response:
         "filers": ["..."],
         "windowStart": "2026-05-15", "windowEnd": "2026-05-25",
         "totalDollarValue": 1234567,
-        "totalShares": 1000
+        "totalShares": 1000,
+        "concurrentInsiderSells": 0,
+        "netInsiderDollar": 1234567
       }
     ]
   }
 }
 ```
+
+`concurrentInsiderSells` (integer) is the count of distinct insiders who sold within the same window as the buy cluster, and `netInsiderDollar` (number) is `totalDollarValue` minus the dollar value of those concurrent sales. Both are advisory signal-strength inputs for the LLM — no cluster is dropped by the deterministic screener because of them.
 
 ### `POST /api/strigoi-insider/complete`
 
