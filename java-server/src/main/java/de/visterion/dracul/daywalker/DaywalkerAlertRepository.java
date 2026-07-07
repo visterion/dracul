@@ -18,17 +18,19 @@ public class DaywalkerAlertRepository {
         this.jdbc = jdbc;
     }
 
-    /** A watchlist item's owner and id, for fanning a symbol's alert out to every owner. */
-    public record OwnerItem(String userId, String watchlistItemId) {}
+    /** A watchlist item's owner, id, and whether it is a HELD position (for routing). */
+    public record OwnerItem(String userId, String watchlistItemId, boolean held) {}
 
-    /** All (owner, watchlist-item-id) pairs that hold a ticker, across all users. */
+    /** All (owner, watchlist-item-id, held) triples that hold a ticker, across all users. */
     public List<OwnerItem> findOwnersBySymbol(String symbol) {
         return jdbc.sql("""
-                SELECT user_id, id FROM watchlist_items
+                SELECT user_id, id, tag FROM watchlist_items
                 WHERE ticker = :t
                 """)
                 .param("t", symbol)
-                .query((rs, n) -> new OwnerItem(rs.getString("user_id"), rs.getString("id")))
+                .query((rs, n) -> new OwnerItem(
+                        rs.getString("user_id"), rs.getString("id"),
+                        "HELD".equals(rs.getString("tag"))))
                 .list();
     }
 

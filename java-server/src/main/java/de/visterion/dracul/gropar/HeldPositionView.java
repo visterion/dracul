@@ -16,5 +16,7 @@ public record HeldPositionView(
         ExitIndicators indicators,
         RiskMetrics risk,
         List<String> firedRules,
-        Map<String, Object> thesis   // {summary, signals, risks, anomalyTypes, horizon} or null
+        Map<String, Object> thesis,   // {summary, signals, risks, anomalyTypes, horizon} or null
+        List<java.math.BigDecimal> profitTargets,        // [entry+2R, entry+4R] or empty
+        List<java.math.BigDecimal> scaleOutFractions      // [0.3333, 0.3333]
 ) {}

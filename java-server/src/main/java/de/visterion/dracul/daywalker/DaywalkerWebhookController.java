@@ -77,8 +77,11 @@ public class DaywalkerWebhookController {
         }
         BigDecimal confidence = o.path("confidence").isNumber()
                 ? new BigDecimal(o.path("confidence").asText()) : null;
+        String positionId = o.path("position_id").isTextual()
+                ? o.path("position_id").asText() : null;
         completionService.persistAssessment(symbol, triggerType,
-                o.path("severity").asText("INFO"), o.path("thesis").asText(""), confidence, runId);
+                o.path("severity").asText("INFO"), o.path("thesis").asText(""),
+                confidence, runId, positionId);
         return ResponseEntity.noContent().build();
     }
 

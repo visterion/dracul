@@ -41,17 +41,27 @@ public class DaywalkerCompletionService {
 
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId) {
-        var owners = alerts.findOwnersBySymbol(symbol);
-        if (owners.isEmpty()) {
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, null);
+    }
+
+    public void persistAssessment(String symbol, String triggerType, String severity,
+                                  String thesis, BigDecimal confidence, String runId,
+                                  String positionId) {
+        var all = alerts.findOwnersBySymbol(symbol);
+        if (all.isEmpty()) {
             log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
             return;
         }
+        var owners = positionId != null
+                ? all.stream().filter(o -> positionId.equals(o.watchlistItemId())).toList()
+                : all.stream().filter(o -> !o.held()).toList();
         Instant now = Instant.now();
         var eligible = owners.stream()
                 .filter(o -> !inCooldown(o.userId(), symbol, triggerType, now))
                 .toList();
         if (eligible.isEmpty()) {
-            log.info("daywalker run {} all owners of {} ({}) in cooldown — skipping", runId, symbol, triggerType);
+            log.info("daywalker run {} no eligible owner for {} ({}) [positionId={}] — skipping",
+                    runId, symbol, triggerType, positionId);
             return;
         }
 

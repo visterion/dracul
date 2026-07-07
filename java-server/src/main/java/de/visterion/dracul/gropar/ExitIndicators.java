@@ -15,5 +15,6 @@ public record ExitIndicators(
         BigDecimal high52w,    BigDecimal low52w, boolean window52wAvailable,
         Integer daysHeld,                  // null in v1 (controller may compute later)
         boolean horizonElapsed,
-        List<String> firedRules            // CHANDELIER_STOP, DEATH_CROSS, TIME_STOP (PROFIT/STOP added by controller)
+        List<String> firedRules,           // CHANDELIER_STOP, DEATH_CROSS, TIME_STOP (PROFIT/STOP added by controller)
+        BigDecimal distToMa200InAtr        // (close - MA200)/ATR; null when MA200/ATR unavailable
 ) {}

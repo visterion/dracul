@@ -71,4 +71,25 @@ class GroparPromptContractTest {
                 .as("prompt must explicitly forbid a bare top-level array")
                 .contains("Never return a bare array");
     }
+
+    @Test
+    void promptMentionsOverextension() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt)
+                .as("gropar prompt must reference the distToMa200InAtr indicator")
+                .contains("distToMa200InAtr");
+        assertThat(prompt)
+                .as("gropar prompt must define overextension guidance in German")
+                .containsIgnoringCase("überdehnt");
+    }
+
+    @Test void promptMentionsScaleOutLadder() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt)
+                .as("gropar prompt must reference the profitTargets scale-out ladder")
+                .contains("profitTargets");
+        assertThat(prompt)
+                .as("gropar prompt must describe the +4R scale-out rung")
+                .contains("+4R");
+    }
 }

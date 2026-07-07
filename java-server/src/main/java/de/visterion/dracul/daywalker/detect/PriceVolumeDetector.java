@@ -33,7 +33,7 @@ public class PriceVolumeDetector {
             if (ref.signum() != 0) {
                 double pct = price.subtract(ref).doubleValue() / ref.doubleValue();
                 if (Math.abs(pct) > priceThreshold) {
-                    events.add(new TriggerEvent(item.ticker(), item.companyName(),
+                    events.add(TriggerEvent.watchOnly(item.ticker(), item.companyName(),
                             TriggerType.PRICE_SPIKE, price,
                             Map.of("price_change_pct", round(pct),
                                     "from_price", ref,
@@ -48,7 +48,7 @@ public class PriceVolumeDetector {
             double avg = vols.subList(0, vols.size() - 1).stream()
                     .mapToLong(Long::longValue).average().orElse(0);
             if (avg > 0 && lastVol > volumeMultiplier * avg) {
-                events.add(new TriggerEvent(item.ticker(), item.companyName(),
+                events.add(TriggerEvent.watchOnly(item.ticker(), item.companyName(),
                         TriggerType.VOLUME_SPIKE, price,
                         Map.of("volume_multiple", round(lastVol / avg),
                                 "last_volume", lastVol,

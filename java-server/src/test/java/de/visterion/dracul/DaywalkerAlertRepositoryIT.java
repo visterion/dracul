@@ -37,7 +37,7 @@ class DaywalkerAlertRepositoryIT {
                 50.0, List.of(50.0), "", null, null);
 
         assertThat(alerts.findOwnersBySymbol("DWA"))
-                .containsExactly(new DaywalkerAlertRepository.OwnerItem("default", item.id()));
+                .containsExactly(new DaywalkerAlertRepository.OwnerItem("default", item.id(), false));
         assertThat(alerts.lastAlertAt("default", "DWA", "PRICE_SPIKE")).isEmpty();
 
         alerts.insert("default", item.id(), "DWA", "PRICE_SPIKE",
@@ -60,8 +60,22 @@ class DaywalkerAlertRepositoryIT {
                 50.0, List.of(50.0), "", null, null);
         assertThat(alerts.findOwnersBySymbol("DWA"))
                 .containsExactlyInAnyOrder(
-                        new DaywalkerAlertRepository.OwnerItem("u1@x.com", a.id()),
-                        new DaywalkerAlertRepository.OwnerItem("u2@x.com", b.id()));
+                        new DaywalkerAlertRepository.OwnerItem("u1@x.com", a.id(), false),
+                        new DaywalkerAlertRepository.OwnerItem("u2@x.com", b.id(), false));
+    }
+
+    @Test
+    void findOwnersBySymbolReportsHeldFlag() {
+        var a = watchlist.insert("u1@x.com", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "HELD", null, null);
+        var b = watchlist.insert("u2@x.com", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "calm", null, null);
+
+        var owners = alerts.findOwnersBySymbol("DWA");
+
+        assertThat(owners).hasSize(2);
+        assertThat(owners).anyMatch(o -> o.userId().equals("u1@x.com") && o.held());
+        assertThat(owners).anyMatch(o -> o.userId().equals("u2@x.com") && !o.held());
     }
 
     @org.junit.jupiter.api.Test
