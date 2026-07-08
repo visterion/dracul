@@ -21,6 +21,9 @@ public class OrderGuard {
 
     /**
      * @param side "BUY" or "SELL"
+     * @param qty order quantity; must be strictly positive
+     * @param referencePrice the reference (entry) price the stop is measured against; must be positive
+     * @param stopPrice the protective stop price; must be positive and on the correct side of the reference
      * @param connectionEnv the connection the order would hit
      * @param allowedConnection the only connection writes are permitted on (paper)
      */
@@ -36,10 +39,16 @@ public class OrderGuard {
                 || referencePrice == null || referencePrice.signum() <= 0) {
             return Result.fail(RejectReason.NO_STOP);
         }
-        // Long: stop below reference. Short: stop above reference.
-        boolean stopValid = "BUY".equalsIgnoreCase(side)
-                ? stopPrice.compareTo(referencePrice) < 0
-                : stopPrice.compareTo(referencePrice) > 0;
+        // Long: stop strictly below reference. Short: stop strictly above reference.
+        // A malformed side (null or anything else) is an explicit rejection, never a guess.
+        boolean stopValid;
+        if ("BUY".equalsIgnoreCase(side)) {
+            stopValid = stopPrice.compareTo(referencePrice) < 0;
+        } else if ("SELL".equalsIgnoreCase(side)) {
+            stopValid = stopPrice.compareTo(referencePrice) > 0;
+        } else {
+            return Result.fail(RejectReason.SCHEMA_INVALID);
+        }
         if (!stopValid) return Result.fail(RejectReason.NO_STOP);
         return Result.pass();
     }
