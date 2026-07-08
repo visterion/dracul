@@ -25,8 +25,8 @@ public class AgoraTrading {
     private final RestClient http;
 
     public AgoraTrading(
-            @Value("${dracul.executor.agora-base-url}") String baseUrl,
-            @Value("${dracul.executor.agora-trading-token}") String token,
+            @Value("${dracul.executor.agora-base-url:http://agora:8080}") String baseUrl,
+            @Value("${dracul.executor.agora-trading-token:}") String token,
             ObjectMapper mapper) {
         this.token = token;
         this.mapper = mapper;
