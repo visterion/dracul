@@ -95,6 +95,30 @@ class OrderGuardTest {
     }
 
     @Test
+    void rejectsStopEqualToReferenceLong() {
+        OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("100"), "saxo-sim", "saxo-sim");
+        assertThat(result.ok()).isFalse();
+        assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
+    }
+
+    @Test
+    void rejectsStopEqualToReferenceShort() {
+        OrderGuard.Result result = guard.check("SELL", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("100"), "saxo-sim", "saxo-sim");
+        assertThat(result.ok()).isFalse();
+        assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
+    }
+
+    @Test
+    void rejectsUnknownSide() {
+        OrderGuard.Result result = guard.check("LONG", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("95"), "saxo-sim", "saxo-sim");
+        assertThat(result.ok()).isFalse();
+        assertThat(result.reason()).isEqualTo(RejectReason.SCHEMA_INVALID);
+    }
+
+    @Test
     void connectionCheckedBeforeQty() {
         OrderGuard.Result result = guard.check("BUY", BigDecimal.ZERO, new BigDecimal("100"),
                 new BigDecimal("95"), "saxo-live", "saxo-sim");
