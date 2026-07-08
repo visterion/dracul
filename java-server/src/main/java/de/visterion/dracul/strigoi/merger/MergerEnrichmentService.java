@@ -44,10 +44,14 @@ public class MergerEnrichmentService {
         for (MergerCandidate c : capped) {
             FilingText ft = safeFilingText(c.filingUrl());
             Quote q = c.symbol() == null ? null : quotes.get(c.symbol());
-            BigDecimal price = q == null ? null : q.price();
+            // quotes() maps a missing/malformed price to BigDecimal.ZERO; treat a non-positive
+            // price as unavailable so the LLM never computes a spread against 0.
+            BigDecimal rawPrice = q == null ? null : q.price();
+            boolean priceAvailable = rawPrice != null && rawPrice.signum() > 0;
+            BigDecimal price = priceAvailable ? rawPrice : null;
             out.add(new EnrichedMergerCandidate(
                     c.symbol(), c.companyName(), c.formType(), c.filingDate(), c.filingUrl(),
-                    ft.text(), ft.available(), price, price != null));
+                    ft.text(), ft.available(), price, priceAvailable));
         }
         return out;
     }

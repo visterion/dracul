@@ -64,4 +64,17 @@ class MergerEnrichmentServiceTest {
         assertThat(out).hasSize(1);
         assertThat(out.get(0).priceAvailable()).isFalse();
     }
+
+    @Test void zeroPriceIsTreatedAsUnavailable() {
+        AgoraFilings filings = Mockito.mock(AgoraFilings.class);
+        AgoraMarketData md = Mockito.mock(AgoraMarketData.class);
+        when(filings.filingText(any())).thenReturn(new FilingText("t", true));
+        // quotes() maps a missing/malformed price to BigDecimal.ZERO.
+        when(md.quotes(any())).thenReturn(Map.of("ZRO", new Quote(BigDecimal.ZERO, BigDecimal.ZERO)));
+
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md).enrich(List.of(candidate("ZRO")));
+
+        assertThat(out.get(0).lastPrice()).isNull();
+        assertThat(out.get(0).priceAvailable()).isFalse();
+    }
 }
