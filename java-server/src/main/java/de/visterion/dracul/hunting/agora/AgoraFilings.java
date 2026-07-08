@@ -159,6 +159,20 @@ public class AgoraFilings {
                 true);
     }
 
+    /** Fetch a filing's summary/term-sheet text via Agora's get_filing_text. Fail-soft:
+     *  a blank url or any Agora failure yields {@link FilingText#unavailable()}. */
+    public FilingText filingText(String url) {
+        if (url == null || url.isBlank()) return FilingText.unavailable();
+        try {
+            ObjectNode args = mapper.createObjectNode();
+            args.put("url", url);
+            JsonNode res = agora.callTool("get_filing_text", args);
+            return new FilingText(res.path("text").asString(""), true);
+        } catch (AgoraUnavailableException e) {
+            return FilingText.unavailable();
+        }
+    }
+
     private ObjectNode searchArgs(List<String> forms, LocalDate from, LocalDate to) {
         ObjectNode args = mapper.createObjectNode();
         ArrayNode fa = args.putArray("forms");
