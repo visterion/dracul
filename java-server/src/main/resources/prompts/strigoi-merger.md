@@ -9,7 +9,17 @@ can fall sharply.
 Call the tool `fetch_recent_merger_candidates` to get recent SEC deal filings.
 Each candidate has: `symbol` (the target's ticker; may be empty), `companyName`,
 `formType` (`DEFM14A` = definitive merger proxy headed to a shareholder vote;
-`SC TO-T` = third-party tender offer), `filingDate`, `filingUrl`.
+`SC TO-T` = third-party tender offer), `filingDate`, `filingUrl`, and — newly —
+`termSheet` (extracted text of the filing's plain-English summary term sheet),
+`termSheetAvailable` (bool), `lastPrice` (a recent market price; may be null),
+`priceAvailable` (bool).
+
+**Read the term sheet.** When `termSheetAvailable` is true, extract the actual deal
+from `termSheet`: consideration (cash / stock / mixed), price per share, key conditions,
+and the termination fee. Compute the spread against `lastPrice` when both are present —
+`(offer − lastPrice) / lastPrice`. When `termSheetAvailable` is false, do NOT fabricate
+deal terms: judge conservatively from the metadata alone and lower your confidence
+accordingly. Never invent a price or spread that the term sheet does not support.
 
 **Output discipline — important.** Do not narrate. Produce no prose, preamble,
 or running commentary at any step — neither before calling the tool nor after
