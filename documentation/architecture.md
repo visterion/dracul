@@ -261,8 +261,35 @@ Two new tables under the `dracul` schema hold runtime-editable agent definitions
 2. `GenericAgentRegistrar` reads all agent definitions from the DB, builds a `CreateAgentRequest` for each, prepends `dracul.public-url` to all webhook callback paths, appends the current language directive to the system prompt, and registers or updates the agent with Vistierie. It re-runs whenever an `AgentDefinitionChangedEvent` or `LanguageChangedEvent` is published (e.g. after a `PUT /api/settings/agents/{name}/definition` or `PUT /api/settings/language`), making definition changes effective immediately without a restart.
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
-Phase-2 multi-user readiness. Schema changes require a Flyway migration and
-an update to this document.
+Phase-2 multi-user readiness, **except** the three Executor tables below
+(V17), which are scoped to the single operator's paper book, not per-user.
+Schema changes require a Flyway migration and an update to this document.
+
+**Executor tables (V17):** three tables backing the guarded paper-trading
+agent (see `documentation/strigoi.md` for the agent's role). Like every
+other table documented in this section, they live in Postgres's default
+`public` schema — "`dracul` schema" throughout this document is an informal
+label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
+
+| Table | Purpose |
+|---|---|
+| `executor_signal` | Injected advice awaiting evaluation (PK `signal_id`, caller-supplied or generated UUID); `status` transitions `PENDING` → `ACCEPTED` / `REJECTED` / `SKIPPED` |
+| `executor_position` | The paper position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status) |
+| `executor_decision` | Append-only audit trail — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK) |
+
+**Doctrine note:** Dracul is deliberately, otherwise strictly, read-only —
+no order routing, no broker integration, no auto-trading (see `README.md`
+"Project values"). The Executor agent is the one intentional exception,
+and it is narrowly scoped: **guarded paper execution only**. It can only
+ever write to a paper connection (`saxo-sim`), enforced by two independent
+mechanisms — `OrderGuard`'s connection check and Agora's trading webhooks
+being reached with a non-live trading token, so the live connection
+(`saxo-live`) is physically unreachable regardless of any code or config
+mistake. Every entry the LLM requests is re-checked in code
+(`VetoService` + `OrderGuard`) before it reaches the broker — the LLM
+proposes, code disposes. This exception does not weaken the doctrine for
+any other agent: the six Strigoi, Voievod, gropar, and Daywalker remain
+strictly read-only.
 
 ## Data Flow
 

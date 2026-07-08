@@ -43,6 +43,57 @@ mirroring the watchlist path's `WatchlistCurrencyMapper`.
 | GET | `/api/strigoi/{name}` | Single Strigoi: runs, stats, configuration |
 | POST | `/api/strigoi/{name}/hunt` | Trigger manual one-off hunt (proxied to Vistierie) |
 
+## Executor
+
+Operator seam for the guarded paper-trading executor agent (slice 1). These
+three endpoints sit behind Cloudflare Access like the rest of `/api/**` (no
+bearer token) and are only registered when `dracul.executor.enabled=true`.
+The tool + completion webhooks the agent itself calls are documented
+separately under "Executor Webhooks" below.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/executor/signals` | Inject a signal (advice) for the executor to evaluate |
+| GET | `/api/executor/signals` | List signals awaiting evaluation (status `PENDING`, up to 50) |
+| POST | `/api/executor/run` | Trigger an ad-hoc Vistierie run of the executor agent |
+
+### `POST /api/executor/signals`
+
+Request body (all fields optional except `symbol`/`direction`/`confidence`,
+which the code-enforced `SCHEMA_INVALID` veto requires downstream):
+
+```json
+{
+  "signal_id": "optional-caller-supplied-id",
+  "source": "gropar",
+  "agent_version": "1",
+  "symbol": "ACME",
+  "direction": "LONG",
+  "confidence": 0.8,
+  "mechanism": "insider cluster + PEAD",
+  "kill_criteria": ["close below 20d low"],
+  "horizon": "3m",
+  "reference_price": 142.50
+}
+```
+
+`signal_id` is generated (UUID) when absent. The signal is persisted with
+status `PENDING`. Response (200):
+
+```json
+{ "signal_id": "...", "status": "PENDING" }
+```
+
+### `GET /api/executor/signals`
+
+Returns up to 50 pending `ExecutorSignal` rows (same shape as the tool
+webhook's `fetch-pending-signals`, see below).
+
+### `POST /api/executor/run`
+
+Triggers an ad-hoc Vistierie run of the `executor` agent (same mechanism as
+`POST /api/strigoi/{name}/hunt`). Returns the Vistierie `VistierieRunDetail`.
+
 ## Authentication
 
 User-facing endpoints sit behind **Cloudflare Access**. Dracul verifies the
@@ -930,3 +981,108 @@ Completion webhook. Headers: `Authorization: Bearer ...`, `X-Vistierie-Run-Id: .
 On success (`status` = `done`) persists each `output.prey[]` entry as Prey with
 `anomalyType=INDEX_INCLUSION`, `discoveredBy=strigoi-index`. Prey without a `symbol` are
 skipped. Returns 204; non-success / empty prey acknowledged without persisting.
+
+## Executor Webhooks
+
+Called by Vistierie during an `executor` agent run (guarded paper trading,
+see `documentation/strigoi.md`). All six require
+`Authorization: Bearer <DRACUL_EXECUTOR_WEBHOOK_TOKEN>` (verified with
+constant-time comparison via `BearerTokenVerifier`); a missing/wrong token
+returns 401. Only registered when `dracul.executor.enabled=true`. Unlike the
+operator endpoints above, these sit **outside** Cloudflare Access — they are
+machine-to-machine, called in-cluster by Vistierie's tool dispatcher, the
+same pattern as `/api/strigoi-*`, `/api/voievod`, `/api/gropar`.
+
+### `POST /api/executor/tools/fetch-pending-signals`
+
+Tool webhook. Returns up to 50 `PENDING` `ExecutorSignal` rows.
+
+Response:
+```json
+{ "output": { "signals": [
+  { "signal_id": "...", "symbol": "ACME", "direction": "LONG", "confidence": 0.8,
+    "mechanism": "...", "kill_criteria": ["..."], "horizon": "3m",
+    "reference_price": 142.50 }
+] } }
+```
+
+### `POST /api/executor/tools/get-account`
+
+Tool webhook. Input: `{ "connection": "saxo-sim" }` (optional; defaults to
+`dracul.executor.connection`). Proxies Agora's `get_account` trading tool via
+`AgoraTrading`. Response: `{ "output": <account snapshot> }`, or
+`{ "output": { "available": false, "error": "..." } }` if Agora/the broker
+call fails.
+
+### `POST /api/executor/tools/list-positions`
+
+Tool webhook. Same input/connection resolution as `get-account`. Proxies
+Agora's `list_positions` trading tool. Response: `{ "output": <positions
+snapshot> }`, or the same `available:false` error shape on failure.
+
+### `POST /api/executor/tools/place-entry`
+
+Tool webhook — the safety-critical core. The LLM only *requests* an entry;
+code decides. Input:
+
+```json
+{
+  "signal_id": "...",
+  "symbol": "ACME",
+  "side": "BUY",
+  "qty": 10,
+  "limit_price": 142.50,
+  "stop_price": 138.00,
+  "take_profit": 150.00
+}
+```
+
+Pipeline: signal lookup → `VetoService` → `OrderGuard` → `AgoraTrading` (only
+on pass). Every step short-circuits before the broker call. On success:
+
+```json
+{ "output": { "placed": true, "broker_order_id": "...", "position_id": 42 } }
+```
+
+On rejection: `{ "output": { "placed": false, "reason": "<REASON>", "veto_trace"?: [...] } }`.
+`veto_trace` is present for veto rejections (e.g.
+`["SCHEMA_INVALID:PASS","LOW_CONFIDENCE:PASS","MAX_POSITIONS:FAIL"]`) and for
+order-guard rejections it is the veto trace plus an `ORDER_GUARD:<reason>`
+entry. `reason` is one of:
+
+| Reason | Where enforced | Meaning |
+|---|---|---|
+| `SCHEMA_INVALID` | `VetoService` / `OrderGuard` | Signal not found, or missing symbol/direction/confidence, or malformed `side`/`qty` |
+| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` |
+| `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
+| `NO_STOP` | `OrderGuard` | `stop_price`/reference price missing, non-positive, or on the wrong side of price for the given `side` |
+| `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
+| `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
+
+Every outcome (accepted or rejected) writes one `executor_decision` audit
+row; accepted entries also insert an `executor_position` row and mark the
+source signal `ACCEPTED` (rejections mark it `REJECTED`).
+
+### `POST /api/executor/tools/submit-decision`
+
+Tool webhook. Records SKIP decisions the LLM made for signals it chose not
+to act on (ENTER decisions are recorded implicitly via `place-entry`).
+Input:
+
+```json
+{ "decisions": [
+  { "action": "SKIP", "signal_id": "...", "symbol": "ACME", "rationale": "..." }
+] }
+```
+
+Non-`SKIP` actions in the array are ignored. Each recorded `SKIP` writes an
+`executor_decision` row (`accepted=false`, no `reject_reason`) and marks the
+signal `SKIPPED`. Response: `{ "output": { "recorded": <count> } }`.
+
+### `POST /api/executor/complete`
+
+Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher`
+when the agent run finishes. Slice 1 only verifies the bearer token and
+acknowledges (204); the run's actual actions were already persisted
+incrementally by the tool webhooks above (`place-entry` / `submit-decision`),
+so there is nothing left to write here.
