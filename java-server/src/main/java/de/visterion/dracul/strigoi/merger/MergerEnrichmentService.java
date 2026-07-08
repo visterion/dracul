@@ -42,7 +42,7 @@ public class MergerEnrichmentService {
 
         List<EnrichedMergerCandidate> out = new ArrayList<>();
         for (MergerCandidate c : capped) {
-            FilingText ft = filings.filingText(c.filingUrl());
+            FilingText ft = safeFilingText(c.filingUrl());
             Quote q = c.symbol() == null ? null : quotes.get(c.symbol());
             BigDecimal price = q == null ? null : q.price();
             out.add(new EnrichedMergerCandidate(
@@ -50,6 +50,17 @@ public class MergerEnrichmentService {
                     ft.text(), ft.available(), price, price != null));
         }
         return out;
+    }
+
+    /** {@link AgoraFilings#filingText} is already fail-soft, but wrap it too so an unforeseen
+     *  runtime failure degrades one candidate rather than the whole run (mirrors EchoEnrichmentService). */
+    private FilingText safeFilingText(String url) {
+        try {
+            return filings.filingText(url);
+        } catch (Exception e) {
+            log.debug("merger enrichment: filing text unavailable for {}: {}", url, e.getMessage());
+            return FilingText.unavailable();
+        }
     }
 
     private Map<String, Quote> safeQuotes(List<String> symbols) {
