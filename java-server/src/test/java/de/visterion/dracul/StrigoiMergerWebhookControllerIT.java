@@ -4,7 +4,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
-import de.visterion.dracul.hunting.agora.MergerFiling;
+import de.visterion.dracul.strigoi.merger.MergerEnrichmentService;
+import de.visterion.dracul.strigoi.merger.EnrichedMergerCandidate;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -19,6 +20,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +43,7 @@ class StrigoiMergerWebhookControllerIT {
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
     @MockitoBean AgoraFilings filings;
+    @MockitoBean MergerEnrichmentService enrichment;
 
     RestClient rest;
 
@@ -52,14 +55,14 @@ class StrigoiMergerWebhookControllerIT {
                 .build();
         when(filings.searchMergers(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedMergerCandidate(
+                "TGT", "Target Corp", "DEFM14A", "2026-05-20", "http://sec/u1",
+                "SUMMARY TERM SHEET: $52.00 in cash per share", true,
+                new BigDecimal("47.50"), true)));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(filings.searchMergers(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("agora", List.of(
-                        new MergerFiling("TGT", "Target Corp", "DEFM14A", LocalDate.of(2026, 5, 20), "http://sec/u1"))));
-
         JsonNode resp = rest.post().uri("/api/strigoi-merger/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-merger-token")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -68,9 +71,13 @@ class StrigoiMergerWebhookControllerIT {
                 .retrieve().body(JsonNode.class);
 
         JsonNode cands = resp.path("output").path("candidates");
-        boolean found = false;
-        for (JsonNode c : cands) if ("TGT".equals(c.path("symbol").asText())) found = true;
-        assertThat(found).as("TGT candidate returned").isTrue();
+        JsonNode tgt = null;
+        for (JsonNode c : cands) if ("TGT".equals(c.path("symbol").asText())) tgt = c;
+        assertThat(tgt).as("TGT candidate returned").isNotNull();
+        assertThat(tgt.path("termSheet").asText()).contains("$52.00");
+        assertThat(tgt.path("termSheetAvailable").asBoolean()).isTrue();
+        assertThat(new BigDecimal(tgt.path("lastPrice").asText())).isEqualByComparingTo("47.50");
+        assertThat(tgt.path("priceAvailable").asBoolean()).isTrue();
     }
 
     @Test

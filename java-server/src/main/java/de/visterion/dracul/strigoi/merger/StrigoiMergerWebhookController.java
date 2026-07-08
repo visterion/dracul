@@ -20,18 +20,21 @@ public class StrigoiMergerWebhookController extends HuntController {
 
     private final AgoraFilings filings;
     private final MergerScreener screener;
+    private final MergerEnrichmentService enrichment;
     private final int defaultLookback;
 
     public StrigoiMergerWebhookController(
             @Value("${dracul.strigoi.merger.webhook-token}") String token,
             AgoraFilings filings,
             MergerScreener screener,
+            MergerEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             @Value("${dracul.strigoi.merger.lookback-days:45}") int defaultLookback) {
         super(token, preyRepo, cache);
         this.filings = filings;
         this.screener = screener;
+        this.enrichment = enrichment;
         this.defaultLookback = defaultLookback;
     }
 
@@ -45,7 +48,8 @@ public class StrigoiMergerWebhookController extends HuntController {
         int lookback = lookbackDays(body, defaultLookback, 1, 120);
         var to = LocalDate.now();
         var raw = filings.searchMergers(to.minusDays(lookback), to);
-        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items()), raw.health());
+        var enriched = enrichment.enrich(screener.screen(raw.items()));
+        return new de.visterion.dracul.hunting.DataSourceResult<>(enriched, raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")
