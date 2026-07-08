@@ -15,13 +15,13 @@ class ExecutorDefaults {
 
     static final String NAME = "executor";
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     @Bean
     AgentDefaultProvider executorAgentDefaults(
+            ObjectMapper mapper,
             @Value("${dracul.executor.schedule:}") String schedule) {
-        var schema = AgentResources.readSchema(MAPPER, "schemas/executor-decision.json");
+        var schema = AgentResources.readSchema(mapper, "schemas/executor-decision.json");
         String resolvedSchedule = (schedule == null || schedule.isBlank()) ? null : schedule;
+        List<ToolCatalogEntry> entries = catalogEntries(mapper);
         return new AgentDefaultProvider() {
             @Override
             public AgentDefinition defaultDefinition() {
@@ -41,17 +41,17 @@ class ExecutorDefaults {
 
             @Override
             public List<ToolCatalogEntry> catalogEntries() {
-                return ExecutorDefaults.catalogEntries();
+                return entries;
             }
         };
     }
 
-    public static List<ToolCatalogEntry> catalogEntries() {
-        var empty = AgentResources.parseJson(MAPPER, "{\"type\":\"object\",\"properties\":{}}");
-        var connectionInput = AgentResources.parseJson(MAPPER, """
+    private static List<ToolCatalogEntry> catalogEntries(ObjectMapper mapper) {
+        var empty = AgentResources.parseJson(mapper, "{\"type\":\"object\",\"properties\":{}}");
+        var connectionInput = AgentResources.parseJson(mapper, """
                 {"type":"object","properties":{"connection":{"type":"string"}}}
                 """);
-        var placeEntryInput = AgentResources.parseJson(MAPPER, """
+        var placeEntryInput = AgentResources.parseJson(mapper, """
                 {
                   "type": "object",
                   "properties": {
