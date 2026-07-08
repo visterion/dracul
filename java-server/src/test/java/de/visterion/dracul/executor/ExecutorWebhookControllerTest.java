@@ -161,11 +161,25 @@ class ExecutorWebhookControllerTest {
 
         verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
         verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
 
         ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo).insert(captor.capture());
         assertThat(captor.getValue().accepted()).isFalse();
         assertThat(captor.getValue().rejectReason()).isEqualTo("NO_STOP");
+    }
+
+    @Test
+    void placeEntry_nullBody_rejectsCleanly() {
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
+
+        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(positionRepo, never()).insert(any());
     }
 
     // -------------------------------------------------------------------
@@ -306,6 +320,17 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo, times(1)).insert(any());
         verify(signalRepo).markStatus("sig-1", "SKIPPED");
         verify(signalRepo, never()).markStatus(eq("sig-2"), any());
+    }
+
+    @Test
+    void submitDecision_nullBody_recordsZero() {
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, null, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(0);
+
+        verify(decisionRepo, never()).insert(any());
     }
 
     // -------------------------------------------------------------------
