@@ -118,8 +118,8 @@ before the move was obvious.
 │           │ Patterns        │               │ Alerts          │
 │           ▼                 ▼               ▼                 │
 │  ┌────────────────────────────────────────────────────┐       │
-│  │           Hunting grounds (adapters)               │       │
-│  │   EDGAR · prices · news · earnings calendar        │       │
+│  │      Hunting grounds → Agora (MCP)                 │       │
+│  │   prices · filings · news · earnings calendar      │       │
 │  └────────────────────────────────────────────────────┘       │
 │                             │                                  │
 │                             ▼                                  │
@@ -143,8 +143,9 @@ before the move was obvious.
 Vistierie owns the agent runtime (scheduling, recursion, context
 shielding, cost ledger, kill switch, tier-based routing). Dracul owns
 the investment domain (Strigoi logic, Voievod, Daywalker, market-data
-adapters, pre-screen, prey/verdict/pattern/alert persistence, Chronicle
-frontend). The split is non-negotiable — see `CLAUDE.md`.
+and filing access via Agora (MCP), pre-screen,
+prey/verdict/pattern/alert persistence, Chronicle frontend). The split
+is non-negotiable — see `CLAUDE.md`.
 
 ---
 
@@ -193,14 +194,15 @@ assessment. Critical alerts go to Telegram immediately.
 > instance and a Postgres database.
 
 ```bash
-docker run --rm -p 8091:8091 \
+docker run --rm -p 8080:8080 \
   -e DRACUL_DB_URL=jdbc:postgresql://host.docker.internal:5432/dracul \
   -e DRACUL_DB_USER=dracul \
   -e DRACUL_DB_PASSWORD=dracul \
   -e DRACUL_VISTIERIE_BASE_URL=http://vistierie:8090 \
   -e DRACUL_VISTIERIE_TOKEN='<bearer-token-issued-by-vistierie>' \
   -e DRACUL_TOOL_WEBHOOK_TOKEN='<dracul-side-secret>' \
-  -e EDGAR_USER_AGENT='Dracul research@example.com' \
+  -e DRACUL_AGORA_BASE_URL='http://agora:8080' \
+  -e DRACUL_AGORA_TOKEN='<bearer-token-to-reach-agora>' \
   -e TELEGRAM_BOT_TOKEN='<optional>' \
   -e TELEGRAM_CHAT_ID='<optional>' \
   ghcr.io/visterion/dracul:main
@@ -217,7 +219,7 @@ Full setup, tenant bootstrap, and operations runbook:
 |---|---|
 | [architecture.md](documentation/architecture.md) | System overview, all modules, domain model, data flow |
 | [strigoi.md](documentation/strigoi.md) | Strigoi roster, Voievod, Daywalker — the hunt pattern and tier routing |
-| [hunting-grounds.md](documentation/hunting-grounds.md) | Market-data adapters (EDGAR, prices, news, calendar) |
+| [hunting-grounds.md](documentation/hunting-grounds.md) | Market-data & filings via Agora (MCP) |
 | [vistierie-integration.md](documentation/vistierie-integration.md) | Vistierie ownership boundary, tier conventions, webhooks |
 | [api.md](documentation/api.md) | REST endpoint reference, SSE live-update stream |
 | [configuration.md](documentation/configuration.md) | All `dracul.*` properties and env vars |
