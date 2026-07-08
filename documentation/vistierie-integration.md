@@ -159,3 +159,9 @@ and rate-limit handling for hunting fetch just as it does for prices/OHLC.
 
 Agora must be deployed — with `get_company_profile` and `get_earnings_window`
 available — before Dracul-7c.
+
+**Term-sheet enrichment (2026-07-08):** strigoi-merger and strigoi-spin also
+depend on Agora's `get_filing_text` tool (fetches a filing's primary document
+as cleaned summary-term-sheet text), consumed via `AgoraFilings.filingText(url)`.
+Fail-soft: an unavailable filing degrades to `FilingText.unavailable()` and the
+strigoi LLM judges conservatively — the agents' `output_schema` is unchanged.
