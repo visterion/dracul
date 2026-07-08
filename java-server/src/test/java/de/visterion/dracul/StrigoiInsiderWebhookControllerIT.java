@@ -160,4 +160,32 @@ class StrigoiInsiderWebhookControllerIT {
                 .retrieve().toBodilessEntity();
         assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
     }
+
+    @Test
+    void toolWireCarriesNetInsiderSentiment() {
+        when(filings.recentForm4(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.Form4Filing("NETT", "Alice", "Chief Executive Officer",
+                                LocalDate.now().minusDays(6), java.math.BigDecimal.valueOf(3000), java.math.BigDecimal.valueOf(600_000), "P"),
+                        new de.visterion.dracul.hunting.agora.Form4Filing("NETT", "Bob", "Director",
+                                LocalDate.now().minusDays(4), java.math.BigDecimal.valueOf(3000), java.math.BigDecimal.valueOf(600_000), "P"),
+                        new de.visterion.dracul.hunting.agora.Form4Filing("NETT", "Carol", "Chief Financial Officer",
+                                LocalDate.now().minusDays(2), java.math.BigDecimal.valueOf(3000), java.math.BigDecimal.valueOf(600_000), "P"),
+                        new de.visterion.dracul.hunting.agora.Form4Filing("NETT", "Dave", "Director",
+                                LocalDate.now().minusDays(3), java.math.BigDecimal.valueOf(2000), java.math.BigDecimal.valueOf(400_000), "S"))));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-insider/tools/fetch-clusters")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-token-abc")
+                .contentType(MediaType.APPLICATION_JSON)
+                // Distinct lookback_days (11) — ToolFetchCache keys on fetch_recent_clusters:<lookback_days>
+                // (no run_id), so reusing 7 would serve another test's cached empty result.
+                .body(Map.of("run_id", "r-net", "tool_name", "fetch_recent_clusters",
+                            "input", Map.of("lookback_days", 11)))
+                .retrieve().body(JsonNode.class);
+
+        JsonNode cluster = resp.path("output").path("clusters").path(0);
+        assertThat(cluster.path("ticker").asText()).isEqualTo("NETT");
+        assertThat(cluster.path("concurrentInsiderSells").asInt()).isEqualTo(1);
+        assertThat(cluster.path("netInsiderDollar").decimalValue()).isEqualByComparingTo("1400000");
+    }
 }
