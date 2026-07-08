@@ -47,12 +47,12 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 
 | Strigoi | Facade + Agora tool(s) |
 |---|---|
-| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) |
+| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
 | strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScore` (`get_fundamental_score`) |
 | strigoi-index | `AgoraReference.constituents` (`get_index_constituents`) |
-| strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) |
+| strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
 | gropar | Agora `get_ohlc` (daily OHLC history, for RiskMetrics + currentClose) + Agora `get_indicators` (bundled exit TA per position via `AgoraResearch`) — unchanged from pre-7c |
 
@@ -119,7 +119,11 @@ consumed through five neutral domain facades in
   (`get_fundamental_score` — a real Piotroski F-Score computed by Agora from
   SEC companyfacts, with a strict pass/fail per criterion plus a
   `fScoreCriteriaAvailable` coverage count; consumed by strigoi-lazarus's
-  enrichment step, degrading to "unavailable" on any Agora failure).
+  enrichment step, degrading to "unavailable" on any Agora failure), `filingText`
+  (`get_filing_text` — fetches a filing's primary document as cleaned
+  summary-term-sheet text; consumed via `AgoraFilings.filingText(url)` →
+  `FilingText(text, available)` by strigoi-merger and strigoi-spin, fail-soft
+  to `available = false` on any Agora failure).
 - **`AgoraCompanyData`** — `news`, `recommendations`, `fundamentals`,
   `profile`.
 - **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates),

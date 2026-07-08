@@ -703,9 +703,18 @@ Response:
 ```json
 { "output": { "candidates": [
   { "symbol": "SPN", "companyName": "Acme Spinco Inc", "formType": "10-12B",
-    "filingDate": "2026-05-20", "filingUrl": "https://www.sec.gov/Archives/..." }
+    "filingDate": "2026-05-20", "filingUrl": "https://www.sec.gov/Archives/...",
+    "termSheet": "The distribution ratio is one share of SpinCo for every four shares...",
+    "termSheetAvailable": true }
 ] } }
 ```
+
+`termSheet` / `termSheetAvailable` are advisory annotations — the cleaned
+summary-term-sheet text of the filing (via Agora's `get_filing_text`, fetched
+by `AgoraFilings.filingText(filingUrl)`) and whether it was available. The LLM
+extracts parent/ratio/record-date/size from it; fail-soft (`termSheetAvailable
+= false`, empty text) on any Agora failure — no candidate is dropped for it.
+`output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-spin/complete`
 
@@ -732,9 +741,20 @@ Response:
 ```json
 { "output": { "candidates": [
   { "symbol": "TGT", "companyName": "Target Co Inc", "formType": "DEFM14A",
-    "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/..." }
+    "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/...",
+    "termSheet": "Each share of common stock will be converted into the right to receive $58.00 in cash...",
+    "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true }
 ] } }
 ```
+
+`termSheet` / `termSheetAvailable` and `lastPrice` / `priceAvailable` are
+advisory annotations — the cleaned summary-term-sheet text of the filing (via
+Agora's `get_filing_text`, fetched by `AgoraFilings.filingText(filingUrl)`)
+plus the current quote, for the LLM to interpret. The LLM extracts
+offer/consideration/conditions/termination-fee from `termSheet` and computes
+the spread vs `lastPrice`; fail-soft (`*Available = false`) on any Agora
+failure — no candidate is dropped for it. `output_schema` (the final verdict)
+is unchanged.
 
 ### `POST /api/strigoi-merger/complete`
 
