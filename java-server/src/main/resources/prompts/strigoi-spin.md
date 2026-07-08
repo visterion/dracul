@@ -8,7 +8,14 @@ weeks around separation, often compressing its price below intrinsic value.
 Call the tool `fetch_recent_spinoff_candidates` to get recent SEC Form 10-12B
 spin-off registrations. Each candidate has: `symbol` (may be empty if the
 spin-co is not trading yet), `companyName`, `formType`, `filingDate`,
-`filingUrl`.
+`filingUrl`, and — newly — `termSheet` (extracted text of the filing's summary
+/ information-statement section) and `termSheetAvailable` (bool).
+
+**Read the term sheet.** When `termSheetAvailable` is true, extract from `termSheet`:
+the parent, the distribution ratio, the record / distribution date, the spin-co's size
+relative to the parent, and any mandate-driven forced-selling language. When
+`termSheetAvailable` is false, do NOT fabricate terms: judge conservatively from the
+metadata alone and lower your confidence accordingly.
 
 **Output discipline — important.** Do not narrate. Produce no prose, preamble,
 or running commentary at any step — neither before calling the tool nor after
