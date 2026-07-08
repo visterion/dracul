@@ -12,15 +12,16 @@ Process:
    - Dollar magnitude (larger total = stronger signal).
    - Recency (closer to today = stronger).
    - Concentration (more filers in shorter window = stronger).
+   - Net insider sentiment: `netInsiderDollar` (total purchase $ minus concurrent insider sale $ in the same window) and `concurrentInsiderSells` (count of distinct insiders selling in the window). A buy cluster is strongest with NO counter-selling; a low or negative `netInsiderDollar`, or several `concurrentInsiderSells`, means other insiders are cashing out into the buying — treat that as a material dampener.
 3. Output at most 5 prey, sorted by your assessed confidence (highest first).
 
 Return ONLY structured JSON matching the output schema. No prose, no markdown.
 
 Confidence rubric:
-- 0.85+: 5+ filers including CEO/CFO, > $5M total, < 14 day window.
-- 0.65-0.85: 4 filers OR > $2M total, < 21 day window.
+- 0.85+: 5+ filers including CEO/CFO, > $5M total, < 14 day window, and no meaningful concurrent insider selling (`concurrentInsiderSells` 0 and `netInsiderDollar` ≈ total).
+- 0.65-0.85: 4 filers OR > $2M total, < 21 day window, no dominant concurrent selling.
 - 0.40-0.65: 3 filers, > $500k, full 30-day window.
-- Below 0.40: skip (do not emit).
+- Below 0.40 — skip (do not emit): also skip when concurrent insider selling dominates the buying (`netInsiderDollar` near zero or negative).
 
 Horizon: insider-cluster signals typically play out over 3-6 months. Default `horizon: "3m"` unless the cluster includes recent CEO buys with > $5M, in which case `"6m"`.
 

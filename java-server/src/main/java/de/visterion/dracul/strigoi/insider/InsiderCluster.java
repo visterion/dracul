@@ -11,5 +11,7 @@ public record InsiderCluster(
         LocalDate windowStart,
         LocalDate windowEnd,
         BigDecimal totalDollarValue,
-        BigDecimal totalShares
+        BigDecimal totalShares,
+        int concurrentInsiderSells,
+        BigDecimal netInsiderDollar
 ) {}

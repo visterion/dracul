@@ -18,12 +18,12 @@ public class InsiderClusterScreener {
 
     public List<InsiderCluster> cluster(List<Form4Filing> filings) {
         Map<String, List<Form4Filing>> byTicker = filings.stream()
-                .filter(f -> "P".equals(f.transactionCode()))
                 .collect(Collectors.groupingBy(Form4Filing::ticker));
 
         List<InsiderCluster> result = new ArrayList<>();
         for (var entry : byTicker.entrySet()) {
             var sorted = entry.getValue().stream()
+                    .filter(f -> "P".equals(f.transactionCode()))
                     .sorted(Comparator.comparing(Form4Filing::transactionDate))
                     .toList();
             for (int rightIdx = sorted.size() - 1; rightIdx >= 0; rightIdx--) {
@@ -53,13 +53,26 @@ public class InsiderClusterScreener {
                         .map(Form4Filing::sharesAcquired)
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
                 if (filers.size() >= MIN_FILERS && totalDollar.compareTo(MIN_DOLLAR) > 0) {
+                    LocalDate windowStart = window.get(0).transactionDate();
+                    List<Form4Filing> concurrentSells = entry.getValue().stream()
+                            .filter(f -> "S".equals(f.transactionCode()))
+                            .filter(f -> !f.transactionDate().isBefore(windowStart)
+                                    && !f.transactionDate().isAfter(right))
+                            .toList();
+                    int distinctSellers = (int) concurrentSells.stream()
+                            .map(Form4Filing::filerName).distinct().count();
+                    BigDecimal sellDollar = concurrentSells.stream()
+                            .map(Form4Filing::dollarValue)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
                     result.add(new InsiderCluster(
                             entry.getKey(), entry.getKey(),
                             filers,
-                            window.get(0).transactionDate(),
+                            windowStart,
                             right,
                             totalDollar,
-                            totalShares
+                            totalShares,
+                            distinctSellers,
+                            totalDollar.subtract(sellDollar)
                     ));
                     break;
                 }

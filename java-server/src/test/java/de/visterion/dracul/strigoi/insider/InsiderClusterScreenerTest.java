@@ -145,4 +145,50 @@ class InsiderClusterScreenerTest {
         var clusters = screener.cluster(filings);
         assertThat(clusters).extracting(InsiderCluster::ticker).containsExactlyInAnyOrder("AAPL", "MSFT");
     }
+
+    private static Form4Filing sell(String ticker, String filer, LocalDate d, long shares, long price) {
+        return new Form4Filing(ticker, filer, "Director", d,
+                BigDecimal.valueOf(shares), BigDecimal.valueOf(shares * price), "S");
+    }
+
+    @Test
+    void annotatesConcurrentSellsAndNetDollar() {
+        var filings = List.of(
+                buy("AAPL", "Alice", LocalDate.of(2026, 5, 1), 1000, 200),   // 200k
+                buy("AAPL", "Bob",   LocalDate.of(2026, 5, 15), 500, 200),   // 100k
+                buy("AAPL", "Carol", LocalDate.of(2026, 5, 28), 2000, 200),  // 400k -> total 700k
+                sell("AAPL", "Dave",  LocalDate.of(2026, 5, 10), 1000, 200),  // 200k sell, in window
+                sell("AAPL", "Dave",  LocalDate.of(2026, 5, 12), 500, 200)    // 100k sell, same filer
+        );
+        var c = screener.cluster(filings).get(0);
+        assertThat(c.totalDollarValue()).isEqualByComparingTo("700000");
+        assertThat(c.concurrentInsiderSells()).isEqualTo(1);            // one distinct seller (Dave)
+        assertThat(c.netInsiderDollar()).isEqualByComparingTo("400000"); // 700k buys - 300k sells
+    }
+
+    @Test
+    void pureBuyClusterHasZeroSellsAndNetEqualsTotal() {
+        var filings = List.of(
+                buy("AAPL", "Alice", LocalDate.of(2026, 5, 1), 1000, 200),
+                buy("AAPL", "Bob",   LocalDate.of(2026, 5, 15), 500, 200),
+                buy("AAPL", "Carol", LocalDate.of(2026, 5, 28), 2000, 200)
+        );
+        var c = screener.cluster(filings).get(0);
+        assertThat(c.concurrentInsiderSells()).isEqualTo(0);
+        assertThat(c.netInsiderDollar()).isEqualByComparingTo(c.totalDollarValue());
+    }
+
+    @Test
+    void sellsOutsideWindowAreExcluded() {
+        var filings = List.of(
+                buy("AAPL", "Alice", LocalDate.of(2026, 5, 1), 1000, 200),
+                buy("AAPL", "Bob",   LocalDate.of(2026, 5, 15), 500, 200),
+                buy("AAPL", "Carol", LocalDate.of(2026, 5, 28), 2000, 200),
+                sell("AAPL", "Zed",  LocalDate.of(2026, 4, 1), 5000, 200),   // before windowStart
+                sell("AAPL", "Yan",  LocalDate.of(2026, 6, 30), 5000, 200)   // after windowEnd
+        );
+        var c = screener.cluster(filings).get(0);
+        assertThat(c.concurrentInsiderSells()).isEqualTo(0);
+        assertThat(c.netInsiderDollar()).isEqualByComparingTo("700000");
+    }
 }

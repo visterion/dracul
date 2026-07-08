@@ -98,11 +98,19 @@ class EchoEnrichmentServiceTest {
         return a;
     }
 
-    private RevisionsProxy revisions(Integer proxy, String dir) {
-        RevisionsProxy r = mock(RevisionsProxy.class);
-        when(r.revisions(anyString())).thenReturn(
-                proxy == null ? EarningsRevisions.unavailable() : new EarningsRevisions(proxy, dir, true));
-        return r;
+    private de.visterion.dracul.hunting.agora.AgoraCompanyData companyData(
+            List<de.visterion.dracul.hunting.agora.RecommendationTrend> trend) {
+        var d = mock(de.visterion.dracul.hunting.agora.AgoraCompanyData.class);
+        when(d.recommendations(anyString())).thenReturn(trend);
+        return d;
+    }
+
+    /** A two-period trend whose latestNet-prevNet == proxy and whose latest-period sum == coverage. */
+    private static List<de.visterion.dracul.hunting.agora.RecommendationTrend> trend(int proxy, int coverage) {
+        int hold = Math.max(0, coverage - Math.max(proxy, 0));
+        return List.of(
+                new de.visterion.dracul.hunting.agora.RecommendationTrend("p2", Math.max(proxy, 0), 0, hold, Math.max(-proxy, 0), 0),
+                new de.visterion.dracul.hunting.agora.RecommendationTrend("p1", 0, 0, 0, 0, 0));
     }
 
     private AgoraEarnings nextEarnings(Integer daysAhead) {
@@ -119,16 +127,17 @@ class EchoEnrichmentServiceTest {
     }
 
     private EchoEnrichmentService service(List<QuarterlyEps> hist, SloanAccrualCalculator a,
-                                          RevisionsProxy r, AgoraEarnings n, ConfounderScreen ev) {
+                                          de.visterion.dracul.hunting.agora.AgoraCompanyData cd,
+                                          AgoraEarnings n, ConfounderScreen ev) {
         return new EchoEnrichmentService(new SueEngine(), filings(), shaper(hist), marketData(),
                 new MarketSignalService(), equityMetrics(), "SPY", 320,
-                a, r, n, ev, new EchoDeterministicGate(new BigDecimal("0.10"), 10));
+                a, new RevisionsProxy(), cd, n, ev, new EchoDeterministicGate(new BigDecimal("0.10"), 10));
     }
 
     @Test
     void enrichesCleanCandidateWithSp3SoftFields() {
         var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.04")), revisions(7, "up"),
+                accruals(new BigDecimal("0.04")), companyData(trend(7, 12)),
                 nextEarnings(40), confounders(List.of()));
         var out = svc.enrich(List.of(cand("AAPL", 1.80)));
         assertThat(out).hasSize(1);
@@ -140,12 +149,14 @@ class EchoEnrichmentServiceTest {
         assertThat(e.revisionsAvailable()).isTrue();
         assertThat(e.nextEarningsDate()).isEqualTo(LocalDate.now().plusDays(40));
         assertThat(e.daysToNextEarnings()).isEqualTo(40);
+        assertThat(e.coverageAvailable()).isTrue();
+        assertThat(e.analystCoverage()).isEqualTo(12);
     }
 
     @Test
     void dropsAccrualDrivenCandidate() {
         var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.25")), revisions(1, "up"),
+                accruals(new BigDecimal("0.25")), companyData(trend(1, 8)),
                 nextEarnings(40), confounders(List.of()));
         assertThat(svc.enrich(List.of(cand("BAD", 1.80)))).isEmpty();
     }
@@ -153,7 +164,7 @@ class EchoEnrichmentServiceTest {
     @Test
     void dropsConfoundedCandidate() {
         var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.03")), revisions(1, "up"),
+                accruals(new BigDecimal("0.03")), companyData(trend(1, 8)),
                 nextEarnings(40), confounders(List.of("m&a")));
         assertThat(svc.enrich(List.of(cand("MNA", 1.80)))).isEmpty();
     }
@@ -161,7 +172,7 @@ class EchoEnrichmentServiceTest {
     @Test
     void dropsCandidateWithImminentNextEarnings() {
         var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.03")), revisions(1, "up"),
+                accruals(new BigDecimal("0.03")), companyData(trend(1, 8)),
                 nextEarnings(5), confounders(List.of()));
         assertThat(svc.enrich(List.of(cand("SOON", 1.80)))).isEmpty();
     }
@@ -169,7 +180,7 @@ class EchoEnrichmentServiceTest {
     @Test
     void degradesWhenSp3SourcesUnavailableButStillKeeps() {
         var svc = service(List.of(),
-                accruals(null), revisions(null, null),
+                accruals(null), companyData(List.of()),
                 nextEarnings(null), confounders(List.of()));
         var out = svc.enrich(List.of(cand("ZZZ", 1.80)));
         assertThat(out).hasSize(1);
@@ -178,5 +189,7 @@ class EchoEnrichmentServiceTest {
         assertThat(out.get(0).daysToNextEarnings()).isNull();
         // SP1/SP2 still present
         assertThat(out.get(0).carAvailable()).isTrue();
+        assertThat(out.get(0).coverageAvailable()).isFalse();
+        assertThat(out.get(0).analystCoverage()).isNull();
     }
 }
