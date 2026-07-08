@@ -75,6 +75,10 @@ dracul:
     ma-slow: ${DRACUL_GROPAR_MA_SLOW:200}
     profit-target-pct: ${DRACUL_GROPAR_PROFIT_TARGET_PCT:40}
     stop-loss-pct: ${DRACUL_GROPAR_STOP_LOSS_PCT:15}
+  executor:
+    enabled: ${DRACUL_EXECUTOR_ENABLED:false}
+    webhook-token: ${DRACUL_EXECUTOR_WEBHOOK_TOKEN:dev-token-change-me}
+    schedule: ${DRACUL_EXECUTOR_SCHEDULE:}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
