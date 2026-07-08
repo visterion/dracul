@@ -7,5 +7,6 @@ public enum RejectReason {
     MAX_POSITIONS,
     NO_STOP,
     MAX_TRANCHE,
-    NON_SIM_CONNECTION
+    NON_SIM_CONNECTION,
+    DUPLICATE
 }

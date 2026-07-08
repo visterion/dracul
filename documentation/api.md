@@ -997,12 +997,20 @@ same pattern as `/api/strigoi-*`, `/api/voievod`, `/api/gropar`.
 
 Tool webhook. Returns up to 50 `PENDING` `ExecutorSignal` rows.
 
+Each signal is enriched server-side with `atr`/`swing_low` (via
+`ExecutorIndicators`, periods `dracul.executor.atr-period`/`dracul.executor.
+swing-period`, default 22/20) and `reference_price`. When indicators are
+unavailable (e.g. insufficient price history or Agora unreachable), `atr`
+and `swing_low` are `null` and `reference_price` falls back to the signal's
+stored value. The LLM is not expected to call any market-data tool itself
+for this context — it is fetched once per signal by the controller.
+
 Response:
 ```json
 { "output": { "signals": [
   { "signal_id": "...", "symbol": "ACME", "direction": "LONG", "confidence": 0.8,
     "mechanism": "...", "kill_criteria": ["..."], "horizon": "3m",
-    "reference_price": 142.50 }
+    "atr": 4.2, "swing_low": 138.00, "reference_price": 142.50 }
 ] } }
 ```
 
@@ -1057,6 +1065,7 @@ entry. `reason` is one of:
 | `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
 | `NO_STOP` | `OrderGuard` | `stop_price`/reference price missing, non-positive, or on the wrong side of price for the given `side` |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
+| `DUPLICATE` | `ExecutorWebhookController` | The signal is no longer `PENDING` (already `ACCEPTED`/`REJECTED`/`SKIPPED`) — idempotency guard, checked before vetos/order guard; no broker call, no signal-status change |
 | `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
 
 Every outcome (accepted or rejected) writes one `executor_decision` audit

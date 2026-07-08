@@ -23,6 +23,7 @@ class ExecutorWebhookControllerTest {
     private ExecutorPositionRepository positionRepo;
     private ExecutorDecisionRepository decisionRepo;
     private AgoraTrading agoraTrading;
+    private ExecutorIndicators executorIndicators;
     private JsonMapper mapper;
 
     private ExecutorWebhookController controller;
@@ -33,18 +34,26 @@ class ExecutorWebhookControllerTest {
         positionRepo = mock(ExecutorPositionRepository.class);
         decisionRepo = mock(ExecutorDecisionRepository.class);
         agoraTrading = mock(AgoraTrading.class);
+        executorIndicators = mock(ExecutorIndicators.class);
         mapper = JsonMapper.builder().build();
+
+        when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
 
         controller = new ExecutorWebhookController(
                 signalRepo, positionRepo, decisionRepo,
-                new VetoService(), new OrderGuard(), agoraTrading, mapper,
-                "tkn", "saxo-sim", 0.6, 3);
+                new VetoService(), new OrderGuard(), agoraTrading, executorIndicators, mapper,
+                "tkn", "saxo-sim", 0.6, 3, 22, 20);
     }
 
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
+        return signal(signalId, confidence, referencePrice, "PENDING");
+    }
+
+    private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice, String status) {
         return new ExecutorSignal(signalId, "hunter", "v1", "ACME", "LONG",
                 confidence, "mechanism", List.of("X"), "3m", referencePrice,
-                "PENDING", "2026-07-01T00:00:00Z");
+                status, "2026-07-01T00:00:00Z");
     }
 
     private JsonNode json(String s) {
@@ -142,6 +151,30 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo).insert(captor.capture());
         assertThat(captor.getValue().accepted()).isFalse();
         assertThat(captor.getValue().rejectReason()).isEqualTo("SCHEMA_INVALID");
+    }
+
+    @Test
+    void placeEntry_alreadyProcessed_noBrokerCall() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100"), "ACCEPTED"));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("DUPLICATE");
+
+        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(anyString(), anyString());
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().accepted()).isFalse();
+        assertThat(captor.getValue().rejectReason()).isEqualTo("DUPLICATE");
     }
 
     @Test
@@ -268,6 +301,34 @@ class ExecutorWebhookControllerTest {
         assertThat(first.get("symbol")).isEqualTo("ACME");
         assertThat(first.get("confidence")).isEqualTo(0.8);
         assertThat(first.get("kill_criteria")).isEqualTo(List.of("X"));
+    }
+
+    @Test
+    void fetchPending_enrichesWithIndicatorLevelsWhenAvailable() {
+        when(signalRepo.findPending(50)).thenReturn(List.of(signal("sig-1", 0.8, new BigDecimal("100"))));
+        when(executorIndicators.levels("ACME", 22, 20)).thenReturn(
+                new ExecutorIndicators.Levels(true, new BigDecimal("2.5"), new BigDecimal("92"), new BigDecimal("100")));
+
+        ResponseEntity<?> resp = controller.fetchPendingSignals(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> first = (Map<String, Object>) ((List<?>) outputOf(resp).get("signals")).get(0);
+        assertThat(first.get("atr")).isEqualTo(new BigDecimal("2.5"));
+        assertThat(first.get("swing_low")).isEqualTo(new BigDecimal("92"));
+        assertThat(first.get("reference_price")).isEqualTo(new BigDecimal("100"));
+    }
+
+    @Test
+    void fetchPending_indicatorsUnavailable_fieldsNullWithoutError() {
+        when(signalRepo.findPending(50)).thenReturn(List.of(signal("sig-1", 0.8, new BigDecimal("100"))));
+        when(executorIndicators.levels("ACME", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
+
+        ResponseEntity<?> resp = controller.fetchPendingSignals(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> first = (Map<String, Object>) ((List<?>) outputOf(resp).get("signals")).get(0);
+        assertThat(first.get("atr")).isNull();
+        assertThat(first.get("swing_low")).isNull();
     }
 
     // -------------------------------------------------------------------

@@ -14,6 +14,7 @@ public class BearerTokenVerifier {
     }
 
     public boolean verify(String authHeader) {
+        if (expected.length == 0) return false; // unconfigured secret must deny, never match a blank presented token
         if (authHeader == null) return false;
         if (!authHeader.startsWith("Bearer ")) return false;
         byte[] presented = authHeader.substring("Bearer ".length()).getBytes(StandardCharsets.UTF_8);

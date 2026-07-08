@@ -28,4 +28,18 @@ class BearerTokenVerifierTest {
         assertThat(verifier.verify("expected-secret-xyz")).isFalse();
         assertThat(verifier.verify("Token expected-secret-xyz")).isFalse();
     }
+
+    @Test
+    void blankConfiguredTokenFailsClosed() {
+        var blank = new BearerTokenVerifier("");
+        assertThat(blank.verify("Bearer ")).isFalse();
+        assertThat(blank.verify("Bearer anything")).isFalse();
+    }
+
+    @Test
+    void nullConfiguredTokenFailsClosed() {
+        var nullToken = new BearerTokenVerifier(null);
+        assertThat(nullToken.verify("Bearer ")).isFalse();
+        assertThat(nullToken.verify("Bearer anything")).isFalse();
+    }
 }
