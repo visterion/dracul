@@ -108,6 +108,30 @@ class CloudflareAccessFilterTest {
         assertThat(r[1]).isEqualTo(200);
     }
 
+    @Test void executorToolWebhookIsExcluded() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("POST", "/api/executor/tools/place-entry"));
+        assertThat(r[1]).isEqualTo(200);
+    }
+
+    @Test void executorCompleteWebhookIsExcluded() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("POST", "/api/executor/complete"));
+        assertThat(r[1]).isEqualTo(200);
+    }
+
+    @Test void executorSignalsOperatorPathStillEnforced() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("GET", "/api/executor/signals"));
+        assertThat(r[1]).isEqualTo(401);
+    }
+
+    @Test void executorRunOperatorPathStillEnforced() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("POST", "/api/executor/run"));
+        assertThat(r[1]).isEqualTo(401);
+    }
+
     @Test void bypassModeUsesDevUserHeaderElseDefault() throws Exception {
         var filter = new CloudflareAccessFilter("", "", devEnv());
         var req = new MockHttpServletRequest("GET", "/api/watchlist");

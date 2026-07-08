@@ -38,11 +38,14 @@ public class ExecutorWebhookController {
     private final VetoService vetoService;
     private final OrderGuard orderGuard;
     private final AgoraTrading agoraTrading;
+    private final ExecutorIndicators executorIndicators;
     private final ObjectMapper mapper;
 
     private final String connection;
     private final double minConfidence;
     private final int maxPositions;
+    private final int atrPeriod;
+    private final int swingPeriod;
 
     public ExecutorWebhookController(
             ExecutorSignalRepository signalRepo,
@@ -51,11 +54,14 @@ public class ExecutorWebhookController {
             VetoService vetoService,
             OrderGuard orderGuard,
             AgoraTrading agoraTrading,
+            ExecutorIndicators executorIndicators,
             ObjectMapper mapper,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
             @Value("${dracul.executor.min-confidence:0.6}") double minConfidence,
-            @Value("${dracul.executor.max-positions:5}") int maxPositions) {
+            @Value("${dracul.executor.max-positions:5}") int maxPositions,
+            @Value("${dracul.executor.atr-period:22}") int atrPeriod,
+            @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
@@ -63,10 +69,13 @@ public class ExecutorWebhookController {
         this.vetoService = vetoService;
         this.orderGuard = orderGuard;
         this.agoraTrading = agoraTrading;
+        this.executorIndicators = executorIndicators;
         this.mapper = mapper;
         this.connection = connection;
         this.minConfidence = minConfidence;
         this.maxPositions = maxPositions;
+        this.atrPeriod = atrPeriod;
+        this.swingPeriod = swingPeriod;
         this.verifier = new BearerTokenVerifier(webhookToken);
     }
 
@@ -91,7 +100,17 @@ public class ExecutorWebhookController {
             node.put("mechanism", s.mechanism());
             node.put("kill_criteria", s.killCriteria());
             node.put("horizon", s.horizon());
-            node.put("reference_price", s.referencePrice());
+
+            ExecutorIndicators.Levels levels = executorIndicators.levels(s.symbol(), atrPeriod, swingPeriod);
+            if (levels.available()) {
+                node.put("atr", levels.atr());
+                node.put("swing_low", levels.swingLow());
+                node.put("reference_price", levels.referencePrice());
+            } else {
+                node.put("atr", null);
+                node.put("swing_low", null);
+                node.put("reference_price", s.referencePrice());
+            }
             signals.add(node);
         }
         return ResponseEntity.ok(Map.of("output", Map.of("signals", signals)));
@@ -166,6 +185,14 @@ public class ExecutorWebhookController {
                     "signal not found for id " + signalId, null, runId, null));
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", RejectReason.SCHEMA_INVALID.name())));
+        }
+
+        if (!"PENDING".equals(signal.status())) {
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    RejectReason.DUPLICATE.name(), List.of("ALREADY_PROCESSED:" + signal.status()),
+                    "signal already processed, status=" + signal.status(), null, runId, null));
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", RejectReason.DUPLICATE.name())));
         }
 
         VetoService.Outcome veto = vetoService.evaluate(signal, positionRepo.countOpen(),
@@ -261,6 +288,8 @@ public class ExecutorWebhookController {
                 if (!"SKIP".equals(action)) continue;
 
                 String signalId = d.path("signal_id").asString("");
+                // NOTE (slice-2): symbol is trusted from the request body and not cross-checked
+                // against the stored signal's actual symbol — deferred per final review item #5.
                 String symbol = d.path("symbol").asString("");
                 String rationale = d.path("rationale").asString(null);
 
