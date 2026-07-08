@@ -20,18 +20,21 @@ public class StrigoiSpinWebhookController extends HuntController {
 
     private final AgoraFilings filings;
     private final SpinoffScreener screener;
+    private final SpinEnrichmentService enrichment;
     private final int defaultLookback;
 
     public StrigoiSpinWebhookController(
             @Value("${dracul.strigoi.spin.webhook-token}") String token,
             AgoraFilings filings,
             SpinoffScreener screener,
+            SpinEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             @Value("${dracul.strigoi.spin.lookback-days:60}") int defaultLookback) {
         super(token, preyRepo, cache);
         this.filings = filings;
         this.screener = screener;
+        this.enrichment = enrichment;
         this.defaultLookback = defaultLookback;
     }
 
@@ -46,7 +49,8 @@ public class StrigoiSpinWebhookController extends HuntController {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
         var to = LocalDate.now();
         var raw = filings.searchSpinoffs(to.minusDays(lookback), to);
-        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items()), raw.health());
+        var enriched = enrichment.enrich(screener.screen(raw.items()));
+        return new de.visterion.dracul.hunting.DataSourceResult<>(enriched, raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")

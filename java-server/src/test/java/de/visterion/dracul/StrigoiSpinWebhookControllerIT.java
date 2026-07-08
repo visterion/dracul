@@ -4,7 +4,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
-import de.visterion.dracul.hunting.agora.SpinoffFiling;
+import de.visterion.dracul.strigoi.spin.SpinEnrichmentService;
+import de.visterion.dracul.strigoi.spin.EnrichedSpinCandidate;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -41,6 +42,7 @@ class StrigoiSpinWebhookControllerIT {
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
     @MockitoBean AgoraFilings filings;
+    @MockitoBean SpinEnrichmentService enrichment;
 
     RestClient rest;
 
@@ -52,14 +54,13 @@ class StrigoiSpinWebhookControllerIT {
                 .build();
         when(filings.searchSpinoffs(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedSpinCandidate(
+                "SPN", "SpinCo Inc", "10-12B", "2026-05-20", "http://sec/s1",
+                "SUMMARY distribution ratio 1:3; record date 2026-06-01", true)));
     }
 
     @Test
     void toolEndpointReturnsCandidates() {
-        when(filings.searchSpinoffs(any(LocalDate.class), any(LocalDate.class)))
-                .thenReturn(DataSourceResult.healthy("agora", List.of(
-                        new SpinoffFiling("SPN", "Acme Spinco Inc", "10-12B", LocalDate.of(2026, 5, 20), "http://sec/u1"))));
-
         JsonNode resp = rest.post().uri("/api/strigoi-spin/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-spin-token")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -68,9 +69,11 @@ class StrigoiSpinWebhookControllerIT {
                 .retrieve().body(JsonNode.class);
 
         JsonNode cands = resp.path("output").path("candidates");
-        boolean found = false;
-        for (JsonNode c : cands) if ("SPN".equals(c.path("symbol").asText())) found = true;
-        assertThat(found).as("SPN candidate returned").isTrue();
+        JsonNode spn = null;
+        for (JsonNode c : cands) if ("SPN".equals(c.path("symbol").asText())) spn = c;
+        assertThat(spn).as("SPN candidate returned").isNotNull();
+        assertThat(spn.path("termSheet").asText()).contains("distribution ratio 1:3");
+        assertThat(spn.path("termSheetAvailable").asBoolean()).isTrue();
 
         JsonNode health = resp.path("output").path("data_source_health");
         org.assertj.core.api.Assertions.assertThat(health.path("status").asText()).isEqualTo("healthy");
