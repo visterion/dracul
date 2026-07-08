@@ -186,6 +186,15 @@ watchlist items. Reacts to news, Form-4 filings, and price spikes.
 Uses a cheap Haiku pre-filter before escalating to a full Sonnet
 assessment. Critical alerts go to Telegram immediately.
 
+### Executor (guarded paper trading, opt-in)
+
+Not a hunter and disabled by default. Consumes signals from the Strigoi,
+gropar, or the operator as advice, then decides whether to act — every
+veto and the final order guard are enforced in code, never by the LLM.
+Trades **paper only**, on a non-live connection that makes live trading
+physically unreachable. **Paper simulation, not investment advice, not a
+live-trading system.**
+
 ---
 
 ## Quick start
@@ -254,8 +263,13 @@ java -jar dracul-app/target/dracul-app-*.jar
 - **No domain leaks into Vistierie.** Vistierie sees opaque `tenant`,
   `realm`, `purpose`, `messages`, `payload`. Investment terms in
   Vistierie's codebase are a layer-violation bug.
-- **Read-only.** No order routing, no broker integration, no
-  auto-trading in v1 or v2. The operator is always the decision-maker.
+- **Read-only by default, with one narrow, guarded exception.** The six
+  Strigoi, Voievod, gropar, and Daywalker never route orders or touch a
+  broker. The opt-in Executor agent (off by default) is the deliberate
+  exception: **guarded paper trading only** — every entry is re-checked in
+  code before it reaches the broker, and the connection is a non-live paper
+  connection by construction. No agent ever trades live capital. The
+  operator is always the decision-maker.
 - **Patient by design.** Strigoi look for rare, high-quality setups.
   Empty nights are the norm, not a bug.
 - **Backtests with discipline.** Every Strigoi has a backtest gate

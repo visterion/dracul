@@ -323,6 +323,47 @@ propagating it via `definition/reset`), not setting an env var.
 
 Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
+## Executor (guarded paper-trading agent, slice 1)
+
+Disabled by default (`enabled=false`) — existing deploys are unaffected until
+an operator opts in. The executor consumes signals (from Strigoi/gropar or a
+human) as **advice only**; code — not the LLM — enforces every veto and the
+final order guard before any broker call. See `documentation/strigoi.md` for
+the agent's role and `documentation/architecture.md` for the doctrine note on
+why this is the one exception to Dracul's read-only design.
+
+| Env var | Property | Default | Purpose |
+|---|---|---|---|
+| `DRACUL_EXECUTOR_ENABLED` | `dracul.executor.enabled` | `false` | Register the agent + activate the operator and tool-webhook controllers (`@ConditionalOnProperty`). |
+| `DRACUL_EXECUTOR_CONNECTION` | `dracul.executor.connection` | `saxo-sim` | The Agora trading connection the executor is allowed to trade on. **Must be a paper connection** — `OrderGuard` rejects (`NON_SIM_CONNECTION`) anything else, and only a paper connection should ever be configured here. |
+| `DRACUL_EXECUTOR_AGORA_BASE_URL` | `dracul.executor.agora-base-url` | `http://agora:8080` | Base URL of Agora's webhook trading tools (`AgoraTrading`), separate from the read-only research `AgoraClient`. |
+| `DRACUL_EXECUTOR_AGORA_TRADING_TOKEN` | `dracul.executor.agora-trading-token` | _(blank)_ | Bearer token sent to Agora's trading webhooks. **Must be a NON-LIVE trading token** — this is what makes `saxo-live` physically unreachable, independent of the `connection` value above. Set in production. |
+| `DRACUL_EXECUTOR_WEBHOOK_TOKEN` | `dracul.executor.webhook-token` | `dev-token-change-me` | Bearer token shared with Vistierie for the 5 tool webhooks + completion webhook. **Change in production.** |
+| `DRACUL_EXECUTOR_SCHEDULE` | `dracul.executor.schedule` | _(blank)_ | Spring cron (sec min hour dom month dow) for a scheduled executor run. Blank = manual-only (trigger via `POST /api/executor/run`). |
+| `DRACUL_EXECUTOR_MIN_CONFIDENCE` | `dracul.executor.min-confidence` | `0.6` | `VetoService` rejects (`LOW_CONFIDENCE`) any signal whose `confidence` is below this threshold. |
+| `DRACUL_EXECUTOR_MAX_POSITIONS` | `dracul.executor.max-positions` | `5` | `VetoService` rejects (`MAX_POSITIONS`) a new entry once `executor_position` has this many `OPEN` rows. |
+| `DRACUL_EXECUTOR_ATR_PERIOD` | `dracul.executor.atr-period` | `22` | ATR look-back period (trading days) for `ExecutorIndicators`. Not yet consumed in slice 1's `place-entry` path — wired for a later slice's stop/tranche sizing. |
+| `DRACUL_EXECUTOR_SWING_PERIOD` | `dracul.executor.swing-period` | `20` | Swing-low look-back period (trading days) for `ExecutorIndicators`. Same status as `atr-period`. |
+
+**Safety notes:**
+- Broker writes are paper-only by construction: `OrderGuard` requires the
+  request's connection to equal `dracul.executor.connection` (`NON_SIM_CONNECTION`
+  otherwise), and Agora's trading webhooks are reached with the non-live
+  `agora-trading-token`, so `saxo-live` cannot be hit through this path at all.
+- `place-entry` is the only write path to the broker; every other tool
+  (`fetch-pending-signals`, `get-account`, `list-positions`, `submit-decision`)
+  is read-only or advisory. The LLM cannot place an order directly — it can
+  only request one, and `VetoService` + `OrderGuard` decide.
+- Like gropar, a scheduled executor agent needs a Vistierie budget set via the
+  admin `PATCH .../agents/executor/budget` endpoint (mirroring voievod) or
+  every pause/unpause toggle will 500 with `BudgetException`. See
+  `documentation/vistierie-integration.md`.
+
+Executor reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches
+research indicators via the existing read-only `AgoraClient`
+(`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); the trading-specific
+base URL/token above are additive and separate.
+
 ## Stop-Proximity Watcher
 
 Deterministic intraday watcher that checks every held position's live price against its persisted `active_stop` and ATR every ~15 minutes during the US session. Emits `STOP_PROXIMITY` (WARNING) and `STOP_BREACHED` (CRITICAL) alerts via the daywalker alert store, SSE panel, and Telegram. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured (same `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` as gropar / morning report). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change or `definition/reset`.

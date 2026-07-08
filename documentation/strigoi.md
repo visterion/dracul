@@ -301,3 +301,55 @@ condition from generating repeat rows for the same owner on every poll.
 A single reasoning-tier (Sonnet) assessment per event. The documented
 Haiku pre-filter and Opus critical escalation are deferred; deterministic
 detection plus the cooldown already gate event volume.
+
+## Executor (guarded paper-trading agent, slice 1)
+
+**Implemented (slice 1).** Unlike the six Strigoi, the Executor is not a
+hunter — it does not scan hunting grounds or emit Prey. It is a **guarded
+paper executor**: it consumes signals (advice from Strigoi, gropar, or a
+human operator, injected via `POST /api/executor/signals`) and decides
+whether to act on them by placing a bracket order on a **paper** broker
+connection (`saxo-sim` via Agora's webhook trading tools).
+
+The signal is advice, never a command. Every signal is re-evaluated
+independently by code before the LLM even gets to reason about it, and the
+LLM's own request to enter a position is itself re-checked before any broker
+call is made:
+
+- **`VetoService`** (pure, deterministic, no I/O) evaluates every signal
+  against three checks before the agent may act on it: `SCHEMA_INVALID`
+  (missing symbol/direction/confidence), `LOW_CONFIDENCE` (below
+  `dracul.executor.min-confidence`), `MAX_POSITIONS` (open-position count at
+  or above `dracul.executor.max-positions`).
+- **`OrderGuard`** (pure, deterministic) is the final check on the LLM's own
+  `place_entry` request: it requires a valid protective stop on the correct
+  side of the reference price, a strictly positive quantity, and that the
+  order targets the one allowed paper connection.
+- **`place-entry` runs signal → veto → guard → broker in code.** The LLM
+  cannot place an order directly — it can only call the `place_entry` tool,
+  which either forwards to the broker after every check passes or returns a
+  structured rejection reason. See `documentation/api.md` for the full
+  reason list.
+
+**Paper-only by construction:** the executor's broker writes go through
+Agora's webhook trading tools on connection `saxo-sim`, authenticated with a
+**non-live** Agora trading token (`dracul.executor.agora-trading-token`) —
+`saxo-live` is physically unreachable through this path, independent of the
+`OrderGuard` connection check. Research reads (`get_quote` /
+`get_indicators` for ATR/swing levels) go through the existing read-only
+`AgoraClient`, the same one Strigoi and gropar use.
+
+**Slice 1 scope and what's deferred:** the injection seam
+(`POST /api/executor/signals`) is the only way signals reach the executor
+today — there is no automatic wiring from a Strigoi's Prey or gropar's exit
+signal into the executor's queue yet. `RejectReason` already declares
+`MAX_TRANCHE` for a later slice's position-scaling logic, but `VetoService`
+does not enforce it in slice 1. Position tranching, the fuller veto catalog
+(kill-criteria monitoring, correlation/exposure limits), and automated
+exits (stop/target management on open `executor_position` rows) are out of
+scope for slice 1 and land in later slices.
+
+See `documentation/architecture.md` for the doctrine note on why guarded
+paper execution is the one deliberate exception to Dracul's read-only
+design, and `documentation/configuration.md` for the full
+`dracul.executor.*` property reference.
