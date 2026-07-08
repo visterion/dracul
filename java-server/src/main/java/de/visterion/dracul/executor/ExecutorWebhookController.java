@@ -149,6 +149,7 @@ public class ExecutorWebhookController {
             @RequestBody(required = false) JsonNode body) {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        if (body == null) body = mapper.createObjectNode();
 
         String signalId = body.path("signal_id").asString("");
         String bodySymbol = body.path("symbol").asString("");
@@ -185,6 +186,12 @@ public class ExecutorWebhookController {
 
         BigDecimal referencePrice = signal.referencePrice() != null
                 ? signal.referencePrice() : limitPrice;
+        // Invariant: both connectionEnv and allowedConnection are the same server-fixed
+        // config connection. place-entry deliberately ignores any body-supplied connection
+        // and always trades on the guarded config default, so NON_SIM_CONNECTION cannot fire
+        // through this controller today. Primary live-trading safety is the non-live Agora
+        // trading token (saxo-live is physically unreachable). The guard's connection arm
+        // becomes load-bearing only if per-request connection routing is added in a later slice.
         OrderGuard.Result guard = orderGuard.check(side, qty, referencePrice, stopPrice,
                 connection, connection);
 
@@ -194,6 +201,7 @@ public class ExecutorWebhookController {
             trace.add("ORDER_GUARD:" + reason);
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
         }
@@ -243,6 +251,7 @@ public class ExecutorWebhookController {
             @RequestBody(required = false) JsonNode body) {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        if (body == null) body = mapper.createObjectNode();
 
         int recorded = 0;
         JsonNode decisions = body.path("decisions");
