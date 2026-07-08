@@ -1,8 +1,10 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.agent.AgentDefaultProvider;
 import de.visterion.dracul.agent.AgentDefinition;
 import de.visterion.dracul.agent.ToolCatalogEntry;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -10,10 +12,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ExecutorDefaultsTest {
 
+    private AgentDefaultProvider provider(String schedule) {
+        return new ExecutorDefaults().executorAgentDefaults(new ObjectMapper(), schedule);
+    }
+
     @Test
     void defaultDefinition_hasExpectedShape() {
-        var defaults = new ExecutorDefaults();
-        AgentDefinition def = defaults.executorAgentDefaults("").defaultDefinition();
+        AgentDefinition def = provider("").defaultDefinition();
 
         assertThat(def.name()).isEqualTo("executor");
         assertThat(def.completionPath()).isEqualTo("/api/executor/complete");
@@ -23,16 +28,12 @@ class ExecutorDefaultsTest {
 
     @Test
     void blankSchedule_isCoercedToNull() {
-        var defaults = new ExecutorDefaults();
-        AgentDefinition def = defaults.executorAgentDefaults("").defaultDefinition();
-
-        assertThat(def.schedule()).isNull();
+        assertThat(provider("").defaultDefinition().schedule()).isNull();
     }
 
     @Test
     void tools_areBoundInOrder() {
-        var defaults = new ExecutorDefaults();
-        AgentDefinition def = defaults.executorAgentDefaults("").defaultDefinition();
+        AgentDefinition def = provider("").defaultDefinition();
 
         assertThat(def.tools()).extracting("toolName")
                 .containsExactly(
@@ -44,8 +45,11 @@ class ExecutorDefaultsTest {
     }
 
     @Test
-    void catalogEntries_hasFiveEntriesWithCorrectCallbacks() {
-        List<ToolCatalogEntry> entries = ExecutorDefaults.catalogEntries();
+    void providerCatalogEntries_hasFiveEntriesWithCorrectCallbacks() {
+        // Exercise the PROVIDER's catalogEntries() — this is what AgentToolCatalog
+        // actually calls. A provider that only overrides defaultDefinition() would
+        // fall back to the empty interface default and fail here.
+        List<ToolCatalogEntry> entries = provider("").catalogEntries();
 
         assertThat(entries).hasSize(5);
         assertThat(entries).extracting("callbackPath")
