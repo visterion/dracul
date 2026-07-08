@@ -80,7 +80,7 @@ dracul:
     connection: ${DRACUL_EXECUTOR_CONNECTION:saxo-sim}
     agora-base-url: ${DRACUL_EXECUTOR_AGORA_BASE_URL:http://agora:8080}
     agora-trading-token: ${DRACUL_EXECUTOR_AGORA_TRADING_TOKEN:}
-    webhook-token: ${DRACUL_EXECUTOR_WEBHOOK_TOKEN:dev-token-change-me}
+    webhook-token: ${DRACUL_EXECUTOR_WEBHOOK_TOKEN:}
     schedule: ${DRACUL_EXECUTOR_SCHEDULE:}
     min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.6}
     max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
