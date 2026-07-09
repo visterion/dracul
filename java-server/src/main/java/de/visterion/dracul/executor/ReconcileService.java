@@ -163,7 +163,10 @@ public class ReconcileService {
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp) {
         BigDecimal currentClose = bp.marketPrice();
         BigDecimal baseHighest = p.highestPrice() == null ? p.entryPrice() : p.highestPrice();
-        BigDecimal newHighest = baseHighest.max(currentClose);
+        // highest_price is the favorable price extreme: highest for a long, lowest for a short.
+        BigDecimal newHighest = "SELL".equalsIgnoreCase(p.side())
+                ? baseHighest.min(currentClose)
+                : baseHighest.max(currentClose);
 
         BigDecimal currentR = computeR(p, currentClose);
         BigDecimal baseMfe = p.mfeR() == null ? BigDecimal.ZERO : p.mfeR();

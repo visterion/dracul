@@ -137,6 +137,54 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void stillOpenShort_favorableExtremeIsMinimum() {
+        ExecutorPosition p = openPosition(5L, "SHORT1", "SELL", new BigDecimal("100"),
+                new BigDecimal("105"), "brk-5", "stop-5", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("SHORT1", "SELL", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("94")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(5L), highestCaptor.capture(), mfeCaptor.capture(),
+                eq(0), eq(new BigDecimal("105")), eq(null));
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("94");
+        assertThat(mfeCaptor.getValue()).isEqualByComparingTo("1.2");
+
+        assertThat(survivors).hasSize(1);
+        ExecutorPosition survivor = survivors.get(0);
+        assertThat(survivor.highestPrice()).isEqualByComparingTo("94");
+        assertThat(survivor.mfeR()).isEqualByComparingTo("1.2");
+    }
+
+    @Test
+    void stillOpenShort_adverseMoveKeepsPriorFavorableExtreme() {
+        ExecutorPosition p = openPosition(6L, "SHORT2", "SELL", new BigDecimal("100"),
+                new BigDecimal("105"), "brk-6", "stop-6", new BigDecimal("98"), new BigDecimal("0.4"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("SHORT2", "SELL", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("103")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(6L), highestCaptor.capture(), mfeCaptor.capture(),
+                eq(0), eq(new BigDecimal("105")), eq(null));
+        // favorable extreme (the low) must not move against the position when price rises
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("98");
+        // mfeR keeps the best-ever R, not the current (worse) R
+        assertThat(mfeCaptor.getValue()).isEqualByComparingTo("0.4");
+
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("98");
+    }
+
+    @Test
     void brokerUnavailable_escalatesAndReturnsUnchanged() {
         ExecutorPosition p = openPosition(4L, "CCC", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), "brk-4", "stop-4", null, null);
