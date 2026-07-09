@@ -45,6 +45,10 @@ test.describe('Prey Detail View (/prey/:id)', () => {
     await expect(page.locator('.sr-list--risks li').first()).toBeVisible()
   })
 
+  test('renders kill-criteria list with at least 1 item', async ({ page }) => {
+    await expect(page.locator('.sr-list--kill li').first()).toBeVisible()
+  })
+
   test('found-by button is visible and keyboard-accessible', async ({ page }) => {
     const btn = page.getByTestId('pd-found-by')
     await expect(btn).toBeVisible()

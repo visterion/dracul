@@ -14,6 +14,8 @@ export interface Prey {
   thesis: string
   signals: string[]
   risks: string[]
+  /** Falsifiable exit conditions — what would kill the thesis */
+  killCriteria: string[]
   horizon: TimeHorizon
   /** e.g. "strigoi-echo" */
   discoveredBy: string

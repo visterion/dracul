@@ -21,6 +21,10 @@ export const mockPrey: Prey[] = [
       'Macro headwinds may delay recovery timeline',
       'Possible additional rebalancing selling at quarter-end',
     ],
+    killCriteria: [
+      'Close below the post-spin low of 148.20',
+      'No stabilization above spin-day close by 2026-09-30',
+    ],
     horizon: '90d',
     discoveredBy: 'strigoi-spin',
     discoveredAt: ago(2),
@@ -41,6 +45,10 @@ export const mockPrey: Prey[] = [
     risks: [
       'Sector rotation risk if rates rise unexpectedly',
       'Macro headwinds on enterprise capex spending',
+    ],
+    killCriteria: [
+      'Drift reverses with a close below the pre-earnings gap-up level',
+      'Guidance walk-back or negative pre-announcement within the 60-day window',
     ],
     horizon: '60d',
     discoveredBy: 'strigoi-echo',
@@ -63,6 +71,10 @@ export const mockPrey: Prey[] = [
       'EM currency risk, particularly BRL/USD exposure',
       'Regulatory headwinds from Banco Central do Brasil',
     ],
+    killCriteria: [
+      'FinTech unit trades below GMV-implied value 30 days post-separation',
+      'Management reverses guidance on standalone profitability targets',
+    ],
     horizon: '180d',
     discoveredBy: 'strigoi-spin',
     discoveredAt: ago(6),
@@ -84,6 +96,10 @@ export const mockPrey: Prey[] = [
       'Competitive pressure from Intel Gaudi in AI accelerator space',
       'AI spend concentration risk — top 5 customers represent 60% of data center revenue',
     ],
+    killCriteria: [
+      'Any insider files a Form 4 sale within 90 days of the cluster buy',
+      'Close below the pre-cluster low of $167.40',
+    ],
     horizon: '90d',
     discoveredBy: 'strigoi-insider',
     discoveredAt: ago(8),
@@ -104,6 +120,10 @@ export const mockPrey: Prey[] = [
     risks: [
       'Continued sector rotation may extend drawdown before recovery',
       'Valuation remains premium vs peers even at 52-week low',
+    ],
+    killCriteria: [
+      'Piotroski F-Score drops below 6 on next quarterly filing',
+      'Price sets a new 52-week low after an initial stabilization above the prior low',
     ],
     horizon: '180d',
     discoveredBy: 'strigoi-lazarus',
