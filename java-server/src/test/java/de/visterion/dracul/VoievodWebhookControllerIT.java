@@ -77,6 +77,7 @@ class VoievodWebhookControllerIT {
                 UUID.randomUUID().toString(), symbol, symbol + " Corp", anomalyType,
                 confidence, "thesis for " + discoveredBy,
                 List.of("signal-" + discoveredBy), List.of("risk-" + discoveredBy),
+                List.of(),
                 "6m", discoveredBy, now)));
     }
 

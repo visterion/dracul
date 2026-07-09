@@ -16,6 +16,7 @@ class PreySignalMapperTest {
                 "prey-1", "ACME", "Acme Corp", "SPINOFF",
                 0.73, "Forced index selling post-separation.",
                 List.of("Dropped from parent's index"), List.of("Thin float"),
+                List.of("Close below 90.00"),
                 "6m", "strigoi-spin", "2026-07-08T10:00:00Z");
     }
 

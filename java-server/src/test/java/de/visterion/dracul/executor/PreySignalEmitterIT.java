@@ -28,6 +28,7 @@ class PreySignalEmitterIT {
         return new Prey(
                 "prey-" + symbol, symbol, symbol + " Corp", "SPINOFF",
                 0.7, "thesis", List.of("signal"), List.of("risk"),
+                List.of("kill"),
                 "6m", "strigoi-spin", "2026-07-08T10:00:00Z");
     }
 

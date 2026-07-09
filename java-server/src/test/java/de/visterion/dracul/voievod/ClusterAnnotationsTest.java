@@ -11,7 +11,7 @@ class ClusterAnnotationsTest {
 
     private Prey prey(String discoveredBy, String anomalyType, String discoveredAt) {
         return new Prey("id-" + discoveredBy, "SYM", "Sym Corp", anomalyType,
-                0.7, "thesis", List.of(), List.of(), "6m", discoveredBy, discoveredAt);
+                0.7, "thesis", List.of(), List.of(), List.of(), "6m", discoveredBy, discoveredAt);
     }
 
     private ConsensusCluster cluster(Prey... prey) {
