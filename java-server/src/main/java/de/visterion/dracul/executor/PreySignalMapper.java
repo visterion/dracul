@@ -1,6 +1,8 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.prey.Prey;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.UUID;
@@ -14,6 +16,8 @@ import java.util.UUID;
  * literal {@code PENDING} status, and a {@code null} {@code createdAt} (the DB
  * column defaults to {@code now()}).
  */
+@Component
+@ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class PreySignalMapper {
 
     public ExecutorSignal map(Prey p) {
