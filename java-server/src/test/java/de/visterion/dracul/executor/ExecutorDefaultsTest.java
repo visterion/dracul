@@ -41,24 +41,28 @@ class ExecutorDefaultsTest {
                         "get_account",
                         "list_positions",
                         "place_entry",
-                        "submit_decision");
+                        "submit_decision",
+                        "fetch_open_positions",
+                        "exit_position");
     }
 
     @Test
-    void providerCatalogEntries_hasFiveEntriesWithCorrectCallbacks() {
+    void providerCatalogEntries_hasSevenEntriesWithCorrectCallbacks() {
         // Exercise the PROVIDER's catalogEntries() — this is what AgentToolCatalog
         // actually calls. A provider that only overrides defaultDefinition() would
         // fall back to the empty interface default and fail here.
         List<ToolCatalogEntry> entries = provider("").catalogEntries();
 
-        assertThat(entries).hasSize(5);
+        assertThat(entries).hasSize(7);
         assertThat(entries).extracting("callbackPath")
                 .containsExactlyInAnyOrder(
                         "/api/executor/tools/fetch-pending-signals",
                         "/api/executor/tools/get-account",
                         "/api/executor/tools/list-positions",
                         "/api/executor/tools/place-entry",
-                        "/api/executor/tools/submit-decision");
+                        "/api/executor/tools/submit-decision",
+                        "/api/executor/tools/fetch-open-positions",
+                        "/api/executor/tools/exit-position");
 
         ToolCatalogEntry placeEntry = entries.stream()
                 .filter(e -> e.toolName().equals("place_entry"))
@@ -66,5 +70,16 @@ class ExecutorDefaultsTest {
         assertThat(placeEntry.timeoutSeconds()).isEqualTo(60);
         String requiredJson = placeEntry.inputSchema().get("required").toString();
         assertThat(requiredJson).contains("signal_id").contains("stop_price");
+
+        ToolCatalogEntry fetchOpenPositions = entries.stream()
+                .filter(e -> e.toolName().equals("fetch_open_positions"))
+                .findFirst().orElseThrow();
+        assertThat(fetchOpenPositions.timeoutSeconds()).isEqualTo(30);
+
+        ToolCatalogEntry exitPosition = entries.stream()
+                .filter(e -> e.toolName().equals("exit_position"))
+                .findFirst().orElseThrow();
+        assertThat(exitPosition.timeoutSeconds()).isEqualTo(60);
+        assertThat(exitPosition.inputSchema().get("required").toString()).contains("symbol");
     }
 }
