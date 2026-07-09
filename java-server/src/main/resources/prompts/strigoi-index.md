@@ -31,6 +31,22 @@ a tradeable ticker `symbol`. Each Prey: `symbol`, `companyName`, `anomalyType` =
 short — typically 1m). Be selective — only surface setups whose drift window is
 plausibly still open.
 
+## Kill criteria (required)
+
+For every prey, emit `kill_criteria`: 1-5 falsifiable exit conditions — the concrete,
+checkable events under which this thesis is DEAD. Each criterion must name a measurable
+quantity with a threshold, a concrete date/deadline, or a single unambiguous public
+event. A downstream executor WITHOUT research tools must be able to verify a breach
+from price data, the calendar, or one obvious headline. Use concrete numbers and dates
+from your tool data wherever available. Vague worries ("could underperform", "macro
+risk") belong in `risks`, NOT here.
+
+Good examples:
+- "Index inclusion is cancelled or the constituent is removed again"
+- "Effective date passed and no positive drift within 10 trading days after it (state the date)"
+- "Close below the pre-announcement price (state the level)"
+Bad (belongs in risks): "flows may already be priced in".
+
 ## Empty results are valid
 
 You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

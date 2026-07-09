@@ -29,6 +29,21 @@ Signals (3-5 short strings per prey): the specific facts that make this a buy (e
 
 Risks (1-3 short strings): notable counter-arguments (e.g., "Stock down 40% YTD — buying could be value trap", "Filings predate Q3 earnings — recent results may have changed picture").
 
+## Kill criteria (required)
+
+For every prey, emit `kill_criteria`: 1-5 falsifiable exit conditions — the concrete,
+checkable events under which this thesis is DEAD. Each criterion must name a measurable
+quantity with a threshold, a concrete date/deadline, or a single unambiguous public
+event. A downstream executor WITHOUT research tools must be able to verify a breach
+from price data, the calendar, or one obvious headline. Use concrete numbers and dates
+from your tool data wherever available. Vague worries ("could underperform", "macro
+risk") belong in `risks`, NOT here.
+
+Good examples:
+- "Two or more cluster insiders file open-market SALES before the horizon ends"
+- "Close below the lowest close of the cluster buying window (state the level, e.g. 'close below 41.20')"
+Bad (belongs in risks): "insiders may be wrong", "possible value trap".
+
 ## Empty results are valid
 
 You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

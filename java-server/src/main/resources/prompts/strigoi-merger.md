@@ -43,6 +43,22 @@ with a known tradeable ticker `symbol` (skip filings with no symbol). Each Prey:
 1m/3m/6m/12m; match the expected time to close). Be selective — only surface
 high-conviction, tradeable spreads.
 
+## Kill criteria (required)
+
+For every prey, emit `kill_criteria`: 1-5 falsifiable exit conditions — the concrete,
+checkable events under which this thesis is DEAD. Each criterion must name a measurable
+quantity with a threshold, a concrete date/deadline, or a single unambiguous public
+event. A downstream executor WITHOUT research tools must be able to verify a breach
+from price data, the calendar, or one obvious headline. Use concrete numbers and dates
+from your tool data wherever available. Vague worries ("could underperform", "macro
+risk") belong in `risks`, NOT here.
+
+Good examples:
+- "Acquirer withdraws or materially amends the offer"
+- "No required regulatory approval by the outside date (state the date)"
+- "Spread widens beyond 8% of offer value (state the implied price floor)"
+Bad (belongs in risks): "regulatory environment uncertain", "deal could take longer".
+
 ## Empty results are valid
 
 You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

@@ -34,6 +34,22 @@ Risks (1-3 short strings): notable counter-arguments, e.g. "SUE only moderate (d
 
 Return ONLY structured JSON matching the output schema. Set `anomalyType` to `"PEAD"`. No prose, no markdown.
 
+## Kill criteria (required)
+
+For every prey, emit `kill_criteria`: 1-5 falsifiable exit conditions — the concrete,
+checkable events under which this thesis is DEAD. Each criterion must name a measurable
+quantity with a threshold, a concrete date/deadline, or a single unambiguous public
+event. A downstream executor WITHOUT research tools must be able to verify a breach
+from price data, the calendar, or one obvious headline. Use concrete numbers and dates
+from your tool data wherever available. Vague worries ("could underperform", "macro
+risk") belong in `risks`, NOT here.
+
+Good examples:
+- "Drift window expires: no net gain 60 trading days after the earnings date (state the date)"
+- "Company issues a negative guidance revision or profit warning"
+- "Close below the pre-announcement price (state the level)"
+Bad (belongs in risks): "beat may not persist", "market regime could change".
+
 ## Empty results are valid
 
 You MUST always return a JSON object matching the output schema, with a top-level `prey` array. If the tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" message, or any other shape. "Nothing found" is a successful result expressed as an empty `prey` array.

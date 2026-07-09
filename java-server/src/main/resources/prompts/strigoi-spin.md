@@ -35,6 +35,22 @@ they are not actionable). Each Prey: `symbol`, `companyName`,
 `signals` (array), `risks` (array), `horizon` (one of 1m/3m/6m/12m; spin-off
 drift is typically 3m–6m). Be selective — only surface high-conviction setups.
 
+## Kill criteria (required)
+
+For every prey, emit `kill_criteria`: 1-5 falsifiable exit conditions — the concrete,
+checkable events under which this thesis is DEAD. Each criterion must name a measurable
+quantity with a threshold, a concrete date/deadline, or a single unambiguous public
+event. A downstream executor WITHOUT research tools must be able to verify a breach
+from price data, the calendar, or one obvious headline. Use concrete numbers and dates
+from your tool data wherever available. Vague worries ("could underperform", "macro
+risk") belong in `risks`, NOT here.
+
+Good examples:
+- "Close below the post-spin low (state the level)"
+- "No stabilization: price below the spin-day close 60 trading days after separation (state the date)"
+- "Parent re-consolidates or reverses the separation"
+Bad (belongs in risks): "spinco is small and volatile", "forced selling could continue".
+
 ## Empty results are valid
 
 You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.
