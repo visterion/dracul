@@ -155,9 +155,16 @@ class AgoraExecutionGatewayTest {
         assertThat(args.path("symbol").asString()).isEqualTo("ACME");
         assertThat(args.path("side").asString()).isEqualTo("BUY");
         assertThat(args.has("qty")).isTrue();
-        assertThat(args.has("stop_loss_stop")).isTrue();
-        assertThat(args.has("take_profit_limit")).isTrue();
-        assertThat(args.path("client_ref").asString()).isEqualTo("sig-1");
+        // Agora requires camelCase arg names on the wire.
+        assertThat(args.has("stopLossStop")).isTrue();
+        assertThat(args.has("takeProfitLimit")).isTrue();
+        assertThat(args.has("limitPrice")).isTrue();
+        assertThat(args.has("timeInForce")).isTrue();
+        assertThat(args.path("clientRef").asString()).isEqualTo("sig-1");
+        // and NOT the old snake_case names.
+        assertThat(args.has("stop_loss_stop")).isFalse();
+        assertThat(args.has("take_profit_limit")).isFalse();
+        assertThat(args.has("client_ref")).isFalse();
 
         assertThat(result.bracketId()).isEqualTo("brk-1");
         assertThat(result.stopLegId()).isEqualTo("stop-1");
@@ -177,9 +184,9 @@ class AgoraExecutionGatewayTest {
 
         gw.placeBracket("saxo-sim", req);
 
-        assertThat(gw.capturedArgs.has("limit_price")).isFalse();
-        assertThat(gw.capturedArgs.has("client_ref")).isFalse();
-        assertThat(gw.capturedArgs.has("time_in_force")).isFalse();
+        assertThat(gw.capturedArgs.has("limitPrice")).isFalse();
+        assertThat(gw.capturedArgs.has("clientRef")).isFalse();
+        assertThat(gw.capturedArgs.has("timeInForce")).isFalse();
     }
 
     @Test void flattenSendsFractionAndMapsResult() {
@@ -225,5 +232,117 @@ class AgoraExecutionGatewayTest {
         assertThatThrownBy(() -> gw.account("saxo-sim"))
                 .isInstanceOf(BrokerUnavailableException.class)
                 .hasMessageContaining("no session");
+    }
+
+    // -------------------------------------------------------------------
+    // Live Agora/saxo-sim real wire shapes (captured 2026-07-09)
+    // -------------------------------------------------------------------
+
+    @Test void accountReadsNestedCamelCaseFields() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"account":{"accountId":"acc-1","equity":10003.84,"buyingPower":9178.57,
+                    "cash":9178.57,"currency":"EUR","status":"ACTIVE"}}}
+                """);
+
+        AccountSnapshot result = gw.account("saxo-sim");
+
+        assertThat(result.cash()).isEqualByComparingTo("9178.57");
+        assertThat(result.buyingPower()).isEqualByComparingTo("9178.57");
+        assertThat(result.currency()).isEqualTo("EUR");
+    }
+
+    @Test void placeBracketMapsOrderIdOnAccepted() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"accepted":true,"orderId":"5039135626","clientRef":"sig-1","status":"accepted"}}
+                """);
+
+        BracketRequest req = new BracketRequest("AAPL", "BUY", new BigDecimal("3"),
+                new BigDecimal("300"), new BigDecimal("290"), new BigDecimal("320"), "sig-1", "DAY");
+
+        PlacedBracket result = gw.placeBracket("saxo-sim", req);
+
+        assertThat(result.bracketId()).isEqualTo("5039135626");
+        assertThat(result.clientRef()).isEqualTo("sig-1");
+        // Saxo returns no leg ids — expected null.
+        assertThat(result.stopLegId()).isNull();
+        assertThat(result.takeProfitLegId()).isNull();
+        assertThat(result.status()).isEqualTo(OrderStatus.WORKING);
+    }
+
+    @Test void placeBracketThrowsOnRejection() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"accepted":false,"rejectReason":"Order-Preis ist zu weit vom Markt entfernt",
+                    "rejectCode":"TooFarFromEntryOrder"}}
+                """);
+
+        BracketRequest req = new BracketRequest("AAPL", "BUY", new BigDecimal("3"),
+                new BigDecimal("300"), new BigDecimal("290"), new BigDecimal("320"), "sig-1", "DAY");
+
+        assertThatThrownBy(() -> gw.placeBracket("saxo-sim", req))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .hasMessageContaining("TooFarFromEntryOrder");
+    }
+
+    @Test void flattenThrowsOnRejection() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"NoPosition\"}}");
+
+        assertThatThrownBy(() -> gw.flatten("saxo-sim", "AAPL", new BigDecimal("1")))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .hasMessageContaining("NoPosition");
+    }
+
+    @Test void modifyBracketThrowsOnRejection() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectReason\":\"unknown order\"}}");
+
+        assertThatThrownBy(() -> gw.modifyBracket("saxo-sim", "brk-1", "AAPL",
+                new BigDecimal("104"), new BigDecimal("120")))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .hasMessageContaining("unknown order");
+    }
+
+    @Test void positionsReadsMarketValueAsMarketPrice() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"positions":[
+                    {"symbol":"AAPL","qty":3.0,"avgEntryPrice":307.59,"marketValue":312.0,
+                     "unrealizedPl":22.53,"currency":"USD"}
+                ]}}
+                """);
+
+        List<BrokerPosition> result = gw.positions("saxo-sim");
+
+        assertThat(result).hasSize(1);
+        BrokerPosition p = result.get(0);
+        assertThat(p.symbol()).isEqualTo("AAPL");
+        assertThat(p.qty()).isEqualByComparingTo("3.0");
+        assertThat(p.avgEntryPrice()).isEqualByComparingTo("307.59");
+        assertThat(p.marketPrice()).isEqualByComparingTo("312.0");
+        // Live Saxo has no side field.
+        assertThat(p.side()).isNull();
+    }
+
+    @Test void ordersDerivesStopLossRoleFromType() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"5039135626","clientRef":"sig-1","symbol":"AAPL","side":"sell",
+                     "qty":3.0,"type":"stopiftraded","status":"working"},
+                    {"brokerOrderId":"5039135627","clientRef":"sig-1","symbol":"AAPL","side":"sell",
+                     "qty":3.0,"type":"limit","status":"working"}
+                ]}}
+                """);
+
+        List<BrokerOrder> result = gw.orders("saxo-sim");
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).role()).isEqualTo(OrderRole.STOP_LOSS);
+        assertThat(result.get(0).status()).isEqualTo(OrderStatus.WORKING);
+        // plain "limit" is ambiguous (entry vs take-profit) -> OTHER, never guessed.
+        assertThat(result.get(1).role()).isEqualTo(OrderRole.OTHER);
     }
 }
