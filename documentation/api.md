@@ -984,8 +984,8 @@ skipped. Returns 204; non-success / empty prey acknowledged without persisting.
 
 ## Executor Webhooks
 
-Called by Vistierie during an `executor` agent run (guarded paper trading,
-see `documentation/strigoi.md`). All six require
+Called by Vistierie during an `executor` agent run (guarded broker execution,
+see `documentation/strigoi.md`). All eight require
 `Authorization: Bearer <DRACUL_EXECUTOR_WEBHOOK_TOKEN>` (verified with
 constant-time comparison via `BearerTokenVerifier`); a missing/wrong token
 returns 401. Only registered when `dracul.executor.enabled=true`. Unlike the
@@ -1087,6 +1087,55 @@ Input:
 Non-`SKIP` actions in the array are ignored. Each recorded `SKIP` writes an
 `executor_decision` row (`accepted=false`, no `reject_reason`) and marks the
 signal `SKIPPED`. Response: `{ "output": { "recorded": <count> } }`.
+
+### `POST /api/executor/tools/fetch-open-positions`
+
+Tool webhook (slice 2). Before returning positions, runs the full exit
+lifecycle server-side for the configured connection: `ReconcileService`
+(sync broker fills, retire closed positions, apply cooldown), then
+`HardTriggerService` (stop-breach / giveback hard exits — always enforced,
+never the LLM's call), then `StopRatchetService` (ratchet the active stop up
+to the chandelier level). Only after that does it read back the still-open
+`executor_position` rows and enrich each with price/ATR/chandelier/R/MFE via
+the maintenance pipeline. Response:
+
+```json
+{ "output": { "positions": [
+  { "symbol": "ACME", "side": "BUY", "qty": 10, "entry_price": 142.50,
+    "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
+    "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
+    "days_held": 6, "kill_criteria": ["..."],
+    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1 } }
+] } }
+```
+
+`soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
+condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
+to act once it reaches `dracul.executor.soft-confirm-min`.
+
+### `POST /api/executor/tools/exit-position`
+
+Tool webhook (slice 2) — the LLM's soft-judgment full exit; unlike
+`place-entry`, exits are **always permitted** (no veto/order-guard gate).
+Input:
+
+```json
+{ "symbol": "ACME", "reason": "soft trigger confirmed", "confidence": 0.75, "reasoning": "..." }
+```
+
+Looks up the open `executor_position` for `symbol` on the configured
+connection, flattens it via `AgoraTrading`'s broker gateway, computes
+realized R, closes the position row, and adds a `cooldown` entry
+(`dracul.executor.cooldown-days`, "fresh setup only"). Writes one
+`decision_log` row (`trigger_type=SOFT_TRIGGER`). Response:
+
+```json
+{ "output": { "exited": true, "exit_reason": "soft trigger confirmed" } }
+```
+
+or on failure: `{ "output": { "exited": false, "reason": "NO_OPEN_POSITION" } }`
+(no open position for `symbol`) or `{ "output": { "exited": false, "reason": "BROKER_ERROR" } }`
+(the broker flatten call failed/unreachable).
 
 ### `POST /api/executor/complete`
 

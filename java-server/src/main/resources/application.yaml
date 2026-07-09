@@ -86,6 +86,12 @@ dracul:
     max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
     atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
     swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
+    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.2}
+    chandelier-mult: ${DRACUL_EXECUTOR_CHANDELIER_MULT:3.0}
+    giveback-pct: ${DRACUL_EXECUTOR_GIVEBACK_PCT:0.35}
+    giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}
+    soft-confirm-min: ${DRACUL_EXECUTOR_SOFT_CONFIRM_MIN:2}
+    cooldown-days: ${DRACUL_EXECUTOR_COOLDOWN_DAYS:10}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
