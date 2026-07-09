@@ -302,14 +302,20 @@ A single reasoning-tier (Sonnet) assessment per event. The documented
 Haiku pre-filter and Opus critical escalation are deferred; deterministic
 detection plus the cooldown already gate event volume.
 
-## Executor (guarded paper-trading agent, slice 1)
+## Executor (guarded broker-execution agent, slices 1+2)
 
-**Implemented (slice 1).** Unlike the six Strigoi, the Executor is not a
+**Implemented (slices 1+2).** Unlike the six Strigoi, the Executor is not a
 hunter — it does not scan hunting grounds or emit Prey. It is a **guarded
-paper executor**: it consumes signals (advice from Strigoi, gropar, or a
-human operator, injected via `POST /api/executor/signals`) and decides
-whether to act on them by placing a bracket order on a **paper** broker
-connection (`saxo-sim` via Agora's webhook trading tools).
+execution agent** that now manages the full position lifecycle: it consumes
+signals (advice from Strigoi, gropar, or a human operator, injected via
+`POST /api/executor/signals`) and decides whether to enter, and it reviews
+open positions to decide whether to exit on a soft trigger. It is
+**venue-neutral**: the prompt and tool set carry no notion of paper vs
+live — `dracul.executor.connection` is an operator/config choice the agent
+cannot see or influence, and the code guards below apply identically
+regardless of connection.
+
+### Entries
 
 The signal is advice, never a command. Every signal is re-evaluated
 independently by code before the LLM even gets to reason about it, and the
@@ -324,32 +330,60 @@ call is made:
 - **`OrderGuard`** (pure, deterministic) is the final check on the LLM's own
   `place_entry` request: it requires a valid protective stop on the correct
   side of the reference price, a strictly positive quantity, and that the
-  order targets the one allowed paper connection.
+  order targets the configured connection.
 - **`place-entry` runs signal → veto → guard → broker in code.** The LLM
   cannot place an order directly — it can only call the `place_entry` tool,
   which either forwards to the broker after every check passes or returns a
   structured rejection reason. See `documentation/api.md` for the full
   reason list.
 
-**Paper-only by construction:** the executor's broker writes go through
-Agora's webhook trading tools on connection `saxo-sim`, authenticated with a
-**non-live** Agora trading token (`dracul.executor.agora-trading-token`) —
-`saxo-live` is physically unreachable through this path, independent of the
-`OrderGuard` connection check. Research reads (`get_quote` /
-`get_indicators` for ATR/swing levels) go through the existing read-only
-`AgoraClient`, the same one Strigoi and gropar use.
+Research reads (`get_quote` / `get_indicators` for ATR/swing levels) go
+through the existing read-only `AgoraClient`, the same one Strigoi and
+gropar use; broker writes go through Agora's webhook trading tools
+(`AgoraTrading`), scoped to whichever connection/token the operator
+configured.
 
-**Slice 1 scope and what's deferred:** the injection seam
-(`POST /api/executor/signals`) is the only way signals reach the executor
-today — there is no automatic wiring from a Strigoi's Prey or gropar's exit
-signal into the executor's queue yet. `RejectReason` already declares
-`MAX_TRANCHE` for a later slice's position-scaling logic, but `VetoService`
-does not enforce it in slice 1. Position tranching, the fuller veto catalog
-(kill-criteria monitoring, correlation/exposure limits), and automated
-exits (stop/target management on open `executor_position` rows) are out of
-scope for slice 1 and land in later slices.
+### Exits (slice 2)
+
+Exits are split between code, which owns everything hard and mechanical, and
+the LLM, which owns only the soft judgment call. Every call to
+`fetch-open-positions` first runs, server-side, in order:
+
+1. **`ReconcileService`** — syncs broker fills against `executor_position`,
+   retires positions the broker reports closed, applies `cooldown`.
+2. **`HardTriggerService`** — force-closes a position on stop-breach or
+   giveback (fraction of peak MFE-in-R given back, active once MFE clears
+   `dracul.executor.giveback-active-from-r`) — always enforced, never the
+   LLM's call.
+3. **`StopRatchetService`** — ratchets the active stop up to the chandelier
+   level (`dracul.executor.chandelier-mult` × ATR below the highest price
+   reached), never down.
+
+Only after that does the LLM see the (now current) open positions, each
+carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,
+`confirm_count`). Once a soft trigger has held for
+`dracul.executor.soft-confirm-min` consecutive runs, the LLM is expected to
+call `exit_position(symbol, reason, confidence, reasoning)`. Unlike
+`place_entry`, exits carry **no veto/order-guard gate** — they are always
+permitted, since closing a position is never something code needs to guard
+against.
+
+Every decision point (entry, hard exit, stop-ratchet, soft exit) writes a
+`decision_log` row tagged with the active `dracul.executor.rule-version`,
+giving a single, richer audit trail across the whole lifecycle (see
+`documentation/architecture.md` for the table shapes).
+
+### Scope
+
+The injection seam (`POST /api/executor/signals`) is still the only way
+signals reach the executor — there is no automatic wiring from a Strigoi's
+Prey or gropar's exit signal into the executor's queue. `RejectReason`
+already declares `MAX_TRANCHE` for a later slice's position-scaling logic,
+but `VetoService` does not enforce it yet. Position tranching and the fuller
+veto catalog (kill-criteria monitoring, correlation/exposure limits) remain
+out of scope and land in later slices.
 
 See `documentation/architecture.md` for the doctrine note on why guarded
-paper execution is the one deliberate exception to Dracul's read-only
-design, and `documentation/configuration.md` for the full
-`dracul.executor.*` property reference.
+execution is the one deliberate exception to Dracul's read-only design, and
+`documentation/configuration.md` for the full `dracul.executor.*` property
+reference.
