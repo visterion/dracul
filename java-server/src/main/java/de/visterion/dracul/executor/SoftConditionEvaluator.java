@@ -1,5 +1,7 @@
 package de.visterion.dracul.executor;
 
+import org.springframework.stereotype.Component;
+
 import java.math.BigDecimal;
 
 /**
@@ -7,6 +9,7 @@ import java.math.BigDecimal;
  * cross, plus the running confirmation count used to require N consecutive soft breaches
  * before acting (see {@code soft_confirm_min} in the rule version).
  */
+@Component
 public class SoftConditionEvaluator {
 
     public record SoftState(boolean chandelierBreach, boolean maBreak, int confirmCount) {
