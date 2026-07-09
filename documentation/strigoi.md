@@ -86,6 +86,15 @@ Every Strigoi follows the same three-step shape:
    Vistierie handles cost accounting and run history; Dracul handles
    domain persistence.
 
+   When the executor is enabled (`dracul.executor.enabled=true`), the same
+   `/complete` request also auto-feeds the executor: `PreySignalEmitter` maps
+   each persisted prey to a pending `executor_signal` (skipping symbols already
+   open or already pending). This is a read-only-to-execution handoff — the
+   hunters still only produce prey; the code-guarded executor is the sole agent
+   that acts on the resulting signals. See `hunting-grounds.md`
+   ("Prey → ExecutorSignal flow"). With the executor disabled, hunts complete
+   exactly as before.
+
 ### Reference implementation
 
 ```java

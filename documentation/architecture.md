@@ -309,6 +309,17 @@ position lifecycle, not just entries:
 This exception does not weaken the doctrine for any other agent: the six
 Strigoi, Voievod, gropar, and Daywalker remain strictly read-only.
 
+**Hunters feed the executor (`PreySignalEmitter`).** When the executor is
+enabled, each hunter's `/complete` webhook — right after it persists prey —
+maps those findings to pending `executor_signal` rows via the deterministic
+`PreySignalMapper`/`PreySignalEmitter` adapter (package
+`de.visterion.dracul.executor`). The adapter skips symbols already open or
+already pending and is wired as an optional
+`ObjectProvider<PreySignalEmitter>`, so a disabled executor leaves hunts
+untouched. This does not make the hunters themselves execute anything — they
+still only produce prey; the executor remains the sole code-guarded agent that
+acts on the resulting signals.
+
 ## Data Flow
 
 ```
@@ -317,10 +328,14 @@ External sources (EDGAR, prices, news, calendar)
   hunting-grounds adapters
           │
    ┌──────┴──────────────────────┐
-   │ Strigoi (6, nightly)         │→ Prey → dracul.prey
+   │ Strigoi (6, nightly)         │→ Prey → dracul.prey ─┐
    │ Voievod (1, daily)           │→ Verdicts → dracul.verdicts
    │ Daywalker (1, streaming)     │→ Alerts → dracul.daywalker_alerts
-   └─────────────────────────────┘
+   └─────────────────────────────┘                      │
+                │                    (executor enabled)  │
+                │        PreySignalEmitter ◀─────────────┘
+                │                    │
+                │        dracul.executor_signal (PENDING)
                 │
     Synthesizer (creates Verdicts from agreeing Prey)
                 │

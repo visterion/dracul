@@ -339,7 +339,7 @@ Dracul's read-only design.
 
 | Env var | Property | Default | Purpose |
 |---|---|---|---|
-| `DRACUL_EXECUTOR_ENABLED` | `dracul.executor.enabled` | `false` | Register the agent + activate the operator and tool-webhook controllers (`@ConditionalOnProperty`). |
+| `DRACUL_EXECUTOR_ENABLED` | `dracul.executor.enabled` | `false` | Register the agent + activate the operator and tool-webhook controllers (`@ConditionalOnProperty`). Also activates the `PreySignalEmitter`: when enabled, each hunter's `/complete` webhook auto-emits pending `executor_signal` rows from the prey it persists (`Prey → ExecutorSignal`, skipping already-open/already-pending symbols). Disabled → no emitter is wired and hunts complete unchanged. |
 | `DRACUL_EXECUTOR_CONNECTION` | `dracul.executor.connection` | `saxo-sim` | The Agora trading connection the executor trades on. Paper vs live is entirely an operator/config choice — the LLM prompt does not name or distinguish connections. |
 | `DRACUL_EXECUTOR_AGORA_BASE_URL` | `dracul.executor.agora-base-url` | `http://agora:8080` | Base URL of Agora's webhook trading tools (`AgoraTrading`), separate from the read-only research `AgoraClient`. |
 | `DRACUL_EXECUTOR_AGORA_TRADING_TOKEN` | `dracul.executor.agora-trading-token` | _(blank)_ | Bearer token sent to Agora's trading webhooks, scoped to whichever connection(s) it is authorized for. Set in production. |
