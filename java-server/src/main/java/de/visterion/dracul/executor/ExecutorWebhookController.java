@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
 import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
+import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
@@ -18,19 +19,28 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * The 5 tool webhooks + completion callback for the Dracul executor agent.
+ * The 7 tool webhooks + completion callback for the Dracul executor agent.
  *
  * <p>{@code place-entry} is the safety-critical core: the LLM only <em>requests</em> an
  * entry, code decides. Every rejection path (schema, veto, order guard, broker error)
  * short-circuits before any call to {@link ExecutionGateway#placeBracket}.
+ *
+ * <p>{@code exit-position} is the mirror-image LLM tool for maintenance (SOFT full exit):
+ * exits are always permitted (reducing risk needs no veto), and it books the close, sets a
+ * cooldown, and writes a {@code SOFT_TRIGGER}/{@code EXIT_FULL} decision-log row — mirroring
+ * {@link HardTriggerService}'s idiom for gateway/repo wiring and decision-log construction.
  */
 @RestController
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -45,13 +55,19 @@ public class ExecutorWebhookController {
     private final OrderGuard orderGuard;
     private final ExecutionGateway gateway;
     private final ExecutorIndicators executorIndicators;
+    private final MaintenancePipeline pipeline;
+    private final DecisionLogRepository decisionLogRepo;
+    private final CooldownRepository cooldownRepo;
+    private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
+    private final Clock clock;
 
     private final String connection;
     private final double minConfidence;
     private final int maxPositions;
     private final int atrPeriod;
     private final int swingPeriod;
+    private final int cooldownDays;
 
     public ExecutorWebhookController(
             ExecutorSignalRepository signalRepo,
@@ -61,13 +77,18 @@ public class ExecutorWebhookController {
             OrderGuard orderGuard,
             ExecutionGateway gateway,
             ExecutorIndicators executorIndicators,
+            MaintenancePipeline pipeline,
+            DecisionLogRepository decisionLogRepo,
+            CooldownRepository cooldownRepo,
+            RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
             @Value("${dracul.executor.min-confidence:0.6}") double minConfidence,
             @Value("${dracul.executor.max-positions:5}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
-            @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
+            @Value("${dracul.executor.swing-period:20}") int swingPeriod,
+            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
@@ -76,12 +97,18 @@ public class ExecutorWebhookController {
         this.orderGuard = orderGuard;
         this.gateway = gateway;
         this.executorIndicators = executorIndicators;
+        this.pipeline = pipeline;
+        this.decisionLogRepo = decisionLogRepo;
+        this.cooldownRepo = cooldownRepo;
+        this.ruleVersions = ruleVersions;
         this.mapper = mapper;
+        this.clock = Clock.systemUTC();
         this.connection = connection;
         this.minConfidence = minConfidence;
         this.maxPositions = maxPositions;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
+        this.cooldownDays = cooldownDays;
         this.verifier = new BearerTokenVerifier(webhookToken);
     }
 
@@ -325,6 +352,124 @@ public class ExecutorWebhookController {
             }
         }
         return ResponseEntity.ok(Map.of("output", Map.of("recorded", recorded)));
+    }
+
+    // -------------------------------------------------------------------
+    // fetch-open-positions
+    // -------------------------------------------------------------------
+
+    @PostMapping("/tools/fetch-open-positions")
+    public ResponseEntity<Map<String, Object>> fetchOpenPositions(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+            @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId) {
+
+        if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+
+        List<EnrichedPosition> positions = pipeline.run(connection, runId);
+        List<Map<String, Object>> serialized = new ArrayList<>();
+        for (EnrichedPosition p : positions) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("symbol", p.symbol());
+            node.put("side", p.side());
+            node.put("qty", p.qty());
+            node.put("entry_price", p.entryPrice());
+            node.put("active_stop", p.activeStop());
+            node.put("current_price", p.currentPrice());
+            node.put("atr", p.atr());
+            node.put("chandelier_level", p.chandelierLevel());
+            node.put("r_current", p.rCurrent());
+            node.put("mfe_r", p.mfeR());
+            node.put("days_held", p.daysHeld());
+            node.put("kill_criteria", p.killCriteria());
+
+            Map<String, Object> softTrigger = new LinkedHashMap<>();
+            softTrigger.put("chandelier_breach", p.chandelierBreach());
+            softTrigger.put("ma_break", p.maBreak());
+            softTrigger.put("confirm_count", p.softConfirmCount());
+            node.put("soft_trigger", softTrigger);
+
+            serialized.add(node);
+        }
+        return ResponseEntity.ok(Map.of("output", Map.of("positions", serialized)));
+    }
+
+    // -------------------------------------------------------------------
+    // exit-position — LLM SOFT full exit; exits are always permitted, no veto
+    // -------------------------------------------------------------------
+
+    @PostMapping("/tools/exit-position")
+    public ResponseEntity<Map<String, Object>> exitPosition(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+            @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
+            @RequestBody(required = false) JsonNode body) {
+
+        if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        if (body == null) body = mapper.createObjectNode();
+
+        String symbol = body.path("symbol").asString("");
+        String reason = body.path("reason").asString("SOFT_EXIT");
+        Double confidence = body.path("confidence").isNumber() ? body.path("confidence").asDouble() : null;
+        String reasoning = body.path("reasoning").asString(null);
+
+        ExecutorPosition position = positionRepo.findOpen().stream()
+                .filter(p -> connection.equals(p.connection()))
+                .filter(p -> symbol.equals(p.symbol()))
+                .findFirst()
+                .orElse(null);
+
+        if (position == null) {
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "reason", "NO_OPEN_POSITION")));
+        }
+
+        CloseResult cr;
+        try {
+            cr = gateway.flatten(connection, symbol, BigDecimal.ONE);
+        } catch (BrokerUnavailableException e) {
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "ESCALATE", "BROKER_UNAVAILABLE", null,
+                    "broker unavailable during soft-exit flatten: " + e.getMessage(),
+                    confidence, null, null));
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "reason", "BROKER_ERROR")));
+        }
+
+        BigDecimal exitPrice = cr.avgFillPrice();
+        BigDecimal realizedR = exitPrice != null ? computeR(position, exitPrice) : null;
+
+        positionRepo.close(position.id(), exitPrice, realizedR, reason);
+        cooldownRepo.add(symbol, reason, clock.instant().plus(Duration.ofDays(cooldownDays)),
+                "fresh setup only");
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("exit_price", exitPrice);
+        inputs.put("realized_r", realizedR);
+        inputs.put("active_stop", position.activeStop());
+
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("fraction", 1.0);
+
+        decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "SOFT_TRIGGER", null, null, null, symbol, inputs, null,
+                "EXIT_FULL", reason, orderJson, reasoning, confidence, null, null));
+
+        return ResponseEntity.ok(Map.of("output",
+                Map.of("exited", true, "exit_reason", reason)));
+    }
+
+    private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {
+        BigDecimal numerator;
+        BigDecimal denominator;
+        if ("SELL".equals(p.side())) {
+            numerator = p.entryPrice().subtract(exitPrice);
+            denominator = p.initialStop().subtract(p.entryPrice());
+        } else {
+            numerator = exitPrice.subtract(p.entryPrice());
+            denominator = p.entryPrice().subtract(p.initialStop());
+        }
+        if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
+        return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
     }
 
     // -------------------------------------------------------------------
