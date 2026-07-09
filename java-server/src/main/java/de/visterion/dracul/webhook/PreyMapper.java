@@ -30,6 +30,7 @@ public class PreyMapper {
                     p.path("confidence").asDouble(0.0),
                     p.path("thesis").asText(""),
                     signals, risks,
+                    List.of(),
                     p.path("horizon").asText(defaultHorizon),
                     discoveredBy, now));
         }

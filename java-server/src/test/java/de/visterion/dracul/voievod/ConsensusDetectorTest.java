@@ -15,7 +15,7 @@ class ConsensusDetectorTest {
 
     private Prey prey(String symbol, String company, String discoveredBy, String discoveredAt, String horizon) {
         return new Prey("id-" + symbol + "-" + discoveredBy, symbol, company, "ANOM",
-                0.7, "thesis", List.of(), List.of(), horizon, discoveredBy, discoveredAt);
+                0.7, "thesis", List.of(), List.of(), List.of(), horizon, discoveredBy, discoveredAt);
     }
 
     @Test
