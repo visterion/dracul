@@ -42,6 +42,7 @@ Dracul uses two of Vistierie's Bee lifecycle models:
 | Strigoi (6 agents) | ScheduledBee | Cron nightly |
 | Voievod (synthesizer, Etappe 7) | ScheduledBee | Cron daily on weekdays (~08:00 UTC); reasoning tier. Note: a separate outcome-analysis learning loop (Etappe 8) is a later addition and will run on a different schedule. |
 | Daywalker | StreamingBee | Window-bounded session at market open; polls an event-source webhook every 5 min |
+| Executor (slice 1) | ScheduledBee | Cron (`dracul.executor.schedule`, blank by default = manual-only via `POST /api/executor/run`); reasoning tier |
 
 The `StreamingBee` pattern is a Vistierie extension introduced to support
 Dracul's Daywalker. If Vistierie does not yet expose this interface, it
@@ -61,6 +62,34 @@ verifier and registered with Vistierie as the tool + completion webhook token).
 When a ScheduledBee run finishes, Vistierie POSTs the validated agent
 output to a single Dracul completion webhook. Dracul writes the result
 into the appropriate table (`dracul.prey`, `dracul.patterns`).
+
+## Agent budgets and definition updates
+
+Two operational gotchas apply to any scheduled agent registered with
+Vistierie, including the Executor:
+
+- **A scheduled agent needs a Vistierie budget.** Without one, Vistierie's
+  `AgentService.patch` throws `BudgetException: agent budget missing` (HTTP
+  500) on **any** pause/unpause toggle, leaving the agent stuck at its
+  current pause state. Set one via the admin endpoint, mirroring voievod
+  ($1/day, $10/month):
+  ```
+  curl -s -X PATCH -H "Authorization: Bearer $VISTIERIE_ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"daily_cap_micros":1000000,"monthly_cap_micros":10000000}' \
+    http://localhost:8090/admin/tenants/dracul/agents/executor/budget
+  ```
+- **Prompt/schema/tool changes to an already-registered agent need a
+  definition reset.** `AgentDefinitionBootstrap` is insert-if-absent, so
+  once `executor`'s row exists in `agent_definition` a deploy that changes
+  `prompts/executor.md` or `schemas/executor-decision.json` does **not**
+  propagate automatically — `GenericAgentRegistrar.matches()` compares the
+  DB-stored (old) definition against Vistierie's (old) definition and finds
+  them equal, so it skips the update. Trigger
+  `POST /api/settings/agents/executor/definition/reset` to re-apply the code
+  default (fires `AgentDefinitionChangedEvent` → re-registration). Verify
+  with `GET /agents/executor` on Vistierie — `output_schema` /
+  `system_prompt` should reflect the change and `version` should bump.
 
 ## Cost and run history
 
