@@ -37,7 +37,8 @@ public class CloudflareAccessFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(CloudflareAccessFilter.class);
     static final List<String> EXCLUDED =
-            List.of("/api/strigoi-", "/api/voievod", "/api/gropar", "/api/daywalker", "/actuator/health");
+            List.of("/api/strigoi-", "/api/voievod", "/api/gropar", "/api/daywalker",
+                    "/api/executor/tools", "/api/executor/complete", "/actuator/health");
 
     private final boolean bypass;
     private final ConfigurableJWTProcessor<SecurityContext> jwtProcessor; // null in bypass

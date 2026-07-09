@@ -75,6 +75,17 @@ dracul:
     ma-slow: ${DRACUL_GROPAR_MA_SLOW:200}
     profit-target-pct: ${DRACUL_GROPAR_PROFIT_TARGET_PCT:40}
     stop-loss-pct: ${DRACUL_GROPAR_STOP_LOSS_PCT:15}
+  executor:
+    enabled: ${DRACUL_EXECUTOR_ENABLED:false}
+    connection: ${DRACUL_EXECUTOR_CONNECTION:saxo-sim}
+    agora-base-url: ${DRACUL_EXECUTOR_AGORA_BASE_URL:http://agora:8080}
+    agora-trading-token: ${DRACUL_EXECUTOR_AGORA_TRADING_TOKEN:}
+    webhook-token: ${DRACUL_EXECUTOR_WEBHOOK_TOKEN:}
+    schedule: ${DRACUL_EXECUTOR_SCHEDULE:}
+    min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.6}
+    max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
+    atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
+    swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
