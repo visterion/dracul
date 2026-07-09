@@ -261,11 +261,11 @@ Two new tables under the `dracul` schema hold runtime-editable agent definitions
 2. `GenericAgentRegistrar` reads all agent definitions from the DB, builds a `CreateAgentRequest` for each, prepends `dracul.public-url` to all webhook callback paths, appends the current language directive to the system prompt, and registers or updates the agent with Vistierie. It re-runs whenever an `AgentDefinitionChangedEvent` or `LanguageChangedEvent` is published (e.g. after a `PUT /api/settings/agents/{name}/definition` or `PUT /api/settings/language`), making definition changes effective immediately without a restart.
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
-Phase-2 multi-user readiness, **except** the three Executor tables below
-(V17), which are scoped to the single operator's paper book, not per-user.
+Phase-2 multi-user readiness, **except** the Executor tables below
+(V17 + V18), which are scoped to the single operator's book, not per-user.
 Schema changes require a Flyway migration and an update to this document.
 
-**Executor tables (V17):** three tables backing the guarded paper-trading
+**Executor tables (V17 + V18):** tables backing the guarded broker-execution
 agent (see `documentation/strigoi.md` for the agent's role). Like every
 other table documented in this section, they live in Postgres's default
 `public` schema — "`dracul` schema" throughout this document is an informal
@@ -274,22 +274,40 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | Table | Purpose |
 |---|---|
 | `executor_signal` | Injected advice awaiting evaluation (PK `signal_id`, caller-supplied or generated UUID); `status` transitions `PENDING` → `ACCEPTED` / `REJECTED` / `SKIPPED` |
-| `executor_position` | The paper position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status) |
-| `executor_decision` | Append-only audit trail — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK) |
+| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id` |
+| `executor_decision` | Append-only audit trail (slice 1) — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK) |
+| `decision_log` | Append-only audit trail (V18, slice 2) — one row per *any* executor decision point (entry, hard exit, stop-ratchet, soft exit): `run_id`, `rule_version`, `trigger_type`, `symbol`, `inputs_snapshot`/`veto_results`/`order_json` (JSONB), `action`, `reason_code`, `reasoning`, `confidence_in_decision`. Richer and broader in scope than `executor_decision`, which only covers the entry path |
+| `rule_versions` | (V18) One row per tagged rule-version (`dracul.executor.rule-version`, e.g. `exec-v0.2`): `valid_from`, `changes`, `prompt_hash`, `params` — makes prompt/threshold changes traceable against `decision_log.rule_version` |
+| `cooldown` | (V18) Symbols temporarily excluded from fresh entries after any exit (hard or soft): `symbol`, `reason`, `expires_at` (`dracul.executor.cooldown-days` out), `exception_condition` |
 
 **Doctrine note:** Dracul is deliberately, otherwise strictly, read-only —
 no order routing, no broker integration, no auto-trading (see `README.md`
-"Project values"). The Executor agent is the one intentional exception,
-and it is narrowly scoped: **guarded paper execution only**. It can only
-ever write to a paper connection (`saxo-sim`), enforced by two independent
-mechanisms — `OrderGuard`'s connection check and Agora's trading webhooks
-being reached with a non-live trading token, so the live connection
-(`saxo-live`) is physically unreachable regardless of any code or config
-mistake. Every entry the LLM requests is re-checked in code
-(`VetoService` + `OrderGuard`) before it reaches the broker — the LLM
-proposes, code disposes. This exception does not weaken the doctrine for
-any other agent: the six Strigoi, Voievod, gropar, and Daywalker remain
-strictly read-only.
+"Project values"). The Executor agent is the one intentional exception, and
+it is narrowly scoped and code-guarded. As of slice 2 it manages the full
+position lifecycle, not just entries:
+
+- **Entries:** every entry the LLM requests is re-checked in code
+  (`VetoService` + `OrderGuard`) before it reaches the broker — the LLM
+  proposes, code disposes. A rejection returns `placed:false` with a reason.
+- **Exits:** the exit lifecycle runs server-side, ahead of anything the LLM
+  does, every time `fetch-open-positions` is called — `ReconcileService`
+  (sync fills, retire closed positions, apply cooldown), `HardTriggerService`
+  (stop-breach / giveback — always enforced, never the LLM's call), and
+  `StopRatchetService` (ratchet the active stop up to the chandelier level).
+  The LLM's only exit responsibility is the soft judgment: deciding to call
+  `exit-position` once a `soft_trigger` (chandelier breach / MA break) has
+  been confirmed for `dracul.executor.soft-confirm-min` consecutive runs.
+  Unlike entries, exits carry no veto/order-guard gate — they are always
+  permitted.
+- **Venue-neutral by design:** the agent (prompt + tool set) has no
+  awareness of which connection (`dracul.executor.connection`) it trades on
+  and cannot distinguish paper from live — that choice, and the guardrails
+  around it (trading-token scoping, connection allowlisting), live entirely
+  in operator config, not in agent logic. The code guards above (veto,
+  order guard, hard exits) are always on regardless of connection.
+
+This exception does not weaken the doctrine for any other agent: the six
+Strigoi, Voievod, gropar, and Daywalker remain strictly read-only.
 
 ## Data Flow
 

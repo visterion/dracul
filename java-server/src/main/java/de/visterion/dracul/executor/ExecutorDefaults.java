@@ -36,7 +36,9 @@ class ExecutorDefaults {
                                 new ToolBinding("get_account", null, null, 1),
                                 new ToolBinding("list_positions", null, null, 2),
                                 new ToolBinding("place_entry", null, null, 3),
-                                new ToolBinding("submit_decision", null, null, 4)));
+                                new ToolBinding("submit_decision", null, null, 4),
+                                new ToolBinding("fetch_open_positions", null, null, 5),
+                                new ToolBinding("exit_position", null, null, 6)));
             }
 
             @Override
@@ -66,13 +68,25 @@ class ExecutorDefaults {
                   "required": ["signal_id", "symbol", "side", "qty", "stop_price"]
                 }
                 """);
+        var exitPositionInput = AgentResources.parseJson(mapper, """
+                {
+                  "type": "object",
+                  "properties": {
+                    "symbol": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "confidence": {"type": ["number", "null"]},
+                    "reasoning": {"type": "string"}
+                  },
+                  "required": ["symbol"]
+                }
+                """);
 
         return List.of(
                 new ToolCatalogEntry("fetch_pending_signals",
                         "Return executor signals awaiting a decision.",
                         empty, "/api/executor/tools/fetch-pending-signals", 30),
                 new ToolCatalogEntry("get_account",
-                        "Return paper-broker account snapshot.",
+                        "Return broker account snapshot.",
                         connectionInput, "/api/executor/tools/get-account", 30),
                 new ToolCatalogEntry("list_positions",
                         "Return current broker positions.",
@@ -82,6 +96,12 @@ class ExecutorDefaults {
                         placeEntryInput, "/api/executor/tools/place-entry", 60),
                 new ToolCatalogEntry("submit_decision",
                         "Record the executor's ENTER/SKIP decisions for processed signals.",
-                        empty, "/api/executor/tools/submit-decision", 30));
+                        empty, "/api/executor/tools/submit-decision", 30),
+                new ToolCatalogEntry("fetch_open_positions",
+                        "Return open positions enriched with price/ATR/chandelier/R/MFE and soft-trigger state (runs reconciliation, hard exits, and stop-ratchet server-side first).",
+                        empty, "/api/executor/tools/fetch-open-positions", 30),
+                new ToolCatalogEntry("exit_position",
+                        "Fully close an open position (soft-trigger exit). Always permitted.",
+                        exitPositionInput, "/api/executor/tools/exit-position", 60));
     }
 }

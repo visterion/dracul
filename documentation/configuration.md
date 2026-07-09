@@ -323,37 +323,48 @@ propagating it via `definition/reset`), not setting an env var.
 
 Gropar reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
-## Executor (guarded paper-trading agent, slice 1)
+## Executor (guarded broker-execution agent, slices 1+2)
 
 Disabled by default (`enabled=false`) — existing deploys are unaffected until
 an operator opts in. The executor consumes signals (from Strigoi/gropar or a
 human) as **advice only**; code — not the LLM — enforces every veto and the
-final order guard before any broker call. See `documentation/strigoi.md` for
-the agent's role and `documentation/architecture.md` for the doctrine note on
-why this is the one exception to Dracul's read-only design.
+final order guard before any broker call, and (slice 2) owns the full exit
+lifecycle (reconcile, hard exits, stop-ratchet) with the LLM only making the
+soft-exit judgment call. The agent itself is **venue-agnostic**: whether
+`dracul.executor.connection` points at a paper or live connection is an
+operator/config decision the LLM has no visibility into. See
+`documentation/strigoi.md` for the agent's role and `documentation/
+architecture.md` for the doctrine note on why this is the one exception to
+Dracul's read-only design.
 
 | Env var | Property | Default | Purpose |
 |---|---|---|---|
 | `DRACUL_EXECUTOR_ENABLED` | `dracul.executor.enabled` | `false` | Register the agent + activate the operator and tool-webhook controllers (`@ConditionalOnProperty`). |
-| `DRACUL_EXECUTOR_CONNECTION` | `dracul.executor.connection` | `saxo-sim` | The Agora trading connection the executor is allowed to trade on. **Must be a paper connection** — `OrderGuard` rejects (`NON_SIM_CONNECTION`) anything else, and only a paper connection should ever be configured here. |
+| `DRACUL_EXECUTOR_CONNECTION` | `dracul.executor.connection` | `saxo-sim` | The Agora trading connection the executor trades on. Paper vs live is entirely an operator/config choice — the LLM prompt does not name or distinguish connections. |
 | `DRACUL_EXECUTOR_AGORA_BASE_URL` | `dracul.executor.agora-base-url` | `http://agora:8080` | Base URL of Agora's webhook trading tools (`AgoraTrading`), separate from the read-only research `AgoraClient`. |
-| `DRACUL_EXECUTOR_AGORA_TRADING_TOKEN` | `dracul.executor.agora-trading-token` | _(blank)_ | Bearer token sent to Agora's trading webhooks. **Must be a NON-LIVE trading token** — this is what makes `saxo-live` physically unreachable, independent of the `connection` value above. Set in production. |
-| `DRACUL_EXECUTOR_WEBHOOK_TOKEN` | `dracul.executor.webhook-token` | _(blank)_ | Bearer token shared with Vistierie for the 5 tool webhooks + completion webhook. **Required when the executor is enabled; set in production.** Unlike the other agents' webhook tokens, this one gates a broker-**write** path (`place-entry`), so it deliberately defaults to blank (fail-loud when unset) rather than a guessable checked-in default, mirroring gropar's precedent. |
+| `DRACUL_EXECUTOR_AGORA_TRADING_TOKEN` | `dracul.executor.agora-trading-token` | _(blank)_ | Bearer token sent to Agora's trading webhooks, scoped to whichever connection(s) it is authorized for. Set in production. |
+| `DRACUL_EXECUTOR_WEBHOOK_TOKEN` | `dracul.executor.webhook-token` | _(blank)_ | Bearer token shared with Vistierie for the 7 tool webhooks + completion webhook. **Required when the executor is enabled; set in production.** Unlike the other agents' webhook tokens, this one gates broker-**write** paths (`place-entry`, `exit-position`), so it deliberately defaults to blank (fail-loud when unset) rather than a guessable checked-in default, mirroring gropar's precedent. |
 | `DRACUL_EXECUTOR_SCHEDULE` | `dracul.executor.schedule` | _(blank)_ | Spring cron (sec min hour dom month dow) for a scheduled executor run. Blank = manual-only (trigger via `POST /api/executor/run`). |
 | `DRACUL_EXECUTOR_MIN_CONFIDENCE` | `dracul.executor.min-confidence` | `0.6` | `VetoService` rejects (`LOW_CONFIDENCE`) any signal whose `confidence` is below this threshold. |
 | `DRACUL_EXECUTOR_MAX_POSITIONS` | `dracul.executor.max-positions` | `5` | `VetoService` rejects (`MAX_POSITIONS`) a new entry once `executor_position` has this many `OPEN` rows. |
-| `DRACUL_EXECUTOR_ATR_PERIOD` | `dracul.executor.atr-period` | `22` | ATR look-back period (trading days) for `ExecutorIndicators`. Not yet consumed in slice 1's `place-entry` path — wired for a later slice's stop/tranche sizing. |
-| `DRACUL_EXECUTOR_SWING_PERIOD` | `dracul.executor.swing-period` | `20` | Swing-low look-back period (trading days) for `ExecutorIndicators`. Same status as `atr-period`. |
+| `DRACUL_EXECUTOR_ATR_PERIOD` | `dracul.executor.atr-period` | `22` | ATR look-back period (trading days) for `ExecutorIndicators`, used for entry-stop guidance and (slice 2) as the basis of the chandelier offset (`chandelier-mult` × ATR). |
+| `DRACUL_EXECUTOR_SWING_PERIOD` | `dracul.executor.swing-period` | `20` | Swing-low look-back period (trading days) for `ExecutorIndicators`, used for entry-stop guidance. |
+| `DRACUL_EXECUTOR_RULE_VERSION` | `dracul.executor.rule-version` | `exec-v0.2` | The active rule-version tag (`RuleVersionProvider`) stamped onto every `decision_log` row, so a later change in prompt/thresholds is traceable in the audit trail. |
+| `DRACUL_EXECUTOR_CHANDELIER_MULT` | `dracul.executor.chandelier-mult` | `3.0` | ATR multiple used by `StopRatchetService`/`MaintenancePipeline` to compute the chandelier stop level (highest price reached minus `chandelier-mult` × ATR for longs, mirrored for shorts). The active stop only ever ratchets up (in the position's favor), never down. |
+| `DRACUL_EXECUTOR_GIVEBACK_PCT` | `dracul.executor.giveback-pct` | `0.35` | Fraction of peak favorable excursion (MFE, in R) `HardTriggerService` allows to be given back before force-closing the position — a hard exit, not the LLM's call. |
+| `DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R` | `dracul.executor.giveback-active-from-r` | `1.5` | Giveback protection only arms once a position's MFE has reached this many R; below it, only the hard stop-breach exit applies. |
+| `DRACUL_EXECUTOR_SOFT_CONFIRM_MIN` | `dracul.executor.soft-confirm-min` | `2` | Minimum consecutive-run `soft_trigger.confirm_count` (from `fetch-open-positions`) before the LLM is expected to act on a soft trigger (`chandelier_breach`/`ma_break`) via `exit-position`. |
+| `DRACUL_EXECUTOR_COOLDOWN_DAYS` | `dracul.executor.cooldown-days` | `10` | Days a symbol is kept in `cooldown` ("fresh setup only") after any exit (hard or soft), preventing an immediate re-entry on the same setup. |
 
 **Safety notes:**
-- Broker writes are paper-only by construction: `OrderGuard` requires the
-  request's connection to equal `dracul.executor.connection` (`NON_SIM_CONNECTION`
-  otherwise), and Agora's trading webhooks are reached with the non-live
-  `agora-trading-token`, so `saxo-live` cannot be hit through this path at all.
-- `place-entry` is the only write path to the broker; every other tool
-  (`fetch-pending-signals`, `get-account`, `list-positions`, `submit-decision`)
-  is read-only or advisory. The LLM cannot place an order directly — it can
-  only request one, and `VetoService` + `OrderGuard` decide.
+- `place-entry` and `exit-position` are the only write paths to the broker;
+  every other tool (`fetch-pending-signals`, `fetch-open-positions`,
+  `get-account`, `list-positions`, `submit-decision`) is read-only or
+  advisory. The LLM cannot place an order or close a position directly —
+  it can only request one, and code (`VetoService` + `OrderGuard` for
+  entries; always-permitted for exits) decides.
+- `exit-position` has no veto/order-guard gate by design — closing a
+  position is never something the code needs to protect against.
 - Like gropar, a scheduled executor agent needs a Vistierie budget set via the
   admin `PATCH .../agents/executor/budget` endpoint (mirroring voievod) or
   every pause/unpause toggle will 500 with `BudgetException`. See
