@@ -314,6 +314,58 @@ class ExecutorWebhookControllerTest {
     }
 
     // -------------------------------------------------------------------
+    // place-entry: Vistierie envelope ({"run_id","tool_name","input":{...}})
+    // -------------------------------------------------------------------
+
+    @Test
+    void placeEntry_vistierieEnvelope_placesIdenticallyToTopLevel() {
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("230")));
+        when(positionRepo.countOpen()).thenReturn(0);
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-9", "stop-9", null, "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(42L);
+
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"s1","symbol":"MRVL","side":"BUY","qty":4,"stop_price":229.5}}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-9");
+        assertThat(output.get("position_id")).isEqualTo(42L);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        assertThat(req.side()).isEqualTo("BUY");
+        assertThat(req.qty()).isEqualByComparingTo("4");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("229.5");
+        assertThat(req.clientRef()).isEqualTo("s1");
+
+        verify(signalRepo).markStatus("s1", "ACCEPTED");
+    }
+
+    @Test
+    void placeEntry_vistierieEnvelope_unknownSignalStillRejects() {
+        when(signalRepo.findById("ghost")).thenReturn(null);
+
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"ghost","symbol":"ZZZ","side":"BUY","qty":10,"stop_price":95}}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    // -------------------------------------------------------------------
     // fetch-pending-signals
     // -------------------------------------------------------------------
 
@@ -417,6 +469,26 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void submitDecision_vistierieEnvelope_recordsSkips() {
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"submit_decision",
+                 "input":{"decisions":[
+                    {"signal_id":"sig-1","symbol":"ACME","action":"SKIP","rationale":"thin"},
+                    {"signal_id":"sig-2","symbol":"BBB","action":"ENTER","rationale":"x"}
+                 ]}}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(1);
+
+        verify(decisionRepo, times(1)).insert(any());
+        verify(signalRepo).markStatus("sig-1", "SKIPPED");
+        verify(signalRepo, never()).markStatus(eq("sig-2"), any());
+    }
+
+    @Test
     void submitDecision_nullBody_recordsZero() {
         ResponseEntity<?> resp = controller.submitDecision(BEARER, null, null);
 
@@ -506,6 +578,33 @@ class ExecutorWebhookControllerTest {
         assertThat(log.triggerType()).isEqualTo("SOFT_TRIGGER");
         assertThat(log.action()).isEqualTo("EXIT_FULL");
         assertThat(log.confidenceInDecision()).isEqualTo(0.7);
+    }
+
+    @Test
+    void exitPosition_vistierieEnvelope_fullExit() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"exit_position",
+                 "input":{"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(true);
+        assertThat(output.get("exit_reason")).isEqualTo("SOFT_CHANDELIER");
+
+        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("EXIT_FULL");
+        assertThat(logCaptor.getValue().confidenceInDecision()).isEqualTo(0.7);
     }
 
     @Test
