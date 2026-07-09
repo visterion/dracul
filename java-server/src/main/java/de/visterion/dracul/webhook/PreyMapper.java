@@ -23,6 +23,8 @@ public class PreyMapper {
             for (var s : p.path("signals")) signals.add(s.asText(""));
             var risks = new ArrayList<String>();
             for (var r : p.path("risks")) risks.add(r.asText(""));
+            var killCriteria = new ArrayList<String>();
+            for (var k : p.path("kill_criteria")) killCriteria.add(k.asText(""));
             out.add(new Prey(
                     UUID.randomUUID().toString(), symbol,
                     p.path("companyName").asText(""),
@@ -30,7 +32,7 @@ public class PreyMapper {
                     p.path("confidence").asDouble(0.0),
                     p.path("thesis").asText(""),
                     signals, risks,
-                    List.of(),
+                    killCriteria,
                     p.path("horizon").asText(defaultHorizon),
                     discoveredBy, now));
         }

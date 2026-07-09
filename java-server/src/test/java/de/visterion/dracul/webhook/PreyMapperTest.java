@@ -36,4 +36,26 @@ class PreyMapperTest {
             """).path("prey");
         assertThat(new PreyMapper().map(node, "strigoi-merger", "MERGER_ARB", "3m", true)).isEmpty();
     }
+
+    @Test
+    void mapsKillCriteria() throws Exception {
+        var node = json.readTree("""
+            {"prey":[{"symbol":"ACME","companyName":"Acme","confidence":0.8,
+                      "thesis":"t","kill_criteria":["Close below 42.50","Deal breaks"]}]}
+            """).path("prey");
+        List<Prey> prey = new PreyMapper().map(node, "strigoi-merger", "MERGER_ARB", "3m", false);
+
+        assertThat(prey).singleElement().satisfies(p ->
+                assertThat(p.killCriteria()).containsExactly("Close below 42.50", "Deal breaks"));
+    }
+
+    @Test
+    void missingKillCriteriaDefaultsToEmpty() throws Exception {
+        var node = json.readTree("""
+            {"prey":[{"symbol":"ACME","companyName":"Acme","confidence":0.8,"thesis":"t"}]}
+            """).path("prey");
+        assertThat(new PreyMapper().map(node, "strigoi-echo", "PEAD", "3m", false))
+                .singleElement()
+                .satisfies(p -> assertThat(p.killCriteria()).isEmpty());
+    }
 }
