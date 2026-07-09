@@ -12,6 +12,10 @@ class VetoServiceTest {
     private final VetoService vetoService = new VetoService();
 
     private ExecutorSignal signal(String symbol, Double confidence) {
+        return signal(symbol, confidence, List.of("Close below 90.00"));
+    }
+
+    private ExecutorSignal signal(String symbol, Double confidence, List<String> killCriteria) {
         return new ExecutorSignal(
                 "sig-1",
                 "strigoi-test",
@@ -20,7 +24,7 @@ class VetoServiceTest {
                 "LONG",
                 confidence,
                 "mechanism",
-                List.of(),
+                killCriteria,
                 "horizon",
                 BigDecimal.TEN,
                 "PENDING",
@@ -96,5 +100,21 @@ class VetoServiceTest {
                 .findFirst().orElseThrow();
 
         assertThat(confidenceResult.passed()).isTrue();
+    }
+
+    @Test
+    void rejectsSchemaInvalid_emptyKillCriteria() {
+        VetoService.Outcome outcome = vetoService.evaluate(signal("ACME", 0.9, List.of()), 0, 0.6, 5);
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SCHEMA_INVALID);
+    }
+
+    @Test
+    void rejectsSchemaInvalid_nullKillCriteria() {
+        VetoService.Outcome outcome = vetoService.evaluate(signal("ACME", 0.9, null), 0, 0.6, 5);
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SCHEMA_INVALID);
     }
 }
