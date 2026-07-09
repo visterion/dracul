@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *  tests drive it single-threaded. */
 public class FakeExecutionGateway implements ExecutionGateway {
 
-    public record ModifyCall(String orderId, BigDecimal stop, BigDecimal target) {
+    public record ModifyCall(String orderId, String symbol, BigDecimal stop, BigDecimal target) {
     }
 
     private final Map<String, BrokerPosition> positionsBySymbol = new LinkedHashMap<>();
@@ -109,9 +109,9 @@ public class FakeExecutionGateway implements ExecutionGateway {
     }
 
     @Override
-    public ModifyResult modifyBracket(String connection, String orderId, BigDecimal stop, BigDecimal target) {
+    public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target) {
         checkAvailable();
-        modifyCalls.add(new ModifyCall(orderId, stop, target));
+        modifyCalls.add(new ModifyCall(orderId, symbol, stop, target));
         return new ModifyResult(orderId, stop, target, true);
     }
 }

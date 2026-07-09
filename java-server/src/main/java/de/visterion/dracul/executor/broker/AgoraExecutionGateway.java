@@ -97,16 +97,18 @@ public class AgoraExecutionGateway implements ExecutionGateway {
 
         JsonNode order = out.path("order");
         if (order.isMissingNode() || order.isNull()) order = out;
-        if (order.path("orderId").isMissingNode() && order.path("order_id").isMissingNode()) {
+        if (order.path("brokerOrderId").isMissingNode() && order.path("broker_order_id").isMissingNode()) {
             return Optional.empty();
         }
         return Optional.of(toBrokerOrder(order));
     }
 
-    // TODO(track-A contract): confirm wire field names against agora documentation/exit-tools.md
+    /** Wire field names per {@code agora/documentation/exit-tools.md}'s get_orders/get_order_by_ref
+     *  contract: {@code brokerOrderId, clientRef, symbol, side, qty, type, status, role, filledQty,
+     *  avgFillPrice, parentId}. */
     private BrokerOrder toBrokerOrder(JsonNode o) {
         return new BrokerOrder(
-                textOrNull(o, "orderId", "order_id"),
+                textOrNull(o, "brokerOrderId", "broker_order_id"),
                 textOrNull(o, "clientRef", "client_ref"),
                 textOrNull(o, "symbol"),
                 toRole(textOrNull(o, "role")),
@@ -117,16 +119,19 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                 textOrNull(o, "parentId", "parent_id"));
     }
 
+    /** {@code role} is documented as always present, lowercase: entry|stop_loss|take_profit|other. */
     private OrderRole toRole(String role) {
         if (role == null) return OrderRole.OTHER;
         return switch (role.toLowerCase()) {
             case "entry" -> OrderRole.ENTRY;
-            case "stop_loss", "stoploss" -> OrderRole.STOP_LOSS;
-            case "take_profit", "takeprofit" -> OrderRole.TAKE_PROFIT;
+            case "stop_loss" -> OrderRole.STOP_LOSS;
+            case "take_profit" -> OrderRole.TAKE_PROFIT;
             default -> OrderRole.OTHER;
         };
     }
 
+    /** Anything not explicitly terminal/working-named (new/accepted/pending_new/held/working/open/…)
+     *  maps to WORKING — brokers vary in their exact working-state vocabulary. */
     private OrderStatus toStatus(String status) {
         if (status == null) return OrderStatus.WORKING;
         return switch (status.toLowerCase()) {
@@ -153,7 +158,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
 
         JsonNode out = unwrap(call("place_bracket", args));
         return new PlacedBracket(
-                textOrNull(out, "bracketId", "bracket_id"),
+                textOrNull(out, "orderId", "order_id"),
                 textOrNull(out, "stopLegId", "stop_leg_id"),
                 textOrNull(out, "takeProfitLegId", "take_profit_leg_id"),
                 textOrNull(out, "clientRef", "client_ref"),
@@ -172,14 +177,15 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                 decimalField(out, "closedQty", "closed_qty"),
                 decimalField(out, "remainingQty", "remaining_qty"),
                 decimalField(out, "avgFillPrice", "avg_fill_price"),
-                textOrNull(out, "orderRef", "order_ref"));
+                textOrNull(out, "orderId", "order_id"));
     }
 
     @Override
-    public ModifyResult modifyBracket(String connection, String orderId, BigDecimal stop, BigDecimal target) {
+    public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
         args.put("orderId", orderId);
+        args.put("symbol", symbol);
         if (stop != null) args.put("stop", stop);
         if (target != null) args.put("target", target);
 

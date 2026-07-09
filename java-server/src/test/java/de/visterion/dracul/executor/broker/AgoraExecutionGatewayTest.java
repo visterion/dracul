@@ -69,9 +69,9 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
                 {"output":{"orders":[
-                    {"orderId":"ord-1","clientRef":"ref-1","symbol":"ACME","role":"stop_loss",
-                     "status":"partially_filled","qty":"10","filledQty":"4","avgFillPrice":"95",
-                     "parentId":"brk-1"}
+                    {"brokerOrderId":"ord-1","clientRef":"ref-1","symbol":"ACME","side":"sell",
+                     "role":"stop_loss","status":"partially_filled","qty":"10","filledQty":"4",
+                     "avgFillPrice":"95","parentId":"brk-1"}
                 ]}}
                 """);
 
@@ -88,10 +88,34 @@ class AgoraExecutionGatewayTest {
         assertThat(order.parentId()).isEqualTo("brk-1");
     }
 
+    @Test void ordersMapsAllRolesAndStatuses() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"ord-entry","clientRef":"r","symbol":"ACME","role":"entry",
+                     "status":"filled","qty":"10","filledQty":"10","avgFillPrice":"100","parentId":null},
+                    {"brokerOrderId":"ord-tp","clientRef":"r","symbol":"ACME","role":"take_profit",
+                     "status":"new","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":"ord-entry"},
+                    {"brokerOrderId":"ord-other","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"cancelled","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":null}
+                ]}}
+                """);
+
+        List<BrokerOrder> result = gw.orders("saxo-sim");
+
+        assertThat(result).hasSize(3);
+        assertThat(result.get(0).role()).isEqualTo(OrderRole.ENTRY);
+        assertThat(result.get(0).status()).isEqualTo(OrderStatus.FILLED);
+        assertThat(result.get(1).role()).isEqualTo(OrderRole.TAKE_PROFIT);
+        assertThat(result.get(1).status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(result.get(2).role()).isEqualTo(OrderRole.OTHER);
+        assertThat(result.get(2).status()).isEqualTo(OrderStatus.CANCELLED);
+    }
+
     @Test void orderByRefFound() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
-                {"output":{"order":{"orderId":"ord-1","clientRef":"ref-1","symbol":"ACME",
+                {"output":{"order":{"brokerOrderId":"ord-1","clientRef":"ref-1","symbol":"ACME",
                     "role":"entry","status":"working","qty":"10","filledQty":"0"}}}
                 """);
 
@@ -116,7 +140,7 @@ class AgoraExecutionGatewayTest {
     @Test void placeBracketBuildsArgsAndMapsIds() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
-                {"output":{"bracketId":"brk-1","stopLegId":"stop-1","takeProfitLegId":"tp-1",
+                {"output":{"orderId":"brk-1","stopLegId":"stop-1","takeProfitLegId":"tp-1",
                     "clientRef":"sig-1","status":"working"}}
                 """);
 
@@ -144,7 +168,7 @@ class AgoraExecutionGatewayTest {
     @Test void placeBracketOmitsOptionalArgs() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
-                {"output":{"bracketId":"brk-1","stopLegId":"stop-1","takeProfitLegId":"tp-1",
+                {"output":{"orderId":"brk-1","stopLegId":"stop-1","takeProfitLegId":"tp-1",
                     "status":"working"}}
                 """);
 
@@ -161,7 +185,7 @@ class AgoraExecutionGatewayTest {
     @Test void flattenSendsFractionAndMapsResult() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
-                {"output":{"closedQty":"5","remainingQty":"5","avgFillPrice":"108","orderRef":"close-1"}}
+                {"output":{"closedQty":"5","remainingQty":"5","avgFillPrice":"108","orderId":"close-1"}}
                 """);
 
         CloseResult result = gw.flatten("saxo-sim", "ACME", new BigDecimal("0.5"));
@@ -175,19 +199,20 @@ class AgoraExecutionGatewayTest {
         assertThat(result.orderRef()).isEqualTo("close-1");
     }
 
-    @Test void modifyBracketSendsOrderIdStopTargetAndMapsResult() {
+    @Test void modifyBracketSendsOrderIdSymbolStopTargetAndMapsResult() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
-                {"output":{"orderId":"stop-1","newStop":"104","newTarget":"120","accepted":true}}
+                {"output":{"orderId":"brk-1","newStop":"104","newTarget":"120","accepted":true}}
                 """);
 
-        ModifyResult result = gw.modifyBracket("saxo-sim", "stop-1", new BigDecimal("104"), new BigDecimal("120"));
+        ModifyResult result = gw.modifyBracket("saxo-sim", "brk-1", "ACME", new BigDecimal("104"), new BigDecimal("120"));
 
         assertThat(gw.capturedTool).isEqualTo("modify_bracket");
-        assertThat(gw.capturedArgs.path("orderId").asString()).isEqualTo("stop-1");
+        assertThat(gw.capturedArgs.path("orderId").asString()).isEqualTo("brk-1");
+        assertThat(gw.capturedArgs.path("symbol").asString()).isEqualTo("ACME");
         assertThat(gw.capturedArgs.path("stop").asString()).isEqualTo("104");
         assertThat(gw.capturedArgs.path("target").asString()).isEqualTo("120");
-        assertThat(result.orderId()).isEqualTo("stop-1");
+        assertThat(result.orderId()).isEqualTo("brk-1");
         assertThat(result.newStop()).isEqualByComparingTo("104");
         assertThat(result.newTarget()).isEqualByComparingTo("120");
         assertThat(result.accepted()).isTrue();
