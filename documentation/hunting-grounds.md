@@ -216,3 +216,31 @@ not emit `data_source_health`.
   `healthy`-with-fewer-candidates, Wikipedia empty-result-always-means-failure)
   no longer apply; Agora's internal fallback/retry behavior is opaque to
   Dracul and out of scope for this doc.
+
+## Prey → ExecutorSignal flow
+
+When a hunter's `/complete` webhook persists its findings (`preyRepo.insertAll`),
+the same request also feeds the guarded executor — but only when it is enabled
+(`dracul.executor.enabled=true`). `PreySignalEmitter` maps each persisted `Prey`
+to a pending `ExecutorSignal` via the deterministic `PreySignalMapper`:
+
+| ExecutorSignal field | Source |
+|---|---|
+| `signalId` | freshly generated UUID (same as the operator inject seam) |
+| `source` | `prey.discoveredBy()` (the hunter name) |
+| `symbol` | `prey.symbol()` |
+| `direction` | constant `BUY` — all six anomalies are long-biased (per-type nuance is a deferred fast-follow) |
+| `confidence` | `prey.confidence()` |
+| `mechanism` | `prey.anomalyType()` |
+| `horizon` | `prey.horizon()` |
+| `killCriteria` | empty (derived downstream) |
+| `agentVersion` / `referencePrice` | `null` |
+| `status` | `PENDING` |
+| `createdAt` | `null` (DB defaults to `now()`) |
+
+The emitter **skips** any prey whose symbol is already an open position
+(`executor_position`) or already sits in a pending signal (`executor_signal`),
+and dedupes repeated symbols within a single batch — the executor is never
+handed duplicate work. When the executor is disabled, no emitter bean is wired
+and hunts complete exactly as before (the hook is an optional
+`ObjectProvider<PreySignalEmitter>` that no-ops when absent).
