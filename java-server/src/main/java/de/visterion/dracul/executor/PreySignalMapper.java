@@ -4,7 +4,6 @@ import de.visterion.dracul.prey.Prey;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -32,7 +31,7 @@ public class PreySignalMapper {
                 "BUY",
                 p.confidence(),
                 p.anomalyType(),
-                List.of(),                     // killCriteria — derived downstream, empty here
+                p.killCriteria(),
                 p.horizon(),
                 null,                          // referencePrice — resolved at execution time
                 "PENDING",                     // matches the inject seam's literal status

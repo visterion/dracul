@@ -45,8 +45,9 @@ class PreySignalMapperTest {
     }
 
     @Test
-    void killCriteriaIsEmpty() {
-        assertThat(mapper.map(samplePrey()).killCriteria()).isEmpty();
+    void killCriteriaPassesThrough() {
+        assertThat(mapper.map(samplePrey()).killCriteria())
+                .containsExactly("Close below 90.00");
     }
 
     @Test
