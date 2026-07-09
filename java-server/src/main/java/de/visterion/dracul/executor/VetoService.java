@@ -25,7 +25,10 @@ public class VetoService {
         boolean schemaOk = signal != null
                 && signal.symbol() != null && !signal.symbol().isBlank()
                 && signal.direction() != null && !signal.direction().isBlank()
-                && signal.confidence() != null;
+                && signal.confidence() != null
+                // Executor-spec veto #1: a signal without kill criteria is not tradeable.
+                // Presence is a code guarantee; falsifiability stays the LLM's judgment.
+                && signal.killCriteria() != null && !signal.killCriteria().isEmpty();
         results.add(new VetoResult("SCHEMA_INVALID", schemaOk));
         if (!schemaOk) firstFailure = RejectReason.SCHEMA_INVALID;
 
