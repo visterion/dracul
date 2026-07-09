@@ -531,6 +531,7 @@ export default {
     thesisTitle: 'Die These',
     signals: 'Signale',
     risks: 'Risiken',
+    killCriteria: 'Kill-Kriterien',
     confidenceTitle: 'Konfidenz',
     facts: {
       anomaly: 'Anomalie',

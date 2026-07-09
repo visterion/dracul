@@ -56,6 +56,12 @@
                 <li v-for="(r, i) in prey.risks" :key="i">{{ r }}</li>
               </ul>
             </div>
+            <div class="sr-col">
+              <div class="sr-head">{{ t('prey.killCriteria') }}</div>
+              <ul class="sr-list sr-list--kill">
+                <li v-for="(k, i) in prey.killCriteria" :key="i">{{ k }}</li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
@@ -237,7 +243,7 @@ async function onAddToWatchlist() {
 /* ── Signals / Risks two-col grid ── */
 .sr-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--space-6);
 }
 
@@ -275,6 +281,8 @@ async function onAddToWatchlist() {
 .sr-list--signals li::before { color: var(--cathedral-gold); }
 .sr-list--risks li { color: var(--bone-ivory-dim); }
 .sr-list--risks li::before { color: var(--ash-gray); }
+.sr-list--kill li { color: var(--bone-ivory-dim); }
+.sr-list--kill li::before { color: var(--signal-danger); }
 
 /* ── Right column: confidence spacing ── */
 .pd-conf { margin-bottom: var(--space-5); }
