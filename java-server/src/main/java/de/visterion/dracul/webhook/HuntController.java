@@ -1,9 +1,12 @@
 package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.executor.PreySignalEmitter;
 import de.visterion.dracul.prey.PreyRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,6 +26,11 @@ public abstract class HuntController {
     private final PreyRepository preyRepo;
     private final PreyMapper preyMapper = new PreyMapper();
     private final ToolFetchCache cache;
+
+    /** Optional: only present when the executor is enabled. Field-injected so
+     *  subclass constructors stay unchanged. When absent, hunts still complete. */
+    @Autowired
+    private ObjectProvider<PreySignalEmitter> signalEmitter;
 
     protected HuntController(String token, PreyRepository preyRepo, ToolFetchCache cache) {
         this.verifier = new BearerTokenVerifier(token);
@@ -107,6 +115,9 @@ public abstract class HuntController {
         }
         preyRepo.insertAll(prey);
         log.info("{} run {} persisted {} prey", agentName(), runId, prey.size());
+        // Feed the executor when it is enabled; a disabled executor wires no bean
+        // and the hunt still completes normally.
+        signalEmitter.ifAvailable(e -> e.emit(prey));
         return ResponseEntity.noContent().build();
     }
 }
