@@ -80,7 +80,12 @@ Every Strigoi follows the same three-step shape:
 2. **LLM evaluation** via Vistierie — a Sonnet-tier (`reasoning`) or
    Haiku-tier (`routine`) call. The prompt includes any `ACTIVE` patterns
    from the Pattern Library that apply to this Strigoi. Returns structured
-   `Prey` JSON.
+   `Prey` JSON, including:
+   - `kill_criteria` (1–5 strings, required): falsifiable exit conditions — a measurable
+     threshold, a concrete date, or a single unambiguous public event under which the
+     thesis is dead. They flow through the Prey→ExecutorSignal adapter; the executor
+     hard-rejects (`SCHEMA_INVALID`) any entry signal without them. Vague concerns belong
+     in `risks`.
 
 3. **Persist** — the parsed `Prey` records are written to `dracul.prey`.
    Vistierie handles cost accounting and run history; Dracul handles

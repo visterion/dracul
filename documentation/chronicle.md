@@ -32,7 +32,7 @@ Both documents are required reading before implementing any view.
 | 1 | Chronicle | `/` | Morning dashboard — new prey, verdicts, alerts, lessons | Medium | ✅ Etappe 9 |
 | 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) | ✅ Etappe 10 |
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
-| 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, thesis, outcome | Medium | ✅ Chronicle redesign |
+| 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, kill criteria, thesis, outcome | Medium | ✅ Chronicle redesign |
 | 5 | Watchlist | `/watchlist` | Tracking-only monitoring of watched candidates (positions live in Portfolio) | Medium | ✅ Etappe 11 |
 | 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
