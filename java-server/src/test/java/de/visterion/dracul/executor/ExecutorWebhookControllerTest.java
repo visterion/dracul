@@ -270,7 +270,8 @@ class ExecutorWebhookControllerTest {
         assertThat(req.qty()).isEqualByComparingTo("10");
         assertThat(req.stopLossStop()).isEqualByComparingTo("95");
         assertThat(req.limitPrice()).isNull();
-        assertThat(req.takeProfitLimit()).isNull();
+        // take-profit is now guaranteed: reference=100, stop=95 → R=5 → 100 + 3*5 = 115
+        assertThat(req.takeProfitLimit()).isEqualByComparingTo("115");
         assertThat(req.clientRef()).isEqualTo("sig-1");
 
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
@@ -311,6 +312,75 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo).insert(decCaptor.capture());
         assertThat(decCaptor.getValue().accepted()).isFalse();
         assertThat(decCaptor.getValue().rejectReason()).isEqualTo("BROKER_ERROR");
+    }
+
+    // -------------------------------------------------------------------
+    // place-entry: guaranteed take-profit leg (Agora requires one)
+    // -------------------------------------------------------------------
+
+    @Test
+    void placeEntry_noTakeProfit_synthesizesWide3RTarget_buy() {
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
+        when(positionRepo.countOpen()).thenReturn(0);
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        // BUY, reference=100, stop=95 → R=5 → target = 100 + 3*5 = 115, no take_profit supplied
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}}
+                """);
+
+        controller.placeEntry(BEARER, "r1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isNotNull();
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("115");
+    }
+
+    @Test
+    void placeEntry_noTakeProfit_synthesizesWide3RTarget_sell() {
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
+        when(positionRepo.countOpen()).thenReturn(0);
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        // SELL, reference=100, stop=105 → R=5 → target = 100 - 3*5 = 85 (below entry)
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"SELL","qty":10,"stop_price":105}}
+                """);
+
+        controller.placeEntry(BEARER, "r1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isNotNull();
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("85");
+    }
+
+    @Test
+    void placeEntry_explicitTakeProfit_usedUnchanged() {
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
+        when(positionRepo.countOpen()).thenReturn(0);
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        // LLM supplies take_profit=108 → must be used as-is, not overwritten by the 3R default (115)
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95,"take_profit":108}}
+                """);
+
+        controller.placeEntry(BEARER, "r1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("108");
     }
 
     // -------------------------------------------------------------------
