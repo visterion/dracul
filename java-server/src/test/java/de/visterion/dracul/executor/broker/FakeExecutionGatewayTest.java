@@ -59,7 +59,7 @@ class FakeExecutionGatewayTest {
 
     @Test
     void modifyRecorded() {
-        ModifyResult result = gateway.modifyBracket("c", "stop-1", new BigDecimal("104"), null);
+        ModifyResult result = gateway.modifyBracket("c", "stop-1", "ACME", new BigDecimal("104"), null);
 
         assertThat(result.accepted()).isTrue();
         assertThat(result.newStop()).isEqualByComparingTo("104");

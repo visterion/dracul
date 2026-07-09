@@ -55,6 +55,7 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).hasSize(1);
         FakeExecutionGateway.ModifyCall call = gateway.modifyCalls.get(0);
         assertThat(call.orderId()).isEqualTo("stop-1");
+        assertThat(call.symbol()).isEqualTo("ACME");
         assertThat(call.stop()).isEqualByComparingTo("104");
         assertThat(call.target()).isNull();
 

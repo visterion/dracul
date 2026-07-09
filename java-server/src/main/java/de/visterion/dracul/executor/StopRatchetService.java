@@ -63,7 +63,7 @@ public class StopRatchetService {
 
             String orderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
             try {
-                gateway.modifyBracket(p.connection(), orderId, chandelier, null);
+                gateway.modifyBracket(p.connection(), orderId, p.symbol(), chandelier, null);
             } catch (BrokerUnavailableException e) {
                 decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                         "MAINTENANCE", null, null, null, p.symbol(), null, null,

@@ -14,6 +14,7 @@ public interface ExecutionGateway {
     PlacedBracket placeBracket(String connection, BracketRequest req);
     /** fraction in (0,1]; 1.0 = full close. */
     CloseResult flatten(String connection, String symbol, BigDecimal fraction);
-    /** null stop/target = leave that leg unchanged. */
-    ModifyResult modifyBracket(String connection, String orderId, BigDecimal stop, BigDecimal target);
+    /** null stop/target = leave that leg unchanged. {@code symbol} is required by Agora's
+     *  modify_bracket contract (parent-lookup + symbol-fallback leg resolution). */
+    ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target);
 }
