@@ -8,7 +8,7 @@ are relative to the context root of `dracul-app`.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/prey` | List recent prey; query params: `strigoi`, `anomaly`, `from`, `to`, `minConfidence`, `page`, `size` |
-| GET | `/api/prey/{id}` | Single prey detail (signals, risks, thesis, outcome if assessed) |
+| GET | `/api/prey/{id}` | Single prey detail (signals, risks, `killCriteria` (string[]), thesis, outcome if assessed) |
 
 ## Verdicts
 

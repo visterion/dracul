@@ -101,6 +101,7 @@ public record Prey(
     String thesis,
     List<Signal> signals,
     List<Risk> risks,
+    List<String> killCriteria,    // 1-5 falsifiable exit conditions (V19)
     Horizon timeHorizon,
     Instant discoveredAt,
     UserId discoveredFor          // Phase 1: always "default"
@@ -319,6 +320,9 @@ already pending and is wired as an optional
 untouched. This does not make the hunters themselves execute anything — they
 still only produce prey; the executor remains the sole code-guarded agent that
 acts on the resulting signals.
+
+**Prey kill-criteria column (V19):**
+- `kill_criteria` (JSONB, NOT NULL DEFAULT '[]') — 1-5 hunter-emitted falsifiable exit conditions (a measurable threshold, a concrete date, or a single unambiguous public event under which the thesis is dead), carried onto `executor_signal` by the Prey→ExecutorSignal adapter (`PreySignalMapper`).
 
 ## Data Flow
 
