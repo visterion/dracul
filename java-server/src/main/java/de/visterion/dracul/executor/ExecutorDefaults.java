@@ -86,7 +86,7 @@ class ExecutorDefaults {
                         "Return executor signals awaiting a decision.",
                         empty, "/api/executor/tools/fetch-pending-signals", 30),
                 new ToolCatalogEntry("get_account",
-                        "Return paper-broker account snapshot.",
+                        "Return broker account snapshot.",
                         connectionInput, "/api/executor/tools/get-account", 30),
                 new ToolCatalogEntry("list_positions",
                         "Return current broker positions.",

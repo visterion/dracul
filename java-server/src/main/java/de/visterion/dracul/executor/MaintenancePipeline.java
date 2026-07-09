@@ -109,7 +109,7 @@ public class MaintenancePipeline {
         BigDecimal rCurrent = computeR(p, currentPrice, sell);
 
         SoftConditionEvaluator.SoftState ss = softEval.evaluate(currentPrice, chandelierLevel,
-                null, null, p.softConfirmCount());
+                null, null, p.side(), p.softConfirmCount());
 
         positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), ss.confirmCount(),
                 p.activeStop(), null);
