@@ -160,7 +160,7 @@ public class ExecutorWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
-        String conn = resolveConnection(body);
+        String conn = resolveConnection(inputOf(body));
         try {
             AccountSnapshot snapshot = gateway.account(conn);
             Map<String, Object> output = new LinkedHashMap<>();
@@ -181,7 +181,7 @@ public class ExecutorWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
-        String conn = resolveConnection(body);
+        String conn = resolveConnection(inputOf(body));
         try {
             List<BrokerPosition> positions = gateway.positions(conn);
             List<Map<String, Object>> serialized = new ArrayList<>();
@@ -206,6 +206,19 @@ public class ExecutorWebhookController {
         return body.path("connection").asString(connection);
     }
 
+    /**
+     * Unwrap the tool-argument object from Vistierie's webhook envelope.
+     *
+     * <p>{@code ToolDispatcher.callOnce} POSTs every http-tool call with the shape
+     * {@code {"run_id":..., "tool_name":..., "input":{...the LLM's arguments...}}}, so the
+     * actual tool arguments live under {@code input}. When {@code input} is present and an
+     * object, this returns it; otherwise it falls back to {@code body} itself so direct curl
+     * calls (and top-level-args tests) that pass arguments at the top level keep working.
+     */
+    private static JsonNode inputOf(JsonNode body) {
+        return (body != null && body.path("input").isObject()) ? body.path("input") : body;
+    }
+
     // -------------------------------------------------------------------
     // place-entry — the guarded core
     // -------------------------------------------------------------------
@@ -218,14 +231,15 @@ public class ExecutorWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
         if (body == null) body = mapper.createObjectNode();
+        JsonNode input = inputOf(body);
 
-        String signalId = body.path("signal_id").asString("");
-        String bodySymbol = body.path("symbol").asString("");
-        String side = body.path("side").asString(null);
-        BigDecimal qty = decimalOrNull(body, "qty");
-        BigDecimal limitPrice = decimalOrNull(body, "limit_price");
-        BigDecimal stopPrice = decimalOrNull(body, "stop_price");
-        BigDecimal takeProfit = decimalOrNull(body, "take_profit");
+        String signalId = input.path("signal_id").asString("");
+        String bodySymbol = input.path("symbol").asString("");
+        String side = input.path("side").asString(null);
+        BigDecimal qty = decimalOrNull(input, "qty");
+        BigDecimal limitPrice = decimalOrNull(input, "limit_price");
+        BigDecimal stopPrice = decimalOrNull(input, "stop_price");
+        BigDecimal takeProfit = decimalOrNull(input, "take_profit");
 
         ExecutorSignal signal = signalRepo.findById(signalId);
         if (signal == null) {
@@ -333,7 +347,7 @@ public class ExecutorWebhookController {
         if (body == null) body = mapper.createObjectNode();
 
         int recorded = 0;
-        JsonNode decisions = body.path("decisions");
+        JsonNode decisions = inputOf(body).path("decisions");
         if (decisions.isArray()) {
             for (JsonNode d : decisions) {
                 String action = d.path("action").asString("");
@@ -405,11 +419,12 @@ public class ExecutorWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
         if (body == null) body = mapper.createObjectNode();
+        JsonNode input = inputOf(body);
 
-        String symbol = body.path("symbol").asString("");
-        String reason = body.path("reason").asString("SOFT_EXIT");
-        Double confidence = body.path("confidence").isNumber() ? body.path("confidence").asDouble() : null;
-        String reasoning = body.path("reasoning").asString(null);
+        String symbol = input.path("symbol").asString("");
+        String reason = input.path("reason").asString("SOFT_EXIT");
+        Double confidence = input.path("confidence").isNumber() ? input.path("confidence").asDouble() : null;
+        String reasoning = input.path("reasoning").asString(null);
 
         ExecutorPosition position = positionRepo.findOpen().stream()
                 .filter(p -> connection.equals(p.connection()))
