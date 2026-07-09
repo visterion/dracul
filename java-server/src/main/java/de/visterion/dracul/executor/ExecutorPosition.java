@@ -21,5 +21,13 @@ public record ExecutorPosition(
         String entryDate,
         BigDecimal mfe,
         String status,
-        String brokerOrderId) {
+        String brokerOrderId,
+        BigDecimal highestPrice,
+        BigDecimal mfeR,
+        int softConfirmCount,
+        BigDecimal exitPrice,
+        BigDecimal realizedR,
+        String exitReason,
+        String closedAt,
+        String stopOrderId) {
 }

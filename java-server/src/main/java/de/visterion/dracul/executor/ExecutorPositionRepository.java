@@ -36,10 +36,12 @@ public class ExecutorPositionRepository {
                 INSERT INTO executor_position
                   (connection, symbol, side, qty, entry_price, initial_stop, active_stop,
                    tranche, r_value, kill_criteria, source_signal_id, source_agent, mfe, status,
-                   broker_order_id)
+                   broker_order_id, highest_price, mfe_r, soft_confirm_count, exit_price,
+                   realized_r, exit_reason, stop_order_id)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
-                        :mfe, :status, :brokerOrderId)
+                        :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
+                        :exitPrice, :realizedR, :exitReason, :stopOrderId)
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -56,8 +58,60 @@ public class ExecutorPositionRepository {
                 .param("mfe", p.mfe())
                 .param("status", status)
                 .param("brokerOrderId", p.brokerOrderId())
+                .param("highestPrice", p.highestPrice())
+                .param("mfeR", p.mfeR())
+                .param("softConfirmCount", p.softConfirmCount())
+                .param("exitPrice", p.exitPrice())
+                .param("realizedR", p.realizedR())
+                .param("exitReason", p.exitReason())
+                .param("stopOrderId", p.stopOrderId())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
+    }
+
+    public void updateMaintenance(long id, BigDecimal highestPrice, BigDecimal mfeR,
+            int softConfirmCount, BigDecimal activeStop, String stopOrderId) {
+        jdbc.sql("""
+                UPDATE executor_position
+                SET highest_price = :highestPrice,
+                    mfe_r = :mfeR,
+                    soft_confirm_count = :softConfirmCount,
+                    active_stop = :activeStop,
+                    stop_order_id = COALESCE(:stopOrderId, stop_order_id)
+                WHERE id = :id
+                """)
+                .param("highestPrice", highestPrice)
+                .param("mfeR", mfeR)
+                .param("softConfirmCount", softConfirmCount)
+                .param("activeStop", activeStop)
+                .param("stopOrderId", stopOrderId)
+                .param("id", id)
+                .update();
+    }
+
+    public void close(long id, BigDecimal exitPrice, BigDecimal realizedR, String exitReason) {
+        jdbc.sql("""
+                UPDATE executor_position
+                SET status = 'CLOSED',
+                    exit_price = :exitPrice,
+                    realized_r = :realizedR,
+                    exit_reason = :exitReason,
+                    closed_at = now()
+                WHERE id = :id
+                """)
+                .param("exitPrice", exitPrice)
+                .param("realizedR", realizedR)
+                .param("exitReason", exitReason)
+                .param("id", id)
+                .update();
+    }
+
+    public ExecutorPosition findById(long id) {
+        return jdbc.sql("SELECT * FROM executor_position WHERE id = :id")
+                .param("id", id)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
     }
 
     public List<ExecutorPosition> findOpen() {
@@ -94,7 +148,20 @@ public class ExecutorPositionRepository {
                 entryDateObj == null ? null : entryDateObj.toString(),
                 rs.getBigDecimal("mfe"),
                 rs.getString("status"),
-                rs.getString("broker_order_id"));
+                rs.getString("broker_order_id"),
+                rs.getBigDecimal("highest_price"),
+                rs.getBigDecimal("mfe_r"),
+                rs.getInt("soft_confirm_count"),
+                rs.getBigDecimal("exit_price"),
+                rs.getBigDecimal("realized_r"),
+                rs.getString("exit_reason"),
+                closedAtOrNull(rs),
+                rs.getString("stop_order_id"));
+    }
+
+    private String closedAtOrNull(ResultSet rs) throws SQLException {
+        Object closedAtObj = rs.getObject("closed_at");
+        return closedAtObj == null ? null : closedAtObj.toString();
     }
 
     private String writeJson(List<String> v) {

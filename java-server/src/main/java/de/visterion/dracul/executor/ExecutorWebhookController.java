@@ -241,7 +241,8 @@ public class ExecutorWebhookController {
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
                     signal.symbol(), side, qty, referencePrice, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
-                    "OPEN", brokerOrderId));
+                    "OPEN", brokerOrderId,
+                    referencePrice, null, 0, null, null, null, null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,

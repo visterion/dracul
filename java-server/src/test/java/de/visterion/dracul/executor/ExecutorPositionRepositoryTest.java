@@ -31,12 +31,14 @@ class ExecutorPositionRepositoryTest {
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
-                null, null, "OPEN", null);
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null);
         var posB = new ExecutorPosition(null, "saxo-sim", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
-                null, null, "OPEN", null);
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null);
 
         long idA = repo.insert(posA);
         long idB = repo.insert(posB);
@@ -53,5 +55,47 @@ class ExecutorPositionRepositoryTest {
         var found = open.stream().filter(p -> p.symbol().equals(symbolA)).findFirst().orElseThrow();
         assertThat(found.killCriteria()).containsExactlyInAnyOrder("EARNINGS_MISS", "GUIDANCE_CUT");
         assertThat(found.entryPrice()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void updateMaintenanceReflected() {
+        String symbol = "POS-MAINT-" + UUID.randomUUID();
+        var pos = new ExecutorPosition(null, "saxo-sim", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
+                List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null);
+        long id = repo.insert(pos);
+
+        repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 1,
+                new BigDecimal("104"), "stop-9");
+
+        var found = repo.findById(id);
+        assertThat(found.highestPrice()).isEqualByComparingTo("110");
+        assertThat(found.mfeR()).isEqualByComparingTo("1.6");
+        assertThat(found.softConfirmCount()).isEqualTo(1);
+        assertThat(found.activeStop()).isEqualByComparingTo("104");
+        assertThat(found.stopOrderId()).isEqualTo("stop-9");
+    }
+
+    @Test
+    void closeMovesOutOfOpen() {
+        String symbol = "POS-CLOSE-" + UUID.randomUUID();
+        var pos = new ExecutorPosition(null, "saxo-sim", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
+                List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null);
+        long id = repo.insert(pos);
+
+        repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP");
+
+        assertThat(repo.findOpen()).extracting(ExecutorPosition::symbol).doesNotContain(symbol);
+        var found = repo.findById(id);
+        assertThat(found.status()).isEqualTo("CLOSED");
+        assertThat(found.realizedR()).isEqualByComparingTo("-1.0");
+        assertThat(found.exitReason()).isEqualTo("HARD_STOP");
     }
 }
