@@ -62,6 +62,15 @@ public class ExecutorWebhookController {
     private final ObjectMapper mapper;
     private final Clock clock;
 
+    /**
+     * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
+     * {@code place_bracket} requires a take-profit leg, so a target must always be present or the
+     * order is rejected with {@code missing required argument: takeProfitLimit}. The strategy's
+     * real exits are the trailing chandelier / giveback stops, not a fixed target — so this 3R
+     * default is intentionally wide and rarely fills; it exists only to make the bracket valid.
+     */
+    private static final BigDecimal DEFAULT_TARGET_R = new BigDecimal("3.0");
+
     private final String connection;
     private final double minConfidence;
     private final int maxPositions;
@@ -294,6 +303,22 @@ public class ExecutorWebhookController {
             signalRepo.markStatus(signalId, "REJECTED");
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
+        }
+
+        // Guarantee a take-profit leg. Agora's place_bracket rejects any bracket without one, but
+        // this strategy exits via the trailing chandelier, not a fixed target — so when the LLM
+        // omits take_profit we synthesize a wide DEFAULT_TARGET_R (3R) target that rarely fills. An
+        // explicit LLM take_profit always wins (only fill when null). If we can't compute R (no
+        // reference or stop price) leave it null and let the existing broker-error path handle it.
+        if (takeProfit == null && referencePrice != null && stopPrice != null) {
+            BigDecimal r = referencePrice.subtract(stopPrice).abs();
+            if (r.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
+                BigDecimal target = "SELL".equals(side)
+                        ? referencePrice.subtract(offset)
+                        : referencePrice.add(offset);
+                takeProfit = target.setScale(2, RoundingMode.HALF_UP);
+            }
         }
 
         try {
