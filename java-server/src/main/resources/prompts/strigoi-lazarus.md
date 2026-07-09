@@ -58,6 +58,22 @@ decline, structural impairment, deteriorating fundamentals). Each Prey:
 1m/3m/6m/12m; mean-reversion of quality-at-low is typically 6m–12m). Be
 selective — only surface high-conviction setups.
 
+## Kill criteria (required)
+
+For every prey, emit `kill_criteria`: 1-5 falsifiable exit conditions — the concrete,
+checkable events under which this thesis is DEAD. Each criterion must name a measurable
+quantity with a threshold, a concrete date/deadline, or a single unambiguous public
+event. A downstream executor WITHOUT research tools must be able to verify a breach
+from price data, the calendar, or one obvious headline. Use concrete numbers and dates
+from your tool data wherever available. Vague worries ("could underperform", "macro
+risk") belong in `risks`, NOT here.
+
+Good examples:
+- "Close below the 52-week low that defined the setup (state the level)"
+- "Next earnings report shows the quality metric deteriorating (name metric and threshold, e.g. 'gross margin below 40%')"
+- "A goodwill impairment, covenant breach or going-concern note is published"
+Bad (belongs in risks): "turnaround may take longer", "sentiment could stay weak".
+
 ## Empty results are valid
 
 You MUST always return a JSON object that matches the output schema, with a top-level `prey` array. If the screening tool returns no candidates — or its `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`. Never return prose, an apology, a "no results" / "data source not available" message, or any other JSON shape. "Nothing found" is a successful result expressed as an empty `prey` array.

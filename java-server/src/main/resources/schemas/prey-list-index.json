@@ -6,7 +6,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["symbol", "companyName", "confidence", "thesis", "horizon"],
+        "required": ["symbol", "companyName", "confidence", "thesis", "horizon", "kill_criteria"],
         "properties": {
           "symbol":      {"type": "string"},
           "companyName": {"type": "string"},
@@ -15,7 +15,8 @@
           "thesis":      {"type": "string"},
           "signals":     {"type": "array", "items": {"type": "string"}},
           "risks":       {"type": "array", "items": {"type": "string"}},
-          "horizon":     {"type": "string", "enum": ["1m", "3m", "6m", "12m"]}
+          "horizon":     {"type": "string", "enum": ["1m", "3m", "6m", "12m"]},
+          "kill_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5}
         }
       }
     }

@@ -16,7 +16,7 @@ public final class LanguageDirective {
 
                 ## Output language
 
-                IMPORTANT: Write all narrative output (summaries, theses, signals, risks) in %s.
+                IMPORTANT: Write all narrative output (summaries, theses, signals, risks, kill criteria) in %s.
                 Keep verbatim source quotes, filing titles, tickers and company names in their
                 original language — do not translate them.""".formatted(name);
     }
