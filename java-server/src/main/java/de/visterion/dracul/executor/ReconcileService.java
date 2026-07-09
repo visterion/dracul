@@ -6,6 +6,7 @@ import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -41,6 +42,7 @@ public class ReconcileService {
     private final int cooldownDays;
     private final Clock clock;
 
+    @Autowired
     public ReconcileService(
             ExecutionGateway gateway,
             ExecutorPositionRepository positionRepo,

@@ -2,6 +2,7 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,7 @@ public class HardTriggerService {
     private final int cooldownDays;
     private final Clock clock;
 
+    @Autowired
     public HardTriggerService(
             ExecutionGateway gateway,
             ExecutorPositionRepository positionRepo,
