@@ -1,5 +1,11 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.broker.AccountSnapshot;
+import de.visterion.dracul.executor.broker.BracketRequest;
+import de.visterion.dracul.executor.broker.BrokerUnavailableException;
+import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.executor.broker.OrderStatus;
+import de.visterion.dracul.executor.broker.PlacedBracket;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,7 +28,7 @@ class ExecutorWebhookControllerTest {
     private ExecutorSignalRepository signalRepo;
     private ExecutorPositionRepository positionRepo;
     private ExecutorDecisionRepository decisionRepo;
-    private AgoraTrading agoraTrading;
+    private ExecutionGateway gateway;
     private ExecutorIndicators executorIndicators;
     private JsonMapper mapper;
 
@@ -33,7 +39,7 @@ class ExecutorWebhookControllerTest {
         signalRepo = mock(ExecutorSignalRepository.class);
         positionRepo = mock(ExecutorPositionRepository.class);
         decisionRepo = mock(ExecutorDecisionRepository.class);
-        agoraTrading = mock(AgoraTrading.class);
+        gateway = mock(ExecutionGateway.class);
         executorIndicators = mock(ExecutorIndicators.class);
         mapper = JsonMapper.builder().build();
 
@@ -42,7 +48,7 @@ class ExecutorWebhookControllerTest {
 
         controller = new ExecutorWebhookController(
                 signalRepo, positionRepo, decisionRepo,
-                new VetoService(), new OrderGuard(), agoraTrading, executorIndicators, mapper,
+                new VetoService(), new OrderGuard(), gateway, executorIndicators, mapper,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20);
     }
 
@@ -78,7 +84,7 @@ class ExecutorWebhookControllerTest {
         ResponseEntity<?> resp = controller.placeEntry("Bearer wrong", null, body);
 
         assertThat(resp.getStatusCode().value()).isEqualTo(401);
-        verifyNoInteractions(agoraTrading, signalRepo, positionRepo, decisionRepo);
+        verifyNoInteractions(gateway, signalRepo, positionRepo, decisionRepo);
     }
 
     // -------------------------------------------------------------------
@@ -100,7 +106,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("LOW_CONFIDENCE");
 
-        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
         verify(signalRepo).markStatus("sig-1", "REJECTED");
 
@@ -125,7 +131,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("MAX_POSITIONS");
 
-        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
     }
 
@@ -143,7 +149,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
 
-        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
         verify(signalRepo, never()).markStatus(eq("ghost"), eq("ACCEPTED"));
 
@@ -167,7 +173,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("DUPLICATE");
 
-        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
         verify(signalRepo, never()).markStatus(anyString(), anyString());
 
@@ -192,7 +198,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("NO_STOP");
 
-        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
         verify(signalRepo).markStatus("sig-1", "REJECTED");
 
@@ -211,7 +217,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
 
-        verify(agoraTrading, never()).placeBracket(any(), any(), any(), any(), any(), any(), any());
+        verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
     }
 
@@ -223,9 +229,8 @@ class ExecutorWebhookControllerTest {
     void placeEntry_happyPath_placesAndBooks() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(positionRepo.countOpen()).thenReturn(0);
-        when(agoraTrading.placeBracket(anyString(), anyString(), anyString(),
-                any(), any(), any(), any()))
-                .thenReturn(json("{\"broker_order_id\":\"ord-9\"}"));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
         JsonNode body = json("""
@@ -236,32 +241,40 @@ class ExecutorWebhookControllerTest {
 
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("placed")).isEqualTo(true);
-        assertThat(output.get("broker_order_id")).isEqualTo("ord-9");
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-1");
         assertThat(output.get("position_id")).isEqualTo(77L);
 
-        verify(agoraTrading, times(1)).placeBracket(eq("saxo-sim"), eq("ACME"), eq("BUY"),
-                eq(new BigDecimal("10")), isNull(), eq(new BigDecimal("95")), isNull());
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        assertThat(req.symbol()).isEqualTo("ACME");
+        assertThat(req.side()).isEqualTo("BUY");
+        assertThat(req.qty()).isEqualByComparingTo("10");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        assertThat(req.limitPrice()).isNull();
+        assertThat(req.takeProfitLimit()).isNull();
+        assertThat(req.clientRef()).isEqualTo("sig-1");
 
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
         verify(positionRepo).insert(posCaptor.capture());
         assertThat(posCaptor.getValue().status()).isEqualTo("OPEN");
-        assertThat(posCaptor.getValue().brokerOrderId()).isEqualTo("ord-9");
+        assertThat(posCaptor.getValue().brokerOrderId()).isEqualTo("brk-1");
+        assertThat(posCaptor.getValue().stopOrderId()).isEqualTo("stop-1");
 
         verify(signalRepo).markStatus("sig-1", "ACCEPTED");
 
         ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo).insert(decCaptor.capture());
         assertThat(decCaptor.getValue().accepted()).isTrue();
-        assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("ord-9");
+        assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("brk-1");
     }
 
     @Test
     void placeEntry_brokerError_noPositionBooked() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(positionRepo.countOpen()).thenReturn(0);
-        when(agoraTrading.placeBracket(anyString(), anyString(), anyString(),
-                any(), any(), any(), any()))
-                .thenThrow(new AgoraTradingException("broker down"));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenThrow(new BrokerUnavailableException("broker down"));
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
@@ -337,7 +350,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void getAccount_unavailableEnvelope() {
-        when(agoraTrading.account("saxo-sim")).thenThrow(new AgoraTradingException("no session"));
+        when(gateway.account("saxo-sim")).thenThrow(new BrokerUnavailableException("no session"));
 
         ResponseEntity<?> resp = controller.getAccount(BEARER, json("{}"));
 
@@ -349,13 +362,15 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void getAccount_happy() {
-        when(agoraTrading.account("saxo-sim")).thenReturn(json("{\"cash\":\"1000\"}"));
+        when(gateway.account("saxo-sim")).thenReturn(
+                new AccountSnapshot(new BigDecimal("1000"), new BigDecimal("1000"), "USD"));
 
         ResponseEntity<?> resp = controller.getAccount(BEARER, json("{}"));
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
-        JsonNode output = (JsonNode) ((Map<?, ?>) resp.getBody()).get("output");
-        assertThat(output.path("cash").asString("")).isEqualTo("1000");
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("cash")).isEqualTo(new BigDecimal("1000"));
+        assertThat(output.get("currency")).isEqualTo("USD");
     }
 
     // -------------------------------------------------------------------

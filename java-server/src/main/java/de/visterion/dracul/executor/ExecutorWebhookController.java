@@ -1,5 +1,11 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.broker.AccountSnapshot;
+import de.visterion.dracul.executor.broker.BracketRequest;
+import de.visterion.dracul.executor.broker.BrokerPosition;
+import de.visterion.dracul.executor.broker.BrokerUnavailableException;
+import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -24,7 +30,7 @@ import java.util.Map;
  *
  * <p>{@code place-entry} is the safety-critical core: the LLM only <em>requests</em> an
  * entry, code decides. Every rejection path (schema, veto, order guard, broker error)
- * short-circuits before any call to {@link AgoraTrading#placeBracket}.
+ * short-circuits before any call to {@link ExecutionGateway#placeBracket}.
  */
 @RestController
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -37,7 +43,7 @@ public class ExecutorWebhookController {
     private final ExecutorDecisionRepository decisionRepo;
     private final VetoService vetoService;
     private final OrderGuard orderGuard;
-    private final AgoraTrading agoraTrading;
+    private final ExecutionGateway gateway;
     private final ExecutorIndicators executorIndicators;
     private final ObjectMapper mapper;
 
@@ -53,7 +59,7 @@ public class ExecutorWebhookController {
             ExecutorDecisionRepository decisionRepo,
             VetoService vetoService,
             OrderGuard orderGuard,
-            AgoraTrading agoraTrading,
+            ExecutionGateway gateway,
             ExecutorIndicators executorIndicators,
             ObjectMapper mapper,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
@@ -68,7 +74,7 @@ public class ExecutorWebhookController {
         this.decisionRepo = decisionRepo;
         this.vetoService = vetoService;
         this.orderGuard = orderGuard;
-        this.agoraTrading = agoraTrading;
+        this.gateway = gateway;
         this.executorIndicators = executorIndicators;
         this.mapper = mapper;
         this.connection = connection;
@@ -129,8 +135,13 @@ public class ExecutorWebhookController {
 
         String conn = resolveConnection(body);
         try {
-            return ResponseEntity.ok(Map.of("output", agoraTrading.account(conn)));
-        } catch (AgoraTradingException e) {
+            AccountSnapshot snapshot = gateway.account(conn);
+            Map<String, Object> output = new LinkedHashMap<>();
+            output.put("cash", snapshot.cash());
+            output.put("buying_power", snapshot.buyingPower());
+            output.put("currency", snapshot.currency());
+            return ResponseEntity.ok(Map.of("output", output));
+        } catch (BrokerUnavailableException e) {
             return ResponseEntity.ok(Map.of("output",
                     Map.of("available", false, "error", e.getMessage())));
         }
@@ -145,8 +156,19 @@ public class ExecutorWebhookController {
 
         String conn = resolveConnection(body);
         try {
-            return ResponseEntity.ok(Map.of("output", agoraTrading.positions(conn)));
-        } catch (AgoraTradingException e) {
+            List<BrokerPosition> positions = gateway.positions(conn);
+            List<Map<String, Object>> serialized = new ArrayList<>();
+            for (BrokerPosition p : positions) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("symbol", p.symbol());
+                node.put("side", p.side());
+                node.put("qty", p.qty());
+                node.put("avg_entry_price", p.avgEntryPrice());
+                node.put("market_price", p.marketPrice());
+                serialized.add(node);
+            }
+            return ResponseEntity.ok(Map.of("output", Map.of("positions", serialized)));
+        } catch (BrokerUnavailableException e) {
             return ResponseEntity.ok(Map.of("output",
                     Map.of("available", false, "error", e.getMessage())));
         }
@@ -234,15 +256,17 @@ public class ExecutorWebhookController {
         }
 
         try {
-            JsonNode resp = agoraTrading.placeBracket(connection, signal.symbol(), side,
-                    qty, limitPrice, stopPrice, takeProfit);
-            String brokerOrderId = resp.path("broker_order_id").asString("");
+            BracketRequest req = new BracketRequest(signal.symbol(), side, qty, limitPrice,
+                    stopPrice, takeProfit, signalId, null);
+            PlacedBracket placed = gateway.placeBracket(connection, req);
+            String brokerOrderId = placed.bracketId();
+            String stopOrderId = placed.stopLegId();
 
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
                     signal.symbol(), side, qty, referencePrice, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
-                    referencePrice, null, 0, null, null, null, null, null));
+                    referencePrice, null, 0, null, null, null, null, stopOrderId));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
@@ -252,7 +276,7 @@ public class ExecutorWebhookController {
                     "placed", true,
                     "broker_order_id", brokerOrderId,
                     "position_id", positionId)));
-        } catch (AgoraTradingException e) {
+        } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
                     null, runId, null));
