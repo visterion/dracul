@@ -146,7 +146,10 @@ body {
 .page-head-text { flex: 1 1 auto; min-width: 0; }
 .page-eyebrow { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.16em; color: var(--ash-gray); margin: 0 0 var(--space-3); display: flex; align-items: center; gap: var(--space-2); }
 .eb-glyph { display: inline-flex; }
-.page-title { font-family: var(--font-display); font-weight: 500; font-size: var(--text-h1); line-height: 1.08; letter-spacing: -0.01em; color: var(--bone-ivory); margin: 0; }
+/* Flex so multi-span titles (ticker + company name) keep an explicit gap —
+   Vue's whitespace:'condense' drops the newline text node between slot spans.
+   Plain-text titles are a single flex item and render unchanged. */
+.page-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-3); font-family: var(--font-display); font-weight: 500; font-size: var(--text-h1); line-height: 1.08; letter-spacing: -0.01em; color: var(--bone-ivory); margin: 0; }
 .title-ticker { color: var(--bone-ivory); font-size: 0.92em; }
 .title-name { color: var(--bone-ivory-dim); font-size: var(--text-h3); font-family: var(--font-body); font-weight: 400; }
 .page-sub { color: var(--bone-ivory-dim); font-size: var(--text-body); margin: var(--space-3) 0 0; max-width: 62ch; }

@@ -19,7 +19,7 @@
   </div>
 
   <!-- Main content -->
-  <article v-else class="content-inner pd">
+  <article v-else class="content-inner prose-width pd">
     <BackLink @click="onBack">{{ t('verdict.breadcrumb.chronicle') }}</BackLink>
 
     <PageHead>
