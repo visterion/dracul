@@ -113,11 +113,16 @@ public abstract class HuntController {
             log.info("{} run {} produced no persistable prey", agentName(), runId);
             return ResponseEntity.noContent().build();
         }
-        preyRepo.insertAll(prey);
-        log.info("{} run {} persisted {} prey", agentName(), runId, prey.size());
+        var inserted = preyRepo.insertAll(prey);
+        if (inserted.isEmpty()) {
+            log.info("{} run {} — all {} prey already persisted (duplicate delivery?)", agentName(), runId, prey.size());
+            return ResponseEntity.noContent().build();
+        }
+        log.info("{} run {} persisted {} prey ({} duplicates skipped)",
+                agentName(), runId, inserted.size(), prey.size() - inserted.size());
         // Feed the executor when it is enabled; a disabled executor wires no bean
         // and the hunt still completes normally.
-        signalEmitter.ifAvailable(e -> e.emit(prey));
+        signalEmitter.ifAvailable(e -> e.emit(inserted));
         return ResponseEntity.noContent().build();
     }
 }

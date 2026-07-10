@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import BackLink from '../components/common/BackLink.vue'
@@ -102,19 +102,26 @@ function ruleText(r: string): string {
 function fmt(n: number | null): string { return n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2 }) }
 function goBack() { router.push({ name: 'portfolio' }) }
 
-onMounted(async () => {
+let requestId = 0
+
+watch(() => route.params.id, async (raw) => {
+  const current = ++requestId
+  loading.value = true
+  signal.value = null
+  position.value = null
   try {
-    const id = String(route.params.id)
+    const id = String(raw)
     const [sigs, items] = await Promise.all([api.getExitSignals(), api.getWatchlistItems()])
+    if (current !== requestId) return
     const s = sigs.find(x => x.id === id) ?? null
     signal.value = s
     if (s) {
       position.value = items.find(i => i.id === s.watchlistItemId) ?? items.find(i => i.ticker === s.symbol) ?? null
     }
   } finally {
-    loading.value = false
+    if (current === requestId) loading.value = false
   }
-})
+}, { immediate: true })
 </script>
 
 <style scoped>

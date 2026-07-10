@@ -1,10 +1,12 @@
 package de.visterion.dracul.executor.broker;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,7 +25,7 @@ class AgoraExecutionGatewayTest {
         JsonNode canned;
 
         CapturingGateway(ObjectMapper mapper) {
-            super("http://x", "tkn", mapper);
+            super("http://x", "tkn", mapper, 8000);
         }
 
         @Override
@@ -344,5 +346,33 @@ class AgoraExecutionGatewayTest {
         assertThat(result.get(0).status()).isEqualTo(OrderStatus.WORKING);
         // plain "limit" is ambiguous (entry vs take-profit) -> OTHER, never guessed.
         assertThat(result.get(1).role()).isEqualTo(OrderRole.OTHER);
+    }
+
+    @Test void hungAgoraCallFailsFastWithTimeout() throws Exception {
+        // Real HTTP server (not the overridden `call` seam) so the RestClient's own timeout is
+        // exercised: a handler that sleeps far longer than the configured timeout must still
+        // surface as BrokerUnavailableException rather than blocking the caller.
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/tools/get_account", exchange -> {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] body = "{}".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            AgoraExecutionGateway gw = new AgoraExecutionGateway(
+                    "http://localhost:" + server.getAddress().getPort(), "tkn", mapper, 200);
+
+            assertThatThrownBy(() -> gw.account("saxo-sim"))
+                    .isInstanceOf(BrokerUnavailableException.class);
+        } finally {
+            server.stop(0);
+        }
     }
 }

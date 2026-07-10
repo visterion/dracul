@@ -132,7 +132,9 @@ public class GenericAgentRegistrar {
                 && Objects.equals(existing.completion_webhook(), desired.completion_webhook())
                 && Objects.equals(existing.completion_webhook_token(), desired.completion_webhook_token())
                 && Objects.equals(existing.model_purpose(), desired.model_purpose())
-                && Objects.equals(existing.output_schema(), desired.output_schema());
+                && Objects.equals(existing.output_schema(), desired.output_schema())
+                && Objects.equals(existing.max_turns(), desired.max_turns())
+                && Objects.equals(existing.max_run_seconds(), desired.max_run_seconds());
         if (def.isStreaming()) {
             return base;
         }

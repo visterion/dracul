@@ -2,6 +2,7 @@ package de.visterion.dracul.executor.broker;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
@@ -9,6 +10,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -30,10 +32,17 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     public AgoraExecutionGateway(
             @Value("${dracul.executor.agora-base-url:http://agora:8080}") String baseUrl,
             @Value("${dracul.executor.agora-trading-token:}") String token,
-            ObjectMapper mapper) {
+            ObjectMapper mapper,
+            @Value("${dracul.executor.agora-timeout-ms:8000}") long timeoutMs) {
         this.token = token;
         this.mapper = mapper;
-        this.http = RestClient.builder().baseUrl(baseUrl).build();
+        var requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(timeoutMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(timeoutMs));
+        this.http = RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
+                .build();
     }
 
     @Override

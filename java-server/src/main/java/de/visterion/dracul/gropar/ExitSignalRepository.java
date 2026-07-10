@@ -23,15 +23,19 @@ public class ExitSignalRepository {
         this.mapper = mapper;
     }
 
-    public void insert(ExitSignal s, String userId) {
+    /** @return true if a new row was inserted, false if it was a duplicate (run, item) and skipped. */
+    public boolean insert(ExitSignal s, String userId) {
         UUID id = UUID.fromString(s.id());
         UUID itemId = s.watchlistItemId() != null ? UUID.fromString(s.watchlistItemId()) : null;
-        jdbc.sql("""
+        int rows = jdbc.sql("""
                 INSERT INTO exit_signals
                   (id, watchlist_item_id, symbol, action, fired_rules, gain_loss_pct,
                    thesis_status, rationale, confidence, vistierie_run_id, run_at, user_id)
                 VALUES (:id, :item, :symbol, :action,
                         CAST(:rules AS jsonb), :gl, :thesis, :rationale, :conf, :run, :runAt, :user)
+                ON CONFLICT (vistierie_run_id, watchlist_item_id)
+                  WHERE vistierie_run_id IS NOT NULL AND watchlist_item_id IS NOT NULL
+                  DO NOTHING
                 """)
                 .param("id", id)
                 .param("item", itemId)
@@ -46,6 +50,7 @@ public class ExitSignalRepository {
                 .param("runAt", s.runAt())
                 .param("user", userId)
                 .update();
+        return rows > 0;
     }
 
     public List<ExitSignal> findLatestByUser(String userId, int limit) {
