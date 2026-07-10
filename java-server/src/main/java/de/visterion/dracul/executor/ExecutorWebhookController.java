@@ -502,6 +502,11 @@ public class ExecutorWebhookController {
             softTrigger.put("confirm_count", p.softConfirmCount());
             node.put("soft_trigger", softTrigger);
 
+            Map<String, Object> tranche2 = new LinkedHashMap<>();
+            tranche2.put("eligible", p.tranche2Eligible());
+            tranche2.put("reason", p.tranche2Reason());
+            node.put("tranche2", tranche2);
+
             serialized.add(node);
         }
         return ResponseEntity.ok(Map.of("output", Map.of("positions", serialized)));
