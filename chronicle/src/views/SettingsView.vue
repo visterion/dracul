@@ -105,34 +105,36 @@
             </div>
 
             <SectionHeader :label="t('settings.budgets.sectionAgents')" />
-            <table class="set-budget-table">
-              <thead>
-                <tr>
-                  <th>{{ t('settings.budgets.tableAgent') }}</th>
-                  <th>{{ t('settings.budgets.tableDailyCap') }}</th>
-                  <th>{{ t('settings.budgets.tableMonthlyCap') }}</th>
-                  <th>{{ t('settings.budgets.tableDailyUsed') }}</th>
-                  <th>{{ t('settings.budgets.tableMonthlyUsed') }}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="agent in budgetData.agents" :key="agent.name">
-                  <td class="set-budget-agent">{{ agent.name }}</td>
-                  <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].dailyCapUsd" placeholder="∞" /></td>
-                  <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].monthlyCapUsd" placeholder="∞" /></td>
-                  <td class="set-budget-num">${{ (agent.budget.dailyUsageMicros / 1_000_000).toFixed(4) }}</td>
-                  <td class="set-budget-num">${{ (agent.budget.monthlyUsageMicros / 1_000_000).toFixed(2) }}</td>
-                  <td>
-                    <button
-                      class="btn btn-secondary"
-                      :disabled="budgetSaving === agent.name"
-                      @click="saveAgentBudget(agent.name)"
-                    >{{ budgetSaving === agent.name ? t('settings.budgets.savingAgent') : t('settings.budgets.saveAgent') }}</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="set-budget-table">
+                <thead>
+                  <tr>
+                    <th>{{ t('settings.budgets.tableAgent') }}</th>
+                    <th>{{ t('settings.budgets.tableDailyCap') }}</th>
+                    <th>{{ t('settings.budgets.tableMonthlyCap') }}</th>
+                    <th>{{ t('settings.budgets.tableDailyUsed') }}</th>
+                    <th>{{ t('settings.budgets.tableMonthlyUsed') }}</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="agent in budgetData.agents" :key="agent.name">
+                    <td class="set-budget-agent">{{ agent.name }}</td>
+                    <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].dailyCapUsd" placeholder="∞" /></td>
+                    <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].monthlyCapUsd" placeholder="∞" /></td>
+                    <td class="set-budget-num">${{ (agent.budget.dailyUsageMicros / 1_000_000).toFixed(4) }}</td>
+                    <td class="set-budget-num">${{ (agent.budget.monthlyUsageMicros / 1_000_000).toFixed(2) }}</td>
+                    <td>
+                      <button
+                        class="btn btn-secondary"
+                        :disabled="budgetSaving === agent.name"
+                        @click="saveAgentBudget(agent.name)"
+                      >{{ budgetSaving === agent.name ? t('settings.budgets.savingAgent') : t('settings.budgets.saveAgent') }}</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </template>
         </template>
 
@@ -658,7 +660,7 @@ onMounted(async () => {
 .settings-grid--mobile .set-budget-grid { grid-template-columns: 1fr; }
 
 /* ── Agent Config ─────────────────────────────────────────────── */
-.agent-row { display: flex; align-items: center; gap: 16px; padding: 12px 14px;
+.agent-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 14px;
   border: 1px solid rgba(184, 148, 92, 0.12); border-radius: 6px; }
 .agent-row__main { display: flex; flex-direction: column; min-width: 160px; }
 .agent-row__name { color: var(--bone-ivory); font-weight: 600; }
@@ -671,7 +673,7 @@ onMounted(async () => {
 
 /* ── Data Sources ─────────────────────────────────────────────── */
 .ds-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
-.ds-row { display: flex; align-items: center; gap: 16px; padding: 12px 14px;
+.ds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 14px;
   border: 1px solid rgba(184, 148, 92, 0.12); border-radius: 6px; }
 .ds-row__main { display: flex; flex-direction: column; min-width: 180px; }
 .ds-row__label { color: var(--bone-ivory); font-weight: 600; }
