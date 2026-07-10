@@ -6,6 +6,7 @@ import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
+import de.visterion.dracul.notify.TelegramNotifier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -48,6 +49,7 @@ public class ReconcileService {
     private final CooldownRepository cooldownRepo;
     private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
+    private final TelegramNotifier telegram;
     private final int cooldownDays;
     private final Clock clock;
 
@@ -59,8 +61,9 @@ public class ReconcileService {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
+            TelegramNotifier telegram,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
-        this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper,
+        this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
                 cooldownDays, Clock.systemUTC());
     }
 
@@ -71,6 +74,7 @@ public class ReconcileService {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
+            TelegramNotifier telegram,
             int cooldownDays,
             Clock clock) {
         this.gateway = gateway;
@@ -79,6 +83,7 @@ public class ReconcileService {
         this.cooldownRepo = cooldownRepo;
         this.ruleVersions = ruleVersions;
         this.mapper = mapper;
+        this.telegram = telegram;
         this.cooldownDays = cooldownDays;
         this.clock = clock;
     }
@@ -99,6 +104,24 @@ public class ReconcileService {
                     "ESCALATE", "BROKER_UNAVAILABLE", null,
                     "broker unavailable during reconcile: " + e.getMessage(), null, null, null));
             return open;
+        }
+
+        // Orphan scan (broker→DB): a live broker position with no open book row means an
+        // entry was placed but never persisted (crash / DB failure after placeBracket) —
+        // unmanaged capital. Escalate only; NEVER auto-flatten (operator-in-the-loop). Runs on
+        // the pre-loop `open` list, so a position about to be closed this run is still "known"
+        // (no false orphan).
+        for (BrokerPosition bp : brokerPositions) {
+            boolean known = open.stream().anyMatch(p -> p.symbol().equals(bp.symbol()));
+            if (!known) {
+                decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                        "MAINTENANCE", null, null, null, bp.symbol(), null, null,
+                        "ESCALATE", "ORPHAN_POSITION", null,
+                        "broker position " + bp.symbol() + " has no open book row — unmanaged capital, operator attention required",
+                        null, null, null));
+                telegram.notifyAlert(bp.symbol(), "ORPHAN_POSITION", "CRITICAL",
+                        "broker holds " + bp.symbol() + " with no executor book row — check ORPHANED_ORDER decisions / reconcile manually");
+            }
         }
 
         List<ExecutorPosition> survivors = new ArrayList<>();
