@@ -228,53 +228,16 @@ class VetoServiceTest {
     }
 
     @Test
-    void cooldown_exceptionConditionWithFreshMechanism_passes() {
-        // signal mechanism is PEAD; open position on the symbol is a different mechanism (SPINOFF),
-        // and the cooldown row carries an exception condition -> genuinely fresh setup, allowed through.
+    void cooldown_activeRow_alwaysFails() {
+        // v1 has no fresh-setup exception: the cooldown's origin mechanism is not stored anywhere,
+        // so an exceptionCondition on the row (and/or a differing open mechanism) can never be
+        // verified against the mechanism that actually triggered the cooldown. Any active cooldown
+        // row matching the symbol is therefore a hard block, regardless of exceptionCondition or
+        // the state of openMechanisms.
         Cooldown cd = new Cooldown(1L, "ACME", "stopped out", "2026-08-01",
                 "fresh catalyst", "2026-07-01");
         EntryContext ctx = ctx().activeCooldowns(List.of(cd))
                 .openMechanisms(Map.of("ACME", "SPINOFF"))
-                .build();
-        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
-
-        assertThat(result(outcome, "COOLDOWN").passed()).isTrue();
-    }
-
-    @Test
-    void cooldown_exceptionConditionButSameMechanism_stillFails() {
-        // Conservative: exception condition present, but candidate mechanism (PEAD) matches an
-        // open mechanism on the symbol -> not "genuinely different" -> fail.
-        Cooldown cd = new Cooldown(1L, "ACME", "stopped out", "2026-08-01",
-                "fresh catalyst", "2026-07-01");
-        EntryContext ctx = ctx().activeCooldowns(List.of(cd))
-                .openMechanisms(Map.of("ACME", "PEAD"))
-                .build();
-        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
-
-        assertThat(result(outcome, "COOLDOWN").passed()).isFalse();
-    }
-
-    @Test
-    void cooldown_noExceptionCondition_failsRegardlessOfMechanism() {
-        Cooldown cd = new Cooldown(1L, "ACME", "stopped out", "2026-08-01", null, "2026-07-01");
-        EntryContext ctx = ctx().activeCooldowns(List.of(cd))
-                .openMechanisms(Map.of("ACME", "SPINOFF"))
-                .build();
-        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
-
-        assertThat(result(outcome, "COOLDOWN").passed()).isFalse();
-    }
-
-    @Test
-    void cooldown_emptyBook_exceptionNotGranted() {
-        // Active cooldown carries an exceptionCondition, but openMechanisms is empty (no open
-        // positions to differentiate the candidate mechanism against) -> conservative fail, not a
-        // vacuously-granted exception.
-        Cooldown cd = new Cooldown(1L, "ACME", "stopped out", "2026-08-01",
-                "fresh catalyst", "2026-07-01");
-        EntryContext ctx = ctx().activeCooldowns(List.of(cd))
-                .openMechanisms(Map.of())
                 .build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
