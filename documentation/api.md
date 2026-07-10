@@ -1149,7 +1149,7 @@ the maintenance pipeline. Response:
 
 ```json
 { "output": { "positions": [
-  { "symbol": "ACME", "side": "BUY", "qty": 10, "entry_price": 142.50,
+  { "symbol": "ACME", "signal_id": "sig-123", "side": "BUY", "qty": 10, "entry_price": 142.50,
     "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
@@ -1157,6 +1157,10 @@ the maintenance pipeline. Response:
     "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
 ] } }
 ```
+
+`signal_id` is the position's source signal id (`ExecutorPosition.sourceSignalId()`,
+null-safe — `null` when the position has none), so the LLM can copy it verbatim
+into a Tranche 2 `ADD_TRANCHE`/`HOLD` decision record without a separate lookup.
 
 `soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected

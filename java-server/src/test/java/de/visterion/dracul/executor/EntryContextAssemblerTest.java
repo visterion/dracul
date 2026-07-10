@@ -173,6 +173,39 @@ class EntryContextAssemblerTest {
     }
 
     @Test
+    void differingCurrenciesNoRate_missingContainsFx() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(gateway.account("saxo-sim"))
+                .thenReturn(new AccountSnapshot(new BigDecimal("50000"), new BigDecimal("50000"), "EUR"));
+        // fx is a mock: hasRate() is not stubbed here, so it defaults to false — no cached rate.
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        assertThat(ctx.missing()).contains("fx");
+    }
+
+    @Test
+    void sameCurrencies_missingDoesNotContainFx() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        // account currency USD == instrumentCurrency USD (setUp default) — fx.hasRate is not
+        // even consulted for identical currencies.
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        assertThat(ctx.missing()).doesNotContain("fx");
+    }
+
+    @Test
     void garbageCreatedAt_ageMinusOneAndMissingSignalAge() {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),

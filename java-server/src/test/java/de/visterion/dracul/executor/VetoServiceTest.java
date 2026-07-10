@@ -38,7 +38,12 @@ class VetoServiceTest {
 
     private VetoConfig cfg() {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3);
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10);
+    }
+
+    private VetoConfig cfg(int trancheCount) {
+        return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount);
     }
 
     /** Fluent builder producing {@link EntryContext} with pass-everything defaults. */
@@ -308,6 +313,20 @@ class VetoServiceTest {
         assertThat(result(outcome, "BUDGET").passed()).isTrue();
     }
 
+    @Test
+    void budget_trancheCountHonored_smallerTrancheCountFailsSoonerAtSameExposure() {
+        // trancheCount 5 -> tranche = 10000/5 = 2000; openExposure 8500 + 2000 = 10500 > 10000
+        // (with the default trancheCount 10 -> tranche 1000, this same exposure would pass:
+        // 8500 + 1000 = 9500 <= 10000).
+        EntryContext ctx = ctx().openExposure(BigDecimal.valueOf(8500)).build();
+        VetoService.Outcome outcomeDefault = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+        assertThat(result(outcomeDefault, "BUDGET").passed()).isTrue();
+
+        VetoService.Outcome outcomeTranche5 = vetoService.evaluate(signal(), ctx, sizing(), cfg(5));
+        assertThat(outcomeTranche5.passed()).isFalse();
+        assertThat(outcomeTranche5.firstFailure()).isEqualTo(RejectReason.BUDGET);
+    }
+
     // ---- 6 HEAT_LIMIT ----
 
     @Test
@@ -566,6 +585,30 @@ class VetoServiceTest {
 
         assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SCHEMA_INVALID);
         assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
+    }
+
+    @Test
+    void chasedAway_sellFavorableMove_passes() {
+        // referencePrice 50, chaseAtrMult 2 * atr 2 = 4 -> SELL threshold 46. price 55 (well above
+        // the threshold, not yet collapsed away) -> passes.
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "s", "v1", "ACME", "SELL", 0.8, "PEAD",
+                List.of("kill"), "20d", BigDecimal.valueOf(50), "PENDING", "2026-07-08T00:00:00Z");
+        EntryContext ctx = ctx().price(BigDecimal.valueOf(55)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(sig, ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
+    }
+
+    @Test
+    void chasedAway_sellCollapsedPrice_fails() {
+        // SELL threshold 46 (50 - 2*2); price 44 < 46 -> the entry has already been chased away.
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "s", "v1", "ACME", "SELL", 0.8, "PEAD",
+                List.of("kill"), "20d", BigDecimal.valueOf(50), "PENDING", "2026-07-08T00:00:00Z");
+        EntryContext ctx = ctx().price(BigDecimal.valueOf(44)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(sig, ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.CHASED_AWAY);
     }
 
     @Test

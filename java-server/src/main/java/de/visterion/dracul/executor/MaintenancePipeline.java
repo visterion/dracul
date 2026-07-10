@@ -129,7 +129,7 @@ public class MaintenancePipeline {
         return new EnrichedPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), ss.chandelierBreach(),
-                ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason());
+                ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(), p.sourceSignalId());
     }
 
     private String resolveMechanism(String sourceSignalId) {

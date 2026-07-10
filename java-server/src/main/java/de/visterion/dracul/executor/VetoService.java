@@ -84,18 +84,18 @@ public class VetoService {
         results.add(new VetoResult("MAX_POSITIONS", capacityOk));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
 
-        // 5 BUDGET — all account ccy
-        BigDecimal trancheAccountCcy = cfg.totalBudget().divide(BigDecimal.TEN);
-        boolean budgetOk = ctx.account() != null
-                && ctx.account().cash().compareTo(trancheAccountCcy) >= 0
-                && ctx.openExposure().add(trancheAccountCcy).compareTo(cfg.totalBudget()) <= 0;
+        // 5 BUDGET + 6 HEAT_LIMIT — all account ccy; shared arithmetic with
+        // ExecutorWebhookController.addTranche via CapitalBounds so the two capital-bounds
+        // enforcement points can never silently drift apart.
+        CapitalBounds.Result bounds = CapitalBounds.check(ctx.account(), ctx.openExposure(),
+                ctx.openHeat(), sizing.newRiskAccountCcy(), cfg.totalBudget(), cfg.trancheCount(),
+                cfg.heatPct());
+        boolean budgetOk = bounds.budgetOk();
         results.add(new VetoResult("BUDGET", budgetOk));
         if (!budgetOk && firstFailure == null) firstFailure = RejectReason.BUDGET;
 
         // 6 HEAT_LIMIT
-        BigDecimal heatLimit = cfg.totalBudget().multiply(BigDecimal.valueOf(cfg.heatPct()));
-        boolean heatOk = ctx.openHeat().add(sizing.newRiskAccountCcy())
-                .compareTo(heatLimit) <= 0;
+        boolean heatOk = bounds.heatOk();
         results.add(new VetoResult("HEAT_LIMIT", heatOk));
         if (!heatOk && firstFailure == null) firstFailure = RejectReason.HEAT_LIMIT;
 
@@ -163,6 +163,12 @@ public class VetoService {
             chasedOk = true;
         } else if (signal.referencePrice() == null) {
             chasedOk = false;
+        } else if ("SELL".equals(signal.direction())) {
+            // Mirror for a short entry: chased away means price has already collapsed too far
+            // BELOW the reference (the opposite direction of the BUY case below).
+            BigDecimal chaseThreshold = signal.referencePrice()
+                    .subtract(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
+            chasedOk = ctx.price().compareTo(chaseThreshold) >= 0;
         } else {
             BigDecimal chaseThreshold = signal.referencePrice()
                     .add(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
