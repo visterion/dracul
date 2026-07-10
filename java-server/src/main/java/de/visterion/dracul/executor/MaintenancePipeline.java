@@ -101,7 +101,8 @@ public class MaintenancePipeline {
         List<EnrichedPosition> enriched = new ArrayList<>();
         for (ExecutorPosition p : finalOpen) {
             BigDecimal currentPrice = closeBySymbol.get(p.symbol());
-            Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings);
+            String positionMechanism = resolveMechanism(p.sourceSignalId());
+            Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings, positionMechanism);
             enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()), t2));
         }
         return enriched;
@@ -129,6 +130,12 @@ public class MaintenancePipeline {
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), ss.chandelierBreach(),
                 ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason());
+    }
+
+    private String resolveMechanism(String sourceSignalId) {
+        if (sourceSignalId == null) return null;
+        ExecutorSignal source = signalRepo.findById(sourceSignalId);
+        return source == null ? null : source.mechanism();
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal currentPrice, boolean sell) {

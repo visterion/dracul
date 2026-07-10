@@ -181,9 +181,10 @@ class MaintenancePipelineTest {
                         new BigDecimal("100.9")));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+        when(signalRepo.findById("sig-1")).thenReturn(
+                new ExecutorSignal("sig-1", "src", "v1", "BBB", "BUY", 0.8, "PEAD", List.of(), "6m",
+                        null, "FILLED", "2026-06-01T00:00:00Z"));
         when(signalRepo.findPending(50)).thenReturn(List.of(
-                new ExecutorSignal("s1", "src", "v1", "BBB", "BUY", 0.8, "PEAD", List.of(), "6m",
-                        null, "PENDING", "2026-07-01T00:00:00Z"),
                 new ExecutorSignal("s2", "src", "v1", "BBB", "BUY", 0.8, "SPIN_OFF", List.of(), "6m",
                         null, "PENDING", "2026-07-01T00:00:00Z")));
 
