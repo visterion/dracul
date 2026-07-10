@@ -82,7 +82,7 @@ dracul:
     agora-trading-token: ${DRACUL_EXECUTOR_AGORA_TRADING_TOKEN:}
     webhook-token: ${DRACUL_EXECUTOR_WEBHOOK_TOKEN:}
     schedule: ${DRACUL_EXECUTOR_SCHEDULE:}
-    min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.6}
+    min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.65}
     max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
     atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
     swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
@@ -92,6 +92,16 @@ dracul:
     giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}
     soft-confirm-min: ${DRACUL_EXECUTOR_SOFT_CONFIRM_MIN:2}
     cooldown-days: ${DRACUL_EXECUTOR_COOLDOWN_DAYS:10}
+    total-budget: ${DRACUL_EXECUTOR_TOTAL_BUDGET:10000}
+    tranche-count: ${DRACUL_EXECUTOR_TRANCHE_COUNT:10}
+    instrument-currency: ${DRACUL_EXECUTOR_INSTRUMENT_CURRENCY:USD}
+    heat-pct: ${DRACUL_EXECUTOR_HEAT_PCT:0.06}
+    max-per-sector: ${DRACUL_EXECUTOR_MAX_PER_SECTOR:2}
+    min-price: ${DRACUL_EXECUTOR_MIN_PRICE:5}
+    adv-multiple: ${DRACUL_EXECUTOR_ADV_MULTIPLE:200}
+    max-signal-age-days: ${DRACUL_EXECUTOR_MAX_SIGNAL_AGE_DAYS:5}
+    chase-atr-mult: ${DRACUL_EXECUTOR_CHASE_ATR_MULT:1.0}
+    pace-per-week: ${DRACUL_EXECUTOR_PACE_PER_WEEK:2}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
