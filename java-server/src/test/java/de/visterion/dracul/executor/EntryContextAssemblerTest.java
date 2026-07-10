@@ -279,4 +279,21 @@ class EntryContextAssemblerTest {
         assertThat(ctx.candidateSector()).isEqualTo("Technology");
         assertThat(ctx.missing()).isEmpty();
     }
+
+    @Test
+    void accountWithNullCashIsMarkedMissing() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        // Gateway returns account with null cash but valid buyingPower and currency
+        when(gateway.account("saxo-sim"))
+                .thenReturn(new AccountSnapshot(null, new BigDecimal("50000"), "USD"));
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        assertThat(ctx.missing()).contains("account");
+    }
 }
