@@ -219,7 +219,10 @@ const decisionOptions = computed<{ value: VerdictDecision; label: string; cssCla
   { value: 'DISMISS',     label: t('verdict.decisions.dismiss'),     cssClass: 'btn-crimson-ghost' },
 ])
 
+let requestId = 0
+
 watch(() => route.params.id as string, async (id) => {
+  const current = ++requestId
   loading.value = true
   fetchError.value = null
   verdict.value = null
@@ -231,14 +234,18 @@ watch(() => route.params.id as string, async (id) => {
   watchlistError.value = null
   watchlistAdded.value = false
   try {
-    verdict.value = await api.getVerdictDetail(id)
-    if (verdict.value) {
-      notes.value = await api.getVerdictNotes(id)
+    const v = await api.getVerdictDetail(id)
+    if (current !== requestId) return
+    verdict.value = v
+    if (v) {
+      const n = await api.getVerdictNotes(id)
+      if (current !== requestId) return
+      notes.value = n
     }
   } catch (e) {
-    fetchError.value = (e as Error).message
+    if (current === requestId) fetchError.value = (e as Error).message
   } finally {
-    loading.value = false
+    if (current === requestId) loading.value = false
   }
 }, { immediate: true })
 
