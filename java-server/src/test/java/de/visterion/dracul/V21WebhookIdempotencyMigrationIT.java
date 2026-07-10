@@ -69,6 +69,23 @@ class V21WebhookIdempotencyMigrationIT {
             insertPrey(conn, unrelatedId, "BETA", "INSIDER_CLUSTER", "strigoi-insider", "default",
                     "2026-07-08T10:00:00Z"); // unrelated natural key
 
+            // 2b) Seed dirty pre-V21 exit_signals data: a watchlist item to satisfy the FK,
+            // then two exit_signals rows sharing the same (vistierie_run_id,
+            // watchlist_item_id) -- the earlier one must survive dedup -- plus one row
+            // with a null run id, which must survive untouched.
+            UUID watchlistItemId = UUID.randomUUID();
+            insertWatchlistItem(conn, watchlistItemId);
+            UUID exitKeeperId = UUID.randomUUID();
+            UUID exitLoserId = UUID.randomUUID();
+            UUID exitNullRunId = UUID.randomUUID();
+            String sharedRunId = "run-123";
+            insertExitSignal(conn, exitKeeperId, watchlistItemId, sharedRunId,
+                    "2026-07-10T06:00:00Z"); // earliest -> keeper
+            insertExitSignal(conn, exitLoserId, watchlistItemId, sharedRunId,
+                    "2026-07-10T09:00:00Z"); // later -> loser
+            insertExitSignal(conn, exitNullRunId, watchlistItemId, null,
+                    "2026-07-10T07:00:00Z"); // null run id -> exempt, must survive
+
             // 3) Seed 2 verdicts referencing the dirty prey rows.
             UUID verdict1Id = UUID.randomUUID();
             UUID verdict2Id = UUID.randomUUID();
@@ -103,6 +120,11 @@ class V21WebhookIdempotencyMigrationIT {
             // 5d) Both unique indexes exist.
             assertThat(indexExists(conn, "uq_prey_natural_day")).isTrue();
             assertThat(indexExists(conn, "uq_exit_signals_run_item")).isTrue();
+
+            // 5e) Of the exit_signals dirty rows, only the earliest of the duplicate
+            // pair survives, plus the null-run-id row (exempt from dedup).
+            Set<UUID> remainingExitIds = queryExitSignalIds(conn);
+            assertThat(remainingExitIds).containsExactlyInAnyOrder(exitKeeperId, exitNullRunId);
         }
     }
 
@@ -138,6 +160,45 @@ class V21WebhookIdempotencyMigrationIT {
             ps.setString(3, symbol + " Corp");
             ps.setString(4, contributingPreyIdsJson);
             ps.executeUpdate();
+        }
+    }
+
+    private static void insertWatchlistItem(Connection conn, UUID id) throws Exception {
+        String sql = """
+                INSERT INTO watchlist_items (id, ticker, company_name, current_price,
+                                              day_change_percent, status, added_at, tag, user_id)
+                VALUES (?, 'ACME', 'ACME Corp', 10.00, 0.0, 'ACTIVE', CURRENT_DATE, 'tag', 'default')
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, id);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertExitSignal(Connection conn, UUID id, UUID watchlistItemId,
+                                          String vistierieRunId, String createdAt) throws Exception {
+        String sql = """
+                INSERT INTO exit_signals (id, watchlist_item_id, symbol, action, fired_rules,
+                                           rationale, vistierie_run_id, run_at, user_id, created_at)
+                VALUES (?, ?, 'ACME', 'HOLD', '[]'::jsonb, 'dummy rationale', ?, 'run-at', 'default', ?::timestamptz)
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, id);
+            ps.setObject(2, watchlistItemId);
+            ps.setString(3, vistierieRunId);
+            ps.setString(4, createdAt);
+            ps.executeUpdate();
+        }
+    }
+
+    private static Set<UUID> queryExitSignalIds(Connection conn) throws Exception {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT id FROM exit_signals")) {
+            Set<UUID> ids = new java.util.HashSet<>();
+            while (rs.next()) {
+                ids.add((UUID) rs.getObject("id"));
+            }
+            return ids;
         }
     }
 

@@ -41,7 +41,22 @@ CREATE UNIQUE INDEX uq_prey_natural_day
   ON prey (symbol, anomaly_type, discovered_by, user_id,
            ((discovered_at AT TIME ZONE 'UTC')::date));
 
--- 4) One exit signal per (run, position). Both columns nullable by design;
+-- 4) Delete duplicate exit_signals rows (pre-existing retry duplicates must not
+--    fail the unique index build below). No inbound FK references exit_signals,
+--    so a plain delete is safe -- no remap step needed. Keep earliest per
+--    (vistierie_run_id, watchlist_item_id), tiebreak smallest id.
+WITH ranked AS (
+  SELECT id,
+         first_value(id) OVER (
+           PARTITION BY vistierie_run_id, watchlist_item_id
+           ORDER BY created_at, id
+         ) AS keeper_id
+  FROM exit_signals
+  WHERE vistierie_run_id IS NOT NULL AND watchlist_item_id IS NOT NULL
+)
+DELETE FROM exit_signals WHERE id IN (SELECT id FROM ranked WHERE id <> keeper_id);
+
+-- 5) One exit signal per (run, position). Both columns nullable by design;
 --    rows without run id / item id are exempt.
 CREATE UNIQUE INDEX uq_exit_signals_run_item
   ON exit_signals (vistierie_run_id, watchlist_item_id)
