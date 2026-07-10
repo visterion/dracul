@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Clock;
 import java.util.List;
 
 @Configuration
@@ -14,6 +15,13 @@ import java.util.List;
 class ExecutorDefaults {
 
     static final String NAME = "executor";
+
+    /** Named to avoid ambiguity with any other Clock bean; inject via
+     *  {@code @Qualifier("executorClock")}. */
+    @Bean
+    Clock executorClock() {
+        return Clock.systemUTC();
+    }
 
     @Bean
     AgentDefaultProvider executorAgentDefaults(

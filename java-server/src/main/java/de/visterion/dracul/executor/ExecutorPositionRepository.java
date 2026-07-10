@@ -149,6 +149,15 @@ public class ExecutorPositionRepository {
                 .single();
     }
 
+    /** Count positions ENTERED (entry_date) at or after {@code since}, regardless of current
+     *  status — used for weekly-pace limits (a stopped-out position still counted toward pace). */
+    public int countEnteredSince(java.time.Instant since) {
+        return jdbc.sql("SELECT count(*) FROM executor_position WHERE entry_date >= :since")
+                .param("since", java.sql.Timestamp.from(since))
+                .query(Integer.class)
+                .single();
+    }
+
     private ExecutorPosition mapRow(ResultSet rs, int n) throws SQLException {
         Object entryDateObj = rs.getObject("entry_date");
         return new ExecutorPosition(
