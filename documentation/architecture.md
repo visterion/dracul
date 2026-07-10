@@ -161,7 +161,7 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 
 | Table | Purpose |
 |---|---|
-| `prey` | Immutable Strigoi findings; includes outcome columns filled by Voievod |
+| `prey` | Immutable Strigoi findings; includes outcome columns filled by Voievod. Unique index `uq_prey_natural_day` (V21) on `(symbol, anomaly_type, discovered_by, user_id, discovered_at::date)` makes hunt `/complete` webhooks idempotent — a retried delivery for the same hunter/day is skipped (`ON CONFLICT DO NOTHING`) instead of duplicated, and `HuntController` emits downstream effects only for the actually-inserted subset. |
 | `verdicts` | Consolidated multi-Strigoi consensus records |
 | `verdict_notes` | Append-only audit trail per verdict (id, verdict_id FK, body, created_at, user_id) |
 | `patterns` | Voievod-proposed heuristics (`PENDING` → `ACTIVE` / `REJECTED`) |
@@ -210,7 +210,7 @@ directly without triggering any market-data call.
 - Surfaced via `GET /api/patterns/{id}/cases` (cases ordered by `occurred_at` DESC); seeded with evidence for the 3 pending patterns.
 
 **Exit signals table (V11):**
-- `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default')
+- `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default'). Partial unique index `uq_exit_signals_run_item` (V21) on `(vistierie_run_id, watchlist_item_id)` (where both are non-null) enforces at most one exit signal per run per position.
 - index on `(user_id, symbol, created_at DESC)`
 - Gropar data flow: HELD watchlist positions → daily OHLC history (Agora `get_ohlc`, via `AgoraMarketData.dailyOhlcHistory`) for the current close, plus exit TA (ATR/Chandelier stop, MA cross, 52-week proximity) from Agora `get_indicators` via `AgoraResearch` → `GroparExitIndicators` assembles the bundle (adds gain/loss thresholds and time stop from entry price + verdict horizon; `RiskMetricsService` retained, fed Agora ATR for the R-framework) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts. (The local `ExitIndicatorService` was removed once Agora's `get_indicators` became the TA source.)
 - Gropar position guard: `WatchlistController` publishes a `WatchlistChangedEvent` after every watchlist mutation. `GroparPauseReconciler` (present only when `dracul.gropar.enabled=true`, `@Order(30)` so it runs after `GenericAgentRegistrar`) listens to that event and to `ApplicationReadyEvent`, counts held positions (`WatchlistRepository.countHeldByUser`), and calls `VistierieClient.patchAgent("gropar", heldCount == 0)`. An in-memory last-applied state suppresses redundant Vistierie calls; a failed patch is logged and retried on the next event. gropar's pause is thus system-managed (operator uses the `enabled` flag, not the manual pause toggle).
