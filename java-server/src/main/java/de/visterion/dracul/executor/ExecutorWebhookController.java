@@ -9,6 +9,8 @@ import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
@@ -47,6 +49,8 @@ import java.util.Map;
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 @RequestMapping("/api/executor")
 public class ExecutorWebhookController {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutorWebhookController.class);
 
     private final BearerTokenVerifier verifier;
     private final ExecutorSignalRepository signalRepo;
@@ -430,8 +434,18 @@ public class ExecutorWebhookController {
                     ctx.candidateSector(), ctx.dayHigh(), null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
-            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
-                    null, vetoTrace, "entry placed", brokerOrderId, runId, null));
+
+            try {
+                decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
+                        null, vetoTrace, "entry placed", brokerOrderId, runId, null));
+            } catch (RuntimeException e) {
+                // Position and signal status are durably persisted — the order is managed.
+                // Only the accepted-audit row is missing; log it, but do not flip the response
+                // into a false ORPHANED_ORDER (that would contradict persisted state).
+                log.error("accepted-audit decisionRepo.insert failed for signal {} position {} "
+                                + "broker order {}: {}",
+                        signalId, positionId, brokerOrderId, e.getMessage(), e);
+            }
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,
@@ -744,8 +758,17 @@ public class ExecutorWebhookController {
 
             positionRepo.updateTranche2(position.id(), newQty, newEntry, brokerOrderId, placed.stopLegId());
 
-            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
-                    null, List.of(), "tranche 2 added: " + t2.reason(), brokerOrderId, runId, null));
+            try {
+                decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
+                        null, List.of(), "tranche 2 added: " + t2.reason(), brokerOrderId, runId, null));
+            } catch (RuntimeException e) {
+                // Position tranche update is durably persisted — the order is managed. Only the
+                // accepted-audit row is missing; log it, but do not flip the response into a
+                // false ORPHANED_ORDER (that would contradict persisted state).
+                log.error("accepted-audit decisionRepo.insert failed for signal {} position {} "
+                                + "broker order {}: {}",
+                        position.sourceSignalId(), position.id(), brokerOrderId, e.getMessage(), e);
+            }
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,
