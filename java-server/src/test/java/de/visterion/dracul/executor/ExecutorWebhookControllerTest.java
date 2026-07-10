@@ -35,6 +35,8 @@ class ExecutorWebhookControllerTest {
     private DecisionLogRepository decisionLogRepo;
     private CooldownRepository cooldownRepo;
     private RuleVersionProvider ruleVersions;
+    private EntryContextAssembler assembler;
+    private PositionSizer sizer;
     private JsonMapper mapper;
 
     private ExecutorWebhookController controller;
@@ -50,17 +52,93 @@ class ExecutorWebhookControllerTest {
         decisionLogRepo = mock(DecisionLogRepository.class);
         cooldownRepo = mock(CooldownRepository.class);
         ruleVersions = mock(RuleVersionProvider.class);
+        assembler = mock(EntryContextAssembler.class);
+        sizer = new PositionSizer(); // pure, real instance
         mapper = JsonMapper.builder().build();
 
         when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(ruleVersions.active()).thenReturn("exec-v0.2");
+        when(assembler.assemble(any())).thenReturn(happyContext());
 
         controller = new ExecutorWebhookController(
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                "tkn", "saxo-sim", 0.6, 3, 22, 20, 10);
+                assembler, sizer,
+                "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
+                new BigDecimal("10000"), 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
+    }
+
+    // -------------------------------------------------------------------
+    // EntryContext fixtures
+    // -------------------------------------------------------------------
+
+    /**
+     * A fully-populated, all-vetos-pass {@link EntryContext}: price=100, atr=2, no swingLow, a
+     * generous ADV, empty book, full budget headroom. With this fixture the {@link PositionSizer}
+     * (real instance) computes qty=10 (tranche 1000 / price 100) and a BUY stop window of
+     * [93.5, 95] — matched to the request bodies below that use {@code stop_price:95}.
+     */
+    private static EntryContext happyContext() {
+        return new EntryContext(
+                new AccountSnapshot(new BigDecimal("10000"), new BigDecimal("10000"), "USD"),
+                new BigDecimal("100"),
+                new BigDecimal("2"),
+                null,
+                new BigDecimal("500000"),
+                new BigDecimal("101"),
+                "TECH",
+                List.of(),
+                List.of(),
+                List.of(),
+                0,
+                0L,
+                new BigDecimal("1000"),
+                new BigDecimal("10000"),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                Map.of(),
+                BigDecimal.ONE,
+                List.of());
+    }
+
+    private static EntryContext withMissing(EntryContext c, List<String> missing) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                missing);
+    }
+
+    private static EntryContext withOpenPositions(EntryContext c, List<ExecutorPosition> positions) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), positions, c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing());
+    }
+
+    private static EntryContext withPendingSignals(EntryContext c, List<ExecutorSignal> pending) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                pending, c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing());
+    }
+
+    private static EntryContext withPrice(EntryContext c, BigDecimal price) {
+        return new EntryContext(c.account(), price, c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing());
+    }
+
+    private static EntryContext unavailableContext() {
+        return new EntryContext(null, null, null, null, null, null, null,
+                List.of(), List.of(), List.of(), 0, -1L, null, null, null, null,
+                Map.of(), BigDecimal.ONE, List.of("price", "atr"));
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side,
@@ -81,6 +159,13 @@ class ExecutorWebhookControllerTest {
                 status, "2026-07-01T00:00:00Z");
     }
 
+    private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice,
+            String status, String mechanism) {
+        return new ExecutorSignal(signalId, "hunter", "v1", "ACME", "LONG",
+                confidence, mechanism, List.of("X"), "3m", referencePrice,
+                status, "2026-07-01T00:00:00Z");
+    }
+
     private JsonNode json(String s) {
         return mapper.readTree(s);
     }
@@ -97,7 +182,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void authRejected() {
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry("Bearer wrong", null, body);
@@ -113,10 +198,9 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_lowConfidence_noBrokerCall() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.4, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -138,10 +222,14 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_maxPositions_noBrokerCall() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(3);
+        List<ExecutorPosition> threeOpen = List.of(
+                openPosition(1, "A", "BUY", new BigDecimal("10"), new BigDecimal("9")),
+                openPosition(2, "B", "BUY", new BigDecimal("10"), new BigDecimal("9")),
+                openPosition(3, "C", "BUY", new BigDecimal("10"), new BigDecimal("9")));
+        when(assembler.assemble(any())).thenReturn(withOpenPositions(happyContext(), threeOpen));
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -159,7 +247,7 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("ghost")).thenReturn(null);
 
         JsonNode body = json("""
-                {"signal_id":"ghost","symbol":"ZZZ","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"ghost","symbol":"ZZZ","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -183,7 +271,7 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100"), "ACCEPTED"));
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -205,10 +293,9 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_orderGuardWrongStop_noBrokerCall() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":105}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":105}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -240,6 +327,100 @@ class ExecutorWebhookControllerTest {
         verify(positionRepo, never()).insert(any());
     }
 
+    @Test
+    void placeEntry_invalidSide_rejectsWithoutSizing() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"LONG","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(assembler, never()).assemble(any());
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().rejectReason()).isEqualTo("SCHEMA_INVALID");
+    }
+
+    @Test
+    void placeEntry_dataUnavailable_rejectsWithoutSizerOrGateway() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(unavailableContext());
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("DATA_UNAVAILABLE");
+
+        verifyNoInteractions(gateway);
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+    }
+
+    @Test
+    void placeEntry_trancheTooSmall_rejects() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("2000")));
+        when(assembler.assemble(any()))
+                .thenReturn(withPrice(happyContext(), new BigDecimal("2000")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":1995}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("TRANCHE_TOO_SMALL");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+    }
+
+    @Test
+    void placeEntry_contradictionPair_marksBothSignalsRejected() {
+        ExecutorSignal mergerArb = signal("sig-1", 0.9, new BigDecimal("100"), "PENDING", "MERGER_ARB");
+        ExecutorSignal contradicting = signal("sig-2", 0.9, new BigDecimal("100"), "PENDING", "PEAD");
+        when(signalRepo.findById("sig-1")).thenReturn(mergerArb);
+        when(assembler.assemble(any()))
+                .thenReturn(withPendingSignals(happyContext(), List.of(contradicting)));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("CONTRADICTION");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+        verify(signalRepo).markStatus("sig-2", "REJECTED");
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, times(2)).insert(captor.capture());
+        List<ExecutorDecision> decisions = captor.getAllValues();
+        assertThat(decisions).extracting(ExecutorDecision::signalId).containsExactlyInAnyOrder("sig-1", "sig-2");
+        ExecutorDecision other = decisions.stream().filter(d -> "sig-2".equals(d.signalId())).findFirst().orElseThrow();
+        assertThat(other.rationale()).contains("contradiction pair with sig-1");
+    }
+
     // -------------------------------------------------------------------
     // place-entry: happy path
     // -------------------------------------------------------------------
@@ -247,13 +428,12 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_happyPath_placesAndBooks() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -268,6 +448,7 @@ class ExecutorWebhookControllerTest {
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.symbol()).isEqualTo("ACME");
         assertThat(req.side()).isEqualTo("BUY");
+        // qty is server-side sizer output (tranche 1000 / price 100), not caller-supplied.
         assertThat(req.qty()).isEqualByComparingTo("10");
         assertThat(req.stopLossStop()).isEqualByComparingTo("95");
         assertThat(req.limitPrice()).isNull();
@@ -280,6 +461,9 @@ class ExecutorWebhookControllerTest {
         assertThat(posCaptor.getValue().status()).isEqualTo("OPEN");
         assertThat(posCaptor.getValue().brokerOrderId()).isEqualTo("brk-1");
         assertThat(posCaptor.getValue().stopOrderId()).isEqualTo("stop-1");
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("10");
+        assertThat(posCaptor.getValue().sector()).isEqualTo("TECH");
+        assertThat(posCaptor.getValue().entryDayHigh()).isEqualByComparingTo("101");
 
         verify(signalRepo).markStatus("sig-1", "ACCEPTED");
 
@@ -292,12 +476,11 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_brokerError_noPositionBooked() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
                 .thenThrow(new BrokerUnavailableException("broker down"));
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
@@ -322,7 +505,6 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_noTakeProfit_synthesizesWide3RTarget_buy() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
@@ -330,7 +512,7 @@ class ExecutorWebhookControllerTest {
         // BUY, reference=100, stop=95 → R=5 → target = 100 + 3*5 = 115, no take_profit supplied
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
-                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95}}
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","stop_price":95}}
                 """);
 
         controller.placeEntry(BEARER, "r1", body);
@@ -344,7 +526,6 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_noTakeProfit_synthesizesWide3RTarget_sell() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
@@ -352,7 +533,7 @@ class ExecutorWebhookControllerTest {
         // SELL, reference=100, stop=105 → R=5 → target = 100 - 3*5 = 85 (below entry)
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
-                 "input":{"signal_id":"s1","symbol":"ACME","side":"SELL","qty":10,"stop_price":105}}
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"SELL","stop_price":105}}
                 """);
 
         controller.placeEntry(BEARER, "r1", body);
@@ -366,7 +547,6 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_explicitTakeProfit_usedUnchanged() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(positionRepo.countOpen()).thenReturn(0);
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
@@ -374,7 +554,7 @@ class ExecutorWebhookControllerTest {
         // LLM supplies take_profit=108 → must be used as-is, not overwritten by the 3R default (115)
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
-                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","qty":10,"stop_price":95,"take_profit":108}}
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","stop_price":95,"take_profit":108}}
                 """);
 
         controller.placeEntry(BEARER, "r1", body);
@@ -390,15 +570,14 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void placeEntry_vistierieEnvelope_placesIdenticallyToTopLevel() {
-        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("230")));
-        when(positionRepo.countOpen()).thenReturn(0);
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-9", "stop-9", null, "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(42L);
 
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
-                 "input":{"signal_id":"s1","symbol":"MRVL","side":"BUY","qty":4,"stop_price":229.5}}
+                 "input":{"signal_id":"s1","symbol":"MRVL","side":"BUY","stop_price":95}}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, "r1", body);
@@ -412,8 +591,8 @@ class ExecutorWebhookControllerTest {
         verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.side()).isEqualTo("BUY");
-        assertThat(req.qty()).isEqualByComparingTo("4");
-        assertThat(req.stopLossStop()).isEqualByComparingTo("229.5");
+        assertThat(req.qty()).isEqualByComparingTo("10");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
         assertThat(req.clientRef()).isEqualTo("s1");
 
         verify(signalRepo).markStatus("s1", "ACCEPTED");
@@ -425,7 +604,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
-                 "input":{"signal_id":"ghost","symbol":"ZZZ","side":"BUY","qty":10,"stop_price":95}}
+                 "input":{"signal_id":"ghost","symbol":"ZZZ","side":"BUY","stop_price":95}}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, "r1", body);

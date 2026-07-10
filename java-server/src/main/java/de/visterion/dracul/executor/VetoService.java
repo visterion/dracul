@@ -14,9 +14,7 @@ import java.util.Set;
  *
  * <p>{@link #evaluate} runs the full 13-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
- * mandatory upstream data was missing at assembly time. {@link #evaluateBasic} is a transitional
- * compatibility shim reproducing the slice-1 3-veto behavior for the one remaining caller that has
- * not yet been rewired onto the full context (Task 6).
+ * mandatory upstream data was missing at assembly time.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -186,36 +184,5 @@ public class VetoService {
         if (mechanismA == null || mechanismB == null) return false;
         return ("MERGER_ARB".equals(mechanismA) && MERGER_ARB_CONTRADICTIONS.contains(mechanismB))
                 || ("MERGER_ARB".equals(mechanismB) && MERGER_ARB_CONTRADICTIONS.contains(mechanismA));
-    }
-
-    /**
-     * Transitional — removed in Task 6 when the controller wires the full context. Reproduces the
-     * exact slice-1 semantics (SCHEMA_INVALID incl. kill_criteria / LOW_CONFIDENCE / MAX_POSITIONS)
-     * for the one remaining caller ({@code ExecutorWebhookController}) that has not yet been
-     * rewired onto {@link #evaluate}.
-     */
-    public Outcome evaluateBasic(ExecutorSignal signal, int openPositions,
-                                  double minConfidence, int maxPositions) {
-        List<VetoResult> results = new ArrayList<>();
-        RejectReason firstFailure = null;
-
-        boolean schemaOk = signal != null
-                && signal.symbol() != null && !signal.symbol().isBlank()
-                && signal.direction() != null && !signal.direction().isBlank()
-                && signal.confidence() != null
-                && signal.killCriteria() != null && !signal.killCriteria().isEmpty();
-        results.add(new VetoResult("SCHEMA_INVALID", schemaOk));
-        if (!schemaOk) firstFailure = RejectReason.SCHEMA_INVALID;
-
-        boolean confidenceOk = schemaOk && signal.confidence() >= minConfidence;
-        results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk));
-        if (!confidenceOk && firstFailure == null) firstFailure = RejectReason.LOW_CONFIDENCE;
-
-        boolean capacityOk = openPositions < maxPositions;
-        results.add(new VetoResult("MAX_POSITIONS", capacityOk));
-        if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
-
-        boolean passed = firstFailure == null;
-        return new Outcome(passed, firstFailure, results, null);
     }
 }
