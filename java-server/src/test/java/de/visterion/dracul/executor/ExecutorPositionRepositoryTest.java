@@ -9,6 +9,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -118,6 +120,18 @@ class ExecutorPositionRepositoryTest {
         assertThat(after.entryPrice()).isEqualByComparingTo("101.25");
         assertThat(after.tranche2OrderId()).isEqualTo("ord-2");
         assertThat(after.tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
+    void countEnteredSinceCountsOnlyRecentEntries() {
+        Instant before = Instant.now().minusSeconds(5);
+        long id = repo.insert(openPosition("CES" + System.nanoTime()));
+        assertThat(id).isPositive();
+
+        assertThat(repo.countEnteredSince(before)).isGreaterThanOrEqualTo(1);
+
+        Instant future = Instant.now().plus(1, ChronoUnit.DAYS);
+        assertThat(repo.countEnteredSince(future)).isEqualTo(0);
     }
 
     private ExecutorPosition openPosition(String symbol) {
