@@ -271,7 +271,7 @@ const toDate = '07.06.2026'
 .vf-k { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ash-gray); margin-bottom: var(--space-1); }
 .vf-v { font-size: var(--text-h4); color: var(--bone-ivory); }
 
-@media (max-width: 599.98px) {
+@media (max-width: 959.98px) {
   .bt-field { grid-template-columns: 1fr; gap: var(--space-2); }
   .bt-label { padding-top: 0; }
   .bt-recent { grid-template-columns: 1fr; }
