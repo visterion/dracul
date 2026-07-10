@@ -67,7 +67,8 @@ class ExecutorWebhookControllerTest {
             BigDecimal entry, BigDecimal initialStop) {
         return new ExecutorPosition(id, "saxo-sim", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
-                "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null);
+                "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
+                null, null, null, null);
     }
 
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {

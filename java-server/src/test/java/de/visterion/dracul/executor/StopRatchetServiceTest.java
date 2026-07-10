@@ -42,7 +42,7 @@ class StopRatchetServiceTest {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("90"), activeStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01",
                 null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null, null, null, null,
-                "stop-1");
+                "stop-1", null, null, null, null);
     }
 
     @Test

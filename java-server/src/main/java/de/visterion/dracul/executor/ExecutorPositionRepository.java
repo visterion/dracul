@@ -37,11 +37,13 @@ public class ExecutorPositionRepository {
                   (connection, symbol, side, qty, entry_price, initial_stop, active_stop,
                    tranche, r_value, kill_criteria, source_signal_id, source_agent, mfe, status,
                    broker_order_id, highest_price, mfe_r, soft_confirm_count, exit_price,
-                   realized_r, exit_reason, stop_order_id)
+                   realized_r, exit_reason, stop_order_id, sector, entry_day_high,
+                   tranche2_order_id, tranche2_stop_order_id)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
-                        :exitPrice, :realizedR, :exitReason, :stopOrderId)
+                        :exitPrice, :realizedR, :exitReason, :stopOrderId, :sector, :entryDayHigh,
+                        :tranche2OrderId, :tranche2StopOrderId)
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -65,6 +67,10 @@ public class ExecutorPositionRepository {
                 .param("realizedR", p.realizedR())
                 .param("exitReason", p.exitReason())
                 .param("stopOrderId", p.stopOrderId())
+                .param("sector", p.sector())
+                .param("entryDayHigh", p.entryDayHigh())
+                .param("tranche2OrderId", p.tranche2OrderId())
+                .param("tranche2StopOrderId", p.tranche2StopOrderId())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -102,6 +108,20 @@ public class ExecutorPositionRepository {
                 .param("exitPrice", exitPrice)
                 .param("realizedR", realizedR)
                 .param("exitReason", exitReason)
+                .param("id", id)
+                .update();
+    }
+
+    public void updateTranche2(long id, BigDecimal newQty, BigDecimal newEntryPrice,
+                               String tranche2OrderId, String tranche2StopOrderId) {
+        jdbc.sql("""
+                UPDATE executor_position
+                SET tranche = 2, qty = :qty, entry_price = :entryPrice,
+                    tranche2_order_id = :t2o, tranche2_stop_order_id = :t2s
+                WHERE id = :id
+                """)
+                .param("qty", newQty).param("entryPrice", newEntryPrice)
+                .param("t2o", tranche2OrderId).param("t2s", tranche2StopOrderId)
                 .param("id", id)
                 .update();
     }
@@ -156,7 +176,11 @@ public class ExecutorPositionRepository {
                 rs.getBigDecimal("realized_r"),
                 rs.getString("exit_reason"),
                 closedAtOrNull(rs),
-                rs.getString("stop_order_id"));
+                rs.getString("stop_order_id"),
+                rs.getString("sector"),
+                rs.getBigDecimal("entry_day_high"),
+                rs.getString("tranche2_order_id"),
+                rs.getString("tranche2_stop_order_id"));
     }
 
     private String closedAtOrNull(ResultSet rs) throws SQLException {

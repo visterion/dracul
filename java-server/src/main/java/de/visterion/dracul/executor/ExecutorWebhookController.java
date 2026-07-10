@@ -332,7 +332,8 @@ public class ExecutorWebhookController {
                     signal.symbol(), side, qty, referencePrice, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
-                    referencePrice, null, 0, null, null, null, null, stopOrderId));
+                    referencePrice, null, 0, null, null, null, null, stopOrderId,
+                    null, null, null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
