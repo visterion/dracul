@@ -61,11 +61,20 @@ public class VetoService {
         // the entry, UNLESS the row carries an exceptionCondition AND the candidate mechanism
         // differs from every open mechanism on that symbol (a genuinely fresh setup). When in
         // doubt (no exceptionCondition, or mechanism matches an open one), fail conservatively.
+        // Note: unevaluated because the signal is schema-invalid still traces as PASS here — this
+        // veto and the ones below gated on schemaOk only ever *fail* when schemaOk is true, so a
+        // schema-invalid signal's trace shows PASS for all of them while SCHEMA_INVALID itself is
+        // firstFailure (trace consistency, matches SCHEMA_INVALID/LOW_CONFIDENCE ordering).
         boolean cooldownOk = true;
         if (schemaOk) {
             for (Cooldown cd : ctx.activeCooldowns()) {
                 if (!signal.symbol().equals(cd.symbol())) continue;
+                // Cooldown rows do not store the origin mechanism; without open positions to
+                // differentiate against, the exception cannot be verified — fail conservative.
+                // An empty open book therefore never grants the fresh-setup exception, even if
+                // the row carries an exceptionCondition.
                 boolean freshException = cd.exceptionCondition() != null
+                        && !ctx.openMechanisms().isEmpty()
                         && ctx.openMechanisms().values().stream()
                                 .noneMatch(m -> signal.mechanism().equals(m));
                 if (!freshException) {
@@ -148,10 +157,24 @@ public class VetoService {
         results.add(new VetoResult("SIGNAL_EXPIRED", expiredOk));
         if (!expiredOk && firstFailure == null) firstFailure = RejectReason.SIGNAL_EXPIRED;
 
-        // 12 CHASED_AWAY
-        BigDecimal chaseThreshold = signal.referencePrice()
-                .add(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
-        boolean chasedOk = ctx.price().compareTo(chaseThreshold) <= 0;
+        // 12 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
+        // schemaOk: a null signal, or a schema-valid signal with a null referencePrice (a field not
+        // covered by SCHEMA_INVALID's checklist), can otherwise reach this line and NPE. Made total:
+        // schema-invalid ⇒ traces PASS (consistent with the other gated vetos; SCHEMA_INVALID is
+        // already firstFailure); schema-valid but referencePrice == null ⇒ FAILS conservatively (an
+        // unverifiable chase check is not tradeable). In production the assembler already routes a
+        // null reference price into the DATA_UNAVAILABLE pre-veto, so this branch is defense-in-depth
+        // for direct/pure calls to evaluate().
+        boolean chasedOk;
+        if (!schemaOk) {
+            chasedOk = true;
+        } else if (signal.referencePrice() == null) {
+            chasedOk = false;
+        } else {
+            BigDecimal chaseThreshold = signal.referencePrice()
+                    .add(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
+            chasedOk = ctx.price().compareTo(chaseThreshold) <= 0;
+        }
         results.add(new VetoResult("CHASED_AWAY", chasedOk));
         if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
 

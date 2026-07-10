@@ -266,6 +266,22 @@ class VetoServiceTest {
         assertThat(result(outcome, "COOLDOWN").passed()).isFalse();
     }
 
+    @Test
+    void cooldown_emptyBook_exceptionNotGranted() {
+        // Active cooldown carries an exceptionCondition, but openMechanisms is empty (no open
+        // positions to differentiate the candidate mechanism against) -> conservative fail, not a
+        // vacuously-granted exception.
+        Cooldown cd = new Cooldown(1L, "ACME", "stopped out", "2026-08-01",
+                "fresh catalyst", "2026-07-01");
+        EntryContext ctx = ctx().activeCooldowns(List.of(cd))
+                .openMechanisms(Map.of())
+                .build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.COOLDOWN);
+    }
+
     // ---- 4 MAX_POSITIONS ----
 
     @Test
@@ -560,6 +576,41 @@ class VetoServiceTest {
         EntryContext ctx = ctx().price(BigDecimal.valueOf(54)).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
+        assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
+    }
+
+    @Test
+    void chasedAway_nullReferencePrice_failsConservatively() {
+        // Schema-valid signal (referencePrice is not part of the SCHEMA_INVALID checklist), but
+        // referencePrice is null -> the chase check is unverifiable -> fail conservative rather
+        // than NPE.
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "strigoi-test", "v1", "ACME", "LONG", 0.8,
+                "PEAD", List.of("kill"), "20d", null, "PENDING", "2026-07-08T00:00:00Z");
+        VetoService.Outcome outcome = vetoService.evaluate(sig, ctx().build(), sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.CHASED_AWAY);
+    }
+
+    @Test
+    void chasedAway_schemaInvalid_notEvaluated() {
+        // Signal missing mechanism -> SCHEMA_INVALID is firstFailure; CHASED_AWAY (not gated by
+        // schemaOk in the null-signal sense but internally short-circuited) must still trace PASS,
+        // not throw and not become firstFailure.
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "s", "v1", "ACME", "LONG", 0.8, null,
+                List.of("kill"), "20d", BigDecimal.valueOf(50), "PENDING", "2026-07-08T00:00:00Z");
+        VetoService.Outcome outcome = vetoService.evaluate(sig, ctx().build(), sizing(), cfg());
+
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SCHEMA_INVALID);
+        assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
+    }
+
+    @Test
+    void evaluate_nullSignal_noException() {
+        VetoService.Outcome outcome = vetoService.evaluate(null, ctx().build(), sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SCHEMA_INVALID);
         assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
     }
 
