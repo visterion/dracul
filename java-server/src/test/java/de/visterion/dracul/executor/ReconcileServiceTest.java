@@ -138,6 +138,30 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void stillOpen_pinsSectorEntryDayHighAndTranche2FieldsThroughReconcile() {
+        // Task-1 review carry-over: ReconcileService's still-open position-copy must not drop
+        // sector/entryDayHigh/tranche2OrderId/tranche2StopOrderId — pin the pass-through here.
+        ExecutorPosition p = new ExecutorPosition(7L, "c", "BBB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
+                List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-7", null,
+                BigDecimal.ZERO, 0, null, null, null, null, "stop-7",
+                "Technology", new BigDecimal("101.5"), "ord-2", "stop-2");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("108")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        assertThat(survivors).hasSize(1);
+        ExecutorPosition survivor = survivors.get(0);
+        assertThat(survivor.sector()).isEqualTo("Technology");
+        assertThat(survivor.entryDayHigh()).isEqualByComparingTo("101.5");
+        assertThat(survivor.tranche2OrderId()).isEqualTo("ord-2");
+        assertThat(survivor.tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
     void stillOpenShort_favorableExtremeIsMinimum() {
         ExecutorPosition p = openPosition(5L, "SHORT1", "SELL", new BigDecimal("100"),
                 new BigDecimal("105"), "brk-5", "stop-5", new BigDecimal("100"), BigDecimal.ZERO);

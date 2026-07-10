@@ -852,7 +852,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"),
-                true, false, 1);
+                true, false, 1, true, "R_CONFIRMED");
         when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
@@ -874,6 +874,11 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> softTrigger = (Map<String, Object>) first.get("soft_trigger");
         assertThat(softTrigger.get("confirm_count")).isEqualTo(1);
         assertThat(softTrigger.get("chandelier_breach")).isEqualTo(true);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tranche2 = (Map<String, Object>) first.get("tranche2");
+        assertThat(tranche2.get("eligible")).isEqualTo(true);
+        assertThat(tranche2.get("reason")).isEqualTo("R_CONFIRMED");
     }
 
     @Test

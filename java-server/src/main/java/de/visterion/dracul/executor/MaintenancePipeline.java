@@ -42,6 +42,8 @@ public class MaintenancePipeline {
     private final SoftConditionEvaluator softEval;
     private final ExecutorIndicators indicators;
     private final ExecutorPositionRepository positionRepo;
+    private final ExecutorSignalRepository signalRepo;
+    private final Tranche2Detector tranche2Detector;
     private final double chandelierMult;
     private final int atrPeriod;
     private final int swingPeriod;
@@ -53,6 +55,8 @@ public class MaintenancePipeline {
             SoftConditionEvaluator softEval,
             ExecutorIndicators indicators,
             ExecutorPositionRepository positionRepo,
+            ExecutorSignalRepository signalRepo,
+            Tranche2Detector tranche2Detector,
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
@@ -62,6 +66,8 @@ public class MaintenancePipeline {
         this.softEval = softEval;
         this.indicators = indicators;
         this.positionRepo = positionRepo;
+        this.signalRepo = signalRepo;
+        this.tranche2Detector = tranche2Detector;
         this.chandelierMult = chandelierMult;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
@@ -90,14 +96,19 @@ public class MaintenancePipeline {
                 .filter(p -> afterHardIds.contains(p.id()))
                 .toList();
 
+        List<ExecutorSignal> pendings = signalRepo.findPending(50);
+
         List<EnrichedPosition> enriched = new ArrayList<>();
         for (ExecutorPosition p : finalOpen) {
-            enriched.add(enrich(p, closeBySymbol.get(p.symbol()), atrBySymbol.get(p.symbol())));
+            BigDecimal currentPrice = closeBySymbol.get(p.symbol());
+            Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings);
+            enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()), t2));
         }
         return enriched;
     }
 
-    private EnrichedPosition enrich(ExecutorPosition p, BigDecimal currentPrice, BigDecimal atr) {
+    private EnrichedPosition enrich(ExecutorPosition p, BigDecimal currentPrice, BigDecimal atr,
+            Tranche2Detector.Tranche2Status t2) {
         boolean sell = "SELL".equals(p.side());
 
         BigDecimal chandelierLevel = null;
@@ -117,7 +128,7 @@ public class MaintenancePipeline {
         return new EnrichedPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), ss.chandelierBreach(),
-                ss.maBreak(), ss.confirmCount());
+                ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason());
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal currentPrice, boolean sell) {
