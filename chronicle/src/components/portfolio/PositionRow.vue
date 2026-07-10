@@ -71,4 +71,13 @@ function fmt(n: number | null): string {
 .pf-row__actions { display: flex; gap: var(--space-1); flex: 0 0 auto; }
 .pf-row__btn { background: transparent; border: none; color: var(--ash-gray); cursor: pointer; padding: var(--space-1); }
 .pf-row__btn:hover { color: var(--bone-ivory); }
+
+/* Mobile: wrap into badge/name/actions on the first line, numbers below. */
+@media (max-width: 959.98px) {
+  .pf-row { flex-wrap: wrap; }
+  .pf-row__main { flex: 1 1 auto; min-width: 0; }
+  .pf-row__actions { order: 2; }
+  .pf-row__thesis { order: 3; }
+  .pf-row__nums { order: 4; flex-basis: 100%; }
+}
 </style>
