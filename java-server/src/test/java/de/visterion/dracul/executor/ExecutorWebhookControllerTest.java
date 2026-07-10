@@ -543,6 +543,32 @@ class ExecutorWebhookControllerTest {
         assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("bracket-1");
     }
 
+    @Test
+    void placeEntry_acceptedAuditInsertFails_stillReportsPlacedTrue() {
+        // Position insert + markStatus(ACCEPTED) succeed durably; only the accepted-audit
+        // decisionRepo.insert throws. The response must NOT flip into a false ORPHANED_ORDER
+        // -- that would contradict persisted state.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("bracket-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+        doThrow(new RuntimeException("audit db down")).when(decisionRepo)
+                .insert(argThat(d -> d != null && d.accepted()));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("bracket-1");
+
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
     // -------------------------------------------------------------------
     // place-entry: order-price basis (limit price or fresh close) drives sizing,
     // guard, take-profit synthesis, and booking -- never the stale signal reference
@@ -1180,6 +1206,34 @@ class ExecutorWebhookControllerTest {
         assertThat(decCaptor.getValue().accepted()).isFalse();
         assertThat(decCaptor.getValue().rejectReason()).isEqualTo("ORPHANED_ORDER");
         assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("bracket-2");
+    }
+
+    @Test
+    void addTranche_acceptedAuditInsertFails_stillReportsPlacedTrue() {
+        // updateTranche2 succeeds durably; only the accepted-audit decisionRepo.insert throws.
+        // The response must NOT flip into a false ORPHANED_ORDER -- that would contradict the
+        // already-persisted tranche update.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("saxo-sim"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
+        doThrow(new RuntimeException("audit db down")).when(decisionRepo)
+                .insert(argThat(d -> d != null && d.accepted()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("reason")).isEqualTo("R_CONFIRMED");
+
+        verify(positionRepo).updateTranche2(eq(7L), any(), any(), eq("brk-2"), eq("stop-2"));
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
     }
 
     @Test
