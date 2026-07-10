@@ -1,5 +1,5 @@
 <template>
-  <div class="exit-detail">
+  <div class="content-inner prose-width exit-detail">
     <BackLink data-testid="exit-back" @click="goBack">{{ t('exitSignal.back') }}</BackLink>
 
     <template v-if="loading">
@@ -142,4 +142,11 @@ watch(() => route.params.id, async (raw) => {
 .ed-pnl.pos { color: var(--cathedral-gold); }
 .ed-pnl.neg { color: var(--blood-crimson); }
 .ed-verdict { display: inline-block; margin-top: var(--space-3); color: var(--cathedral-gold); }
+
+/* Mobile: header and rule rows wrap instead of clipping. */
+@media (max-width: 959.98px) {
+  .ed-head { flex-wrap: wrap; }
+  .ed-rule { flex-wrap: wrap; }
+  .ed-rule-k { flex: 0 0 auto; }
+}
 </style>
