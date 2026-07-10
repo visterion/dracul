@@ -87,6 +87,14 @@ class EntryContextAssemblerTest {
         }
     }
 
+    private ExecutorPosition openPosition(String symbol, BigDecimal qty, BigDecimal entryPrice,
+            BigDecimal activeStop, String sourceSignalId) {
+        return new ExecutorPosition(1L, "saxo-sim", symbol, "BUY", qty, entryPrice,
+                entryPrice, activeStop, 1, null, List.of(), sourceSignalId, "agent", "2026-07-01",
+                null, "OPEN", "brk-1", null, null, 0, null, null, null, null,
+                "stop-1", null, null, null, null);
+    }
+
     private JsonNode profileResponse(String sector, String finnhubIndustry, String gicsSector) {
         ObjectNode root = mapper.createObjectNode();
         ObjectNode profile = root.putObject("profile");
@@ -177,6 +185,33 @@ class EntryContextAssemblerTest {
 
         assertThat(ctx.signalAgeTradingDays()).isEqualTo(-1L);
         assertThat(ctx.missing()).contains("signal_age");
+    }
+
+    @Test
+    void openPositions_aggregateExposureHeatAndMechanisms() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+
+        ExecutorPosition msft = openPosition("MSFT", BigDecimal.TEN, new BigDecimal("300.00"),
+                new BigDecimal("290.00"), "sig-1");
+        ExecutorPosition aapl = openPosition("AAPL", new BigDecimal("5"), new BigDecimal("150.00"),
+                new BigDecimal("145.00"), "sig-2");
+        when(positionRepo.findOpen()).thenReturn(List.of(msft, aapl));
+
+        ExecutorSignal spinoffSignal = new ExecutorSignal("sig-1", "strigoi-spin", "v1", "MSFT", "BUY", 0.8,
+                "SPINOFF", List.of(), "swing", new BigDecimal("300.00"), "PENDING", "2026-07-01T00:00:00Z");
+        when(signalRepo.findById("sig-1")).thenReturn(spinoffSignal);
+        when(signalRepo.findById("sig-2")).thenReturn(null);
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        assertThat(ctx.openExposure()).isEqualByComparingTo("3750.00"); // 10*300.00 + 5*150.00
+        assertThat(ctx.openHeat()).isEqualByComparingTo("125.00");
+        assertThat(ctx.openMechanisms()).containsExactly(java.util.Map.entry("MSFT", "SPINOFF"));
     }
 
     @Test
