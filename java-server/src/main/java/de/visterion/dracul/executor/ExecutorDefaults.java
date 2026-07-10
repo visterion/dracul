@@ -68,12 +68,11 @@ class ExecutorDefaults {
                     "signal_id": {"type": "string"},
                     "symbol": {"type": "string"},
                     "side": {"type": "string", "enum": ["BUY", "SELL"]},
-                    "qty": {"type": "number"},
                     "limit_price": {"type": ["number", "null"]},
                     "stop_price": {"type": "number"},
                     "take_profit": {"type": ["number", "null"]}
                   },
-                  "required": ["signal_id", "symbol", "side", "qty", "stop_price"]
+                  "required": ["signal_id", "symbol", "side", "stop_price"]
                 }
                 """);
         var exitPositionInput = AgentResources.parseJson(mapper, """
@@ -100,7 +99,8 @@ class ExecutorDefaults {
                         "Return current broker positions.",
                         connectionInput, "/api/executor/tools/list-positions", 30),
                 new ToolCatalogEntry("place_entry",
-                        "Place a guarded bracket entry (server enforces vetos + order guard).",
+                        "Place a guarded bracket entry (server enforces vetos + order guard). "
+                                + "qty is computed server-side (tranche sizing).",
                         placeEntryInput, "/api/executor/tools/place-entry", 60),
                 new ToolCatalogEntry("submit_decision",
                         "Record the executor's ENTER/SKIP decisions for processed signals.",

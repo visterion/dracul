@@ -17,7 +17,7 @@ class OrderGuardTest {
     @Test
     void passesValidLong() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-sim", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isTrue();
         assertThat(result.reason()).isNull();
     }
@@ -25,7 +25,7 @@ class OrderGuardTest {
     @Test
     void passesValidShort() {
         OrderGuard.Result result = guard.check("SELL", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("105"), "saxo-sim", "saxo-sim");
+                new BigDecimal("105"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isTrue();
         assertThat(result.reason()).isNull();
     }
@@ -33,7 +33,7 @@ class OrderGuardTest {
     @Test
     void rejectsNonAllowedConnection() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-live", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-live", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NON_SIM_CONNECTION);
     }
@@ -41,7 +41,7 @@ class OrderGuardTest {
     @Test
     void rejectsNullConnection() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("95"), null, "saxo-sim");
+                new BigDecimal("95"), null, null, null, "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NON_SIM_CONNECTION);
     }
@@ -49,7 +49,7 @@ class OrderGuardTest {
     @Test
     void rejectsZeroQty() {
         OrderGuard.Result result = guard.check("BUY", BigDecimal.ZERO, new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-sim", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.SCHEMA_INVALID);
     }
@@ -57,7 +57,7 @@ class OrderGuardTest {
     @Test
     void rejectsNegativeQty() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("-5"), new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-sim", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.SCHEMA_INVALID);
     }
@@ -65,7 +65,7 @@ class OrderGuardTest {
     @Test
     void rejectsMissingStop() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                null, "saxo-sim", "saxo-sim");
+                null, null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
     }
@@ -73,7 +73,7 @@ class OrderGuardTest {
     @Test
     void rejectsNonPositiveStop() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                BigDecimal.ZERO, "saxo-sim", "saxo-sim");
+                BigDecimal.ZERO, null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
     }
@@ -81,7 +81,7 @@ class OrderGuardTest {
     @Test
     void rejectsStopOnWrongSideLong() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("105"), "saxo-sim", "saxo-sim");
+                new BigDecimal("105"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
     }
@@ -89,7 +89,7 @@ class OrderGuardTest {
     @Test
     void rejectsStopOnWrongSideShort() {
         OrderGuard.Result result = guard.check("SELL", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-sim", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
     }
@@ -97,7 +97,7 @@ class OrderGuardTest {
     @Test
     void rejectsStopEqualToReferenceLong() {
         OrderGuard.Result result = guard.check("BUY", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("100"), "saxo-sim", "saxo-sim");
+                new BigDecimal("100"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
     }
@@ -105,7 +105,7 @@ class OrderGuardTest {
     @Test
     void rejectsStopEqualToReferenceShort() {
         OrderGuard.Result result = guard.check("SELL", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("100"), "saxo-sim", "saxo-sim");
+                new BigDecimal("100"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NO_STOP);
     }
@@ -113,7 +113,7 @@ class OrderGuardTest {
     @Test
     void rejectsUnknownSide() {
         OrderGuard.Result result = guard.check("LONG", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-sim", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-sim", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.SCHEMA_INVALID);
     }
@@ -121,8 +121,28 @@ class OrderGuardTest {
     @Test
     void connectionCheckedBeforeQty() {
         OrderGuard.Result result = guard.check("BUY", BigDecimal.ZERO, new BigDecimal("100"),
-                new BigDecimal("95"), "saxo-live", "saxo-sim");
+                new BigDecimal("95"), null, null, "saxo-live", "saxo-sim");
         assertThat(result.ok()).isFalse();
         assertThat(result.reason()).isEqualTo(RejectReason.NON_SIM_CONNECTION);
+    }
+
+    @Test
+    void stopOutsideWindowFails() {
+        OrderGuard.Result r = guard.check("BUY", new BigDecimal("7"), new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("87"), new BigDecimal("90"), "saxo-sim", "saxo-sim");
+        assertThat(r.ok()).isFalse();
+        assertThat(r.reason()).isEqualTo(RejectReason.NO_STOP); // 95 > max 90
+    }
+
+    @Test
+    void stopInsideWindowPasses() {
+        assertThat(guard.check("BUY", new BigDecimal("7"), new BigDecimal("100"), new BigDecimal("89"),
+                new BigDecimal("87"), new BigDecimal("90"), "saxo-sim", "saxo-sim").ok()).isTrue();
+    }
+
+    @Test
+    void nullWindowSkipsCheck() {
+        assertThat(guard.check("BUY", new BigDecimal("7"), new BigDecimal("100"), new BigDecimal("95"),
+                null, null, "saxo-sim", "saxo-sim").ok()).isTrue();
     }
 }

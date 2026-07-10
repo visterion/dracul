@@ -61,6 +61,9 @@ public class ExecutorWebhookController {
     private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
     private final Clock clock;
+    private final EntryContextAssembler assembler;
+    private final PositionSizer sizer;
+    private final VetoConfig vetoConfig;
 
     /**
      * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
@@ -91,13 +94,23 @@ public class ExecutorWebhookController {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
+            EntryContextAssembler assembler,
+            PositionSizer sizer,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
-            @Value("${dracul.executor.min-confidence:0.6}") double minConfidence,
+            @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
             @Value("${dracul.executor.max-positions:5}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
+            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
+            @Value("${dracul.executor.total-budget:10000}") java.math.BigDecimal totalBudget,
+            @Value("${dracul.executor.heat-pct:0.06}") double heatPct,
+            @Value("${dracul.executor.max-per-sector:2}") int maxPerSector,
+            @Value("${dracul.executor.min-price:5}") java.math.BigDecimal minPrice,
+            @Value("${dracul.executor.adv-multiple:200}") int advMultiple,
+            @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays,
+            @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
+            @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek) {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
@@ -119,6 +132,10 @@ public class ExecutorWebhookController {
         this.swingPeriod = swingPeriod;
         this.cooldownDays = cooldownDays;
         this.verifier = new BearerTokenVerifier(webhookToken);
+        this.assembler = assembler;
+        this.sizer = sizer;
+        this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
+                maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek);
     }
 
     // -------------------------------------------------------------------
@@ -245,7 +262,6 @@ public class ExecutorWebhookController {
         String signalId = input.path("signal_id").asString("");
         String bodySymbol = input.path("symbol").asString("");
         String side = input.path("side").asString(null);
-        BigDecimal qty = decimalOrNull(input, "qty");
         BigDecimal limitPrice = decimalOrNull(input, "limit_price");
         BigDecimal stopPrice = decimalOrNull(input, "stop_price");
         BigDecimal takeProfit = decimalOrNull(input, "take_profit");
@@ -267,8 +283,29 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", RejectReason.DUPLICATE.name())));
         }
 
-        VetoService.Outcome veto = vetoService.evaluateBasic(signal, positionRepo.countOpen(),
-                minConfidence, maxPositions);
+        // "side" is a controller-level tool argument, not part of the ExecutorSignal, so
+        // VetoService.evaluate never validates it. Reject malformed/missing side before any
+        // sizing math (the sizer has no null guards and silently treats non-BUY as SELL).
+        if (!"BUY".equals(side) && !"SELL".equals(side)) {
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    RejectReason.SCHEMA_INVALID.name(), List.of("INVALID_SIDE:" + side),
+                    "side must be BUY or SELL, got " + side, null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", RejectReason.SCHEMA_INVALID.name())));
+        }
+
+        EntryContext ctx = assembler.assemble(signal);
+
+        // When mandatory upstream data is missing, VetoService.evaluate short-circuits on the
+        // DATA_UNAVAILABLE pre-veto before ever reading `sizing` — so a zero/placeholder Sizing is
+        // safe here and avoids calling the sizer (which has no null guards) with absent inputs.
+        Sizing sizing = (ctx.missing() == null || ctx.missing().isEmpty())
+                ? sizer.size(side, ctx.price(), ctx.atr(), ctx.swingLow(), stopPrice,
+                        ctx.trancheAmount(), ctx.fxToAccount())
+                : new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false);
+
+        VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig);
         List<String> vetoTrace = new ArrayList<>();
         for (VetoResult r : veto.results()) {
             vetoTrace.add(r.check() + ":" + (r.passed() ? "PASS" : "FAIL"));
@@ -279,10 +316,29 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected by veto: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
+
+            if (veto.firstFailure() == RejectReason.CONTRADICTION
+                    && veto.contradictingSignalId() != null) {
+                String otherId = veto.contradictingSignalId();
+                signalRepo.markStatus(otherId, "REJECTED");
+                decisionRepo.insert(new ExecutorDecision(null, otherId, null, false,
+                        reason, vetoTrace, "contradiction pair with " + signalId, null, runId, null));
+            }
+
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
 
+        if (sizing.qty() == null || sizing.qty().signum() == 0) {
+            String reason = RejectReason.TRANCHE_TOO_SMALL.name();
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    reason, vetoTrace, "rejected: " + reason, null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
+        }
+
+        BigDecimal qty = sizing.qty();
         BigDecimal referencePrice = signal.referencePrice() != null
                 ? signal.referencePrice() : limitPrice;
         // Invariant: both connectionEnv and allowedConnection are the same server-fixed
@@ -292,7 +348,7 @@ public class ExecutorWebhookController {
         // trading token (saxo-live is physically unreachable). The guard's connection arm
         // becomes load-bearing only if per-request connection routing is added in a later slice.
         OrderGuard.Result guard = orderGuard.check(side, qty, referencePrice, stopPrice,
-                connection, connection);
+                sizing.stopMin(), sizing.stopMax(), connection, connection);
 
         if (!guard.ok()) {
             String reason = guard.reason().name();
@@ -333,7 +389,7 @@ public class ExecutorWebhookController {
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
                     referencePrice, null, 0, null, null, null, null, stopOrderId,
-                    null, null, null, null));
+                    ctx.candidateSector(), ctx.dayHigh(), null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
