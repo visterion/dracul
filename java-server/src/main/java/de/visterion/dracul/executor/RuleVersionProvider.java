@@ -27,7 +27,7 @@ public class RuleVersionProvider {
     private final ObjectMapper mapper;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.2}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.3}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper) {
         this.active = active;

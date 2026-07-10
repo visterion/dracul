@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Clock;
 import java.util.List;
 
 @Configuration
@@ -14,6 +15,13 @@ import java.util.List;
 class ExecutorDefaults {
 
     static final String NAME = "executor";
+
+    /** Named to avoid ambiguity with any other Clock bean; inject via
+     *  {@code @Qualifier("executorClock")}. */
+    @Bean
+    Clock executorClock() {
+        return Clock.systemUTC();
+    }
 
     @Bean
     AgentDefaultProvider executorAgentDefaults(
@@ -38,7 +46,8 @@ class ExecutorDefaults {
                                 new ToolBinding("place_entry", null, null, 3),
                                 new ToolBinding("submit_decision", null, null, 4),
                                 new ToolBinding("fetch_open_positions", null, null, 5),
-                                new ToolBinding("exit_position", null, null, 6)));
+                                new ToolBinding("exit_position", null, null, 6),
+                                new ToolBinding("add_tranche", null, null, 7)));
             }
 
             @Override
@@ -60,12 +69,11 @@ class ExecutorDefaults {
                     "signal_id": {"type": "string"},
                     "symbol": {"type": "string"},
                     "side": {"type": "string", "enum": ["BUY", "SELL"]},
-                    "qty": {"type": "number"},
                     "limit_price": {"type": ["number", "null"]},
                     "stop_price": {"type": "number"},
                     "take_profit": {"type": ["number", "null"]}
                   },
-                  "required": ["signal_id", "symbol", "side", "qty", "stop_price"]
+                  "required": ["signal_id", "symbol", "side", "stop_price"]
                 }
                 """);
         var exitPositionInput = AgentResources.parseJson(mapper, """
@@ -80,6 +88,16 @@ class ExecutorDefaults {
                   "required": ["symbol"]
                 }
                 """);
+        var addTrancheInput = AgentResources.parseJson(mapper, """
+                {
+                  "type": "object",
+                  "properties": {
+                    "symbol": {"type": "string"},
+                    "reason": {"type": "string"}
+                  },
+                  "required": ["symbol", "reason"]
+                }
+                """);
 
         return List.of(
                 new ToolCatalogEntry("fetch_pending_signals",
@@ -92,7 +110,8 @@ class ExecutorDefaults {
                         "Return current broker positions.",
                         connectionInput, "/api/executor/tools/list-positions", 30),
                 new ToolCatalogEntry("place_entry",
-                        "Place a guarded bracket entry (server enforces vetos + order guard).",
+                        "Place a guarded bracket entry (server enforces vetos + order guard). "
+                                + "qty is computed server-side (tranche sizing).",
                         placeEntryInput, "/api/executor/tools/place-entry", 60),
                 new ToolCatalogEntry("submit_decision",
                         "Record the executor's ENTER/SKIP decisions for processed signals.",
@@ -102,6 +121,10 @@ class ExecutorDefaults {
                         empty, "/api/executor/tools/fetch-open-positions", 30),
                 new ToolCatalogEntry("exit_position",
                         "Fully close an open position (soft-trigger exit). Always permitted.",
-                        exitPositionInput, "/api/executor/tools/exit-position", 60));
+                        exitPositionInput, "/api/executor/tools/exit-position", 60),
+                new ToolCatalogEntry("add_tranche",
+                        "Add a code-verified tranche 2 to an open tranche-1 position "
+                                + "(server re-checks eligibility, sizing, heat and budget; qty is computed server-side).",
+                        addTrancheInput, "/api/executor/tools/add-tranche", 60));
     }
 }

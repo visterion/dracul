@@ -61,6 +61,11 @@ public class ExecutorWebhookController {
     private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
     private final Clock clock;
+    private final EntryContextAssembler assembler;
+    private final PositionSizer sizer;
+    private final SignalRanker ranker;
+    private final VetoConfig vetoConfig;
+    private final Tranche2Detector tranche2Detector;
 
     /**
      * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
@@ -91,13 +96,26 @@ public class ExecutorWebhookController {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
+            EntryContextAssembler assembler,
+            PositionSizer sizer,
+            SignalRanker ranker,
+            Tranche2Detector tranche2Detector,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
-            @Value("${dracul.executor.min-confidence:0.6}") double minConfidence,
+            @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
             @Value("${dracul.executor.max-positions:5}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
+            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
+            @Value("${dracul.executor.total-budget:10000}") java.math.BigDecimal totalBudget,
+            @Value("${dracul.executor.tranche-count:10}") int trancheCount,
+            @Value("${dracul.executor.heat-pct:0.06}") double heatPct,
+            @Value("${dracul.executor.max-per-sector:2}") int maxPerSector,
+            @Value("${dracul.executor.min-price:5}") java.math.BigDecimal minPrice,
+            @Value("${dracul.executor.adv-multiple:200}") int advMultiple,
+            @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays,
+            @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
+            @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek) {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
@@ -119,6 +137,13 @@ public class ExecutorWebhookController {
         this.swingPeriod = swingPeriod;
         this.cooldownDays = cooldownDays;
         this.verifier = new BearerTokenVerifier(webhookToken);
+        this.assembler = assembler;
+        this.sizer = sizer;
+        this.ranker = ranker;
+        this.tranche2Detector = tranche2Detector;
+        this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
+                maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
+                trancheCount);
     }
 
     // -------------------------------------------------------------------
@@ -132,8 +157,12 @@ public class ExecutorWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
+        List<ExecutorPosition> openPositions = positionRepo.findOpen();
+        Map<String, String> openMechanisms = SignalRanker.openMechanisms(openPositions, signalRepo);
+        List<ExecutorSignal> ranked = ranker.rank(signalRepo.findPending(50), openPositions, openMechanisms);
+
         List<Map<String, Object>> signals = new ArrayList<>();
-        for (ExecutorSignal s : signalRepo.findPending(50)) {
+        for (ExecutorSignal s : ranked) {
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("signal_id", s.signalId());
             node.put("symbol", s.symbol());
@@ -245,7 +274,6 @@ public class ExecutorWebhookController {
         String signalId = input.path("signal_id").asString("");
         String bodySymbol = input.path("symbol").asString("");
         String side = input.path("side").asString(null);
-        BigDecimal qty = decimalOrNull(input, "qty");
         BigDecimal limitPrice = decimalOrNull(input, "limit_price");
         BigDecimal stopPrice = decimalOrNull(input, "stop_price");
         BigDecimal takeProfit = decimalOrNull(input, "take_profit");
@@ -267,8 +295,42 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", RejectReason.DUPLICATE.name())));
         }
 
-        VetoService.Outcome veto = vetoService.evaluate(signal, positionRepo.countOpen(),
-                minConfidence, maxPositions);
+        // "side" is a controller-level tool argument, not part of the ExecutorSignal, so
+        // VetoService.evaluate never validates it. Reject malformed/missing side before any
+        // sizing math (the sizer has no null guards and silently treats non-BUY as SELL).
+        if (!"BUY".equals(side) && !"SELL".equals(side)) {
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    RejectReason.SCHEMA_INVALID.name(), List.of("INVALID_SIDE:" + side),
+                    "side must be BUY or SELL, got " + side, null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", RejectReason.SCHEMA_INVALID.name())));
+        }
+
+        EntryContext ctx = assembler.assemble(signal);
+
+        // Single order-price basis for all order mechanics (sizing, guard, take-profit, booking):
+        // the LLM's limit price when given, otherwise the freshly assembled current close. This
+        // replaces the old signal.referencePrice() cascade, which could be up to
+        // maxSignalAgeDays stale and diverge from the sizer's price basis (ctx.price()).
+        //
+        // When mandatory upstream data is missing, VetoService.evaluate short-circuits on the
+        // DATA_UNAVAILABLE pre-veto before ever reading `sizing` or `orderPrice` — so a
+        // zero/placeholder Sizing and a null orderPrice are safe here and avoid dereferencing
+        // ctx.price() (only guaranteed non-null when ctx.missing() is empty) or calling the sizer
+        // (which has no null guards) with absent inputs.
+        BigDecimal orderPrice;
+        Sizing sizing;
+        if (ctx.missing() == null || ctx.missing().isEmpty()) {
+            orderPrice = limitPrice != null ? limitPrice : ctx.price();
+            sizing = sizer.size(side, orderPrice, ctx.atr(), ctx.swingLow(), stopPrice,
+                    ctx.trancheAmount(), ctx.fxToAccount());
+        } else {
+            orderPrice = null;
+            sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false);
+        }
+
+        VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig);
         List<String> vetoTrace = new ArrayList<>();
         for (VetoResult r : veto.results()) {
             vetoTrace.add(r.check() + ":" + (r.passed() ? "PASS" : "FAIL"));
@@ -279,20 +341,37 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected by veto: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
+
+            if (veto.firstFailure() == RejectReason.CONTRADICTION
+                    && veto.contradictingSignalId() != null) {
+                String otherId = veto.contradictingSignalId();
+                signalRepo.markStatus(otherId, "REJECTED");
+                decisionRepo.insert(new ExecutorDecision(null, otherId, signal.symbol(), false,
+                        reason, vetoTrace, "contradiction pair with " + signalId, null, runId, null));
+            }
+
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
 
-        BigDecimal referencePrice = signal.referencePrice() != null
-                ? signal.referencePrice() : limitPrice;
+        if (sizing.qty() == null || sizing.qty().signum() == 0) {
+            String reason = RejectReason.TRANCHE_TOO_SMALL.name();
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    reason, vetoTrace, "rejected: " + reason, null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
+        }
+
+        BigDecimal qty = sizing.qty();
         // Invariant: both connectionEnv and allowedConnection are the same server-fixed
         // config connection. place-entry deliberately ignores any body-supplied connection
         // and always trades on the guarded config default, so NON_SIM_CONNECTION cannot fire
         // through this controller today. Primary live-trading safety is the non-live Agora
         // trading token (saxo-live is physically unreachable). The guard's connection arm
         // becomes load-bearing only if per-request connection routing is added in a later slice.
-        OrderGuard.Result guard = orderGuard.check(side, qty, referencePrice, stopPrice,
-                connection, connection);
+        OrderGuard.Result guard = orderGuard.check(side, qty, orderPrice, stopPrice,
+                sizing.stopMin(), sizing.stopMax(), connection, connection);
 
         if (!guard.ok()) {
             String reason = guard.reason().name();
@@ -309,14 +388,14 @@ public class ExecutorWebhookController {
         // this strategy exits via the trailing chandelier, not a fixed target — so when the LLM
         // omits take_profit we synthesize a wide DEFAULT_TARGET_R (3R) target that rarely fills. An
         // explicit LLM take_profit always wins (only fill when null). If we can't compute R (no
-        // reference or stop price) leave it null and let the existing broker-error path handle it.
-        if (takeProfit == null && referencePrice != null && stopPrice != null) {
-            BigDecimal r = referencePrice.subtract(stopPrice).abs();
+        // order price or stop price) leave it null and let the existing broker-error path handle it.
+        if (takeProfit == null && orderPrice != null && stopPrice != null) {
+            BigDecimal r = orderPrice.subtract(stopPrice).abs();
             if (r.compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
                 BigDecimal target = "SELL".equals(side)
-                        ? referencePrice.subtract(offset)
-                        : referencePrice.add(offset);
+                        ? orderPrice.subtract(offset)
+                        : orderPrice.add(offset);
                 takeProfit = target.setScale(2, RoundingMode.HALF_UP);
             }
         }
@@ -329,10 +408,11 @@ public class ExecutorWebhookController {
             String stopOrderId = placed.stopLegId();
 
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
-                    signal.symbol(), side, qty, referencePrice, stopPrice, stopPrice, 1,
+                    signal.symbol(), side, qty, orderPrice, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
-                    referencePrice, null, 0, null, null, null, null, stopOrderId));
+                    orderPrice, null, 0, null, null, null, null, stopOrderId,
+                    ctx.candidateSector(), ctx.dayHigh(), null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
@@ -409,6 +489,7 @@ public class ExecutorWebhookController {
         for (EnrichedPosition p : positions) {
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("symbol", p.symbol());
+            node.put("signal_id", p.sourceSignalId());
             node.put("side", p.side());
             node.put("qty", p.qty());
             node.put("entry_price", p.entryPrice());
@@ -426,6 +507,11 @@ public class ExecutorWebhookController {
             softTrigger.put("ma_break", p.maBreak());
             softTrigger.put("confirm_count", p.softConfirmCount());
             node.put("soft_trigger", softTrigger);
+
+            Map<String, Object> tranche2 = new LinkedHashMap<>();
+            tranche2.put("eligible", p.tranche2Eligible());
+            tranche2.put("reason", p.tranche2Reason());
+            node.put("tranche2", tranche2);
 
             serialized.add(node);
         }
@@ -510,6 +596,141 @@ public class ExecutorWebhookController {
         }
         if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
         return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
+    }
+
+    // -------------------------------------------------------------------
+    // add-tranche — code-verified tranche-2 adds to an open tranche-1 position
+    // -------------------------------------------------------------------
+
+    @PostMapping("/tools/add-tranche")
+    public ResponseEntity<Map<String, Object>> addTranche(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+            @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
+            @RequestBody(required = false) JsonNode body) {
+
+        if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        if (body == null) body = mapper.createObjectNode();
+        JsonNode input = inputOf(body);
+
+        String symbol = input.path("symbol").asString("");
+
+        ExecutorPosition position = positionRepo.findOpen().stream()
+                .filter(p -> connection.equals(p.connection()))
+                .filter(p -> symbol.equals(p.symbol()))
+                .findFirst()
+                .orElse(null);
+
+        if (position == null) {
+            String reason = RejectReason.NO_POSITION.name();
+            decisionRepo.insert(new ExecutorDecision(null, null, symbol, false,
+                    reason, List.of(), "no open position for " + symbol, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        EntryContext ctx = assembler.assembleForSymbol(symbol);
+        if (ctx.missing() != null && !ctx.missing().isEmpty()) {
+            String reason = RejectReason.DATA_UNAVAILABLE.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, ctx.missing(), "data unavailable: " + ctx.missing(), null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        String positionMechanism = resolvePositionMechanism(position.sourceSignalId());
+        Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(position, ctx.price(),
+                ctx.pendingSignals(), positionMechanism);
+        if (!t2.eligible()) {
+            String reason = RejectReason.NOT_ELIGIBLE.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "tranche 2 not eligible", null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        // Tranche-2 sizing reuses the position's EXISTING active stop — it predates this add and
+        // is never re-derived from the *current* ATR/swing levels, so PositionSizer.stopInWindow()
+        // (which validates freshness against those current levels) is deliberately ignored here;
+        // only qty/risk outputs are used.
+        Sizing sizing = sizer.size(position.side(), ctx.price(), ctx.atr(), ctx.swingLow(),
+                position.activeStop(), ctx.trancheAmount(), ctx.fxToAccount());
+
+        if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
+            String reason = RejectReason.TRANCHE_TOO_SMALL.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        // Shares CapitalBounds with VetoService's BUDGET/HEAT_LIMIT vetos (5/6): a tranche-sized
+        // slice of the account must fit within both remaining cash and remaining total-budget
+        // headroom, and the new risk must not push open heat past its ceiling.
+        CapitalBounds.Result bounds = CapitalBounds.check(ctx.account(), ctx.openExposure(),
+                ctx.openHeat(), sizing.newRiskAccountCcy(), vetoConfig.totalBudget(),
+                vetoConfig.trancheCount(), vetoConfig.heatPct());
+
+        if (!bounds.heatOk()) {
+            String reason = RejectReason.HEAT_LIMIT.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        if (!bounds.budgetOk()) {
+            String reason = RejectReason.BUDGET.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        BigDecimal orderPrice = ctx.price();
+        BigDecimal stopPrice = position.activeStop();
+
+        // Guarantee a take-profit leg, same 3R-from-order-price synthesis as place-entry.
+        BigDecimal takeProfit = null;
+        if (orderPrice != null && stopPrice != null) {
+            BigDecimal r = orderPrice.subtract(stopPrice).abs();
+            if (r.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
+                BigDecimal target = "SELL".equals(position.side())
+                        ? orderPrice.subtract(offset)
+                        : orderPrice.add(offset);
+                takeProfit = target.setScale(2, RoundingMode.HALF_UP);
+            }
+        }
+
+        try {
+            String clientRef = "t2-" + (position.sourceSignalId() != null
+                    ? position.sourceSignalId() : "pos-" + position.id());
+            BracketRequest req = new BracketRequest(symbol, position.side(), sizing.qty(), orderPrice,
+                    stopPrice, takeProfit, clientRef, null);
+            PlacedBracket placed = gateway.placeBracket(connection, req);
+
+            BigDecimal newQty = position.qty().add(sizing.qty());
+            BigDecimal newEntry = position.qty().multiply(position.entryPrice())
+                    .add(sizing.qty().multiply(orderPrice))
+                    .divide(newQty, 6, RoundingMode.HALF_UP);
+
+            positionRepo.updateTranche2(position.id(), newQty, newEntry, placed.bracketId(), placed.stopLegId());
+
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
+                    null, List.of(), "tranche 2 added: " + t2.reason(), placed.bracketId(), runId, null));
+
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "placed", true,
+                    "qty", sizing.qty(),
+                    "reason", t2.reason())));
+        } catch (BrokerUnavailableException e) {
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    "BROKER_ERROR", List.of(), "broker call failed: " + e.getMessage(), null, runId, null));
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
+        }
+    }
+
+    /** Same 4-line null-safe lookup as {@code MaintenancePipeline.resolveMechanism} — replicated
+     *  here rather than shared because that method is private to the maintenance pipeline. */
+    private String resolvePositionMechanism(String sourceSignalId) {
+        if (sourceSignalId == null) return null;
+        ExecutorSignal source = signalRepo.findById(sourceSignalId);
+        return source == null ? null : source.mechanism();
     }
 
     // -------------------------------------------------------------------

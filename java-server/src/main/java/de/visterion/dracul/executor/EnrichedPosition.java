@@ -22,5 +22,8 @@ public record EnrichedPosition(
         List<String> killCriteria,
         boolean chandelierBreach,
         boolean maBreak,
-        int softConfirmCount) {
+        int softConfirmCount,
+        boolean tranche2Eligible,
+        String tranche2Reason,
+        String sourceSignalId) {
 }

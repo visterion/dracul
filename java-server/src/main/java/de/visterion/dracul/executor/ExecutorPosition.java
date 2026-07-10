@@ -29,5 +29,9 @@ public record ExecutorPosition(
         BigDecimal realizedR,
         String exitReason,
         String closedAt,
-        String stopOrderId) {
+        String stopOrderId,
+        String sector,
+        BigDecimal entryDayHigh,
+        String tranche2OrderId,
+        String tranche2StopOrderId) {
 }

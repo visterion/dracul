@@ -985,7 +985,7 @@ skipped. Returns 204; non-success / empty prey acknowledged without persisting.
 ## Executor Webhooks
 
 Called by Vistierie during an `executor` agent run (guarded broker execution,
-see `documentation/strigoi.md`). All eight require
+see `documentation/strigoi.md`). All nine (8 tool webhooks + completion) require
 `Authorization: Bearer <DRACUL_EXECUTOR_WEBHOOK_TOKEN>` (verified with
 constant-time comparison via `BearerTokenVerifier`); a missing/wrong token
 returns 401. Only registered when `dracul.executor.enabled=true`. Unlike the
@@ -995,7 +995,18 @@ same pattern as `/api/strigoi-*`, `/api/voievod`, `/api/gropar`.
 
 ### `POST /api/executor/tools/fetch-pending-signals`
 
-Tool webhook. Returns up to 50 `PENDING` `ExecutorSignal` rows.
+Tool webhook. Returns up to 50 `PENDING` `ExecutorSignal` rows, **ranked**
+by `SignalRanker` rather than in raw insertion/creation order. The agent
+works the queue top-down and stops once it fills its position budget for
+the run, so this order directly decides which candidates ever get a look.
+Priority (highest first):
+
+1. Mechanism diversity — signals whose `mechanism` is not already
+   represented among the currently open positions rank above ones that
+   are (avoid piling into the same anomaly type).
+2. `confidence`, descending.
+3. `createdAt`, descending (freshest first — most remaining runway for
+   time-decaying anomalies such as PEAD or index-inclusion drift).
 
 Each signal is enriched server-side with `atr`/`swing_low` (via
 `ExecutorIndicators`, periods `dracul.executor.atr-period`/`dracul.executor.
@@ -1038,32 +1049,69 @@ code decides. Input:
   "signal_id": "...",
   "symbol": "ACME",
   "side": "BUY",
-  "qty": 10,
   "limit_price": 142.50,
   "stop_price": 138.00,
   "take_profit": 150.00
 }
 ```
 
-Pipeline: signal lookup → `VetoService` → `OrderGuard` → `AgoraTrading` (only
-on pass). Every step short-circuits before the broker call. On success:
+No `qty` field — sizing is entirely server-side (`PositionSizer`): the
+tranche notional (`dracul.executor.total-budget` / `dracul.executor.
+tranche-count`, FX-converted to instrument currency) divided by the order
+price, floored to whole shares. `limit_price` and `take_profit` are
+optional; `stop_price` is required and is code-checked against a stop
+window before the order reaches `OrderGuard` — BUY: between
+`price - 3×ATR - 0.25×ATR` and `min(price - 2.5×ATR, swing_low)`; SELL
+mirrored on the upside. A `stop_price` outside the window fails as `NO_STOP`
+regardless of what the LLM proposed; the LLM is expected to choose *inside*
+the window (typically 2.5–3× ATR, or the recent swing low), never at its
+edges. `take_profit` is genuinely optional to the LLM: if omitted, the
+controller synthesizes a wide 3R target from `stop_price`/order price so
+the bracket is always valid (Agora's `place_bracket` requires a take-profit
+leg) — the strategy's real exits are the trailing chandelier / giveback
+stops, not this fixed target, so it is intentionally wide and rarely fills.
+
+The **order-price basis** used throughout (sizing, stop-window check,
+take-profit synthesis, position booking) is a single value: `limit_price`
+when the LLM supplies one, otherwise the freshly assembled current close
+(`EntryContext.price()`) — never the signal's original, potentially stale,
+`reference_price`.
+
+Pipeline: signal lookup → `EntryContextAssembler` (single I/O layer: Agora
+indicators/company-profile, FX, account, repos) → `VetoService` (13-veto
+catalog, preceded by the `DATA_UNAVAILABLE` pre-veto) → `PositionSizer` →
+`OrderGuard` → `AgoraTrading` (only on pass). Every step short-circuits
+before the broker call. On success:
 
 ```json
 { "output": { "placed": true, "broker_order_id": "...", "position_id": 42 } }
 ```
 
 On rejection: `{ "output": { "placed": false, "reason": "<REASON>", "veto_trace"?: [...] } }`.
-`veto_trace` is present for veto rejections (e.g.
-`["SCHEMA_INVALID:PASS","LOW_CONFIDENCE:PASS","MAX_POSITIONS:FAIL"]`) and for
-order-guard rejections it is the veto trace plus an `ORDER_GUARD:<reason>`
-entry. `reason` is one of:
+`veto_trace` is present for veto rejections (one entry per catalog check, in
+catalog order, e.g.
+`["SCHEMA_INVALID:PASS","LOW_CONFIDENCE:PASS",...,"MAX_POSITIONS:FAIL",...]`)
+and for order-guard rejections it is the veto trace plus an
+`ORDER_GUARD:<reason>` entry. `reason` is one of:
 
 | Reason | Where enforced | Meaning |
 |---|---|---|
-| `SCHEMA_INVALID` | `VetoService` / `OrderGuard` | Signal not found, or missing symbol/direction/confidence, or malformed `side`/`qty` |
-| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` |
+| `DATA_UNAVAILABLE` | `VetoService` (pre-veto) | Mandatory upstream data (account, price, ATR, ADV20 notional, sector, signal age/reference) was missing at `EntryContext` assembly time — short-circuits every other veto; the executor never trades blind |
+| `SCHEMA_INVALID` | `VetoService` / `OrderGuard` | Signal not found; missing `symbol`/`direction`/`confidence`/`kill_criteria`/`mechanism`/`agent_version`; or malformed `side` |
+| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.65`) |
+| `COOLDOWN` | `VetoService` | Any active `cooldown` row matches the symbol — a hard block in v1 with no fresh-setup exception (the cooldown's originating mechanism isn't stored, so no rule can safely distinguish "same setup" from "genuinely new"; see `documentation/architecture.md`) |
 | `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
-| `NO_STOP` | `OrderGuard` | `stop_price`/reference price missing, non-positive, or on the wrong side of price for the given `side` |
+| `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
+| `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
+| `CONCENTRATION` | `VetoService` | Open positions in the candidate's sector (via Agora company-profile lookup, case-insensitive) already ≥ `dracul.executor.max-per-sector` |
+| `CONTRADICTION` | `VetoService` | A `MERGER_ARB` signal/position and a `PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW` signal/position collide on the same symbol (checked against other pending signals and open-position mechanisms); both pending signals in a contradicting pair are rejected, and the audit row for the other signal notes the pairing |
+| `REDUNDANCY` | `VetoService` | An open position on the same symbol already originates from the same `mechanism` |
+| `LIQUIDITY` | `VetoService` | Price below `dracul.executor.min-price` (USD-equivalent), or ADV20 notional below `dracul.executor.adv-multiple` × the tranche amount |
+| `SIGNAL_EXPIRED` | `VetoService` | Signal age (trading days since `createdAt`) exceeds `dracul.executor.max-signal-age-days` |
+| `CHASED_AWAY` | `VetoService` | Current price has moved more than `dracul.executor.chase-atr-mult` × ATR beyond the signal's reference price |
+| `PACE_LIMIT` | `VetoService` | New positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week` |
+| `TRANCHE_TOO_SMALL` | `ExecutorWebhookController` | `PositionSizer` computed a zero quantity (tranche amount doesn't buy even one share at the order price) |
+| `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | The signal is no longer `PENDING` (already `ACCEPTED`/`REJECTED`/`SKIPPED`) — idempotency guard, checked before vetos/order guard; no broker call, no signal-status change |
 | `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
@@ -1101,17 +1149,37 @@ the maintenance pipeline. Response:
 
 ```json
 { "output": { "positions": [
-  { "symbol": "ACME", "side": "BUY", "qty": 10, "entry_price": 142.50,
+  { "symbol": "ACME", "signal_id": "sig-123", "side": "BUY", "qty": 10, "entry_price": 142.50,
     "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
-    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1 } }
+    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1 },
+    "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
 ] } }
 ```
+
+`signal_id` is the position's source signal id (`ExecutorPosition.sourceSignalId()`,
+null-safe — `null` when the position has none), so the LLM can copy it verbatim
+into a Tranche 2 `ADD_TRANCHE`/`HOLD` decision record without a separate lookup.
 
 `soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
 to act once it reaches `dracul.executor.soft-confirm-min`.
+
+`tranche2` (`Tranche2Detector`, pure decision logic, no I/O) reports whether
+this tranche-1 position is eligible for a second tranche via `add-tranche`.
+`eligible` is `false` whenever price has ever moved against entry (BUY:
+below entry; SELL: above entry — no averaging down, ever, regardless of any
+other condition). Once past that gate, `reason` is the first of three
+conditions to match:
+
+| Reason | Condition |
+|---|---|
+| `R_CONFIRMED` | Price has moved ≥ 1R (initial per-share risk) in the position's favor |
+| `NEW_HIGH` | Price has extended past the entry-day extreme (`entry_day_high`) |
+| `REINFORCING_SIGNAL` | A pending signal for the same symbol/direction originates from a mechanism different from the one that opened the position (unavailable if the position's own mechanism is unknown) |
+
+`reason` is `null` when `eligible` is `false`.
 
 ### `POST /api/executor/tools/exit-position`
 
@@ -1136,6 +1204,52 @@ realized R, closes the position row, and adds a `cooldown` entry
 or on failure: `{ "output": { "exited": false, "reason": "NO_OPEN_POSITION" } }`
 (no open position for `symbol`) or `{ "output": { "exited": false, "reason": "BROKER_ERROR" } }`
 (the broker flatten call failed/unreachable).
+
+### `POST /api/executor/tools/add-tranche`
+
+Tool webhook — adds a code-verified second tranche to an open tranche-1
+position. Like `place-entry`, the LLM only *requests* the add; the server
+re-verifies eligibility, sizing, heat and budget from scratch (it never
+trusts the `tranche2` block a prior `fetch-open-positions` call may have
+shown the LLM). Input:
+
+```json
+{ "symbol": "ACME", "reason": "R_CONFIRMED" }
+```
+
+Pipeline: open-position lookup → `EntryContextAssembler.assembleForSymbol`
+(same I/O as `place-entry`, but `signal_reference`/`signal_age` are not
+mandatory here — there is no pending signal to check freshness against) →
+`Tranche2Detector.detect` (re-derives eligibility; does not trust the
+caller-supplied `reason`) → `PositionSizer.size` (reusing the position's
+**existing active stop**, not a freshly recomputed one — the ATR/swing
+levels have moved since tranche 1, but the stop is a single, per-position
+line the ratchet already tracks) → heat check (mirrors `HEAT_LIMIT`) →
+budget check (mirrors `BUDGET`) → `AgoraTrading`. On success, the bracket
+reuses the active stop, and the position row is updated in place
+(`tranche=2`, quantity summed, entry price re-weighted to the
+qty-weighted average of both tranches, `tranche2_order_id`/
+`tranche2_stop_order_id` recorded so the stop ratchet moves both legs):
+
+```json
+{ "output": { "placed": true, "qty": 5, "reason": "R_CONFIRMED" } }
+```
+
+On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
+`reason` is one of:
+
+| Reason | Meaning |
+|---|---|
+| `NO_POSITION` | No open tranche-1 position for `symbol` on the configured connection |
+| `DATA_UNAVAILABLE` | Mandatory upstream data missing at assembly time |
+| `NOT_ELIGIBLE` | `Tranche2Detector` re-derived ineligibility (e.g. price has moved against entry, or none of `R_CONFIRMED`/`NEW_HIGH`/`REINFORCING_SIGNAL` currently holds) |
+| `TRANCHE_TOO_SMALL` | Sizer computed less than one whole share for the second tranche |
+| `HEAT_LIMIT` | Adding this tranche's risk would exceed the heat cap |
+| `BUDGET` | Remaining cash or budget headroom can't cover the tranche |
+| `BROKER_ERROR` | The Agora trading webhook call failed |
+
+Every outcome writes one `executor_decision` audit row (no `submit-decision`
+call needed for tranche-2 adds).
 
 ### `POST /api/executor/complete`
 

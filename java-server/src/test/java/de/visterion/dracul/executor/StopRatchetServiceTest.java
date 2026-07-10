@@ -39,10 +39,15 @@ class StopRatchetServiceTest {
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
             BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount) {
+        return openPosition(id, symbol, side, highestPrice, activeStop, mfeR, softConfirmCount, null);
+    }
+
+    private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
+            BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount, String tranche2StopOrderId) {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("90"), activeStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01",
                 null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null, null, null, null,
-                "stop-1");
+                "stop-1", null, null, null, tranche2StopOrderId);
     }
 
     @Test
@@ -119,5 +124,30 @@ class StopRatchetServiceTest {
         assertThat(log.symbol()).isEqualTo("ACME");
 
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void tranche2StopOrderId_movesBothLegs() {
+        ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "s2");
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls.stream().map(FakeExecutionGateway.ModifyCall::orderId))
+                .containsExactlyInAnyOrder("stop-1", "s2");
+        gateway.modifyCalls.forEach(call -> {
+            assertThat(call.symbol()).isEqualTo("ACME");
+            assertThat(call.stop()).isEqualByComparingTo("104");
+        });
+
+        ArgumentCaptor<BigDecimal> newStopCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(5L),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("110")),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("1.0")),
+                org.mockito.ArgumentMatchers.eq(0),
+                newStopCaptor.capture(), org.mockito.ArgumentMatchers.isNull());
+        assertThat(newStopCaptor.getValue()).isEqualByComparingTo("104");
+        verify(decisionRepo).insert(any());
     }
 }

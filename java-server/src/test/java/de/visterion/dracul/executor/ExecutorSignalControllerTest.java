@@ -43,12 +43,55 @@ class ExecutorSignalControllerTest {
         assertThat(signal.referencePrice()).isEqualByComparingTo(new BigDecimal("100.5"));
         assertThat(signal.status()).isEqualTo("PENDING");
         assertThat(signal.source()).isEqualTo("injected");
+        assertThat(signal.agentVersion()).isEqualTo("operator");
 
         @SuppressWarnings("unchecked")
         Map<String, Object> responseBody = (Map<String, Object>) resp.getBody();
         assertThat(responseBody).isNotNull();
         assertThat((String) responseBody.get("signal_id")).isNotBlank();
         assertThat(responseBody.get("status")).isEqualTo("PENDING");
+    }
+
+    @Test
+    void injectDefaultsAgentVersionToOperatorWhenBlank() throws Exception {
+        var repo = mock(ExecutorSignalRepository.class);
+        var controller = new ExecutorSignalController(repo);
+
+        String json = """
+                {
+                  "symbol": "ACME",
+                  "direction": "LONG",
+                  "agent_version": ""
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        controller.inject(body);
+
+        var captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(repo).insert(captor.capture());
+        assertThat(captor.getValue().agentVersion()).isEqualTo("operator");
+    }
+
+    @Test
+    void injectKeepsProvidedAgentVersion() throws Exception {
+        var repo = mock(ExecutorSignalRepository.class);
+        var controller = new ExecutorSignalController(repo);
+
+        String json = """
+                {
+                  "symbol": "ACME",
+                  "direction": "LONG",
+                  "agent_version": "v7"
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        controller.inject(body);
+
+        var captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(repo).insert(captor.capture());
+        assertThat(captor.getValue().agentVersion()).isEqualTo("v7");
     }
 
     @Test
@@ -99,6 +142,7 @@ class ExecutorSignalControllerTest {
         assertThat(signal.killCriteria()).isEmpty();
         assertThat(signal.referencePrice()).isNull();
         assertThat(signal.confidence()).isEqualTo(0.5);
+        assertThat(signal.agentVersion()).isEqualTo("operator");
     }
 
     @Test

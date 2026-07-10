@@ -21,6 +21,12 @@ import java.util.Map;
  * <p>On {@link BrokerUnavailableException} during {@code modifyBracket}, this escalates via the
  * decision log and leaves the old stop in place — mirrors {@link ReconcileService} and
  * {@link HardTriggerService}'s idiom.
+ *
+ * <p>When a position has added a second tranche ({@link ExecutorPosition#tranche2StopOrderId()}
+ * non-null), the same chandelier level is sent to <em>both</em> stop legs — they share one
+ * position and must ratchet in lockstep. If the second leg's {@code modifyBracket} call throws
+ * mid-loop after the first leg already succeeded at the broker, this still escalates and skips
+ * persisting the new stop for this pass; the next maintenance run will retry both legs.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -61,9 +67,14 @@ public class StopRatchetService {
             BigDecimal chandelier = computeChandelier(p, atr);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
 
-            String orderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
+            String primaryOrderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
+            List<String> orderIds = p.tranche2StopOrderId() != null
+                    ? List.of(primaryOrderId, p.tranche2StopOrderId())
+                    : List.of(primaryOrderId);
             try {
-                gateway.modifyBracket(p.connection(), orderId, p.symbol(), chandelier, null);
+                for (String orderId : orderIds) {
+                    gateway.modifyBracket(p.connection(), orderId, p.symbol(), chandelier, null);
+                }
             } catch (BrokerUnavailableException e) {
                 decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                         "MAINTENANCE", null, null, null, p.symbol(), null, null,
