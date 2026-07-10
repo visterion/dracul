@@ -37,6 +37,7 @@ class ExecutorWebhookControllerTest {
     private RuleVersionProvider ruleVersions;
     private EntryContextAssembler assembler;
     private PositionSizer sizer;
+    private SignalRanker ranker;
     private JsonMapper mapper;
 
     private ExecutorWebhookController controller;
@@ -54,6 +55,7 @@ class ExecutorWebhookControllerTest {
         ruleVersions = mock(RuleVersionProvider.class);
         assembler = mock(EntryContextAssembler.class);
         sizer = new PositionSizer(); // pure, real instance
+        ranker = new SignalRanker(); // pure, real instance
         mapper = JsonMapper.builder().build();
 
         when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
@@ -65,7 +67,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer,
+                assembler, sizer, ranker,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
     }
@@ -719,6 +721,27 @@ class ExecutorWebhookControllerTest {
         assertThat(first.get("atr")).isEqualTo(new BigDecimal("2.5"));
         assertThat(first.get("swing_low")).isEqualTo(new BigDecimal("92"));
         assertThat(first.get("reference_price")).isEqualTo(new BigDecimal("100"));
+    }
+
+    @Test
+    void fetchPending_ranksByMechanismDiversityThenConfidence() {
+        ExecutorSignal heldHigh = signal("held-high", 0.95, new BigDecimal("100"), "PENDING", "PEAD");
+        ExecutorSignal newLow = signal("new-low", 0.30, new BigDecimal("100"), "PENDING", "MERGER_ARB");
+        ExecutorSignal newHigh = signal("new-high", 0.90, new BigDecimal("100"), "PENDING", "SPINOFF");
+        when(signalRepo.findPending(50)).thenReturn(List.of(heldHigh, newLow, newHigh));
+
+        // openPosition() hardcodes sourceSignalId="sig-1", so stub findById for that id.
+        ExecutorSignal heldSource = signal("sig-1", 0.9, new BigDecimal("100"), "ACCEPTED", "PEAD");
+        when(signalRepo.findById("sig-1")).thenReturn(heldSource);
+        when(positionRepo.findOpen()).thenReturn(
+                List.of(openPosition(1, "HELD", "BUY", new BigDecimal("100"), new BigDecimal("95"))));
+
+        ResponseEntity<?> resp = controller.fetchPendingSignals(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> signals = (List<Map<String, Object>>) (List<?>) outputOf(resp).get("signals");
+        assertThat(signals).extracting(s -> s.get("signal_id"))
+                .containsExactly("new-high", "new-low", "held-high");
     }
 
     @Test

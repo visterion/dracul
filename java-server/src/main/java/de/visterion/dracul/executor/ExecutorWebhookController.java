@@ -63,6 +63,7 @@ public class ExecutorWebhookController {
     private final Clock clock;
     private final EntryContextAssembler assembler;
     private final PositionSizer sizer;
+    private final SignalRanker ranker;
     private final VetoConfig vetoConfig;
 
     /**
@@ -96,6 +97,7 @@ public class ExecutorWebhookController {
             ObjectMapper mapper,
             EntryContextAssembler assembler,
             PositionSizer sizer,
+            SignalRanker ranker,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
             @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
@@ -134,6 +136,7 @@ public class ExecutorWebhookController {
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
+        this.ranker = ranker;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek);
     }
@@ -149,8 +152,12 @@ public class ExecutorWebhookController {
 
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
+        List<ExecutorPosition> openPositions = positionRepo.findOpen();
+        Map<String, String> openMechanisms = SignalRanker.openMechanisms(openPositions, signalRepo);
+        List<ExecutorSignal> ranked = ranker.rank(signalRepo.findPending(50), openPositions, openMechanisms);
+
         List<Map<String, Object>> signals = new ArrayList<>();
-        for (ExecutorSignal s : signalRepo.findPending(50)) {
+        for (ExecutorSignal s : ranked) {
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("signal_id", s.signalId());
             node.put("symbol", s.symbol());
