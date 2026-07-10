@@ -46,7 +46,8 @@ public class ExecutorSignalController {
                 : null;
 
         String source = body.path("source").asString("injected");
-        String agentVersion = nullableString(body, "agent_version");
+        String agentVersion = body.path("agent_version").asString("");
+        if (agentVersion.isBlank()) agentVersion = "operator";
         String symbol = nullableString(body, "symbol");
         String direction = nullableString(body, "direction");
         String mechanism = nullableString(body, "mechanism");
