@@ -5,9 +5,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Pure decision logic for whether an open tranche-1 position is eligible to add a second
@@ -25,11 +23,12 @@ import java.util.Set;
  *       the initial per-share risk ({@code entryPrice - initialStop} for BUY, mirrored for SELL).</li>
  *   <li>{@code NEW_HIGH} — price has extended past the entry-day extreme
  *       ({@link ExecutorPosition#entryDayHigh()}), i.e. day-1 momentum is still running.</li>
- *   <li>{@code REINFORCING_SIGNAL} — at least two currently pending signals for the same symbol
- *       and direction as the position originate from mutually distinct mechanisms, i.e. two
- *       independent hunting strategies agree. (The position itself does not carry the mechanism
- *       that opened it, so this looks for corroboration among the pending signals themselves
- *       rather than comparing against the position's original entry signal.)</li>
+ *   <li>{@code REINFORCING_SIGNAL} — a currently pending signal for the same symbol and direction
+ *       as the position originates from a mechanism that differs from the mechanism that opened
+ *       the position itself, i.e. an independent hunting strategy corroborates the thesis. If the
+ *       position's own mechanism is unknown ({@code positionMechanism == null}), this route is
+ *       conservatively unavailable — a pending signal can never be judged "different" from an
+ *       unknown mechanism, so only {@code R_CONFIRMED}/{@code NEW_HIGH} can fire.</li>
  * </ol>
  */
 @Service
@@ -45,7 +44,8 @@ public class Tranche2Detector {
     public record Tranche2Status(boolean eligible, String reason) {
     }
 
-    public Tranche2Status detect(ExecutorPosition p, BigDecimal price, List<ExecutorSignal> pendings) {
+    public Tranche2Status detect(ExecutorPosition p, BigDecimal price, List<ExecutorSignal> pendings,
+            String positionMechanism) {
         if (p.tranche() != 1 || !"OPEN".equals(p.status()) || price == null) return NOT_ELIGIBLE;
 
         boolean sell = "SELL".equals(p.side());
@@ -74,14 +74,13 @@ public class Tranche2Detector {
             if (newExtreme) return new Tranche2Status(true, NEW_HIGH);
         }
 
-        if (pendings != null) {
-            Set<String> mechanisms = new HashSet<>();
+        if (pendings != null && positionMechanism != null) {
             for (ExecutorSignal s : pendings) {
                 if (s.symbol() == null || !s.symbol().equals(p.symbol())) continue;
                 if (s.direction() == null || !s.direction().equals(p.side())) continue;
-                if (s.mechanism() != null) mechanisms.add(s.mechanism());
+                if (s.mechanism() == null) continue;
+                if (!s.mechanism().equals(positionMechanism)) return new Tranche2Status(true, REINFORCING_SIGNAL);
             }
-            if (mechanisms.size() >= 2) return new Tranche2Status(true, REINFORCING_SIGNAL);
         }
 
         return NOT_ELIGIBLE;
