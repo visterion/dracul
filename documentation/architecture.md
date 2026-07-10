@@ -275,7 +275,7 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | Table | Purpose |
 |---|---|
 | `executor_signal` | Injected advice awaiting evaluation (PK `signal_id`, caller-supplied or generated UUID); `status` transitions `PENDING` → `ACCEPTED` / `REJECTED` / `SKIPPED` |
-| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id` |
+| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids, so the stop ratchet moves *both* legs once a tranche 2 exists) |
 | `executor_decision` | Append-only audit trail (slice 1) — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK) |
 | `decision_log` | Append-only audit trail (V18, slice 2) — one row per *any* executor decision point (entry, hard exit, stop-ratchet, soft exit): `run_id`, `rule_version`, `trigger_type`, `symbol`, `inputs_snapshot`/`veto_results`/`order_json` (JSONB), `action`, `reason_code`, `reasoning`, `confidence_in_decision`. Richer and broader in scope than `executor_decision`, which only covers the entry path |
 | `rule_versions` | (V18) One row per tagged rule-version (`dracul.executor.rule-version`, e.g. `exec-v0.2`): `valid_from`, `changes`, `prompt_hash`, `params` — makes prompt/threshold changes traceable against `decision_log.rule_version` |
@@ -323,6 +323,81 @@ acts on the resulting signals.
 
 **Prey kill-criteria column (V19):**
 - `kill_criteria` (JSONB, NOT NULL DEFAULT '[]') — 1-5 hunter-emitted falsifiable exit conditions (a measurable threshold, a concrete date, or a single unambiguous public event under which the thesis is dead), carried onto `executor_signal` by the Prey→ExecutorSignal adapter (`PreySignalMapper`).
+
+**Entry completeness (V20): `EntryContextAssembler` as the single I/O
+layer.** Every entry decision (`place-entry`) and every tranche-2 add
+(`add-tranche`) is preceded by one call into `EntryContextAssembler`, which
+is the *only* place in the entry path that talks to Agora, the broker
+gateway, `FxService`, or the executor repositories. Downstream decision
+logic (`VetoService`, `PositionSizer`, `Tranche2Detector`) is pure — it only
+ever consumes the assembled `EntryContext` record, never performs I/O
+itself. Conceptually:
+
+```
+ExecutorSignal (or, for add-tranche, just a symbol)
+        │
+        ▼
+EntryContextAssembler.assemble() / .assembleForSymbol()
+        │  ├─ Agora get_indicators  → price, ATR, swing_low, ADV20-notional, day_high
+        │  ├─ Agora get_company_profile → sector
+        │  ├─ FxService             → instrument→account FX multiplier
+        │  ├─ ExecutionGateway      → account snapshot (cash, buying power)
+        │  └─ position/cooldown/signal repos → open positions, active cooldowns,
+        │                                       pending-signal queue, mechanism map,
+        │                                       entries-this-week, signal age
+        ▼
+EntryContext (assembled record; `missing` lists any absent MANDATORY datum)
+        │
+        ▼
+VetoService.evaluate() ──(pass)──▶ PositionSizer.size() ──▶ OrderGuard.check() ──▶ AgoraTrading
+        │ (fail)
+        ▼
+executor_decision audit row, signal REJECTED
+```
+
+`EntryContext.missing()` is the mechanism behind the `DATA_UNAVAILABLE`
+pre-veto below: some fields (`swing_low`, `day_high`) are optional and may
+be `null` without being flagged; every other datum that's absent because an
+upstream call failed is both null/default *and* named in `missing`.
+
+**The 13-veto catalog (`VetoService`, code-enforced, pure/deterministic —
+the LLM's judgment never overrides these), preceded by a `DATA_UNAVAILABLE`
+pre-veto:**
+
+| # | Veto | Short form |
+|---|---|---|
+| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 13, audited, never trade blind |
+| 1 | `SCHEMA_INVALID` | Signal missing symbol/direction/confidence/kill-criteria/mechanism/agent-version |
+| 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.65) |
+| 3 | `COOLDOWN` | Active cooldown on the symbol — hard block in v1, no fresh-setup exception (origin mechanism not stored) |
+| 4 | `MAX_POSITIONS` | Open-position count at cap |
+| 5 | `BUDGET` | Tranche doesn't fit remaining cash / budget headroom |
+| 6 | `HEAT_LIMIT` | Open heat + new risk exceeds `heat-pct` of total budget |
+| 7 | `CONCENTRATION` | Sector already at `max-per-sector` open positions |
+| 8 | `CONTRADICTION` | `MERGER_ARB` vs. a drift-style mechanism (`PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW`) on the same symbol, either direction |
+| 9 | `REDUNDANCY` | Same mechanism already open on the symbol |
+| 10 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
+| 11 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
+| 12 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
+| 13 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
+
+`VetoService.evaluate` always runs and traces all 13 checks (`veto_trace`
+in the `place-entry` response), even after the first failure, except
+where a check is itself gated on schema validity — see the source comments
+in `VetoService` for the exact PASS/FAIL trace semantics of a
+schema-invalid signal. `TRANCHE_TOO_SMALL` (sizer produced zero
+shares) is a code-enforced rejection but sits outside this catalog — it is
+checked by `ExecutorWebhookController` only after all 13 vetos pass,
+since sizing depends on the order price the LLM/context supplies.
+
+**DATA_UNAVAILABLE semantics:** the executor's guiding principle is "when
+in doubt, fail" — a missing account snapshot, price, ATR, ADV20 notional,
+sector, or (for `place-entry` only) signal reference/age never falls back
+to a stale or default value. Any one of them missing at assembly time
+short-circuits straight to `DATA_UNAVAILABLE`, before any of the 13 vetos
+even run, and is recorded as an audited rejection (`executor_decision` row,
+`missing` fields joined into the reject detail) rather than a silent
+skip or a guessed trade.
 
 ## Data Flow
 

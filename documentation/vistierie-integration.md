@@ -44,6 +44,19 @@ Dracul uses two of Vistierie's Bee lifecycle models:
 | Daywalker | StreamingBee | Window-bounded session at market open; polls an event-source webhook every 5 min |
 | Executor (slice 1) | ScheduledBee | Cron (`dracul.executor.schedule`, blank by default = manual-only via `POST /api/executor/run`); reasoning tier |
 
+The Executor's `ToolBinding` list (`ExecutorDefaults.executorAgentDefaults`,
+registered in this order) is: `fetch_pending_signals`, `get_account`,
+`list_positions`, `place_entry`, `submit_decision`, `fetch_open_positions`,
+`exit_position`, `add_tranche` — the last one, `add_tranche`, was added by
+the entry-completeness work to let the LLM request a code-verified second
+tranche on an already-open position (see `documentation/api.md`'s
+`POST /api/executor/tools/add-tranche`). Adding a tool binding changes the
+agent's registered definition just like a prompt/schema edit does, so it is
+subject to the same insert-if-absent bootstrap behavior below: on an
+already-registered `executor` agent, a deploy that adds `add_tranche` does
+**not** propagate to Vistierie on its own — the same
+`POST /api/settings/agents/executor/definition/reset` step is required.
+
 The `StreamingBee` pattern is a Vistierie extension introduced to support
 Dracul's Daywalker. If Vistierie does not yet expose this interface, it
 must be added upstream before the Daywalker can be implemented — never
