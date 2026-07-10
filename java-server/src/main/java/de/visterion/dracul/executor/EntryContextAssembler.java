@@ -123,6 +123,14 @@ public class EntryContextAssembler {
         BigDecimal fxToAccount = fx.convert(BigDecimal.ONE, instrumentCurrency, accountCurrency);
         if (fxToAccount == null) fxToAccount = BigDecimal.ONE;
 
+        // Currencies differ and no rate is cached even after warm(): every downstream amount
+        // (exposure, heat, tranche sizing) would silently be measured unconverted — never trade
+        // blind on FX, so this is mandatory upstream data like price/atr/account. Identical
+        // currencies never need a rate, so hasRate is only consulted when they actually differ.
+        if (!instrumentCurrency.equalsIgnoreCase(accountCurrency) && !fx.hasRate(instrumentCurrency, accountCurrency)) {
+            missing.add("fx");
+        }
+
         BigDecimal trancheAmount = fx.convert(
                 totalBudget.divide(BigDecimal.valueOf(trancheCount), 6, RoundingMode.HALF_UP),
                 accountCurrency, instrumentCurrency);

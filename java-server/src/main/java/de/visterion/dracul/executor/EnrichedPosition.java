@@ -24,5 +24,6 @@ public record EnrichedPosition(
         boolean maBreak,
         int softConfirmCount,
         boolean tranche2Eligible,
-        String tranche2Reason) {
+        String tranche2Reason,
+        String sourceSignalId) {
 }

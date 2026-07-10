@@ -108,6 +108,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
             @Value("${dracul.executor.total-budget:10000}") java.math.BigDecimal totalBudget,
+            @Value("${dracul.executor.tranche-count:10}") int trancheCount,
             @Value("${dracul.executor.heat-pct:0.06}") double heatPct,
             @Value("${dracul.executor.max-per-sector:2}") int maxPerSector,
             @Value("${dracul.executor.min-price:5}") java.math.BigDecimal minPrice,
@@ -141,7 +142,8 @@ public class ExecutorWebhookController {
         this.ranker = ranker;
         this.tranche2Detector = tranche2Detector;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
-                maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek);
+                maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
+                trancheCount);
     }
 
     // -------------------------------------------------------------------
@@ -344,7 +346,7 @@ public class ExecutorWebhookController {
                     && veto.contradictingSignalId() != null) {
                 String otherId = veto.contradictingSignalId();
                 signalRepo.markStatus(otherId, "REJECTED");
-                decisionRepo.insert(new ExecutorDecision(null, otherId, null, false,
+                decisionRepo.insert(new ExecutorDecision(null, otherId, signal.symbol(), false,
                         reason, vetoTrace, "contradiction pair with " + signalId, null, runId, null));
             }
 
@@ -487,6 +489,7 @@ public class ExecutorWebhookController {
         for (EnrichedPosition p : positions) {
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("symbol", p.symbol());
+            node.put("signal_id", p.sourceSignalId());
             node.put("side", p.side());
             node.put("qty", p.qty());
             node.put("entry_price", p.entryPrice());
@@ -656,21 +659,21 @@ public class ExecutorWebhookController {
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
 
-        BigDecimal heatLimit = vetoConfig.totalBudget().multiply(BigDecimal.valueOf(vetoConfig.heatPct()));
-        if (ctx.openHeat().add(sizing.newRiskAccountCcy()).compareTo(heatLimit) > 0) {
+        // Shares CapitalBounds with VetoService's BUDGET/HEAT_LIMIT vetos (5/6): a tranche-sized
+        // slice of the account must fit within both remaining cash and remaining total-budget
+        // headroom, and the new risk must not push open heat past its ceiling.
+        CapitalBounds.Result bounds = CapitalBounds.check(ctx.account(), ctx.openExposure(),
+                ctx.openHeat(), sizing.newRiskAccountCcy(), vetoConfig.totalBudget(),
+                vetoConfig.trancheCount(), vetoConfig.heatPct());
+
+        if (!bounds.heatOk()) {
             String reason = RejectReason.HEAT_LIMIT.name();
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
                     reason, List.of(), "rejected: " + reason, null, runId, null));
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
 
-        // Mirrors VetoService's BUDGET veto (veto 5): a tranche-sized slice of the account must
-        // fit within both remaining cash and remaining total-budget headroom.
-        BigDecimal trancheAccountCcy = vetoConfig.totalBudget().divide(BigDecimal.TEN);
-        boolean budgetOk = ctx.account() != null
-                && ctx.account().cash().compareTo(trancheAccountCcy) >= 0
-                && ctx.openExposure().add(trancheAccountCcy).compareTo(vetoConfig.totalBudget()) <= 0;
-        if (!budgetOk) {
+        if (!bounds.budgetOk()) {
             String reason = RejectReason.BUDGET.name();
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
                     reason, List.of(), "rejected: " + reason, null, runId, null));
@@ -694,8 +697,10 @@ public class ExecutorWebhookController {
         }
 
         try {
+            String clientRef = "t2-" + (position.sourceSignalId() != null
+                    ? position.sourceSignalId() : "pos-" + position.id());
             BracketRequest req = new BracketRequest(symbol, position.side(), sizing.qty(), orderPrice,
-                    stopPrice, takeProfit, "t2-" + position.sourceSignalId(), null);
+                    stopPrice, takeProfit, clientRef, null);
             PlacedBracket placed = gateway.placeBracket(connection, req);
 
             BigDecimal newQty = position.qty().add(sizing.qty());

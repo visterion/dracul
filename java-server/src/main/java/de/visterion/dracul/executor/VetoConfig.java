@@ -16,5 +16,6 @@ public record VetoConfig(
         int advMultiple,
         int maxSignalAgeDays,
         double chaseAtrMult,
-        int pacePerWeek) {
+        int pacePerWeek,
+        int trancheCount) {
 }

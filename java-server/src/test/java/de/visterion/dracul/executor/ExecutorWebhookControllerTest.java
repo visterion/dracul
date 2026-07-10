@@ -72,7 +72,7 @@ class ExecutorWebhookControllerTest {
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
-                new BigDecimal("10000"), 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
     }
 
     // -------------------------------------------------------------------
@@ -432,6 +432,7 @@ class ExecutorWebhookControllerTest {
         assertThat(decisions).extracting(ExecutorDecision::signalId).containsExactlyInAnyOrder("sig-1", "sig-2");
         ExecutorDecision other = decisions.stream().filter(d -> "sig-2".equals(d.signalId())).findFirst().orElseThrow();
         assertThat(other.rationale()).contains("contradiction pair with sig-1");
+        assertThat(other.symbol()).isEqualTo("ACME");
     }
 
     // -------------------------------------------------------------------
@@ -863,7 +864,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"),
-                true, false, 1, true, "R_CONFIRMED");
+                true, false, 1, true, "R_CONFIRMED", "sig-42");
         when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
@@ -877,6 +878,7 @@ class ExecutorWebhookControllerTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> first = (Map<String, Object>) positions.get(0);
         assertThat(first.get("symbol")).isEqualTo("ACME");
+        assertThat(first.get("signal_id")).isEqualTo("sig-42");
         assertThat(first.get("current_price")).isEqualTo(new BigDecimal("108"));
         assertThat(first.get("chandelier_level")).isEqualTo(new BigDecimal("104"));
         assertThat(first.get("kill_criteria")).isEqualTo(List.of("X"));
@@ -1036,6 +1038,43 @@ class ExecutorWebhookControllerTest {
     // -------------------------------------------------------------------
 
     @Test
+    void addTranche_eligible_nonDegenerateWeightedAverage() {
+        // 10@100 existing + 7@102 add -> weighted-average entry (10*100 + 7*102) / 17 = 100.823529.
+        ExecutorPosition open = openPosition(11L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("saxo-sim"), any()))
+                .thenReturn(new PlacedBracket("brk-11", "stop-11", "tp-11", "t2-sig-1", OrderStatus.WORKING));
+
+        // price=102, trancheAmount=750 -> sizer floors qty to 7 (750/102 = 7.35).
+        EntryContext ctx = new EntryContext(
+                new AccountSnapshot(new BigDecimal("10000"), new BigDecimal("10000"), "USD"),
+                new BigDecimal("102"), new BigDecimal("2"), null, new BigDecimal("500000"),
+                new BigDecimal("103"), "TECH", List.of(), List.of(), List.of(), 0, 0L,
+                new BigDecimal("750"), new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
+                Map.of(), BigDecimal.ONE, List.of());
+        when(assembler.assembleForSymbol(any())).thenReturn(ctx);
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("7");
+
+        ArgumentCaptor<BigDecimal> qtyCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> entryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateTranche2(eq(11L), qtyCaptor.capture(), entryCaptor.capture(),
+                eq("brk-11"), eq("stop-11"));
+        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("17");
+        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100.823529");
+    }
+
+    @Test
     void addTranche_eligible_placesSecondTranche() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
@@ -1079,6 +1118,30 @@ class ExecutorWebhookControllerTest {
         assertThat(decision.accepted()).isTrue();
         assertThat(decision.rationale()).isEqualTo("tranche 2 added: R_CONFIRMED");
         assertThat(decision.brokerOrderId()).isEqualTo("brk-2");
+    }
+
+    @Test
+    void addTranche_nullSourceSignalId_clientRefFallsBackToPositionId() {
+        ExecutorPosition open = new ExecutorPosition(42L, "saxo-sim", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
+                null, null, null, null, null, null, null, null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("saxo-sim"), any()))
+                .thenReturn(new PlacedBracket("brk-42", "stop-42", "tp-42", "t2-pos-42", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        controller.addTranche(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().clientRef()).isEqualTo("t2-pos-42");
     }
 
     @Test

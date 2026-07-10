@@ -86,7 +86,7 @@ dracul:
     max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
     atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
     swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
-    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.2}
+    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.3}
     chandelier-mult: ${DRACUL_EXECUTOR_CHANDELIER_MULT:3.0}
     giveback-pct: ${DRACUL_EXECUTOR_GIVEBACK_PCT:0.35}
     giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}
