@@ -267,7 +267,7 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", RejectReason.DUPLICATE.name())));
         }
 
-        VetoService.Outcome veto = vetoService.evaluate(signal, positionRepo.countOpen(),
+        VetoService.Outcome veto = vetoService.evaluateBasic(signal, positionRepo.countOpen(),
                 minConfidence, maxPositions);
         List<String> vetoTrace = new ArrayList<>();
         for (VetoResult r : veto.results()) {
