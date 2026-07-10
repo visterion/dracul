@@ -1,5 +1,5 @@
 <template>
-  <div class="portfolio-view">
+  <div class="content-inner portfolio-view">
     <PageHead :title="t('portfolio.title')" :sub="t('portfolio.subtitle')" />
 
     <div class="pf-toolbar">
