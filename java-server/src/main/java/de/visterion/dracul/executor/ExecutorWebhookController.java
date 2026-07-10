@@ -7,6 +7,7 @@ import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.PlacedBracket;
+import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -66,6 +67,7 @@ public class ExecutorWebhookController {
     private final SignalRanker ranker;
     private final VetoConfig vetoConfig;
     private final Tranche2Detector tranche2Detector;
+    private final TelegramNotifier telegram;
 
     /**
      * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
@@ -100,6 +102,7 @@ public class ExecutorWebhookController {
             PositionSizer sizer,
             SignalRanker ranker,
             Tranche2Detector tranche2Detector,
+            TelegramNotifier telegram,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
             @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
@@ -141,6 +144,7 @@ public class ExecutorWebhookController {
         this.sizer = sizer;
         this.ranker = ranker;
         this.tranche2Detector = tranche2Detector;
+        this.telegram = telegram;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
                 trancheCount);
@@ -400,13 +404,24 @@ public class ExecutorWebhookController {
             }
         }
 
+        PlacedBracket placed;
         try {
             BracketRequest req = new BracketRequest(signal.symbol(), side, qty, limitPrice,
                     stopPrice, takeProfit, signalId, null);
-            PlacedBracket placed = gateway.placeBracket(connection, req);
-            String brokerOrderId = placed.bracketId();
-            String stopOrderId = placed.stopLegId();
+            placed = gateway.placeBracket(connection, req);
+        } catch (BrokerUnavailableException e) {
+            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                    "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
+                    null, runId, null));
+            signalRepo.markStatus(signalId, "REJECTED");
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
+        }
 
+        String brokerOrderId = placed.bracketId();
+        String stopOrderId = placed.stopLegId();
+
+        try {
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
                     signal.symbol(), side, qty, orderPrice, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
@@ -422,13 +437,22 @@ public class ExecutorWebhookController {
                     "placed", true,
                     "broker_order_id", brokerOrderId,
                     "position_id", positionId)));
-        } catch (BrokerUnavailableException e) {
-            decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
-                    "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
-                    null, runId, null));
-            signalRepo.markStatus(signalId, "REJECTED");
+        } catch (RuntimeException e) {
+            // Broker holds a LIVE order but the book write failed. Alert FIRST — the DB
+            // may be the failing component, so Telegram is the only reliable channel.
+            telegram.notifyAlert(signal.symbol(), "ORPHANED_ORDER", "CRITICAL",
+                    "broker order " + brokerOrderId + " placed but book write failed: " + e.getMessage()
+                            + " — reconcile orphan scan will re-flag until resolved");
+            try {
+                decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                        "ORPHANED_ORDER", vetoTrace,
+                        "broker order " + brokerOrderId + " live but persistence failed: " + e.getMessage(),
+                        brokerOrderId, runId, null));
+            } catch (RuntimeException ignored) {
+                // same DB is likely down; the Telegram alert above is the escalation of record
+            }
             return ResponseEntity.ok(Map.of("output",
-                    Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
+                    Map.of("placed", false, "reason", "ORPHANED_ORDER", "broker_order_id", brokerOrderId)));
         }
     }
 
@@ -696,32 +720,53 @@ public class ExecutorWebhookController {
             }
         }
 
+        PlacedBracket placed;
         try {
             String clientRef = "t2-" + (position.sourceSignalId() != null
                     ? position.sourceSignalId() : "pos-" + position.id());
             BracketRequest req = new BracketRequest(symbol, position.side(), sizing.qty(), orderPrice,
                     stopPrice, takeProfit, clientRef, null);
-            PlacedBracket placed = gateway.placeBracket(connection, req);
-
-            BigDecimal newQty = position.qty().add(sizing.qty());
-            BigDecimal newEntry = position.qty().multiply(position.entryPrice())
-                    .add(sizing.qty().multiply(orderPrice))
-                    .divide(newQty, 6, RoundingMode.HALF_UP);
-
-            positionRepo.updateTranche2(position.id(), newQty, newEntry, placed.bracketId(), placed.stopLegId());
-
-            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
-                    null, List.of(), "tranche 2 added: " + t2.reason(), placed.bracketId(), runId, null));
-
-            return ResponseEntity.ok(Map.of("output", Map.of(
-                    "placed", true,
-                    "qty", sizing.qty(),
-                    "reason", t2.reason())));
+            placed = gateway.placeBracket(connection, req);
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
                     "BROKER_ERROR", List.of(), "broker call failed: " + e.getMessage(), null, runId, null));
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
+        }
+
+        String brokerOrderId = placed.bracketId();
+
+        try {
+            BigDecimal newQty = position.qty().add(sizing.qty());
+            BigDecimal newEntry = position.qty().multiply(position.entryPrice())
+                    .add(sizing.qty().multiply(orderPrice))
+                    .divide(newQty, 6, RoundingMode.HALF_UP);
+
+            positionRepo.updateTranche2(position.id(), newQty, newEntry, brokerOrderId, placed.stopLegId());
+
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
+                    null, List.of(), "tranche 2 added: " + t2.reason(), brokerOrderId, runId, null));
+
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "placed", true,
+                    "qty", sizing.qty(),
+                    "reason", t2.reason())));
+        } catch (RuntimeException e) {
+            // Broker holds a LIVE tranche-2 order but the book write failed. Alert FIRST — the
+            // DB may be the failing component, so Telegram is the only reliable channel.
+            telegram.notifyAlert(symbol, "ORPHANED_ORDER", "CRITICAL",
+                    "tranche-2 order " + brokerOrderId + " placed but book write failed: " + e.getMessage()
+                            + " — reconcile orphan scan will re-flag until resolved");
+            try {
+                decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                        "ORPHANED_ORDER", List.of(),
+                        "tranche-2 order " + brokerOrderId + " live but persistence failed: " + e.getMessage(),
+                        brokerOrderId, runId, null));
+            } catch (RuntimeException ignored) {
+                // same DB is likely down; the Telegram alert above is the escalation of record
+            }
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", "ORPHANED_ORDER", "broker_order_id", brokerOrderId)));
         }
     }
 
