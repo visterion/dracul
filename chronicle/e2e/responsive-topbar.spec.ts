@@ -21,4 +21,13 @@ test.describe('Top bar on narrow desktop', () => {
     expect(bell).not.toBeNull()
     expect(bell!.x + bell!.width).toBeLessThanOrEqual(1024 + 1)
   })
+
+  test('active-tab underline is not clipped by the nav scroll container', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    const clipped = await page.locator('.top-bar__nav').evaluate(
+      el => el.scrollHeight > el.clientHeight,
+    )
+    expect(clipped).toBe(false)
+  })
 })

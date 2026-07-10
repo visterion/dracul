@@ -132,6 +132,9 @@ const me = useMe()
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  /* overflow-x:auto forces overflow-y to 'auto' too; keep the active-tab
+     underline (::after at bottom:-2px) inside the scrollable box. */
+  padding: 4px 0;
 }
 .top-bar__nav::-webkit-scrollbar { display: none; }
 
