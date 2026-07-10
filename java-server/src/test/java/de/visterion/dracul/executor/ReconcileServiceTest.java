@@ -51,7 +51,8 @@ class ReconcileServiceTest {
             BigDecimal highest, BigDecimal mfeR) {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
-                brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId);
+                brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId,
+                null, null, null, null);
     }
 
     @Test

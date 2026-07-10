@@ -32,13 +32,15 @@ class ExecutorPositionRepositoryTest {
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
                 null, null, "OPEN", null,
-                null, null, 0, null, null, null, null, null);
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null);
         var posB = new ExecutorPosition(null, "saxo-sim", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
                 null, null, "OPEN", null,
-                null, null, 0, null, null, null, null, null);
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null);
 
         long idA = repo.insert(posA);
         long idB = repo.insert(posB);
@@ -65,7 +67,8 @@ class ExecutorPositionRepositoryTest {
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
                 null, null, "OPEN", null,
-                null, null, 0, null, null, null, null, null);
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null);
         long id = repo.insert(pos);
 
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 1,
@@ -87,7 +90,8 @@ class ExecutorPositionRepositoryTest {
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
                 null, null, "OPEN", null,
-                null, null, 0, null, null, null, null, null);
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null);
         long id = repo.insert(pos);
 
         repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP");
@@ -97,5 +101,32 @@ class ExecutorPositionRepositoryTest {
         assertThat(found.status()).isEqualTo("CLOSED");
         assertThat(found.realizedR()).isEqualByComparingTo("-1.0");
         assertThat(found.exitReason()).isEqualTo("HARD_STOP");
+    }
+
+    @Test
+    void newColumnsRoundTripAndTranche2Update() {
+        long id = repo.insert(openPosition("T2RT" + System.nanoTime()));
+        ExecutorPosition p = repo.findById(id);
+        assertThat(p.sector()).isEqualTo("Technology");
+        assertThat(p.entryDayHigh()).isEqualByComparingTo("105.5");
+        assertThat(p.tranche2OrderId()).isNull();
+
+        repo.updateTranche2(id, new BigDecimal("20"), new BigDecimal("101.25"), "ord-2", "stop-2");
+        ExecutorPosition after = repo.findById(id);
+        assertThat(after.tranche()).isEqualTo(2);
+        assertThat(after.qty()).isEqualByComparingTo("20");
+        assertThat(after.entryPrice()).isEqualByComparingTo("101.25");
+        assertThat(after.tranche2OrderId()).isEqualTo("ord-2");
+        assertThat(after.tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    private ExecutorPosition openPosition(String symbol) {
+        return new ExecutorPosition(null, "saxo-sim", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
+                List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                "Technology", new BigDecimal("105.5"), null, null);
     }
 }
