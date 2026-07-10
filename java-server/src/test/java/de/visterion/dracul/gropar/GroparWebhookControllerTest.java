@@ -63,6 +63,7 @@ class GroparWebhookControllerTest {
         var cache = new ToolFetchCache(new AgentToolCatalog(java.util.List.of()), 0);
 
         when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
+        when(exitSignalRepo.insert(any(ExitSignal.class), any())).thenReturn(true);
 
         controller = new GroparWebhookController(
                 "tok",
@@ -268,6 +269,39 @@ class GroparWebhookControllerTest {
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
         verify(exitSignalRepo, never()).insert(any(), any());
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    // =========================================================================
+    // Test 6b: duplicate /complete delivery for the same run/position → Telegram
+    // fires only once, since the second insert reports no fresh row.
+    // =========================================================================
+
+    @Test
+    void complete_duplicateDelivery_notifiesTelegramOnlyOnce() throws Exception {
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(exitSignalRepo.insert(any(ExitSignal.class), eq("alice@x")))
+                .thenReturn(true)   // first delivery: fresh row
+                .thenReturn(false); // retried delivery: conflict, no new row
+
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "signals": [
+                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL",
+                        "rationale": "exit", "confidence": 0.7 }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        controller.complete(BEARER, "run-dup", body);
+        controller.complete(BEARER, "run-dup", body);
+
+        verify(exitSignalRepo, times(2)).insert(any(ExitSignal.class), eq("alice@x"));
+        verify(telegram, times(1)).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"), any());
     }
 
     // =========================================================================

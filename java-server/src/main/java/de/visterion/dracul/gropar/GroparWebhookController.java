@@ -286,9 +286,9 @@ public class GroparWebhookController {
                     runId,
                     Instant.now().toString());
 
-            exitSignalRepo.insert(signal, owner);
+            boolean fresh = exitSignalRepo.insert(signal, owner);
 
-            if (!HOLD.equals(action)) {
+            if (fresh && !HOLD.equals(action)) {
                 // "EXIT" is the triggerType label; owner is prefixed so the single
                 // operator channel stays attributable across users.
                 telegram.notifyAlert(symbol, "EXIT", action,

@@ -194,16 +194,21 @@ const scheduleSummary = computed(() => {
   return `${t('strigoi.schedule.next')} ${formatNextRun(strigoi.value.nextRunAt)}`
 })
 
+let requestId = 0
+
 watch(() => route.params.name as string, async (name) => {
+  const current = ++requestId
   loading.value = true
   fetchError.value = null
   strigoi.value = null
   try {
-    strigoi.value = await api.getStrigoiDetail(name)
+    const s = await api.getStrigoiDetail(name)
+    if (current !== requestId) return
+    strigoi.value = s
   } catch (e) {
-    fetchError.value = (e as Error).message
+    if (current === requestId) fetchError.value = (e as Error).message
   } finally {
-    loading.value = false
+    if (current === requestId) loading.value = false
   }
 }, { immediate: true })
 

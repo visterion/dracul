@@ -178,7 +178,9 @@ public class EntryContextAssembler {
     private AccountSnapshot fetchAccount(List<String> missing) {
         try {
             AccountSnapshot account = gateway.account(connection);
-            if (account == null) {
+            // Field-level guard: CapitalBounds dereferences cash(); a partially-populated
+            // snapshot (schema drift at Agora) must veto as DATA_UNAVAILABLE, not NPE.
+            if (account == null || account.cash() == null) {
                 missing.add("account");
             }
             return account;

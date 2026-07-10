@@ -66,8 +66,13 @@ public class PreyRepository {
         );
     }
 
-    public void insertAll(java.util.List<Prey> prey) {
-        if (prey.isEmpty()) return;
+    /** Inserts the given prey, skipping any that collide with an existing row on the
+     *  same-day natural key (symbol, anomaly_type, discovered_by, user_id, discovered day).
+     *  Returns only the subset actually inserted, so retried webhook deliveries don't
+     *  re-trigger downstream effects for prey that were already persisted. */
+    public java.util.List<Prey> insertAll(java.util.List<Prey> prey) {
+        java.util.List<Prey> inserted = new java.util.ArrayList<>();
+        if (prey.isEmpty()) return inserted;
         for (Prey p : prey) {
             String signalsJson;
             String risksJson;
@@ -79,18 +84,22 @@ public class PreyRepository {
             } catch (Exception e) {
                 throw new RuntimeException("Failed to serialize prey signals/risks/killCriteria", e);
             }
-            jdbc.sql("""
+            int rows = jdbc.sql("""
                     INSERT INTO prey
                       (id, symbol, company_name, anomaly_type, confidence,
                        thesis, signals, risks, kill_criteria, horizon, discovered_by, discovered_at, user_id)
                     VALUES (?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?::timestamptz, ?)
+                    ON CONFLICT (symbol, anomaly_type, discovered_by, user_id,
+                                 ((discovered_at AT TIME ZONE 'UTC')::date)) DO NOTHING
                     """)
                     .params(p.id(), p.symbol(), p.companyName(), p.anomalyType(),
                             p.confidence(), p.thesis(),
                             signalsJson, risksJson, killCriteriaJson,
                             p.horizon(), p.discoveredBy(), p.discoveredAt(), "default")
                     .update();
+            if (rows > 0) inserted.add(p);
         }
+        return inserted;
     }
 
     private List<String> readList(String json) {

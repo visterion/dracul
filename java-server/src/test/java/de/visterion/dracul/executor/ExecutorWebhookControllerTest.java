@@ -7,6 +7,7 @@ import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
+import de.visterion.dracul.notify.TelegramNotifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -39,6 +40,7 @@ class ExecutorWebhookControllerTest {
     private PositionSizer sizer;
     private SignalRanker ranker;
     private Tranche2Detector tranche2Detector;
+    private TelegramNotifier telegram;
     private JsonMapper mapper;
 
     private ExecutorWebhookController controller;
@@ -58,6 +60,7 @@ class ExecutorWebhookControllerTest {
         sizer = new PositionSizer(); // pure, real instance
         ranker = new SignalRanker(); // pure, real instance
         tranche2Detector = mock(Tranche2Detector.class);
+        telegram = mock(TelegramNotifier.class);
         mapper = JsonMapper.builder().build();
 
         when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
@@ -70,7 +73,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker, tranche2Detector,
+                assembler, sizer, ranker, tranche2Detector, telegram,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
     }
@@ -510,6 +513,60 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo).insert(decCaptor.capture());
         assertThat(decCaptor.getValue().accepted()).isFalse();
         assertThat(decCaptor.getValue().rejectReason()).isEqualTo("BROKER_ERROR");
+    }
+
+    @Test
+    void placeEntry_dbFailureAfterPlacedBracket_escalatesOrphanedOrder() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("bracket-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenThrow(new RuntimeException("db down"));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("ORPHANED_ORDER");
+        assertThat(output.get("broker_order_id")).isEqualTo("bracket-1");
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("ORPHANED_ORDER"), eq("CRITICAL"), contains("bracket-1"));
+        verify(signalRepo, never()).markStatus("sig-1", "ACCEPTED");
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("ORPHANED_ORDER");
+        assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("bracket-1");
+    }
+
+    @Test
+    void placeEntry_acceptedAuditInsertFails_stillReportsPlacedTrue() {
+        // Position insert + markStatus(ACCEPTED) succeed durably; only the accepted-audit
+        // decisionRepo.insert throws. The response must NOT flip into a false ORPHANED_ORDER
+        // -- that would contradict persisted state.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("bracket-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+        doThrow(new RuntimeException("audit db down")).when(decisionRepo)
+                .insert(argThat(d -> d != null && d.accepted()));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("bracket-1");
+
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
     }
 
     // -------------------------------------------------------------------
@@ -1118,6 +1175,65 @@ class ExecutorWebhookControllerTest {
         assertThat(decision.accepted()).isTrue();
         assertThat(decision.rationale()).isEqualTo("tranche 2 added: R_CONFIRMED");
         assertThat(decision.brokerOrderId()).isEqualTo("brk-2");
+    }
+
+    @Test
+    void addTranche_dbFailureAfterPlacedBracket_escalatesOrphanedOrder() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("saxo-sim"), any()))
+                .thenReturn(new PlacedBracket("bracket-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
+        doThrow(new RuntimeException("db down")).when(positionRepo)
+                .updateTranche2(eq(7L), any(), any(), any(), any());
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("ORPHANED_ORDER");
+        assertThat(output.get("broker_order_id")).isEqualTo("bracket-2");
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("ORPHANED_ORDER"), eq("CRITICAL"), contains("bracket-2"));
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("ORPHANED_ORDER");
+        assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("bracket-2");
+    }
+
+    @Test
+    void addTranche_acceptedAuditInsertFails_stillReportsPlacedTrue() {
+        // updateTranche2 succeeds durably; only the accepted-audit decisionRepo.insert throws.
+        // The response must NOT flip into a false ORPHANED_ORDER -- that would contradict the
+        // already-persisted tranche update.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("saxo-sim"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
+        doThrow(new RuntimeException("audit db down")).when(decisionRepo)
+                .insert(argThat(d -> d != null && d.accepted()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("reason")).isEqualTo("R_CONFIRMED");
+
+        verify(positionRepo).updateTranche2(eq(7L), any(), any(), eq("brk-2"), eq("stop-2"));
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
     }
 
     @Test
