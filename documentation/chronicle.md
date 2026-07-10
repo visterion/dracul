@@ -465,7 +465,7 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 
 ## E2E Test Suite (Etappe 15)
 
-**Playwright E2E tests** (`chronicle/e2e/`): 16 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+**Playwright E2E tests** (`chronicle/e2e/`): 22 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and six `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, portfolio/exit-signal/settings mobile layout, backtest breakpoint, detail-title gap). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
 
 Run locally: `cd chronicle && npm run test:e2e`
 
