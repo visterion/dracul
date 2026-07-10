@@ -36,6 +36,14 @@ public class FxService {
         return amount.multiply(rate).setScale(4, RoundingMode.HALF_UP);
     }
 
+    /** Whether a cached rate is available for from -> to (never fetches). Identity pairs (null
+     *  currency or from == to) are trivially "available" since {@link #convert} needs no rate
+     *  for them. */
+    public boolean hasRate(String from, String to) {
+        if (from == null || to == null || from.equalsIgnoreCase(to)) return true;
+        return cache.containsKey(pair(from, to));
+    }
+
     /** Fetch the latest from -> to rate from Agora and cache it. Called by the background refresher.
      *  Never throws; on failure logs and keeps the last-known rate. */
     public void warm(String from, String to) {

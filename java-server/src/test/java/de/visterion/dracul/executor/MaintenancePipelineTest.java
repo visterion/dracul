@@ -29,14 +29,17 @@ class MaintenancePipelineTest {
     private final StopRatchetService ratchet = mock(StopRatchetService.class);
     private final ExecutorIndicators indicators = mock(ExecutorIndicators.class);
     private final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
+    private final ExecutorSignalRepository signalRepo = mock(ExecutorSignalRepository.class);
+    private final Tranche2Detector tranche2Detector = new Tranche2Detector();
     private final SoftConditionEvaluator softEval = new SoftConditionEvaluator();
 
     private MaintenancePipeline pipeline;
 
     @BeforeEach
     void setUp() {
+        when(signalRepo.findPending(50)).thenReturn(List.of());
         pipeline = new MaintenancePipeline(reconcile, hardTrigger, ratchet, softEval, indicators,
-                positionRepo, 3.0, 22, 20);
+                positionRepo, signalRepo, tranche2Detector, 3.0, 22, 20);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
@@ -44,7 +47,7 @@ class MaintenancePipelineTest {
         return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("95"), activeStop, 1, null, List.of(), "sig-1", "agent",
                 "2026-06-01", null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null,
-                null, null, null, "stop-1");
+                null, null, null, "stop-1", null, null, null, null);
     }
 
     @Test
@@ -75,6 +78,8 @@ class MaintenancePipelineTest {
         assertThat(ep.mfeR()).isEqualByComparingTo("1.6");
         assertThat(ep.chandelierBreach()).isFalse();
         assertThat(ep.softConfirmCount()).isEqualTo(0);
+        assertThat(ep.tranche2Eligible()).isTrue();
+        assertThat(ep.tranche2Reason()).isEqualTo("R_CONFIRMED");
 
         InOrder order = inOrder(reconcile, hardTrigger, ratchet);
         order.verify(reconcile).reconcile("c", "r1");
@@ -159,5 +164,37 @@ class MaintenancePipelineTest {
         assertThat(ep.softConfirmCount()).isEqualTo(0);
 
         verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any());
+        assertThat(ep.tranche2Eligible()).isFalse();
+        assertThat(ep.tranche2Reason()).isNull();
+    }
+
+    @Test
+    void tranche2Eligible_surfacesReinforcingSignal_fromPendingsFetchedOnce() {
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        // price 100.9 -> R = (100.9-100)/(100-95) = 0.18, no R_CONFIRMED; no entryDayHigh set.
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("100.9")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+        when(signalRepo.findById("sig-1")).thenReturn(
+                new ExecutorSignal("sig-1", "src", "v1", "BBB", "BUY", 0.8, "PEAD", List.of(), "6m",
+                        null, "FILLED", "2026-06-01T00:00:00Z"));
+        when(signalRepo.findPending(50)).thenReturn(List.of(
+                new ExecutorSignal("s2", "src", "v1", "BBB", "BUY", 0.8, "SPIN_OFF", List.of(), "6m",
+                        null, "PENDING", "2026-07-01T00:00:00Z")));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        assertThat(result).hasSize(1);
+        EnrichedPosition ep = result.get(0);
+        assertThat(ep.tranche2Eligible()).isTrue();
+        assertThat(ep.tranche2Reason()).isEqualTo("REINFORCING_SIGNAL");
+
+        verify(signalRepo).findPending(50);
     }
 }

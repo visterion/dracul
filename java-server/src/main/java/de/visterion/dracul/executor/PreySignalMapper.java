@@ -19,11 +19,17 @@ import java.util.UUID;
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class PreySignalMapper {
 
+    private final AgentVersionResolver versions;
+
+    public PreySignalMapper(AgentVersionResolver versions) {
+        this.versions = versions;
+    }
+
     public ExecutorSignal map(Prey p) {
         return new ExecutorSignal(
                 UUID.randomUUID().toString(), // same generation as the inject seam
                 p.discoveredBy(),
-                null,                          // agentVersion — not carried on Prey
+                versions.versionFor(p.discoveredBy()),
                 p.symbol(),
                 // All six anomalies (spin-off, insider cluster, PEAD, index-inclusion,
                 // M&A arb, quality-at-52w-low) are long-biased, so direction is a

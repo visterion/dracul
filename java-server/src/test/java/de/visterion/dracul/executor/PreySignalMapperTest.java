@@ -6,10 +6,13 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class PreySignalMapperTest {
 
-    private final PreySignalMapper mapper = new PreySignalMapper();
+    private final AgentVersionResolver versions = mock(AgentVersionResolver.class);
+    private final PreySignalMapper mapper = new PreySignalMapper(versions);
 
     private Prey samplePrey() {
         return new Prey(
@@ -22,10 +25,12 @@ class PreySignalMapperTest {
 
     @Test
     void mapsPreyFieldsOntoSignal() {
+        when(versions.versionFor("strigoi-spin")).thenReturn("p-abc");
+
         ExecutorSignal s = mapper.map(samplePrey());
 
         assertThat(s.source()).isEqualTo("strigoi-spin");
-        assertThat(s.agentVersion()).isNull();
+        assertThat(s.agentVersion()).isEqualTo("p-abc");
         assertThat(s.symbol()).isEqualTo("ACME");
         assertThat(s.confidence()).isEqualTo(0.73);
         assertThat(s.mechanism()).isEqualTo("SPINOFF");

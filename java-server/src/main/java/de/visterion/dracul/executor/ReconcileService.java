@@ -28,6 +28,15 @@ import java.util.List;
  *
  * <p>On {@link BrokerUnavailableException} this deliberately does nothing to the book —
  * a transient broker outage must never be mistaken for positions closing.
+ *
+ * <p><b>Tranche-2 v1 limitation:</b> a position with a second bracket ({@code tranche2OrderId}/
+ * {@code tranche2StopOrderId}) has two independent exit legs at the broker, but the book still
+ * models it as a single row. When either bracket's exit leg fills (or the whole position vanishes)
+ * this class cannot correctly TRIM the row to the surviving tranche's quantity, so it deliberately
+ * neither closes nor silently keeps the row: it escalates ({@code TRANCHE2_DESYNC}) and leaves the
+ * row OPEN for operator attention. Full multi-leg reconciliation (partial close down to the
+ * surviving tranche) lands with TRIM support; until then, capital protection is provided by the
+ * broker-held stops, not by this book row.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -100,7 +109,10 @@ public class ReconcileService {
 
             BrokerOrder filledLeg = findFilledExitLeg(p, orders);
 
-            if (bp == null || filledLeg != null) {
+            if (p.tranche2OrderId() != null && (bp == null || filledLeg != null)) {
+                escalateTranche2Desync(p, filledLeg, runId);
+                survivors.add(p);
+            } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, runId);
             } else {
                 survivors.add(updateMaintenance(p, bp));
@@ -120,7 +132,36 @@ public class ReconcileService {
     private boolean matchesPosition(ExecutorPosition p, BrokerOrder o) {
         boolean parentMatch = p.brokerOrderId() != null && p.brokerOrderId().equals(o.parentId());
         boolean stopIdMatch = p.stopOrderId() != null && p.stopOrderId().equals(o.orderId());
-        return parentMatch || stopIdMatch;
+        boolean parent2Match = p.tranche2OrderId() != null && p.tranche2OrderId().equals(o.parentId());
+        boolean stop2Match = p.tranche2StopOrderId() != null && p.tranche2StopOrderId().equals(o.orderId());
+        return parentMatch || stopIdMatch || parent2Match || stop2Match;
+    }
+
+    /**
+     * v1 tranche-2 desync handling (see class javadoc): a filled/vanished exit leg on a
+     * two-bracket position cannot be safely reconciled to a single book row, so this records an
+     * escalation and leaves the row untouched (still OPEN) rather than closing or silently
+     * ignoring it.
+     */
+    private void escalateTranche2Desync(ExecutorPosition p, BrokerOrder filledLeg, String runId) {
+        String legDescription;
+        if (filledLeg == null) {
+            legDescription = "position vanished from broker";
+        } else {
+            boolean isTranche2Leg = p.tranche2OrderId() != null && p.tranche2OrderId().equals(filledLeg.parentId())
+                    || p.tranche2StopOrderId() != null && p.tranche2StopOrderId().equals(filledLeg.orderId());
+            legDescription = (isTranche2Leg ? "tranche-2 " : "tranche-1 ") + filledLeg.role() + " leg filled";
+        }
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("tranche2_order_id", p.tranche2OrderId());
+        inputs.put("tranche2_stop_order_id", p.tranche2StopOrderId());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "ESCALATE", "TRANCHE2_DESYNC", null,
+                "position " + p.symbol() + " (id " + p.id() + "): " + legDescription
+                        + " — TRANCHE2_DESYNC — operator attention required", null, null, null));
     }
 
     private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp, String runId) {
@@ -179,7 +220,8 @@ public class ReconcileService {
                 p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
                 p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
                 p.status(), p.brokerOrderId(), newHighest, newMfeR, p.softConfirmCount(),
-                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId());
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId());
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {

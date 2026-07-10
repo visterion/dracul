@@ -51,7 +51,8 @@ class ReconcileServiceTest {
             BigDecimal highest, BigDecimal mfeR) {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
-                brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId);
+                brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId,
+                null, null, null, null);
     }
 
     @Test
@@ -137,6 +138,30 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void stillOpen_pinsSectorEntryDayHighAndTranche2FieldsThroughReconcile() {
+        // Task-1 review carry-over: ReconcileService's still-open position-copy must not drop
+        // sector/entryDayHigh/tranche2OrderId/tranche2StopOrderId — pin the pass-through here.
+        ExecutorPosition p = new ExecutorPosition(7L, "c", "BBB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
+                List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-7", null,
+                BigDecimal.ZERO, 0, null, null, null, null, "stop-7",
+                "Technology", new BigDecimal("101.5"), "ord-2", "stop-2");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("108")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        assertThat(survivors).hasSize(1);
+        ExecutorPosition survivor = survivors.get(0);
+        assertThat(survivor.sector()).isEqualTo("Technology");
+        assertThat(survivor.entryDayHigh()).isEqualByComparingTo("101.5");
+        assertThat(survivor.tranche2OrderId()).isEqualTo("ord-2");
+        assertThat(survivor.tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
     void stillOpenShort_favorableExtremeIsMinimum() {
         ExecutorPosition p = openPosition(5L, "SHORT1", "SELL", new BigDecimal("100"),
                 new BigDecimal("105"), "brk-5", "stop-5", new BigDecimal("100"), BigDecimal.ZERO);
@@ -182,6 +207,66 @@ class ReconcileServiceTest {
 
         assertThat(survivors).hasSize(1);
         assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("98");
+    }
+
+    @Test
+    void tranche2Position_t1ExitFilled_staysOpenAndEscalates() {
+        // t2 position (has tranche2OrderId/tranche2StopOrderId); the t1 TAKE_PROFIT leg fills.
+        // v1 cannot safely TRIM the row to the surviving tranche, so it must neither close nor
+        // silently keep it — it escalates and leaves the row OPEN.
+        ExecutorPosition p = new ExecutorPosition(8L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
+                List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-8", null,
+                BigDecimal.ZERO, 0, null, null, null, null, "stop-8",
+                null, null, "ord-t2", "stop-t2");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("tp-8", "ref-8", "ACME", OrderRole.TAKE_PROFIT,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("112"), "brk-8"));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("TRANCHE2_DESYNC");
+        assertThat(log.symbol()).isEqualTo("ACME");
+
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).status()).isEqualTo("OPEN");
+        assertThat(survivors.get(0).id()).isEqualTo(8L);
+    }
+
+    @Test
+    void tranche2Position_t2StopLegRecognizedAsOwnLeg_staysOpenAndEscalates() {
+        // The filled leg matches ONLY via tranche2StopOrderId — matchesPosition must recognize it
+        // as belonging to this position (not "foreign"/unmatched), and because this is a t2
+        // position it must escalate rather than fall through to a silent updateMaintenance.
+        ExecutorPosition p = new ExecutorPosition(9L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
+                List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-9", null,
+                BigDecimal.ZERO, 0, null, null, null, null, "stop-9",
+                null, null, "ord-t2-9", "stop-t2-9");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Only the tranche-2 stop leg id matches (not brokerOrderId/stopOrderId/tranche2OrderId).
+        gateway.seedOrder(new BrokerOrder("stop-t2-9", "ref-9", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("90"), "unrelated-parent"));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE2_DESYNC");
+
+        assertThat(survivors).hasSize(1);
     }
 
     @Test

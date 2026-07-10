@@ -3,9 +3,11 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.prey.Prey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -27,13 +29,22 @@ public class PreySignalEmitter {
     private final PreySignalMapper mapper;
     private final ExecutorSignalRepository signalRepo;
     private final ExecutorPositionRepository positionRepo;
+    private final ExecutorIndicators indicators;
+    private final int atrPeriod;
+    private final int swingPeriod;
 
     public PreySignalEmitter(PreySignalMapper mapper,
                              ExecutorSignalRepository signalRepo,
-                             ExecutorPositionRepository positionRepo) {
+                             ExecutorPositionRepository positionRepo,
+                             ExecutorIndicators indicators,
+                             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
+                             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
         this.mapper = mapper;
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
+        this.indicators = indicators;
+        this.atrPeriod = atrPeriod;
+        this.swingPeriod = swingPeriod;
     }
 
     public void emit(List<Prey> preys) {
@@ -57,7 +68,12 @@ public class PreySignalEmitter {
                 log.debug("Skipping prey {} — already a pending signal", symbol);
                 continue;
             }
-            signalRepo.insert(mapper.map(p));
+            ExecutorSignal s = mapper.map(p);
+            ExecutorIndicators.Levels lv = indicators.levels(symbol, atrPeriod, swingPeriod);
+            BigDecimal ref = lv.available() ? lv.referencePrice() : null;
+            signalRepo.insert(new ExecutorSignal(s.signalId(), s.source(), s.agentVersion(),
+                    s.symbol(), s.direction(), s.confidence(), s.mechanism(), s.killCriteria(),
+                    s.horizon(), ref, s.status(), s.createdAt()));
             pendingSymbols.add(symbol); // guard against duplicate symbols within this batch
             emitted++;
         }

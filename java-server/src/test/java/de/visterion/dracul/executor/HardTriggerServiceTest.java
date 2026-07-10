@@ -45,7 +45,8 @@ class HardTriggerServiceTest {
             BigDecimal initialStop, BigDecimal activeStop, BigDecimal mfeR) {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 activeStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
-                "brk-1", null, mfeR, 0, null, null, null, null, "stop-1");
+                "brk-1", null, mfeR, 0, null, null, null, null, "stop-1",
+                null, null, null, null);
     }
 
     @Test
