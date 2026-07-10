@@ -57,10 +57,14 @@ public class VetoService {
         results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk));
         if (!confidenceOk && firstFailure == null) firstFailure = RejectReason.LOW_CONFIDENCE;
 
-        // 3 COOLDOWN — deterministic v1 rule: an active cooldown row matching the symbol fails
-        // the entry, UNLESS the row carries an exceptionCondition AND the candidate mechanism
-        // differs from every open mechanism on that symbol (a genuinely fresh setup). When in
-        // doubt (no exceptionCondition, or mechanism matches an open one), fail conservatively.
+        // 3 COOLDOWN — deterministic v1 rule: ANY active cooldown row matching the symbol fails
+        // the entry, with no exception. Rationale: the cooldown's ORIGIN mechanism is not stored
+        // anywhere (the position that caused it is closed and thus absent from openMechanisms), so
+        // no formulation over open positions — whole-book or symbol-scoped — can ever verify "this
+        // is a genuinely new mechanism, not the one that triggered the cooldown". Per the executor
+        // spec's "when in doubt, fail" principle, an active cooldown is therefore a hard block in
+        // v1. A real fresh-setup exception returns as a fast-follow once a `cooldown.mechanism`
+        // column exists to record the origin.
         // Note: unevaluated because the signal is schema-invalid still traces as PASS here — this
         // veto and the ones below gated on schemaOk only ever *fail* when schemaOk is true, so a
         // schema-invalid signal's trace shows PASS for all of them while SCHEMA_INVALID itself is
@@ -68,16 +72,7 @@ public class VetoService {
         boolean cooldownOk = true;
         if (schemaOk) {
             for (Cooldown cd : ctx.activeCooldowns()) {
-                if (!signal.symbol().equals(cd.symbol())) continue;
-                // Cooldown rows do not store the origin mechanism; without open positions to
-                // differentiate against, the exception cannot be verified — fail conservative.
-                // An empty open book therefore never grants the fresh-setup exception, even if
-                // the row carries an exceptionCondition.
-                boolean freshException = cd.exceptionCondition() != null
-                        && !ctx.openMechanisms().isEmpty()
-                        && ctx.openMechanisms().values().stream()
-                                .noneMatch(m -> signal.mechanism().equals(m));
-                if (!freshException) {
+                if (signal.symbol().equals(cd.symbol())) {
                     cooldownOk = false;
                     break;
                 }
