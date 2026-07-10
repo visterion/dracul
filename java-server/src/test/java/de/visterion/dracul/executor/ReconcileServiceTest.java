@@ -5,6 +5,7 @@ import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
+import de.visterion.dracul.notify.TelegramNotifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -35,6 +36,7 @@ class ReconcileServiceTest {
     private final CooldownRepository cooldownRepo = mock(CooldownRepository.class);
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
+    private final TelegramNotifier telegram = mock(TelegramNotifier.class);
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
 
     private ReconcileService service;
@@ -43,7 +45,7 @@ class ReconcileServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, 10, clock);
+                ruleVersions, mapper, telegram, 10, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -267,6 +269,49 @@ class ReconcileServiceTest {
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE2_DESYNC");
 
         assertThat(survivors).hasSize(1);
+    }
+
+    @Test
+    void brokerPositionWithoutBookRowIsFlaggedAsOrphan() {
+        when(positionRepo.findOpen()).thenReturn(List.of());
+
+        gateway.seedPosition(new BrokerPosition("GHOST", "BUY", BigDecimal.TEN,
+                new BigDecimal("50"), new BigDecimal("55")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("ORPHAN_POSITION");
+        assertThat(log.symbol()).isEqualTo("GHOST");
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
+
+        verify(telegram).notifyAlert(eq("GHOST"), eq("ORPHAN_POSITION"), eq("CRITICAL"), any());
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void brokerPositionMatchingOpenBookRowIsNotFlaggedAsOrphan() {
+        ExecutorPosition p = openPosition(10L, "BBB", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-10", "stop-10", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("108")));
+
+        service.reconcile("c", "run-1");
+
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
+        verify(telegram, never()).notifyAlert(any(), eq("ORPHAN_POSITION"), any(), any());
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
+
+    private static DecisionLog argThatReasonCodeIs(String reasonCode) {
+        return org.mockito.ArgumentMatchers.argThat(d -> reasonCode.equals(d.reasonCode()));
     }
 
     @Test
