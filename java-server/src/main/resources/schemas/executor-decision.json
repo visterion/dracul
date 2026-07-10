@@ -8,9 +8,8 @@
         "properties": {
           "signal_id": { "type": "string" },
           "symbol": { "type": "string" },
-          "action": { "type": "string", "enum": ["ENTER", "SKIP"] },
+          "action": { "type": "string", "enum": ["ENTER", "SKIP", "ADD_TRANCHE", "HOLD"] },
           "side": { "type": "string", "enum": ["BUY", "SELL"] },
-          "qty": { "type": ["number", "null"] },
           "limit_price": { "type": ["number", "null"] },
           "stop_price": { "type": ["number", "null"] },
           "take_profit": { "type": ["number", "null"] },
