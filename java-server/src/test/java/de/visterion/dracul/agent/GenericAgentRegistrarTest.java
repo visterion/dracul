@@ -132,4 +132,58 @@ class GenericAgentRegistrarTest {
                 .contains("## Output language")
                 .contains("English");
     }
+
+    @Test
+    void maxTurnsChangeTriggersUpdate() {
+        var client = mock(VistierieClient.class);
+        var registrar = newRegistrar(client);
+        var def = echo();
+        var desired = registrar.buildRequest(def);
+
+        // AgentDetail matching desired in all fields EXCEPT max_turns (20 vs 25)
+        var existing = new AgentDetail(
+                "id-1", "strigoi-echo",
+                desired.system_prompt(),  // same as desired (includes language directive)
+                "routine",
+                desired.tools(),  // same tools as desired
+                desired.output_schema(),
+                20, 1800, false, 1,  // max_turns=20 differs from 25
+                Instant.EPOCH, Instant.EPOCH,
+                "0 0 7 * * *", null,
+                "https://dracul.example.com/api/strigoi-echo/complete",
+                "tok-strigoi-echo");
+        when(client.getAgent("strigoi-echo")).thenReturn(Optional.of(existing));
+
+        registrar.registerAll();
+
+        verify(client).updateAgent(eq("strigoi-echo"), any(UpdateAgentRequest.class));
+        verify(client, never()).registerAgent(any());
+    }
+
+    @Test
+    void maxRunSecondsChangeTriggersUpdate() {
+        var client = mock(VistierieClient.class);
+        var registrar = newRegistrar(client);
+        var def = echo();
+        var desired = registrar.buildRequest(def);
+
+        // AgentDetail matching desired in all fields EXCEPT max_run_seconds (600 vs 1800)
+        var existing = new AgentDetail(
+                "id-1", "strigoi-echo",
+                desired.system_prompt(),  // same as desired (includes language directive)
+                "routine",
+                desired.tools(),  // same tools as desired
+                desired.output_schema(),
+                25, 600, false, 1,  // max_run_seconds=600 differs from 1800
+                Instant.EPOCH, Instant.EPOCH,
+                "0 0 7 * * *", null,
+                "https://dracul.example.com/api/strigoi-echo/complete",
+                "tok-strigoi-echo");
+        when(client.getAgent("strigoi-echo")).thenReturn(Optional.of(existing));
+
+        registrar.registerAll();
+
+        verify(client).updateAgent(eq("strigoi-echo"), any(UpdateAgentRequest.class));
+        verify(client, never()).registerAgent(any());
+    }
 }
