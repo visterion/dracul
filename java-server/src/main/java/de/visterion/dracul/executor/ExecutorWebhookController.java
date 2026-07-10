@@ -297,13 +297,26 @@ public class ExecutorWebhookController {
 
         EntryContext ctx = assembler.assemble(signal);
 
+        // Single order-price basis for all order mechanics (sizing, guard, take-profit, booking):
+        // the LLM's limit price when given, otherwise the freshly assembled current close. This
+        // replaces the old signal.referencePrice() cascade, which could be up to
+        // maxSignalAgeDays stale and diverge from the sizer's price basis (ctx.price()).
+        //
         // When mandatory upstream data is missing, VetoService.evaluate short-circuits on the
-        // DATA_UNAVAILABLE pre-veto before ever reading `sizing` — so a zero/placeholder Sizing is
-        // safe here and avoids calling the sizer (which has no null guards) with absent inputs.
-        Sizing sizing = (ctx.missing() == null || ctx.missing().isEmpty())
-                ? sizer.size(side, ctx.price(), ctx.atr(), ctx.swingLow(), stopPrice,
-                        ctx.trancheAmount(), ctx.fxToAccount())
-                : new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false);
+        // DATA_UNAVAILABLE pre-veto before ever reading `sizing` or `orderPrice` — so a
+        // zero/placeholder Sizing and a null orderPrice are safe here and avoid dereferencing
+        // ctx.price() (only guaranteed non-null when ctx.missing() is empty) or calling the sizer
+        // (which has no null guards) with absent inputs.
+        BigDecimal orderPrice;
+        Sizing sizing;
+        if (ctx.missing() == null || ctx.missing().isEmpty()) {
+            orderPrice = limitPrice != null ? limitPrice : ctx.price();
+            sizing = sizer.size(side, orderPrice, ctx.atr(), ctx.swingLow(), stopPrice,
+                    ctx.trancheAmount(), ctx.fxToAccount());
+        } else {
+            orderPrice = null;
+            sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false);
+        }
 
         VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig);
         List<String> vetoTrace = new ArrayList<>();
@@ -339,15 +352,13 @@ public class ExecutorWebhookController {
         }
 
         BigDecimal qty = sizing.qty();
-        BigDecimal referencePrice = signal.referencePrice() != null
-                ? signal.referencePrice() : limitPrice;
         // Invariant: both connectionEnv and allowedConnection are the same server-fixed
         // config connection. place-entry deliberately ignores any body-supplied connection
         // and always trades on the guarded config default, so NON_SIM_CONNECTION cannot fire
         // through this controller today. Primary live-trading safety is the non-live Agora
         // trading token (saxo-live is physically unreachable). The guard's connection arm
         // becomes load-bearing only if per-request connection routing is added in a later slice.
-        OrderGuard.Result guard = orderGuard.check(side, qty, referencePrice, stopPrice,
+        OrderGuard.Result guard = orderGuard.check(side, qty, orderPrice, stopPrice,
                 sizing.stopMin(), sizing.stopMax(), connection, connection);
 
         if (!guard.ok()) {
@@ -365,14 +376,14 @@ public class ExecutorWebhookController {
         // this strategy exits via the trailing chandelier, not a fixed target — so when the LLM
         // omits take_profit we synthesize a wide DEFAULT_TARGET_R (3R) target that rarely fills. An
         // explicit LLM take_profit always wins (only fill when null). If we can't compute R (no
-        // reference or stop price) leave it null and let the existing broker-error path handle it.
-        if (takeProfit == null && referencePrice != null && stopPrice != null) {
-            BigDecimal r = referencePrice.subtract(stopPrice).abs();
+        // order price or stop price) leave it null and let the existing broker-error path handle it.
+        if (takeProfit == null && orderPrice != null && stopPrice != null) {
+            BigDecimal r = orderPrice.subtract(stopPrice).abs();
             if (r.compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
                 BigDecimal target = "SELL".equals(side)
-                        ? referencePrice.subtract(offset)
-                        : referencePrice.add(offset);
+                        ? orderPrice.subtract(offset)
+                        : orderPrice.add(offset);
                 takeProfit = target.setScale(2, RoundingMode.HALF_UP);
             }
         }
@@ -385,10 +396,10 @@ public class ExecutorWebhookController {
             String stopOrderId = placed.stopLegId();
 
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
-                    signal.symbol(), side, qty, referencePrice, stopPrice, stopPrice, 1,
+                    signal.symbol(), side, qty, orderPrice, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
-                    referencePrice, null, 0, null, null, null, null, stopOrderId,
+                    orderPrice, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");

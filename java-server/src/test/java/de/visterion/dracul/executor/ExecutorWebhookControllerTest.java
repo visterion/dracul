@@ -499,6 +499,76 @@ class ExecutorWebhookControllerTest {
     }
 
     // -------------------------------------------------------------------
+    // place-entry: order-price basis (limit price or fresh close) drives sizing,
+    // guard, take-profit synthesis, and booking -- never the stale signal reference
+    // -------------------------------------------------------------------
+
+    @Test
+    void placeEntry_divergentPrices_usesFreshPriceBasis() {
+        // Stale signal.referencePrice=110 vs fresh ctx.price()=100 (happyContext: atr=2, no
+        // swingLow -> SELL stop window [105, 106.5], since price fell after the signal's reference
+        // was captured). stop=106 sits inside that fresh window and is > orderPrice(100), so the
+        // fresh-basis guard passes. The OLD stale-reference guard would have wrongly rejected this
+        // same order: 106 is not > referencePrice(110), so its direction check would fail with
+        // NO_STOP. CHASED_AWAY only fires when price rises away from the reference, so a falling
+        // price never trips it here (price(100) <= referencePrice(110) + atr(2) trivially holds).
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("110")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"SELL","stop_price":106}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        // qty basis is the fresh ctx.price()=100, not the stale reference=110: floor(1000/100)=10
+        assertThat(reqCaptor.getValue().qty()).isEqualByComparingTo("10");
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("100");
+        assertThat(posCaptor.getValue().highestPrice()).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void placeEntry_limitPriceWinsAsBasis() {
+        // An LLM-supplied limit_price=99 must win over ctx.price()=100 as the single order-price
+        // basis for sizing and booking (BracketRequest.limitPrice itself is untouched -- it always
+        // carries the LLM's raw argument, null or not).
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":99,"stop_price":93}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        // qty basis is limit_price=99, not ctx.price()=100: floor(1000/99)=10
+        assertThat(reqCaptor.getValue().qty()).isEqualByComparingTo("10");
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("99");
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("99");
+        assertThat(posCaptor.getValue().highestPrice()).isEqualByComparingTo("99");
+    }
+
+    // -------------------------------------------------------------------
     // place-entry: guaranteed take-profit leg (Agora requires one)
     // -------------------------------------------------------------------
 
