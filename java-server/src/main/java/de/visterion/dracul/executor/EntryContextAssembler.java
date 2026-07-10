@@ -81,13 +81,29 @@ public class EntryContextAssembler {
     }
 
     public EntryContext assemble(ExecutorSignal signal) {
+        return gather(signal.symbol(), signal);
+    }
+
+    /**
+     * Lighter gathering path for tranche-2 adds ({@code add_tranche}), which have no
+     * {@link ExecutorSignal} of their own (the add is keyed off an already-open position, not a
+     * pending signal). Same I/O as {@link #assemble}, but {@code signal_reference}/{@code
+     * signal_age} are not mandatory here — there is no signal to check freshness or a reference
+     * price against, so {@link EntryContext#signalAgeTradingDays()} is left at -1 and neither
+     * name is added to {@link EntryContext#missing()}.
+     */
+    public EntryContext assembleForSymbol(String symbol) {
+        return gather(symbol, null);
+    }
+
+    private EntryContext gather(String symbol, ExecutorSignal signal) {
         List<String> missing = new ArrayList<>();
 
         AccountSnapshot account = fetchAccount(missing);
         String accountCurrency = account != null ? account.currency() : instrumentCurrency;
 
-        Indicators ind = fetchIndicators(signal.symbol(), missing);
-        String sector = fetchSector(signal.symbol(), missing);
+        Indicators ind = fetchIndicators(symbol, missing);
+        String sector = fetchSector(symbol, missing);
 
         List<ExecutorPosition> openPositions = positionRepo.findOpen();
         List<Cooldown> activeCooldowns = cooldownRepo.active(clock.instant());
@@ -95,9 +111,11 @@ public class EntryContextAssembler {
 
         int entriesThisWeek = positionRepo.countEnteredSince(startOfIsoWeek());
 
-        long signalAgeTradingDays = tradingDayAge(signal.createdAt(), missing);
-
-        if (signal.referencePrice() == null) missing.add("signal_reference");
+        long signalAgeTradingDays = -1L;
+        if (signal != null) {
+            signalAgeTradingDays = tradingDayAge(signal.createdAt(), missing);
+            if (signal.referencePrice() == null) missing.add("signal_reference");
+        }
 
         // FX: warm both directions once per assemble; convert() itself is cache-only.
         fx.warm(instrumentCurrency, accountCurrency);

@@ -24,5 +24,7 @@ public enum RejectReason {
     MAX_TRANCHE,
     TRANCHE_TOO_SMALL,
     NON_SIM_CONNECTION,
-    DUPLICATE
+    DUPLICATE,
+    NO_POSITION,
+    NOT_ELIGIBLE
 }

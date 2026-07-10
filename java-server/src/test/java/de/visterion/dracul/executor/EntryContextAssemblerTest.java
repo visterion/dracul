@@ -229,4 +229,21 @@ class EntryContextAssemblerTest {
         assertThat(ctx.signalAgeTradingDays()).isEqualTo(1L);
         assertThat(ctx.missing()).doesNotContain("signal_age");
     }
+
+    @Test
+    void assembleForSymbol_signalReferenceAndAgeNotMandatory() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+
+        EntryContext ctx = assembler.assembleForSymbol("ACME");
+
+        assertThat(ctx.missing()).doesNotContain("signal_reference", "signal_age");
+        assertThat(ctx.signalAgeTradingDays()).isEqualTo(-1L);
+        assertThat(ctx.price()).isEqualByComparingTo("100.00");
+        assertThat(ctx.atr()).isEqualByComparingTo("2.50");
+        assertThat(ctx.candidateSector()).isEqualTo("Technology");
+        assertThat(ctx.missing()).isEmpty();
+    }
 }
