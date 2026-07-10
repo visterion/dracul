@@ -127,7 +127,13 @@ const me = useMe()
   align-items: center;
   gap: var(--space-1);
   flex: 1;
+  /* Never push the controls out of the row: allow the nav to shrink below
+     its content width and scroll internally instead. */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.top-bar__nav::-webkit-scrollbar { display: none; }
 
 .top-bar__tab {
   position: relative;
@@ -221,5 +227,12 @@ const me = useMe()
   position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 8px; background: var(--blood-crimson); color: var(--bone-ivory);
   font-size: 10px; line-height: 16px; text-align: center; font-weight: 600;
+}
+
+/* Narrow desktop (960–1279px): tighten spacing so all 7 tabs + controls fit;
+   the email text yields first (the logout button itself always stays). */
+@media (max-width: 1279.98px) {
+  .top-bar__inner { gap: var(--space-4); padding: 0 var(--space-4); }
+  .top-bar__user { display: none; }
 }
 </style>
