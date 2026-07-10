@@ -38,6 +38,7 @@ class ExecutorWebhookControllerTest {
     private EntryContextAssembler assembler;
     private PositionSizer sizer;
     private SignalRanker ranker;
+    private Tranche2Detector tranche2Detector;
     private JsonMapper mapper;
 
     private ExecutorWebhookController controller;
@@ -56,18 +57,20 @@ class ExecutorWebhookControllerTest {
         assembler = mock(EntryContextAssembler.class);
         sizer = new PositionSizer(); // pure, real instance
         ranker = new SignalRanker(); // pure, real instance
+        tranche2Detector = mock(Tranche2Detector.class);
         mapper = JsonMapper.builder().build();
 
         when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         when(assembler.assemble(any())).thenReturn(happyContext());
+        when(assembler.assembleForSymbol(any())).thenReturn(happyContext());
 
         controller = new ExecutorWebhookController(
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker,
+                assembler, sizer, ranker, tranche2Detector,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
     }
@@ -134,6 +137,14 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing());
+    }
+
+    private static EntryContext withOpenHeat(EntryContext c, BigDecimal openHeat) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), openHeat, c.openMechanisms(), c.fxToAccount(),
                 c.missing());
     }
 
@@ -1018,6 +1029,159 @@ class ExecutorWebhookControllerTest {
 
         assertThat(resp.getStatusCode().value()).isEqualTo(401);
         verifyNoInteractions(gateway, positionRepo, decisionLogRepo, cooldownRepo);
+    }
+
+    // -------------------------------------------------------------------
+    // add-tranche
+    // -------------------------------------------------------------------
+
+    @Test
+    void addTranche_eligible_placesSecondTranche() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("saxo-sim"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("reason")).isEqualTo("R_CONFIRMED");
+        assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("10");
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        assertThat(req.symbol()).isEqualTo("ACME");
+        assertThat(req.side()).isEqualTo("BUY");
+        assertThat(req.qty()).isEqualByComparingTo("10");
+        // stop-2 leg uses the position's EXISTING active stop (95), not a re-derived stop window.
+        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        assertThat(req.clientRef()).isEqualTo("t2-sig-1");
+
+        ArgumentCaptor<BigDecimal> qtyCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> entryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateTranche2(eq(7L), qtyCaptor.capture(), entryCaptor.capture(),
+                eq("brk-2"), eq("stop-2"));
+        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("20");
+        // weighted average: (10*100 + 10*100) / 20 = 100.000000
+        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100.000000");
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        ExecutorDecision decision = decisionCaptor.getValue();
+        assertThat(decision.accepted()).isTrue();
+        assertThat(decision.rationale()).isEqualTo("tranche 2 added: R_CONFIRMED");
+        assertThat(decision.brokerOrderId()).isEqualTo("brk-2");
+    }
+
+    @Test
+    void addTranche_notEligible_noGatewayCall() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(false, null));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("NOT_ELIGIBLE");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).updateTranche2(anyLong(), any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getValue().accepted()).isFalse();
+        assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("NOT_ELIGIBLE");
+    }
+
+    @Test
+    void addTranche_heatLimitBreach_noGatewayCall() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        // heat limit = 0.06 * 10000 = 600; existing openHeat of 590 + new risk (50) breaches it.
+        when(assembler.assembleForSymbol(any())).thenReturn(withOpenHeat(happyContext(), new BigDecimal("590")));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("HEAT_LIMIT");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).updateTranche2(anyLong(), any(), any(), any(), any());
+    }
+
+    @Test
+    void addTranche_noOpenPosition() {
+        when(positionRepo.findOpen()).thenReturn(List.of());
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("NO_POSITION");
+
+        verify(assembler, never()).assembleForSymbol(any());
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("NO_POSITION");
+    }
+
+    @Test
+    void addTranche_dataUnavailable_rejectsBeforeSizing() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(assembler.assembleForSymbol(any())).thenReturn(unavailableContext());
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("DATA_UNAVAILABLE");
+
+        verifyNoInteractions(tranche2Detector);
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("DATA_UNAVAILABLE");
+    }
+
+    @Test
+    void addTranche_authRejected() {
+        ResponseEntity<?> resp = controller.addTranche("Bearer wrong", "run-1", json("{}"));
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(401);
+        verifyNoInteractions(gateway, positionRepo, decisionRepo, tranche2Detector);
     }
 
     // -------------------------------------------------------------------

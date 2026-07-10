@@ -43,17 +43,18 @@ class ExecutorDefaultsTest {
                         "place_entry",
                         "submit_decision",
                         "fetch_open_positions",
-                        "exit_position");
+                        "exit_position",
+                        "add_tranche");
     }
 
     @Test
-    void providerCatalogEntries_hasSevenEntriesWithCorrectCallbacks() {
+    void providerCatalogEntries_hasEightEntriesWithCorrectCallbacks() {
         // Exercise the PROVIDER's catalogEntries() — this is what AgentToolCatalog
         // actually calls. A provider that only overrides defaultDefinition() would
         // fall back to the empty interface default and fail here.
         List<ToolCatalogEntry> entries = provider("").catalogEntries();
 
-        assertThat(entries).hasSize(7);
+        assertThat(entries).hasSize(8);
         assertThat(entries).extracting("callbackPath")
                 .containsExactlyInAnyOrder(
                         "/api/executor/tools/fetch-pending-signals",
@@ -62,7 +63,8 @@ class ExecutorDefaultsTest {
                         "/api/executor/tools/place-entry",
                         "/api/executor/tools/submit-decision",
                         "/api/executor/tools/fetch-open-positions",
-                        "/api/executor/tools/exit-position");
+                        "/api/executor/tools/exit-position",
+                        "/api/executor/tools/add-tranche");
 
         ToolCatalogEntry placeEntry = entries.stream()
                 .filter(e -> e.toolName().equals("place_entry"))
@@ -81,5 +83,12 @@ class ExecutorDefaultsTest {
                 .findFirst().orElseThrow();
         assertThat(exitPosition.timeoutSeconds()).isEqualTo(60);
         assertThat(exitPosition.inputSchema().get("required").toString()).contains("symbol");
+
+        ToolCatalogEntry addTranche = entries.stream()
+                .filter(e -> e.toolName().equals("add_tranche"))
+                .findFirst().orElseThrow();
+        assertThat(addTranche.timeoutSeconds()).isEqualTo(60);
+        String addTrancheRequired = addTranche.inputSchema().get("required").toString();
+        assertThat(addTrancheRequired).contains("symbol").contains("reason");
     }
 }

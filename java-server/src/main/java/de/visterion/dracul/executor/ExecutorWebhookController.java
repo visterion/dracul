@@ -65,6 +65,7 @@ public class ExecutorWebhookController {
     private final PositionSizer sizer;
     private final SignalRanker ranker;
     private final VetoConfig vetoConfig;
+    private final Tranche2Detector tranche2Detector;
 
     /**
      * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
@@ -98,6 +99,7 @@ public class ExecutorWebhookController {
             EntryContextAssembler assembler,
             PositionSizer sizer,
             SignalRanker ranker,
+            Tranche2Detector tranche2Detector,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:saxo-sim}") String connection,
             @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
@@ -137,6 +139,7 @@ public class ExecutorWebhookController {
         this.assembler = assembler;
         this.sizer = sizer;
         this.ranker = ranker;
+        this.tranche2Detector = tranche2Detector;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek);
     }
@@ -590,6 +593,139 @@ public class ExecutorWebhookController {
         }
         if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
         return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
+    }
+
+    // -------------------------------------------------------------------
+    // add-tranche — code-verified tranche-2 adds to an open tranche-1 position
+    // -------------------------------------------------------------------
+
+    @PostMapping("/tools/add-tranche")
+    public ResponseEntity<Map<String, Object>> addTranche(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+            @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
+            @RequestBody(required = false) JsonNode body) {
+
+        if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        if (body == null) body = mapper.createObjectNode();
+        JsonNode input = inputOf(body);
+
+        String symbol = input.path("symbol").asString("");
+
+        ExecutorPosition position = positionRepo.findOpen().stream()
+                .filter(p -> connection.equals(p.connection()))
+                .filter(p -> symbol.equals(p.symbol()))
+                .findFirst()
+                .orElse(null);
+
+        if (position == null) {
+            String reason = RejectReason.NO_POSITION.name();
+            decisionRepo.insert(new ExecutorDecision(null, null, symbol, false,
+                    reason, List.of(), "no open position for " + symbol, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        EntryContext ctx = assembler.assembleForSymbol(symbol);
+        if (ctx.missing() != null && !ctx.missing().isEmpty()) {
+            String reason = RejectReason.DATA_UNAVAILABLE.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, ctx.missing(), "data unavailable: " + ctx.missing(), null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        String positionMechanism = resolvePositionMechanism(position.sourceSignalId());
+        Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(position, ctx.price(),
+                ctx.pendingSignals(), positionMechanism);
+        if (!t2.eligible()) {
+            String reason = RejectReason.NOT_ELIGIBLE.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "tranche 2 not eligible", null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        // Tranche-2 sizing reuses the position's EXISTING active stop — it predates this add and
+        // is never re-derived from the *current* ATR/swing levels, so PositionSizer.stopInWindow()
+        // (which validates freshness against those current levels) is deliberately ignored here;
+        // only qty/risk outputs are used.
+        Sizing sizing = sizer.size(position.side(), ctx.price(), ctx.atr(), ctx.swingLow(),
+                position.activeStop(), ctx.trancheAmount(), ctx.fxToAccount());
+
+        if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
+            String reason = RejectReason.TRANCHE_TOO_SMALL.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        BigDecimal heatLimit = vetoConfig.totalBudget().multiply(BigDecimal.valueOf(vetoConfig.heatPct()));
+        if (ctx.openHeat().add(sizing.newRiskAccountCcy()).compareTo(heatLimit) > 0) {
+            String reason = RejectReason.HEAT_LIMIT.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        // Mirrors VetoService's BUDGET veto (veto 5): a tranche-sized slice of the account must
+        // fit within both remaining cash and remaining total-budget headroom.
+        BigDecimal trancheAccountCcy = vetoConfig.totalBudget().divide(BigDecimal.TEN);
+        boolean budgetOk = ctx.account() != null
+                && ctx.account().cash().compareTo(trancheAccountCcy) >= 0
+                && ctx.openExposure().add(trancheAccountCcy).compareTo(vetoConfig.totalBudget()) <= 0;
+        if (!budgetOk) {
+            String reason = RejectReason.BUDGET.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        BigDecimal orderPrice = ctx.price();
+        BigDecimal stopPrice = position.activeStop();
+
+        // Guarantee a take-profit leg, same 3R-from-order-price synthesis as place-entry.
+        BigDecimal takeProfit = null;
+        if (orderPrice != null && stopPrice != null) {
+            BigDecimal r = orderPrice.subtract(stopPrice).abs();
+            if (r.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
+                BigDecimal target = "SELL".equals(position.side())
+                        ? orderPrice.subtract(offset)
+                        : orderPrice.add(offset);
+                takeProfit = target.setScale(2, RoundingMode.HALF_UP);
+            }
+        }
+
+        try {
+            BracketRequest req = new BracketRequest(symbol, position.side(), sizing.qty(), orderPrice,
+                    stopPrice, takeProfit, "t2-" + position.sourceSignalId(), null);
+            PlacedBracket placed = gateway.placeBracket(connection, req);
+
+            BigDecimal newQty = position.qty().add(sizing.qty());
+            BigDecimal newEntry = position.qty().multiply(position.entryPrice())
+                    .add(sizing.qty().multiply(orderPrice))
+                    .divide(newQty, 6, RoundingMode.HALF_UP);
+
+            positionRepo.updateTranche2(position.id(), newQty, newEntry, placed.bracketId(), placed.stopLegId());
+
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
+                    null, List.of(), "tranche 2 added: " + t2.reason(), placed.bracketId(), runId, null));
+
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "placed", true,
+                    "qty", sizing.qty(),
+                    "reason", t2.reason())));
+        } catch (BrokerUnavailableException e) {
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    "BROKER_ERROR", List.of(), "broker call failed: " + e.getMessage(), null, runId, null));
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
+        }
+    }
+
+    /** Same 4-line null-safe lookup as {@code MaintenancePipeline.resolveMechanism} — replicated
+     *  here rather than shared because that method is private to the maintenance pipeline. */
+    private String resolvePositionMechanism(String sourceSignalId) {
+        if (sourceSignalId == null) return null;
+        ExecutorSignal source = signalRepo.findById(sourceSignalId);
+        return source == null ? null : source.mechanism();
     }
 
     // -------------------------------------------------------------------
