@@ -62,6 +62,16 @@ Verify via `GET /agents/executor` on Vistierie (`:8090`, tenant token): the
 `system_prompt` should include the new ladder/hard-kill/GTD paragraphs and
 `version` should have bumped.
 
+The same change set also alters the executor's **tool schema**: the
+`place_entry` input schema gains an optional `confidence` field (number,
+0–1), which the agent passes so its decision confidence lands in
+`decision_log.confidence_in_decision` (the executor-side Brier /
+calibration input). The definition reset above propagates this schema
+change too — without it the live agent keeps the old `place_entry`
+schema and every ENTER/REJECT row stays uncalibratable (`null`
+confidence). Verify the reset picked it up: the `place_entry` entry in
+the agent's tool catalog should list `confidence` among its properties.
+
 This change set also bumps `DRACUL_EXECUTOR_RULE_VERSION` to `exec-v0.4`
 (`RuleVersionProvider.seed()` is insert-if-absent, so the new `rule_versions`
 row is seeded automatically on the next boot — no manual step). The

@@ -703,6 +703,62 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_confidence_landsInDecisionLog_enter() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95,"confidence":0.85}
+                """);
+
+        controller.placeEntry(BEARER, "run-42", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+        assertThat(log.action()).isEqualTo("ENTER");
+        assertThat(log.confidenceInDecision()).isEqualTo(0.85);
+    }
+
+    @Test
+    void placeEntry_confidence_landsInDecisionLog_vetoReject() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.4, new BigDecimal("100")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95,"confidence":0.55}
+                """);
+
+        controller.placeEntry(BEARER, "run-7", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("LOW_CONFIDENCE");
+        assertThat(log.confidenceInDecision()).isEqualTo(0.55);
+    }
+
+    @Test
+    void placeEntry_noConfidenceArgument_logsNullNeverFabricated() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-42", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        assertThat(captor.getValue().confidenceInDecision()).isNull();
+    }
+
+    @Test
     void placeEntry_brokerError_noPositionBooked() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
