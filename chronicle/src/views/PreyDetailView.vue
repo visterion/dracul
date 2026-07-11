@@ -58,9 +58,10 @@
             </div>
             <div class="sr-col">
               <div class="sr-head">{{ t('prey.killCriteria') }}</div>
-              <ul class="sr-list sr-list--kill">
+              <ul v-if="prey.killCriteria?.length" class="sr-list sr-list--kill">
                 <li v-for="(k, i) in prey.killCriteria" :key="i">{{ k }}</li>
               </ul>
+              <p v-else class="sr-empty" data-testid="pd-kill-empty">{{ t('prey.killCriteriaEmpty') }}</p>
             </div>
           </div>
         </div>
@@ -284,6 +285,8 @@ async function onAddToWatchlist() {
 .sr-list--risks li::before { color: var(--ash-gray); }
 .sr-list--kill li { color: var(--bone-ivory-dim); }
 .sr-list--kill li::before { color: var(--signal-danger); }
+
+.sr-empty { color: var(--ash-gray); font-style: italic; font-size: var(--text-body-sm); margin: 0; }
 
 /* ── Right column: confidence spacing ── */
 .pd-conf { margin-bottom: var(--space-5); }
