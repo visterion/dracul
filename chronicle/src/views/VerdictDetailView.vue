@@ -110,7 +110,7 @@
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.currentPrice') }}</span>
-              <span class="kv-v mono"><MoneyDisplay :amount="verdict.currentPrice" :currency="verdict.currency" :native-amount="verdict.nativeCurrentPrice" :native-currency="verdict.nativeCurrency" /></span>
+              <span class="kv-v mono"><MoneyDisplay :amount="verdict.currentPrice" :currency="verdict.currency" :native-amount="verdict.nativeCurrentPrice" :native-currency="verdict.nativeCurrency" original-primary /></span>
             </div>
           </div>
         </div>

@@ -48,13 +48,15 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
     await expect(page.locator('.kv-list')).toContainText('0,78')
   })
 
-  test('current-price fact shows converted EUR plus native USD original', async ({ page }) => {
-    // wl-1/verdict-1 (AVGO) is USD-native displayed in EUR -> native line SHOWS.
-    // App boots in German, so the origPrice token is 'urspr.'; the native USD
-    // amount renders in de formatting as 1.247,50 $.
+  test('current-price fact shows the native USD original first, converted EUR in parens', async ({ page }) => {
+    // C2: wl-1/verdict-1 (AVGO) is USD-native displayed in EUR. Original-primary
+    // format drops the "urspr." label: "1.247,50 $ (1.147,70 €)" in de formatting.
     const priceCell = page.locator('.kv-list .money')
-    await expect(priceCell).toContainText('urspr.')
     await expect(priceCell).toContainText('1.247,50')
+    await expect(priceCell).toContainText('$')
+    await expect(priceCell).toContainText('1.147,70')
+    await expect(priceCell).toContainText('€')
+    await expect(priceCell).not.toContainText('urspr.')
   })
 
   test('renders signals section with at least 1 item', async ({ page }) => {
