@@ -27,13 +27,22 @@ public class VetoService {
 
     /** Result of evaluating the full veto catalog against one signal. */
     public record Outcome(boolean passed, RejectReason firstFailure, List<VetoResult> results,
-                           String contradictingSignalId) {}
+                           String contradictingSignalId, Snapshot snapshot) {}
+
+    /**
+     * Values already computed inside {@link #evaluate} for its own checks, surfaced so the
+     * decision-log audit trail (rich {@code decision_log} rows) never has to recompute them —
+     * one source of truth per number. Null on the {@code DATA_UNAVAILABLE} short-circuit path,
+     * where none of these were ever computed.
+     */
+    public record Snapshot(double heatBeforePct, double heatAfterPct, BigDecimal budgetFree,
+                            int newPositionsThisWeek, int sectorCountSame, String cooldownStatus) {}
 
     public Outcome evaluate(ExecutorSignal signal, EntryContext ctx, Sizing sizing, VetoConfig cfg) {
         if (ctx.missing() != null && !ctx.missing().isEmpty()) {
             String joined = String.join(",", ctx.missing());
             return new Outcome(false, RejectReason.DATA_UNAVAILABLE,
-                    List.of(new VetoResult("DATA_UNAVAILABLE:" + joined, false, joined)), null);
+                    List.of(new VetoResult("DATA_UNAVAILABLE:" + joined, false, joined)), null, null);
         }
 
         List<VetoResult> results = new ArrayList<>();
@@ -122,6 +131,7 @@ public class VetoService {
         boolean budgetOk = bounds.budgetOk();
         BigDecimal cash = ctx.account() != null ? ctx.account().cash() : BigDecimal.ZERO;
         BigDecimal exposureAfter = ctx.openExposure().add(bounds.trancheAccountCcy());
+        BigDecimal budgetFree = cfg.totalBudget().subtract(exposureAfter);
         String budgetMeasured = "cash " + fmt2(cash) + (cash.compareTo(bounds.trancheAccountCcy()) >= 0 ? " >= " : " < ")
                 + "tranche " + fmt2(bounds.trancheAccountCcy())
                 + "; exposure " + fmt2(exposureAfter) + (exposureAfter.compareTo(cfg.totalBudget()) <= 0 ? " <= " : " > ")
@@ -132,6 +142,8 @@ public class VetoService {
         // 6 HEAT_LIMIT
         boolean heatOk = bounds.heatOk();
         BigDecimal heatUsed = ctx.openHeat().add(sizing.newRiskAccountCcy());
+        double heatBeforePct = cfg.totalBudget().signum() == 0 ? 0.0
+                : ctx.openHeat().divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
         double usedPct = cfg.totalBudget().signum() == 0 ? 0.0
                 : heatUsed.divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
         double limitPct = cfg.heatPct() * 100;
@@ -271,7 +283,9 @@ public class VetoService {
         if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;
 
         boolean passed = firstFailure == null;
-        return new Outcome(passed, firstFailure, results, contradictingSignalId);
+        Snapshot snapshot = new Snapshot(heatBeforePct, usedPct, budgetFree, ctx.entriesThisWeek(),
+                (int) sameSectorCount, cooldownMeasured);
+        return new Outcome(passed, firstFailure, results, contradictingSignalId, snapshot);
     }
 
     /** Two-decimal formatting for measured-string amounts (account/instrument ccy). */

@@ -16,6 +16,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
@@ -42,6 +45,11 @@ class ExecutorWebhookControllerTest {
     private Tranche2Detector tranche2Detector;
     private TelegramNotifier telegram;
     private JsonMapper mapper;
+
+    /** Fixed at 42s after every test signal's createdAt ("2026-07-01T00:00:00Z"), so
+     *  latency.signal_to_decision_seconds is deterministic across tests. */
+    private static final Instant FIXED_NOW = Instant.parse("2026-07-01T00:00:42Z");
+    private final Clock fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
 
     private ExecutorWebhookController controller;
 
@@ -75,7 +83,8 @@ class ExecutorWebhookControllerTest {
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
-                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2);
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
+                2, fixedClock);
     }
 
     // -------------------------------------------------------------------
@@ -236,6 +245,48 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_lowConfidence_writesRichDecisionLogReject() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.4, new BigDecimal("100")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-7", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.triggerType()).isEqualTo("SIGNAL");
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("LOW_CONFIDENCE");
+        assertThat(log.runId()).isEqualTo("run-7");
+        assertThat(log.signalId()).isEqualTo("sig-1");
+        assertThat(log.symbol()).isEqualTo("ACME");
+        assertThat(log.orderJson()).isNull();
+
+        JsonNode inputs = log.inputsSnapshot();
+        assertThat(inputs).isNotNull();
+        for (String key : List.of("signal_confidence", "signal_mechanism", "signal_age_trading_days",
+                "order_price", "atr", "book_positions_count", "portfolio_heat_before_pct",
+                "portfolio_heat_after_pct", "budget_free", "new_positions_this_week",
+                "sector_count_same", "cooldown_status")) {
+            assertThat(inputs.has(key)).as("missing key " + key).isTrue();
+        }
+        assertThat(inputs.path("signal_confidence").asDouble()).isEqualTo(0.4);
+
+        JsonNode vetoResults = log.vetoResults();
+        assertThat(vetoResults.isArray()).isTrue();
+        assertThat(vetoResults.size()).isEqualTo(14);
+        for (JsonNode v : vetoResults) {
+            assertThat(v.has("check")).isTrue();
+            assertThat(v.has("passed")).isTrue();
+            assertThat(v.has("measured")).isTrue();
+        }
+    }
+
+    @Test
     void placeEntry_maxPositions_noBrokerCall() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         List<ExecutorPosition> threeOpen = List.of(
@@ -331,6 +382,27 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_orderGuardReject_writesRichDecisionLog() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":105}
+                """);
+
+        controller.placeEntry(BEARER, "run-8", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("NO_STOP");
+        assertThat(log.orderJson()).isNull();
+        assertThat(log.inputsSnapshot()).isNotNull();
+        assertThat(log.vetoResults().size()).isEqualTo(14);
+    }
+
+    @Test
     void placeEntry_nullBody_rejectsCleanly() {
         ResponseEntity<?> resp = controller.placeEntry(BEARER, null, null);
 
@@ -387,6 +459,43 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_dataUnavailable_writesRichDecisionLogWithNullsForMissingSnapshotValues() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(unavailableContext());
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-9", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("DATA_UNAVAILABLE");
+        assertThat(log.orderJson()).isNull();
+
+        // Genuinely unavailable market data -> null, never fabricated.
+        JsonNode inputs = log.inputsSnapshot();
+        assertThat(inputs.path("order_price").isNull()).isTrue();
+        assertThat(inputs.path("atr").isNull()).isTrue();
+        assertThat(inputs.path("signal_age_trading_days").isNull()).isTrue();
+        // veto never evaluated past the DATA_UNAVAILABLE short-circuit -> snapshot-derived
+        // keys are all null too.
+        assertThat(inputs.path("portfolio_heat_before_pct").isNull()).isTrue();
+        assertThat(inputs.path("portfolio_heat_after_pct").isNull()).isTrue();
+        assertThat(inputs.path("budget_free").isNull()).isTrue();
+        assertThat(inputs.path("new_positions_this_week").isNull()).isTrue();
+        assertThat(inputs.path("sector_count_same").isNull()).isTrue();
+        assertThat(inputs.path("cooldown_status").isNull()).isTrue();
+
+        assertThat(log.vetoResults().size()).isEqualTo(1);
+        assertThat(log.vetoResults().get(0).path("check").asString()).startsWith("DATA_UNAVAILABLE");
+    }
+
+    @Test
     void placeEntry_trancheTooSmall_rejects() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("2000")));
         when(assembler.assemble(any()))
@@ -405,6 +514,29 @@ class ExecutorWebhookControllerTest {
         verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
         verify(signalRepo).markStatus("sig-1", "REJECTED");
+    }
+
+    @Test
+    void placeEntry_trancheTooSmall_writesRichDecisionLog() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("2000")));
+        when(assembler.assemble(any()))
+                .thenReturn(withPrice(happyContext(), new BigDecimal("2000")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":1995}
+                """);
+
+        controller.placeEntry(BEARER, "run-10", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("TRANCHE_TOO_SMALL");
+        assertThat(log.orderJson()).isNull();
+        assertThat(log.inputsSnapshot()).isNotNull();
+        assertThat(log.vetoResults().size()).isEqualTo(14);
     }
 
     @Test
@@ -491,6 +623,72 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_happyPath_writesRichDecisionLog() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-42", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.triggerType()).isEqualTo("SIGNAL");
+        assertThat(log.action()).isEqualTo("ENTER");
+        assertThat(log.reasonCode()).isNull();
+        assertThat(log.runId()).isEqualTo("run-42");
+        assertThat(log.signalId()).isEqualTo("sig-1");
+        assertThat(log.sourceAgent()).isEqualTo("hunter");
+        assertThat(log.sourceAgentVersion()).isEqualTo("v1");
+        assertThat(log.symbol()).isEqualTo("ACME");
+
+        JsonNode inputs = log.inputsSnapshot();
+        assertThat(inputs).isNotNull();
+        for (String key : List.of("signal_confidence", "signal_mechanism", "signal_age_trading_days",
+                "order_price", "atr", "book_positions_count", "portfolio_heat_before_pct",
+                "portfolio_heat_after_pct", "budget_free", "new_positions_this_week",
+                "sector_count_same", "cooldown_status")) {
+            assertThat(inputs.has(key)).as("missing key " + key).isTrue();
+        }
+        assertThat(inputs.path("signal_confidence").asDouble()).isEqualTo(0.9);
+        assertThat(inputs.path("signal_mechanism").asString()).isEqualTo("mechanism");
+        assertThat(inputs.path("order_price").asDouble()).isEqualTo(100.0);
+        assertThat(inputs.path("atr").asDouble()).isEqualTo(2.0);
+
+        JsonNode vetoResults = log.vetoResults();
+        assertThat(vetoResults.isArray()).isTrue();
+        assertThat(vetoResults.size()).isEqualTo(14);
+        for (JsonNode v : vetoResults) {
+            assertThat(v.has("check")).isTrue();
+            assertThat(v.has("passed")).isTrue();
+            assertThat(v.has("measured")).isTrue();
+        }
+
+        JsonNode order = log.orderJson();
+        assertThat(order).isNotNull();
+        assertThat(order.path("type").asString()).isEqualTo("limit_bracket");
+        assertThat(order.path("qty").asDouble()).isEqualTo(10.0);
+        assertThat(order.path("limit_price").isNull()).isTrue();
+        assertThat(order.path("stop_price").asDouble()).isEqualTo(95.0);
+        assertThat(order.path("take_profit").asDouble()).isEqualTo(115.0);
+        assertThat(order.path("stop_basis").asString()).contains("ATR");
+        assertThat(order.path("r_per_share").asDouble()).isEqualTo(5.0);
+        assertThat(order.path("position_risk").asDouble()).isEqualTo(50.0);
+        assertThat(order.path("gtd_days").asInt()).isEqualTo(2);
+
+        JsonNode latency = log.latency();
+        assertThat(latency).isNotNull();
+        // signal createdAt "2026-07-01T00:00:00Z", fixedClock at "...T00:00:42Z" -> 42s.
+        assertThat(latency.path("signal_to_decision_seconds").asLong()).isEqualTo(42L);
+    }
+
+    @Test
     void placeEntry_brokerError_noPositionBooked() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
@@ -513,6 +711,15 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo).insert(decCaptor.capture());
         assertThat(decCaptor.getValue().accepted()).isFalse();
         assertThat(decCaptor.getValue().rejectReason()).isEqualTo("BROKER_ERROR");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
+        assertThat(log.orderJson()).isNull();
+        assertThat(log.inputsSnapshot()).isNotNull();
+        assertThat(log.vetoResults().size()).isEqualTo(14);
     }
 
     @Test
