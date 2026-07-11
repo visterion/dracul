@@ -58,6 +58,7 @@ separately under "Executor Webhooks" below.
 | POST | `/api/executor/run` | Trigger an ad-hoc Vistierie run of the executor agent |
 | GET | `/api/executor/calibration` | Brier calibration — executor overall + per-hunter |
 | GET | `/api/executor/behavior` | Veto precision, hard-exit latency, whipsaw, stop-basis comparison, slippage |
+| GET | `/api/executor/metrics/versions` | Outcome metrics grouped by `(source_agent, agent_version, rule_version)`, with an insufficient-sample gate |
 
 ### `POST /api/executor/signals`
 
@@ -168,6 +169,41 @@ Response (200):
   "stop_basis": [{"basis": "ATR", "n": 8, "mean_realized_r": 0.9, "mean_mae_r": -0.5},
                  {"basis": "SWING_LOW", "n": 4, "mean_realized_r": 1.3, "mean_mae_r": -0.3}],
   "slippage": {"n": 12, "mean": -0.02, "worst": -0.15}
+}
+```
+
+### `GET /api/executor/metrics/versions`
+
+Read-only outcome metrics (Task 5, item 23) over completed `TRADE` rows in
+`outcome_log`, joined to `decision_log` for timestamps, grouped by
+`(source_agent, agent_version, rule_version)`. Lets an operator compare a
+new agent/rule version's realized performance against the prior one once
+enough data has accumulated. No LLM calls, no writes.
+
+- **`avg_return`**: mean `outcome_log.realized_r` (quantity-weighted
+  R-multiple over partial exits) of the group's completed `TRADE` rows.
+- **`hit_rate`**: fraction of the group's rows with `realized_r > 0` — the
+  same "won" definition used by `GET /api/executor/calibration`'s executor
+  Brier score.
+- **`insufficient_sample`**: `true` unless the group's decisions span at
+  least 14 days (`first_at` to `last_at`, from the joined `decision_log`
+  rows) **and** the group has at least 20 decisions — both thresholds must
+  hold ("2 weeks or 20 decisions, whichever is later"). The row is still
+  returned when insufficient, just flagged as low-confidence.
+- An empty database returns `{"versions": []}`, not an error.
+
+Response (200):
+
+```json
+{
+  "versions": [
+    {"agent": "gropar", "agent_version": "1", "rule_version": "v3", "decisions": 25,
+     "first_at": "2026-06-01T00:00:00Z", "last_at": "2026-06-25T00:00:00Z",
+     "avg_return": 0.31, "hit_rate": 0.56, "insufficient_sample": false},
+    {"agent": "gropar", "agent_version": "2", "rule_version": "v4", "decisions": 6,
+     "first_at": "2026-07-05T00:00:00Z", "last_at": "2026-07-10T00:00:00Z",
+     "avg_return": -0.1, "hit_rate": 0.33, "insufficient_sample": true}
+  ]
 }
 ```
 
