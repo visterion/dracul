@@ -241,7 +241,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         args.put("connection", connection);
         args.put("orderId", orderId);
 
-        JsonNode out = unwrap(call("cancel", args));
+        JsonNode out = unwrap(call("cancel_order", args));
         requireAccepted(out);
     }
 
@@ -268,7 +268,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     }
 
     /**
-     * Live Agora write tools (place_bracket, flatten, modify_bracket, cancel) return an
+     * Live Agora write tools (place_bracket, flatten, modify_bracket, cancel_order) return an
      * {@code accepted} flag; a business rejection is {@code accepted:false} with
      * {@code rejectCode}/{@code rejectReason}. Treat that as unavailable so a rejected order is
      * never silently returned as a success with a null orderId.
