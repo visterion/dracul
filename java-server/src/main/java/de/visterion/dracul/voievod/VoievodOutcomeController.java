@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import tools.jackson.databind.JsonNode;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -132,8 +133,21 @@ public class VoievodOutcomeController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Upper bound on the OHLC window so a very old backlog prey can't request an unbounded history. */
+    private static final int MAX_OHLC_WINDOW_DAYS = 730;
+
     private Map<String, Object> condensedOhlc(Prey p) {
-        int days = Horizons.approxDays(p.horizon()) + ELAPSED_GRACE_DAYS;
+        int days;
+        try {
+            LocalDate discovered = Horizons.dateOf(p.discoveredAt());
+            days = (int) Math.min(
+                    MAX_OHLC_WINDOW_DAYS,
+                    ChronoUnit.DAYS.between(discovered, LocalDate.now()) + 1);
+        } catch (RuntimeException e) {
+            log.warn("voievod-outcome: unparseable discoveredAt '{}' for {} — falling back to horizon window",
+                    p.discoveredAt(), p.symbol());
+            days = Horizons.approxDays(p.horizon()) + ELAPSED_GRACE_DAYS;
+        }
         List<OhlcBar> bars;
         try {
             bars = marketData.dailyOhlcHistory(p.symbol(), days);

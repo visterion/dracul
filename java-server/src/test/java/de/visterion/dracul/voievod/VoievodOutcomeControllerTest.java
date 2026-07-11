@@ -117,6 +117,31 @@ class VoievodOutcomeControllerTest {
     }
 
     // =========================================================================
+    // OHLC window for backlog prey is anchored to discoveredAt, not a fixed
+    // horizon-derived constant — old prey must request a far larger window
+    // than horizonDays + 30 so firstClose reflects the discovery-time price.
+    // =========================================================================
+
+    @Test
+    void fetchElapsedPrey_backlogPrey_requestsOhlcWindowAnchoredToDiscoveryDate() {
+        LocalDate discovered = LocalDate.now().minusDays(400);
+        var p = prey("id-old", "OLD", discovered + "T00:00:00Z", "3m");
+        when(preyRepo.findElapsedUnreviewed(eq("default"), isNull())).thenReturn(List.of(p));
+        when(marketData.dailyOhlcHistory(eq("OLD"), anyInt())).thenReturn(bars(100, 90));
+
+        controller.fetchElapsedPrey(BEARER, null);
+
+        ArgumentCaptor<Integer> daysCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(marketData).dailyOhlcHistory(eq("OLD"), daysCaptor.capture());
+
+        int expectedDays = (int) java.time.temporal.ChronoUnit.DAYS.between(discovered, LocalDate.now()) + 1;
+        int oldFixedFormula = Horizons.approxDays("3m") + 30; // 90 + 30 = 120 — must NOT be used
+
+        assertThat(daysCaptor.getValue()).isEqualTo(expectedDays);
+        assertThat(daysCaptor.getValue()).isGreaterThan(oldFixedFormula);
+    }
+
+    // =========================================================================
     // Prey whose horizon hasn't elapsed >30d ago is excluded, not reviewed
     // =========================================================================
 

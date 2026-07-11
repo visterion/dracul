@@ -335,7 +335,7 @@ verdict list is treated as a valid, respectable outcome.
 
 ## Voievod-Outcome (elapsed-hunt pattern reviewer)
 
-**Implemented 2026-07-11 (fetch side; completion side is a follow-up).** A second,
+**Implemented 2026-07-11 (fetch and completion sides both shipped).** A second,
 separate agent from Voievod above — reviews **elapsed** hunts (not consensus) and
 proposes generalizable patterns. Runs weekly, Saturday morning (default cron
 `0 0 7 * * 6`, UTC), reasoning tier (model_purpose `reasoning`).
@@ -347,7 +347,8 @@ returns every prey whose horizon elapsed more than 30 days ago
 reviewed, oldest-discovered first, capped at 25 prey per run (the response notes whether the
 cap was applied). Each entry carries `symbol`, `anomalyType`, `thesis`, `killCriteria`,
 `discoveredAt`, `horizon`, and `ohlc` — daily close history since discovery (via
-`AgoraMarketData.dailyOhlcHistory`, `horizon days + 30`) condensed server-side to
+`AgoraMarketData.dailyOhlcHistory`, window sized from `discoveredAt` to today, capped at
+730 days) condensed server-side to
 `firstClose` / `lastClose` / `minClose` / `maxClose` (token budget — the full daily series is
 never shipped). Fetched prey are marked reviewed **at fetch time**
 (`prey.outcome_reviewed_at`, migration V24) — the simplest correct v1; a re-run never
@@ -356,8 +357,10 @@ re-surfaces the same prey even if the agent run itself later fails.
 The LLM judges each prey against its original thesis and kill criteria using the condensed
 OHLC, and proposes a pattern only when **at least 3 separate prey** support the same
 statement — see `prompts/voievod-outcome.md`. `POST /api/voievod-outcome/complete`
-(persisting `Pattern` rows) is a follow-up task; the agent definition's `completionPath`
-already points at it.
+persists the agent's proposed lessons as PENDING `patterns` rows (bearer-token auth,
+CF-Access-exempt); the agent definition's `completionPath` points at it. Requires
+`status: "done"` or `"succeeded"` — any other status is acknowledged (204) without
+persisting. See `documentation/api.md` for the full request/response contract.
 
 ## Daywalker (streaming guardian)
 
