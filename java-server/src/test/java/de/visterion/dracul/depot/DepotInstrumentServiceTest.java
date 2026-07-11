@@ -22,7 +22,7 @@ class DepotInstrumentServiceTest {
         AgoraClient agora = mock(AgoraClient.class);
         when(agora.callTool(eq("get_company_profile"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"name\":\"Acme Corp\"}"));
         when(agora.callTool(eq("get_company_news"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"news\":[]}"));
-        when(agora.callTool(eq("get_earnings_window"), any())).thenReturn(json("{\"events\":[]}"));
+        when(agora.callTool(eq("get_earnings_window"), any())).thenReturn(json("{\"earnings\":[]}"));
         when(agora.callTool(eq("get_analyst_estimates"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"recommendations\":[]}"));
         when(agora.callTool(eq("get_earnings_estimates"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"estimates\":[]}"));
         when(agora.callTool(eq("get_fundamental_score"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"score\":7}"));
@@ -118,5 +118,74 @@ class DepotInstrumentServiceTest {
                 org.mockito.ArgumentMatchers.argThat(args -> args.path("symbol").isMissingNode()));
         verify(agora).callTool(eq("get_form4_transactions"),
                 org.mockito.ArgumentMatchers.argThat(args -> args.path("symbol").isMissingNode()));
+    }
+
+    @Test
+    void earningsSectionIsFilteredToRequestedSymbol() {
+        AgoraClient agora = allSucceedingAgora();
+        when(agora.callTool(eq("get_earnings_window"), any())).thenReturn(json(
+                "{\"earnings\":["
+                        + "{\"symbol\":\"ACME\",\"date\":\"2026-07-20\"},"
+                        + "{\"symbol\":\"OTHER\",\"date\":\"2026-07-21\"},"
+                        + "{\"symbol\":\"acme\",\"date\":\"2026-07-22\"}"
+                        + "],\"truncated\":false}"));
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        JsonNode earnings = bundle.earnings();
+        assertThat(earnings.path("earnings")).hasSize(2);
+        for (JsonNode row : earnings.path("earnings")) {
+            assertThat(row.path("symbol").asString()).isEqualToIgnoringCase("ACME");
+        }
+        assertThat(earnings.path("truncated").asBoolean()).isFalse();
+    }
+
+    @Test
+    void insiderActivitySectionIsFilteredToRequestedSymbolByTicker() {
+        AgoraClient agora = allSucceedingAgora();
+        when(agora.callTool(eq("get_form4_transactions"), any())).thenReturn(json(
+                "{\"transactions\":["
+                        + "{\"ticker\":\"ACME\",\"filerName\":\"Jane\"},"
+                        + "{\"ticker\":\"OTHER\",\"filerName\":\"John\"},"
+                        + "{\"ticker\":\"acme\",\"filerName\":\"Jim\"}"
+                        + "],\"truncated\":false}"));
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        JsonNode insiderActivity = bundle.insiderActivity();
+        assertThat(insiderActivity.path("transactions")).hasSize(2);
+        for (JsonNode row : insiderActivity.path("transactions")) {
+            assertThat(row.path("ticker").asString()).isEqualToIgnoringCase("ACME");
+        }
+        assertThat(insiderActivity.path("truncated").asBoolean()).isFalse();
+    }
+
+    @Test
+    void earningsSectionWithUnexpectedShapeIsPassedThroughUnchanged() {
+        AgoraClient agora = allSucceedingAgora();
+        when(agora.callTool(eq("get_earnings_window"), any())).thenReturn(json(
+                "{\"note\":\"no earnings in the requested window\"}"));
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        assertThat(bundle.earnings().path("note").asString())
+                .isEqualTo("no earnings in the requested window");
+        assertThat(bundle.earnings().has("earnings")).isFalse();
+    }
+
+    @Test
+    void insiderActivitySectionWithUnexpectedShapeIsPassedThroughUnchanged() {
+        AgoraClient agora = allSucceedingAgora();
+        when(agora.callTool(eq("get_form4_transactions"), any())).thenReturn(json(
+                "{\"note\":\"unavailable\"}"));
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        assertThat(bundle.insiderActivity().path("note").asString()).isEqualTo("unavailable");
+        assertThat(bundle.insiderActivity().has("transactions")).isFalse();
     }
 }
