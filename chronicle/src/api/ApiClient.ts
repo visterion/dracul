@@ -13,6 +13,7 @@ export interface ApiClient {
   getSystemStatus(): Promise<SystemStatus>
   getVerdictDetail(id: string): Promise<VerdictDetail | null>
   getStrigoiDetail(name: string): Promise<StrigoiDetail | null>
+  triggerStrigoiRun(name: string): Promise<{ runId: string }>
   getWatchlistItems(): Promise<WatchlistItem[]>
   getPortfolio(): Promise<WatchlistItem[]>
   getPatterns(): Promise<Pattern[]>

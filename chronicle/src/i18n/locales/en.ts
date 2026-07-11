@@ -115,6 +115,7 @@ export default {
     agentConfig: {
       title: 'Agents',
       subtitle: 'Pause or resume each agent. Tier, schedule and budget are configured in code.',
+      run: 'Hunt',
       pause: 'Pause',
       resume: 'Resume',
       loadError: 'Could not load agents.',
@@ -672,6 +673,12 @@ export default {
       monthlyBudget: 'Monthly budget',
       primary: 'Primary',
       fallback: 'Fallback',
+    },
+    trigger: {
+      button: 'Trigger hunt',
+      running: 'Triggering …',
+      started: 'Hunt started',
+      pausedTooltip: 'Agent paused',
     },
   },
 }

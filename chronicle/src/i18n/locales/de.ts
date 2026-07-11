@@ -115,6 +115,7 @@ export default {
     agentConfig: {
       title: 'Agenten',
       subtitle: 'Pausiere oder aktiviere jeden Agenten. Tier, Schedule und Budget werden im Code konfiguriert.',
+      run: 'Jagd',
       pause: 'Pausieren',
       resume: 'Aktivieren',
       loadError: 'Agenten konnten nicht geladen werden.',
@@ -672,6 +673,12 @@ export default {
       monthlyBudget: 'Monatsbudget',
       primary: 'Primär',
       fallback: 'Fallback',
+    },
+    trigger: {
+      button: 'Jagd auslösen',
+      running: 'Wird ausgelöst …',
+      started: 'Jagd gestartet',
+      pausedTooltip: 'Agent pausiert',
     },
   },
 }

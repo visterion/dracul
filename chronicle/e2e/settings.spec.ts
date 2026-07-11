@@ -134,6 +134,14 @@ test.describe('Settings View (/settings)', () => {
     await expect(dialog.locator('#sf-schedule')).toBeVisible()
   })
 
+  test('agent rows offer a run trigger; paused agents are disabled', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Agenten")')
+    await expect(page.locator('[data-testid="agent-config-list"]')).toBeVisible()
+    await expect(page.getByTestId('agent-run-strigoi-lazarus')).toBeDisabled()
+    await page.getByTestId('agent-run-strigoi-spin').click()
+    await expect(page.getByText('Jagd gestartet')).toBeVisible()
+  })
+
   test('reset repopulates the form to the default prompt', async ({ page }) => {
     page.on('dialog', d => d.accept())
     await page.click('.set-nav-item:has-text("Agenten")')

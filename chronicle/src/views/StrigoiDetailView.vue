@@ -30,6 +30,15 @@
           {{ stateLabel }} · {{ scheduleSummary }}
         </span>
       </template>
+      <template #right>
+        <button
+          class="btn btn-primary"
+          :disabled="triggering || isPaused"
+          :title="isPaused ? t('strigoi.trigger.pausedTooltip') : undefined"
+          data-testid="sd-trigger-hunt"
+          @click="onTriggerHunt"
+        >{{ triggering ? t('strigoi.trigger.running') : t('strigoi.trigger.button') }}</button>
+      </template>
     </PageHead>
 
     <div class="section-head" data-testid="sd-stats-head"><span class="sh-rule" />{{ t('strigoi.sections.statsMonth') }}</div>
@@ -156,6 +165,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiDetail, Prey } from '../api/types'
 import { useApi } from '../api'
+import { useToast } from '../composables/useToast'
 import BackLink from '../components/common/BackLink.vue'
 import PageHead from '../components/common/PageHead.vue'
 import StatTile from '../components/common/StatTile.vue'
@@ -172,10 +182,15 @@ const { anomalyTypeLabel, agentTierLabel } = useEnumLabels()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
+const toast = useToast()
 
 const strigoi = ref<StrigoiDetail | null>(null)
 const loading = ref(true)
 const fetchError = ref<string | null>(null)
+const triggering = ref(false)
+
+const isPaused = computed(() =>
+  strigoi.value?.state === 'paused' || strigoi.value?.configuration.disabled === true)
 
 const lastRun = computed(() => strigoi.value?.recentRuns[0] ?? null)
 
@@ -223,6 +238,21 @@ function onBack() {
 
 function onOpenPrey(prey: Prey) {
   router.push({ name: 'prey-detail', params: { id: prey.id } })
+}
+
+async function onTriggerHunt() {
+  if (!strigoi.value || triggering.value) return
+  triggering.value = true
+  try {
+    await api.triggerStrigoiRun(strigoi.value.name)
+    toast.show(t('strigoi.trigger.started'), { type: 'success' })
+    const refreshed = await api.getStrigoiDetail(strigoi.value.name)
+    if (refreshed) strigoi.value = refreshed
+  } catch (e) {
+    toast.show((e as Error).message, { type: 'error' })
+  } finally {
+    triggering.value = false
+  }
 }
 
 function formatRunDate(iso: string): string {
