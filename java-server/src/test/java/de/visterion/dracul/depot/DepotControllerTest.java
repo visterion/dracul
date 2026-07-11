@@ -25,7 +25,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         when(service.depots("alice@x.com")).thenReturn(List.of());
 
-        var out = new DepotController(service).depots();
+        var out = newController(service).depots();
 
         assertThat(out.depots()).isEmpty();
         assertThat(out.error()).isNull();
@@ -38,7 +38,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         when(service.depots("alice@x.com")).thenThrow(new DepotUnavailableException("agora down"));
 
-        var out = new DepotController(service).depots();
+        var out = newController(service).depots();
 
         assertThat(out.depots()).isEmpty();
         assertThat(out.error()).isEqualTo("agora down");
@@ -50,7 +50,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         when(service.depots("alice@x.com")).thenReturn(List.of());
 
-        var controller = new DepotController(service);
+        var controller = newController(service);
 
         assertThatThrownBy(() -> controller.positionDetail("missing-conn", "ACME"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -64,7 +64,7 @@ class DepotControllerTest {
         DepotDto depot = depotWithPosition("conn-1", "ACME");
         when(service.depots("alice@x.com")).thenReturn(List.of(depot));
 
-        var controller = new DepotController(service);
+        var controller = newController(service);
 
         assertThatThrownBy(() -> controller.positionDetail("conn-1", "MSFT"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -79,7 +79,7 @@ class DepotControllerTest {
                 "agora down", null, null, null, null, null);
         when(service.depots("alice@x.com")).thenReturn(List.of(depot));
 
-        var controller = new DepotController(service);
+        var controller = newController(service);
 
         assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -94,7 +94,7 @@ class DepotControllerTest {
                 null, null, null, null, null, null);
         when(service.depots("alice@x.com")).thenReturn(List.of(depot));
 
-        var controller = new DepotController(service);
+        var controller = newController(service);
 
         assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -107,7 +107,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         when(service.depots("alice@x.com")).thenThrow(new DepotUnavailableException("agora down"));
 
-        var controller = new DepotController(service);
+        var controller = newController(service);
 
         assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -121,7 +121,7 @@ class DepotControllerTest {
         DepotDto depot = depotWithPosition("conn-1", "ACME");
         when(service.depots("alice@x.com")).thenReturn(List.of(depot));
 
-        var out = new DepotController(service).positionDetail("conn-1", "ACME");
+        var out = newController(service).positionDetail("conn-1", "ACME");
 
         assertThat(out.depot().id()).isEqualTo("conn-1");
         assertThat(out.depot().provider()).isEqualTo("alpaca");
@@ -129,6 +129,77 @@ class DepotControllerTest {
         assertThat(out.position().symbol()).isEqualTo("ACME");
         assertThat(out.orders()).extracting(DepotOrder::symbol).containsOnly("ACME");
         assertThat(out.asOf()).isEqualTo("2026-07-11T12:00:00Z");
+    }
+
+    @Test
+    void chartDelegatesToChartService() {
+        var service = mock(DepotService.class);
+        var chartService = mock(DepotChartService.class);
+        var chart = new DepotChartService.InstrumentChart("ACME", "1y",
+                List.of(new DepotChartService.ChartPoint("2026-07-01", BigDecimal.TEN)));
+        when(chartService.instrumentChart("ACME", "1y")).thenReturn(chart);
+
+        var controller = new DepotController(service, chartService);
+        var out = controller.chart("ACME", "1y");
+
+        assertThat(out.symbol()).isEqualTo("ACME");
+        assertThat(out.range()).isEqualTo("1y");
+        assertThat(out.points()).containsExactly(new DepotChartService.ChartPoint("2026-07-01", BigDecimal.TEN));
+    }
+
+    @Test
+    void depotChartUnknownConnectionIs404() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        when(service.depots("alice@x.com")).thenReturn(List.of());
+        var controller = new DepotController(service, mock(DepotChartService.class));
+
+        assertThatThrownBy(() -> controller.depotChart("missing-conn", "1y"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasFieldOrPropertyWithValue("statusCode", org.springframework.http.HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void depotChartBrokenConnectionIs503() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
+                "agora down", null, null, null, null, null);
+        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        var controller = new DepotController(service, mock(DepotChartService.class));
+
+        assertThatThrownBy(() -> controller.depotChart("conn-1", "1y"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasFieldOrPropertyWithValue("statusCode", org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    void depotChartComposesCurveFromResolvedDepotPositions() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = depotWithPosition("conn-1", "ACME");
+        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+
+        var chartService = mock(DepotChartService.class);
+        var curve = new DepotChartService.DepotCurve(
+                List.of(new DepotChartService.ChartPoint("2026-07-01", new BigDecimal("2250.00"))),
+                List.of(new DepotChartService.RelativePoint("2026-07-01", BigDecimal.ZERO)),
+                false);
+        when(chartService.depotCurve(eq("1y"), any(), any())).thenReturn(curve);
+
+        var controller = new DepotController(service, chartService);
+        var out = controller.depotChart("conn-1", "1y");
+
+        assertThat(out.connection()).isEqualTo("conn-1");
+        assertThat(out.range()).isEqualTo("1y");
+        assertThat(out.points()).isEqualTo(curve.points());
+        assertThat(out.relative()).isEqualTo(curve.relative());
+        assertThat(out.partial()).isFalse();
+        verify(chartService).depotCurve(eq("1y"), any(), any());
+    }
+
+    private DepotController newController(DepotService service) {
+        return new DepotController(service, mock(DepotChartService.class));
     }
 
     private DepotDto depotWithPosition(String connId, String symbol) {
