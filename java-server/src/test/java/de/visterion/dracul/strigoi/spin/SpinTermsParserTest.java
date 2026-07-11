@@ -60,6 +60,24 @@ class SpinTermsParserTest {
     }
 
     @Test
+    void distributionKeywordDoesNotCrossBindOntoRecordDate() {
+        // "distribution will" opens a distribution-date trigger, but the only date in the
+        // sentence belongs to the record date — the gap must refuse to cross "record date".
+        SpinTerms t = parser.parse("The distribution will follow the record date of March 15, 2026.");
+        assertThat(t.recordDate()).isEqualTo("2026-03-15");
+        assertThat(t.distributionDate()).isNull();
+    }
+
+    @Test
+    void recordDateKeywordDoesNotCrossBindOntoDistributionDate() {
+        // Mirror case: "record date" opens a record-date trigger, but the date belongs to the
+        // distribution date — the gap must refuse to cross "distribution".
+        SpinTerms t = parser.parse("the record date follows the distribution date of April 1, 2026.");
+        assertThat(t.distributionDate()).isEqualTo("2026-04-01");
+        assertThat(t.recordDate()).isNull();
+    }
+
+    @Test
     void genericProxyBoilerplateDoesNotFalselyMatchRecordDate() {
         // Generic proxy-instruction boilerplate mentions "record date" without ever stating an
         // actual date nearby — must not throw and must yield null rather than grabbing an

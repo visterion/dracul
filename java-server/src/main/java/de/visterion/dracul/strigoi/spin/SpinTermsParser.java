@@ -45,11 +45,20 @@ public final class SpinTermsParser {
     // Bounded to a 80-char, single-sentence window ([^.] excludes crossing a full stop) so a
     // generic "record date"/"distribution" mention with no nearby date (e.g. proxy voting
     // boilerplate: "the record date ... will be entitled to vote at the annual meeting") never
-    // grabs an unrelated date from elsewhere in the text.
-    private static final Pattern RECORD_DATE =
-            Pattern.compile("record date[^.]{0,80}?" + MONTH_DATE, Pattern.CASE_INSENSITIVE);
+    // grabs an unrelated date from elsewhere in the text. Each gap additionally refuses to
+    // cross the OTHER keyword — without that, "The distribution will follow the record date
+    // of March 15, 2026" would cross-bind the record date onto distributionDate (and "the
+    // record date follows the distribution date of April 1, 2026" the reverse).
+    private static final Pattern RECORD_DATE = Pattern.compile(
+            "record date(?:(?!distribution)[^.]){0,80}?" + MONTH_DATE, Pattern.CASE_INSENSITIVE);
+    // The distribution trigger is deliberately narrow (not bare "distribution"): "distribution
+    // date", "distributed on", or "distribution" followed by a verb-ish continuation — so
+    // "distribution" as a plain noun inside a record-date sentence cannot open a
+    // distribution-date match.
     private static final Pattern DISTRIBUTION_DATE = Pattern.compile(
-            "(?:distribution(?:\\s+date)?|distributed on)[^.]{0,80}?" + MONTH_DATE, Pattern.CASE_INSENSITIVE);
+            "(?:distribution\\s+date|distribution\\s+(?:is|will|expected|occur|effected)|distributed on)"
+                    + "(?:(?!record date)[^.]){0,80}?" + MONTH_DATE,
+            Pattern.CASE_INSENSITIVE);
 
     public SpinTerms parse(String termSheet) {
         if (termSheet == null || termSheet.isBlank()) {
