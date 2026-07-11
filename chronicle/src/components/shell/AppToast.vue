@@ -6,9 +6,13 @@
         :key="toast.id"
         class="toast"
         :class="`toast--${toast.type}`"
-        role="status"
+        role="button"
+        tabindex="0"
+        :aria-label="t('common.dismiss')"
         data-testid="app-toast"
         @click="dismiss(toast.id)"
+        @keydown.enter="dismiss(toast.id)"
+        @keydown.space.prevent="dismiss(toast.id)"
       >
         <i class="ph" :class="toast.type === 'error' ? 'ph-warning-circle' : 'ph-check-circle'" aria-hidden="true" />
         <span>{{ toast.message }}</span>
@@ -18,7 +22,9 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { useToast } from '../../composables/useToast'
+const { t } = useI18n()
 const { toasts, dismiss } = useToast()
 </script>
 
