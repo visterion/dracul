@@ -62,6 +62,57 @@ Verify via `GET /agents/executor` on Vistierie (`:8090`, tenant token): the
 `system_prompt` should include the new ladder/hard-kill/GTD paragraphs and
 `version` should have bumped.
 
+This change set also bumps `DRACUL_EXECUTOR_RULE_VERSION` to `exec-v0.4`
+(`RuleVersionProvider.seed()` is insert-if-absent, so the new `rule_versions`
+row is seeded automatically on the next boot — no manual step). The
+`executor` agent definition reset above is still required separately: the
+`rule_versions` row is an audit-trail record, it does not itself push the
+new prompt text to Vistierie.
+
+### Rule-version change discipline
+
+`rule_versions` is an append-only audit trail — `RuleVersionProvider.seed()`
+only ever inserts a new row when the configured version is absent; existing
+rows (e.g. `exec-v0.3`) are never edited or deleted. Follow these rules when
+touching executor thresholds, guards, or prompt wording:
+
+- **One change per `rule_version`.** Bundle a single conceptual change
+  (one threshold tweak, one new guard, one prompt addition) into each
+  version bump, not several unrelated changes at once — this keeps any
+  later calibration delta attributable to a single cause.
+- **Rollback is a new version, not an edit.** If a version regresses,
+  bump `DRACUL_EXECUTOR_RULE_VERSION` again with the reverted params
+  rather than mutating the row for the version being rolled back — history
+  stays monotonic and every `decision_log.rule_version` value keeps
+  pointing at whatever was actually active when that decision was made.
+- **Compare metrics only within a version.** `decision_log.rule_version`
+  tags every row, so `GET /api/executor/calibration` /
+  `GET /api/executor/behavior` results must be read per `rule_version` —
+  pooling decisions from `exec-v0.3` and `exec-v0.4` together produces a
+  meaningless blended number.
+- **Minimum sample before judging a version:** wait for at least 2 weeks
+  of sim runtime **and** at least 20 decisions under that version before
+  drawing any conclusion from its calibration numbers; below that,
+  small-sample noise dominates.
+
+`exec-v0.4` (this change set) also fixes an audit-trail drift: the seeded
+`rule_versions.params.confidence_min` was `0.6` while the actual runtime
+`dracul.executor.min-confidence` default had already moved to `0.65` in an
+earlier change — only the audit blob was stale, not the enforced veto
+behavior. `exec-v0.4` records the correct `0.65` plus the knobs introduced
+this branch (`trim_fractions`, `entry_gtd_days`, `kill_criteria_hard`).
+
+### Human-confirm gate (deferred to live phase)
+
+A human-confirmation step in front of broker-write calls (`place_entry`,
+`exit_position`, `add_tranche`) is a live-trading-phase feature and is
+**not implemented in sim.** `OrderGuard`'s `NON_SIM_CONNECTION` reject reason
+is the guard such a step would hang off, but `dracul.executor.connection` is
+always the paper/sim connection today, so that branch cannot fire — there is
+no human-confirm UI or webhook yet, and none is needed while the executor
+only trades on `saxo-sim`. Build it when the executor is first pointed at a
+live connection, not before.
+
 ## Environment variables
 
 See [configuration.md](./configuration.md) for the full list.

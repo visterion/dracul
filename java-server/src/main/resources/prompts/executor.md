@@ -78,4 +78,4 @@ You MUST always return a single JSON object matching the `executor-decision.json
 
 Never return a bare array, prose, an apology, or any other shape. No markdown outside the `rationale` field.
 
-<!-- rule_version: exec-v0.3 -->
+<!-- rule_version: exec-v0.4 -->

@@ -26,12 +26,6 @@ public class HypotheticalREngine {
 
     private static final BigDecimal NEG_ONE_R = BigDecimal.ONE.negate();
 
-    private final PositionSizer positionSizer;
-
-    public HypotheticalREngine(PositionSizer positionSizer) {
-        this.positionSizer = positionSizer;
-    }
-
     /**
      * Walks {@code barsAfterSignal} (oldest-first, one entry per trading day following the
      * signal) and computes the hypothetical R outcome.

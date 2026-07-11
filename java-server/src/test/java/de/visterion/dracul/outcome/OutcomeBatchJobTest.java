@@ -6,7 +6,6 @@ import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
 import de.visterion.dracul.executor.ExecutorSignal;
 import de.visterion.dracul.executor.ExecutorSignalRepository;
-import de.visterion.dracul.executor.PositionSizer;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.junit.jupiter.api.Test;
@@ -44,7 +43,7 @@ class OutcomeBatchJobTest {
     private final OutcomeLogRepository outcomeLog = mock(OutcomeLogRepository.class);
     private final AgoraMarketData marketData = mock(AgoraMarketData.class);
     private final ObjectMapper mapper = new ObjectMapper();
-    private final HypotheticalREngine engine = new HypotheticalREngine(new PositionSizer());
+    private final HypotheticalREngine engine = new HypotheticalREngine();
 
     private final OutcomeBatchJob job = new OutcomeBatchJob(
             positions, decisionLog, signals, outcomeLog, engine, marketData, mapper);

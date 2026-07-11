@@ -30,5 +30,9 @@ class RuleVersionProviderTest {
         var v = repo.find("exec-test-1");
         assertThat(v).isNotNull();
         assertThat(v.params().path("chandelier_mult").asDouble()).isEqualTo(3.0);
+        assertThat(v.params().path("confidence_min").asDouble()).isEqualTo(0.65);
+        assertThat(v.params().path("trim_fractions").asString()).isEqualTo("0.33,0.5,1.0");
+        assertThat(v.params().path("entry_gtd_days").asInt()).isEqualTo(2);
+        assertThat(v.params().path("kill_criteria_hard").asString()).isEqualTo("price-level only");
     }
 }

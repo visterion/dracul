@@ -1,6 +1,5 @@
 package de.visterion.dracul.outcome;
 
-import de.visterion.dracul.executor.PositionSizer;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class HypotheticalREngineTest {
 
-    private final HypotheticalREngine engine = new HypotheticalREngine(new PositionSizer());
+    private final HypotheticalREngine engine = new HypotheticalREngine();
 
     private static BigDecimal bd(String v) {
         return new BigDecimal(v);
