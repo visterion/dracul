@@ -124,6 +124,55 @@ only trades on `depot-1` (the neutral sim connection id, formerly
 `saxo-sim`). Build it when the executor is first pointed at a
 live connection, not before.
 
+### Deploying the depots view (Agora readonly live tokens + `depot-1` rename)
+
+The `/depots` view (`GET /api/depots` + instrument bundle) reads live broker
+data through a dedicated read-only Agora client
+(`documentation/configuration.md#depots-portfoliopositions-view`). Bringing it
+up requires **two coordinated deploys, in this order** — Agora first, then
+Dracul:
+
+1. **Agora deploy:**
+   - Set `AGORA_TRADING_LIVE_TOKENS_READONLY=<token>` (comma-separated if
+     more than one) — the read-only token(s) accepted for account/positions/
+     orders/list-connections reads on **live** connections. These tokens must
+     never be accepted on any order-placing/modifying tool call (Agora
+     enforces this; see `feat/live-readonly-tokens`).
+   - Rename the `saxo-sim` connection key to `depot-1` in Agora's
+     `agora.trading.connections` config (same rename Dracul's V24 migration
+     applies on its own side — see below). This is a config-only change
+     (the connection's `provider`/`environment`/`base-url`/credentials are
+     unchanged, only the map key + any `AGORA_TRADING_SAXO_SIM_*` env names
+     that encode it) and must land **before** Dracul's V24 migration runs,
+     or the two sides briefly disagree on the connection id.
+   - Restart/redeploy Agora so both changes are live.
+
+2. **Dracul deploy:**
+   - Set `DRACUL_DEPOTS_AGORA_READONLY_TOKEN=<same token as above>` (see
+     `documentation/configuration.md`).
+   - If not relying on the new default, also set
+     `DRACUL_EXECUTOR_CONNECTION` explicitly — it now defaults to `depot-1`
+     (renamed from `saxo-sim`).
+   - On startup, Flyway migration **V24** auto-renames any persisted rows
+     referencing the old `saxo-sim` connection id (e.g.
+     `executor_position.connection`) to `depot-1`. No manual data migration
+     step is needed.
+
+**Verify:** `GET /api/depots` (through Cloudflare Access, or Local Access —
+see below) returns the expected connections; live-environment connections
+appear only when the calling user's email is on
+`DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS`. Confirm the executor's reconciliation
+still matches: `executor_position.connection` should read `depot-1`, matching
+whatever Agora now reports as the live connection id.
+
+**Rollback note:** V24 is a **one-way, idempotent-forward** rename — it does
+not ship a `.undo` migration. Reverting the connection name (e.g. rolling
+back to a pre-rename Agora config) requires manually running the reverse
+`UPDATE ... SET connection = 'saxo-sim' WHERE connection = 'depot-1'` against
+every affected table, and reverting the Agora connection-key config at the
+same time so the two sides stay in agreement. Do not roll back one side
+without the other.
+
 ## Environment variables
 
 See [configuration.md](./configuration.md) for the full list.
