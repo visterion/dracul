@@ -123,9 +123,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { useEnumLabels } from '../composables/useEnumLabels'
 import { useChronicleStore } from '../stores/chronicle'
@@ -137,8 +137,10 @@ import PreyCard from '../components/common/PreyCard.vue'
 import BroodMini from '../components/common/BroodMini.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import FilterSheet from '../components/chronicle/FilterSheet.vue'
+import { filterToQuery, queryToFilter } from '../utils/filterQuery'
 
 const { t, locale } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const store = useChronicleStore()
 const statusStore = useStatusStore()
@@ -153,7 +155,14 @@ onMounted(() => {
 
 // ── filter state ────────────────────────────────────────────────
 // 'all' | 'high' | <AnomalyType derived from data>
-const filter = ref<string>('all')
+const filter = ref<string>(queryToFilter(route.query))
+watch(filter, f => {
+  router.replace({ query: filterToQuery(f) })
+})
+watch(() => route.query, q => {
+  const f = queryToFilter(q as Record<string, unknown>)
+  if (f !== filter.value) filter.value = f
+})
 
 // distinct anomaly types present in the prey list (derived, not hardcoded)
 const anomalyTypes = computed(() => {
