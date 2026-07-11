@@ -27,6 +27,10 @@
         :lessons="store.pendingPatterns.length"
       />
 
+      <button v-if="smAndDown" class="filter-fab" data-testid="filter-fab" @click="sheetOpen = true">
+        <i class="ph ph-funnel" aria-hidden="true" /> {{ t('chronicle.filters.button') }} ({{ activeFilterCount }})
+      </button>
+
       <div class="chronicle-grid">
         <!-- Feed -->
         <div class="feed">
@@ -65,7 +69,7 @@
         </div>
 
         <!-- Filters / Brood aside -->
-        <aside class="filters">
+        <aside v-if="!smAndDown" class="filters">
           <div class="filter-group">
             <div class="fg-head">{{ t('chronicle.filters.title') }}</div>
             <button
@@ -99,7 +103,7 @@
           </div>
 
           <div class="filter-group">
-            <div class="fg-head">{{ t('chronicle.filters.brood') }}</div>
+            <div class="fg-head">{{ t('chronicle.filters.broodProfiles') }}</div>
             <BroodMini
               :strigoi="statusStore.status?.strigoi ?? []"
               :counts="broodCounts"
@@ -108,6 +112,12 @@
           </div>
         </aside>
       </div>
+
+      <FilterSheet
+        :open="sheetOpen" :filter="filter" :anomaly-types="anomalyTypes" :counts="filterCounts"
+        :strigoi="statusStore.status?.strigoi ?? []" :brood-counts="broodCounts"
+        @close="sheetOpen = false" @select="selectFilter" @open-strigoi="openStrigoi"
+      />
     </template>
   </div>
 </template>
@@ -116,6 +126,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { useEnumLabels } from '../composables/useEnumLabels'
 import { useChronicleStore } from '../stores/chronicle'
 import { useStatusStore } from '../stores/status'
@@ -125,12 +136,15 @@ import VerdictCard from '../components/common/VerdictCard.vue'
 import PreyCard from '../components/common/PreyCard.vue'
 import BroodMini from '../components/common/BroodMini.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
+import FilterSheet from '../components/chronicle/FilterSheet.vue'
 
 const { t, locale } = useI18n()
 const router = useRouter()
 const store = useChronicleStore()
 const statusStore = useStatusStore()
 const { anomalyTypeLabel } = useEnumLabels()
+const { smAndDown } = useDisplay()
+const sheetOpen = ref(false)
 
 onMounted(() => {
   store.load()
@@ -159,6 +173,18 @@ const filteredPrey = computed(() => store.prey.filter(p => matches(p, filter.val
 // chip counts always reflect the FULL prey list
 function countFor(key: string): number {
   return store.prey.filter(p => matches(p, key)).length
+}
+
+// counts map for the mobile FilterSheet (same source of truth as the desktop rail)
+const filterCounts = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = { all: countFor('all'), high: countFor('high') }
+  for (const a of anomalyTypes.value) m[a] = countFor(a)
+  return m
+})
+const activeFilterCount = computed(() => (filter.value === 'all' ? 0 : 1))
+function selectFilter(f: string) {
+  filter.value = f
+  sheetOpen.value = false
 }
 
 // ── day grouping (by distinct calendar day of discoveredAt, newest first) ──
@@ -340,6 +366,23 @@ function openStrigoi(strigoi: StrigoiStatus) {
   margin-left: auto;
   font-size: var(--text-micro);
   color: var(--ash-gray);
+}
+
+.filter-fab {
+  position: sticky;
+  top: var(--space-2);
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--crypt-black-elevated);
+  border: var(--hairline);
+  border-radius: 22px;
+  color: var(--bone-ivory);
+  cursor: pointer;
 }
 
 @media (max-width: 959.98px) {
