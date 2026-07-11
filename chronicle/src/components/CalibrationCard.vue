@@ -21,6 +21,31 @@
           <span class="cal-executor-n">n={{ calibration.executor.n }}</span>
         </div>
 
+        <div
+          v-if="!calibration.executor.insufficient && calibration.executor.buckets.length > 0"
+          class="table-scroll cal-buckets"
+          data-testid="calibration-buckets"
+        >
+          <table class="dt">
+            <thead>
+              <tr>
+                <th>{{ t('calibration.cols.range') }}</th>
+                <th class="num">{{ t('calibration.cols.n') }}</th>
+                <th class="num">{{ t('calibration.cols.predicted') }}</th>
+                <th class="num">{{ t('calibration.cols.observed') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="b in calibration.executor.buckets" :key="b.range">
+                <td class="tkr">{{ b.range }}</td>
+                <td class="num">{{ b.n }}</td>
+                <td class="num">{{ fmtR(b.predicted) }}</td>
+                <td class="num">{{ fmtR(b.observed) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <div class="table-scroll">
           <table class="dt">
             <thead>
@@ -43,6 +68,9 @@
                   </TagPill>
                   <span v-else class="mono">{{ fmtBrier(h.brier) }}</span>
                 </td>
+              </tr>
+              <tr v-if="calibration.hunters.length === 0" data-testid="calibration-hunters-empty">
+                <td class="cal-empty" colspan="3">{{ t('calibration.emptyHunters') }}</td>
               </tr>
             </tbody>
           </table>
@@ -75,6 +103,9 @@
                 <td class="num">{{ fmtR(row.mean_hypothetical_r_20d) }}</td>
                 <td class="num">{{ fmtR(row.mean_hypothetical_r_60d) }}</td>
                 <td class="num">{{ fmtPct(row.stopped_out_pct) }}</td>
+              </tr>
+              <tr v-if="behavior.veto_precision.length === 0" data-testid="calibration-veto-empty">
+                <td class="cal-empty" colspan="6">{{ t('calibration.emptyVeto') }}</td>
               </tr>
             </tbody>
           </table>
@@ -129,10 +160,11 @@ onMounted(async () => {
   }
 })
 
-const fmtBrier = (v: number | null) => (v == null ? '—' : v.toFixed(3))
-const fmtR = (v: number | null) => (v == null ? '—' : v.toFixed(2))
-const fmtPct = (v: number | null) => (v == null ? '—' : `${v.toFixed(1)}%`)
-const fmtSeconds = (v: number | null) => (v == null ? '—' : `${v}s`)
+// Wire values are primitives (never null) — see CalibrationService records.
+const fmtBrier = (v: number) => v.toFixed(3)
+const fmtR = (v: number) => v.toFixed(2)
+const fmtPct = (v: number) => `${v.toFixed(1)}%`
+const fmtSeconds = (v: number) => `${v}s`
 </script>
 
 <style scoped>
@@ -159,6 +191,8 @@ const fmtSeconds = (v: number | null) => (v == null ? '—' : `${v}s`)
 }
 .cal-executor-value { font-size: var(--text-h4); color: var(--bone-ivory); }
 .cal-executor-n { font-size: var(--text-body-sm); color: var(--ash-gray); }
+.cal-buckets { margin-bottom: var(--space-5); }
+.cal-empty { color: var(--ash-gray); font-style: italic; }
 .cal-caveats {
   margin: var(--space-4) 0 0;
   padding-left: var(--space-5);
