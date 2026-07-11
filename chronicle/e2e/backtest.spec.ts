@@ -72,4 +72,10 @@ test.describe('Backtest View (/backtest)', () => {
     await expect(page.locator('.chart-card')).toHaveCount(0)
     await expect(page.locator('table.dt')).toBeVisible()
   })
+
+  test('results carry a context header from the selected run', async ({ page }) => {
+    await expect(page.getByTestId('bt-context')).toContainText('Strigoi-Spin · Russell 2000 · 2024–2026')
+    await page.locator('.bt-recent-card', { hasText: 'Strigoi-Echo' }).click()
+    await expect(page.getByTestId('bt-context')).toContainText('Strigoi-Echo · S&P 500 · 2023–2026')
+  })
 })
