@@ -4,6 +4,19 @@ import { useApi } from '../api'
 import type { SystemStatus } from '../api/types'
 import { formatNumber } from '../utils/format'
 
+/** Compact age of a non-negative second span, rolling over s → m → h → d → w → mo. */
+export function compactAge(diffSec: number): string {
+  if (diffSec < 60) return `${diffSec}s`
+  const min = Math.floor(diffSec / 60)
+  if (min < 60) return `${min}m`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h`
+  const days = Math.floor(hr / 24)
+  if (days < 7) return `${days}d`
+  if (days < 30) return `${Math.floor(days / 7)}w`
+  return `${Math.floor(days / 30)}mo`
+}
+
 export const useStatusStore = defineStore('status', () => {
   const status = ref<SystemStatus | null>(null)
 
@@ -15,19 +28,13 @@ export const useStatusStore = defineStore('status', () => {
 
   const dailyCost = computed(() => status.value?.dailyCostUsd ?? 0)
 
-  /** Compact relative age of the last verdict, e.g. "12m", "3h", "2d", or "—". */
+  /** Compact age of a positive second-diff: "12m", "3h", "2d", "1w", "1mo". */
   const lastVerdictRelative = computed(() => {
     const iso = status.value?.lastVerdictAt
     if (!iso) return '—'
     const then = new Date(iso).getTime()
     if (Number.isNaN(then)) return '—'
-    const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000))
-    if (diffSec < 60) return `${diffSec}s`
-    const min = Math.floor(diffSec / 60)
-    if (min < 60) return `${min}m`
-    const hr = Math.floor(min / 60)
-    if (hr < 24) return `${hr}h`
-    return `${Math.floor(hr / 24)}d`
+    return compactAge(Math.max(0, Math.floor((Date.now() - then) / 1000)))
   })
 
   const summaryLine = computed(() => {
