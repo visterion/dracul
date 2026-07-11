@@ -7,6 +7,7 @@ import type {
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
+  DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
 } from './types'
 
 export interface ApiClient {
@@ -48,4 +49,12 @@ export interface ApiClient {
   getMorningReport(): Promise<MorningReport>
   getExecutorCalibration(): Promise<ExecutorCalibration>
   getExecutorBehavior(): Promise<ExecutorBehavior>
+  getDepots(): Promise<DepotsResponse>
+  getDepotChart(connection: string, range: ChartRange): Promise<DepotChart>
+  getInstrumentChart(symbol: string, range: ChartRange): Promise<DepotChart>
+  getInstrumentInfo(symbol: string): Promise<InstrumentInfo>
+  getDepotPosition(
+    connection: string,
+    symbol: string,
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }>
 }
