@@ -432,9 +432,11 @@ export interface CalibrationBucket {
   observed: number
 }
 
-/** Brier calibration for one unit (the executor overall, or one hunter). */
+/** Brier calibration for one unit (the executor overall, or one hunter).
+ *  All numeric fields are primitives on the wire (never null) — an empty
+ *  sample serializes as brier 0 with insufficient: true. */
 export interface CalibrationUnit {
-  brier: number | null
+  brier: number
   n: number
   insufficient: boolean
   buckets: CalibrationBucket[]
@@ -453,15 +455,15 @@ export interface VetoPrecisionRow {
   reason_code: string
   n: number
   skipped: number
-  mean_hypothetical_r_20d: number | null
-  mean_hypothetical_r_60d: number | null
-  stopped_out_pct: number | null
+  mean_hypothetical_r_20d: number
+  mean_hypothetical_r_60d: number
+  stopped_out_pct: number
 }
 
 export interface HardExitLatency {
   n: number
-  max_seconds: number | null
-  p95_seconds: number | null
+  max_seconds: number
+  p95_seconds: number
 }
 
 export interface WhipsawStats {
@@ -472,14 +474,14 @@ export interface WhipsawStats {
 export interface StopBasisRow {
   basis: string
   n: number
-  mean_realized_r: number | null
-  mean_mae_r: number | null
+  mean_realized_r: number
+  mean_mae_r: number
 }
 
 export interface SlippageStats {
   n: number
-  mean: number | null
-  worst: number | null
+  mean: number
+  worst: number
 }
 
 export interface ExecutorBehavior {

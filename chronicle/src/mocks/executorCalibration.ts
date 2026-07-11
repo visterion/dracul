@@ -10,7 +10,7 @@ export const mockExecutorCalibration: ExecutorCalibration = {
   },
   hunters: [
     { agent: 'strigoi-echo', brier: 0.21, n: 34, insufficient: false, buckets: [] },
-    { agent: 'strigoi-lazarus', brier: null, n: 8, insufficient: true, buckets: [] },
+    { agent: 'strigoi-lazarus', brier: 0.31, n: 8, insufficient: true, buckets: [] },
   ],
 }
 
