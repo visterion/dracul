@@ -104,6 +104,9 @@ dracul:
     chase-atr-mult: ${DRACUL_EXECUTOR_CHASE_ATR_MULT:1.0}
     pace-per-week: ${DRACUL_EXECUTOR_PACE_PER_WEEK:2}
     max-tranche: ${DRACUL_EXECUTOR_MAX_TRANCHE:2}
+  outcome:
+    enabled: ${DRACUL_OUTCOME_ENABLED:true}
+    cron: ${DRACUL_OUTCOME_CRON:0 30 22 * * 2-6}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}

@@ -10,6 +10,8 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -66,6 +68,70 @@ public class DecisionLogRepository {
                 ORDER BY created_at DESC LIMIT :limit
                 """)
                 .param("limit", limit)
+                .query(this::mapRow)
+                .list();
+    }
+
+    /** All {@code trigger_type='SIGNAL'} rows with the given action (e.g. {@code ENTER} or
+     *  {@code REJECT}), oldest first — used by the outcome batch job (Task 9) to walk entries
+     *  and rejects that need a {@code outcome_log} row. */
+    public List<DecisionLog> findSignalRowsByAction(String action) {
+        return jdbc.sql("""
+                SELECT * FROM decision_log
+                WHERE trigger_type = 'SIGNAL' AND action = :action
+                ORDER BY created_at ASC
+                """)
+                .param("action", action)
+                .query(this::mapRow)
+                .list();
+    }
+
+    /** The most recent decision row for a given signal id + action (used to resolve the ENTER
+     *  row a closed position was opened by). Null when no such row exists. */
+    public DecisionLog findBySignalIdAndAction(String signalId, String action) {
+        return jdbc.sql("""
+                SELECT * FROM decision_log
+                WHERE signal_id = :signalId AND action = :action
+                ORDER BY created_at DESC LIMIT 1
+                """)
+                .param("signalId", signalId)
+                .param("action", action)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
+    /** All decision rows for a symbol with the given action, oldest first — used for the
+     *  symbol+nearest-timestamp ENTER fallback join and for the reentry-within-10d whipsaw
+     *  check. */
+    public List<DecisionLog> findBySymbolAndAction(String symbol, String action) {
+        return jdbc.sql("""
+                SELECT * FROM decision_log
+                WHERE symbol = :symbol AND action = :action
+                ORDER BY created_at ASC
+                """)
+                .param("symbol", symbol)
+                .param("action", action)
+                .query(this::mapRow)
+                .list();
+    }
+
+    /** Decision rows for a symbol whose action is one of {@code actions} and whose
+     *  {@code created_at} falls within [{@code from}, {@code to}] inclusive, oldest first — used
+     *  to assemble TRIM rows and the final EXIT_FULL/LOG_HARD_EXIT/RECONCILE_CLOSE row for a
+     *  closed position's holding window. */
+    public List<DecisionLog> findBySymbolAndActionsBetween(String symbol, List<String> actions,
+            Instant from, Instant to) {
+        return jdbc.sql("""
+                SELECT * FROM decision_log
+                WHERE symbol = :symbol AND action IN (:actions)
+                  AND created_at >= :from AND created_at <= :to
+                ORDER BY created_at ASC
+                """)
+                .param("symbol", symbol)
+                .param("actions", actions)
+                .param("from", Timestamp.from(from))
+                .param("to", Timestamp.from(to))
                 .query(this::mapRow)
                 .list();
     }

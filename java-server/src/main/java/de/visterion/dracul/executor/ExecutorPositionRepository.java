@@ -194,6 +194,17 @@ public class ExecutorPositionRepository {
                 .list();
     }
 
+    /** Closed positions (final exit already recorded), oldest first — feeds the outcome batch
+     *  job (Task 9), which computes realized-R/MAE/whipsaw once a position is done moving. */
+    public List<ExecutorPosition> findClosed() {
+        return jdbc.sql("""
+                SELECT * FROM executor_position WHERE status = 'CLOSED'
+                ORDER BY closed_at ASC
+                """)
+                .query(this::mapRow)
+                .list();
+    }
+
     public int countOpen() {
         return jdbc.sql("SELECT count(*) FROM executor_position WHERE status = 'OPEN'")
                 .query(Integer.class)

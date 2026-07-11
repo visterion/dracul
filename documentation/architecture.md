@@ -275,11 +275,12 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | Table | Purpose |
 |---|---|
 | `executor_signal` | Injected advice awaiting evaluation (PK `signal_id`, caller-supplied or generated UUID); `status` transitions `PENDING` → `ACCEPTED` / `REJECTED` / `SKIPPED` |
-| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids, so the stop ratchet moves *both* legs once a tranche 2 exists) |
+| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids, so the stop ratchet moves *both* legs once a tranche 2 exists). V23 adds `trim_count` (scale-out ladder leg count) and `lowest_price` (adverse-excursion extreme for MAE tracking) |
 | `executor_decision` | Append-only audit trail (slice 1) — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK) |
 | `decision_log` | Append-only audit trail (V18, slice 2) — one row per *any* executor decision point (entry, hard exit, stop-ratchet, soft exit): `run_id`, `rule_version`, `trigger_type`, `symbol`, `inputs_snapshot`/`veto_results`/`order_json` (JSONB), `action`, `reason_code`, `reasoning`, `confidence_in_decision`. Richer and broader in scope than `executor_decision`, which only covers the entry path |
 | `rule_versions` | (V18) One row per tagged rule-version (`dracul.executor.rule-version`, e.g. `exec-v0.2`): `valid_from`, `changes`, `prompt_hash`, `params` — makes prompt/threshold changes traceable against `decision_log.rule_version` |
 | `cooldown` | (V18) Symbols temporarily excluded from fresh entries after any exit (hard or soft): `symbol`, `reason`, `expires_at` (`dracul.executor.cooldown-days` out), `exception_condition` |
+| `outcome_log` | (V23) One row per `decision_log` entry/reject signal, written exclusively by the nightly `OutcomeBatchJob` — the Executor itself never reads or writes this table. `kind` is `TRADE` (a closed position's realized outcome: quantity-weighted `realized_r` across partial exits, `mae_r`/`mfe_r`, `slippage_vs_limit`, whipsaw flags `reentry_within_10d`/`roundtrip_under_5d`) or `COUNTERFACTUAL` (a rejected signal's "what would have happened", via `HypotheticalREngine`: `hypothetical` JSONB with `r_after_20d`/`r_after_60d`/`would_have_stopped_out`/`skipped_reason`, plus `hunter_label` — the triple-barrier +1R-before-1R label used for hunter-confidence calibration). Unique on `log_id_ref` (the source `decision_log.log_id`), upserted idempotently (`ON CONFLICT ... DO UPDATE`) so re-runs refine rather than duplicate a row. See "Outcome batch job" below |
 
 **Doctrine note:** Dracul is deliberately, otherwise strictly, read-only —
 no order routing, no broker integration, no auto-trading (see `README.md`
@@ -407,6 +408,45 @@ short-circuits straight to `DATA_UNAVAILABLE`, before any of the 14 vetos
 even run, and is recorded as an audited rejection (`executor_decision` row,
 `missing` fields joined into the reject detail) rather than a silent
 skip or a guessed trade.
+
+**Outcome batch job (V23, `OutcomeBatchJob`):** a deterministic, code-only
+nightly batch — no LLM calls — that fills `outcome_log`. It runs after the
+executor's evening cycle (`dracul.outcome.cron`, default `0 30 22 * * 2-6`
+UTC), gated by `dracul.outcome.enabled` (default on) *and*
+`dracul.executor.enabled` (default off; without the executor's `decision_log`/
+`executor_position` beans wired, the job has nothing to read). A batch
+failure never breaks the app — the whole run and every per-item step are
+wrapped so one bad symbol/position never aborts the rest.
+
+- **TRADE rows** — one per closed position, joined to its `ENTER`
+  `decision_log` row via `signal_id` (falling back to a symbol +
+  nearest-timestamp match when `signal_id` is null; a position with no
+  resolvable `ENTER` row is skipped with a `WARN`, never a fabricated join).
+  `realized_r` is quantity-weighted across every `TRIM` decision-log leg plus
+  the final exit leg (falls back to the position's own final-leg
+  `realized_r` when any leg's quantity/price is missing, rather than
+  fabricating a weighted figure from incomplete data). `mae_r` derives from
+  `lowest_price` (BUY) / `highest_price` (SELL); `holding_days` and
+  `reentry_within_10d` use calendar-day approximations (documented in
+  `configuration.md`) since neither `entry_date`/`closed_at` nor
+  `decision_log.created_at` carry trading-calendar awareness. Rows are
+  `complete=true` immediately — a closed position's outcome never changes.
+- **COUNTERFACTUAL rows** — one per `REJECT` `decision_log` row
+  (`trigger_type=SIGNAL`) without a complete outcome yet. Walks
+  `HypotheticalREngine` from the reject's `order_price`/`atr` (from
+  `inputs_snapshot`) with `swing_low` always null (not captured in the
+  reject snapshot — the counterfactual anchor is ATR-only), against daily
+  bars fetched from the decision date forward (the same Agora OHLC adapter
+  `IndexEnrichmentService` uses). The horizon is the rejected signal's own
+  horizon (resolved via `signal_id`, converted calendar→trading days) or 60
+  trading days as a default. Missing `order_price`/`atr`, an unresolvable
+  side (no matching `executor_signal`), or an unparseable decision date all
+  populate `hypothetical.skipped_reason` and mark the row `complete=true` —
+  never a fabricated number. A genuine OHLC-provider outage is *not* treated
+  as a permanent skip: the row is left untouched (absent/incomplete) so the
+  next nightly run retries. `complete` otherwise flips to `true` once 60
+  bars exist; a re-run before then re-walks and upserts the same row
+  (`ON CONFLICT (log_id_ref) DO UPDATE`) rather than duplicating it.
 
 ## Data Flow
 
