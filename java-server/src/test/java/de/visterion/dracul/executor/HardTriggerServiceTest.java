@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,7 @@ class HardTriggerServiceTest {
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+    private final KillCriteriaEvaluator killCriteriaEvaluator = new KillCriteriaEvaluator();
 
     private HardTriggerService service;
 
@@ -38,13 +40,18 @@ class HardTriggerServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new HardTriggerService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, 0.35, 1.5, 10, clock);
+                ruleVersions, mapper, killCriteriaEvaluator, 0.35, 1.5, 10, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
             BigDecimal initialStop, BigDecimal activeStop, BigDecimal mfeR) {
+        return openPosition(id, symbol, side, entry, initialStop, activeStop, mfeR, List.of());
+    }
+
+    private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
+            BigDecimal initialStop, BigDecimal activeStop, BigDecimal mfeR, List<String> killCriteria) {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
-                activeStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
+                activeStop, 1, null, killCriteria, "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "brk-1", null, mfeR, 0, null, null, null, null, "stop-1",
                 null, null, null, null, 0, null, null);
     }
@@ -132,6 +139,79 @@ class HardTriggerServiceTest {
         assertThat(gateway.flattenedSymbols).isEmpty();
         assertThat(survivors).containsExactly(p);
         verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void measurablekillCriterionBreachFlattensFully() {
+        ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null,
+                List.of("Close below $40 invalidates the thesis"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("39.50")), "run1");
+
+        assertThat(gateway.flattenedSymbols).containsExactly("ACME");
+        assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
+
+        verify(positionRepo).close(org.mockito.ArgumentMatchers.eq(6L),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("39.50")),
+                any(), org.mockito.ArgumentMatchers.eq("HARD_KILL_CRITERIA"));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("HARD_KILL_CRITERIA");
+        assertThat(log.vetoResults().get(0).get("check").asString()).isEqualTo("KILL_CRITERIA");
+        String measured = log.vetoResults().get(0).get("measured").asString();
+        assertThat(measured).contains("Close below $40 invalidates the thesis");
+        assertThat(measured).contains("close 39.5");
+
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void stopBreachWinsOverKillCriteria() {
+        ExecutorPosition p = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null,
+                List.of("Close below $40 invalidates the thesis"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("39.50")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("HARD_STOP");
+
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void killCriteriaWinsOverGiveback() {
+        ExecutorPosition p = openPosition(8L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), new BigDecimal("2.0"),
+                List.of("Close below $95 invalidates the thesis"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("94")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("HARD_KILL_CRITERIA");
+
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void qualitativeCriterionDoesNotTrigger() {
+        ExecutorPosition p = openPosition(9L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null,
+                List.of("CEO departs"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("39.50")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        assertThat(survivors).containsExactly(p);
     }
 
     @Test

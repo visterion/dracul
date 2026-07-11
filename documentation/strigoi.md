@@ -381,10 +381,17 @@ the LLM, which owns only the soft judgment call. Every call to
 
 1. **`ReconcileService`** — syncs broker fills against `executor_position`,
    retires positions the broker reports closed, applies `cooldown`.
-2. **`HardTriggerService`** — force-closes a position on stop-breach or
-   giveback (fraction of peak MFE-in-R given back, active once MFE clears
-   `dracul.executor.giveback-active-from-r`) — always enforced, never the
-   LLM's call.
+2. **`HardTriggerService`** — force-closes a position on stop-breach,
+   measurable kill-criteria breach, or giveback (fraction of peak MFE-in-R
+   given back, active once MFE clears `dracul.executor.giveback-active-from-r`)
+   — always enforced, never the LLM's call. Precedence when more than one
+   condition is simultaneously breached: stop-breach first (`HARD_STOP`),
+   then measurable kill-criteria (`HARD_KILL_CRITERIA`), then giveback
+   (`GIVEBACK_BREACH`) — the first match names the `decision_log` reason
+   code and no later check runs. Kill-criteria here reuses the same
+   `KillCriteriaEvaluator` described below, so only measurable price-level
+   criteria can hard-close a position; qualitative criteria never do and
+   stay surfaced via `kill_criteria_breached` for the LLM to judge.
 3. **`StopRatchetService`** — ratchets the active stop up to the chandelier
    level (`dracul.executor.chandelier-mult` × ATR below the highest price
    reached), never down.

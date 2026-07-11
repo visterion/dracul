@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,8 +25,10 @@ import java.util.Map;
  * an LLM's judgment — mirrors {@link ReconcileService}'s idiom for gateway/repo wiring,
  * decision-log construction, and cooldown bookkeeping.
  *
- * <p>Stop-breach is always checked before giveback: a position that has both simultaneously
- * breached its stop is logged as {@code HARD_STOP}, not {@code GIVEBACK_BREACH}.
+ * <p>Precedence when multiple conditions are simultaneously breached: stop-breach, then
+ * measurable kill-criteria, then MFE-giveback — the first match names the reason. Kill-criteria
+ * covers only measurable, price-level free-text criteria (via {@link KillCriteriaEvaluator});
+ * qualitative criteria are left to the LLM elsewhere and never trigger here.
  *
  * <p>On {@link BrokerUnavailableException} while flattening, this deliberately does nothing
  * to the book — a transient broker outage must never be mistaken for a closed position — and
@@ -41,6 +44,7 @@ public class HardTriggerService {
     private final CooldownRepository cooldownRepo;
     private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
+    private final KillCriteriaEvaluator killCriteriaEvaluator;
     private final double givebackPct;
     private final double givebackActiveFromR;
     private final int cooldownDays;
@@ -54,11 +58,12 @@ public class HardTriggerService {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
+            KillCriteriaEvaluator killCriteriaEvaluator,
             @Value("${dracul.executor.giveback-pct:0.35}") double givebackPct,
             @Value("${dracul.executor.giveback-active-from-r:1.5}") double givebackActiveFromR,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper,
-                givebackPct, givebackActiveFromR, cooldownDays, Clock.systemUTC());
+                killCriteriaEvaluator, givebackPct, givebackActiveFromR, cooldownDays, Clock.systemUTC());
     }
 
     HardTriggerService(
@@ -68,6 +73,7 @@ public class HardTriggerService {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
+            KillCriteriaEvaluator killCriteriaEvaluator,
             double givebackPct,
             double givebackActiveFromR,
             int cooldownDays,
@@ -78,6 +84,7 @@ public class HardTriggerService {
         this.cooldownRepo = cooldownRepo;
         this.ruleVersions = ruleVersions;
         this.mapper = mapper;
+        this.killCriteriaEvaluator = killCriteriaEvaluator;
         this.givebackPct = givebackPct;
         this.givebackActiveFromR = givebackActiveFromR;
         this.cooldownDays = cooldownDays;
@@ -98,6 +105,9 @@ public class HardTriggerService {
             BigDecimal currentR = computeR(p, close);
 
             Trigger trigger = detectStopBreach(p, close, sell);
+            if (trigger == null) {
+                trigger = detectKillCriteria(p, close);
+            }
             if (trigger == null) {
                 trigger = detectGiveback(p, currentR);
             }
@@ -170,6 +180,14 @@ public class HardTriggerService {
         String measured = "STOP_BREACH: close " + plain(close) + (sell ? " > stop " : " < stop ")
                 + plain(p.activeStop());
         return new Trigger("HARD_STOP", "STOP_BREACH", measured);
+    }
+
+    private Trigger detectKillCriteria(ExecutorPosition p, BigDecimal close) {
+        List<String> breached = killCriteriaEvaluator.breached(p.killCriteria(), close);
+        if (breached.isEmpty()) return null;
+        String measured = "KILL_CRITERIA: close " + plain(close) + " breaches: \""
+                + String.join("\"; \"", breached) + "\"";
+        return new Trigger("HARD_KILL_CRITERIA", "KILL_CRITERIA", measured);
     }
 
     private Trigger detectGiveback(ExecutorPosition p, BigDecimal currentR) {
