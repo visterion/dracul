@@ -107,7 +107,12 @@ public class OutcomeBatchJob {
             return;
         }
         String logIdRef = enter.logId();
-        if (outcomeLog.isComplete(logIdRef)) return; // closed position outcome never changes again
+        // A TRADE row is only final once the re-entry window has elapsed: reentry_within_10d
+        // observes ENTER rows written on days 1..14 AFTER the close, so marking the row complete
+        // on the first run after close would freeze the flag at false forever. Until
+        // (closedAt + REENTRY_WINDOW_CALENDAR_DAYS) has passed, re-runs recompute the whipsaw
+        // flags via the idempotent upsert; afterwards the row flips complete and is skipped.
+        if (outcomeLog.isComplete(logIdRef)) return;
 
         BigDecimal entryPrice = p.entryPrice();
         BigDecimal initialStop = p.initialStop();
@@ -160,6 +165,13 @@ public class OutcomeBatchJob {
                     + "falling back to the position's own exit_reason", p.id(), p.symbol());
         }
 
+        // Complete only once the documented re-entry window (14 calendar days ≈ 10 trading days)
+        // after the close has fully passed — see the isComplete note above. An unparseable
+        // closedAt can never resolve the window, so it completes immediately (old behavior).
+        boolean reentryWindowElapsed = closedDate == null
+                || !LocalDate.now(ZoneOffset.UTC)
+                        .isBefore(closedDate.plusDays(REENTRY_WINDOW_CALENDAR_DAYS));
+
         OutcomeLogRow row = new OutcomeLogRow(
                 "TRADE", logIdRef, p.id(), p.symbol(), null,
                 true, entryPrice, slippage, holdingDays,
@@ -168,7 +180,7 @@ public class OutcomeBatchJob {
                 reentry, holdingDays != null && holdingDays < 5,
                 null, null,
                 enter.sourceAgent(), enter.sourceAgentVersion(), enter.ruleVersion(),
-                true);
+                reentryWindowElapsed);
         outcomeLog.upsert(row);
     }
 

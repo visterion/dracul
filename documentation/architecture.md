@@ -429,8 +429,12 @@ wrapped so one bad symbol/position never aborts the rest.
   `lowest_price` (BUY) / `highest_price` (SELL); `holding_days` and
   `reentry_within_10d` use calendar-day approximations (documented in
   `configuration.md`) since neither `entry_date`/`closed_at` nor
-  `decision_log.created_at` carry trading-calendar awareness. Rows are
-  `complete=true` immediately — a closed position's outcome never changes.
+  `decision_log.created_at` carry trading-calendar awareness. A TRADE row
+  stays `complete=false` until 14 calendar days (the documented
+  10-trading-day approximation) after `closed_at` have passed — re-entries
+  land on days 1..14 AFTER the close, so nightly re-runs keep recomputing
+  the whipsaw flags via the idempotent upsert until the window elapses,
+  then the row flips `complete=true` and is skipped for good.
 - **COUNTERFACTUAL rows** — one per `REJECT` `decision_log` row
   (`trigger_type=SIGNAL`) without a complete outcome yet. Walks
   `HypotheticalREngine` from the reject's `order_price`/`atr` (from
