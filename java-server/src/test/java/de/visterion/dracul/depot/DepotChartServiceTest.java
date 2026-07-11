@@ -151,6 +151,34 @@ class DepotChartServiceTest {
     }
 
     @Test
+    void emptyBarsSymbolIsSkippedAndMarksPartial() {
+        AgoraClient agora = mock(AgoraClient.class);
+        when(agora.callTool(eq("get_ohlc"), org.mockito.ArgumentMatchers.argThat(
+                args -> args != null && "ACME".equals(args.path("symbol").asString()))))
+                .thenReturn(json("""
+                    {"bars":[
+                      {"date":"2026-07-01","open":99,"high":101,"low":99,"close":100,"volume":1},
+                      {"date":"2026-07-02","open":100,"high":112,"low":99,"close":110,"volume":1}]}"""));
+        when(agora.callTool(eq("get_ohlc"), org.mockito.ArgumentMatchers.argThat(
+                args -> args != null && "EMPTY".equals(args.path("symbol").asString()))))
+                .thenReturn(json("""
+                    {"bars":[]}"""));
+
+        DepotChartService service = new DepotChartService(agora);
+        List<DepotPosition> positions = List.of(
+                new DepotPosition("ACME", BigDecimal.TEN, null, null, null, null),
+                new DepotPosition("EMPTY", BigDecimal.valueOf(5), null, null, null, null));
+
+        var curve = service.depotCurve("1w", positions, BigDecimal.valueOf(1000));
+
+        assertThat(curve.partial()).isTrue();
+        assertThat(curve.points()).extracting(DepotChartService.ChartPoint::t)
+                .containsExactly("2026-07-01", "2026-07-02");
+        assertThat(curve.points()).extracting(DepotChartService.ChartPoint::value)
+                .containsExactly(new BigDecimal("2000.00"), new BigDecimal("2100.00"));
+    }
+
+    @Test
     void datesAreAlignedByIntersection() {
         AgoraClient agora = mock(AgoraClient.class);
         when(agora.callTool(eq("get_ohlc"), org.mockito.ArgumentMatchers.argThat(

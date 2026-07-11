@@ -89,7 +89,12 @@ public class DepotChartService {
                 for (ChartPoint pt : fetchSeries(p.symbol(), range)) {
                     closes.put(pt.t(), pt.value());
                 }
-                perSymbol.put(p.symbol(), closes);
+                if (closes.isEmpty()) {
+                    log.warn("depot chart: skipping symbol {} (no bars returned)", p.symbol());
+                    partial = true;
+                } else {
+                    perSymbol.put(p.symbol(), closes);
+                }
             } catch (AgoraUnavailableException e) {
                 log.warn("depot chart: skipping symbol {} ({})", p.symbol(), e.toString());
                 partial = true;

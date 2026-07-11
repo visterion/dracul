@@ -515,8 +515,9 @@ plus each held position's quantity times that instrument's close price
 at `t`. Per-symbol close series are fetched independently and aligned
 by **intersection**: only timestamps present in every
 successfully-fetched symbol's series appear in `points`/`relative`. A
-symbol whose series can't be fetched (Agora failure) is skipped —
-the curve is still built from the rest — and sets `partial: true`.
+symbol whose series can't be fetched (Agora failure) — or that Agora
+fetches without error but returns zero bars for — is skipped; the
+curve is still built from the rest — and sets `partial: true`.
 `relative[].pct` is `(value/points[0].value − 1) × 100`, scale 2
 HALF_UP (so the first point's `pct` is always `0.00`).
 
