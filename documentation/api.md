@@ -1244,6 +1244,7 @@ and for order-guard rejections it is the veto trace plus an
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | The signal is no longer `PENDING` (already `ACCEPTED`/`REJECTED`/`SKIPPED`) — idempotency guard, checked before vetos/order guard; no broker call, no signal-status change |
 | `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
+| `UNKNOWN_VERSION` | `PreySignalEmitter` (intake, not a `VetoService` entry) | The mapped signal's `agent_version` is neither a `PromptRegistry`-known prompt-body hash nor the emitting agent's current live DB version (`AgentVersionResolver.versionFor`) — the signal is dropped before it is ever inserted as `executor_signal`, so it produces no audit row and no `veto_trace` entry; `operator`-sourced (manual) signals are exempt since they carry no prompt hash |
 
 Every outcome (accepted or rejected) writes one `executor_decision` audit
 row; accepted entries also insert an `executor_position` row and mark the

@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.agent.PromptRegistry;
 import de.visterion.dracul.prey.Prey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,8 @@ public class PreySignalEmitter {
     private final ExecutorSignalRepository signalRepo;
     private final ExecutorPositionRepository positionRepo;
     private final ExecutorIndicators indicators;
+    private final PromptRegistry registry;
+    private final AgentVersionResolver versions;
     private final int atrPeriod;
     private final int swingPeriod;
 
@@ -37,12 +40,16 @@ public class PreySignalEmitter {
                              ExecutorSignalRepository signalRepo,
                              ExecutorPositionRepository positionRepo,
                              ExecutorIndicators indicators,
+                             PromptRegistry registry,
+                             AgentVersionResolver versions,
                              @Value("${dracul.executor.atr-period:22}") int atrPeriod,
                              @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
         this.mapper = mapper;
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
         this.indicators = indicators;
+        this.registry = registry;
+        this.versions = versions;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
     }
@@ -69,6 +76,11 @@ public class PreySignalEmitter {
                 continue;
             }
             ExecutorSignal s = mapper.map(p);
+            if (!isKnownVersion(s.source(), s.agentVersion())) {
+                log.warn("Skipping prey {} — UNKNOWN_VERSION: agent {} version {} not in registry",
+                        symbol, s.source(), s.agentVersion());
+                continue;
+            }
             ExecutorIndicators.Levels lv = indicators.levels(symbol, atrPeriod, swingPeriod);
             BigDecimal ref = lv.available() ? lv.referencePrice() : null;
             signalRepo.insert(new ExecutorSignal(s.signalId(), s.source(), s.agentVersion(),
@@ -78,5 +90,16 @@ public class PreySignalEmitter {
             emitted++;
         }
         log.info("Emitted {} executor signal(s) from {} prey", emitted, preys.size());
+    }
+
+    /**
+     * "operator" is exempt — manual signals carry no prompt hash. Otherwise the version
+     * must be a registry-known body hash, or the live-DB fallback keeps legitimately
+     * user-edited prompts (registry miss, but matching the agent's current stored prompt)
+     * working.
+     */
+    private boolean isKnownVersion(String source, String version) {
+        if ("operator".equals(source)) return true;
+        return registry.knownHashes().contains(version) || versions.versionFor(source).equals(version);
     }
 }
