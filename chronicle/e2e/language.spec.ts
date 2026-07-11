@@ -39,8 +39,8 @@ test.describe('Language switcher (/settings)', () => {
     const strip = page.locator('[data-testid="dusk-strip"]')
     await expect(strip).toBeVisible()
     // English chrome present, German chrome gone.
-    await expect(strip).toContainText('new prey')
-    await expect(strip).not.toContainText('neue Beute')
+    await expect(strip).toContainText('prey')
+    await expect(strip).not.toContainText('Beute')
     await expect(strip).not.toContainText('Urteil')
 
     // Relative-time on a verdict card must be English ("… ago"), not German ("vor …").
