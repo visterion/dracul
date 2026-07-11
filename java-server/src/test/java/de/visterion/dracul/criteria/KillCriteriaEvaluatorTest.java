@@ -39,6 +39,34 @@ class KillCriteriaEvaluatorTest {
     }
 
     @Test
+    void ignoresPercentThresholdEvenWhenPrefixDigitsWouldBreach() {
+        // regression: "125%" must not backtrack-match as price level 12 (or 125)
+        assertThat(eval.breached(List.of("Price rises above 125%"), new BigDecimal("500")))
+                .isEmpty();
+    }
+
+    @Test
+    void ignoresDecimalPercentThreshold() {
+        // regression: "12.5%" must not backtrack-match as price level 12
+        assertThat(eval.breached(List.of("Close falls below 12.5%"), new BigDecimal("10")))
+                .isEmpty();
+        assertThat(eval.breached(List.of("Price falls below 15%"), new BigDecimal("10")))
+                .isEmpty();
+    }
+
+    @Test
+    void detectsDecimalPriceLevel() {
+        assertThat(eval.breached(List.of("Close below 12.5"), new BigDecimal("12")))
+                .containsExactly("Close below 12.5");
+    }
+
+    @Test
+    void detectsStopKeyword() {
+        assertThat(eval.breached(List.of("Stop below $90"), new BigDecimal("85")))
+                .containsExactly("Stop below $90");
+    }
+
+    @Test
     void nullSafe() {
         assertThat(eval.breached(null, new BigDecimal("1"))).isEmpty();
         assertThat(eval.breached(List.of("close below 5"), null)).isEmpty();
