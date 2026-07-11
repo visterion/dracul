@@ -273,6 +273,7 @@ export default {
     },
     sidebar: {
       decisionTitle: 'Entscheidung',
+      killBreach: 'KILL: {criterion}',
       notesTitle: 'Notizen',
       statsTitle: 'Schnellstatistik',
       daywalkerTitle: 'Tagesläufer-Status',

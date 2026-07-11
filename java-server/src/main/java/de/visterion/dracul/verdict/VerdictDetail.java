@@ -11,12 +11,14 @@ public record VerdictDetail(
         List<String> signals, List<String> risks,
         List<ContributingStrigoiDetail> contributingDetails,
         String decision, String decidedAt,
-        String currency, Double nativeCurrentPrice, String nativeCurrency) {
+        String currency, Double nativeCurrentPrice, String nativeCurrency,
+        List<String> killCriteriaBreached) {
 
     /**
      * Back-compat constructor (pre-SP-2 16-arg shape) + native currency. Used by the repository
      * row mapper, which reads the native price + native currency from the DB. Native fields
      * mirror the native value so an un-converted (un-mapped) response is still self-consistent.
+     * killCriteriaBreached defaults to empty (callers using this shape predate Task 7).
      */
     public VerdictDetail(
             String id, String symbol, String companyName,
@@ -31,7 +33,7 @@ public record VerdictDetail(
         this(id, symbol, companyName, contributingStrigoi, consensusScore, summary, createdAt,
                 anomalyTypes, currentPrice, avgConfidence, horizon, signals, risks,
                 contributingDetails, decision, decidedAt,
-                currency, currentPrice, currency);
+                currency, currentPrice, currency, List.of());
     }
 
     /**
@@ -44,6 +46,6 @@ public record VerdictDetail(
                 id, symbol, companyName, contributingStrigoi, consensusScore, summary, createdAt,
                 anomalyTypes, convertedPrice, avgConfidence, horizon, signals, risks,
                 contributingDetails, decision, decidedAt,
-                displayCurrency, nativePrice, nativeCurrencyCode);
+                displayCurrency, nativePrice, nativeCurrencyCode, killCriteriaBreached);
     }
 }

@@ -324,6 +324,11 @@ acts on the resulting signals.
 **Prey kill-criteria column (V19):**
 - `kill_criteria` (JSONB, NOT NULL DEFAULT '[]') — 1-5 hunter-emitted falsifiable exit conditions (a measurable threshold, a concrete date, or a single unambiguous public event under which the thesis is dead), carried onto `executor_signal` by the Prey→ExecutorSignal adapter (`PreySignalMapper`).
 
+**Verdict kill-criteria breach columns (V22):**
+- `verdicts.kill_criteria_breached` (JSONB, NOT NULL DEFAULT '[]') — the union of contributing prey's kill criteria currently evaluating as breached, as last computed by `VerdictKillCriteriaWatcher`.
+- `verdicts.kill_criteria_checked_at` (TIMESTAMPTZ, nullable) — when the watcher last evaluated this verdict; bumped on every poll (including when nothing is breached), so it also doubles as a liveness signal for the watcher itself.
+- `VerdictKillCriteriaWatcher` (`dracul.verdict-killwatch.enabled`, default `true`; cron `dracul.verdict-killwatch.cron`, default `0 30 21 * * 1-5` UTC — after US close, before gropar) is a deterministic, no-LLM `@Scheduled` job: for every open verdict (`decision IS NULL OR decision <> 'DISMISS'`) whose symbol is **not** a held watchlist position (same `isHeld` semantics as gropar — tag `HELD` + `entryPrice` + `shareCount` all non-null), it batches `AgoraMarketData.quotes(...)` for the watched symbols, unions the contributing prey's `kill_criteria` (`PreyRepository.findByIds`), runs them through `KillCriteriaEvaluator.breached(...)` (the same deterministic price-threshold parser executor's soft trigger uses), and persists the result via `VerdictRepository.markKillCriteriaBreached`. Only *newly* breached criteria (not already in `kill_criteria_breached`) publish a `VerdictKillCriteriaBreachedEvent`, bridged onto SSE as `verdict.kill_criteria_breached` (see `documentation/api.md`) and rendered as a `KILL: <criterion>` badge on `VerdictDetailView`. The whole poll body — and each per-verdict check — is wrapped in try/catch so one bad quote/prey lookup never blocks the rest or throws out of the scheduled method.
+
 **Entry completeness (V20): `EntryContextAssembler` as the single I/O
 layer.** Every entry decision (`place-entry`) and every tranche-2 add
 (`add-tranche`) is preceded by one call into `EntryContextAssembler`, which

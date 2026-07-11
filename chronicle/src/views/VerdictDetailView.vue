@@ -137,6 +137,14 @@
           <div v-if="currentDecision" class="vd-decision-badge" data-testid="vd-decision-badge">
             {{ currentDecision.decision }} · {{ relativeTime(currentDecision.decidedAt) }}
           </div>
+          <div v-if="verdict.killCriteriaBreached?.length" class="vd-kill-breach-tags">
+            <TagPill
+              v-for="c in verdict.killCriteriaBreached"
+              :key="c"
+              tone="crimson"
+              data-testid="vd-kill-breach"
+            >{{ t('verdict.sidebar.killBreach', { criterion: c }) }}</TagPill>
+          </div>
           <div class="vd-decision-buttons">
             <button
               v-for="opt in decisionOptions"
@@ -377,6 +385,7 @@ async function onAddNote() {
   margin-bottom: var(--space-3); letter-spacing: 0.05em; text-transform: uppercase;
   display: inline-block;
 }
+.vd-kill-breach-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 .vd-error { color: var(--blood-crimson); font-size: var(--text-micro); margin: var(--space-2) 0 0 0; }

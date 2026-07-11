@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { LiveAlert } from '../api/types'
+import { useChronicleStore } from './chronicle'
 
 const MAX_ALERTS = 50
 
@@ -10,6 +11,14 @@ interface AlertNewPayload {
   trigger_type: string
   severity: string
   thesis: string
+  ts: string
+}
+
+/** Wire shape of a `verdict.kill_criteria_breached` SSE payload (snake_case from the backend). */
+interface VerdictKillCriteriaBreachedPayload {
+  verdict_id: string
+  symbol: string
+  breached: string[]
   ts: string
 }
 
@@ -42,6 +51,25 @@ export const useLiveAlertsStore = defineStore('liveAlerts', () => {
         })
         if (alerts.value.length > MAX_ALERTS) alerts.value.length = MAX_ALERTS
         unread.value += 1
+      } catch {
+        // ignore malformed payloads
+      }
+    })
+    source.addEventListener('verdict.kill_criteria_breached', (e: MessageEvent) => {
+      try {
+        const p = JSON.parse(e.data) as VerdictKillCriteriaBreachedPayload
+        alerts.value.unshift({
+          symbol: p.symbol,
+          triggerType: 'KILL_CRITERIA_BREACHED',
+          severity: 'CRITICAL',
+          thesis: p.breached.map((c) => `KILL: ${c}`).join(' · '),
+          ts: p.ts,
+        })
+        if (alerts.value.length > MAX_ALERTS) alerts.value.length = MAX_ALERTS
+        unread.value += 1
+        // Refresh the chronicle overview so the breached verdict's summary reflects the
+        // new state; VerdictDetailView re-fetches its own detail on next visit/reload.
+        void useChronicleStore().load()
       } catch {
         // ignore malformed payloads
       }

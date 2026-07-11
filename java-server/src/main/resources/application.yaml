@@ -128,6 +128,9 @@ dracul:
     atr-multiple: ${DRACUL_STOPGUARD_ATR_MULTIPLE:0.5}
     cooldown:     ${DRACUL_STOPGUARD_COOLDOWN:82800}
     notify-level: ${DRACUL_STOPGUARD_NOTIFY_LEVEL:WARNING}
+  verdict-killwatch:
+    enabled: ${DRACUL_VERDICT_KILLWATCH_ENABLED:true}
+    cron:    ${DRACUL_VERDICT_KILLWATCH_CRON:0 30 21 * * 1-5}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}
