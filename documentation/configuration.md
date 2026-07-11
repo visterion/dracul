@@ -135,7 +135,7 @@ outcome is recorded in `daywalker_alerts.notification_sent`.
 | `DRACUL_DAYWALKER_PRICE_SPIKE` | `0.03` | PRICE_SPIKE threshold (fraction) |
 | `DRACUL_DAYWALKER_VOLUME_MULT` | `3.0` | VOLUME_SPIKE multiple of rolling average |
 | `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min) |
-| `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). |
+| `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). Escalation only actually fires when `DRACUL_DAYWALKER_DEEP_ENABLED` is **also** `true` — the gate checks both flags. |
 | `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE` | `0.6` | A CRITICAL assessment escalates only when its `confidence` is strictly below this threshold. |
 
 Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
@@ -153,9 +153,13 @@ deferred.
 
 Trigger-only agent (`schedule=null`) — see the escalation-flow config above
 (`DRACUL_DAYWALKER_ESCALATION_ENABLED` / `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE`)
-for when it fires. Like every Vistierie agent it also needs a budget set once via
-the admin endpoint before it can run — see `documentation/operations.md`'s Agent
-budget guard section.
+for when it fires. **`DaywalkerCompletionService` gates escalation on both
+`DRACUL_DAYWALKER_ESCALATION_ENABLED` and `DRACUL_DAYWALKER_DEEP_ENABLED`** — since
+the latter defaults to `false`, escalation is a no-op out of the box even though
+its own toggle defaults to `true`; enable both to actually trigger `daywalker-deep`
+runs. Like every Vistierie agent it also needs a budget set once via the admin
+endpoint before it can run — see `documentation/operations.md`'s Agent budget guard
+section.
 
 ## Watchlist price refresh
 

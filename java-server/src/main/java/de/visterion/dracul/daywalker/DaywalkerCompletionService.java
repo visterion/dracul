@@ -32,6 +32,7 @@ public class DaywalkerCompletionService {
     private final long cooldownSeconds;
     private final ObjectProvider<VistierieClient> vistierie;
     private final boolean escalationEnabled;
+    private final boolean daywalkerDeepEnabled;
     private final BigDecimal escalationThreshold;
 
     public DaywalkerCompletionService(
@@ -42,6 +43,7 @@ public class DaywalkerCompletionService {
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
             ObjectProvider<VistierieClient> vistierie,
             @Value("${dracul.daywalker.escalation-enabled:true}") boolean escalationEnabled,
+            @Value("${dracul.daywalker-deep.enabled:false}") boolean daywalkerDeepEnabled,
             @Value("${dracul.daywalker.escalation-confidence:0.6}") BigDecimal escalationThreshold) {
         this.alerts = alerts;
         this.notifier = notifier;
@@ -50,6 +52,7 @@ public class DaywalkerCompletionService {
         this.cooldownSeconds = cooldownSeconds;
         this.vistierie = vistierie;
         this.escalationEnabled = escalationEnabled;
+        this.daywalkerDeepEnabled = daywalkerDeepEnabled;
         this.escalationThreshold = escalationThreshold;
     }
 
@@ -131,11 +134,16 @@ public class DaywalkerCompletionService {
      * and is echoed back verbatim by the deep agent, so the follow-up assessment resolves
      * against the SAME owner set as the original (exact holder for position-scoped alerts,
      * non-held watchers otherwise).
+     *
+     * <p>Gated on BOTH {@code dracul.daywalker.escalation-enabled} and
+     * {@code dracul.daywalker-deep.enabled} — the latter defaults to {@code false}, so without
+     * this second check every low-confidence CRITICAL assessment would trigger a run for a
+     * possibly-unregistered {@code daywalker-deep} agent (silently WARN-swallowed downstream).
      */
     private void maybeEscalate(String symbol, String triggerType, String severity,
                                String thesis, BigDecimal confidence, String positionId,
                                boolean fromEscalation) {
-        if (!escalationEnabled || fromEscalation) return;
+        if (!escalationEnabled || !daywalkerDeepEnabled || fromEscalation) return;
         if (!"CRITICAL".equalsIgnoreCase(severity)) return;
         if (confidence == null || confidence.compareTo(escalationThreshold) >= 0) return;
 
