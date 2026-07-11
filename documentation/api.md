@@ -1217,7 +1217,9 @@ shown the LLM). Input:
 { "symbol": "ACME", "reason": "R_CONFIRMED" }
 ```
 
-Pipeline: open-position lookup → `EntryContextAssembler.assembleForSymbol`
+Pipeline: open-position lookup → tranche-cap guard (`position.tranche() >=
+dracul.executor.max-tranche` rejects with `MAX_TRANCHE` before any further
+I/O) → `EntryContextAssembler.assembleForSymbol`
 (same I/O as `place-entry`, but `signal_reference`/`signal_age` are not
 mandatory here — there is no pending signal to check freshness against) →
 `Tranche2Detector.detect` (re-derives eligibility; does not trust the
@@ -1241,6 +1243,7 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | Reason | Meaning |
 |---|---|
 | `NO_POSITION` | No open tranche-1 position for `symbol` on the configured connection |
+| `MAX_TRANCHE` | Position's current `tranche` count is already at or above `dracul.executor.max-tranche` |
 | `DATA_UNAVAILABLE` | Mandatory upstream data missing at assembly time |
 | `NOT_ELIGIBLE` | `Tranche2Detector` re-derived ineligibility (e.g. price has moved against entry, or none of `R_CONFIRMED`/`NEW_HIGH`/`REINFORCING_SIGNAL` currently holds) |
 | `TRANCHE_TOO_SMALL` | Sizer computed less than one whole share for the second tranche |

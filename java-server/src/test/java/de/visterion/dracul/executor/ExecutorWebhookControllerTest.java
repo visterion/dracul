@@ -75,7 +75,7 @@ class ExecutorWebhookControllerTest {
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
-                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2);
     }
 
     // -------------------------------------------------------------------
@@ -1258,6 +1258,35 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("saxo-sim"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().clientRef()).isEqualTo("t2-pos-42");
+    }
+
+    @Test
+    void addTranche_rejectsWhenTrancheLimitReached() {
+        ExecutorPosition open = new ExecutorPosition(7L, "saxo-sim", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
+                null, null, null, null, null, null, null, null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("MAX_TRANCHE");
+
+        verify(assembler, never()).assembleForSymbol(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(tranche2Detector, never()).detect(any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getValue().accepted()).isFalse();
+        assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("MAX_TRANCHE");
     }
 
     @Test
