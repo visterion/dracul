@@ -92,4 +92,27 @@ class DaywalkerAlertRepositoryIT {
                 .query(Boolean.class).single();
         assertThat(sent).isTrue();
     }
+
+    @Test
+    void sameUtcDayLookupFindsAndUpdatesInPlace() {
+        var item = watchlist.insert("default", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "", null, null);
+        alerts.insert("default", item.id(), "DWA", "PRICE_SPIKE",
+                "INFO", "first thesis", new BigDecimal("0.500"), "run-1");
+
+        var found = alerts.findSameUtcDay("default", "DWA", "PRICE_SPIKE", java.time.Instant.now());
+        assertThat(found).isPresent();
+        assertThat(found.get().severity()).isEqualTo("INFO");
+        assertThat(alerts.findSameUtcDay("default", "DWA", "VOLUME_SPIKE", java.time.Instant.now())).isEmpty();
+
+        alerts.updateSameDayAlert(found.get().id(), "PRICE_SPIKE", "CRITICAL",
+                "second thesis", new BigDecimal("0.900"), "run-2", true);
+
+        var after = alerts.findSameUtcDay("default", "DWA", "PRICE_SPIKE", java.time.Instant.now());
+        assertThat(after).isPresent();
+        assertThat(after.get().severity()).isEqualTo("CRITICAL");
+        Long count = jdbc.sql("SELECT COUNT(*) FROM daywalker_alerts WHERE symbol = 'DWA'")
+                .query(Long.class).single();
+        assertThat(count).isEqualTo(1L); // updated, not duplicated
+    }
 }
