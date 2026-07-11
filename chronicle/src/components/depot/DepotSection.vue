@@ -165,15 +165,25 @@ const chart = ref<DepotChart | null>(null)
 const chartLoading = ref(false)
 const chartError = ref<string | null>(null)
 
+// Guards against a stale response overwriting a newer one when the range is
+// switched again before the previous request has resolved: each call captures
+// its own request id, and only the still-current request may write to state.
+let chartRequestId = 0
+
 async function loadChart() {
+  const requestId = ++chartRequestId
+  const requestedRange = range.value
   chartLoading.value = true
   chartError.value = null
   try {
-    chart.value = await api.getDepotChart(props.depot.id, range.value)
+    const result = await api.getDepotChart(props.depot.id, requestedRange)
+    if (requestId !== chartRequestId) return // superseded by a later range switch
+    chart.value = result
   } catch (e) {
+    if (requestId !== chartRequestId) return
     chartError.value = e instanceof Error ? e.message : t('depots.chart.error')
   } finally {
-    chartLoading.value = false
+    if (requestId === chartRequestId) chartLoading.value = false
   }
 }
 

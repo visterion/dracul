@@ -8,8 +8,7 @@
           <th class="num" @click="sortBy('avgEntryPrice')">{{ t('depots.table.avgEntry') }}</th>
           <th class="num" @click="sortBy('price')">{{ t('depots.table.price') }}</th>
           <th class="num" @click="sortBy('marketValue')">{{ t('depots.table.marketValue') }}</th>
-          <th class="num" :class="{ 'metric-primary': metric === 'sinceBuy' }" @click="sortBy('unrealizedPl')">{{ t('depots.table.pnl') }}</th>
-          <th class="num" :class="{ 'metric-primary': metric === 'today' }" @click="sortBy('dayChangePercent')">{{ t('depots.table.dayChange') }}</th>
+          <th class="num" @click="sortBy('change')">{{ metric === 'sinceBuy' ? t('depots.table.pnl') : t('depots.table.dayChange') }}</th>
           <th class="num" @click="sortBy('weightPct')">{{ t('depots.table.weight') }}</th>
         </tr>
       </thead>
@@ -28,16 +27,10 @@
           <td class="num">{{ formatMoney(p.marketValue, p.currency) }}</td>
           <td
             class="num pnl-cell"
-            data-testid="pnl-cell"
-            :class="pnlClass(p.unrealizedPl)"
+            data-testid="change-cell"
+            :class="pnlClass(changeSortValue(p))"
             @click.stop="toggle()"
-          >{{ fmtPl(p.unrealizedPl, p.unrealizedPlPct, mode, p.currency) }}</td>
-          <td
-            class="num pnl-cell"
-            data-testid="day-change-cell"
-            :class="pnlClass(p.dayChangePercent)"
-            @click.stop="toggle()"
-          >{{ fmtPl(positionDayChangeAbs(p), p.dayChangePercent, mode, p.currency) }}</td>
+          >{{ fmtPl(changeAbs(p), changePct(p), mode, p.currency) }}</td>
           <td class="num">{{ p.weightPct == null ? '—' : formatPercent(p.weightPct) }}</td>
         </tr>
       </tbody>
@@ -64,7 +57,7 @@ defineEmits<{ select: [symbol: string] }>()
 
 const { t } = useI18n()
 
-type SortKey = 'symbol' | 'qty' | 'avgEntryPrice' | 'price' | 'marketValue' | 'unrealizedPl' | 'dayChangePercent' | 'weightPct'
+type SortKey = 'symbol' | 'qty' | 'avgEntryPrice' | 'price' | 'marketValue' | 'change' | 'weightPct'
 const sortKey = ref<SortKey>('weightPct')
 const sortDir = ref<1 | -1>(-1)
 
@@ -77,12 +70,24 @@ function sortBy(key: SortKey) {
   }
 }
 
+/** The change column follows the selected metric: "Seit Kauf" sorts/shows
+ *  unrealizedPl(Pct), "Heute" sorts/shows the day change. */
+function changeSortValue(p: DepotPositionView): number | null {
+  return props.metric === 'sinceBuy' ? p.unrealizedPl : p.dayChangePercent
+}
+function changeAbs(p: DepotPositionView): number | null {
+  return props.metric === 'sinceBuy' ? p.unrealizedPl : positionDayChangeAbs(p)
+}
+function changePct(p: DepotPositionView): number | null {
+  return props.metric === 'sinceBuy' ? p.unrealizedPlPct : p.dayChangePercent
+}
+
 const sorted = computed(() => {
   const key = sortKey.value
   const dir = sortDir.value
   return [...props.positions].sort((a, b) => {
-    const av = a[key]
-    const bv = b[key]
+    const av = key === 'change' ? changeSortValue(a) : a[key]
+    const bv = key === 'change' ? changeSortValue(b) : b[key]
     if (av == null && bv == null) return 0
     if (av == null) return 1
     if (bv == null) return -1
@@ -104,6 +109,5 @@ function pnlClass(v: number | null): string {
 .pnl-cell.pos { color: var(--signal-positive-bright); }
 .pnl-cell.neg { color: var(--blood-crimson-bright); }
 th { cursor: pointer; user-select: none; }
-th.metric-primary { color: var(--cathedral-gold); }
 .depot-position-row { cursor: pointer; }
 </style>
