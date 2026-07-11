@@ -1370,6 +1370,55 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void exitPosition_trim033_roundHundredQty_noDoubleComplementDrift() {
+        // Regression: 1 - 0.33 computed in primitive double is 0.6699999999999999, which floors
+        // qty=100 to 66 instead of 67. The complement must be computed in BigDecimal so qty=100
+        // trims to exactly remaining 67 / closed 33.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("100"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenReturn(new CloseResult(new BigDecimal("33"), new BigDecimal("67"), new BigDecimal("112"), "close-1"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("67");
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("33");
+
+        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("67")), eq(1));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().orderJson().path("qty_remaining").asDouble()).isEqualTo(67.0);
+        assertThat(logCaptor.getValue().orderJson().path("qty_closed").asDouble()).isEqualTo(33.0);
+    }
+
+    @Test
+    void exitPosition_trim033_qty200_remaining134() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("200"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenReturn(new CloseResult(new BigDecimal("66"), new BigDecimal("134"), new BigDecimal("112"), "close-1"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        controller.exitPosition(BEARER, "run-1", body);
+
+        // 200 * 0.67 = 134 exactly; double-complement drift would have produced 133.
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("134")), eq(1));
+    }
+
+    @Test
     void exitPosition_fractionBelowLadderFloor_rejectsSchemaInvalid() {
         // trim_count=1 -> ladder floor is 0.5; LLM may not undercut with 0.33.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),

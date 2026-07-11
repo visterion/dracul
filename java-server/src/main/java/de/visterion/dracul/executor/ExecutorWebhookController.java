@@ -768,8 +768,13 @@ public class ExecutorWebhookController {
                             + "); fraction " + fraction + " would undercut it")));
         }
 
+        // Compute the complement in BigDecimal, not primitive double: 1 - 0.33 in double is
+        // 0.6699999999999999, which would floor qty=100 to remaining 66 instead of the intended
+        // 67 -- a real bookkeeping drift over repeated trims. BigDecimal.valueOf(0.33) is the
+        // exact decimal "0.33", so ONE.subtract(...) yields an exact "0.67".
         BigDecimal remaining = position.qty()
-                .multiply(BigDecimal.valueOf(1 - fraction)).setScale(0, RoundingMode.FLOOR);
+                .multiply(BigDecimal.ONE.subtract(BigDecimal.valueOf(fraction)))
+                .setScale(0, RoundingMode.FLOOR);
         boolean fullExit = fraction == 1.0 || remaining.signum() <= 0;
 
         // BigDecimal.valueOf(1.0) has scale 1 ("1.0") and is not .equals() to BigDecimal.ONE
