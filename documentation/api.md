@@ -463,7 +463,7 @@ CF cookie / injected JWT), so the stream is **authenticated and scoped to the
 connecting user** — each stream receives only that user's events. Multiple tabs of
 one user are all served.
 
-**v1 emits only `alert.new`** — a new Daywalker alert:
+**v1 emits `alert.new`** — a new Daywalker alert:
 
 ```text
 event: alert.new
@@ -474,9 +474,23 @@ An `alert.new` event is delivered only to the owners for whom an alert row was
 persisted (watchlist owner of the symbol, outside the per-`(owner, symbol,
 trigger-type)` cooldown) — the same boundary as the persisted alert list.
 
-The stream is generic; `verdict.new` and `strigoi.status` are planned and will
-attach to the same stream once their sources exist. No replay / Last-Event-ID in
-v1 — clients receive events from connect time; `EventSource` auto-reconnects.
+**and `verdict.kill_criteria_breached`** — a contributing prey's kill criterion
+on an open (non-DISMISSed), non-held verdict has newly evaluated as breached,
+emitted by `VerdictKillCriteriaWatcher`:
+
+```text
+event: verdict.kill_criteria_breached
+data: {"verdict_id":"…","symbol":"AAPL","breached":["Close below 90"],"ts":"2026-06-04T21:30:00Z"}
+```
+
+Delivered only to the verdict's owner. `breached` lists only the *newly*
+breached criteria on this poll — criteria already persisted as breached on a
+prior poll are not re-sent (though `markKillCriteriaBreached` still refreshes
+`kill_criteria_checked_at` for them every poll).
+
+The stream is generic; `strigoi.status` is planned and will attach to the same
+stream once its source exists. No replay / Last-Event-ID in v1 — clients
+receive events from connect time; `EventSource` auto-reconnects.
 
 ## Error Responses
 

@@ -401,6 +401,15 @@ Deterministic intraday watcher that checks every held position's live price agai
 
 Reuses `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `TELEGRAM_BASE_URL` — no additional Telegram config is needed.
 
+## Verdict Kill-Criteria Watcher
+
+Deterministic (no-LLM) watcher: for every open verdict (not yet DISMISSed) whose symbol is **not** a held watchlist position, evaluates the contributing prey's `kill_criteria` against the current quote and persists any breach on the verdict (`kill_criteria_breached` / `kill_criteria_checked_at`). Newly breached criteria are published as a `verdict.kill_criteria_breached` SSE event (see `documentation/api.md`) and rendered as a `KILL: <criterion>` badge on the verdict detail page. On by default; a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change or `definition/reset`.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_VERDICT_KILLWATCH_ENABLED` (`dracul.verdict-killwatch.enabled`) | `true` | Enables the `VerdictKillCriteriaWatcher` scheduled poll. Set to `false` to disable. |
+| `DRACUL_VERDICT_KILLWATCH_CRON` (`dracul.verdict-killwatch.cron`) | `0 30 21 * * 1-5` | Spring cron (zone: UTC) for the poll. Default: 21:30 UTC on weekdays — after US market close, before gropar's exit-signal run. |
+
 ## Morning Report (daily digest)
 
 A daily Telegram digest of the morning report. Gated off by default; enabling it requires Telegram bot-token and chat-id already configured for the gropar notifications (i.e. `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set). This is a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change.

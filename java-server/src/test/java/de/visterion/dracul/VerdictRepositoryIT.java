@@ -25,7 +25,7 @@ class VerdictRepositoryIT {
 
     @BeforeEach
     void clean() {
-        jdbc.sql("DELETE FROM verdicts WHERE symbol IN ('RTST','RTUP','RTMR')").update();
+        jdbc.sql("DELETE FROM verdicts WHERE symbol IN ('RTST','RTUP','RTMR','KWTEST')").update();
     }
 
     private String insert(String symbol, String summary, List<String> preyIds) {
@@ -37,6 +37,10 @@ class VerdictRepositoryIT {
                 List.of(new ContributingStrigoiDetail("strigoi-spin", 0.7, "t1"),
                         new ContributingStrigoiDetail("strigoi-insider", 0.6, "t2")),
                 preyIds, "default");
+    }
+
+    private String insert(String symbol, List<String> preyIds) {
+        return insert(symbol, "summary for " + symbol, preyIds);
     }
 
     @Test
@@ -85,5 +89,14 @@ class VerdictRepositoryIT {
     @Test
     void contributingPreyIdsById_unknownFormatReturnsEmpty() {
         assertThat(repo.contributingPreyIdsById("not-a-uuid")).isEmpty();
+    }
+
+    @Test
+    void markAndReadKillCriteriaBreach() {
+        String id = insert("KWTEST", List.of("p1"));
+        repo.markKillCriteriaBreached(id, List.of("Close below 90"));
+        var detail = repo.findDetailById(id).orElseThrow();
+        assertThat(detail.killCriteriaBreached()).containsExactly("Close below 90");
+        assertThat(repo.findOpenForKillCheck()).extracting(r -> r.id()).contains(id);
     }
 }

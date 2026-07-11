@@ -273,6 +273,7 @@ export default {
     },
     sidebar: {
       decisionTitle: 'Decision',
+      killBreach: 'KILL: {criterion}',
       notesTitle: 'Notes',
       statsTitle: 'Quick stats',
       daywalkerTitle: 'Daywalker status',

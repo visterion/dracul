@@ -64,6 +64,17 @@ Two additional trigger types emitted by the stop-proximity watcher now appear in
 
 Both types are routed through the existing `useEnumLabels()` composable (see `enums.*` i18n keys) and rendered with the same severity colour coding as all other alert types (WARNING = gold, CRITICAL = crimson).
 
+A `verdict.kill_criteria_breached` SSE event (see `documentation/api.md`) is
+also surfaced in the live panel — one panel entry per poll, with a `KILL: …`
+thesis per newly-breached criterion — and additionally triggers a chronicle
+overview reload (`useChronicleStore().load()`) so the affected verdict's
+summary state refreshes without a manual page reload.
+
+On the Verdict Detail view (`/verdict/:id`), a breached verdict shows a
+`TagPill tone="crimson"` badge per breached criterion (`KILL: <criterion>`,
+`data-testid="vd-kill-breach"`) in the decision card next to the decision
+badge, sourced from `VerdictDetail.killCriteriaBreached`.
+
 ## Application shell
 
 Present on every view:
