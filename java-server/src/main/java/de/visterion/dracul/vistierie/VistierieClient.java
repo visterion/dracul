@@ -18,7 +18,17 @@ public interface VistierieClient {
 
     // ── runs ──────────────────────────────────────────────────────
     List<VistierieRunDetail> listRuns();
-    VistierieRunDetail triggerRun(String agentName);
+
+    /** Triggers a run with no input payload. */
+    default VistierieRunDetail triggerRun(String agentName) {
+        return triggerRun(agentName, null);
+    }
+
+    /** Triggers a run, forwarding {@code input} as the run's {@code payload}
+     *  (Vistierie contract: {@code POST /agents/{name}/run} body {@code {"payload": ...}}).
+     *  {@code input} may be {@code null} for a payload-less trigger. */
+    VistierieRunDetail triggerRun(String agentName, java.util.Map<String, Object> input);
+
     List<VistierieRunEvent> getRunEvents(String runId);
     java.util.List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
             java.util.List<String> status, java.time.Instant from, java.time.Instant to,

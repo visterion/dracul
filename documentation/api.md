@@ -58,6 +58,7 @@ separately under "Executor Webhooks" below.
 | POST | `/api/executor/run` | Trigger an ad-hoc Vistierie run of the executor agent |
 | GET | `/api/executor/calibration` | Brier calibration — executor overall + per-hunter |
 | GET | `/api/executor/behavior` | Veto precision, hard-exit latency, whipsaw, stop-basis comparison, slippage |
+| GET | `/api/executor/metrics/versions` | Outcome metrics grouped by `(source_agent, agent_version, rule_version)`, with an insufficient-sample gate |
 
 ### `POST /api/executor/signals`
 
@@ -168,6 +169,41 @@ Response (200):
   "stop_basis": [{"basis": "ATR", "n": 8, "mean_realized_r": 0.9, "mean_mae_r": -0.5},
                  {"basis": "SWING_LOW", "n": 4, "mean_realized_r": 1.3, "mean_mae_r": -0.3}],
   "slippage": {"n": 12, "mean": -0.02, "worst": -0.15}
+}
+```
+
+### `GET /api/executor/metrics/versions`
+
+Read-only outcome metrics (Task 5, item 23) over completed `TRADE` rows in
+`outcome_log`, joined to `decision_log` for timestamps, grouped by
+`(source_agent, agent_version, rule_version)`. Lets an operator compare a
+new agent/rule version's realized performance against the prior one once
+enough data has accumulated. No LLM calls, no writes.
+
+- **`avg_return`**: mean `outcome_log.realized_r` (quantity-weighted
+  R-multiple over partial exits) of the group's completed `TRADE` rows.
+- **`hit_rate`**: fraction of the group's rows with `realized_r > 0` — the
+  same "won" definition used by `GET /api/executor/calibration`'s executor
+  Brier score.
+- **`insufficient_sample`**: `true` unless the group's decisions span at
+  least 14 days (`first_at` to `last_at`, from the joined `decision_log`
+  rows) **and** the group has at least 20 decisions — both thresholds must
+  hold ("2 weeks or 20 decisions, whichever is later"). The row is still
+  returned when insufficient, just flagged as low-confidence.
+- An empty database returns `{"versions": []}`, not an error.
+
+Response (200):
+
+```json
+{
+  "versions": [
+    {"agent": "gropar", "agent_version": "1", "rule_version": "v3", "decisions": 25,
+     "first_at": "2026-06-01T00:00:00Z", "last_at": "2026-06-25T00:00:00Z",
+     "avg_return": 0.31, "hit_rate": 0.56, "insufficient_sample": false},
+    {"agent": "gropar", "agent_version": "2", "rule_version": "v4", "decisions": 6,
+     "first_at": "2026-07-05T00:00:00Z", "last_at": "2026-07-10T00:00:00Z",
+     "avg_return": -0.1, "hit_rate": 0.33, "insufficient_sample": true}
+  ]
 }
 ```
 
@@ -1073,6 +1109,81 @@ array is absent, the endpoint acknowledges (204) without persisting and logs the
 run-id. Symbols in the output that no longer form a valid cluster (e.g. prey
 expired between tool-call and completion) are silently skipped.
 
+## Voievod-Outcome Webhooks
+
+Called by Vistierie during a `voievod-outcome` agent run (elapsed-hunt pattern
+reviewer — a separate agent from `voievod` above). Requires `Authorization: Bearer
+<DRACUL_VOIEVOD_OUTCOME_TOKEN>`; only registered when
+`DRACUL_VOIEVOD_OUTCOME_ENABLED=true`. Runs weekly (default cron `0 0 7 * * 6`, UTC).
+
+### `POST /api/voievod-outcome/tools/fetch-elapsed-prey`
+
+Tool webhook. Returns prey whose horizon elapsed more than 30 days ago
+(`!Horizons.isOpen(discoveredAt, horizon, today.minusDays(30))`) and that has not yet
+been reviewed, oldest-discovered first, capped at 25 prey per run.
+
+Request: `{ "run_id": "...", "tool_name": "fetch_elapsed_prey", "input": { "lookback_days": 90 } }`
+
+`input.lookback_days` is optional — when present it additionally bounds the scan to
+prey discovered within that many days of now.
+
+Response:
+```json
+{
+  "output": {
+    "prey": [
+      {
+        "symbol": "ACME",
+        "anomalyType": "SPINOFF",
+        "thesis": "...",
+        "killCriteria": ["Close below 42.50"],
+        "discoveredAt": "2026-01-15T08:00:00Z",
+        "horizon": "3m",
+        "ohlc": { "firstClose": 40.10, "lastClose": 51.30, "minClose": 38.20, "maxClose": 53.00 }
+      }
+    ],
+    "cap": 25,
+    "capped": false
+  }
+}
+```
+
+`ohlc` is the daily close history since discovery (`AgoraMarketData.dailyOhlcHistory`,
+window sized from `discoveredAt` to today, capped at 730 days), condensed server-side
+to first/last/min/max closes so `firstClose` reflects the discovery-time price — the full
+daily series is never shipped (token budget). When Agora is unavailable for a symbol,
+`ohlc` degrades to `{}` and the prey is still returned (fail-soft). Every prey returned
+in the response is marked reviewed at fetch time (`prey.outcome_reviewed_at`) so a
+re-run never re-surfaces it.
+
+### `POST /api/voievod-outcome/complete`
+
+Completion webhook — persists the agent's proposed lessons as PENDING `patterns`
+rows. Requires `status: "done"` or `"succeeded"`; any other status is acknowledged
+(204) without persisting.
+
+Request (per the agent's output schema, `schemas/voievod-outcome.json`):
+```json
+{
+  "status": "done",
+  "output": {
+    "patterns": [
+      { "applies_to_strigoi": "strigoi-spin",
+        "statement": "Tech spin-offs outperform industrial spin-offs",
+        "evidence_symbols": ["GEHC", "KVUE", "SOLV"] }
+    ]
+  }
+}
+```
+
+For each entry, a `patterns` row is inserted with `status = 'PENDING'`,
+`evidence_count = evidence_symbols.length`, and `user_id = 'default'` (single-user
+system, same default used by the fetch endpoint). A proposal is skipped when a
+PENDING pattern with an identical `statement` already exists for the user
+(dedupe on repeated/overlapping runs). Returns 204 either way; the existing
+Chronicle pattern-review UI (approve/reject) picks up PENDING patterns
+automatically — no frontend changes needed.
+
 ## Strigoi-Index Webhooks
 
 Called by Vistierie during a `strigoi-index` agent run (index-inclusion drift).
@@ -1244,6 +1355,7 @@ and for order-guard rejections it is the veto trace plus an
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | The signal is no longer `PENDING` (already `ACCEPTED`/`REJECTED`/`SKIPPED`) — idempotency guard, checked before vetos/order guard; no broker call, no signal-status change |
 | `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
+| `UNKNOWN_VERSION` | `PreySignalEmitter` (intake, not a `VetoService` entry) | The mapped signal's `agent_version` is neither a `PromptRegistry`-known prompt-body hash nor the emitting agent's current live DB version (`AgentVersionResolver.versionFor`) — the signal is dropped before it is ever inserted as `executor_signal`, so it produces no audit row and no `veto_trace` entry; `operator`-sourced (manual) signals are exempt since they carry no prompt hash |
 
 Every outcome (accepted or rejected) writes one `executor_decision` audit
 row; accepted entries also insert an `executor_position` row and mark the

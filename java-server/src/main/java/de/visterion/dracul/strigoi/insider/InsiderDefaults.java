@@ -32,7 +32,7 @@ class InsiderDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "routine",
-                        AgentResources.classpath("prompts/strigoi-insider.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/strigoi-insider.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-insider/complete",
                         null, null, null, true,

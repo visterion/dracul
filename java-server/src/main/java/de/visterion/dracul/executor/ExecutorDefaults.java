@@ -35,7 +35,7 @@ class ExecutorDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "reasoning",
-                        AgentResources.classpath("prompts/executor.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/executor.md"), schema,
                         resolvedSchedule, 25, 1800,
                         "/api/executor/complete",
                         null, null, null, true,

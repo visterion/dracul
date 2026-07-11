@@ -64,6 +64,10 @@ dracul:
     enabled: ${DRACUL_VOIEVOD_ENABLED:false}
     webhook-token: ${DRACUL_VOIEVOD_TOKEN:dev-token-change-me}
     schedule: ${DRACUL_VOIEVOD_SCHEDULE:0 0 8 * * 1-5}
+  voievod-outcome:
+    enabled: ${DRACUL_VOIEVOD_OUTCOME_ENABLED:false}
+    webhook-token: ${DRACUL_VOIEVOD_OUTCOME_TOKEN:dev-token-change-me}
+    schedule: ${DRACUL_VOIEVOD_OUTCOME_SCHEDULE:0 0 7 * * 6}
   gropar:
     enabled: ${DRACUL_GROPAR_ENABLED:false}
     webhook-token: ${DRACUL_GROPAR_WEBHOOK_TOKEN:dev-token-change-me}
@@ -117,6 +121,11 @@ dracul:
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
     notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
+    escalation-enabled: ${DRACUL_DAYWALKER_ESCALATION_ENABLED:true}
+    escalation-confidence: ${DRACUL_DAYWALKER_ESCALATION_CONFIDENCE:0.6}
+  daywalker-deep:
+    enabled: ${DRACUL_DAYWALKER_DEEP_ENABLED:false}
+    webhook-token: ${DRACUL_DAYWALKER_DEEP_TOKEN:dev-token-change-me}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}

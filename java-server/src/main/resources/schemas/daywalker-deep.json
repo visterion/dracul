@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["symbol", "trigger_type", "severity", "thesis", "confidence"],
+  "properties": {
+    "symbol": {"type": "string"},
+    "trigger_type": {"type": "string"},
+    "severity": {"type": "string", "enum": ["INFO", "WARNING", "CRITICAL"]},
+    "thesis": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "position_id": {"type": ["string", "null"]}
+  }
+}

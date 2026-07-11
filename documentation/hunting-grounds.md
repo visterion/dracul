@@ -18,12 +18,10 @@ fundamentals, earnings, index constituents, intraday, prices, OHLC) now
 routes through the co-located **Agora** service over MCP. Dracul no longer
 runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 
-> **Health:** Settings → Data Sources actively probes each source (one cheap
-> request, cached ~60s) and shows ok / rate-limited / error / not-configured /
-> timeout. See `GET /api/settings/data-sources`. **Note (7c):** this probe still
-> hits EDGAR/Yahoo/Finnhub/Wikipedia directly for a health signal only — it does
-> not reflect how hunting fetch is actually served (Agora). Flagged for 7d
-> realignment (probe Agora instead).
+> **Health:** Settings → Data Sources actively probes the Agora service
+> exclusively via the `ping` MCP tool (one cheap request, cached ~60s) and shows
+> ok / rate-limited / error / not-configured / timeout. See `GET /api/settings/data-sources`.
+> (Spec item 19 — health probing is now Agora-only.)
 
 ## Conventions
 

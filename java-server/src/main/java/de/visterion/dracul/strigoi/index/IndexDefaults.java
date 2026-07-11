@@ -32,7 +32,7 @@ class IndexDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "routine",
-                        AgentResources.classpath("prompts/strigoi-index.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/strigoi-index.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-index/complete",
                         null, null, null, true,

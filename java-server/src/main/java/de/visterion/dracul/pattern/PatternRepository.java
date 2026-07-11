@@ -68,6 +68,34 @@ public class PatternRepository {
                 .list();
     }
 
+    /** Accepted-pattern statements relevant to a hunter's fetch response: ACTIVE
+     *  patterns scoped to this strigoi plus ACTIVE patterns scoped to 'all'.
+     *  Used to feed the learning loop back into hunter tool-fetch output
+     *  ({@code active_patterns}) — see HuntController#handleFetch. */
+    public List<String> findAcceptedByStrigoi(String strigoi) {
+        return jdbc.sql("""
+                SELECT statement FROM patterns
+                WHERE status = 'ACTIVE' AND (applies_to_strigoi = :strigoi OR applies_to_strigoi = 'all')
+                ORDER BY proposed_at DESC
+                """)
+                .param("strigoi", strigoi)
+                .query(String.class)
+                .list();
+    }
+
+    /** Every ACTIVE pattern statement regardless of scope — used by Voievod, which
+     *  reviews consensus clusters spanning multiple hunters and so benefits from the
+     *  full accepted-lesson set rather than a single strigoi's slice. */
+    public List<String> findAllAccepted() {
+        return jdbc.sql("""
+                SELECT statement FROM patterns
+                WHERE status = 'ACTIVE'
+                ORDER BY proposed_at DESC
+                """)
+                .query(String.class)
+                .list();
+    }
+
     public void updateStatus(String id, String userId, String status) {
         jdbc.sql("UPDATE patterns SET status = :status WHERE id = :id::uuid AND user_id = :userId")
                 .param("status", status)
@@ -80,6 +108,36 @@ public class PatternRepository {
         jdbc.sql("UPDATE patterns SET name = :name WHERE id = :id::uuid AND user_id = :userId")
                 .param("name", name)
                 .param("id", id)
+                .param("userId", userId)
+                .update();
+    }
+
+    /** True when a PENDING pattern with an identical statement already exists for the
+     *  user — used by the voievod-outcome completion handler to dedupe proposals. */
+    public boolean existsPendingStatement(String userId, String statement) {
+        Integer count = jdbc.sql("""
+                SELECT COUNT(*) FROM patterns
+                WHERE user_id = :userId AND status = 'PENDING' AND statement = :statement
+                """)
+                .param("userId", userId)
+                .param("statement", statement)
+                .query(Integer.class)
+                .single();
+        return count != null && count > 0;
+    }
+
+    /** Inserts a new PENDING pattern proposal from the voievod-outcome agent. */
+    public void insertProposal(String userId, String appliesToStrigoi, String statement,
+                                int evidenceCount) {
+        jdbc.sql("""
+                INSERT INTO patterns (id, applies_to_strigoi, statement, status,
+                                      evidence_count, proposed_at, user_id)
+                VALUES (gen_random_uuid(), :strigoi, :statement, 'PENDING',
+                        :evidence, now(), :userId)
+                """)
+                .param("strigoi", appliesToStrigoi)
+                .param("statement", statement)
+                .param("evidence", evidenceCount)
                 .param("userId", userId)
                 .update();
     }

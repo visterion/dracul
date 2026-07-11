@@ -1,8 +1,10 @@
 package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.vistierie.VistierieClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -16,6 +18,9 @@ import java.util.Map;
  * Resolves every owner of a completed Daywalker assessment's symbol, fires one Telegram push
  * + one live event per symbol assessment (if severe enough), and persists one alert row per
  * owner that is outside its (owner, symbol, trigger-type) cooldown.
+ *
+ * <p>Low-confidence CRITICAL assessments additionally trigger an asynchronous
+ * reasoning-tier second opinion ({@code daywalker-deep}) — see {@link #maybeEscalate}.
  */
 @Component
 public class DaywalkerCompletionService {
@@ -27,28 +32,51 @@ public class DaywalkerCompletionService {
     private final ApplicationEventPublisher events;
     private final int notifyRank;
     private final long cooldownSeconds;
+    private final ObjectProvider<VistierieClient> vistierie;
+    private final boolean escalationEnabled;
+    private final boolean daywalkerDeepEnabled;
+    private final BigDecimal escalationThreshold;
 
     public DaywalkerCompletionService(
             DaywalkerAlertRepository alerts,
             TelegramNotifier notifier,
             ApplicationEventPublisher events,
             @Value("${dracul.daywalker.notify-level:CRITICAL}") String notifyLevel,
-            @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds) {
+            @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
+            ObjectProvider<VistierieClient> vistierie,
+            @Value("${dracul.daywalker.escalation-enabled:true}") boolean escalationEnabled,
+            @Value("${dracul.daywalker-deep.enabled:false}") boolean daywalkerDeepEnabled,
+            @Value("${dracul.daywalker.escalation-confidence:0.6}") BigDecimal escalationThreshold) {
         this.alerts = alerts;
         this.notifier = notifier;
         this.events = events;
         this.notifyRank = rank(notifyLevel);
         this.cooldownSeconds = cooldownSeconds;
+        this.vistierie = vistierie;
+        this.escalationEnabled = escalationEnabled;
+        this.daywalkerDeepEnabled = daywalkerDeepEnabled;
+        this.escalationThreshold = escalationThreshold;
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId) {
-        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, null);
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, null, false);
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId,
                                   String positionId) {
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, positionId, false);
+    }
+
+    /**
+     * @param fromEscalation true when this assessment is itself the completion of a
+     *                       {@code daywalker-deep} escalation run — guards against a
+     *                       re-triggered escalation looping forever.
+     */
+    public void persistAssessment(String symbol, String triggerType, String severity,
+                                  String thesis, BigDecimal confidence, String runId,
+                                  String positionId, boolean fromEscalation) {
         var all = alerts.findOwnersBySymbol(symbol);
         if (all.isEmpty()) {
             log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
@@ -96,6 +124,48 @@ public class DaywalkerCompletionService {
         }
         log.info("daywalker run {} persisted {} alert(s) for {} ({}), notified={}",
                 runId, eligible.size(), symbol, triggerType, sent);
+
+        maybeEscalate(symbol, triggerType, severity, thesis, confidence, positionId, fromEscalation);
+    }
+
+    /**
+     * Low-confidence CRITICAL assessments get a second opinion from a reasoning-tier
+     * one-shot run ({@code daywalker-deep}) — asynchronous, never delays or suppresses
+     * the alert above (which has already been persisted + notified by this point). Its
+     * completion posts a follow-up assessment through {@link #persistAssessment} with
+     * {@code fromEscalation=true}; the existing same-day dedupe/escalation-severity merge
+     * (never lowered) reconciles it into the alert row already written above.
+     *
+     * <p>{@code positionId} (nullable) rides along in the trigger input as {@code position_id}
+     * and is echoed back verbatim by the deep agent, so the follow-up assessment resolves
+     * against the SAME owner set as the original (exact holder for position-scoped alerts,
+     * non-held watchers otherwise).
+     *
+     * <p>Gated on BOTH {@code dracul.daywalker.escalation-enabled} and
+     * {@code dracul.daywalker-deep.enabled} — the latter defaults to {@code false}, so without
+     * this second check every low-confidence CRITICAL assessment would trigger a run for a
+     * possibly-unregistered {@code daywalker-deep} agent (silently WARN-swallowed downstream).
+     */
+    private void maybeEscalate(String symbol, String triggerType, String severity,
+                               String thesis, BigDecimal confidence, String positionId,
+                               boolean fromEscalation) {
+        if (!escalationEnabled || !daywalkerDeepEnabled || fromEscalation) return;
+        if (!"CRITICAL".equalsIgnoreCase(severity)) return;
+        if (confidence == null || confidence.compareTo(escalationThreshold) >= 0) return;
+
+        vistierie.ifAvailable(v -> {
+            try {
+                var input = new java.util.HashMap<String, Object>();
+                input.put("symbol", symbol);
+                input.put("trigger_type", triggerType);
+                input.put("thesis", thesis);
+                if (positionId != null) input.put("position_id", positionId);
+                v.triggerRun("daywalker-deep", input);
+                log.info("daywalker escalation triggered for {} ({})", symbol, triggerType);
+            } catch (Exception e) {
+                log.warn("daywalker escalation failed for {}: {}", symbol, e.getMessage());
+            }
+        });
     }
 
     private boolean inCooldown(String userId, String symbol, String triggerType, Instant now) {

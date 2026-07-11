@@ -78,9 +78,10 @@ Every Strigoi follows the same three-step shape:
    and filters to the ones worth spending tokens on.
 
 2. **LLM evaluation** via Vistierie — a Sonnet-tier (`reasoning`) or
-   Haiku-tier (`routine`) call. The prompt includes any `ACTIVE` patterns
-   from the Pattern Library that apply to this Strigoi. Returns structured
-   `Prey` JSON, including:
+   Haiku-tier (`routine`) call. The fetch-tool response includes `active_patterns`
+   — the statements of every `ACTIVE` pattern scoped to this Strigoi (plus any
+   scoped `'all'`), so approved user lessons weigh directly on this hunt (see
+   "Learning loop" below). Returns structured `Prey` JSON, including:
    - `kill_criteria` (1–5 strings, required): falsifiable exit conditions — a measurable
      threshold, a concrete date, or a single unambiguous public event under which the
      thesis is dead. They flow through the Prey→ExecutorSignal adapter; the executor
@@ -133,6 +134,34 @@ public class StrigoiSpin implements Bee<HuntRequest, List<Prey>> {
     }
 }
 ```
+
+## Learning loop (accepted patterns feed back into hunts)
+
+When the user approves a proposed pattern (`PATCH /api/patterns/{id}` with
+`action: "approve"`), `PatternController` sets its status to `ACTIVE` and
+assigns it a slug `name`. From that point on, every hunter's fetch-tool
+response — the payload returned from e.g. `/api/strigoi-spin/tools/fetch-candidates`
+— carries an `active_patterns` array: the `statement` text of every `ACTIVE`
+pattern where `applies_to_strigoi` equals that hunter's agent name or `'all'`
+(`PatternRepository.findAcceptedByStrigoi`, wired into `HuntController#handleFetch`
+via a field-injected `ObjectProvider<PatternRepository>`, mirroring the existing
+`PreySignalEmitter` pattern — if the bean is ever absent, the key is simply
+omitted rather than failing the hunt). Voievod's own fetch tool
+(`VoievodWebhookController`, which does not extend `HuntController`) includes the
+same key, but scoped to `PatternRepository.findAllAccepted()` — every `ACTIVE`
+pattern regardless of `applies_to_strigoi` — since Voievod judges consensus
+clusters spanning multiple hunters rather than a single anomaly type.
+
+Each of the 6 hunter prompts and the Voievod prompt (bumped to `1.1.0`, see
+`prompts/prompt_registry.json` and the archived `1.0.0` bodies under
+`prompts/archive/<agent>/`) instructs the agent to weigh candidates against
+`active_patterns` as user-confirmed lessons from past hunts.
+
+**Cache-expiry caveat:** `handleFetch` responses are served through
+`ToolFetchCache` (per-tool TTL). A pattern approved or rejected after a tool's
+cache entry was populated only becomes visible in `active_patterns` once that
+cache entry expires — acceptable for v1; there is no cache-invalidation hook
+on pattern-status changes.
 
 ## Adding a new agent
 
@@ -304,6 +333,35 @@ ticker across hunters is treated as coincidence (multiple-testing / FDR
 concern) until a concrete independent mechanism is named, and an empty
 verdict list is treated as a valid, respectable outcome.
 
+## Voievod-Outcome (elapsed-hunt pattern reviewer)
+
+**Implemented 2026-07-11 (fetch and completion sides both shipped).** A second,
+separate agent from Voievod above — reviews **elapsed** hunts (not consensus) and
+proposes generalizable patterns. Runs weekly, Saturday morning (default cron
+`0 0 7 * * 6`, UTC), reasoning tier (model_purpose `reasoning`).
+
+`POST /api/voievod-outcome/tools/fetch-elapsed-prey` (bearer-token auth via
+`DRACUL_VOIEVOD_OUTCOME_TOKEN`, only registered when `DRACUL_VOIEVOD_OUTCOME_ENABLED=true`)
+returns every prey whose horizon elapsed more than 30 days ago
+(`!Horizons.isOpen(discoveredAt, horizon, today.minusDays(30))`) and that has not yet been
+reviewed, oldest-discovered first, capped at 25 prey per run (the response notes whether the
+cap was applied). Each entry carries `symbol`, `anomalyType`, `thesis`, `killCriteria`,
+`discoveredAt`, `horizon`, and `ohlc` — daily close history since discovery (via
+`AgoraMarketData.dailyOhlcHistory`, window sized from `discoveredAt` to today, capped at
+730 days) condensed server-side to
+`firstClose` / `lastClose` / `minClose` / `maxClose` (token budget — the full daily series is
+never shipped). Fetched prey are marked reviewed **at fetch time**
+(`prey.outcome_reviewed_at`, migration V24) — the simplest correct v1; a re-run never
+re-surfaces the same prey even if the agent run itself later fails.
+
+The LLM judges each prey against its original thesis and kill criteria using the condensed
+OHLC, and proposes a pattern only when **at least 3 separate prey** support the same
+statement — see `prompts/voievod-outcome.md`. `POST /api/voievod-outcome/complete`
+persists the agent's proposed lessons as PENDING `patterns` rows (bearer-token auth,
+CF-Access-exempt); the agent definition's `completionPath` points at it. Requires
+`status: "done"` or `"succeeded"` — any other status is acknowledged (204) without
+persisting. See `documentation/api.md` for the full request/response contract.
+
 ## Daywalker (streaming guardian)
 
 **Implemented 2026-06-04** as a Vistierie `StreamingBee` consumer (Daywalker
@@ -367,6 +425,63 @@ same symbol are deduped independently.
 A single reasoning-tier (Sonnet) assessment per event. The documented
 Haiku pre-filter and Opus critical escalation are deferred; deterministic
 detection plus the cooldown already gate event volume.
+
+### Daywalker reasoning-tier escalation (`daywalker-deep`)
+
+**Implemented 2026-07-11.** A CRITICAL Daywalker assessment with low LLM-reported
+confidence gets a second, more rigorous opinion from a dedicated one-shot reasoning-tier
+agent, **asynchronously** — it never delays or suppresses the original alert (a CRITICAL
+alert arriving late is worse than one that is occasionally over-cautious).
+
+Flow, inside `DaywalkerCompletionService.persistAssessment`:
+
+1. The original assessment is persisted + notified exactly as before (this never
+   changes based on the escalation outcome).
+2. After that block, `maybeEscalate` checks: `dracul.daywalker.escalation-enabled`
+   (default `true`) **and** `severity == CRITICAL` **and** `confidence != null`
+   **and** `confidence < dracul.daywalker.escalation-confidence` (default `0.6`).
+   When all hold, it calls `VistierieClient.triggerRun("daywalker-deep", {symbol,
+   trigger_type, thesis, position_id?})` — a fire-and-forget trigger; any exception is
+   caught and logged at WARN, never propagated (the alert flow above has already
+   completed by this point regardless). `position_id` is included only for
+   position-scoped assessments (nullable pass-through of `persistAssessment`'s
+   `positionId` argument).
+3. `daywalker-deep` (`prompts/daywalker-deep.md`, schema
+   `schemas/daywalker-deep.json`) is a **trigger-only** Vistierie agent — `schedule`
+   is `null`, it is never cron-scheduled, only ever run via step 2's `triggerRun`.
+   It has no tools; the trigger's `payload` (`symbol`/`trigger_type`/`thesis`/
+   optional `position_id`) is its entire context — it re-scrutinizes the *existing*
+   thesis for rigor rather than re-fetching market data, and confirms or downgrades
+   severity. The prompt instructs it to echo `position_id` back VERBATIM (or omit it
+   when absent) — never to reason about it.
+4. `daywalker-deep`'s completion (`POST /api/daywalker-deep/complete`,
+   `DaywalkerDeepController`) parses the echoed `position_id` (null-safe) and calls
+   the same `persistAssessment` with it as the `positionId` argument, plus
+   `fromEscalation=true` — the loop guard: an escalation-originated assessment can
+   never trigger another escalation, however low its own reported confidence.
+   Threading `position_id` end-to-end matters because `persistAssessment`'s owner
+   resolution branches on it: non-null → exactly the holding owner of that position;
+   null → all non-held watchers. Without the round-trip, a position-scoped follow-up
+   would resolve against the wrong owner set.
+5. The follow-up assessment merges into the **same alert row** via the existing
+   same-UTC-day dedup/escalation-severity logic (see above) — `max(existingSeverity,
+   newSeverity)`, never downgraded. **v1 acceptance:** if `daywalker-deep` downgrades
+   (e.g. CRITICAL → WARNING), the already-notified CRITICAL severity on the row is
+   *not* walked back down; only a same-or-higher follow-up severity is reflected. The
+   user sees the original CRITICAL alert with its thesis/confidence refreshed to the
+   deep run's, and can judge the revised thesis themselves. **Residual caveat:** the
+   `position_id` round-trip relies on the model echoing it; if the model fails to
+   echo it, the follow-up falls back to the non-held-watcher owner set (`positionId
+   == null`), and the same-day merge then may not reach the holder — the original
+   alert row is unaffected either way.
+
+Config: `dracul.daywalker.escalation-enabled` / `dracul.daywalker.escalation-confidence`
+(env `DRACUL_DAYWALKER_ESCALATION_ENABLED` / `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE`);
+`dracul.daywalker-deep.enabled` / `dracul.daywalker-deep.webhook-token` gate the agent
+definition + controller the same way every other agent is gated
+(`@ConditionalOnProperty`). See `documentation/configuration.md` and
+`documentation/vistierie-integration.md` ("Programmatic run trigger with an input
+payload") for the `triggerRun(name, input)` contract this relies on.
 
 ## Executor (guarded broker-execution agent, slices 1+2)
 

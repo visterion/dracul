@@ -1,12 +1,9 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.agent.AgentDefinitionStore;
+import de.visterion.dracul.agent.PromptHashes;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 
 /**
  * Signal attributability: the emitting agent's "version" is a short hash of its
@@ -25,16 +22,7 @@ public class AgentVersionResolver {
 
     public String versionFor(String agentName) {
         return store.find(agentName)
-                .map(def -> "p-" + sha256Hex(def.promptText()).substring(0, 12))
+                .map(def -> PromptHashes.hash(def.promptText()))
                 .orElse("unknown");
-    }
-
-    private static String sha256Hex(String s) {
-        try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
     }
 }

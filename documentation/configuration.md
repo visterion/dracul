@@ -45,7 +45,7 @@ in `CurrentUserHolder`.
 When **both** values are blank **and** the active profile is `dev` or `test`, the
 filter runs in **bypass mode**: it honors an `X-Dev-User` header (falling back to
 `default`) instead of verifying a JWT. Machine webhook paths (`/api/strigoi-*`,
-`/api/voievod`, `/api/daywalker`) and `/actuator/health` are always excluded — they
+`/api/voievod`, `/api/daywalker`, `/api/daywalker-deep`) and `/actuator/health` are always excluded — they
 authenticate with their own bearer tokens and are reached in-cluster, bypassing
 Cloudflare.
 
@@ -135,12 +135,31 @@ outcome is recorded in `daywalker_alerts.notification_sent`.
 | `DRACUL_DAYWALKER_PRICE_SPIKE` | `0.03` | PRICE_SPIKE threshold (fraction) |
 | `DRACUL_DAYWALKER_VOLUME_MULT` | `3.0` | VOLUME_SPIKE multiple of rolling average |
 | `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min) |
+| `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). Escalation only actually fires when `DRACUL_DAYWALKER_DEEP_ENABLED` is **also** `true` — the gate checks both flags. |
+| `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE` | `0.6` | A CRITICAL assessment escalates only when its `confidence` is strictly below this threshold. |
 
 Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
 **DST caveat:** the session cron is a fixed UTC expression, so it drifts ~1h
 against US market open across the EST/EDT boundary. A calendar-aware open is
 deferred.
+
+## Daywalker-Deep (reasoning-tier escalation agent)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `DRACUL_DAYWALKER_DEEP_ENABLED` | `false` | Register the agent + activate `/api/daywalker-deep/complete` (`@ConditionalOnProperty`) |
+| `DRACUL_DAYWALKER_DEEP_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the completion webhook. **Change in production.** |
+
+Trigger-only agent (`schedule=null`) — see the escalation-flow config above
+(`DRACUL_DAYWALKER_ESCALATION_ENABLED` / `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE`)
+for when it fires. **`DaywalkerCompletionService` gates escalation on both
+`DRACUL_DAYWALKER_ESCALATION_ENABLED` and `DRACUL_DAYWALKER_DEEP_ENABLED`** — since
+the latter defaults to `false`, escalation is a no-op out of the box even though
+its own toggle defaults to `true`; enable both to actually trigger `daywalker-deep`
+runs. Like every Vistierie agent it also needs a budget set once via the admin
+endpoint before it can run — see `documentation/operations.md`'s Agent budget guard
+section.
 
 ## Watchlist price refresh
 
@@ -492,6 +511,31 @@ The following remain **code-bound** and require a redeploy to change:
 - Output schema (JSON structure the agent's completion webhook expects)
 - Tool routing (which webhook path handles which tool call)
 - The agent roster itself (which `AgentDefaultProvider` beans exist)
+
+## Prompt file header format
+
+Each bundled prompt file under `java-server/src/main/resources/prompts/` starts
+with a machine-readable `agent-meta` header, prepended to the file and followed
+by exactly one blank line:
+
+```
+<!-- agent-meta
+agent: strigoi-spin
+version: 1.0.0
+-->
+
+<unchanged prompt body>
+```
+
+`PromptDocument` (`de.visterion.dracul.agent.PromptDocument`) parses this header
+out. The **body** — everything after the header block and its following blank
+line — is what gets stored in `agent_definition.prompt_text`, hashed into
+`agent_version` (`AgentVersionResolver`), and sent to Vistierie; the header
+itself never affects that hash. `*Defaults` providers load prompts via
+`PromptDocument.bodyFromClasspath("prompts/<agent-name>.md")` instead of the
+raw `AgentResources.classpath(...)` helper. A prompt file without a header
+still parses fine (`agent`/`version` come back `null`, body = the raw file) —
+the header is optional metadata, not a hard requirement.
 
 ## Agent tool-fetch cache
 
