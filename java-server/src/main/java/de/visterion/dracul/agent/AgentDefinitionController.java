@@ -1,5 +1,7 @@
 package de.visterion.dracul.agent;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,6 +13,8 @@ import java.util.stream.IntStream;
 @RestController
 @RequestMapping("/api/settings/agents")
 public class AgentDefinitionController {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentDefinitionController.class);
 
     private final AgentDefinitionStore store;
     private final AgentDefinitionValidator validator;
@@ -59,15 +63,28 @@ public class AgentDefinitionController {
         var error = validator.validate(edited);
         if (error.isPresent()) return ResponseEntity.badRequest().body(Map.of("error", error.get()));
 
+        log.info("agent {} definition updated: prompt {} -> {}", name,
+                PromptHashes.hash(current.promptText()), PromptHashes.hash(edited.promptText()));
+
         saveAndPublish(edited);
         return ResponseEntity.ok(edited);
     }
 
     @PostMapping("/{name}/definition/reset")
     public ResponseEntity<?> reset(@PathVariable String name) {
+        var current = store.find(name).orElse(null);
         var def = providers.stream().map(AgentDefaultProvider::defaultDefinition)
                 .filter(d -> d.name().equals(name)).findFirst().orElse(null);
         if (def == null) return ResponseEntity.notFound().build();
+
+        if (current != null) {
+            log.info("agent {} definition reset: prompt {} -> {}", name,
+                    PromptHashes.hash(current.promptText()), PromptHashes.hash(def.promptText()));
+        } else {
+            log.info("agent {} definition reset: prompt -> {}", name,
+                    PromptHashes.hash(def.promptText()));
+        }
+
         saveAndPublish(def);
         return ResponseEntity.ok(def);
     }
