@@ -20,12 +20,12 @@
         <StatTile
           :label="t('vistierie.tiles.thisMonth')"
           icon="ph-moon"
-          :value="`$${data.monthlyTotalUsd.toFixed(2)}`"
-          :foot="t('vistierie.tiles.ofCap', { cap: data.monthlyBudgetUsd.toFixed(2) })"
+          :value="formatMoney(data.monthlyTotalUsd, 'USD')"
+          :foot="t('vistierie.tiles.ofCap', { cap: formatNumber(data.monthlyBudgetUsd, 2) })"
         />
         <StatTile
           :label="t('vistierie.tiles.perDay')"
-          :value="`$${avgPerDay}`"
+          :value="formatMoney(avgPerDay, 'USD')"
           :foot="t('vistierie.tiles.thirtyDayAvg')"
         />
       </div>
@@ -49,10 +49,10 @@
                     </span>
                     <span class="lr-num mono">
                       <template v-if="tier.budgetUsd">
-                        <span :class="tier.usedUsd > 0 ? 'pos' : ''">${{ tier.usedUsd.toFixed(2) }}</span>
-                        / ${{ tier.budgetUsd.toFixed(2) }}
+                        <span :class="tier.usedUsd > 0 ? 'pos' : ''">{{ formatMoney(tier.usedUsd, 'USD') }}</span>
+                        / {{ formatMoney(tier.budgetUsd, 'USD') }}
                       </template>
-                      <template v-else>${{ tier.usedUsd.toFixed(2) }} / ∞</template>
+                      <template v-else>{{ formatMoney(tier.usedUsd, 'USD') }} / ∞</template>
                     </span>
                   </div>
                   <div class="ledger-track">
@@ -69,8 +69,8 @@
                 <div class="lr-top">
                   <span class="lr-tier">{{ t('vistierie.sections.monthlyTotal') }}</span>
                   <span class="lr-num mono">
-                    <span class="pos">${{ data.monthlyTotalUsd.toFixed(2) }}</span>
-                    / ${{ data.monthlyBudgetUsd.toFixed(2) }}
+                    <span class="pos">{{ formatMoney(data.monthlyTotalUsd, 'USD') }}</span>
+                    / {{ formatMoney(data.monthlyBudgetUsd, 'USD') }}
                   </span>
                 </div>
                 <div class="ledger-track">
@@ -96,7 +96,7 @@
               >
                 <span class="as-name mono">{{ agent.agent }}</span>
                 <SpendBar :value="agent.totalUsd" :max="maxAgent" />
-                <span class="as-val mono">${{ agent.totalUsd.toFixed(2) }}</span>
+                <span class="as-val mono">{{ formatMoney(agent.totalUsd, 'USD') }}</span>
               </div>
             </div>
           </div>
@@ -116,11 +116,11 @@
             <div class="vist-foot">
               <div>
                 <div class="vf-k">{{ t('vistierie.stats.avgPerDay') }}</div>
-                <div class="vf-v mono">${{ avgPerDay }}</div>
+                <div class="vf-v mono">{{ formatMoney(avgPerDay, 'USD') }}</div>
               </div>
               <div>
                 <div class="vf-k">{{ t('vistierie.stats.monthTotal') }}</div>
-                <div class="vf-v mono">${{ data.monthlyTotalUsd.toFixed(2) }}</div>
+                <div class="vf-v mono">{{ formatMoney(data.monthlyTotalUsd, 'USD') }}</div>
               </div>
             </div>
           </div>
@@ -141,6 +141,7 @@ import SectionHeader from '../components/common/SectionHeader.vue'
 import StatTile from '../components/common/StatTile.vue'
 import SpendBar from '../components/common/SpendBar.vue'
 import LineChart from '../components/common/LineChart.vue'
+import { formatMoney, formatNumber } from '../utils/format'
 
 defineProps<{ embedded?: boolean }>()
 
@@ -166,8 +167,8 @@ const maxAgent = computed(() =>
 
 const avgPerDay = computed(() => {
   const d = data.value?.dailySpend30d
-  if (!d || d.length === 0) return '0.00'
-  return (d.reduce((s, e) => s + e.totalUsd, 0) / d.length).toFixed(2)
+  if (!d || d.length === 0) return 0
+  return d.reduce((s, e) => s + e.totalUsd, 0) / d.length
 })
 
 function fillClass(tier: TierBudget): string {
