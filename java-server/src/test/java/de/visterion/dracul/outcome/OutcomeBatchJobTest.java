@@ -53,8 +53,13 @@ class OutcomeBatchJobTest {
 
     private ExecutorPosition closedPosition(String symbol, String signalId, BigDecimal qty,
             BigDecimal exitPrice, BigDecimal realizedR, BigDecimal lowestPrice) {
+        return closedPosition(7L, symbol, signalId, qty, exitPrice, realizedR, lowestPrice);
+    }
+
+    private ExecutorPosition closedPosition(long id, String symbol, String signalId, BigDecimal qty,
+            BigDecimal exitPrice, BigDecimal realizedR, BigDecimal lowestPrice) {
         return new ExecutorPosition(
-                7L, "saxo-sim", symbol, "BUY", qty, bd("100"), bd("95"), bd("95"), 1, bd("5"),
+                id, "saxo-sim", symbol, "BUY", qty, bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", "2026-06-01 10:00:00.0", null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, exitPrice, realizedR, "TAKE_PROFIT", "2026-06-10 10:00:00.0",
                 null, null, null, null, null, 0, lowestPrice, null);
@@ -68,6 +73,9 @@ class OutcomeBatchJobTest {
                 null, null, null, "2026-06-01 10:00:00.0");
     }
 
+    /** NOTE: the TRIM/exit rows here carry NO {@code order_json.position_id} — this doubles as
+     *  the fallback-path test: pre-linkage historical rows must still match via the
+     *  symbol+calendar-day window heuristic. */
     @Test
     void tradeRecord_quantityWeightedRealizedR_matchesHandComputedFixture() {
         String symbol = "TRD1";
@@ -120,6 +128,87 @@ class OutcomeBatchJobTest {
         assertThat(row.complete()).isTrue();
         assertThat(row.sourceAgent()).isEqualTo("strigoi-spin");
         assertThat(row.ruleVersion()).isEqualTo("exec-v0.2");
+    }
+
+    /** Two lifecycles on the SAME symbol whose calendar-day windows overlap (same-day
+     *  close+reentry, possible with cooldown-days=0): the window heuristic alone WOULD leak each
+     *  lifecycle's TRIM/exit rows into the other's weighted-R math. {@code order_json.position_id}
+     *  stamping must keep them apart — each outcome row uses only its own exits. */
+    @Test
+    void twoSameDayLifecyclesOnOneSymbol_positionIdKeepsTrimsAndExitsApart() {
+        String symbol = "LEAK1";
+
+        DecisionLog enterA = decisionRow("enter-A", "sig-A", symbol, "ENTER", null, null, null, null, null);
+        DecisionLog enterB = decisionRow("enter-B", "sig-B", symbol, "ENTER", null, null, null, null, null);
+
+        // Lifecycle A (position 1): trim 33 @ 110 (R=2.0), final 67 @ 104 (R=0.8) -> 1.196
+        var trimAJson = mapper.createObjectNode();
+        trimAJson.put("fraction", 0.33);
+        trimAJson.put("qty_closed", bd("33"));
+        trimAJson.put("price", bd("110"));
+        trimAJson.put("position_id", 1L);
+        DecisionLog trimA = decisionRow("trim-A", null, symbol, "TRIM", null, null, trimAJson, null, null);
+        var exitAJson = mapper.createObjectNode();
+        exitAJson.put("fraction", 1.0);
+        exitAJson.put("position_id", 1L);
+        DecisionLog exitA = decisionRow("exit-A", null, symbol, "EXIT_FULL", "TAKE_PROFIT",
+                null, exitAJson, null, null);
+
+        // Lifecycle B (position 2): trim 50 @ 120 (R=4.0), final 50 @ 100 (R=0) -> 2.0
+        var trimBJson = mapper.createObjectNode();
+        trimBJson.put("fraction", 0.5);
+        trimBJson.put("qty_closed", bd("50"));
+        trimBJson.put("price", bd("120"));
+        trimBJson.put("position_id", 2L);
+        DecisionLog trimB = decisionRow("trim-B", null, symbol, "TRIM", null, null, trimBJson, null, null);
+        var exitBJson = mapper.createObjectNode();
+        exitBJson.put("fraction", 1.0);
+        exitBJson.put("position_id", 2L);
+        DecisionLog exitB = decisionRow("exit-B", null, symbol, "LOG_HARD_EXIT", "HARD_STOP",
+                null, exitBJson, null, null);
+
+        ExecutorPosition posA = closedPosition(1L, symbol, "sig-A", bd("67"), bd("104"), bd("0.8"), null);
+        ExecutorPosition posB = closedPosition(2L, symbol, "sig-B", bd("50"), bd("100"), bd("0"), null);
+
+        when(positions.findClosed()).thenReturn(List.of(posA, posB));
+        when(decisionLog.findBySignalIdAndAction("sig-A", "ENTER")).thenReturn(enterA);
+        when(decisionLog.findBySignalIdAndAction("sig-B", "ENTER")).thenReturn(enterB);
+        when(outcomeLog.isComplete("enter-A")).thenReturn(false);
+        when(outcomeLog.isComplete("enter-B")).thenReturn(false);
+        // The overlapping calendar-day window returns BOTH lifecycles' rows for BOTH positions —
+        // exactly the leak scenario; position_id filtering must sort it out.
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("TRIM")), any(), any()))
+                .thenReturn(List.of(trimA, trimB));
+        when(decisionLog.findBySymbolAndActionsBetween(
+                eq(symbol), eq(List.of("EXIT_FULL", "LOG_HARD_EXIT", "RECONCILE_CLOSE")), any(), any()))
+                .thenReturn(List.of(exitA, exitB));
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("ENTER")), any(), any()))
+                .thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(2)).upsert(captor.capture());
+
+        OutcomeLogRow rowA = captor.getAllValues().stream()
+                .filter(r -> "enter-A".equals(r.logIdRef())).findFirst().orElseThrow();
+        OutcomeLogRow rowB = captor.getAllValues().stream()
+                .filter(r -> "enter-B".equals(r.logIdRef())).findFirst().orElseThrow();
+
+        // A: (33*2.0 + 67*0.8)/100 = 1.196 — trimB's R=4.0 leg must NOT be in here
+        assertThat(rowA.realizedR()).isEqualByComparingTo("1.196");
+        assertThat(rowA.exitTrigger()).isEqualTo("TAKE_PROFIT");
+        assertThat(rowA.exitLogId()).isEqualTo("exit-A");
+        assertThat(rowA.partialExits().size()).isEqualTo(1);
+        assertThat(rowA.partialExits().get(0).path("log_id").asString()).isEqualTo("trim-A");
+
+        // B: (50*4.0 + 50*0)/100 = 2.0 — trimA's leg must NOT be in here
+        assertThat(rowB.realizedR()).isEqualByComparingTo("2.0");
+        assertThat(rowB.exitTrigger()).isEqualTo("HARD_STOP");
+        assertThat(rowB.exitLogId()).isEqualTo("exit-B");
+        assertThat(rowB.partialExits().size()).isEqualTo(1);
+        assertThat(rowB.partialExits().get(0).path("log_id").asString()).isEqualTo("trim-B");
     }
 
     @Test

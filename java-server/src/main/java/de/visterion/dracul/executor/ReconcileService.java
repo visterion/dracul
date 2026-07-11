@@ -237,9 +237,15 @@ public class ReconcileService {
         inputs.put("entry_price", p.entryPrice());
         inputs.put("initial_stop", p.initialStop());
 
+        // Exact position linkage for the outcome batch job (decision_log has no position_id
+        // column; order_json carries it). A reconcile close is always a full flatten.
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("fraction", 1.0);
+        orderJson.put("position_id", p.id());
+
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
-                action, exitReason, null, null, null, null, null));
+                action, exitReason, orderJson, null, null, null, null));
     }
 
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp) {

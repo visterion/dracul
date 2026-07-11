@@ -166,9 +166,16 @@ public class HardTriggerService {
         ObjectNode latency = mapper.createObjectNode();
         latency.put("trigger_to_order_seconds", Duration.between(tStart, clock.instant()).getSeconds());
 
+        // Exact position linkage for the outcome batch job (decision_log has no position_id
+        // column; order_json carries it). A hard exit is always a full flatten -> fraction 1.0,
+        // mirroring the EXIT_FULL row's shape.
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("fraction", 1.0);
+        orderJson.put("position_id", p.id());
+
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "HARD_TRIGGER", null, null, null, p.symbol(), inputs, vetoResults,
-                "LOG_HARD_EXIT", trigger.reasonCode(), null, null, null, latency, null));
+                "LOG_HARD_EXIT", trigger.reasonCode(), orderJson, null, null, latency, null));
     }
 
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
