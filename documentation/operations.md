@@ -212,11 +212,11 @@ Dracul:
      never be accepted on any order-placing/modifying tool call (Agora
      enforces this; see `feat/live-readonly-tokens`).
    - Rename the `saxo-sim` connection key to `depot-1` in Agora's
-     `agora.trading.connections` config (same rename Dracul's V24 migration
+     `agora.trading.connections` config (same rename Dracul's V25 migration
      applies on its own side — see below). This is a config-only change
      (the connection's `provider`/`environment`/`base-url`/credentials are
      unchanged, only the map key + any `AGORA_TRADING_SAXO_SIM_*` env names
-     that encode it) and must land **before** Dracul's V24 migration runs,
+     that encode it) and must land **before** Dracul's V25 migration runs,
      or the two sides briefly disagree on the connection id.
    - Restart/redeploy Agora so both changes are live.
 
@@ -226,7 +226,7 @@ Dracul:
    - If not relying on the new default, also set
      `DRACUL_EXECUTOR_CONNECTION` explicitly — it now defaults to `depot-1`
      (renamed from `saxo-sim`).
-   - On startup, Flyway migration **V24** auto-renames any persisted rows
+   - On startup, Flyway migration **V25** auto-renames any persisted rows
      referencing the old `saxo-sim` connection id (e.g.
      `executor_position.connection`) to `depot-1`. No manual data migration
      step is needed.
@@ -238,7 +238,7 @@ appear only when the calling user's email is on
 still matches: `executor_position.connection` should read `depot-1`, matching
 whatever Agora now reports as the live connection id.
 
-**Rollback note:** V24 is a **one-way, idempotent-forward** rename — it does
+**Rollback note:** V25 is a **one-way, idempotent-forward** rename — it does
 not ship a `.undo` migration. Reverting the connection name (e.g. rolling
 back to a pre-rename Agora config) requires manually running the reverse
 `UPDATE ... SET connection = 'saxo-sim' WHERE connection = 'depot-1'` against
