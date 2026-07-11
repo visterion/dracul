@@ -29,14 +29,14 @@ class ExecutorPositionRepositoryTest {
         String symbolA = "POS-A-" + UUID.randomUUID();
         String symbolB = "POS-B-" + UUID.randomUUID();
 
-        var posA = new ExecutorPosition(null, "saxo-sim", symbolA, "BUY",
+        var posA = new ExecutorPosition(null, "depot-1", symbolA, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
                 null, null, null, null, 0, null, null);
-        var posB = new ExecutorPosition(null, "saxo-sim", symbolB, "BUY",
+        var posB = new ExecutorPosition(null, "depot-1", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
@@ -64,7 +64,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void updateMaintenanceReflected() {
         String symbol = "POS-MAINT-" + UUID.randomUUID();
-        var pos = new ExecutorPosition(null, "saxo-sim", symbol, "BUY",
+        var pos = new ExecutorPosition(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
@@ -87,7 +87,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void closeMovesOutOfOpen() {
         String symbol = "POS-CLOSE-" + UUID.randomUUID();
-        var pos = new ExecutorPosition(null, "saxo-sim", symbol, "BUY",
+        var pos = new ExecutorPosition(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
@@ -185,7 +185,7 @@ class ExecutorPositionRepositoryTest {
     }
 
     private ExecutorPosition openPosition(String symbol) {
-        return new ExecutorPosition(null, "saxo-sim", symbol, "BUY",
+        return new ExecutorPosition(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
                 new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",

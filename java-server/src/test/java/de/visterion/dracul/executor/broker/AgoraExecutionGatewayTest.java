@@ -40,10 +40,10 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"cash\":\"1000\",\"buyingPower\":\"2000\",\"currency\":\"USD\"}}");
 
-        AccountSnapshot result = gw.account("saxo-sim");
+        AccountSnapshot result = gw.account("depot-1");
 
         assertThat(gw.capturedTool).isEqualTo("get_account");
-        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("saxo-sim");
+        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
         assertThat(result.cash()).isEqualByComparingTo("1000");
         assertThat(result.buyingPower()).isEqualByComparingTo("2000");
         assertThat(result.currency()).isEqualTo("USD");
@@ -57,10 +57,10 @@ class AgoraExecutionGatewayTest {
                 ]}}
                 """);
 
-        List<BrokerPosition> result = gw.positions("saxo-sim");
+        List<BrokerPosition> result = gw.positions("depot-1");
 
         assertThat(gw.capturedTool).isEqualTo("get_positions");
-        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("saxo-sim");
+        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
         assertThat(result).hasSize(1);
         assertThat(result.get(0).symbol()).isEqualTo("ACME");
         assertThat(result.get(0).qty()).isEqualByComparingTo("10");
@@ -77,7 +77,7 @@ class AgoraExecutionGatewayTest {
                 ]}}
                 """);
 
-        List<BrokerOrder> result = gw.orders("saxo-sim");
+        List<BrokerOrder> result = gw.orders("depot-1");
 
         assertThat(gw.capturedTool).isEqualTo("get_orders");
         assertThat(result).hasSize(1);
@@ -103,7 +103,7 @@ class AgoraExecutionGatewayTest {
                 ]}}
                 """);
 
-        List<BrokerOrder> result = gw.orders("saxo-sim");
+        List<BrokerOrder> result = gw.orders("depot-1");
 
         assertThat(result).hasSize(3);
         assertThat(result.get(0).role()).isEqualTo(OrderRole.ENTRY);
@@ -121,7 +121,7 @@ class AgoraExecutionGatewayTest {
                     "role":"entry","status":"working","qty":"10","filledQty":"0"}}}
                 """);
 
-        Optional<BrokerOrder> result = gw.orderByRef("saxo-sim", "ref-1");
+        Optional<BrokerOrder> result = gw.orderByRef("depot-1", "ref-1");
 
         assertThat(gw.capturedTool).isEqualTo("get_order_by_ref");
         assertThat(gw.capturedArgs.path("ref").asString()).isEqualTo("ref-1");
@@ -134,7 +134,7 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{}}");
 
-        Optional<BrokerOrder> result = gw.orderByRef("saxo-sim", "nope");
+        Optional<BrokerOrder> result = gw.orderByRef("depot-1", "nope");
 
         assertThat(result).isEmpty();
     }
@@ -149,11 +149,11 @@ class AgoraExecutionGatewayTest {
         BracketRequest req = new BracketRequest("ACME", "BUY", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("110"), "sig-1", "DAY");
 
-        PlacedBracket result = gw.placeBracket("saxo-sim", req);
+        PlacedBracket result = gw.placeBracket("depot-1", req);
 
         assertThat(gw.capturedTool).isEqualTo("place_bracket");
         JsonNode args = gw.capturedArgs;
-        assertThat(args.path("connection").asString()).isEqualTo("saxo-sim");
+        assertThat(args.path("connection").asString()).isEqualTo("depot-1");
         assertThat(args.path("symbol").asString()).isEqualTo("ACME");
         assertThat(args.path("side").asString()).isEqualTo("BUY");
         assertThat(args.has("qty")).isTrue();
@@ -184,7 +184,7 @@ class AgoraExecutionGatewayTest {
         BracketRequest req = new BracketRequest("ACME", "BUY", new BigDecimal("10"),
                 null, new BigDecimal("95"), new BigDecimal("110"), null, null);
 
-        gw.placeBracket("saxo-sim", req);
+        gw.placeBracket("depot-1", req);
 
         assertThat(gw.capturedArgs.has("limitPrice")).isFalse();
         assertThat(gw.capturedArgs.has("clientRef")).isFalse();
@@ -197,7 +197,7 @@ class AgoraExecutionGatewayTest {
                 {"output":{"closedQty":"5","remainingQty":"5","avgFillPrice":"108","orderId":"close-1"}}
                 """);
 
-        CloseResult result = gw.flatten("saxo-sim", "ACME", new BigDecimal("0.5"));
+        CloseResult result = gw.flatten("depot-1", "ACME", new BigDecimal("0.5"));
 
         assertThat(gw.capturedTool).isEqualTo("flatten");
         assertThat(gw.capturedArgs.path("symbol").asString()).isEqualTo("ACME");
@@ -214,7 +214,7 @@ class AgoraExecutionGatewayTest {
                 {"output":{"orderId":"brk-1","newStop":"104","newTarget":"120","accepted":true}}
                 """);
 
-        ModifyResult result = gw.modifyBracket("saxo-sim", "brk-1", "ACME", new BigDecimal("104"), new BigDecimal("120"));
+        ModifyResult result = gw.modifyBracket("depot-1", "brk-1", "ACME", new BigDecimal("104"), new BigDecimal("120"));
 
         assertThat(gw.capturedTool).isEqualTo("modify_bracket");
         assertThat(gw.capturedArgs.path("orderId").asString()).isEqualTo("brk-1");
@@ -231,10 +231,10 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":true,\"orderId\":\"brk-1\",\"status\":\"cancelled\"}}");
 
-        gw.cancelOrder("saxo-sim", "brk-1");
+        gw.cancelOrder("depot-1", "brk-1");
 
         assertThat(gw.capturedTool).isEqualTo("cancel_order");
-        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("saxo-sim");
+        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
         assertThat(gw.capturedArgs.path("orderId").asString()).isEqualTo("brk-1");
     }
 
@@ -242,7 +242,7 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"UnknownOrder\"}}");
 
-        assertThatThrownBy(() -> gw.cancelOrder("saxo-sim", "brk-1"))
+        assertThatThrownBy(() -> gw.cancelOrder("depot-1", "brk-1"))
                 .isInstanceOf(BrokerUnavailableException.class)
                 .hasMessageContaining("UnknownOrder");
     }
@@ -251,13 +251,13 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"available\":false,\"error\":\"no session\"}}");
 
-        assertThatThrownBy(() -> gw.account("saxo-sim"))
+        assertThatThrownBy(() -> gw.account("depot-1"))
                 .isInstanceOf(BrokerUnavailableException.class)
                 .hasMessageContaining("no session");
     }
 
     // -------------------------------------------------------------------
-    // Live Agora/saxo-sim real wire shapes (captured 2026-07-09)
+    // Live Agora/depot-1 real wire shapes (captured 2026-07-09)
     // -------------------------------------------------------------------
 
     @Test void accountReadsNestedCamelCaseFields() {
@@ -267,7 +267,7 @@ class AgoraExecutionGatewayTest {
                     "cash":9178.57,"currency":"EUR","status":"ACTIVE"}}}
                 """);
 
-        AccountSnapshot result = gw.account("saxo-sim");
+        AccountSnapshot result = gw.account("depot-1");
 
         assertThat(result.cash()).isEqualByComparingTo("9178.57");
         assertThat(result.buyingPower()).isEqualByComparingTo("9178.57");
@@ -283,7 +283,7 @@ class AgoraExecutionGatewayTest {
         BracketRequest req = new BracketRequest("AAPL", "BUY", new BigDecimal("3"),
                 new BigDecimal("300"), new BigDecimal("290"), new BigDecimal("320"), "sig-1", "DAY");
 
-        PlacedBracket result = gw.placeBracket("saxo-sim", req);
+        PlacedBracket result = gw.placeBracket("depot-1", req);
 
         assertThat(result.bracketId()).isEqualTo("5039135626");
         assertThat(result.clientRef()).isEqualTo("sig-1");
@@ -303,7 +303,7 @@ class AgoraExecutionGatewayTest {
         BracketRequest req = new BracketRequest("AAPL", "BUY", new BigDecimal("3"),
                 new BigDecimal("300"), new BigDecimal("290"), new BigDecimal("320"), "sig-1", "DAY");
 
-        assertThatThrownBy(() -> gw.placeBracket("saxo-sim", req))
+        assertThatThrownBy(() -> gw.placeBracket("depot-1", req))
                 .isInstanceOf(BrokerUnavailableException.class)
                 .hasMessageContaining("TooFarFromEntryOrder");
     }
@@ -312,7 +312,7 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"NoPosition\"}}");
 
-        assertThatThrownBy(() -> gw.flatten("saxo-sim", "AAPL", new BigDecimal("1")))
+        assertThatThrownBy(() -> gw.flatten("depot-1", "AAPL", new BigDecimal("1")))
                 .isInstanceOf(BrokerUnavailableException.class)
                 .hasMessageContaining("NoPosition");
     }
@@ -321,7 +321,7 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":false,\"rejectReason\":\"unknown order\"}}");
 
-        assertThatThrownBy(() -> gw.modifyBracket("saxo-sim", "brk-1", "AAPL",
+        assertThatThrownBy(() -> gw.modifyBracket("depot-1", "brk-1", "AAPL",
                 new BigDecimal("104"), new BigDecimal("120")))
                 .isInstanceOf(BrokerUnavailableException.class)
                 .hasMessageContaining("unknown order");
@@ -336,7 +336,7 @@ class AgoraExecutionGatewayTest {
                 ]}}
                 """);
 
-        List<BrokerPosition> result = gw.positions("saxo-sim");
+        List<BrokerPosition> result = gw.positions("depot-1");
 
         assertThat(result).hasSize(1);
         BrokerPosition p = result.get(0);
@@ -359,7 +359,7 @@ class AgoraExecutionGatewayTest {
                 ]}}
                 """);
 
-        List<BrokerOrder> result = gw.orders("saxo-sim");
+        List<BrokerOrder> result = gw.orders("depot-1");
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).role()).isEqualTo(OrderRole.STOP_LOSS);
@@ -389,7 +389,7 @@ class AgoraExecutionGatewayTest {
             AgoraExecutionGateway gw = new AgoraExecutionGateway(
                     "http://localhost:" + server.getAddress().getPort(), "tkn", mapper, 200);
 
-            assertThatThrownBy(() -> gw.account("saxo-sim"))
+            assertThatThrownBy(() -> gw.account("depot-1"))
                     .isInstanceOf(BrokerUnavailableException.class);
         } finally {
             server.stop(0);
