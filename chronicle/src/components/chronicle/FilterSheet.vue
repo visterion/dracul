@@ -89,8 +89,16 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') emit('close')
 }
 
+let priorOverflow = ''
 function setBodyOverflow(hidden: boolean) {
-  document.body.style.overflow = hidden ? 'hidden' : ''
+  const scroller = document.querySelector<HTMLElement>('main.app-main')
+  if (!scroller) return
+  if (hidden) {
+    priorOverflow = scroller.style.overflow
+    scroller.style.overflow = 'hidden'
+  } else {
+    scroller.style.overflow = priorOverflow
+  }
 }
 
 watch(() => props.open, (isOpen) => {
