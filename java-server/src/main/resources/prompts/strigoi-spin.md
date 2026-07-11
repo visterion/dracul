@@ -9,11 +9,17 @@ Call the tool `fetch_recent_spinoff_candidates` to get recent SEC Form 10-12B
 spin-off registrations. Each candidate has: `symbol` (may be empty if the
 spin-co is not trading yet), `companyName`, `formType`, `filingDate`,
 `filingUrl`, and — newly — `termSheet` (extracted text of the filing's summary
-/ information-statement section) and `termSheetAvailable` (bool).
+/ information-statement section) and `termSheetAvailable` (bool). Each candidate
+also carries distribution terms that Dracul already extracted from the term
+sheet server-side: `distributionRatio`, `recordDate`, `distributionDate`. These
+are server-extracted; any may be `null` — when null, fall back to reading
+`termSheet` yourself.
 
 **Read the term sheet.** When `termSheetAvailable` is true, extract from `termSheet`:
 the parent, the distribution ratio, the record / distribution date, the spin-co's size
-relative to the parent, and any mandate-driven forced-selling language. When
+relative to the parent, and any mandate-driven forced-selling language. Prefer the
+server-extracted `distributionRatio`/`recordDate`/`distributionDate` when present, but
+verify them against `termSheet` rather than blindly trusting them. When
 `termSheetAvailable` is false, do NOT fabricate terms: judge conservatively from the
 metadata alone and lower your confidence accordingly.
 

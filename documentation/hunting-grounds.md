@@ -47,7 +47,7 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 
 | Strigoi | Facade + Agora tool(s) |
 |---|---|
-| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) |
+| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date extraction) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
 | strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScore` (`get_fundamental_score`) |
