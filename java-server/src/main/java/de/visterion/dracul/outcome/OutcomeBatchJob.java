@@ -122,12 +122,16 @@ public class OutcomeBatchJob {
         Instant windowTo = closedDate != null
                 ? closedDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant() : Instant.now();
 
-        List<DecisionLog> trims = windowFrom != null
+        // TRIM/exit rows carry order_json.position_id (exact linkage). Rows stamped with a
+        // DIFFERENT position's id are always excluded — that is what keeps two same-day
+        // lifecycles on one symbol apart. Rows WITHOUT a position_id (pre-linkage historical
+        // rows) fall back to the symbol+calendar-day window heuristic the query already applied.
+        List<DecisionLog> trims = ownedByPosition(windowFrom != null
                 ? decisionLog.findBySymbolAndActionsBetween(p.symbol(), TRIM_ACTIONS, windowFrom, windowTo)
-                : List.of();
-        List<DecisionLog> exits = windowFrom != null
+                : List.of(), p.id());
+        List<DecisionLog> exits = ownedByPosition(windowFrom != null
                 ? decisionLog.findBySymbolAndActionsBetween(p.symbol(), EXIT_ACTIONS, windowFrom, windowTo)
-                : List.of();
+                : List.of(), p.id());
         DecisionLog finalExit = exits.isEmpty() ? null : exits.get(exits.size() - 1);
 
         WeightedR weighted = weightedRealizedR(p, trims, rPerShare);
@@ -190,6 +194,18 @@ public class OutcomeBatchJob {
             }
         }
         return best != null ? best : candidates.get(candidates.size() - 1);
+    }
+
+    /** Keeps rows linked to {@code positionId} via {@code order_json.position_id}, plus rows
+     *  with no linkage at all (historical rows written before position_id stamping existed,
+     *  which rely on the caller's symbol+window heuristic). Rows explicitly stamped with a
+     *  different position's id are always dropped. */
+    private static List<DecisionLog> ownedByPosition(List<DecisionLog> rows, Long positionId) {
+        return rows.stream().filter(d -> {
+            JsonNode pid = d.orderJson() == null ? null : d.orderJson().path("position_id");
+            if (pid == null || pid.isMissingNode() || pid.isNull()) return true; // pre-linkage row
+            return pid.canConvertToLong() && positionId != null && pid.asLong() == positionId;
+        }).toList();
     }
 
     private record WeightedR(BigDecimal realizedR, ArrayNode partialExits) {}

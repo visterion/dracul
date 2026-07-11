@@ -812,6 +812,10 @@ public class ExecutorWebhookController {
             orderJson.put("qty_closed", qtyClosed);
             orderJson.put("qty_remaining", remaining);
             orderJson.put("price", cr.avgFillPrice());
+            // Exact position linkage for the outcome batch job (decision_log has no position_id
+            // column; order_json carries it) — without it, a same-day close+reentry on the same
+            // symbol could leak another lifecycle's TRIM into the weighted-R math.
+            orderJson.put("position_id", position.id());
 
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
@@ -836,6 +840,7 @@ public class ExecutorWebhookController {
 
         ObjectNode orderJson = mapper.createObjectNode();
         orderJson.put("fraction", fraction);
+        orderJson.put("position_id", position.id()); // exact linkage for the outcome batch job
 
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "SOFT_TRIGGER", null, null, null, symbol, inputs, null,
