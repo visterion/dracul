@@ -318,6 +318,29 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void confirmedFill_clearsEntryExpiryMarker() {
+        // entry_expires_at doubles as the persisted "unfilled" flag for LLM-exit gating: once
+        // the broker actually holds the position (confirmed fill), reconcile must clear it —
+        // otherwise exit_position would keep rejecting a genuinely filled position NOT_FILLED.
+        ExecutorPosition p = new ExecutorPosition(13L, "c", "FILLPOS", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
+                List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-13",
+                new BigDecimal("100"), BigDecimal.ZERO, 0, null, null, null, null, "stop-13",
+                null, null, null, null, 0, null, "2026-07-10T00:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("FILLPOS", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("104")));
+
+        ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
+
+        verify(positionRepo).clearEntryExpiry(13L);
+        assertThat(result.unfilledIds()).isEmpty();
+        assertThat(result.survivors()).hasSize(1);
+        assertThat(result.survivors().get(0).entryExpiresAt()).isNull();
+    }
+
+    @Test
     void brokerPositionWithoutBookRowIsFlaggedAsOrphan() {
         when(positionRepo.findOpen()).thenReturn(List.of());
 

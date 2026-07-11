@@ -28,5 +28,9 @@ public record EnrichedPosition(
         String tranche2Reason,
         String sourceSignalId,
         int trimCount,
-        double suggestedFraction) {
+        double suggestedFraction,
+        /** False while the position's GTD entry has no confirmed fill (no broker holdings):
+         *  hard triggers, ratcheting, soft-confirm accumulation and LLM exits are all gated
+         *  off until the entry fills; EntryExpiryService owns the unfilled lifecycle. */
+        boolean entryFilled) {
 }

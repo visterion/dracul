@@ -261,6 +261,41 @@ class MaintenancePipelineTest {
 
         assertThat(result).extracting(EnrichedPosition::symbol)
                 .containsExactlyInAnyOrder("AAA", "BBB");
+        // The enrichment carries the fill state so the agent (and Chronicle) can see it.
+        assertThat(result.stream().filter(ep -> "AAA".equals(ep.symbol())).findFirst()
+                .orElseThrow().entryFilled()).isFalse();
+        assertThat(result.stream().filter(ep -> "BBB".equals(ep.symbol())).findFirst()
+                .orElseThrow().entryFilled()).isTrue();
+    }
+
+    @Test
+    void unfilledPosition_softConfirmNotAccumulated() {
+        // Close 90 sits below the chandelier (110 - 3*2 = 104) AND below the entry (100) —
+        // on a filled position that would increment the soft-confirm count and write a new
+        // adverse extreme. Flagged UNFILLED, neither may happen: an unfilled entry has nothing
+        // to soft-exit (accumulated confirms would prime an immediate exit the moment the
+        // entry fills), and a pre-fill close is not an excursion of any held position.
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(
+                new ReconcileService.ReconcileResult(List.of(bbb), Set.of(1L)));
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("90")));
+        when(hardTrigger.apply(any(), any(), eq("r1"))).thenAnswer(inv -> inv.getArgument(0));
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        assertThat(result).hasSize(1);
+        EnrichedPosition ep = result.get(0);
+        assertThat(ep.entryFilled()).isFalse();
+        assertThat(ep.chandelierBreach()).isFalse();
+        assertThat(ep.softConfirmCount()).isEqualTo(0);
+
+        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any());
+        verify(positionRepo, org.mockito.Mockito.never()).updateAdverseExtreme(anyLong(), any());
     }
 
     @Test

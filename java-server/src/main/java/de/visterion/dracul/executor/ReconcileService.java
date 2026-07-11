@@ -268,6 +268,14 @@ public class ReconcileService {
     }
 
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp) {
+        // The broker actually holds this position -> the entry is confirmed filled. Clear the
+        // GTD expiry marker: from here on `entry_expires_at IS NULL` doubles as the persisted
+        // "entry filled" flag (set at placement, cleared here on fill or by EntryExpiryService
+        // on cancel), which ExecutorWebhookController.exitPosition uses to gate LLM exits.
+        if (p.entryExpiresAt() != null) {
+            positionRepo.clearEntryExpiry(p.id());
+        }
+
         BigDecimal currentClose = bp.marketPrice();
         BigDecimal baseHighest = p.highestPrice() == null ? p.entryPrice() : p.highestPrice();
         // highest_price is the favorable price extreme: highest for a long, lowest for a short.
@@ -288,7 +296,7 @@ public class ReconcileService {
                 p.status(), p.brokerOrderId(), newHighest, newMfeR, p.softConfirmCount(),
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
-                p.trimCount(), p.lowestPrice(), p.entryExpiresAt());
+                p.trimCount(), p.lowestPrice(), null);
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {

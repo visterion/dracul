@@ -1198,7 +1198,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of("X"),
-                true, false, 1, true, "R_CONFIRMED", "sig-42", 0, 0.33);
+                true, false, 1, true, "R_CONFIRMED", "sig-42", 0, 0.33, true);
         when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
@@ -1213,6 +1213,7 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> first = (Map<String, Object>) positions.get(0);
         assertThat(first.get("symbol")).isEqualTo("ACME");
         assertThat(first.get("signal_id")).isEqualTo("sig-42");
+        assertThat(first.get("entry_filled")).isEqualTo(true);
         assertThat(first.get("current_price")).isEqualTo(new BigDecimal("108"));
         assertThat(first.get("chandelier_level")).isEqualTo(new BigDecimal("104"));
         assertThat(first.get("kill_criteria")).isEqualTo(List.of("X"));
@@ -1239,9 +1240,62 @@ class ExecutorWebhookControllerTest {
         verifyNoInteractions(pipeline);
     }
 
+    @Test
+    void fetchOpenPositions_serializesEntryFilledFalseForUnfilledEntry() {
+        EnrichedPosition ep = new EnrichedPosition(1L, "saxo-sim", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                null, null, null, null, null, 0, List.of(), List.of(),
+                false, false, 0, false, null, "sig-42", 0, 0.33, false);
+        when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
+
+        ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> first = (Map<String, Object>) ((List<?>) output.get("positions")).get(0);
+        assertThat(first.get("entry_filled")).isEqualTo(false);
+    }
+
     // -------------------------------------------------------------------
     // exit-position
     // -------------------------------------------------------------------
+
+    @Test
+    void exitPosition_unfilledEntry_rejectedNotFilled_noBrokerCall() {
+        // entry_expires_at != null marks a GTD entry with no confirmed fill (set at placement,
+        // cleared by reconcile on fill / by expiry on cancel). An LLM exit on it would flatten
+        // zero broker holdings and fabricate a close -> rejected NOT_FILLED, no broker call.
+        ExecutorPosition unfilled = new ExecutorPosition(7L, "saxo-sim", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("95"), 1, null, List.of("X"), "sig-1", "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0, null, null,
+                null, null, "stop-1", null, null, null, null, 0, null,
+                "2026-07-03T00:00:42Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("NOT_FILLED");
+
+        verifyNoInteractions(gateway);
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("NOT_FILLED");
+        assertThat(log.confidenceInDecision()).isEqualTo(0.7);
+    }
 
     @Test
     void exitPosition_fullExit() {
