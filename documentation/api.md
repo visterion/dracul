@@ -1078,7 +1078,7 @@ when the LLM supplies one, otherwise the freshly assembled current close
 `reference_price`.
 
 Pipeline: signal lookup → `EntryContextAssembler` (single I/O layer: Agora
-indicators/company-profile, FX, account, repos) → `VetoService` (13-veto
+indicators/company-profile, FX, account, repos) → `VetoService` (14-veto
 catalog, preceded by the `DATA_UNAVAILABLE` pre-veto) → `PositionSizer` →
 `OrderGuard` → `AgoraTrading` (only on pass). Every step short-circuits
 before the broker call. On success:
@@ -1104,6 +1104,7 @@ and for order-guard rejections it is the veto trace plus an
 | `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
 | `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
 | `CONCENTRATION` | `VetoService` | Open positions in the candidate's sector (via Agora company-profile lookup, case-insensitive) already ≥ `dracul.executor.max-per-sector` |
+| `CORRELATED` | `VetoService` | An open position exists in the same sector (case-insensitive) AND with the same `mechanism` (anomaly type) as the candidate signal — blocks doubling up on the same anomaly within a sector even below the `CONCENTRATION` cap; null sector or mechanism passes (fail-soft) |
 | `CONTRADICTION` | `VetoService` | A `MERGER_ARB` signal/position and a `PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW` signal/position collide on the same symbol (checked against other pending signals and open-position mechanisms); both pending signals in a contradicting pair are rejected, and the audit row for the other signal notes the pairing |
 | `REDUNDANCY` | `VetoService` | An open position on the same symbol already originates from the same `mechanism` |
 | `LIQUIDITY` | `VetoService` | Price below `dracul.executor.min-price` (USD-equivalent), or ADV20 notional below `dracul.executor.adv-multiple` × the tranche amount |
