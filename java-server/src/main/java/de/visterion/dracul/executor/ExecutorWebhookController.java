@@ -434,7 +434,7 @@ public class ExecutorWebhookController {
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
                     orderPrice, null, 0, null, null, null, null, stopOrderId,
-                    ctx.candidateSector(), ctx.dayHigh(), null, null));
+                    ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null));
 
             signalRepo.markStatus(signalId, "ACCEPTED");
 
