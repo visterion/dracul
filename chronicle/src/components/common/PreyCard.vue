@@ -12,7 +12,7 @@
     <!-- Header -->
     <header class="prey-head">
       <span class="prey-ticker font-mono">{{ prey.symbol }}</span>
-      <span class="prey-name">{{ prey.companyName }}</span>
+      <span v-if="displayName(prey.symbol, prey.companyName)" class="prey-name">{{ displayName(prey.symbol, prey.companyName) }}</span>
       <span class="prey-head-spacer" />
       <span class="anomaly-badge">{{ anomalyTypeLabel(prey.anomalyType) }}</span>
     </header>
@@ -59,6 +59,7 @@ import type { Prey } from '../../api/types'
 import ConfidenceBar from './ConfidenceBar.vue'
 import { useRelativeTime } from '../../composables/useRelativeTime'
 import { useEnumLabels } from '../../composables/useEnumLabels'
+import { displayName } from '../../utils/instrument'
 
 const props = defineProps<{ prey: Prey }>()
 defineEmits<{ (e: 'open', prey: Prey): void }>()

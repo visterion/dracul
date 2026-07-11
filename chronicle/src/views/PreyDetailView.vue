@@ -28,7 +28,7 @@
       </template>
       <template #title>
         <span class="mono title-ticker">{{ prey.symbol }}</span>
-        <span class="title-name">{{ prey.companyName }}</span>
+        <span v-if="displayName(prey.symbol, prey.companyName)" class="title-name">{{ displayName(prey.symbol, prey.companyName) }}</span>
       </template>
     </PageHead>
 
@@ -127,6 +127,7 @@ import { useApi } from '../api'
 import { useChronicleStore } from '../stores/chronicle'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import { useEnumLabels } from '../composables/useEnumLabels'
+import { displayName } from '../utils/instrument'
 import BackLink from '../components/common/BackLink.vue'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'

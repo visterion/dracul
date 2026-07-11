@@ -106,4 +106,21 @@ test.describe('Watchlist View (/watchlist)', () => {
     await page.getByTestId('wl-add-symbol').fill('3750.HK')
     await expect(page.getByTestId('wl-add-submit')).toBeEnabled()
   })
+
+  test('pressing Enter in the add dialog submits and shows a success toast', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('TSLA')
+    await page.getByTestId('wl-add-symbol').press('Enter')
+    await expect(page.getByTestId('app-toast')).toBeVisible()
+    await expect(page.locator('[data-testid="watchlist-item"]:has-text("TSLA")')).toBeVisible()
+  })
+
+  test('a row whose name equals its symbol renders the symbol only once', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('PYPL')
+    await page.getByTestId('wl-add-symbol').press('Enter')
+    const row = page.locator('[data-testid="watchlist-item"]:has-text("PYPL")').first()
+    await expect(row).toBeVisible()
+    await expect(row.locator('.wr-name')).toHaveCount(0)
+  })
 })
