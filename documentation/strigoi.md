@@ -189,7 +189,11 @@ On each run:
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
    `verdict` (SELL / TRIM / HOLD), `thesis_status` (INTACT / WEAKENING / INVALIDATED / NONE —
    `NONE` means the position has no original thesis, e.g. a manually-added position, so gropar
-   judges it on technical indicators alone), `rationale` (German), and `confidence`.
+   judges it on technical indicators alone), `rationale` (German), and `confidence`. When
+   `thesis_status` = `INVALIDATED`, the LLM must also name which condition failed via the
+   optional `violated_kill_criteria` array (verbatim entries from the fetched `thesis.killCriteria`);
+   the completion handler appends them to the persisted rationale as
+   `" [Verletzt: <criterion>; <criterion>]"` when present and non-empty.
 4. `POST /api/gropar/complete` — completion webhook persists each signal to `dracul.exit_signals`
    (V11), scoped to the owner resolved from its `position_id`; signals with an unknown id are
    skipped. `GET /api/exit-signals` then serves each user only their own signals.
@@ -212,6 +216,13 @@ pause toggle (which the guard would overwrite on the next watchlist change).
 gropar also surfaces a scale-out ladder (`profitTargets` = [+2R, +4R] with
 `scaleOutFractions`) and an overextension indicator (`distToMa200InAtr`) that flags a
 wide distance above the MA200 as a mean-reversion „TRIM in die Stärke" hint.
+
+> **Deploy note:** the `violated_kill_criteria` schema field and the prompt rule that
+> requires naming it on `INVALIDATED` verdicts only take effect after a definition
+> reset (`AgentDefaultProvider` is insert-if-absent, so a running deploy keeps the old
+> DB-stored schema/prompt). `POST /api/settings/agents/gropar/definition/reset` —
+> see "Local access" in `documentation/operations.md` for reaching that endpoint
+> non-interactively.
 
 ## Voievod (weekly reviewer)
 

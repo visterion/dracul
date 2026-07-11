@@ -12,6 +12,7 @@
           "fired_rules": { "type": "array", "items": { "type": "string" } },
           "gain_loss_pct": { "type": ["number", "null"] },
           "thesis_status": { "type": "string", "enum": ["INTACT", "WEAKENING", "INVALIDATED", "NONE"] },
+          "violated_kill_criteria": { "type": "array", "items": { "type": "string" } },
           "rationale": { "type": "string" },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
         },

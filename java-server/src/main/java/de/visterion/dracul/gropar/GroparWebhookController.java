@@ -278,6 +278,15 @@ public class GroparWebhookController {
             Double confidence  = nullableDouble(node, "confidence");
             Double gainLossPct = nullableDouble(node, "gain_loss_pct");
 
+            var violatedKillCriteria = new ArrayList<String>();
+            JsonNode violatedNode = node.path("violated_kill_criteria");
+            if (violatedNode.isArray()) {
+                for (JsonNode v : violatedNode) violatedKillCriteria.add(v.asText());
+            }
+            if (!violatedKillCriteria.isEmpty() && rationale != null) {
+                rationale = rationale + " [Verletzt: " + String.join("; ", violatedKillCriteria) + "]";
+            }
+
             String owner = ownerByPosition.get(positionId);
             if (owner == null) {
                 log.warn("gropar: signal for unknown/non-held position_id {} (symbol {}) — skipping",
