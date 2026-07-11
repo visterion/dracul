@@ -159,6 +159,15 @@ public class ExecutorPositionRepository {
                 .param("id", id).update();
     }
 
+    /** Clears the GTD expiry after {@code EntryExpiryService} has processed the position, making
+     *  the expiry one-shot by construction: {@link #findOpenUnfilledPastExpiry} filters on
+     *  {@code entry_expires_at IS NOT NULL}, so a cleared row can never be re-processed (e.g. a
+     *  partially-filled entry whose remainder was already cancelled). */
+    public void clearEntryExpiry(long id) {
+        jdbc.sql("UPDATE executor_position SET entry_expires_at = NULL WHERE id = :id")
+                .param("id", id).update();
+    }
+
     /** Open positions whose entry GTD expiry has passed. Fill detection is a separate concern
      *  (Task 6) — this only filters by expiry. */
     public List<ExecutorPosition> findOpenUnfilledPastExpiry(Instant now) {

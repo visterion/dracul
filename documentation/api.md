@@ -1270,6 +1270,19 @@ the book is left untouched and a `trigger_type=MAINTENANCE`,
 `action=ESCALATE`, `reason_code=BROKER_UNAVAILABLE` row is written instead,
 mirroring `ReconcileService`'s/`HardTriggerService`'s broker-outage idiom.
 
+Both cancel paths also clear `entry_expires_at` afterwards, making the
+expiry one-shot by construction (the expiry query filters on
+`entry_expires_at IS NOT NULL`) — a partially-filled entry whose remainder
+was already cancelled is never re-cancelled or re-logged, even if the broker
+keeps reporting the order as `PARTIALLY_FILLED`. Positions fully cancelled
+by the expiry step are dropped from the pipeline's in-memory survivor list
+before `HardTriggerService` runs, so a just-cancelled unfilled position can
+never be hard-triggered/flattened in the same pass. Conversely,
+`ReconcileService` recognizes a book row whose ENTRY order is still
+`WORKING`/`PARTIALLY_FILLED` at the broker (no broker position yet) and
+keeps it OPEN instead of closing it as `RECONCILE_GONE` — the GTD expiry
+service owns that lifecycle.
+
 ### `POST /api/executor/tools/exit-position`
 
 Tool webhook (slice 2) — the LLM's soft-judgment exit; unlike `place-entry`,

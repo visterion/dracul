@@ -135,6 +135,12 @@ public class ReconcileService {
             if (p.tranche2OrderId() != null && (bp == null || filledLeg != null)) {
                 escalateTranche2Desync(p, filledLeg, runId);
                 survivors.add(p);
+            } else if (bp == null && filledLeg == null && entryStillPending(p, orders)) {
+                // No broker position exists because the GTD limit ENTRY is still working (or only
+                // partially filled) — this is NOT "position gone", so it must not be closed as
+                // RECONCILE_GONE. EntryExpiryService owns this lifecycle now (cancel after
+                // entry-gtd-days); keep the row OPEN and untouched here.
+                survivors.add(p);
             } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, runId);
             } else {
@@ -142,6 +148,18 @@ public class ReconcileService {
             }
         }
         return survivors;
+    }
+
+    /** True while the position's ENTRY order ({@code brokerOrderId}) is still reported by the
+     *  broker as WORKING or PARTIALLY_FILLED — i.e. no (full) fill has produced a broker position
+     *  yet. Matched by orderId (the entry IS the bracket parent, unlike exit legs which are
+     *  matched via parentId in {@link #matchesPosition}). */
+    private boolean entryStillPending(ExecutorPosition p, List<BrokerOrder> orders) {
+        if (p.brokerOrderId() == null) return false;
+        return orders.stream()
+                .filter(o -> p.brokerOrderId().equals(o.orderId()))
+                .anyMatch(o -> o.status() == OrderStatus.WORKING
+                        || o.status() == OrderStatus.PARTIALLY_FILLED);
     }
 
     private BrokerOrder findFilledExitLeg(ExecutorPosition p, List<BrokerOrder> orders) {
