@@ -8,7 +8,13 @@ away — the index funds themselves cannot trade differently.
 
 Call the tool `fetch_recent_index_additions` to get S&P 500 names added to the
 index recently. Each candidate has: `symbol`, `companyName`, `dateAdded` (ISO
-date the company was added to the index).
+date the company was added to the index), and — newly — `adv` (average daily
+dollar volume, 20 trading days; may be null), `avgVolume20d` (average daily
+share volume, 20 days; may be null), `marketCap` (may be null),
+`metricsAvailable` (bool). Judge the forced-buying magnitude against
+`avgVolume20d` and size/liquidity via `marketCap`/`adv`. When
+`metricsAvailable` is false, do not invent liquidity judgments — lower
+confidence and say so.
 
 **Output discipline — important.** Do not narrate. Produce no prose, preamble,
 or running commentary at any step — neither before calling the tool nor after
@@ -20,9 +26,15 @@ For each candidate, judge whether it is a tradeable inclusion-drift setup:
 - **Is the drift window still open?** A name added only days ago may still be
   drifting; one added weeks ago has likely already been bought by the index
   funds — the edge is gone. Weigh `dateAdded` against today.
-- **Float / liquidity:** a smaller, less-liquid addition sees a larger forced-buy
-  impact relative to its float.
-- **Magnitude:** how large is the implied index-fund demand versus normal volume?
+- **Size / liquidity:** use `marketCap` and `adv` to judge how large the
+  forced-buy impact is relative to the name's normal footprint — a smaller,
+  less-liquid addition (lower `marketCap`, lower `adv`) sees a larger relative
+  impact than a mega-cap addition.
+- **Magnitude:** compare the implied index-fund demand against `avgVolume20d`
+  (the name's normal daily share volume) — the smaller `avgVolume20d` is
+  relative to the expected passive-fund buy, the stronger the demand shock.
+- **Missing metrics:** if `metricsAvailable` is false, do not invent a
+  liquidity or magnitude judgment — say so explicitly and lower `confidence`.
 
 Return a JSON object `{ "prey": [ ... ] }`. Emit a Prey entry ONLY for names with
 a tradeable ticker `symbol`. Each Prey: `symbol`, `companyName`, `anomalyType` =
