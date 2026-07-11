@@ -120,42 +120,37 @@ disagrees with the *bundled file*.
 
 ### Prompt change discipline
 
-When you edit an agent's prompt and deploy the change, follow these 6 steps
-to ensure the bundled version, registry, database, and Vistierie all stay in sync:
+Every prompt edit follows the **version bump workflow** in
+[Prompt registry & archive](#prompt-registry--archive) above — archive the
+*unchanged current* file first, then edit the body and bump the header
+`version:`, then update `prompt_registry.json` (`PromptRegistryTest` is the
+CI guard). This section adds only the deploy-side discipline on top:
 
-1. **Bump the `version:` field** in the file header (`<!-- agent-meta -->`) of
-   `prompts/<agent>.md`. Use semantic versioning (e.g. `v1.0` → `v1.1`) and
-   document the change briefly in the header comment.
+1. **Deploy.** Push to `main` (CI builds the image, runs e2e) and pull the
+   new image to production. The bundled `prompts/<agent>.md` and registry
+   are now current in the container, but the **database row is not yet
+   updated** (bootstrap is insert-if-absent).
 
-2. **Archive the old file.** Before editing, copy the *current* version of
-   `prompts/<agent>.md` unchanged to `prompts/archive/<agent>/<old-version>.md`.
-   This is a source-tree convention for auditability — nothing at runtime reads
-   `archive/`. See `prompts/archive/README.md` for the layout.
+2. **Call the definition-reset endpoint** to propagate the new prompt to
+   the DB row and Vistierie:
 
-3. **Update `prompt_registry.json`.** Bump that agent's `version` to match the
-   new file header, and recompute its `body_hash` (derivation:
-   `"p-" + sha256(body).substring(0, 12)`, same as `PromptHashes.hash()`).
-   `PromptRegistryTest` fails the build if this step is skipped — it is your
-   CI guard.
-
-4. **Deploy.** Push to `main` (CI builds the image, runs e2e) and pull the new
-   image to production. The bundled `prompts/<agent>.md` and registry are now
-   current in the container, but the **database row is not yet updated**.
-
-5. **Call the definition-reset endpoint** to propagate the new prompt to Vistierie:
    ```
    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
      http://<host-lan-ip>:8080/api/settings/agents/<name>/definition/reset
    ```
-   The log will show: `agent <name> definition reset: prompt <old-hash> -> <new-hash>`.
+
+   The app log records the hash transition:
+   `agent <name> definition reset: prompt <old-hash> -> <new-hash>`
+   (the same line, with `updated` instead of `reset`, is logged when a
+   definition is edited via `PUT .../definition` / the settings UI).
    Verify via `GET /agents/<name>` on Vistierie (`:8090`, tenant token) that
    `system_prompt` now contains your edits and `version` has bumped.
 
-6. **Historical hashes stay valid.** Old `agent_version` hashes (from before the
-   change) remain valid references in the run audit trail and metrics. When
-   analyzing outcomes, metrics are version-scoped — compare decisions only within
-   a single prompt version to avoid blending signal from different prompt logic
-   (see Task 5 for version-scoped outcome metrics).
+3. **Historical hashes stay valid.** Old `agent_version` hashes (from before
+   the change) remain valid references on historical signals and in the run
+   audit trail — never rewrite them. Outcome metrics are **version-scoped**:
+   compare results only within a single prompt version; pooling signals from
+   different prompt versions produces a meaningless blended number.
 
 ### Rule-version change discipline
 
