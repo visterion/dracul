@@ -366,6 +366,95 @@ Order ticket fields (`ticket`):
 > operator can decide whether and how to act — it does **not** route, submit, or
 > manage orders with any broker or exchange.
 
+## Depots
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/depots` | List depot connections and their positions/orders for the current user |
+| GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders) |
+
+Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
+/api/depots` calls `DepotService.depots(userEmail)`, which lists Agora's
+configured broker connections and gates any **live**-environment
+connection behind an allow-listed set of user emails
+(`dracul.depots.live-visible-emails`, default `viktor@ufelmann.de`);
+**paper**-environment connections are visible to everyone. A connection
+the calling user isn't allowed to see for the live gate is simply absent
+from the response (not an error) — the position-slice endpoint 404s for
+it the same way it 404s for an unknown connection or symbol.
+
+`asOf` (top-level per depot, and echoed in the position-slice response)
+is the instant Agora's broker fetch (`get_account`/`get_positions`) was
+taken — not a request/response timestamp.
+
+### `GET /api/depots` response
+
+```json
+{
+  "depots": [
+    {
+      "id": "alpaca-paper-1",
+      "provider": "alpaca",
+      "environment": "paper",
+      "status": "connected",
+      "probedAt": "2026-07-11T08:00:00Z",
+      "error": null,
+      "account": { "...": "..." },
+      "aggregates": { "...": "..." },
+      "positions": [
+        {
+          "symbol": "ACME",
+          "qty": 10,
+          "avgEntryPrice": 12.50,
+          "marketValue": 145.00,
+          "unrealizedPl": 20.00,
+          "unrealizedPlPct": 16.00,
+          "price": 14.50,
+          "dayChangePercent": 0.85,
+          "weightPct": 42.30,
+          "currency": "USD"
+        }
+      ],
+      "orders": [ { "...": "..." } ],
+      "asOf": "2026-07-11T08:00:00Z"
+    }
+  ],
+  "error": null
+}
+```
+
+`error` is non-null (with `depots` an empty list) only when Agora is
+unreachable for the whole read path (`DepotUnavailableException`) — HTTP
+status stays 200; per-connection failures instead surface as a non-null
+`error` on that one entry in `depots[]` (see `DepotDto`).
+
+### `GET /api/depots/{connection}/positions/{symbol}` response
+
+```json
+{
+  "depot": { "id": "alpaca-paper-1", "provider": "alpaca", "environment": "paper" },
+  "position": {
+    "symbol": "ACME",
+    "qty": 10,
+    "avgEntryPrice": 12.50,
+    "marketValue": 145.00,
+    "unrealizedPl": 20.00,
+    "unrealizedPlPct": 16.00,
+    "price": 14.50,
+    "dayChangePercent": 0.85,
+    "weightPct": 42.30,
+    "currency": "USD"
+  },
+  "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry" } ],
+  "asOf": "2026-07-11T08:00:00Z"
+}
+```
+
+`orders` is filtered to only the orders for `{symbol}` within that
+depot connection. Returns `404` when `{connection}` isn't visible to the
+current user (unknown, or a live connection outside the allow-list) or
+`{symbol}` isn't held in that connection's positions.
+
 ## Daywalker Alerts
 
 | Method | Path | Purpose |
