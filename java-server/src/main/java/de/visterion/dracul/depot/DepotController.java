@@ -40,7 +40,7 @@ public class DepotController {
         try {
             depots = service.depots(CurrentUserHolder.get());
         } catch (DepotUnavailableException e) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
         }
 
         DepotDto depot = depots.stream()
@@ -48,7 +48,11 @@ public class DepotController {
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown depot connection"));
 
-        DepotPositionDto position = depot.positions() == null ? null : depot.positions().stream()
+        if (depot.error() != null || depot.positions() == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, depot.error());
+        }
+
+        DepotPositionDto position = depot.positions().stream()
                 .filter(p -> symbol.equals(p.symbol()))
                 .findFirst()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown position"));

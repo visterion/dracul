@@ -72,6 +72,49 @@ class DepotControllerTest {
     }
 
     @Test
+    void brokerDownConnectionIs503() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
+                "agora down", null, null, null, null, null);
+        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+
+        var controller = new DepotController(service);
+
+        assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasFieldOrPropertyWithValue("statusCode", org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    void nullPositionsWithoutErrorIsAlso503() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
+                null, null, null, null, null, null);
+        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+
+        var controller = new DepotController(service);
+
+        assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasFieldOrPropertyWithValue("statusCode", org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    void serviceUnavailableExceptionIs503ForPositionDetail() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        when(service.depots("alice@x.com")).thenThrow(new DepotUnavailableException("agora down"));
+
+        var controller = new DepotController(service);
+
+        assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasFieldOrPropertyWithValue("statusCode", org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
     void foundPositionReturnsSliceWithOnlyThatSymbolsOrders() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);

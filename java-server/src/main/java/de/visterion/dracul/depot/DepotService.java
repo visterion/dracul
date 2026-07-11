@@ -58,9 +58,12 @@ public class DepotService {
         List<DepotConnection> connections;
         try {
             connections = depotClient.listConnections();
+        } catch (DepotUnavailableException e) {
+            log.warn("listConnections failed: {}", e.toString());
+            throw e;
         } catch (RuntimeException e) {
             log.warn("listConnections failed: {}", e.toString());
-            return List.of();
+            throw new DepotUnavailableException(e.getMessage(), e);
         }
 
         List<DepotConnection> visible = new ArrayList<>();

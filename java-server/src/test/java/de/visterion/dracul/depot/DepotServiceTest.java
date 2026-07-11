@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -236,12 +237,15 @@ class DepotServiceTest {
         assertThat(posBDto.dayChangePercent()).isEqualByComparingTo("-1.0");
     }
 
-    @Test void listConnectionsFailureReturnsEmptyList() {
+    @Test void listConnectionsFailurePropagatesDepotUnavailableException() {
         AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
         AgoraClient agora = Mockito.mock(AgoraClient.class);
         when(depotClient.listConnections()).thenThrow(new DepotUnavailableException("agora completely down"));
 
         DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
-        assertThat(service.depots("viktor@ufelmann.de")).isEmpty();
+
+        assertThatThrownBy(() -> service.depots("viktor@ufelmann.de"))
+                .isInstanceOf(DepotUnavailableException.class)
+                .hasMessage("agora completely down");
     }
 }
