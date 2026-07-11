@@ -56,7 +56,8 @@ class StrigoiSpinWebhookControllerIT {
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedSpinCandidate(
                 "SPN", "SpinCo Inc", "10-12B", "2026-05-20", "http://sec/s1",
-                "SUMMARY distribution ratio 1:3; record date 2026-06-01", true)));
+                "SUMMARY distribution ratio 1:3; record date 2026-06-01", true,
+                "one share for every three shares", "2026-06-01", "2026-06-15")));
     }
 
     @Test
@@ -74,6 +75,9 @@ class StrigoiSpinWebhookControllerIT {
         assertThat(spn).as("SPN candidate returned").isNotNull();
         assertThat(spn.path("termSheet").asText()).contains("distribution ratio 1:3");
         assertThat(spn.path("termSheetAvailable").asBoolean()).isTrue();
+        assertThat(spn.path("distributionRatio").asText()).isEqualTo("one share for every three shares");
+        assertThat(spn.path("recordDate").asText()).isEqualTo("2026-06-01");
+        assertThat(spn.path("distributionDate").asText()).isEqualTo("2026-06-15");
 
         JsonNode health = resp.path("output").path("data_source_health");
         org.assertj.core.api.Assertions.assertThat(health.path("status").asText()).isEqualTo("healthy");

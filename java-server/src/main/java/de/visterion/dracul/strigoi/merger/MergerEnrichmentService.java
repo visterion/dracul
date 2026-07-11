@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,10 +26,12 @@ public class MergerEnrichmentService {
 
     private final AgoraFilings filings;
     private final AgoraMarketData marketData;
+    private final DealTermsParser dealTermsParser;
 
-    public MergerEnrichmentService(AgoraFilings filings, AgoraMarketData marketData) {
+    public MergerEnrichmentService(AgoraFilings filings, AgoraMarketData marketData, DealTermsParser dealTermsParser) {
         this.filings = filings;
         this.marketData = marketData;
+        this.dealTermsParser = dealTermsParser;
     }
 
     public List<EnrichedMergerCandidate> enrich(List<MergerCandidate> candidates) {
@@ -49,9 +52,19 @@ public class MergerEnrichmentService {
             BigDecimal rawPrice = q == null ? null : q.price();
             boolean priceAvailable = rawPrice != null && rawPrice.signum() > 0;
             BigDecimal price = priceAvailable ? rawPrice : null;
+
+            DealTerms terms = dealTermsParser.parse(ft.available() ? ft.text() : null);
+            BigDecimal spread = null;
+            if (terms.offerPrice() != null && price != null && price.signum() > 0) {
+                spread = terms.offerPrice().subtract(price)
+                        .divide(price, 6, RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP);
+            }
+
             out.add(new EnrichedMergerCandidate(
                     c.symbol(), c.companyName(), c.formType(), c.filingDate(), c.filingUrl(),
-                    ft.text(), ft.available(), price, priceAvailable));
+                    ft.text(), ft.available(), price, priceAvailable,
+                    terms.offerPrice(), terms.considerationType(), terms.exchangeRatio(), terms.breakFee(), spread));
         }
         return out;
     }

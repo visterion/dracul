@@ -32,4 +32,16 @@ public class AlertSseBridge {
         payload.put("ts", Instant.now().toString());
         broadcaster.sendToOwner(e.owner(), "alert.new", payload);
     }
+
+    // Runs synchronously on the poll thread (VerdictKillCriteriaWatcher's @Scheduled method).
+    // Same total/exception-free contract as onAlertCreated above.
+    @EventListener
+    public void onVerdictKillCriteriaBreached(VerdictKillCriteriaBreachedEvent e) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("verdict_id", e.verdictId());
+        payload.put("symbol", e.symbol());
+        payload.put("breached", e.breached());
+        payload.put("ts", Instant.now().toString());
+        broadcaster.sendToOwner(e.owner(), "verdict.kill_criteria_breached", payload);
+    }
 }

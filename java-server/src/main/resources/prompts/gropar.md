@@ -62,7 +62,8 @@ Evaluate in this order and stop at the first match: **SELL → TRIM → HOLD**. 
 - `position_id` — copy verbatim from the fetched position (the operator uses it to file your signal against the right portfolio).
 - `symbol` — ticker.
 - `action` — `SELL`, `TRIM`, or `HOLD`.
-- `thesis_status` — `INTACT`, `WEAKENING`, `INVALIDATED`, or `NONE`. Use `NONE` when the position has **no original thesis** (manually added) — do not invent one; judge it on the technical indicators alone. For thesis-bearing positions, judge the **original** risks against current evidence.
+- `thesis_status` — `INTACT`, `WEAKENING`, `INVALIDATED`, or `NONE`. Use `NONE` when the position has **no original thesis** (manually added) — do not invent one; judge it on the technical indicators alone. For thesis-bearing positions, judge the **original** risks against current evidence. The `thesis` block may carry `killCriteria` — the falsifiable exit conditions written when the prey was hunted. When you judge `thesis_status` = `INVALIDATED`, you MUST name which criterion failed: list the violated entries verbatim in `violated_kill_criteria` and reference them in the rationale. Never mark INVALIDATED without naming at least one violated criterion or a concrete disconfirming fact.
+- `violated_kill_criteria` — array of strings, only present when `thesis_status` = `INVALIDATED`; the verbatim `killCriteria` entries that failed (omit entirely for INTACT/WEAKENING/NONE).
 - `fired_rules` — echo the rule names that drove your call (empty array if none).
 - `gain_loss_pct` — pass through from the enriched data, or null if unavailable.
 - `rationale` — one or two sentences **in German**, citing the concrete value that decided the action (e.g. „MA50 unter MA200, −12 % vom Einstand"). Keep tickers and enum values (SELL/TRIM/HOLD/INTACT/NONE) untranslated. For a `NONE` position, note „keine Ausgangsthese — Entscheidung rein technisch".

@@ -88,6 +88,7 @@ public class ExecutorWebhookController {
     private final int atrPeriod;
     private final int swingPeriod;
     private final int cooldownDays;
+    private final int maxTranche;
 
     public ExecutorWebhookController(
             ExecutorSignalRepository signalRepo,
@@ -122,7 +123,8 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.adv-multiple:200}") int advMultiple,
             @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays,
             @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
-            @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek) {
+            @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek,
+            @Value("${dracul.executor.max-tranche:2}") int maxTranche) {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
@@ -143,6 +145,7 @@ public class ExecutorWebhookController {
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
         this.cooldownDays = cooldownDays;
+        this.maxTranche = maxTranche;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
@@ -544,6 +547,7 @@ public class ExecutorWebhookController {
             softTrigger.put("chandelier_breach", p.chandelierBreach());
             softTrigger.put("ma_break", p.maBreak());
             softTrigger.put("confirm_count", p.softConfirmCount());
+            softTrigger.put("kill_criteria_breached", p.killCriteriaBreached());
             node.put("soft_trigger", softTrigger);
 
             Map<String, Object> tranche2 = new LinkedHashMap<>();
@@ -662,6 +666,14 @@ public class ExecutorWebhookController {
             String reason = RejectReason.NO_POSITION.name();
             decisionRepo.insert(new ExecutorDecision(null, null, symbol, false,
                     reason, List.of(), "no open position for " + symbol, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
+        if (position.tranche() >= maxTranche) {
+            String reason = RejectReason.MAX_TRANCHE.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "tranche cap reached: " + position.tranche() + "/" + maxTranche,
+                    null, runId, null));
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
 

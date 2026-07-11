@@ -20,12 +20,12 @@ logic and the hunt pattern.
 
 | Strigoi | Status |
 |---|---|
-| strigoi-spin | **implemented 2026-06-05; term-sheet enrichment 2026-07-08** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted). Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`); the LLM extracts parent/ratio/record-date/size from it, fail-soft (conservative judgement) when unavailable |
+| strigoi-spin | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured distribution fields 2026-07-11** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted). Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`); the LLM extracts parent/ratio/record-date/size from it, fail-soft (conservative judgement) when unavailable. A deterministic `SpinTermsParser` now regex-extracts `distributionRatio` / `recordDate` / `distributionDate` from `termSheet` server-side (parent extraction deliberately omitted — no reliable heuristic; the filing header/companyName already identifies the issuer); the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null` |
 | strigoi-insider | **implemented 2026-05-25** — Form-4 cluster screener, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases). Each clustered filer now carries its free-text Form-4 officer `role` (empty for non-officers), so the LLM's CEO/CFO-diversity rubric can actually weigh it. `fetch_recent_clusters` also annotates each cluster with `netInsiderDollar` (purchases minus concurrent insider sales in the window) and `concurrentInsiderSells` (distinct selling insiders); this is advisory only — the LLM weighs it into confidence, no cluster is dropped for it. |
 | strigoi-echo | **implemented 2026-06-02; signal upgrade (v2 SP1) 2026-06-24; market-reaction signals (v2 SP2) 2026-06-27** — Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (current price ≥ $5). Earnings announcements come from **Finnhub `/calendar/earnings`** (primary), with the Yahoo earnings calendar demoted to a config-selectable fallback. A deterministic enrichment layer replaces the old raw-5%-surprise signal with academic PEAD signals: **time-series SUE** (Foster seasonal-random-walk, from SEC EDGAR quarterly diluted-EPS history with date-based seasonal alignment) ranked cross-sectionally into **deciles** (z-band fallback for thin batches), **revenue-surprise / double-beat**, and **consecutive seasonal beats**. SP2 further enriches surviving candidates with market-reaction signals from daily OHLC and Finnhub metrics (see SP2 section below). The LLM applies a SUE-based confidence rubric (not a fixed 5% threshold); each emitted prey echoes its numeric **SUE + decile** in `signals`. Long-only. |
 | strigoi-lazarus | **implemented 2026-06-05; real Piotroski F-score (Slice 2b) 2026-07-07** — watchlist-scoped; screens watchlist names within ~10% of their 52-week low with a light solvency gate (positive ROA or free cash flow, modest leverage), plus a **cheapness (valuation) gate** (must be cheap by price-to-book or price/FCF-per-share) and a hard drop on high Sloan accruals — both deterministic and applied server-side. The F-Score is no longer judged qualitatively by the LLM: it is computed deterministically via Agora's `get_fundamental_score` tool (strict scoring + a `fScoreCriteriaAvailable` coverage count from SEC companyfacts) and attached to each surviving candidate. The reasoning-tier LLM then applies the ranking/confidence rubric — rank by `fScore`, skip below 6, dampen confidence when `fScoreCriteriaAvailable` is thin — and narrates the thesis, rather than scoring the F-Score itself, and emits `QUALITY_52W_LOW` Prey. |
-| strigoi-index | **implemented 2026-06-06** — Wikipedia S&P 500 main constituents table (`Date added` column), routine tier (model_purpose `routine`), agent registered with Vistierie on startup; surfaces recently-added S&P 500 constituents; the routine-tier LLM judges whether the inclusion-drift window is still open and emits `INDEX_INCLUSION` Prey |
-| strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`) — plus `lastPrice` / `priceAvailable`; the LLM extracts offer/consideration/conditions/termination-fee from the term sheet and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable |
+| strigoi-index | **implemented 2026-06-06; liquidity enrichment 2026-07-11** — Wikipedia S&P 500 main constituents table (`Date added` column), routine tier (model_purpose `routine`), agent registered with Vistierie on startup; surfaces recently-added S&P 500 constituents; the routine-tier LLM judges whether the inclusion-drift window is still open and emits `INDEX_INCLUSION` Prey. Each candidate now carries `adv` / `avgVolume20d` (20 trading-day average dollar/share volume from Agora `get_ohlc`, via `IndexEnrichmentService`) plus `marketCap` / `metricsAvailable` (via `EquityMetricsExtractor`); the LLM judges forced-buying magnitude against `avgVolume20d` and size/liquidity via `marketCap`/`adv`, fail-soft (lower confidence, no invented judgment) when unavailable |
+| strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured deal terms + server-computed spread 2026-07-11** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`) — plus `lastPrice` / `priceAvailable`; the LLM extracts offer/consideration/conditions/termination-fee from the term sheet and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable. A deterministic `DealTermsParser` now regex-extracts `offerPrice` / `considerationType` (cash/stock/mixed) / `exchangeRatio` / `breakFee` from `termSheet` server-side, and `MergerEnrichmentService` computes `spreadPercent = (offerPrice − lastPrice) / lastPrice × 100` when both are available; the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null` |
 
 ### Strigoi-Echo SP2: market-reaction signals
 
@@ -169,6 +169,11 @@ On each run:
 1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls all HELD watchlist items
    **across all users** with their entry price and share count. Each position carries an opaque
    `positionId` (the watchlist-item id) the LLM echoes back so signals can be routed to their owner.
+   When the position has an originating verdict, its `thesis` block also carries `killCriteria` —
+   the deduplicated union of `killCriteria` across the verdict's contributing prey (via
+   `VerdictRepository.contributingPreyIdsById` + `PreyRepository.findByIds`), so the LLM can judge
+   whether a hold's original invalidation conditions have since been met. The key is omitted when
+   there are none, or fail-soft (logged, omitted) if the lookup fails.
 2. `GroparExitIndicators` assembles the exit-indicator bundle for each position. The technical
    indicators are sourced from Agora's bundled `get_indicators` MCP tool (one call per position)
    via the `AgoraResearch` facade — Dracul no longer computes them locally:
@@ -184,7 +189,11 @@ On each run:
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
    `verdict` (SELL / TRIM / HOLD), `thesis_status` (INTACT / WEAKENING / INVALIDATED / NONE —
    `NONE` means the position has no original thesis, e.g. a manually-added position, so gropar
-   judges it on technical indicators alone), `rationale` (German), and `confidence`.
+   judges it on technical indicators alone), `rationale` (German), and `confidence`. When
+   `thesis_status` = `INVALIDATED`, the LLM must also name which condition failed via the
+   optional `violated_kill_criteria` array (verbatim entries from the fetched `thesis.killCriteria`);
+   the completion handler appends them to the persisted rationale as
+   `" [Verletzt: <criterion>; <criterion>]"` when present and non-empty.
 4. `POST /api/gropar/complete` — completion webhook persists each signal to `dracul.exit_signals`
    (V11), scoped to the owner resolved from its `position_id`; signals with an unknown id are
    skipped. `GET /api/exit-signals` then serves each user only their own signals.
@@ -207,6 +216,13 @@ pause toggle (which the guard would overwrite on the next watchlist change).
 gropar also surfaces a scale-out ladder (`profitTargets` = [+2R, +4R] with
 `scaleOutFractions`) and an overextension indicator (`distToMa200InAtr`) that flags a
 wide distance above the MA200 as a mean-reversion „TRIM in die Stärke" hint.
+
+> **Deploy note:** the `violated_kill_criteria` schema field and the prompt rule that
+> requires naming it on `INVALIDATED` verdicts only take effect after a definition
+> reset (`AgentDefaultProvider` is insert-if-absent, so a running deploy keeps the old
+> DB-stored schema/prompt). `POST /api/settings/agents/gropar/definition/reset` —
+> see "Local access" in `documentation/operations.md` for reaching that endpoint
+> non-interactively.
 
 ## Voievod (weekly reviewer)
 
@@ -375,12 +391,23 @@ the LLM, which owns only the soft judgment call. Every call to
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,
-`confirm_count`). Once a soft trigger has held for
+`confirm_count`, `kill_criteria_breached`). Once a soft trigger has held for
 `dracul.executor.soft-confirm-min` consecutive runs, the LLM is expected to
 call `exit_position(symbol, reason, confidence, reasoning)`. Unlike
 `place_entry`, exits carry **no veto/order-guard gate** — they are always
 permitted, since closing a position is never something code needs to guard
 against.
+
+`kill_criteria_breached` is populated by `KillCriteriaEvaluator`
+(`de.visterion.dracul.criteria`), a deterministic, stateless, best-effort
+parser that recognizes only absolute **price-level** kill criteria (e.g.
+"Close below $90.00", "Price rises above 120") and evaluates them against
+the position's daily close. It is v1-scoped: percent thresholds (e.g.
+"widens above 12%") and qualitative criteria (e.g. "Merger terminated") are
+left unparsed — those stay in the raw `kill_criteria` list for the LLM to
+judge itself. Anything the evaluator can't confidently parse is silently
+skipped rather than raising an error, so a malformed or free-form criterion
+never blocks the pipeline.
 
 Every decision point (entry, hard exit, stop-ratchet, soft exit) writes a
 `decision_log` row tagged with the active `dracul.executor.rule-version`,
@@ -392,10 +419,17 @@ giving a single, richer audit trail across the whole lifecycle (see
 The injection seam (`POST /api/executor/signals`) is still the only way
 signals reach the executor — there is no automatic wiring from a Strigoi's
 Prey or gropar's exit signal into the executor's queue. `RejectReason`
-already declares `MAX_TRANCHE` for a later slice's position-scaling logic,
-but `VetoService` does not enforce it yet. Position tranching and the fuller
-veto catalog (kill-criteria monitoring, correlation/exposure limits) remain
-out of scope and land in later slices.
+declares `MAX_TRANCHE`, and it is now enforced (was declared-only): the
+`add-tranche` tool rejects with `MAX_TRANCHE` (writing a `decision_log`
+entry, same as the other reject paths) once a position's `tranche` count
+reaches `dracul.executor.max-tranche` (default 2), so tranching beyond the
+configured cap is blocked before any eligibility/sizing work runs.
+`VetoService` also now enforces `CORRELATED`: an entry is rejected when an
+open position already exists in the same sector (case-insensitive) with the
+same `mechanism` (anomaly type) as the candidate signal — this blocks
+doubling up on one anomaly within a sector even below the `CONCENTRATION`
+cap; a null sector or mechanism passes (fail-soft). The fuller veto catalog
+(kill-criteria monitoring) remains out of scope and lands in later slices.
 
 See `documentation/architecture.md` for the doctrine note on why guarded
 execution is the one deliberate exception to Dracul's read-only design, and

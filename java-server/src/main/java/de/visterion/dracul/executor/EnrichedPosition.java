@@ -20,6 +20,7 @@ public record EnrichedPosition(
         BigDecimal mfeR,
         long daysHeld,
         List<String> killCriteria,
+        List<String> killCriteriaBreached,
         boolean chandelierBreach,
         boolean maBreak,
         int softConfirmCount,

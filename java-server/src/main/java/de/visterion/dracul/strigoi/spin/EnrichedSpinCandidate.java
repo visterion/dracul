@@ -9,5 +9,8 @@ public record EnrichedSpinCandidate(
         String filingDate,
         String filingUrl,
         String termSheet,
-        boolean termSheetAvailable
+        boolean termSheetAvailable,
+        String distributionRatio,
+        String recordDate,
+        String distributionDate
 ) {}

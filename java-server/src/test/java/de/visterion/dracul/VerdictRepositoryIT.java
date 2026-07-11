@@ -25,7 +25,7 @@ class VerdictRepositoryIT {
 
     @BeforeEach
     void clean() {
-        jdbc.sql("DELETE FROM verdicts WHERE symbol IN ('RTST','RTUP','RTMR')").update();
+        jdbc.sql("DELETE FROM verdicts WHERE symbol IN ('RTST','RTUP','RTMR','KWTEST')").update();
     }
 
     private String insert(String symbol, String summary, List<String> preyIds) {
@@ -37,6 +37,10 @@ class VerdictRepositoryIT {
                 List.of(new ContributingStrigoiDetail("strigoi-spin", 0.7, "t1"),
                         new ContributingStrigoiDetail("strigoi-insider", 0.6, "t2")),
                 preyIds, "default");
+    }
+
+    private String insert(String symbol, List<String> preyIds) {
+        return insert(symbol, "summary for " + symbol, preyIds);
     }
 
     @Test
@@ -73,5 +77,26 @@ class VerdictRepositoryIT {
         insert("RTMR", "newer", List.of("p3", "p4"));
         var active = repo.findActiveBySymbol("RTMR", "default").orElseThrow();
         assertThat(active.contributingPreyIds()).containsExactlyInAnyOrder("p3", "p4");
+    }
+
+    @Test
+    void contributingPreyIdsById_returnsIds() {
+        String id = insert("RTST", "summary", List.of("prey-1", "prey-2"));
+        assertThat(repo.contributingPreyIdsById(id)).containsExactly("prey-1", "prey-2");
+        assertThat(repo.contributingPreyIdsById("00000000-0000-0000-0000-000000000000")).isEmpty();
+    }
+
+    @Test
+    void contributingPreyIdsById_unknownFormatReturnsEmpty() {
+        assertThat(repo.contributingPreyIdsById("not-a-uuid")).isEmpty();
+    }
+
+    @Test
+    void markAndReadKillCriteriaBreach() {
+        String id = insert("KWTEST", List.of("p1"));
+        repo.markKillCriteriaBreached(id, List.of("Close below 90"));
+        var detail = repo.findDetailById(id).orElseThrow();
+        assertThat(detail.killCriteriaBreached()).containsExactly("Close below 90");
+        assertThat(repo.findOpenForKillCheck()).extracting(r -> r.id()).contains(id);
     }
 }

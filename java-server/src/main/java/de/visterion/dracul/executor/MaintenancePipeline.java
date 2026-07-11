@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,7 @@ public class MaintenancePipeline {
     private final ExecutorPositionRepository positionRepo;
     private final ExecutorSignalRepository signalRepo;
     private final Tranche2Detector tranche2Detector;
+    private final KillCriteriaEvaluator killCriteriaEvaluator;
     private final double chandelierMult;
     private final int atrPeriod;
     private final int swingPeriod;
@@ -57,6 +59,7 @@ public class MaintenancePipeline {
             ExecutorPositionRepository positionRepo,
             ExecutorSignalRepository signalRepo,
             Tranche2Detector tranche2Detector,
+            KillCriteriaEvaluator killCriteriaEvaluator,
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
@@ -68,6 +71,7 @@ public class MaintenancePipeline {
         this.positionRepo = positionRepo;
         this.signalRepo = signalRepo;
         this.tranche2Detector = tranche2Detector;
+        this.killCriteriaEvaluator = killCriteriaEvaluator;
         this.chandelierMult = chandelierMult;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
@@ -123,13 +127,16 @@ public class MaintenancePipeline {
         SoftConditionEvaluator.SoftState ss = softEval.evaluate(currentPrice, chandelierLevel,
                 null, null, p.side(), p.softConfirmCount());
 
+        List<String> killCriteriaBreached = killCriteriaEvaluator.breached(p.killCriteria(), currentPrice);
+
         positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), ss.confirmCount(),
                 p.activeStop(), null);
 
         return new EnrichedPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
-                p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), ss.chandelierBreach(),
-                ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(), p.sourceSignalId());
+                p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
+                ss.chandelierBreach(), ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(),
+                p.sourceSignalId());
     }
 
     private String resolveMechanism(String sourceSignalId) {
