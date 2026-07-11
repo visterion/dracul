@@ -84,7 +84,16 @@ public class MaintenancePipeline {
 
     public List<EnrichedPosition> run(String connection, String runId) {
         List<ExecutorPosition> survivors = reconcile.reconcile(connection, runId);
-        entryExpiry.expire(connection, runId);
+
+        // The expiry step cancels unfilled GTD entries in the DB; drop those ids from the
+        // in-memory reconcile survivors too, or a just-cancelled position could still be
+        // hard-triggered/flattened in this same pass.
+        Set<Long> expiryCancelledIds = entryExpiry.expire(connection, runId);
+        if (!expiryCancelledIds.isEmpty()) {
+            survivors = survivors.stream()
+                    .filter(p -> !expiryCancelledIds.contains(p.id()))
+                    .toList();
+        }
 
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();

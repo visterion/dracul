@@ -3,11 +3,13 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -196,6 +198,34 @@ class MaintenancePipelineTest {
         assertThat(result).hasSize(1);
         EnrichedPosition ep = result.get(0);
         assertThat(ep.killCriteriaBreached()).containsExactly("close below 90");
+    }
+
+    @Test
+    void expiryCancelledPosition_isDroppedBeforeHardTrigger() {
+        // Same-pass race guard: a position the expiry step just CANCELLED in the DB must not be
+        // passed on to hardTrigger.apply (it could be flattened despite having no fill).
+        ExecutorPosition aaa = openPosition(2L, "AAA", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(List.of(aaa, bbb));
+        when(entryExpiry.expire("c", "r1")).thenReturn(Set.of(2L));
+        when(indicators.levels("AAA", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(indicators.levels("BBB", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(hardTrigger.apply(any(), any(), eq("r1"))).thenAnswer(inv -> inv.getArgument(0));
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExecutorPosition>> hardArg =
+                ArgumentCaptor.forClass((Class) List.class);
+        verify(hardTrigger).apply(hardArg.capture(), any(), eq("r1"));
+        assertThat(hardArg.getValue()).extracting(ExecutorPosition::id).containsExactly(1L);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).symbol()).isEqualTo("BBB");
     }
 
     @Test

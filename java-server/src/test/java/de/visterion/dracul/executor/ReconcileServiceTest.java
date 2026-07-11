@@ -272,6 +272,44 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void unfilledGtdEntry_stillWorkingAtBroker_survivesInsteadOfReconcileGone() {
+        // A just-placed GTD limit entry has no broker position yet (bp == null) and no filled
+        // exit leg — but its ENTRY order is still WORKING. That must NOT be closed as
+        // RECONCILE_GONE: the EntryExpiryService owns that lifecycle (cancel after gtd days).
+        ExecutorPosition p = openPosition(11L, "NEWPOS", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-11", "stop-11", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("brk-11", "sig-1", "NEWPOS", OrderRole.OTHER,
+                OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(decisionRepo, never()).insert(any());
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).id()).isEqualTo(11L);
+        assertThat(survivors.get(0).status()).isEqualTo("OPEN");
+    }
+
+    @Test
+    void unfilledGtdEntry_partiallyFilledAtBroker_survives() {
+        ExecutorPosition p = openPosition(12L, "PARTPOS", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-12", "stop-12", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("brk-12", "sig-1", "PARTPOS", OrderRole.OTHER,
+                OrderStatus.PARTIALLY_FILLED, BigDecimal.TEN, new BigDecimal("4"),
+                new BigDecimal("100"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).id()).isEqualTo(12L);
+    }
+
+    @Test
     void brokerPositionWithoutBookRowIsFlaggedAsOrphan() {
         when(positionRepo.findOpen()).thenReturn(List.of());
 

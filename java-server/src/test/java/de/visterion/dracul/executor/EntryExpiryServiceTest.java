@@ -14,11 +14,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -59,10 +61,12 @@ class EntryExpiryServiceTest {
         gateway.seedOrder(new BrokerOrder("brk-1", "sig-1", "ACME", OrderRole.ENTRY,
                 OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
 
-        service.expire("c", "run1");
+        Set<Long> cancelled = service.expire("c", "run1");
 
+        assertThat(cancelled).containsExactly(1L);
         assertThat(gateway.cancelledOrderIds).containsExactly("brk-1");
         verify(positionRepo).markCancelled(1L);
+        verify(positionRepo).clearEntryExpiry(1L);
         verify(signalRepo).markStatus("sig-1", "EXPIRED");
 
         ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -96,10 +100,12 @@ class EntryExpiryServiceTest {
         gateway.seedOrder(new BrokerOrder("brk-1", "sig-1", "ACME", OrderRole.ENTRY,
                 OrderStatus.PARTIALLY_FILLED, BigDecimal.TEN, new BigDecimal("4"), new BigDecimal("100"), null));
 
-        service.expire("c", "run1");
+        Set<Long> cancelled = service.expire("c", "run1");
 
+        assertThat(cancelled).isEmpty(); // partial: position stays OPEN, not a full cancel
         assertThat(gateway.cancelledOrderIds).containsExactly("brk-1");
         verify(positionRepo, never()).markCancelled(3L);
+        verify(positionRepo).clearEntryExpiry(3L);
         verify(signalRepo, never()).markStatus(any(), any());
 
         ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -145,8 +151,9 @@ class EntryExpiryServiceTest {
         when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(p));
         gateway.unavailable = true;
 
-        service.expire("c", "run1");
+        Set<Long> cancelled = service.expire("c", "run1");
 
+        assertThat(cancelled).isEmpty();
         verify(positionRepo, never()).markCancelled(6L);
         verify(signalRepo, never()).markStatus(any(), any());
 
@@ -172,5 +179,25 @@ class EntryExpiryServiceTest {
         assertThat(gateway.cancelledOrderIds).isEmpty();
         verify(positionRepo, never()).markCancelled(7L);
         verify(decisionRepo, never()).insert(any());
+    }
+
+    @Test
+    void partiallyFilled_secondRunDoesNothing_expiryIsOneShot() {
+        // First run cancels the remainder and clears entry_expires_at; the second run's expiry
+        // query (entry_expires_at IS NOT NULL) therefore no longer returns the row — even though
+        // the broker keeps reporting the order as PARTIALLY_FILLED.
+        ExecutorPosition p = openPosition(8L, "ACME", "sig-1");
+        when(positionRepo.findOpenUnfilledPastExpiry(NOW))
+                .thenReturn(List.of(p))
+                .thenReturn(List.of());
+        gateway.seedOrder(new BrokerOrder("brk-1", "sig-1", "ACME", OrderRole.ENTRY,
+                OrderStatus.PARTIALLY_FILLED, BigDecimal.TEN, new BigDecimal("4"), new BigDecimal("100"), null));
+
+        service.expire("c", "run1");
+        service.expire("c", "run2");
+
+        assertThat(gateway.cancelledOrderIds).containsExactly("brk-1"); // exactly once
+        verify(positionRepo, times(1)).clearEntryExpiry(8L);
+        verify(decisionRepo, times(1)).insert(any());
     }
 }
