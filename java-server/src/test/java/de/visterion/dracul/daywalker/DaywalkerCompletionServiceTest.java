@@ -28,10 +28,19 @@ class DaywalkerCompletionServiceTest {
         return service(alerts, notifier, null, false, DEFAULT_THRESHOLD);
     }
 
+    /** Both escalation flags default to {@code true} — callers that need to exercise the
+     *  gate combinations use {@link #service(DaywalkerAlertRepository, TelegramNotifier,
+     *  VistierieClient, boolean, boolean, BigDecimal)} directly. */
     private DaywalkerCompletionService service(DaywalkerAlertRepository alerts, TelegramNotifier notifier,
             VistierieClient vistierieClient, boolean escalationEnabled, BigDecimal escalationThreshold) {
+        return service(alerts, notifier, vistierieClient, escalationEnabled, true, escalationThreshold);
+    }
+
+    private DaywalkerCompletionService service(DaywalkerAlertRepository alerts, TelegramNotifier notifier,
+            VistierieClient vistierieClient, boolean escalationEnabled, boolean daywalkerDeepEnabled,
+            BigDecimal escalationThreshold) {
         return new DaywalkerCompletionService(alerts, notifier, events, "CRITICAL", 3600,
-                providerOf(vistierieClient), escalationEnabled, escalationThreshold);
+                providerOf(vistierieClient), escalationEnabled, daywalkerDeepEnabled, escalationThreshold);
     }
 
     /** Minimal ObjectProvider stub — only {@code getObject()} is abstract; the default
@@ -324,6 +333,22 @@ class DaywalkerCompletionServiceTest {
         service(alerts, notifier, vistierie, false, DEFAULT_THRESHOLD)
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-24");
+
+        verify(vistierie, never()).triggerRun(anyString(), any());
+    }
+
+    @Test
+    void daywalkerDeepDisabledNeverTriggersEvenWithEscalationEnabled() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        var vistierie = mock(VistierieClient.class);
+        stubEligibleSingleOwner(alerts, "AAPL", "PRICE_SPIKE");
+
+        // escalation-enabled=true but daywalker-deep itself is disabled (its own default) —
+        // must not trigger a run for an unregistered agent.
+        service(alerts, notifier, vistierie, true, false, DEFAULT_THRESHOLD)
+                .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
+                        "thesis text", new BigDecimal("0.4"), "run-28");
 
         verify(vistierie, never()).triggerRun(anyString(), any());
     }
