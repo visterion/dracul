@@ -539,9 +539,15 @@ function formatDate(isoDate: string): string {
   border: none;
   color: var(--ash-gray);
   cursor: pointer;
-  padding: 0 var(--space-1);
   font-size: var(--text-body-sm);
   line-height: 1;
+  /* >=44x44 hit area without growing the visual row */
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  padding: var(--space-2);
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0;
 }
 .wr-delete:hover { color: var(--blood-crimson); }
 .wr-delete[disabled] { opacity: 0.5; cursor: not-allowed; }

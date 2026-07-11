@@ -126,4 +126,10 @@ test.describe('Watchlist View (/watchlist)', () => {
     await expect(row).toBeVisible()
     await expect(row.locator('.wr-name')).toHaveCount(0)
   })
+
+  test('delete control exposes a >=44px touch target', async ({ page }) => {
+    const box = await page.locator('[data-testid^="wl-delete-"]').first().boundingBox()
+    expect(box!.width).toBeGreaterThanOrEqual(44)
+    expect(box!.height).toBeGreaterThanOrEqual(44)
+  })
 })

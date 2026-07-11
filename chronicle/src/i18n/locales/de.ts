@@ -502,6 +502,7 @@ export default {
     addButton: '+ Position',
     noSignal: '—',
     cols: { entry: 'Einstieg', size: 'Stück', current: 'Kurs', pnl: 'G&V' },
+    summary: { totalValue: 'Gesamtwert', pnl: 'Gesamt-G&V', count: 'Positionen' },
     dialog: {
       addTitle: 'Position hinzufügen',
       editTitle: 'Position bearbeiten',
