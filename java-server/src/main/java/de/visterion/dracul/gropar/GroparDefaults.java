@@ -32,7 +32,7 @@ class GroparDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "reasoning",
-                        AgentResources.classpath("prompts/gropar.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/gropar.md"), schema,
                         schedule, 25, 1800,
                         "/api/gropar/complete",
                         null, null, null, true,

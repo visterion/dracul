@@ -32,7 +32,7 @@ class MergerDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "reasoning",
-                        AgentResources.classpath("prompts/strigoi-merger.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/strigoi-merger.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-merger/complete",
                         null, null, null, true,
