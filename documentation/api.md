@@ -56,6 +56,8 @@ separately under "Executor Webhooks" below.
 | POST | `/api/executor/signals` | Inject a signal (advice) for the executor to evaluate |
 | GET | `/api/executor/signals` | List signals awaiting evaluation (status `PENDING`, up to 50) |
 | POST | `/api/executor/run` | Trigger an ad-hoc Vistierie run of the executor agent |
+| GET | `/api/executor/calibration` | Brier calibration — executor overall + per-hunter |
+| GET | `/api/executor/behavior` | Veto precision, hard-exit latency, whipsaw, stop-basis comparison, slippage |
 
 ### `POST /api/executor/signals`
 
@@ -93,6 +95,81 @@ webhook's `fetch-pending-signals`, see below).
 
 Triggers an ad-hoc Vistierie run of the `executor` agent (same mechanism as
 `POST /api/strigoi/{name}/hunt`). Returns the Vistierie `VistierieRunDetail`.
+
+### `GET /api/executor/calibration`
+
+Read-only analytics over `decision_log` + `outcome_log` (Task 10, executor sim
+completion): how well the executor's and each hunter's confidence scores
+predicted realized outcomes (Brier score). No LLM calls, no writes.
+
+- **Executor Brier**: `confidence_in_decision` of `ENTER` decision rows vs.
+  `realized_r > 0` of the joined, completed `TRADE` outcome row.
+- **Hunter Brier**: `inputs_snapshot.signal_confidence` of the `ENTER`/`REJECT`
+  decision row vs. `outcome_log.hunter_label` (triple-barrier label), grouped
+  by `outcome_log.source_agent`.
+- Buckets are fixed predicted-confidence deciles `[0-0.5)`, `[0.5-0.6)`,
+  `[0.6-0.7)`, `[0.7-0.8)`, `[0.8-0.9)`, `[0.9-1.0]`; only non-empty buckets
+  are returned.
+- `insufficient: true` when the sample size `n < 30` — the numbers are still
+  returned, just flagged as low-confidence. Applies independently per unit
+  (executor overall, and each hunter).
+- An empty database returns a valid zeroed/`insufficient: true` response, not
+  an error.
+
+Response (200):
+
+```json
+{
+  "executor": {"brier": 0.18, "n": 42, "insufficient": false,
+               "buckets": [{"range": "0.6-0.7", "n": 10, "predicted": 0.65, "observed": 0.5}]},
+  "hunters": [{"agent": "strigoi-echo", "brier": 0.21, "n": 17, "insufficient": true, "buckets": []}]
+}
+```
+
+### `GET /api/executor/behavior`
+
+Read-only behavioral analytics (Task 10): veto precision (what rejected
+signals would have done), hard-exit latency, whipsaw (reentry/roundtrip),
+stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
+
+- **`veto_precision`**: `COUNTERFACTUAL` outcome rows grouped by
+  `reason_code` (the first failed veto check). `skipped` counts rows with a
+  `hypothetical.skipped_reason` set (e.g. missing reference price); means
+  (`mean_hypothetical_r_20d`, `mean_hypothetical_r_60d`, `stopped_out_pct`)
+  are computed over the remaining, non-skipped rows only.
+- **`caveats`**: three fixed strings, always present, calling out the
+  optimistic-fill assumption, the opportunity-cost nature of
+  `PACE_LIMIT`/`BUDGET` rejects, and that `reason_code` stats are conditional
+  on earlier checks having passed.
+- **`hard_exit_latency`**: `n`/`max_seconds`/`p95_seconds` over
+  `decision_log.latency.trigger_to_order_seconds` of `HARD_TRIGGER` rows.
+- **`whipsaw`**: counts of `TRADE` outcome rows with `reentry_within_10d` /
+  `roundtrip_under_5d` set.
+- **`stop_basis`**: `TRADE` rows grouped by the ENTER order's
+  `order_json.stop_basis`, normalized by substring match — strings
+  containing `swing_low` become `SWING_LOW`, strings containing `ATR` (and
+  not already matched as swing-low) become `ATR`.
+- **`slippage`**: `n`/`mean`/`worst` (most negative) over `TRADE` rows'
+  `slippage_vs_limit`.
+- An empty database returns a valid zeroed/empty-array response, not an
+  error.
+
+Response (200):
+
+```json
+{
+  "veto_precision": [{"reason_code": "PACE_LIMIT", "n": 12, "skipped": 3, "mean_hypothetical_r_20d": 0.4,
+                       "mean_hypothetical_r_60d": 1.1, "stopped_out_pct": 25.0}],
+  "caveats": ["counterfactuals assume reference-price fills (optimistic)",
+              "PACE_LIMIT/BUDGET rejects are opportunity-cost questions",
+              "reason_code is the first failed check; stats are conditional on earlier checks passing"],
+  "hard_exit_latency": {"n": 5, "max_seconds": 3, "p95_seconds": 2},
+  "whipsaw": {"reentry_within_10d": 0, "roundtrip_under_5d": 1},
+  "stop_basis": [{"basis": "ATR", "n": 8, "mean_realized_r": 0.9, "mean_mae_r": -0.5},
+                 {"basis": "SWING_LOW", "n": 4, "mean_realized_r": 1.3, "mean_mae_r": -0.3}],
+  "slippage": {"n": 12, "mean": -0.02, "worst": -0.15}
+}
+```
 
 ## Authentication
 
