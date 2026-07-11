@@ -351,6 +351,20 @@ curl -s -X PATCH -H "Authorization: Bearer $ADM" -H "Content-Type: application/j
   http://localhost:8090/admin/tenants/dracul/agents/voievod-outcome/budget
 ```
 
+**`daywalker-deep` deploy note:** it is trigger-only (`schedule=null`), so
+`AgentBudgetGuard`'s scheduled-agent scan does **not** flag it — but Vistierie's
+`RunController.trigger` still calls `BudgetEnforcer.checkOrThrow` on *every*
+`POST /agents/{name}/run`, scheduled or not, so a missing budget makes every
+escalation trigger fail (silently, from `DaywalkerCompletionService`'s
+try/catch — see `documentation/strigoi.md`'s escalation section) with no health
+chip to warn you. Set a budget once via the same admin-endpoint procedure,
+substituting `daywalker-deep` for the agent name:
+```
+curl -s -X PATCH -H "Authorization: Bearer $ADM" -H "Content-Type: application/json" \
+  -d '{"daily_cap_micros":1000000,"monthly_cap_micros":10000000}' \
+  http://localhost:8090/admin/tenants/dracul/agents/daywalker-deep/budget
+```
+
 ## Morning report digest
 
 To enable the daily Telegram morning-report digest:

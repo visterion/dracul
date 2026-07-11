@@ -45,7 +45,7 @@ in `CurrentUserHolder`.
 When **both** values are blank **and** the active profile is `dev` or `test`, the
 filter runs in **bypass mode**: it honors an `X-Dev-User` header (falling back to
 `default`) instead of verifying a JWT. Machine webhook paths (`/api/strigoi-*`,
-`/api/voievod`, `/api/daywalker`) and `/actuator/health` are always excluded — they
+`/api/voievod`, `/api/daywalker`, `/api/daywalker-deep`) and `/actuator/health` are always excluded — they
 authenticate with their own bearer tokens and are reached in-cluster, bypassing
 Cloudflare.
 
@@ -135,12 +135,27 @@ outcome is recorded in `daywalker_alerts.notification_sent`.
 | `DRACUL_DAYWALKER_PRICE_SPIKE` | `0.03` | PRICE_SPIKE threshold (fraction) |
 | `DRACUL_DAYWALKER_VOLUME_MULT` | `3.0` | VOLUME_SPIKE multiple of rolling average |
 | `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min) |
+| `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). |
+| `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE` | `0.6` | A CRITICAL assessment escalates only when its `confidence` is strictly below this threshold. |
 
 Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 
 **DST caveat:** the session cron is a fixed UTC expression, so it drifts ~1h
 against US market open across the EST/EDT boundary. A calendar-aware open is
 deferred.
+
+## Daywalker-Deep (reasoning-tier escalation agent)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `DRACUL_DAYWALKER_DEEP_ENABLED` | `false` | Register the agent + activate `/api/daywalker-deep/complete` (`@ConditionalOnProperty`) |
+| `DRACUL_DAYWALKER_DEEP_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the completion webhook. **Change in production.** |
+
+Trigger-only agent (`schedule=null`) — see the escalation-flow config above
+(`DRACUL_DAYWALKER_ESCALATION_ENABLED` / `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE`)
+for when it fires. Like every Vistierie agent it also needs a budget set once via
+the admin endpoint before it can run — see `documentation/operations.md`'s Agent
+budget guard section.
 
 ## Watchlist price refresh
 

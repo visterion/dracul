@@ -121,6 +121,11 @@ dracul:
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
     notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
+    escalation-enabled: ${DRACUL_DAYWALKER_ESCALATION_ENABLED:true}
+    escalation-confidence: ${DRACUL_DAYWALKER_ESCALATION_CONFIDENCE:0.6}
+  daywalker-deep:
+    enabled: ${DRACUL_DAYWALKER_DEEP_ENABLED:false}
+    webhook-token: ${DRACUL_DAYWALKER_DEEP_TOKEN:dev-token-change-me}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}
