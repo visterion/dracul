@@ -27,7 +27,7 @@ public class RuleVersionProvider {
     private final ObjectMapper mapper;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.3}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.4}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper) {
         this.active = active;
@@ -45,9 +45,13 @@ public class RuleVersionProvider {
                     .put("cooldown_days", 10)
                     .put("atr_period", 22)
                     .put("soft_confirm_min", 2)
-                    .put("confidence_min", 0.6)
-                    .put("max_positions", 5);
-            repo.upsert(new RuleVersion(active, LocalDate.now().toString(), "slice-2 exits", null, params));
+                    .put("confidence_min", 0.65)
+                    .put("max_positions", 5)
+                    .put("trim_fractions", "0.33,0.5,1.0")
+                    .put("entry_gtd_days", 2)
+                    .put("kill_criteria_hard", "price-level only");
+            repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
+                    "sim completion: hybrid kill hard trigger, scale-out ladder, entry GTD; confidence_min drift fixed 0.6->0.65", null, params));
         }
     }
 
