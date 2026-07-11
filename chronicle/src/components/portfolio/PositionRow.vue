@@ -7,7 +7,7 @@
     <TagPill :tone="badgeTone" class="pf-row__badge">{{ signal ? signal.action : t('portfolio.noSignal') }}</TagPill>
     <div class="pf-row__main">
       <span class="pf-row__sym mono">{{ item.ticker }}</span>
-      <span class="pf-row__name">{{ item.companyName }}</span>
+      <span v-if="displayName(item.ticker, item.companyName)" class="pf-row__name">{{ displayName(item.ticker, item.companyName) }}</span>
     </div>
     <div class="pf-row__nums mono">
       <span>{{ t('portfolio.cols.entry') }} <MoneyDisplay :amount="item.entryPrice" :currency="item.currency" :native-amount="item.nativeEntryPrice" :native-currency="item.entryCurrency" /></span>
@@ -35,6 +35,7 @@ import MoneyDisplay from '../common/MoneyDisplay.vue'
 import type { WatchlistItem, ExitSignal } from '../../api/types'
 import { formatNumber, formatPercent } from '../../utils/format'
 import { visibleThesisStatus } from '../../lib/portfolioDisplay'
+import { displayName } from '../../utils/instrument'
 
 const props = defineProps<{ item: WatchlistItem; signal: ExitSignal | null }>()
 const emit = defineEmits<{ open: [string]; edit: [WatchlistItem]; delete: [WatchlistItem] }>()

@@ -23,7 +23,7 @@
       </template>
       <template #title>
         <span class="mono title-ticker">{{ verdict.symbol }}</span>
-        <span class="title-name">{{ verdict.companyName }}</span>
+        <span v-if="displayName(verdict.symbol, verdict.companyName)" class="title-name">{{ displayName(verdict.symbol, verdict.companyName) }}</span>
       </template>
     </PageHead>
 
@@ -182,6 +182,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import ConsensusRing from '../components/common/ConsensusRing.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { formatNumber } from '../utils/format'
+import { displayName } from '../utils/instrument'
 
 const { t } = useI18n()
 const { anomalyTypeLabel, horizonLabel } = useEnumLabels()

@@ -27,7 +27,7 @@
         <div class="report-main">
           <span class="report-action tag-pill" :class="actionPillClass(line.action)">{{ line.action }}</span>
           <span class="report-symbol mono">{{ line.symbol }}</span>
-          <span class="report-name">{{ line.companyName }}</span>
+          <span v-if="displayName(line.symbol, line.companyName)" class="report-name">{{ displayName(line.symbol, line.companyName) }}</span>
         </div>
         <div class="report-metrics mono">
           <span><span class="metric-label">{{ t('report.cols.stop') }}</span> {{ fmt(line.activeStop) }}</span>
@@ -51,6 +51,7 @@ import OrderTicketCard from '../components/report/OrderTicketCard.vue'
 import { useApi } from '../api'
 import type { MorningReport } from '../api/types'
 import { formatMoney, formatPercent } from '../utils/format'
+import { displayName } from '../utils/instrument'
 
 const { t } = useI18n()
 const api = useApi()
