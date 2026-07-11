@@ -1116,7 +1116,7 @@ reviewer — a separate agent from `voievod` above). Requires `Authorization: Be
 <DRACUL_VOIEVOD_OUTCOME_TOKEN>`; only registered when
 `DRACUL_VOIEVOD_OUTCOME_ENABLED=true`. Runs weekly (default cron `0 0 7 * * 6`, UTC).
 
-### `POST /webhook/voievod-outcome/tools/fetch-elapsed-prey`
+### `POST /api/voievod-outcome/tools/fetch-elapsed-prey`
 
 Tool webhook. Returns prey whose horizon elapsed more than 30 days ago
 (`!Horizons.isOpen(discoveredAt, horizon, today.minusDays(30))`) and that has not yet
@@ -1155,7 +1155,7 @@ daily series is never shipped (token budget). When Agora is unavailable for a sy
 in the response is marked reviewed at fetch time (`prey.outcome_reviewed_at`) so a
 re-run never re-surfaces it.
 
-### `POST /webhook/voievod-outcome/complete`
+### `POST /api/voievod-outcome/complete`
 
 Completion webhook — persists proposed `Pattern` rows. Not yet implemented (follow-up
 task); the agent definition's `completionPath` already points at this route.

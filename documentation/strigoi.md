@@ -311,7 +311,7 @@ separate agent from Voievod above — reviews **elapsed** hunts (not consensus) 
 proposes generalizable patterns. Runs weekly, Saturday morning (default cron
 `0 0 7 * * 6`, UTC), reasoning tier (model_purpose `reasoning`).
 
-`POST /webhook/voievod-outcome/tools/fetch-elapsed-prey` (bearer-token auth via
+`POST /api/voievod-outcome/tools/fetch-elapsed-prey` (bearer-token auth via
 `DRACUL_VOIEVOD_OUTCOME_TOKEN`, only registered when `DRACUL_VOIEVOD_OUTCOME_ENABLED=true`)
 returns every prey whose horizon elapsed more than 30 days ago
 (`!Horizons.isOpen(discoveredAt, horizon, today.minusDays(30))`) and that has not yet been
@@ -326,7 +326,7 @@ re-surfaces the same prey even if the agent run itself later fails.
 
 The LLM judges each prey against its original thesis and kill criteria using the condensed
 OHLC, and proposes a pattern only when **at least 3 separate prey** support the same
-statement — see `prompts/voievod-outcome.md`. `POST /webhook/voievod-outcome/complete`
+statement — see `prompts/voievod-outcome.md`. `POST /api/voievod-outcome/complete`
 (persisting `Pattern` rows) is a follow-up task; the agent definition's `completionPath`
 already points at it.
 
