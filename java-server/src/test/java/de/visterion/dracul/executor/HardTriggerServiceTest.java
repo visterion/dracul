@@ -214,6 +214,50 @@ class HardTriggerServiceTest {
         assertThat(survivors).containsExactly(p);
     }
 
+    /** Fixed-instant clock whose time a test can move forward explicitly. */
+    private static final class SteppingClock extends Clock {
+        private Instant now;
+
+        SteppingClock(Instant start) { this.now = start; }
+
+        void advance(java.time.Duration d) { now = now.plus(d); }
+
+        @Override public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+
+        @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+
+        @Override public Instant instant() { return now; }
+    }
+
+    @Test
+    void hardExitLatency_spansDetectionToOrder_notPostFlattenOnly() {
+        // trigger_to_order_seconds must be anchored BEFORE the flatten call: the gateway here
+        // takes 7s (it advances the clock inside flatten), so the logged latency must reflect
+        // that span. Anchoring after the flatten would always measure ~0 — a dead metric.
+        SteppingClock steppingClock = new SteppingClock(NOW);
+        FakeExecutionGateway slowGateway = new FakeExecutionGateway() {
+            @Override
+            public de.visterion.dracul.executor.broker.CloseResult flatten(
+                    String connection, String symbol, BigDecimal fraction) {
+                steppingClock.advance(java.time.Duration.ofSeconds(7));
+                return super.flatten(connection, symbol, fraction);
+            }
+        };
+        HardTriggerService slowService = new HardTriggerService(slowGateway, positionRepo,
+                decisionRepo, cooldownRepo, ruleVersions, mapper, killCriteriaEvaluator,
+                0.35, 1.5, 10, steppingClock);
+
+        ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null);
+
+        slowService.apply(List.of(p), Map.of("ACME", new BigDecimal("94")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().latency().get("trigger_to_order_seconds").asLong())
+                .isEqualTo(7L);
+    }
+
     @Test
     void brokerUnavailableOnFlatten_escalatesKeepsPosition() {
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
