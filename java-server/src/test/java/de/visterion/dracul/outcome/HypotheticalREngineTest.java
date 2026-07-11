@@ -40,6 +40,16 @@ class HypotheticalREngineTest {
     }
 
     @Test
+    void skipsWhenAtrZeroYieldsNonPositiveRPerShare() {
+        // atr=0 and no swing low -> stop == entry, rPerShare 0: must skip, never throw on divide
+        List<OhlcBar> bars = List.of(bar(1, "100.5", "101", "100"));
+        HypotheticalOutcome outcome = engine.walk("BUY", bd("100"), bd("0"), null, bars, 20);
+        assertThat(outcome.skippedReason()).isNotNull().contains("non-positive rPerShare");
+        assertThat(outcome.rAfter20d()).isNull();
+        assertThat(outcome.tripleBarrierLabel()).isNull();
+    }
+
+    @Test
     void derivesAssumedEntryAndStopFromAtrOnlyAnchor() {
         // BUY entry 100, ATR 2, no swing low -> stop = 100 - 2.5*2 = 95, rPerShare = 5
         List<OhlcBar> bars = List.of(bar(1, "100.5", "101", "100"));

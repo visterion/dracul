@@ -24,7 +24,6 @@ import java.util.List;
 @Component
 public class HypotheticalREngine {
 
-    private static final BigDecimal ONE_R = BigDecimal.ONE;
     private static final BigDecimal NEG_ONE_R = BigDecimal.ONE.negate();
 
     private final PositionSizer positionSizer;
@@ -60,6 +59,11 @@ public class HypotheticalREngine {
         BigDecimal entry = referencePrice;
         BigDecimal stop = PositionSizer.deriveStopAnchor(side, referencePrice, atr, swingLow);
         BigDecimal rPerShare = entry.subtract(stop).abs();
+        if (rPerShare.signum() <= 0) {
+            // Garbage upstream data (e.g. atr=0 with no wider swing low): no risk unit exists,
+            // R math would divide by zero. Skip instead of fabricating an outcome.
+            return HypotheticalOutcome.skipped("non-positive rPerShare (atr " + atr + ")");
+        }
         BigDecimal favorableTarget = buy ? entry.add(rPerShare) : entry.subtract(rPerShare);
 
         // Full-path walk (not bounded by horizon): first bar where the adverse extreme reaches
