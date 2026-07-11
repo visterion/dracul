@@ -132,4 +132,13 @@ test.describe('Watchlist View (/watchlist)', () => {
     expect(box!.width).toBeGreaterThanOrEqual(44)
     expect(box!.height).toBeGreaterThanOrEqual(44)
   })
+
+  test('reopening the add dialog via the add button clears a previously typed symbol', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('ZZZZ')
+    await page.locator('.watchlist__dialog-cancel').click()
+    await page.getByTestId('wl-open-add').click()
+    await expect(page.getByTestId('wl-add-symbol')).toHaveValue('')
+    await expect(page.locator('.watchlist__dialog-error')).toHaveCount(0)
+  })
 })
