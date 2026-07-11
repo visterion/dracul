@@ -72,6 +72,10 @@ class ExecutorDefaultsTest {
         assertThat(placeEntry.timeoutSeconds()).isEqualTo(60);
         String requiredJson = placeEntry.inputSchema().get("required").toString();
         assertThat(requiredJson).contains("signal_id").contains("stop_price");
+        // confidence is an OPTIONAL 0..1 number (the executor-side Brier/calibration input) —
+        // present in properties, never required.
+        assertThat(placeEntry.inputSchema().get("properties").has("confidence")).isTrue();
+        assertThat(requiredJson).doesNotContain("confidence");
 
         ToolCatalogEntry fetchOpenPositions = entries.stream()
                 .filter(e -> e.toolName().equals("fetch_open_positions"))

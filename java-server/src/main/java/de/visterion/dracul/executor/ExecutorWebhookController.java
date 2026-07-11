@@ -400,14 +400,16 @@ public class ExecutorWebhookController {
         }
     }
 
-    /** Inserts one rich {@code decision_log} row for a place-entry accept or reject. */
+    /** Inserts one rich {@code decision_log} row for a place-entry accept or reject.
+     *  {@code confidence} is the LLM's own decision confidence (0..1, optional tool argument),
+     *  persisted as {@code confidence_in_decision} — the executor-side Brier/calibration input. */
     private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
             BigDecimal orderPrice, VetoService.Outcome veto, String action, String reasonCode,
-            ObjectNode orderJson, Instant now) {
+            ObjectNode orderJson, Double confidence, Instant now) {
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
                 signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
                 inputsSnapshotNode(signal, ctx, orderPrice, veto), vetoResultsNode(veto.results()),
-                action, reasonCode, orderJson, null, null,
+                action, reasonCode, orderJson, null, confidence,
                 latencyNode(signal.createdAt(), now), null));
     }
 
@@ -431,6 +433,10 @@ public class ExecutorWebhookController {
         BigDecimal limitPrice = decimalOrNull(input, "limit_price");
         BigDecimal stopPrice = decimalOrNull(input, "stop_price");
         BigDecimal takeProfit = decimalOrNull(input, "take_profit");
+        // The LLM's own decision confidence (0..1, optional) — logged for calibration, never
+        // used to gate anything server-side.
+        Double confidence = input.path("confidence").isNumber()
+                ? input.path("confidence").asDouble() : null;
 
         ExecutorSignal signal = signalRepo.findById(signalId);
         if (signal == null) {
@@ -495,7 +501,8 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected by veto: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, clock.instant());
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+                    clock.instant());
 
             if (veto.firstFailure() == RejectReason.CONTRADICTION
                     && veto.contradictingSignalId() != null) {
@@ -514,7 +521,8 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, clock.instant());
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+                    clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
@@ -536,7 +544,8 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, clock.instant());
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+                    clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
         }
@@ -568,7 +577,7 @@ public class ExecutorWebhookController {
                     null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", "BROKER_ERROR", null,
-                    clock.instant());
+                    confidence, clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
         }
@@ -603,7 +612,7 @@ public class ExecutorWebhookController {
                 orderJson.put("position_risk", sizing.newRiskAccountCcy());
                 orderJson.put("gtd_days", entryGtdDays);
                 logEntryDecision(runId, signal, ctx, orderPrice, veto, "ENTER", null, orderJson,
-                        clock.instant());
+                        confidence, clock.instant());
             } catch (RuntimeException e) {
                 // Position and signal status are durably persisted — the order is managed.
                 // Only the accepted-audit row(s) are missing; log it, but do not flip the response

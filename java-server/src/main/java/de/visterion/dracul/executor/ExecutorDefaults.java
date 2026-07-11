@@ -71,7 +71,8 @@ class ExecutorDefaults {
                     "side": {"type": "string", "enum": ["BUY", "SELL"]},
                     "limit_price": {"type": ["number", "null"]},
                     "stop_price": {"type": "number"},
-                    "take_profit": {"type": ["number", "null"]}
+                    "take_profit": {"type": ["number", "null"]},
+                    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
                   },
                   "required": ["signal_id", "symbol", "side", "stop_price"]
                 }
