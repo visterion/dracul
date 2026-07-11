@@ -187,7 +187,7 @@ export default {
     },
     dusk: {
       newPrey: 'neue Beute',
-      verdicts: 'Urteil | Urteile',
+      verdicts: 'Urteil heute | Urteile heute',
       alerts: 'Tagesläufer-Alarm | Tagesläufer-Alarme',
       lessons: 'Lektion ausstehend | Lektionen ausstehend',
     },
