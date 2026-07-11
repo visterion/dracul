@@ -4,6 +4,7 @@ import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
@@ -39,6 +40,7 @@ public class GroparWebhookController {
     private final BearerTokenVerifier verifier;
     private final WatchlistRepository watchlistRepo;
     private final VerdictRepository verdictRepo;
+    private final PreyRepository preyRepo;
     private final AgoraMarketData marketData;
     private final ExitSignalRepository exitSignalRepo;
     private final TelegramNotifier telegram;
@@ -55,6 +57,7 @@ public class GroparWebhookController {
             @Value("${dracul.gropar.webhook-token}") String token,
             WatchlistRepository watchlistRepo,
             VerdictRepository verdictRepo,
+            PreyRepository preyRepo,
             AgoraMarketData marketData,
             ExitSignalRepository exitSignalRepo,
             TelegramNotifier telegram,
@@ -69,6 +72,7 @@ public class GroparWebhookController {
         this.verifier = new BearerTokenVerifier(token);
         this.watchlistRepo = watchlistRepo;
         this.verdictRepo = verdictRepo;
+        this.preyRepo = preyRepo;
         this.marketData = marketData;
         this.exitSignalRepo = exitSignalRepo;
         this.telegram = telegram;
@@ -122,6 +126,20 @@ public class GroparWebhookController {
                             thesis.put("risks", vd.risks());
                             thesis.put("anomalyTypes", vd.anomalyTypes());
                             thesis.put("horizon", vd.horizon());
+
+                            try {
+                                List<String> preyIds = verdictRepo.contributingPreyIdsById(item.verdictId());
+                                if (!preyIds.isEmpty()) {
+                                    List<String> kill = preyRepo.findByIds(preyIds).stream()
+                                            .flatMap(p -> p.killCriteria().stream())
+                                            .distinct()
+                                            .toList();
+                                    if (!kill.isEmpty()) thesis.put("killCriteria", kill);
+                                }
+                            } catch (RuntimeException e) {
+                                log.warn("gropar: failed to resolve kill criteria for verdict {} ({}) — omitting: {}",
+                                        item.verdictId(), item.ticker(), e.getMessage());
+                            }
                         }
                     }
 
