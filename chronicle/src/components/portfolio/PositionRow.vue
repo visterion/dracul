@@ -53,7 +53,7 @@ const badgeTone = computed<'gold' | 'crimson' | 'green' | 'ash'>(() => {
   }
 })
 function fmt(n: number | null): string {
-  return n == null ? '—' : formatNumber(n, 0)
+  return n == null ? '—' : formatNumber(n, Number.isInteger(n) ? 0 : 4)
 }
 </script>
 
