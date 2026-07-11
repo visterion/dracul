@@ -117,12 +117,17 @@ public class HardTriggerService {
                 continue;
             }
 
+            // Latency anchor BEFORE the flatten call: trigger_to_order_seconds must span
+            // detection -> order placement, so capturing it after the flatten (inside
+            // recordHardExit) would measure ~0 always and make the metric useless.
+            Instant detectedAt = clock.instant();
+
             if (!flattenOrEscalate(p, trigger, runId)) {
                 survivors.add(p);
                 continue;
             }
 
-            recordHardExit(p, close, currentR, trigger, runId);
+            recordHardExit(p, close, currentR, trigger, runId, detectedAt);
         }
         return survivors;
     }
@@ -143,9 +148,7 @@ public class HardTriggerService {
     }
 
     private void recordHardExit(ExecutorPosition p, BigDecimal close, BigDecimal currentR,
-            Trigger trigger, String runId) {
-        Instant tStart = clock.instant();
-
+            Trigger trigger, String runId, Instant detectedAt) {
         positionRepo.close(p.id(), close, currentR, trigger.reasonCode());
         cooldownRepo.add(p.symbol(), trigger.reasonCode(),
                 clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
@@ -164,7 +167,7 @@ public class HardTriggerService {
         vetoResults.add(veto);
 
         ObjectNode latency = mapper.createObjectNode();
-        latency.put("trigger_to_order_seconds", Duration.between(tStart, clock.instant()).getSeconds());
+        latency.put("trigger_to_order_seconds", Duration.between(detectedAt, clock.instant()).getSeconds());
 
         // Exact position linkage for the outcome batch job (decision_log has no position_id
         // column; order_json carries it). A hard exit is always a full flatten -> fraction 1.0,
