@@ -50,12 +50,22 @@ describe('FilterSheet', () => {
     await w.vm.$nextTick()
     expect(w.emitted('close')).toBeUndefined()
   })
-  it('locks body scroll while open and restores on close', async () => {
+  it('locks main.app-main scroll while open and restores the prior value on close', async () => {
+    const main = document.createElement('main')
+    main.className = 'app-main'
+    main.style.overflow = 'auto'
+    document.body.appendChild(main)
+
     const w = make({ open: true })
     await w.vm.$nextTick()
-    expect(document.body.style.overflow).toBe('hidden')
+    expect(main.style.overflow).toBe('hidden')
+
     await w.setProps({ open: false })
-    expect(document.body.style.overflow).toBe('')
+    await w.vm.$nextTick()
+    expect(main.style.overflow).toBe('auto')
+
+    w.unmount()
+    main.remove()
   })
 
   it('moves focus into the panel when opened', async () => {
