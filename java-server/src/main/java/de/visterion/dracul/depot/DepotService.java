@@ -127,8 +127,13 @@ public class DepotService {
                 for (JsonNode q : quotesArr) {
                     String symbol = textOrNull(q, "symbol");
                     if (symbol == null) continue;
-                    byUnwrapped.put(symbol, new QuoteData(
-                            decimalOrNull(q, "price"), decimalOrNull(q, "dayChangePercent")));
+                    try {
+                        byUnwrapped.put(symbol, new QuoteData(
+                                decimalOrNull(q, "price"), decimalOrNull(q, "dayChangePercent")));
+                    } catch (NumberFormatException e) {
+                        log.warn("Malformed quote data for {}: {}", symbol, e.toString());
+                        byUnwrapped.put(symbol, new QuoteData(null, null));
+                    }
                 }
             }
             return byUnwrapped;
