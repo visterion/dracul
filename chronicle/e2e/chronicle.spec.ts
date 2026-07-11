@@ -70,4 +70,14 @@ test.describe('Chronicle View (/)', () => {
     const chipTexts = await group.locator('.filter-chip').allTextContents()
     expect(chipTexts.every((tx) => !tx.includes('SPIN'))).toBe(true)
   })
+
+  test('shows the "older prey" control and reveals another day group on click', async ({ page }) => {
+    const cards = page.locator('[data-testid="prey-card"]')
+    await expect(cards.first()).toBeVisible()
+    const before = await cards.count()
+    const showOlder = page.getByTestId('show-older')
+    await expect(showOlder).toBeVisible()
+    await showOlder.click()
+    await expect.poll(() => cards.count()).toBeGreaterThan(before)
+  })
 })

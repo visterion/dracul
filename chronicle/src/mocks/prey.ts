@@ -1,9 +1,9 @@
-import type { Prey } from '../api/types'
+import type { Prey, AnomalyType } from '../api/types'
 
 const ago = (hours: number) =>
   new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
 
-export const mockPrey: Prey[] = [
+const curatedPrey: Prey[] = [
   {
     id: 'prey-1',
     symbol: 'AVGO',
@@ -144,3 +144,36 @@ export const mockPrey: Prey[] = [
     discoveredAt: ago(30),
   },
 ]
+
+// UX-audit D2: exercise the >30-card day-group chunking path end-to-end.
+// The six curated prey span only ~2 days (<30 cards), so "Ältere Beute
+// anzeigen" never appears in mock mode. Spread bulk filler across three
+// calendar days (16/16/8) so the first visible groups exceed the 30-card
+// threshold (buildPreyGroups + visibleGroupCount) and one older group stays
+// hidden until the user expands it.
+const daysAgo = (days: number, i: number) =>
+  new Date(Date.now() - days * 86_400_000 - i * 1000).toISOString()
+
+const anomalyCycle: AnomalyType[] = ['SPIN', 'PEAD', 'INSIDER', 'LAZARUS', 'INDEX', 'MERGER']
+
+const bulkPrey: Prey[] = ([[0, 16], [1, 16], [2, 8]] as const).flatMap(([days, n]) =>
+  Array.from({ length: n }, (_, i): Prey => {
+    const idx = days * 100 + i
+    return {
+      id: `prey-bulk-${idx}`,
+      symbol: `BULK${idx}`,
+      companyName: `Bulk Holdings ${idx}`,
+      anomalyType: anomalyCycle[idx % anomalyCycle.length],
+      confidence: 0.5 + (idx % 40) / 100,
+      thesis: 'Synthetic filler prey used to exercise the day-group chunking path in mock mode.',
+      signals: ['Filler signal'],
+      risks: ['Filler risk'],
+      killCriteria: ['Filler kill criterion'],
+      horizon: '90d',
+      discoveredBy: 'strigoi-spin',
+      discoveredAt: daysAgo(days, i),
+    }
+  }),
+)
+
+export const mockPrey: Prey[] = [...curatedPrey, ...bulkPrey]
