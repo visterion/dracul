@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "required": ["patterns"],
+  "properties": {
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["applies_to_strigoi", "statement", "evidence_symbols"],
+        "properties": {
+          "applies_to_strigoi": {"type": "string"},
+          "statement": {"type": "string"},
+          "evidence_symbols": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

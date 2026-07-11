@@ -1109,6 +1109,57 @@ array is absent, the endpoint acknowledges (204) without persisting and logs the
 run-id. Symbols in the output that no longer form a valid cluster (e.g. prey
 expired between tool-call and completion) are silently skipped.
 
+## Voievod-Outcome Webhooks
+
+Called by Vistierie during a `voievod-outcome` agent run (elapsed-hunt pattern
+reviewer — a separate agent from `voievod` above). Requires `Authorization: Bearer
+<DRACUL_VOIEVOD_OUTCOME_TOKEN>`; only registered when
+`DRACUL_VOIEVOD_OUTCOME_ENABLED=true`. Runs weekly (default cron `0 0 7 * * 6`, UTC).
+
+### `POST /webhook/voievod-outcome/tools/fetch-elapsed-prey`
+
+Tool webhook. Returns prey whose horizon elapsed more than 30 days ago
+(`!Horizons.isOpen(discoveredAt, horizon, today.minusDays(30))`) and that has not yet
+been reviewed, oldest-discovered first, capped at 25 prey per run.
+
+Request: `{ "run_id": "...", "tool_name": "fetch_elapsed_prey", "input": { "lookback_days": 90 } }`
+
+`input.lookback_days` is optional — when present it additionally bounds the scan to
+prey discovered within that many days of now.
+
+Response:
+```json
+{
+  "output": {
+    "prey": [
+      {
+        "symbol": "ACME",
+        "anomalyType": "SPINOFF",
+        "thesis": "...",
+        "killCriteria": ["Close below 42.50"],
+        "discoveredAt": "2026-01-15T08:00:00Z",
+        "horizon": "3m",
+        "ohlc": { "firstClose": 40.10, "lastClose": 51.30, "minClose": 38.20, "maxClose": 53.00 }
+      }
+    ],
+    "cap": 25,
+    "capped": false
+  }
+}
+```
+
+`ohlc` is the daily close history since discovery (`AgoraMarketData.dailyOhlcHistory`,
+`horizon days + 30`), condensed server-side to first/last/min/max closes — the full
+daily series is never shipped (token budget). When Agora is unavailable for a symbol,
+`ohlc` degrades to `{}` and the prey is still returned (fail-soft). Every prey returned
+in the response is marked reviewed at fetch time (`prey.outcome_reviewed_at`) so a
+re-run never re-surfaces it.
+
+### `POST /webhook/voievod-outcome/complete`
+
+Completion webhook — persists proposed `Pattern` rows. Not yet implemented (follow-up
+task); the agent definition's `completionPath` already points at this route.
+
 ## Strigoi-Index Webhooks
 
 Called by Vistierie during a `strigoi-index` agent run (index-inclusion drift).

@@ -84,7 +84,7 @@ new prompt text to Vistierie.
 `java-server/src/main/resources/prompts/prompt_registry.json` maps every
 bundled agent (`daywalker`, `executor`, `gropar`, `strigoi-echo`,
 `strigoi-index`, `strigoi-insider`, `strigoi-lazarus`, `strigoi-merger`,
-`strigoi-spin`, `voievod`) to the `version` and `body_hash` its current
+`strigoi-spin`, `voievod`, `voievod-outcome`) to the `version` and `body_hash` its current
 `prompts/<agent>.md` file is expected to have (`body_hash` =
 `"p-" + sha256(body).substring(0, 12)`, the same derivation the runtime
 `agent_version` uses — see `PromptHashes` in `de.visterion.dracul.agent`).
@@ -338,6 +338,18 @@ the budget-setup procedure for scheduled agents in this repo's project notes
 (agent schema/prompt changes + budgets section). The guard only re-evaluates
 at the next application startup; after fixing the budget, restart the
 `dracul` container (or wait for the next deploy) to clear the flag.
+
+**`voievod-outcome` deploy note:** like every scheduled agent, it needs a
+Vistierie budget set once before it can be unpaused — the definition alone
+(inserted by `AgentDefinitionBootstrap`) is not enough. Mirror `voievod`'s
+budget ($1/day, $10/month) via the same admin-endpoint procedure referenced
+above (agent schema/prompt changes + budgets section), substituting
+`voievod-outcome` for the agent name:
+```
+curl -s -X PATCH -H "Authorization: Bearer $ADM" -H "Content-Type: application/json" \
+  -d '{"daily_cap_micros":1000000,"monthly_cap_micros":10000000}' \
+  http://localhost:8090/admin/tenants/dracul/agents/voievod-outcome/budget
+```
 
 ## Morning report digest
 

@@ -64,6 +64,10 @@ dracul:
     enabled: ${DRACUL_VOIEVOD_ENABLED:false}
     webhook-token: ${DRACUL_VOIEVOD_TOKEN:dev-token-change-me}
     schedule: ${DRACUL_VOIEVOD_SCHEDULE:0 0 8 * * 1-5}
+  voievod-outcome:
+    enabled: ${DRACUL_VOIEVOD_OUTCOME_ENABLED:false}
+    webhook-token: ${DRACUL_VOIEVOD_OUTCOME_TOKEN:dev-token-change-me}
+    schedule: ${DRACUL_VOIEVOD_OUTCOME_SCHEDULE:0 0 7 * * 6}
   gropar:
     enabled: ${DRACUL_GROPAR_ENABLED:false}
     webhook-token: ${DRACUL_GROPAR_WEBHOOK_TOKEN:dev-token-change-me}
