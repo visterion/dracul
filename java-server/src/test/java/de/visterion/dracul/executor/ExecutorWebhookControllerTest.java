@@ -75,7 +75,7 @@ class ExecutorWebhookControllerTest {
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram,
                 "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
-                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2);
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2);
     }
 
     // -------------------------------------------------------------------
@@ -920,7 +920,7 @@ class ExecutorWebhookControllerTest {
         EnrichedPosition ep = new EnrichedPosition(1L, "saxo-sim", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
-                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of("X"),
                 true, false, 1, true, "R_CONFIRMED", "sig-42");
         when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
 
@@ -944,6 +944,7 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> softTrigger = (Map<String, Object>) first.get("soft_trigger");
         assertThat(softTrigger.get("confirm_count")).isEqualTo(1);
         assertThat(softTrigger.get("chandelier_breach")).isEqualTo(true);
+        assertThat(softTrigger.get("kill_criteria_breached")).isEqualTo(List.of("X"));
 
         @SuppressWarnings("unchecked")
         Map<String, Object> tranche2 = (Map<String, Object>) first.get("tranche2");
@@ -1258,6 +1259,35 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("saxo-sim"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().clientRef()).isEqualTo("t2-pos-42");
+    }
+
+    @Test
+    void addTranche_rejectsWhenTrancheLimitReached() {
+        ExecutorPosition open = new ExecutorPosition(7L, "saxo-sim", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
+                null, null, null, null, null, null, null, null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("MAX_TRANCHE");
+
+        verify(assembler, never()).assembleForSymbol(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(tranche2Detector, never()).detect(any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getValue().accepted()).isFalse();
+        assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("MAX_TRANCHE");
     }
 
     @Test

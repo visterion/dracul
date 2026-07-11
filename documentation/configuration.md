@@ -365,6 +365,7 @@ Dracul's read-only design.
 | `DRACUL_EXECUTOR_MAX_SIGNAL_AGE_DAYS` | `dracul.executor.max-signal-age-days` | `5` | Maximum signal age, in trading days since `createdAt`, before the `SIGNAL_EXPIRED` veto rejects it. |
 | `DRACUL_EXECUTOR_CHASE_ATR_MULT` | `dracul.executor.chase-atr-mult` | `1.0` | The `CHASED_AWAY` veto rejects an entry once price has moved more than this many ATRs beyond the signal's reference price. |
 | `DRACUL_EXECUTOR_PACE_PER_WEEK` | `dracul.executor.pace-per-week` | `2` | Maximum new positions (tranche-1 entries) per ISO calendar week; enforced by the `PACE_LIMIT` veto. |
+| `DRACUL_EXECUTOR_MAX_TRANCHE` | `dracul.executor.max-tranche` | `2` | Hard cap on tranches per position; `add-tranche` rejects with `MAX_TRANCHE` once `position.tranche() >= max-tranche`. |
 | `DRACUL_EXECUTOR_INSTRUMENT_CURRENCY` | `dracul.executor.instrument-currency` | `USD` | The currency instrument-side prices/ATR/tranche amounts are assumed to be in (v1: always USD). Used as the `EntryContextAssembler`'s FX-conversion basis and as the fallback account currency when the broker account snapshot is unavailable. |
 
 **Safety notes:**
@@ -399,6 +400,15 @@ Deterministic intraday watcher that checks every held position's live price agai
 | `DRACUL_STOPGUARD_NOTIFY_LEVEL` (`dracul.stopguard.notify-level`) | `WARNING` | Minimum alert severity that triggers a Telegram push (`WARNING` or `CRITICAL`). Default `WARNING` sends both proximity and breach alerts. |
 
 Reuses `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `TELEGRAM_BASE_URL` — no additional Telegram config is needed.
+
+## Verdict Kill-Criteria Watcher
+
+Deterministic (no-LLM) watcher: for every open verdict (not yet DISMISSed) whose symbol is **not** a held watchlist position, evaluates the contributing prey's `kill_criteria` against the current quote and persists any breach on the verdict (`kill_criteria_breached` / `kill_criteria_checked_at`). Newly breached criteria are published as a `verdict.kill_criteria_breached` SSE event (see `documentation/api.md`) and rendered as a `KILL: <criterion>` badge on the verdict detail page. On by default; a **Dracul-internal cron** — it does **not** register a Vistierie agent and requires no Vistierie budget change or `definition/reset`.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_VERDICT_KILLWATCH_ENABLED` (`dracul.verdict-killwatch.enabled`) | `true` | Enables the `VerdictKillCriteriaWatcher` scheduled poll. Set to `false` to disable. |
+| `DRACUL_VERDICT_KILLWATCH_CRON` (`dracul.verdict-killwatch.cron`) | `0 30 21 * * 1-5` | Spring cron (zone: UTC) for the poll. Default: 21:30 UTC on weekdays — after US market close, before gropar's exit-signal run. |
 
 ## Morning Report (daily digest)
 

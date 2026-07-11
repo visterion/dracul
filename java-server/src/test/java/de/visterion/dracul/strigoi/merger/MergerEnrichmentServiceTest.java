@@ -27,7 +27,8 @@ class MergerEnrichmentServiceTest {
         when(filings.filingText("https://sec/TGT")).thenReturn(new FilingText("SUMMARY TERM SHEET $52 cash", true));
         when(md.quotes(any())).thenReturn(Map.of("TGT", new Quote(new BigDecimal("47.50"), BigDecimal.ZERO)));
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md).enrich(List.of(candidate("TGT")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser())
+                .enrich(List.of(candidate("TGT")));
 
         assertThat(out).hasSize(1);
         EnrichedMergerCandidate e = out.get(0);
@@ -44,7 +45,7 @@ class MergerEnrichmentServiceTest {
         when(filings.filingText(any())).thenReturn(FilingText.unavailable());
         when(md.quotes(any())).thenReturn(Map.of());   // no price
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md).enrich(List.of(candidate("ABC")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("ABC")));
 
         EnrichedMergerCandidate e = out.get(0);
         assertThat(e.termSheetAvailable()).isFalse();
@@ -59,7 +60,7 @@ class MergerEnrichmentServiceTest {
         when(filings.filingText(any())).thenReturn(new FilingText("t", true));
         when(md.quotes(any())).thenThrow(new RuntimeException("boom"));
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md).enrich(List.of(candidate("XYZ")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("XYZ")));
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).priceAvailable()).isFalse();
@@ -72,9 +73,25 @@ class MergerEnrichmentServiceTest {
         // quotes() maps a missing/malformed price to BigDecimal.ZERO.
         when(md.quotes(any())).thenReturn(Map.of("ZRO", new Quote(BigDecimal.ZERO, BigDecimal.ZERO)));
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md).enrich(List.of(candidate("ZRO")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("ZRO")));
 
         assertThat(out.get(0).lastPrice()).isNull();
         assertThat(out.get(0).priceAvailable()).isFalse();
+    }
+
+    @Test void extractsDealTermsAndComputesSpread() {
+        AgoraFilings filings = Mockito.mock(AgoraFilings.class);
+        AgoraMarketData md = Mockito.mock(AgoraMarketData.class);
+        when(filings.filingText(any())).thenReturn(
+                new FilingText("...shareholders will receive $54.20 in cash per share...", true));
+        when(md.quotes(any())).thenReturn(Map.of("TGT", new Quote(new BigDecimal("50.00"), BigDecimal.ZERO)));
+
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser())
+                .enrich(List.of(candidate("TGT")));
+
+        EnrichedMergerCandidate e = out.get(0);
+        assertThat(e.offerPrice()).isEqualByComparingTo("54.20");
+        assertThat(e.considerationType()).isEqualTo("cash");
+        assertThat(e.spreadPercent()).isEqualByComparingTo("8.40");
     }
 }

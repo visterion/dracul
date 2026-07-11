@@ -59,7 +59,8 @@ class HuntCompletionSignalEmissionIT {
         when(filings.searchSpinoffs(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedSpinCandidate(
-                "SPN", "SpinCo Inc", "10-12B", "2026-05-20", "http://sec/s1", "SUMMARY", true)));
+                "SPN", "SpinCo Inc", "10-12B", "2026-05-20", "http://sec/s1", "SUMMARY", true,
+                null, null, null)));
     }
 
     @Test

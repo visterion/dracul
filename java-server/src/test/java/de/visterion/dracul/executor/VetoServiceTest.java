@@ -10,7 +10,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Full 13-veto catalog + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
+ * Full 14-veto catalog + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
  * {@link #cfg()} return pass-everything defaults; each test perturbs exactly what it needs to
  * exercise one veto boundary.
  */
@@ -115,7 +115,7 @@ class VetoServiceTest {
 
         assertThat(outcome.passed()).isTrue();
         assertThat(outcome.firstFailure()).isNull();
-        assertThat(outcome.results()).hasSize(13);
+        assertThat(outcome.results()).hasSize(14);
         assertThat(outcome.results()).allMatch(VetoResult::passed);
         assertThat(outcome.contradictingSignalId()).isNull();
     }
@@ -390,7 +390,47 @@ class VetoServiceTest {
         assertThat(result(outcome, "CONCENTRATION").passed()).isTrue();
     }
 
-    // ---- 8 CONTRADICTION ----
+    // ---- 8 CORRELATED ----
+
+    @Test
+    void correlated_rejectsSameSectorSameMechanism() {
+        ExecutorSignal s = signal(); // default mechanism "PEAD"
+        EntryContext ctx = ctx()
+                .openPositions(List.of(position("XYZ", "Technology")))
+                .openMechanisms(Map.of("XYZ", s.mechanism()))
+                .candidateSector("Technology")
+                .build();
+        VetoService.Outcome outcome = vetoService.evaluate(s, ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.CORRELATED);
+    }
+
+    @Test
+    void correlated_passesWhenSectorDiffers() {
+        ExecutorSignal s = signal();
+        EntryContext ctx = ctx()
+                .openPositions(List.of(position("XYZ", "Energy")))
+                .openMechanisms(Map.of("XYZ", s.mechanism()))
+                .candidateSector("Technology")
+                .build();
+
+        assertThat(vetoService.evaluate(s, ctx, sizing(), cfg()).passed()).isTrue();
+    }
+
+    @Test
+    void correlated_passesWhenMechanismDiffers() {
+        ExecutorSignal s = signal();
+        EntryContext ctx = ctx()
+                .openPositions(List.of(position("XYZ", "Technology")))
+                .openMechanisms(Map.of("XYZ", "SOMETHING_ELSE"))
+                .candidateSector("Technology")
+                .build();
+
+        assertThat(vetoService.evaluate(s, ctx, sizing(), cfg()).passed()).isTrue();
+    }
+
+    // ---- 9 CONTRADICTION ----
 
     @Test
     void contradiction_pendingMergerArbVsPead_setsContradictingSignalId() {
@@ -458,7 +498,7 @@ class VetoServiceTest {
         assertThat(outcome.contradictingSignalId()).isNull();
     }
 
-    // ---- 9 REDUNDANCY ----
+    // ---- 10 REDUNDANCY ----
 
     @Test
     void redundancy_sameMechanismSameSymbol_fails() {
@@ -485,7 +525,7 @@ class VetoServiceTest {
         assertThat(result(outcome, "REDUNDANCY").passed()).isTrue();
     }
 
-    // ---- 10 LIQUIDITY ----
+    // ---- 11 LIQUIDITY ----
 
     @Test
     void liquidity_priceBelowMin_fails() {
@@ -522,7 +562,7 @@ class VetoServiceTest {
         assertThat(result(outcome, "LIQUIDITY").passed()).isTrue();
     }
 
-    // ---- 11 SIGNAL_EXPIRED ----
+    // ---- 12 SIGNAL_EXPIRED ----
 
     @Test
     void signalExpired_overMax_fails() {
@@ -541,7 +581,7 @@ class VetoServiceTest {
         assertThat(result(outcome, "SIGNAL_EXPIRED").passed()).isTrue();
     }
 
-    // ---- 12 CHASED_AWAY ----
+    // ---- 13 CHASED_AWAY ----
 
     @Test
     void chasedAway_priceRunAway_fails() {
@@ -620,7 +660,7 @@ class VetoServiceTest {
         assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
     }
 
-    // ---- 13 PACE_LIMIT ----
+    // ---- 14 PACE_LIMIT ----
 
     @Test
     void paceLimit_atLimit_fails() {
@@ -642,12 +682,12 @@ class VetoServiceTest {
     // ---- full trace + ordering ----
 
     @Test
-    void allThirteenVetosAlwaysEvaluated_evenAfterFirstFailure() {
+    void allFourteenVetosAlwaysEvaluated_evenAfterFirstFailure() {
         EntryContext ctx = ctx().entriesThisWeek(3).build(); // fails PACE_LIMIT (last veto)
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(outcome.results()).hasSize(13);
-        assertThat(outcome.results().get(12).check()).isEqualTo("PACE_LIMIT");
+        assertThat(outcome.results()).hasSize(14);
+        assertThat(outcome.results().get(13).check()).isEqualTo("PACE_LIMIT");
     }
 
     @Test
@@ -667,8 +707,9 @@ class VetoServiceTest {
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
 
         List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "COOLDOWN",
-                "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CONTRADICTION",
-                "REDUNDANCY", "LIQUIDITY", "SIGNAL_EXPIRED", "CHASED_AWAY", "PACE_LIMIT");
+                "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
+                "CONTRADICTION", "REDUNDANCY", "LIQUIDITY", "SIGNAL_EXPIRED", "CHASED_AWAY",
+                "PACE_LIMIT");
         List<String> actualOrder = outcome.results().stream().map(VetoResult::check).toList();
 
         assertThat(actualOrder).isEqualTo(expectedOrder);

@@ -12,7 +12,7 @@ import java.util.Set;
  * Code-enforced pre-trade vetos ("Garantien in Code"). Pure and deterministic — no I/O, no clock.
  * The LLM's judgment never overrides these.
  *
- * <p>{@link #evaluate} runs the full 13-veto catalog against an assembled {@link EntryContext},
+ * <p>{@link #evaluate} runs the full 14-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
  * mandatory upstream data was missing at assembly time.
  */
@@ -108,7 +108,16 @@ public class VetoService {
         results.add(new VetoResult("CONCENTRATION", concentrationOk));
         if (!concentrationOk && firstFailure == null) firstFailure = RejectReason.CONCENTRATION;
 
-        // 8 CONTRADICTION — MERGER_ARB vs {PEAD, SPINOFF, INSIDER_CLUSTER, INDEX_INCLUSION,
+        // 8 CORRELATED — same sector AND same mechanism as an existing open position
+        String candSector = ctx.candidateSector();
+        String mech = signal == null ? null : signal.mechanism();
+        boolean uncorrelated = candSector == null || mech == null || ctx.openPositions().stream()
+                .noneMatch(p -> candSector.equalsIgnoreCase(p.sector())
+                        && mech.equalsIgnoreCase(ctx.openMechanisms().getOrDefault(p.symbol(), "")));
+        results.add(new VetoResult("CORRELATED", uncorrelated));
+        if (!uncorrelated && firstFailure == null) firstFailure = RejectReason.CORRELATED;
+
+        // 9 CONTRADICTION — MERGER_ARB vs {PEAD, SPINOFF, INSIDER_CLUSTER, INDEX_INCLUSION,
         // QUALITY_52W_LOW}, both directions, same symbol. Checked against other pending signals
         // (records the contradicting signal id) and against open-position mechanisms.
         boolean contradictionOk = true;
@@ -132,25 +141,25 @@ public class VetoService {
         results.add(new VetoResult("CONTRADICTION", contradictionOk));
         if (!contradictionOk && firstFailure == null) firstFailure = RejectReason.CONTRADICTION;
 
-        // 9 REDUNDANCY — same mechanism already open on the same symbol
+        // 10 REDUNDANCY — same mechanism already open on the same symbol
         boolean redundancyOk = !(schemaOk
                 && signal.mechanism().equals(ctx.openMechanisms().get(signal.symbol())));
         results.add(new VetoResult("REDUNDANCY", redundancyOk));
         if (!redundancyOk && firstFailure == null) firstFailure = RejectReason.REDUNDANCY;
 
-        // 10 LIQUIDITY
+        // 11 LIQUIDITY
         boolean liquidityOk = ctx.price().compareTo(cfg.minPrice()) >= 0
                 && ctx.adv20Notional().compareTo(
                         ctx.trancheAmount().multiply(BigDecimal.valueOf(cfg.advMultiple()))) >= 0;
         results.add(new VetoResult("LIQUIDITY", liquidityOk));
         if (!liquidityOk && firstFailure == null) firstFailure = RejectReason.LIQUIDITY;
 
-        // 11 SIGNAL_EXPIRED
+        // 12 SIGNAL_EXPIRED
         boolean expiredOk = ctx.signalAgeTradingDays() <= cfg.maxSignalAgeDays();
         results.add(new VetoResult("SIGNAL_EXPIRED", expiredOk));
         if (!expiredOk && firstFailure == null) firstFailure = RejectReason.SIGNAL_EXPIRED;
 
-        // 12 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
+        // 13 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
         // schemaOk: a null signal, or a schema-valid signal with a null referencePrice (a field not
         // covered by SCHEMA_INVALID's checklist), can otherwise reach this line and NPE. Made total:
         // schema-invalid ⇒ traces PASS (consistent with the other gated vetos; SCHEMA_INVALID is
@@ -177,7 +186,7 @@ public class VetoService {
         results.add(new VetoResult("CHASED_AWAY", chasedOk));
         if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
 
-        // 13 PACE_LIMIT
+        // 14 PACE_LIMIT
         boolean paceOk = ctx.entriesThisWeek() < cfg.pacePerWeek();
         results.add(new VetoResult("PACE_LIMIT", paceOk));
         if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;

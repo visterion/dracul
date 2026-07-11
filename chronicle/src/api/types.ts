@@ -105,6 +105,7 @@ export interface VerdictDetail extends Verdict {
   currency: string                  // display currency code
   nativeCurrentPrice: number | null // original price before conversion
   nativeCurrency: string            // original currency of currentPrice
+  killCriteriaBreached?: string[]   // kill criteria currently breached (VerdictKillCriteriaWatcher)
 }
 
 export type VerdictDecision = 'TRACK' | 'INTERESTING' | 'DISMISS' | 'ACTED'

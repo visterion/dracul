@@ -5,6 +5,9 @@ import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.prey.Prey;
+import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.verdict.VerdictDetail;
 import de.visterion.dracul.verdict.VerdictRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
@@ -35,6 +38,7 @@ class GroparWebhookControllerTest {
 
     private WatchlistRepository watchlistRepo;
     private VerdictRepository verdictRepo;
+    private PreyRepository preyRepo;
     private AgoraMarketData marketData;
     private ExitSignalRepository exitSignalRepo;
     private TelegramNotifier telegram;
@@ -45,6 +49,7 @@ class GroparWebhookControllerTest {
     void setUp() {
         watchlistRepo    = mock(WatchlistRepository.class);
         verdictRepo      = mock(VerdictRepository.class);
+        preyRepo         = mock(PreyRepository.class);
         marketData       = mock(AgoraMarketData.class);
         exitSignalRepo   = mock(ExitSignalRepository.class);
         telegram         = mock(TelegramNotifier.class);
@@ -67,13 +72,39 @@ class GroparWebhookControllerTest {
 
         controller = new GroparWebhookController(
                 "tok",
-                watchlistRepo, verdictRepo, marketData, exitSignalRepo, telegram,
+                watchlistRepo, verdictRepo, preyRepo, marketData, exitSignalRepo, telegram,
                 indicatorService, riskService, cache,
                 260,  // historyDays
                 40.0, // profitTargetPct
                 15.0, // stopLossPct
                 0L    // fetchThrottleMs (no sleep in tests)
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: minimal VerdictDetail (only fields the thesis block reads matter)
+    // -------------------------------------------------------------------------
+
+    private VerdictDetail detail() {
+        return new VerdictDetail(
+                "v1", "ACME", "ACME Corp",
+                List.of(), 0.8,
+                "summary text", "2025-01-01T00:00:00Z",
+                List.of("SPINOFF"), 100.0,
+                0.8, "3-6m",
+                List.of("signal1"), List.of("risk1"),
+                List.of(),
+                null, null, "USD");
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: minimal Prey with given kill criteria
+    // -------------------------------------------------------------------------
+
+    private Prey preyWithKillCriteria(String id, List<String> criteria) {
+        return new Prey(id, "ACME", "ACME Corp", "SPINOFF",
+                0.8, "thesis text", List.of(), List.of(),
+                criteria, "3-6m", "strigoi-spin", "2025-01-01T00:00:00Z");
     }
 
     // -------------------------------------------------------------------------
@@ -94,6 +125,15 @@ class GroparWebhookControllerTest {
         return new WatchlistItem(id, ticker, ticker + " Corp",
                 110.0, 1.0, "calm", "2025-01-01", tag,
                 null, List.of(), List.of(),
+                entryPrice, shareCount, owner, null, null);
+    }
+
+    private WatchlistItem itemWithVerdict(String id, String ticker, String tag,
+                                           Double entryPrice, Double shareCount, String owner,
+                                           String verdictId) {
+        return new WatchlistItem(id, ticker, ticker + " Corp",
+                110.0, 1.0, "calm", "2025-01-01", tag,
+                verdictId, List.of(), List.of(),
                 entryPrice, shareCount, owner, null, null);
     }
 
@@ -126,6 +166,67 @@ class GroparWebhookControllerTest {
         verify(marketData, times(1)).dailyOhlcHistory(eq("ACME"), anyInt());
         verify(marketData, never()).dailyOhlcHistory(eq("FOO"),  anyInt());
         verify(marketData, never()).dailyOhlcHistory(eq("BAR"),  anyInt());
+    }
+
+    // =========================================================================
+    // Test 1b: fetchHeldPositions thesis block includes deduplicated union of
+    // kill criteria across contributing prey
+    // =========================================================================
+
+    @Test
+    void fetchHeldPositions_includesKillCriteriaFromContributingPrey() throws Exception {
+        var heldItem = itemWithVerdict("id-kc", "ACME", "HELD", 100.0, 10.0, "alice@x", "v1");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(marketData.dailyOhlcHistory(eq("ACME"), anyInt())).thenReturn(oneBar());
+
+        when(verdictRepo.findDetailById("v1")).thenReturn(Optional.of(detail()));
+        when(verdictRepo.contributingPreyIdsById("v1")).thenReturn(List.of("p1", "p2"));
+        when(preyRepo.findByIds(List.of("p1", "p2"))).thenReturn(List.of(
+                preyWithKillCriteria("p1", List.of("Close below 90")),
+                preyWithKillCriteria("p2", List.of("Close below 90", "Merger terminated"))));
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) output.get("positions");
+
+        assertThat(positions).hasSize(1);
+        var view = (HeldPositionView) positions.get(0);
+        @SuppressWarnings("unchecked")
+        var killCriteria = (List<String>) view.thesis().get("killCriteria");
+        assertThat(killCriteria).containsExactly("Close below 90", "Merger terminated");
+    }
+
+    // =========================================================================
+    // Test 1c: fetchHeldPositions thesis block omits killCriteria key when a
+    // repo failure occurs while resolving it — the feed must not break.
+    // =========================================================================
+
+    @Test
+    void fetchHeldPositions_killCriteriaLookupFailure_omitsKeyButDoesNotBreakFeed() throws Exception {
+        var heldItem = itemWithVerdict("id-kc2", "ACME", "HELD", 100.0, 10.0, "alice@x", "v1");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(marketData.dailyOhlcHistory(eq("ACME"), anyInt())).thenReturn(oneBar());
+
+        when(verdictRepo.findDetailById("v1")).thenReturn(Optional.of(detail()));
+        when(verdictRepo.contributingPreyIdsById("v1")).thenThrow(new RuntimeException("db down"));
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) output.get("positions");
+
+        assertThat(positions).hasSize(1);
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.thesis()).doesNotContainKey("killCriteria");
     }
 
     // =========================================================================
@@ -246,6 +347,41 @@ class GroparWebhookControllerTest {
 
         verify(telegram).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"),
                 argThat(text -> text != null && !text.contains("null")));
+    }
+
+    // =========================================================================
+    // Test 5b: complete with violated_kill_criteria appends "[Verletzt: ...]"
+    // to the persisted rationale.
+    // =========================================================================
+
+    @Test
+    void complete_invalidatedSignal_appendsViolatedKillCriteriaToRationale() throws Exception {
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "signals": [
+                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL",
+                        "rationale": "These loosen", "confidence": 0.9,
+                        "thesis_status": "INVALIDATED",
+                        "violated_kill_criteria": ["Close below 90"] }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        var resp = controller.complete(BEARER, "run-47", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+
+        ArgumentCaptor<ExitSignal> captor = ArgumentCaptor.forClass(ExitSignal.class);
+        verify(exitSignalRepo).insert(captor.capture(), eq("alice@x"));
+        assertThat(captor.getValue().rationale())
+                .isEqualTo("These loosen [Verletzt: Close below 90]");
     }
 
     // =========================================================================

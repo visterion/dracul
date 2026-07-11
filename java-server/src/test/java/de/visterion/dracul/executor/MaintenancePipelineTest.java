@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -32,6 +33,7 @@ class MaintenancePipelineTest {
     private final ExecutorSignalRepository signalRepo = mock(ExecutorSignalRepository.class);
     private final Tranche2Detector tranche2Detector = new Tranche2Detector();
     private final SoftConditionEvaluator softEval = new SoftConditionEvaluator();
+    private final KillCriteriaEvaluator killCriteriaEvaluator = new KillCriteriaEvaluator();
 
     private MaintenancePipeline pipeline;
 
@@ -39,13 +41,18 @@ class MaintenancePipelineTest {
     void setUp() {
         when(signalRepo.findPending(50)).thenReturn(List.of());
         pipeline = new MaintenancePipeline(reconcile, hardTrigger, ratchet, softEval, indicators,
-                positionRepo, signalRepo, tranche2Detector, 3.0, 22, 20);
+                positionRepo, signalRepo, tranche2Detector, killCriteriaEvaluator, 3.0, 22, 20);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
             BigDecimal highestPrice, BigDecimal mfeR, int softConfirmCount) {
+        return openPosition(id, symbol, activeStop, highestPrice, mfeR, softConfirmCount, List.of());
+    }
+
+    private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
+            BigDecimal highestPrice, BigDecimal mfeR, int softConfirmCount, List<String> killCriteria) {
         return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
-                new BigDecimal("95"), activeStop, 1, null, List.of(), "sig-1", "agent",
+                new BigDecimal("95"), activeStop, 1, null, killCriteria, "sig-1", "agent",
                 "2026-06-01", null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null,
                 null, null, null, "stop-1", null, null, null, null);
     }
@@ -166,6 +173,26 @@ class MaintenancePipelineTest {
         verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any());
         assertThat(ep.tranche2Eligible()).isFalse();
         assertThat(ep.tranche2Reason()).isNull();
+    }
+
+    @Test
+    void killCriteriaBreach_surfacesInEnrichedPosition() {
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0, List.of("close below 90"));
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("85")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        assertThat(result).hasSize(1);
+        EnrichedPosition ep = result.get(0);
+        assertThat(ep.killCriteriaBreached()).containsExactly("close below 90");
     }
 
     @Test

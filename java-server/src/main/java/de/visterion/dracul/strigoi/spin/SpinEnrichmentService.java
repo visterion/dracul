@@ -20,17 +20,23 @@ public class SpinEnrichmentService {
     static final int MAX = 25;
 
     private final AgoraFilings filings;
+    private final SpinTermsParser spinTermsParser;
 
-    public SpinEnrichmentService(AgoraFilings filings) { this.filings = filings; }
+    public SpinEnrichmentService(AgoraFilings filings, SpinTermsParser spinTermsParser) {
+        this.filings = filings;
+        this.spinTermsParser = spinTermsParser;
+    }
 
     public List<EnrichedSpinCandidate> enrich(List<SpinCandidate> candidates) {
         List<SpinCandidate> capped = candidates.size() > MAX ? candidates.subList(0, MAX) : candidates;
         List<EnrichedSpinCandidate> out = new ArrayList<>();
         for (SpinCandidate c : capped) {
             FilingText ft = safeFilingText(c.filingUrl());
+            SpinTerms terms = spinTermsParser.parse(ft.available() ? ft.text() : null);
             out.add(new EnrichedSpinCandidate(
                     c.symbol(), c.companyName(), c.formType(), c.filingDate(), c.filingUrl(),
-                    ft.text(), ft.available()));
+                    ft.text(), ft.available(),
+                    terms.distributionRatio(), terms.recordDate(), terms.distributionDate()));
         }
         return out;
     }

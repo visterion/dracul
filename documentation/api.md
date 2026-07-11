@@ -463,7 +463,7 @@ CF cookie / injected JWT), so the stream is **authenticated and scoped to the
 connecting user** — each stream receives only that user's events. Multiple tabs of
 one user are all served.
 
-**v1 emits only `alert.new`** — a new Daywalker alert:
+**v1 emits `alert.new`** — a new Daywalker alert:
 
 ```text
 event: alert.new
@@ -474,9 +474,23 @@ An `alert.new` event is delivered only to the owners for whom an alert row was
 persisted (watchlist owner of the symbol, outside the per-`(owner, symbol,
 trigger-type)` cooldown) — the same boundary as the persisted alert list.
 
-The stream is generic; `verdict.new` and `strigoi.status` are planned and will
-attach to the same stream once their sources exist. No replay / Last-Event-ID in
-v1 — clients receive events from connect time; `EventSource` auto-reconnects.
+**and `verdict.kill_criteria_breached`** — a contributing prey's kill criterion
+on an open (non-DISMISSed), non-held verdict has newly evaluated as breached,
+emitted by `VerdictKillCriteriaWatcher`:
+
+```text
+event: verdict.kill_criteria_breached
+data: {"verdict_id":"…","symbol":"AAPL","breached":["Close below 90"],"ts":"2026-06-04T21:30:00Z"}
+```
+
+Delivered only to the verdict's owner. `breached` lists only the *newly*
+breached criteria on this poll — criteria already persisted as breached on a
+prior poll are not re-sent (though `markKillCriteriaBreached` still refreshes
+`kill_criteria_checked_at` for them every poll).
+
+The stream is generic; `strigoi.status` is planned and will attach to the same
+stream once its source exists. No replay / Last-Event-ID in v1 — clients
+receive events from connect time; `EventSource` auto-reconnects.
 
 ## Error Responses
 
@@ -756,15 +770,19 @@ Response:
   { "symbol": "SPN", "companyName": "Acme Spinco Inc", "formType": "10-12B",
     "filingDate": "2026-05-20", "filingUrl": "https://www.sec.gov/Archives/...",
     "termSheet": "The distribution ratio is one share of SpinCo for every four shares...",
-    "termSheetAvailable": true }
+    "termSheetAvailable": true,
+    "distributionRatio": "1:4", "recordDate": "2026-06-10", "distributionDate": "2026-06-24" }
 ] } }
 ```
 
 `termSheet` / `termSheetAvailable` are advisory annotations — the cleaned
 summary-term-sheet text of the filing (via Agora's `get_filing_text`, fetched
-by `AgoraFilings.filingText(filingUrl)`) and whether it was available. The LLM
-extracts parent/ratio/record-date/size from it; fail-soft (`termSheetAvailable
-= false`, empty text) on any Agora failure — no candidate is dropped for it.
+by `AgoraFilings.filingText(filingUrl)`) and whether it was available.
+`distributionRatio` / `recordDate` / `distributionDate` are deterministically
+parsed from `termSheet` by `SpinTermsParser` (`null` when the pattern isn't
+found in the text — the LLM still extracts parent/ratio/record-date/size from
+the raw `termSheet` as a fallback); fail-soft (`termSheetAvailable = false`,
+empty text) on any Agora failure — no candidate is dropped for it.
 `output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-spin/complete`
@@ -794,18 +812,24 @@ Response:
   { "symbol": "TGT", "companyName": "Target Co Inc", "formType": "DEFM14A",
     "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/...",
     "termSheet": "Each share of common stock will be converted into the right to receive $58.00 in cash...",
-    "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true }
+    "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true,
+    "offerPrice": 58.00, "considerationType": "CASH", "exchangeRatio": null,
+    "breakFee": "$120 million", "spreadPercent": 7.21 }
 ] } }
 ```
 
 `termSheet` / `termSheetAvailable` and `lastPrice` / `priceAvailable` are
 advisory annotations — the cleaned summary-term-sheet text of the filing (via
 Agora's `get_filing_text`, fetched by `AgoraFilings.filingText(filingUrl)`)
-plus the current quote, for the LLM to interpret. The LLM extracts
-offer/consideration/conditions/termination-fee from `termSheet` and computes
-the spread vs `lastPrice`; fail-soft (`*Available = false`) on any Agora
-failure — no candidate is dropped for it. `output_schema` (the final verdict)
-is unchanged.
+plus the current quote, for the LLM to interpret. `offerPrice` /
+`considerationType` / `exchangeRatio` / `breakFee` are deterministically
+parsed from `termSheet` by `DealTermsParser` (fields are `null` when not
+found in the text); `spreadPercent` is server-computed from `offerPrice` and
+`lastPrice` when both are available (`(offerPrice - lastPrice) / lastPrice *
+100`). The LLM still extracts offer/consideration/conditions/termination-fee
+from `termSheet` itself as a fallback and interprets the spread; fail-soft
+(`*Available = false`) on any Agora failure — no candidate is dropped for it.
+`output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-merger/complete`
 
@@ -838,10 +862,20 @@ Response:
       "ma_fast": 135.0, "ma_slow": 121.0, "ma_cross": "BULLISH",
       "week52Low": 89.0, "week52High": 155.0,
       "atr22": 4.2
+    },
+    "thesis": {
+      "summary": "...", "signals": ["..."], "risks": ["..."],
+      "anomalyTypes": ["PEAD"], "horizon": "3m",
+      "killCriteria": ["EPS miss next quarter", "Price closes below $120 for 3 sessions"]
     }
   }
 ] } }
 ```
+
+`thesis` is only present when the position's originating verdict is
+resolvable; `thesis.killCriteria` is the deduped union of `kill_criteria`
+across the verdict's contributing prey, omitted entirely (no empty array)
+when none of them declared any.
 
 ### `POST /api/gropar/complete`
 
@@ -854,13 +888,21 @@ Request body:
 ```json
 { "run_id": "...", "status": "succeeded",
   "output": { "signals": [
-    { "symbol": "ACME", "verdict": "SELL", "rationale": "...", "confidence": 0.8 }
+    { "position_id": "...", "symbol": "ACME", "action": "EXIT",
+      "thesis_status": "INVALIDATED", "rationale": "...", "confidence": 0.8,
+      "gain_loss_pct": -8.4, "fired_rules": ["INITIAL_STOP"],
+      "violated_kill_criteria": ["Price closes below $120 for 3 sessions"] }
   ] } }
 ```
 
-Returns 204. If `status != "succeeded"` or the `output.signals` array is absent,
-the endpoint acknowledges (204) without persisting and logs the run-id. SELL or
-TRIM verdicts also trigger a best-effort Telegram push.
+`violated_kill_criteria` is prompt-enforced (`prompts/gropar.md`): the LLM
+must name at least one violated entry whenever `thesis_status` =
+`INVALIDATED`, verbatim from the position's `thesis.killCriteria`; omitted
+for `INTACT`/`WEAKENING`/`NONE`. When present it is appended to the persisted
+`rationale` (`"[Verletzt: ...]"`). Returns 204. If `status != "succeeded"` or
+the `output.signals` array is absent, the endpoint acknowledges (204) without
+persisting and logs the run-id. Any non-`HOLD` `action` also triggers a
+best-effort Telegram push.
 
 ## Voievod Webhooks
 
@@ -971,9 +1013,18 @@ Input `lookback_days` range: 1–90; default 30.
 Response:
 ```json
 { "output": { "candidates": [
-  { "symbol": "ACME", "companyName": "Acme Corp", "dateAdded": "2026-05-15" }
+  { "symbol": "ACME", "companyName": "Acme Corp", "dateAdded": "2026-05-15",
+    "adv": 48250000.00, "marketCap": 12500000000.0, "avgVolume20d": 950000,
+    "metricsAvailable": true }
 ] } }
 ```
+
+`adv` (20-day average daily dollar volume, close × volume), `marketCap`, and
+`avgVolume20d` (20-day average daily share volume) let the LLM judge
+forced-buying magnitude against real liquidity/size instead of guessing. Any
+of the three may be `null` on a per-candidate data-source failure (fail-soft);
+`metricsAvailable` is `false` only when all three are `null` — no candidate
+is dropped for it.
 
 ### `POST /api/strigoi-index/complete`
 
@@ -1078,7 +1129,7 @@ when the LLM supplies one, otherwise the freshly assembled current close
 `reference_price`.
 
 Pipeline: signal lookup → `EntryContextAssembler` (single I/O layer: Agora
-indicators/company-profile, FX, account, repos) → `VetoService` (13-veto
+indicators/company-profile, FX, account, repos) → `VetoService` (14-veto
 catalog, preceded by the `DATA_UNAVAILABLE` pre-veto) → `PositionSizer` →
 `OrderGuard` → `AgoraTrading` (only on pass). Every step short-circuits
 before the broker call. On success:
@@ -1104,6 +1155,7 @@ and for order-guard rejections it is the veto trace plus an
 | `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
 | `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
 | `CONCENTRATION` | `VetoService` | Open positions in the candidate's sector (via Agora company-profile lookup, case-insensitive) already ≥ `dracul.executor.max-per-sector` |
+| `CORRELATED` | `VetoService` | An open position exists in the same sector (case-insensitive) AND with the same `mechanism` (anomaly type) as the candidate signal — blocks doubling up on the same anomaly within a sector even below the `CONCENTRATION` cap; null sector or mechanism passes (fail-soft) |
 | `CONTRADICTION` | `VetoService` | A `MERGER_ARB` signal/position and a `PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW` signal/position collide on the same symbol (checked against other pending signals and open-position mechanisms); both pending signals in a contradicting pair are rejected, and the audit row for the other signal notes the pairing |
 | `REDUNDANCY` | `VetoService` | An open position on the same symbol already originates from the same `mechanism` |
 | `LIQUIDITY` | `VetoService` | Price below `dracul.executor.min-price` (USD-equivalent), or ADV20 notional below `dracul.executor.adv-multiple` × the tranche amount |
@@ -1153,7 +1205,8 @@ the maintenance pipeline. Response:
     "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
-    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1 },
+    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1,
+      "kill_criteria_breached": [] },
     "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
 ] } }
 ```
@@ -1165,6 +1218,12 @@ into a Tranche 2 `ADD_TRANCHE`/`HOLD` decision record without a separate lookup.
 `soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
 to act once it reaches `dracul.executor.soft-confirm-min`.
+
+`soft_trigger.kill_criteria_breached` is the subset of `kill_criteria` that
+`KillCriteriaEvaluator` deterministically matched against the current close
+— v1 recognizes only absolute price-level criteria ("close below 90",
+"rises above 120"); percent thresholds and qualitative criteria are left
+unparsed for the LLM to judge from the raw `kill_criteria` list.
 
 `tranche2` (`Tranche2Detector`, pure decision logic, no I/O) reports whether
 this tranche-1 position is eligible for a second tranche via `add-tranche`.
@@ -1217,7 +1276,9 @@ shown the LLM). Input:
 { "symbol": "ACME", "reason": "R_CONFIRMED" }
 ```
 
-Pipeline: open-position lookup → `EntryContextAssembler.assembleForSymbol`
+Pipeline: open-position lookup → tranche-cap guard (`position.tranche() >=
+dracul.executor.max-tranche` rejects with `MAX_TRANCHE` before any further
+I/O) → `EntryContextAssembler.assembleForSymbol`
 (same I/O as `place-entry`, but `signal_reference`/`signal_age` are not
 mandatory here — there is no pending signal to check freshness against) →
 `Tranche2Detector.detect` (re-derives eligibility; does not trust the
@@ -1241,6 +1302,7 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | Reason | Meaning |
 |---|---|
 | `NO_POSITION` | No open tranche-1 position for `symbol` on the configured connection |
+| `MAX_TRANCHE` | Position's current `tranche` count is already at or above `dracul.executor.max-tranche` |
 | `DATA_UNAVAILABLE` | Mandatory upstream data missing at assembly time |
 | `NOT_ELIGIBLE` | `Tranche2Detector` re-derived ineligibility (e.g. price has moved against entry, or none of `R_CONFIRMED`/`NEW_HIGH`/`REINFORCING_SIGNAL` currently holds) |
 | `TRANCHE_TOO_SMALL` | Sizer computed less than one whole share for the second tranche |

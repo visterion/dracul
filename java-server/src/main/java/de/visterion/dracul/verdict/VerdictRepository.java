@@ -65,7 +65,7 @@ public class VerdictRepository {
                 SELECT id, symbol, company_name, contributing_strigoi, consensus_score,
                        summary, created_at, anomaly_types, current_price, avg_confidence,
                        horizon, signals, risks, contributing_details,
-                       decision, decided_at, currency
+                       decision, decided_at, currency, kill_criteria_breached
                 FROM verdicts
                 WHERE id = :id
                 """)
@@ -87,7 +87,10 @@ public class VerdictRepository {
                         readDetails(rs.getString("contributing_details")),
                         rs.getString("decision"),
                         rs.getString("decided_at"),
-                        rs.getString("currency") == null ? "USD" : rs.getString("currency")
+                        rs.getString("currency") == null ? "USD" : rs.getString("currency"),
+                        rs.getDouble("current_price"),
+                        rs.getString("currency") == null ? "USD" : rs.getString("currency"),
+                        readList(rs.getString("kill_criteria_breached"))
                 ))
                 .optional();
     }
@@ -198,6 +201,70 @@ public class VerdictRepository {
                         json(signals), json(risks), json(contributingDetails),
                         json(contributingPreyIds), id)
                 .update();
+    }
+
+    /**
+     * The contributing prey ids for a verdict, read from {@code contributing_prey_ids} JSONB.
+     * Empty list when the id is malformed, unknown, or the column is null.
+     */
+    public List<String> contributingPreyIdsById(String verdictId) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(verdictId);
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                SELECT contributing_prey_ids
+                FROM verdicts
+                WHERE id = :id
+                """)
+                .param("id", uuid)
+                .query((rs, rowNum) -> readList(rs.getString("contributing_prey_ids")))
+                .optional()
+                .orElse(List.of());
+    }
+
+    /** Writes the persisted kill-criteria breach state for a verdict and bumps
+     *  {@code kill_criteria_checked_at} to now. Called with an empty list when nothing is
+     *  breached, so the checked-at timestamp still advances. No-op (silently) for a
+     *  malformed/unknown id — the watcher already skips per-verdict failures. */
+    public void markKillCriteriaBreached(String verdictId, List<String> breached) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(verdictId);
+        } catch (IllegalArgumentException e) {
+            return;
+        }
+        jdbc.sql("""
+                UPDATE verdicts
+                   SET kill_criteria_breached = ?::jsonb,
+                       kill_criteria_checked_at = now()
+                 WHERE id = ?::uuid
+                """)
+                .params(json(breached), uuid.toString())
+                .update();
+    }
+
+    /** An open verdict (not yet DISMISSed) as seen by the kill-criteria watcher: enough to
+     *  fetch quotes/prey and to distinguish newly-breached criteria from ones already persisted. */
+    public record OpenVerdictForCheck(String id, String userId, String symbol,
+            List<String> contributingPreyIds, List<String> alreadyBreached) {}
+
+    /** Open verdicts (decision IS NULL or not DISMISS) for the kill-criteria watcher. */
+    public List<OpenVerdictForCheck> findOpenForKillCheck() {
+        return jdbc.sql("""
+                SELECT id, user_id, symbol, contributing_prey_ids, kill_criteria_breached
+                FROM verdicts
+                WHERE decision IS NULL OR decision <> 'DISMISS'
+                """)
+                .query((rs, rowNum) -> new OpenVerdictForCheck(
+                        rs.getString("id"),
+                        rs.getString("user_id"),
+                        rs.getString("symbol"),
+                        readList(rs.getString("contributing_prey_ids")),
+                        readList(rs.getString("kill_criteria_breached"))))
+                .list();
     }
 
     public java.util.List<String> distinctCurrencies() {

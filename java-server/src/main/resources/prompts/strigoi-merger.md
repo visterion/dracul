@@ -12,7 +12,12 @@ Each candidate has: `symbol` (the target's ticker; may be empty), `companyName`,
 `SC TO-T` = third-party tender offer), `filingDate`, `filingUrl`, and — newly —
 `termSheet` (extracted text of the filing's plain-English summary term sheet),
 `termSheetAvailable` (bool), `lastPrice` (a recent market price; may be null),
-`priceAvailable` (bool).
+`priceAvailable` (bool). Each candidate also carries deal terms that Dracul
+already extracted from the term sheet server-side: `offerPrice`, `considerationType`
+(`"cash"` / `"stock"` / `"mixed"`), `exchangeRatio`, `breakFee`, and `spreadPercent`
+(computed as `(offerPrice − lastPrice) / lastPrice × 100`). These are
+server-extracted; any may be `null` — when null, fall back to reading `termSheet`
+yourself as before.
 
 **Read the term sheet.** When `termSheetAvailable` is true, extract the actual deal
 from `termSheet`: consideration (cash / stock / mixed), price per share, key conditions,
@@ -29,7 +34,11 @@ output-token budget and can truncate the turn before any result is produced.
 
 For each candidate, judge the merger-arb setup:
 - **Spread & offer:** what is the announced offer (cash, stock, or mixed)? Is the
-  current price meaningfully below it?
+  current price meaningfully below it? When `spreadPercent` is present, prefer it
+  over recomputing your own spread — but verify it against the term sheet (does the
+  implied `offerPrice` and consideration type actually match what `termSheet` says?)
+  rather than blindly trusting it. Fall back to your own reading of `termSheet` when
+  `spreadPercent` or `offerPrice` is `null`.
 - **Closing probability:** regulatory / antitrust risk, financing certainty,
   shareholder-vote outcome, presence of a termination fee, strategic vs financial
   buyer, competing bids.

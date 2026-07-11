@@ -103,6 +103,7 @@ dracul:
     max-signal-age-days: ${DRACUL_EXECUTOR_MAX_SIGNAL_AGE_DAYS:5}
     chase-atr-mult: ${DRACUL_EXECUTOR_CHASE_ATR_MULT:1.0}
     pace-per-week: ${DRACUL_EXECUTOR_PACE_PER_WEEK:2}
+    max-tranche: ${DRACUL_EXECUTOR_MAX_TRANCHE:2}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
@@ -127,6 +128,9 @@ dracul:
     atr-multiple: ${DRACUL_STOPGUARD_ATR_MULTIPLE:0.5}
     cooldown:     ${DRACUL_STOPGUARD_COOLDOWN:82800}
     notify-level: ${DRACUL_STOPGUARD_NOTIFY_LEVEL:WARNING}
+  verdict-killwatch:
+    enabled: ${DRACUL_VERDICT_KILLWATCH_ENABLED:true}
+    cron:    ${DRACUL_VERDICT_KILLWATCH_CRON:0 30 21 * * 1-5}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}

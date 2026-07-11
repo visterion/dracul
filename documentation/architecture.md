@@ -324,6 +324,11 @@ acts on the resulting signals.
 **Prey kill-criteria column (V19):**
 - `kill_criteria` (JSONB, NOT NULL DEFAULT '[]') — 1-5 hunter-emitted falsifiable exit conditions (a measurable threshold, a concrete date, or a single unambiguous public event under which the thesis is dead), carried onto `executor_signal` by the Prey→ExecutorSignal adapter (`PreySignalMapper`).
 
+**Verdict kill-criteria breach columns (V22):**
+- `verdicts.kill_criteria_breached` (JSONB, NOT NULL DEFAULT '[]') — the **cumulative** set of contributing prey's kill criteria that have ever evaluated as breached, maintained by `VerdictKillCriteriaWatcher`. Kill criteria are falsifiable thesis-death conditions: once breached, the thesis is dead — a later price recovery never un-breaches (removes) a criterion. Breaches never clear automatically.
+- `verdicts.kill_criteria_checked_at` (TIMESTAMPTZ, nullable) — when the watcher last evaluated this verdict; bumped on every poll (including when nothing is breached), so it also doubles as a liveness signal for the watcher itself.
+- `VerdictKillCriteriaWatcher` (`dracul.verdict-killwatch.enabled`, default `true`; cron `dracul.verdict-killwatch.cron`, default `0 30 21 * * 1-5` UTC — after US close, before gropar) is a deterministic, no-LLM `@Scheduled` job: for every open verdict (`decision IS NULL OR decision <> 'DISMISS'`) whose symbol is **not** held *by that verdict's owner* (held-skip is owner-scoped — user A holding a symbol never suppresses user B's verdict on it; same `isHeld` semantics as gropar — tag `HELD` + `entryPrice` + `shareCount` all non-null), it batches `AgoraMarketData.quotes(...)` for the watched symbols, unions the contributing prey's `kill_criteria` (`PreyRepository.findByIds`), runs them through `KillCriteriaEvaluator.breached(...)` (the same deterministic price-threshold parser executor's soft trigger uses), and persists the union of the previously-persisted breaches plus any freshly breached criteria via `VerdictRepository.markKillCriteriaBreached`. Only *newly* breached criteria (not already in `kill_criteria_breached`) publish a `VerdictKillCriteriaBreachedEvent`, bridged onto SSE as `verdict.kill_criteria_breached` (see `documentation/api.md`) and rendered as a `KILL: <criterion>` badge on `VerdictDetailView` — the cumulative persistence also means a price that dips, recovers, and dips again can never fire a duplicate event for the same criterion. The whole poll body — and each per-verdict check — is wrapped in try/catch so one bad quote/prey lookup never blocks the rest or throws out of the scheduled method.
+
 **Entry completeness (V20): `EntryContextAssembler` as the single I/O
 layer.** Every entry decision (`place-entry`) and every tranche-2 add
 (`add-tranche`) is preceded by one call into `EntryContextAssembler`, which
@@ -360,13 +365,13 @@ pre-veto below: some fields (`swing_low`, `day_high`) are optional and may
 be `null` without being flagged; every other datum that's absent because an
 upstream call failed is both null/default *and* named in `missing`.
 
-**The 13-veto catalog (`VetoService`, code-enforced, pure/deterministic —
+**The 14-veto catalog (`VetoService`, code-enforced, pure/deterministic —
 the LLM's judgment never overrides these), preceded by a `DATA_UNAVAILABLE`
 pre-veto:**
 
 | # | Veto | Short form |
 |---|---|---|
-| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 13, audited, never trade blind |
+| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 14, audited, never trade blind |
 | 1 | `SCHEMA_INVALID` | Signal missing symbol/direction/confidence/kill-criteria/mechanism/agent-version |
 | 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.65) |
 | 3 | `COOLDOWN` | Active cooldown on the symbol — hard block in v1, no fresh-setup exception (origin mechanism not stored) |
@@ -374,27 +379,31 @@ pre-veto:**
 | 5 | `BUDGET` | Tranche doesn't fit remaining cash / budget headroom |
 | 6 | `HEAT_LIMIT` | Open heat + new risk exceeds `heat-pct` of total budget |
 | 7 | `CONCENTRATION` | Sector already at `max-per-sector` open positions |
-| 8 | `CONTRADICTION` | `MERGER_ARB` vs. a drift-style mechanism (`PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW`) on the same symbol, either direction |
-| 9 | `REDUNDANCY` | Same mechanism already open on the symbol |
-| 10 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
-| 11 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
-| 12 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
-| 13 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
+| 8 | `CORRELATED` | Same sector *and* same mechanism as an existing open position (blocks piling into one correlated bet even under the sector cap) |
+| 9 | `CONTRADICTION` | `MERGER_ARB` vs. a drift-style mechanism (`PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW`) on the same symbol, either direction |
+| 10 | `REDUNDANCY` | Same mechanism already open on the symbol |
+| 11 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
+| 12 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
+| 13 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
+| 14 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
 
-`VetoService.evaluate` always runs and traces all 13 checks (`veto_trace`
+`VetoService.evaluate` always runs and traces all 14 checks (`veto_trace`
 in the `place-entry` response), even after the first failure, except
 where a check is itself gated on schema validity — see the source comments
 in `VetoService` for the exact PASS/FAIL trace semantics of a
 schema-invalid signal. `TRANCHE_TOO_SMALL` (sizer produced zero
 shares) is a code-enforced rejection but sits outside this catalog — it is
-checked by `ExecutorWebhookController` only after all 13 vetos pass,
-since sizing depends on the order price the LLM/context supplies.
+checked by `ExecutorWebhookController` only after all 14 vetos pass,
+since sizing depends on the order price the LLM/context supplies. `MAX_TRANCHE`
+(tranche count already at `dracul.executor.max-tranche` for the symbol) is
+likewise a code-enforced rejection checked separately, inside `add_tranche`
+rather than `place-entry`'s veto pipeline.
 
 **DATA_UNAVAILABLE semantics:** the executor's guiding principle is "when
 in doubt, fail" — a missing account snapshot, price, ATR, ADV20 notional,
 sector, or (for `place-entry` only) signal reference/age never falls back
 to a stale or default value. Any one of them missing at assembly time
-short-circuits straight to `DATA_UNAVAILABLE`, before any of the 13 vetos
+short-circuits straight to `DATA_UNAVAILABLE`, before any of the 14 vetos
 even run, and is recorded as an audited rejection (`executor_decision` row,
 `missing` fields joined into the reject detail) rather than a silent
 skip or a guessed trade.
