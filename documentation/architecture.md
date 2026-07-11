@@ -209,6 +209,20 @@ directly without triggering any market-data call.
 - index `idx_pattern_evidence_pattern` on `pattern_id`
 - Surfaced via `GET /api/patterns/{id}/cases` (cases ordered by `occurred_at` DESC); seeded with evidence for the 3 pending patterns.
 
+**Learning loop — accepted patterns feed back into hunts:** approving a pattern
+(`PATCH /api/patterns/{id}` with `action: "approve"`) sets `status = 'ACTIVE'`.
+`PatternRepository.findAcceptedByStrigoi(strigoi)` selects `statement` for every
+`ACTIVE` row where `applies_to_strigoi` equals that strigoi or `'all'`; every
+`HuntController` subclass's fetch-tool response includes the result as
+`active_patterns` (field-injected `ObjectProvider<PatternRepository>`, absent-bean
+safe). Voievod's fetch tool includes `active_patterns` too, but sourced from
+`PatternRepository.findAllAccepted()` (every `ACTIVE` pattern, unscoped) since it
+reviews cross-hunter consensus clusters. Both hunter and Voievod prompts instruct
+the agent to weigh candidates against these lessons. Caveat: `HuntController`
+responses ride `ToolFetchCache`, so a pattern approved/rejected after a tool's
+cache entry was populated is only reflected in `active_patterns` once that entry's
+TTL expires. See `strigoi.md` ("Learning loop") for the full write-up.
+
 **Exit signals table (V11):**
 - `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default'). Partial unique index `uq_exit_signals_run_item` (V21) on `(vistierie_run_id, watchlist_item_id)` (where both are non-null) enforces at most one exit signal per run per position.
 - index on `(user_id, symbol, created_at DESC)`
@@ -321,6 +335,18 @@ already pending and is wired as an optional
 untouched. This does not make the hunters themselves execute anything — they
 still only produce prey; the executor remains the sole code-guarded agent that
 acts on the resulting signals.
+
+**`UNKNOWN_VERSION` intake gate.** Before `PreySignalEmitter` inserts a
+mapped `executor_signal`, it checks the signal's `agent_version` against
+`PromptRegistry.knownHashes()` (the bundled `prompts/prompt_registry.json`
+body hashes for all agents) and, as a fallback, `AgentVersionResolver
+.versionFor(source)` (the emitting agent's live DB-stored prompt hash — this
+keeps operator-edited prompts working even though they're no longer in the
+static registry). `"operator"`-sourced (manual) signals are exempt, since
+they carry no prompt hash. A signal that matches neither is dropped with a
+WARN log and never reaches `signalRepo.insert(...)` — it produces no
+`executor_signal` row and no audit trail, ensuring a signal from an
+unversioned or foreign prompt never reaches the executor.
 
 **Prey kill-criteria column (V19):**
 - `kill_criteria` (JSONB, NOT NULL DEFAULT '[]') — 1-5 hunter-emitted falsifiable exit conditions (a measurable threshold, a concrete date, or a single unambiguous public event under which the thesis is dead), carried onto `executor_signal` by the Prey→ExecutorSignal adapter (`PreySignalMapper`).

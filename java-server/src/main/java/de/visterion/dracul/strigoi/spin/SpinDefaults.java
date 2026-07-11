@@ -32,7 +32,7 @@ class SpinDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "reasoning",
-                        AgentResources.classpath("prompts/strigoi-spin.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/strigoi-spin.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-spin/complete",
                         null, null, null, true,

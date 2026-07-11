@@ -26,7 +26,7 @@ class DaywalkerDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         "daywalker", "reasoning",
-                        AgentResources.classpath("prompts/daywalker.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/daywalker.md"), schema,
                         schedule, 8, 600,
                         "/api/daywalker/complete",
                         "/api/daywalker/events", sessionDuration, pollInterval,

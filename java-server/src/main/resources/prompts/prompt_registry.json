@@ -1,0 +1,14 @@
+{
+  "daywalker": { "version": "1.0.0", "body_hash": "p-64bef970682b" },
+  "daywalker-deep": { "version": "1.0.0", "body_hash": "p-0df7da2f19a0" },
+  "executor": { "version": "1.0.0", "body_hash": "p-766853df4624" },
+  "gropar": { "version": "1.0.0", "body_hash": "p-625d2484ce49" },
+  "strigoi-echo": { "version": "1.1.0", "body_hash": "p-ad753c04c703" },
+  "strigoi-index": { "version": "1.1.0", "body_hash": "p-46c546c67281" },
+  "strigoi-insider": { "version": "1.1.0", "body_hash": "p-91059590df69" },
+  "strigoi-lazarus": { "version": "1.1.0", "body_hash": "p-238a931ad45f" },
+  "strigoi-merger": { "version": "1.1.0", "body_hash": "p-475203828483" },
+  "strigoi-spin": { "version": "1.1.0", "body_hash": "p-9517b89a850e" },
+  "voievod": { "version": "1.1.0", "body_hash": "p-ad44dfcc3cfd" },
+  "voievod-outcome": { "version": "1.0.0", "body_hash": "p-64e203d18308" }
+}

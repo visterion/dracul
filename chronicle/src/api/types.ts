@@ -386,6 +386,7 @@ export interface AgentConfigRow {
   dailyUsedUsd: number
   dailyBudgetUsd: number
   primaryProvider: string | null
+  budgetMissing: boolean
 }
 
 export interface ToolBinding {

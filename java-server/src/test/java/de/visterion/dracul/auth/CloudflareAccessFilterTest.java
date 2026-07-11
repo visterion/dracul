@@ -114,6 +114,20 @@ class CloudflareAccessFilterTest {
         assertThat(r[1]).isEqualTo(200);
     }
 
+    @Test void voievodOutcomeWebhookIsExcluded() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var fetch = run(filter, new MockHttpServletRequest("POST", "/api/voievod-outcome/tools/fetch-elapsed-prey"));
+        assertThat(fetch[1]).isEqualTo(200);
+        var complete = run(filter, new MockHttpServletRequest("POST", "/api/voievod-outcome/complete"));
+        assertThat(complete[1]).isEqualTo(200);
+    }
+
+    @Test void daywalkerDeepWebhookIsExcluded() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("POST", "/api/daywalker-deep/complete"));
+        assertThat(r[1]).isEqualTo(200);
+    }
+
     @Test void executorCompleteWebhookIsExcluded() throws Exception {
         var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
         var r = run(filter, new MockHttpServletRequest("POST", "/api/executor/complete"));

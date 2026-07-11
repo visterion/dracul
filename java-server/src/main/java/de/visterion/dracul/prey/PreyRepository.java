@@ -64,6 +64,40 @@ public class PreyRepository {
                 .list();
     }
 
+    /** Prey not yet reviewed by voievod-outcome, oldest-discovered first. Horizon-elapsed
+     *  filtering (via {@code Horizons.isOpen}) happens in the caller — the horizon grammar
+     *  isn't expressible in SQL. When {@code lookbackDays} is non-null, only prey discovered
+     *  within that many days of now are considered (bounds an otherwise unbounded scan). */
+    public List<Prey> findElapsedUnreviewed(String userId, Integer lookbackDays) {
+        String lookbackClause = lookbackDays == null
+                ? ""
+                : " AND discovered_at >= now() - (:lookbackDays::text || ' days')::interval ";
+        var spec = jdbc.sql("""
+                SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
+                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at
+                FROM prey
+                WHERE user_id = :userId
+                  AND outcome_reviewed_at IS NULL
+                """ + lookbackClause + """
+                ORDER BY discovered_at ASC
+                """)
+                .param("userId", userId);
+        if (lookbackDays != null) spec = spec.param("lookbackDays", lookbackDays);
+        return spec.query(this::mapRow).list();
+    }
+
+    /** Marks the given prey ids as reviewed by voievod-outcome (fetch time, not completion
+     *  time — see project notes on the v1 simplification). No-op for an empty collection. */
+    public void markOutcomeReviewed(Collection<String> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        jdbc.sql("""
+                UPDATE prey SET outcome_reviewed_at = now()
+                WHERE id::text IN (:ids)
+                """)
+                .param("ids", ids)
+                .update();
+    }
+
     private Prey mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         return new Prey(
                 rs.getString("id"),

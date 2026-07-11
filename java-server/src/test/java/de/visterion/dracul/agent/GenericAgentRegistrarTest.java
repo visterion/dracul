@@ -26,6 +26,14 @@ class GenericAgentRegistrarTest {
                 List.of(new ToolBinding("fetch_recent_pead_candidates", "desc", null, 0)));
     }
 
+    private AgentDefinition streamingEcho() {
+        return new AgentDefinition("strigoi-stream", "routine", "STREAM PROMPT",
+                json.createObjectNode().put("type", "object"),
+                null, 25, 1800, "/api/strigoi-stream/complete",
+                "/api/strigoi-stream/events", 3600, 5, true,
+                List.of());
+    }
+
     private AgentToolCatalog catalog() {
         var entry = new ToolCatalogEntry("fetch_recent_pead_candidates", "catalog desc",
                 json.createObjectNode(), "/api/strigoi-echo/tools/fetch-candidates", 30);
@@ -40,6 +48,16 @@ class GenericAgentRegistrarTest {
         var store = mock(AgentDefinitionStore.class);
         when(store.findAllEnabled()).thenReturn(List.of(echo()));
         when(store.find("strigoi-echo")).thenReturn(Optional.of(echo()));
+        var settings = mock(AppSettingsRepository.class);
+        when(settings.getLanguage()).thenReturn("en");
+        return new GenericAgentRegistrar(client, store, catalog(), settings,
+                "https://dracul.example.com", name -> "tok-" + name);
+    }
+
+    private GenericAgentRegistrar newStreamingRegistrar(VistierieClient client) {
+        var store = mock(AgentDefinitionStore.class);
+        when(store.findAllEnabled()).thenReturn(List.of(streamingEcho()));
+        when(store.find("strigoi-stream")).thenReturn(Optional.of(streamingEcho()));
         var settings = mock(AppSettingsRepository.class);
         when(settings.getLanguage()).thenReturn("en");
         return new GenericAgentRegistrar(client, store, catalog(), settings,
@@ -83,7 +101,7 @@ class GenericAgentRegistrarTest {
                 Instant.EPOCH, Instant.EPOCH,
                 "0 0 7 * * *", null,
                 "https://dracul.example.com/api/strigoi-echo/complete",
-                "tok-strigoi-echo");
+                "tok-strigoi-echo", null, null, null);
         when(client.getAgent("strigoi-echo")).thenReturn(Optional.of(existing));
 
         newRegistrar(client).registerAll();
@@ -151,7 +169,7 @@ class GenericAgentRegistrarTest {
                 Instant.EPOCH, Instant.EPOCH,
                 "0 0 7 * * *", null,
                 "https://dracul.example.com/api/strigoi-echo/complete",
-                "tok-strigoi-echo");
+                "tok-strigoi-echo", null, null, null);
         when(client.getAgent("strigoi-echo")).thenReturn(Optional.of(existing));
 
         registrar.registerAll();
@@ -178,12 +196,65 @@ class GenericAgentRegistrarTest {
                 Instant.EPOCH, Instant.EPOCH,
                 "0 0 7 * * *", null,
                 "https://dracul.example.com/api/strigoi-echo/complete",
-                "tok-strigoi-echo");
+                "tok-strigoi-echo", null, null, null);
         when(client.getAgent("strigoi-echo")).thenReturn(Optional.of(existing));
 
         registrar.registerAll();
 
         verify(client).updateAgent(eq("strigoi-echo"), any(UpdateAgentRequest.class));
+        verify(client, never()).registerAgent(any());
+    }
+
+    @Test
+    void streamingFieldChangeTriggersUpdate() {
+        var client = mock(VistierieClient.class);
+        var registrar = newStreamingRegistrar(client);
+        var def = streamingEcho();
+        var desired = registrar.buildRequest(def);
+
+        // AgentDetail matching desired in all fields EXCEPT session_duration_seconds (1800 vs 3600)
+        var existing = new AgentDetail(
+                "id-1", "strigoi-stream",
+                desired.system_prompt(),
+                "routine",
+                desired.tools(),
+                desired.output_schema(),
+                25, 1800, false, 1,
+                Instant.EPOCH, Instant.EPOCH,
+                null, null,
+                desired.completion_webhook(), desired.completion_webhook_token(),
+                desired.event_source_url(), 1800, desired.poll_interval_seconds());
+        when(client.getAgent("strigoi-stream")).thenReturn(Optional.of(existing));
+
+        registrar.registerAll();
+
+        verify(client).updateAgent(eq("strigoi-stream"), any(UpdateAgentRequest.class));
+        verify(client, never()).registerAgent(any());
+    }
+
+    @Test
+    void streamingFieldsUnchangedIsUpToDate() {
+        var client = mock(VistierieClient.class);
+        var registrar = newStreamingRegistrar(client);
+        var def = streamingEcho();
+        var desired = registrar.buildRequest(def);
+
+        var existing = new AgentDetail(
+                "id-1", "strigoi-stream",
+                desired.system_prompt(),
+                "routine",
+                desired.tools(),
+                desired.output_schema(),
+                25, 1800, false, 1,
+                Instant.EPOCH, Instant.EPOCH,
+                null, null,
+                desired.completion_webhook(), desired.completion_webhook_token(),
+                desired.event_source_url(), desired.session_duration_seconds(), desired.poll_interval_seconds());
+        when(client.getAgent("strigoi-stream")).thenReturn(Optional.of(existing));
+
+        registrar.registerAll();
+
+        verify(client, never()).updateAgent(any(), any());
         verify(client, never()).registerAgent(any());
     }
 }

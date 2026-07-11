@@ -79,4 +79,47 @@ class PreyRepositoryIT {
         assertThat(repo.findByIds(List.of())).isEmpty();
         assertThat(repo.findByIds(null)).isEmpty();
     }
+
+    @Test
+    void findElapsedUnreviewed_excludesReviewedAndOtherUsers_ordersOldestFirst() {
+        String symOld = "OUT" + System.nanoTime();
+        String symNew = "OUT" + System.nanoTime() + 1;
+        Prey older = preyFixture(symOld, "SPINOFF", "strigoi-spin", "2026-01-01T00:00:00Z");
+        Prey newer = preyFixture(symNew, "SPINOFF", "strigoi-spin", "2026-02-01T00:00:00Z");
+        List<Prey> inserted = repo.insertAll(List.of(newer, older));
+        assertThat(inserted).hasSize(2);
+
+        List<Prey> unreviewed = repo.findElapsedUnreviewed("default", null);
+        assertThat(unreviewed).filteredOn(p -> p.symbol().equals(symOld) || p.symbol().equals(symNew))
+                .extracting(Prey::symbol)
+                .containsSubsequence(symOld, symNew); // oldest discoveredAt first
+
+        String olderId = unreviewed.stream().filter(p -> p.symbol().equals(symOld)).findFirst().orElseThrow().id();
+        repo.markOutcomeReviewed(List.of(olderId));
+
+        List<Prey> afterReview = repo.findElapsedUnreviewed("default", null);
+        assertThat(afterReview).extracting(Prey::symbol).doesNotContain(symOld);
+        assertThat(afterReview).extracting(Prey::symbol).contains(symNew);
+    }
+
+    @Test
+    void findElapsedUnreviewed_lookbackDaysBoundsToRecentDiscoveries() {
+        String symRecent = "LB" + System.nanoTime();
+        Prey recent = preyFixture(symRecent, "SPINOFF", "strigoi-spin",
+                java.time.Instant.now().toString());
+        repo.insertAll(List.of(recent));
+
+        List<Prey> withinLookback = repo.findElapsedUnreviewed("default", 5);
+        assertThat(withinLookback).extracting(Prey::symbol).contains(symRecent);
+
+        List<Prey> outsideLookback = repo.findElapsedUnreviewed("default", 0);
+        assertThat(outsideLookback).extracting(Prey::symbol).doesNotContain(symRecent);
+    }
+
+    @Test
+    void markOutcomeReviewed_emptyCollection_isNoop() {
+        repo.markOutcomeReviewed(List.of());
+        repo.markOutcomeReviewed(null);
+        // no exception is the assertion
+    }
 }

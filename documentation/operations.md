@@ -79,6 +79,79 @@ row is seeded automatically on the next boot — no manual step). The
 `rule_versions` row is an audit-trail record, it does not itself push the
 new prompt text to Vistierie.
 
+### Prompt registry & archive
+
+`java-server/src/main/resources/prompts/prompt_registry.json` maps every
+bundled agent (`daywalker`, `executor`, `gropar`, `strigoi-echo`,
+`strigoi-index`, `strigoi-insider`, `strigoi-lazarus`, `strigoi-merger`,
+`strigoi-spin`, `voievod`, `voievod-outcome`) to the `version` and `body_hash` its current
+`prompts/<agent>.md` file is expected to have (`body_hash` =
+`"p-" + sha256(body).substring(0, 12)`, the same derivation the runtime
+`agent_version` uses — see `PromptHashes` in `de.visterion.dracul.agent`).
+
+**Editing a prompt (version bump workflow):**
+
+1. Before editing, copy the current `prompts/<agent>.md` unchanged to
+   `prompts/archive/<agent>/<old-version>.md` (see
+   `prompts/archive/README.md`). This is a source-tree convention, not a
+   runtime dependency — nothing reads `archive/` at startup.
+2. Edit the live file: change the body and bump the `version:` field in its
+   `<!-- agent-meta -->` header.
+3. Update `prompt_registry.json`: bump that agent's `version` to match, and
+   recompute `body_hash` from the new body.
+4. `PromptRegistryTest` fails the build if steps 2–3 drift apart — it is the
+   CI guard that forces a registry bump alongside every prompt edit.
+5. Deploy, then follow the usual definition-reset step (see above) so the DB
+   row and Vistierie pick up the new prompt — the registry only tracks what's
+   *bundled in the jar*, not what's live in the DB.
+
+**Bootstrap validation:** `PromptRegistryValidator` runs once on
+`ApplicationReadyEvent` and, for every enabled agent, compares the bundled
+`prompts/<agent>.md` (header version + body hash) against the registry, and
+separately compares the DB-stored `prompt_text` hash against the registry.
+A registry-vs-file mismatch (missing registry entry, version mismatch, or
+hash mismatch) is a hard error: it's logged as a WARN and recorded in
+`app_settings` under key `health.prompt_registry` as
+`MISMATCH:<agent1,agent2,...>` (or `OK` if everything lines up). A
+DB-vs-registry hash mismatch alone is only logged at INFO and does **not**
+set the health flag — a user-edited prompt in the DB is legitimate and not
+itself a problem; it will show as "prompt file changed" only if it also
+disagrees with the *bundled file*.
+
+### Prompt change discipline
+
+Every prompt edit follows the **version bump workflow** in
+[Prompt registry & archive](#prompt-registry--archive) above — archive the
+*unchanged current* file first, then edit the body and bump the header
+`version:`, then update `prompt_registry.json` (`PromptRegistryTest` is the
+CI guard). This section adds only the deploy-side discipline on top:
+
+1. **Deploy.** Push to `main` (CI builds the image, runs e2e) and pull the
+   new image to production. The bundled `prompts/<agent>.md` and registry
+   are now current in the container, but the **database row is not yet
+   updated** (bootstrap is insert-if-absent).
+
+2. **Call the definition-reset endpoint** to propagate the new prompt to
+   the DB row and Vistierie:
+
+   ```
+   curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+     http://<host-lan-ip>:8080/api/settings/agents/<name>/definition/reset
+   ```
+
+   The app log records the hash transition:
+   `agent <name> definition reset: prompt <old-hash> -> <new-hash>`
+   (the same line, with `updated` instead of `reset`, is logged when a
+   definition is edited via `PUT .../definition` / the settings UI).
+   Verify via `GET /agents/<name>` on Vistierie (`:8090`, tenant token) that
+   `system_prompt` now contains your edits and `version` has bumped.
+
+3. **Historical hashes stay valid.** Old `agent_version` hashes (from before
+   the change) remain valid references on historical signals and in the run
+   audit trail — never rewrite them. Outcome metrics are **version-scoped**:
+   compare results only within a single prompt version; pooling signals from
+   different prompt versions produces a meaningless blended number.
+
 ### Rule-version change discipline
 
 `rule_versions` is an append-only audit trail — `RuleVersionProvider.seed()`
@@ -241,6 +314,56 @@ columns to `prey`). Standard Postgres backup / restore is sufficient.
 - **Application logs**: structured JSON to stdout; collect via Docker log
   driver. Key events: Strigoi run start/end, Prey written, Verdict
   created, Daywalker trigger, Telegram notification sent.
+
+## Agent budget guard
+
+A scheduled agent without a Vistierie budget silently never runs: Vistierie
+throws `BudgetException: agent budget missing` on any pause/unpause toggle, and
+`GET /agents/{name}/budget` returns `200` with all-null caps, which masks the
+problem (this bit prod once — Gropar stayed stuck paused and never ran).
+
+`AgentBudgetGuard` (`de.visterion.dracul.agent`) runs once at startup
+(`ApplicationReadyEvent`) and checks every enabled, scheduled agent definition
+(`schedule() != null`) against Vistierie's `GET /agents/{name}/budget`. An
+agent counts as missing a budget when the call fails, or when both
+`dailyCapMicros` and `monthlyCapMicros` come back null. The result is written
+to the `health.agent_budgets` app setting (`OK` or `MISSING:<name>,<name>,...`)
+and logged as a `WARN` per affected agent. `SettingsController` reads that
+flag to set `budgetMissing` on the corresponding `AgentConfigRow`, and the
+Chronicle Settings → Agents view renders a "no budget" warning chip next to
+the affected row.
+
+To fix a flagged agent, set its budget via Vistierie's admin endpoint — see
+the budget-setup procedure for scheduled agents in this repo's project notes
+(agent schema/prompt changes + budgets section). The guard only re-evaluates
+at the next application startup; after fixing the budget, restart the
+`dracul` container (or wait for the next deploy) to clear the flag.
+
+**`voievod-outcome` deploy note:** like every scheduled agent, it needs a
+Vistierie budget set once before it can be unpaused — the definition alone
+(inserted by `AgentDefinitionBootstrap`) is not enough. Mirror `voievod`'s
+budget ($1/day, $10/month) via the same admin-endpoint procedure referenced
+above (agent schema/prompt changes + budgets section), substituting
+`voievod-outcome` for the agent name:
+```
+curl -s -X PATCH -H "Authorization: Bearer $ADM" -H "Content-Type: application/json" \
+  -d '{"daily_cap_micros":1000000,"monthly_cap_micros":10000000}' \
+  http://localhost:8090/admin/tenants/dracul/agents/voievod-outcome/budget
+```
+
+**`daywalker-deep` deploy note:** it is trigger-only (`schedule=null`), so
+`AgentBudgetGuard`'s scheduled-agent scan does **not** flag it — but Vistierie's
+`RunController.trigger` still calls `BudgetEnforcer.checkOrThrow` on *every*
+`POST /agents/{name}/run`, scheduled or not, so a missing budget makes every
+escalation trigger fail (silently, from `DaywalkerCompletionService`'s
+try/catch — see `documentation/strigoi.md`'s escalation section) with no health
+chip to warn you. Set a budget once via the same admin-endpoint procedure,
+substituting `daywalker-deep` for the agent name:
+```
+curl -s -X PATCH -H "Authorization: Bearer $ADM" -H "Content-Type: application/json" \
+  -d '{"daily_cap_micros":1000000,"monthly_cap_micros":10000000}' \
+  http://localhost:8090/admin/tenants/dracul/agents/daywalker-deep/budget
+```
 
 ## Morning report digest
 

@@ -107,7 +107,7 @@ public class MockVistierieClient implements VistierieClient {
     }
 
     @Override
-    public VistierieRunDetail triggerRun(String agentName) {
+    public VistierieRunDetail triggerRun(String agentName, Map<String, Object> input) {
         return new VistierieRunDetail("run-mock-triggered", agentName, "running",
             Instant.now().toString(), null, null, null);
     }
@@ -270,7 +270,8 @@ public class MockVistierieClient implements VistierieClient {
                 req.max_run_seconds() == null ? 1800 : req.max_run_seconds(),
                 false, 1, now, now,
                 req.schedule(), null,
-                req.completion_webhook(), req.completion_webhook_token());
+                req.completion_webhook(), req.completion_webhook_token(),
+                req.event_source_url(), req.session_duration_seconds(), req.poll_interval_seconds());
         agents.put(req.name(), d);
         return d;
     }
@@ -288,7 +289,8 @@ public class MockVistierieClient implements VistierieClient {
                 existing.paused(), existing.version() + 1,
                 existing.created_at(), java.time.Instant.now(),
                 req.schedule(), existing.last_tick_at(),
-                req.completion_webhook(), req.completion_webhook_token());
+                req.completion_webhook(), req.completion_webhook_token(),
+                req.event_source_url(), req.session_duration_seconds(), req.poll_interval_seconds());
         agents.put(name, updated);
         return updated;
     }
