@@ -1,26 +1,36 @@
 <template>
   <div class="content-inner full-bleed">
     <div class="settings-grid" :class="{ 'settings-grid--mobile': smAndDown }">
-      <aside class="settings-nav" :class="{ 'settings-nav--chips': smAndDown }">
-        <button
-          v-for="item in navItems"
-          :key="item.id"
-          type="button"
-          class="set-nav-item"
-          :class="{
-            active: active === item.id,
-            disabled: item.disabled,
-            'admin-only': item.admin,
-          }"
-          :aria-current="active === item.id ? 'page' : undefined"
-          :disabled="item.disabled"
-          @click="active = item.id"
-        >
-          <i v-if="item.icon" :class="['ph', item.icon]" />
-          <span>{{ item.label }}</span>
-          <span v-if="item.admin" class="set-badge admin">{{ t('settings.adminBadge') }}</span>
-          <span v-else-if="item.badge" class="set-badge">{{ item.badge }}</span>
-        </button>
+      <aside
+        class="settings-nav"
+        :class="{
+          'settings-nav--chips': smAndDown,
+          'hscroll-fade': smAndDown,
+          'hscroll-fade--left': smAndDown && fadeLeft,
+          'hscroll-fade--right': smAndDown && fadeRight,
+        }"
+      >
+        <div ref="chipsEl" class="settings-nav__scroll">
+          <button
+            v-for="item in navItems"
+            :key="item.id"
+            type="button"
+            class="set-nav-item"
+            :class="{
+              active: active === item.id,
+              disabled: item.disabled,
+              'admin-only': item.admin,
+            }"
+            :aria-current="active === item.id ? 'page' : undefined"
+            :disabled="item.disabled"
+            @click="active = item.id"
+          >
+            <i v-if="item.icon" :class="['ph', item.icon]" />
+            <span>{{ item.label }}</span>
+            <span v-if="item.admin" class="set-badge admin">{{ t('settings.adminBadge') }}</span>
+            <span v-else-if="item.badge" class="set-badge">{{ item.badge }}</span>
+          </button>
+        </div>
       </aside>
 
       <div class="settings-body">
@@ -292,12 +302,16 @@ import ProviderCard from '../components/common/ProviderCard.vue'
 import AgentEditDialog from '../components/settings/AgentEditDialog.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
+import { useEdgeFades } from '../composables/useEdgeFades'
 import { useDisplayCurrencyStore } from '../stores/displayCurrency'
 
 const { t, locale } = useI18n()
 const { agentRoleLabel, agentTierLabel, agentStateLabel } = useEnumLabels()
 const api = useApi()
 const { smAndDown } = useDisplay()
+
+const chipsEl = ref<HTMLElement | null>(null)
+const { left: fadeLeft, right: fadeRight } = useEdgeFades(chipsEl)
 
 // No user/admin store exists in Chronicle — Dracul is single-operator, so the
 // operator is always the admin (matches the prototype's isAdmin default).
@@ -532,10 +546,14 @@ onMounted(async () => {
 .settings-nav {
   border-right: var(--hairline);
   padding: var(--space-5) var(--space-3);
+  overflow: hidden;
+}
+.settings-nav__scroll {
   display: flex;
   flex-direction: column;
   gap: 2px;
   overflow-y: auto;
+  height: 100%;
 }
 .set-nav-item {
   display: flex;
@@ -647,16 +665,20 @@ onMounted(async () => {
 /* ── Mobile: nav becomes a horizontal chip row (styles.css:537-543) ── */
 .settings-grid--mobile { grid-template-columns: 1fr; height: auto; }
 .settings-nav--chips {
-  flex-direction: row;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
   border-right: none;
   border-bottom: var(--hairline);
   padding: var(--space-3);
-  gap: var(--space-2);
 }
-.settings-nav--chips::-webkit-scrollbar { display: none; }
-.settings-nav--chips .set-nav-item { flex: 0 0 auto; white-space: nowrap; width: auto; }
+.settings-nav--chips .settings-nav__scroll {
+  flex-direction: row;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.settings-nav--chips .settings-nav__scroll::-webkit-scrollbar { display: none; }
+.settings-nav--chips .set-nav-item { flex: 0 0 auto; white-space: nowrap; width: auto; min-height: 44px; }
 .settings-grid--mobile .set-budget-grid { grid-template-columns: 1fr; }
 
 /* ── Agent Config ─────────────────────────────────────────────── */
