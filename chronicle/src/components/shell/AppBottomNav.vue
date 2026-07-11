@@ -10,7 +10,7 @@
         :key="item.name"
         :to="{ name: item.name }"
         class="bottom-nav__tab"
-        active-class="bottom-nav__tab--active"
+        :class="{ 'bottom-nav__tab--active': isNavActive(item.matchPrefixes, route.path) }"
       >
         <i class="ph bottom-nav__icon" :class="item.icon" aria-hidden="true"></i>
         <span class="bottom-nav__label">{{ item.label }}</span>
@@ -22,7 +22,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useNavItems } from '../../composables/useNavItems'
+import { useNavItems, isNavActive } from '../../composables/useNavItems'
 import { useEdgeFades } from '../../composables/useEdgeFades'
 const navItems = useNavItems()
 const scrollEl = ref<HTMLElement | null>(null)
