@@ -200,6 +200,28 @@ public class VerdictRepository {
                 .update();
     }
 
+    /**
+     * The contributing prey ids for a verdict, read from {@code contributing_prey_ids} JSONB.
+     * Empty list when the id is malformed, unknown, or the column is null.
+     */
+    public List<String> contributingPreyIdsById(String verdictId) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(verdictId);
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                SELECT contributing_prey_ids
+                FROM verdicts
+                WHERE id = :id
+                """)
+                .param("id", uuid)
+                .query((rs, rowNum) -> readList(rs.getString("contributing_prey_ids")))
+                .optional()
+                .orElse(List.of());
+    }
+
     public java.util.List<String> distinctCurrencies() {
         return jdbc.sql("SELECT DISTINCT currency FROM verdicts WHERE currency IS NOT NULL")
                 .query(String.class)
