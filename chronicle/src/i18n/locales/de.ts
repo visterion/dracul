@@ -190,8 +190,8 @@ export default {
       retry: 'Wiederholen',
     },
     dusk: {
-      newPrey: 'neue Beute',
-      verdicts: 'Urteil heute | Urteile heute',
+      newPrey: 'Beute',
+      verdicts: 'Urteil | Urteile',
       alerts: 'Tagesläufer-Alarm | Tagesläufer-Alarme',
       lessons: 'Lektion ausstehend | Lektionen ausstehend',
     },

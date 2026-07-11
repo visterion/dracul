@@ -144,7 +144,6 @@ import FilterSheet from '../components/chronicle/FilterSheet.vue'
 import { filterToQuery, queryToFilter } from '../utils/filterQuery'
 import { useScrollMemory } from '../composables/useScrollMemory'
 import { buildPreyGroups, visibleGroupCount } from '../utils/preyGroups'
-import { countSince, localMidnight } from '../utils/time'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -156,11 +155,10 @@ const { smAndDown } = useDisplay()
 const sheetOpen = ref(false)
 const scrollMemory = useScrollMemory('chronicle')
 
-// dusk-strip tally: "new today" (since local midnight), not "all-time total"
-// (GET /api/chronicle returns ALL prey/verdicts, not just tonight's — see
-// ChronicleController.java findAllByUser)
-const newPreyToday = computed(() => countSince(store.prey.map(p => p.discoveredAt), localMidnight()))
-const verdictsToday = computed(() => countSince(store.verdicts.map(v => v.createdAt), localMidnight()))
+// dusk-strip tally: the full list total (GET /api/chronicle returns ALL prey/verdicts,
+// and the feed below renders all of them — the tally must match what the list shows).
+const newPreyToday = computed(() => store.prey.length)
+const verdictsToday = computed(() => store.verdicts.length)
 
 onMounted(async () => {
   const loading = store.load()

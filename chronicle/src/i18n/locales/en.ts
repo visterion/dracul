@@ -190,8 +190,8 @@ export default {
       retry: 'Retry',
     },
     dusk: {
-      newPrey: 'new prey',
-      verdicts: 'verdict today | verdicts today',
+      newPrey: 'prey',
+      verdicts: 'verdict | verdicts',
       alerts: 'daywalker alert | daywalker alerts',
       lessons: 'lesson pending | lessons pending',
     },
