@@ -13,7 +13,7 @@
     >
       <div class="wcmp-shared-head">
         <span class="wcmp-ticker mono">{{ row.ticker }}</span>
-        <span class="wcmp-name">{{ row.companyName }}</span>
+        <span v-if="displayName(row.ticker, row.companyName)" class="wcmp-name">{{ displayName(row.ticker, row.companyName) }}</span>
         <span class="wcmp-px mono"><MoneyDisplay :amount="row.currentPrice" :currency="row.mine.currency" :native-amount="row.mine.nativeCurrentPrice" :native-currency="row.mine.nativeCurrency" /></span>
         <span class="wcmp-chg mono" :class="row.dayChangePercent >= 0 ? 'pos' : 'neg'">
           {{ formatPercent(row.dayChangePercent) }}
@@ -42,7 +42,7 @@
       :data-testid="`compare-mine-${item.ticker}`"
     >
       <span class="wcmp-ticker mono">{{ item.ticker }}</span>
-      <span class="wcmp-name">{{ item.companyName }}</span>
+      <span v-if="displayName(item.ticker, item.companyName)" class="wcmp-name">{{ displayName(item.ticker, item.companyName) }}</span>
       <span class="wcmp-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
       <span class="wcmp-dot" :class="`dot-${dotClass(item.status)}`" />
       <span class="wcmp-pos">{{ posLabel(item) }}</span>
@@ -57,7 +57,7 @@
       :data-testid="`compare-theirs-${item.ticker}`"
     >
       <span class="wcmp-ticker mono">{{ item.ticker }}</span>
-      <span class="wcmp-name">{{ item.companyName }}</span>
+      <span v-if="displayName(item.ticker, item.companyName)" class="wcmp-name">{{ displayName(item.ticker, item.companyName) }}</span>
       <span class="wcmp-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
       <span class="wcmp-dot" :class="`dot-${dotClass(item.status)}`" />
       <span class="wcmp-pos">{{ posLabel(item) }}</span>
@@ -73,6 +73,7 @@ import MoneyDisplay from '../common/MoneyDisplay.vue'
 import { buildComparison } from '../../lib/watchlistComparison'
 import type { WatchlistItem, WatchlistStatus } from '../../api/types'
 import { formatPercent } from '../../utils/format'
+import { displayName } from '../../utils/instrument'
 
 const props = defineProps<{
   items: WatchlistItem[]

@@ -16,7 +16,7 @@
         <TagPill :tone="badgeTone" class="ed-action">{{ signal.action }}</TagPill>
         <div class="ed-id">
           <h1 class="ed-sym mono">{{ signal.symbol }}</h1>
-          <div v-if="position" class="ed-name">{{ position.companyName }}</div>
+          <div v-if="position && displayName(signal.symbol, position.companyName)" class="ed-name">{{ displayName(signal.symbol, position.companyName) }}</div>
         </div>
         <span class="ed-runat mono">{{ signal.runAt }}</span>
       </div>
@@ -72,6 +72,7 @@ import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import type { WatchlistItem, ExitSignal } from '../api/types'
 import { formatNumber, formatPercent } from '../utils/format'
+import { displayName } from '../utils/instrument'
 
 const { t } = useI18n()
 const route = useRoute()

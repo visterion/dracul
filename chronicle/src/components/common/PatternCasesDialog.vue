@@ -51,7 +51,7 @@
               data-testid="pattern-case-row"
             >
               <td class="tkr">{{ c.symbol }}</td>
-              <td>{{ c.companyName }}</td>
+              <td>{{ displayName(c.symbol, c.companyName) }}</td>
               <td>{{ anomalyTypeLabel(c.anomalyType) }}</td>
               <td class="mono pc-date">{{ formatDate(c.occurredAt) }}</td>
               <td>
@@ -81,6 +81,7 @@ import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import type { Pattern, PatternCase } from '../../api/types'
 import { useEnumLabels } from '../../composables/useEnumLabels'
+import { displayName } from '../../utils/instrument'
 
 defineProps<{
   modelValue: boolean
