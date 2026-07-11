@@ -705,6 +705,7 @@ public class ExecutorWebhookController {
             node.put("signal_id", p.sourceSignalId());
             node.put("side", p.side());
             node.put("qty", p.qty());
+            node.put("entry_filled", p.entryFilled());
             node.put("entry_price", p.entryPrice());
             node.put("active_stop", p.activeStop());
             node.put("current_price", p.currentPrice());
@@ -735,7 +736,8 @@ public class ExecutorWebhookController {
     }
 
     // -------------------------------------------------------------------
-    // exit-position — LLM SOFT full exit; exits are always permitted, no veto
+    // exit-position — LLM SOFT full exit; exits on FILLED positions are always permitted (no
+    // veto). Unfilled GTD entries are rejected NOT_FILLED — there is nothing to flatten.
     // -------------------------------------------------------------------
 
     @PostMapping("/tools/exit-position")
@@ -762,6 +764,21 @@ public class ExecutorWebhookController {
         if (position == null) {
             return ResponseEntity.ok(Map.of("output",
                     Map.of("exited", false, "reason", "NO_OPEN_POSITION")));
+        }
+
+        // A position whose GTD entry has no confirmed fill holds nothing at the broker — an
+        // LLM exit would flatten zero holdings and book a fabricated close (+ cooldown).
+        // `entry_expires_at` doubles as the persisted unfilled marker: set at placement,
+        // cleared by ReconcileService on a confirmed fill and by EntryExpiryService on cancel.
+        if (position.entryExpiresAt() != null) {
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "REJECT", "NOT_FILLED", null,
+                    "exit_position on unfilled entry (position " + position.id()
+                            + ") — no broker holdings; awaiting fill or GTD expiry",
+                    confidence, null, null));
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "reason", "NOT_FILLED")));
         }
 
         // The exit_position schema enum pins fraction to exactly 0.33 / 0.5 / 1.0 (or absent,

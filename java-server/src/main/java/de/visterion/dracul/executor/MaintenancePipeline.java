@@ -138,13 +138,14 @@ public class MaintenancePipeline {
             BigDecimal currentPrice = closeBySymbol.get(p.symbol());
             String positionMechanism = resolveMechanism(p.sourceSignalId());
             Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings, positionMechanism);
-            enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()), t2));
+            boolean entryFilled = !unfilledIds.contains(p.id());
+            enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()), t2, entryFilled));
         }
         return enriched;
     }
 
     private EnrichedPosition enrich(ExecutorPosition p, BigDecimal currentPrice, BigDecimal atr,
-            Tranche2Detector.Tranche2Status t2) {
+            Tranche2Detector.Tranche2Status t2, boolean entryFilled) {
         boolean sell = "SELL".equals(p.side());
 
         BigDecimal chandelierLevel = null;
@@ -155,8 +156,13 @@ public class MaintenancePipeline {
 
         BigDecimal rCurrent = computeR(p, currentPrice, sell);
 
-        SoftConditionEvaluator.SoftState ss = softEval.evaluate(currentPrice, chandelierLevel,
-                null, null, p.side(), p.softConfirmCount());
+        // Soft-confirm accumulation only makes sense on real holdings: an unfilled entry has
+        // nothing to soft-exit, so its confirm count must not creep up while the order waits
+        // for its fill (it would prime an immediate soft exit the moment the entry fills).
+        SoftConditionEvaluator.SoftState ss = entryFilled
+                ? softEval.evaluate(currentPrice, chandelierLevel,
+                        null, null, p.side(), p.softConfirmCount())
+                : new SoftConditionEvaluator.SoftState(false, false, p.softConfirmCount());
 
         List<String> killCriteriaBreached = killCriteriaEvaluator.breached(p.killCriteria(), currentPrice);
 
@@ -167,7 +173,8 @@ public class MaintenancePipeline {
         // written only when it decreases below the current floor. SELL positions do NOT write
         // lowest_price — their adverse extreme is the HIGHEST close, already tracked as
         // highestPrice via the ratchet step; mae_r for SELL positions derives from highest_price.
-        if (!sell && currentPrice != null) {
+        // Gated on entryFilled: a pre-fill close is not an excursion of any held position.
+        if (entryFilled && !sell && currentPrice != null) {
             BigDecimal floor = p.lowestPrice() != null ? p.lowestPrice() : p.entryPrice();
             if (currentPrice.compareTo(floor) < 0) {
                 positionRepo.updateAdverseExtreme(p.id(), currentPrice);
@@ -178,7 +185,8 @@ public class MaintenancePipeline {
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
                 ss.chandelierBreach(), ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(),
-                p.sourceSignalId(), p.trimCount(), ExecutorWebhookController.ladderFloor(p.trimCount()));
+                p.sourceSignalId(), p.trimCount(), ExecutorWebhookController.ladderFloor(p.trimCount()),
+                entryFilled);
     }
 
     private String resolveMechanism(String sourceSignalId) {

@@ -1280,7 +1280,8 @@ pipeline. Response:
 
 ```json
 { "output": { "positions": [
-  { "symbol": "ACME", "signal_id": "sig-123", "side": "BUY", "qty": 10, "entry_price": 142.50,
+  { "symbol": "ACME", "signal_id": "sig-123", "side": "BUY", "qty": 10, "entry_filled": true,
+    "entry_price": 142.50,
     "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
@@ -1294,6 +1295,12 @@ pipeline. Response:
 `signal_id` is the position's source signal id (`ExecutorPosition.sourceSignalId()`,
 null-safe — `null` when the position has none), so the LLM can copy it verbatim
 into a Tranche 2 `ADD_TRANCHE`/`HOLD` decision record without a separate lookup.
+
+`entry_filled` is false while the position's GTD limit entry has no confirmed
+fill at the broker (no holdings yet): hard exits, stop ratcheting and
+soft-confirm accumulation are all suspended for it, and `exit-position`
+rejects it with `NOT_FILLED` — the position is awaiting its fill or the GTD
+expiry.
 
 `trim_count` and `suggested_fraction` feed `exit-position`'s scale-out trim
 ladder (see below): `suggested_fraction` is the code-computed ladder floor
@@ -1422,7 +1429,10 @@ Response:
 ```
 
 or on failure: `{ "output": { "exited": false, "reason": "NO_OPEN_POSITION" } }`
-(no open position for `symbol`) or `{ "output": { "exited": false, "reason": "BROKER_ERROR" } }`
+(no open position for `symbol`), `{ "output": { "exited": false, "reason": "NOT_FILLED" } }`
+(the position's GTD entry has no confirmed fill — nothing to flatten; a
+`decision_log` REJECT/NOT_FILLED row is written), or
+`{ "output": { "exited": false, "reason": "BROKER_ERROR" } }`
 (the broker flatten call failed/unreachable).
 
 ### `POST /api/executor/tools/add-tranche`
