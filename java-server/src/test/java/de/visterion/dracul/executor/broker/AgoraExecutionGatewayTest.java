@@ -227,6 +227,26 @@ class AgoraExecutionGatewayTest {
         assertThat(result.accepted()).isTrue();
     }
 
+    @Test void cancelOrderSendsConnectionAndOrderId() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":true,\"orderId\":\"brk-1\",\"status\":\"cancelled\"}}");
+
+        gw.cancelOrder("saxo-sim", "brk-1");
+
+        assertThat(gw.capturedTool).isEqualTo("cancel_order");
+        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("saxo-sim");
+        assertThat(gw.capturedArgs.path("orderId").asString()).isEqualTo("brk-1");
+    }
+
+    @Test void cancelOrderThrowsOnRejection() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"UnknownOrder\"}}");
+
+        assertThatThrownBy(() -> gw.cancelOrder("saxo-sim", "brk-1"))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .hasMessageContaining("UnknownOrder");
+    }
+
     @Test void unavailableEnvelopeThrowsBrokerUnavailable() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"available\":false,\"error\":\"no session\"}}");
