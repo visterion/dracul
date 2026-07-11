@@ -72,7 +72,7 @@ public class MorningReportScheduler {
             sb.append(marker).append(' ').append(l.action()).append(' ')
               .append(l.symbol());
             if (l.ticket().shares() > 0) sb.append(' ')
-              .append((long) l.ticket().shares()).append(" Stk");
+              .append(fmtShares(l.ticket().shares())).append(" Stk");
             sb.append(" — Stop ").append(fmt(l.activeStop()))
               .append(" / Ziel ").append(l.targetReached() ? "✓" : fmt(l.nextTarget2r()))
               .append(" / Kurs ").append(fmt(l.currentClose()));
@@ -85,4 +85,9 @@ public class MorningReportScheduler {
     }
 
     private static String fmt(BigDecimal v) { return v == null ? "—" : v.toPlainString(); }
+
+    /** "10" for whole counts, "0.73" for fractional ones — never a truncating long cast. */
+    private static String fmtShares(double v) {
+        return BigDecimal.valueOf(v).stripTrailingZeros().toPlainString();
+    }
 }
