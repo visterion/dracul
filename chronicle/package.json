@@ -11,7 +11,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
-    "test:e2e:integration": "playwright test --config playwright.config.integration.ts"
+    "test:e2e:integration": "playwright test --config playwright.config.integration.ts",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",
@@ -27,9 +28,12 @@
     "@playwright/test": "^1.61.1",
     "@types/node": "^25.9.2",
     "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.10.6",
     "sass": "^1.101.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
+    "vitest": "^4.1.10",
     "vue-tsc": "^3.3.6"
   }
 }
