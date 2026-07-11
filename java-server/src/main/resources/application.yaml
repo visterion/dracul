@@ -77,7 +77,7 @@ dracul:
     stop-loss-pct: ${DRACUL_GROPAR_STOP_LOSS_PCT:15}
   executor:
     enabled: ${DRACUL_EXECUTOR_ENABLED:false}
-    connection: ${DRACUL_EXECUTOR_CONNECTION:saxo-sim}
+    connection: ${DRACUL_EXECUTOR_CONNECTION:depot-1}
     agora-base-url: ${DRACUL_EXECUTOR_AGORA_BASE_URL:http://agora:8080}
     agora-trading-token: ${DRACUL_EXECUTOR_AGORA_TRADING_TOKEN:}
     agora-timeout-ms: ${DRACUL_EXECUTOR_AGORA_TIMEOUT_MS:8000}

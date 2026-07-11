@@ -120,7 +120,8 @@ A human-confirmation step in front of broker-write calls (`place_entry`,
 is the guard such a step would hang off, but `dracul.executor.connection` is
 always the paper/sim connection today, so that branch cannot fire — there is
 no human-confirm UI or webhook yet, and none is needed while the executor
-only trades on `saxo-sim`. Build it when the executor is first pointed at a
+only trades on `depot-1` (the neutral sim connection id, formerly
+`saxo-sim`). Build it when the executor is first pointed at a
 live connection, not before.
 
 ## Environment variables

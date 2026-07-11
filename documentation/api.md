@@ -1155,7 +1155,7 @@ Response:
 
 ### `POST /api/executor/tools/get-account`
 
-Tool webhook. Input: `{ "connection": "saxo-sim" }` (optional; defaults to
+Tool webhook. Input: `{ "connection": "depot-1" }` (optional; defaults to
 `dracul.executor.connection`). Proxies Agora's `get_account` trading tool via
 `AgoraTrading`. Response: `{ "output": <account snapshot> }`, or
 `{ "output": { "available": false, "error": "..." } }` if Agora/the broker

@@ -118,7 +118,7 @@ public class ExecutorWebhookController {
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
-            @Value("${dracul.executor.connection:saxo-sim}") String connection,
+            @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
             @Value("${dracul.executor.max-positions:5}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
