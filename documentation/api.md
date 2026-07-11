@@ -1157,8 +1157,31 @@ re-run never re-surfaces it.
 
 ### `POST /api/voievod-outcome/complete`
 
-Completion webhook — persists proposed `Pattern` rows. Not yet implemented (follow-up
-task); the agent definition's `completionPath` already points at this route.
+Completion webhook — persists the agent's proposed lessons as PENDING `patterns`
+rows. Requires `status: "done"` or `"succeeded"`; any other status is acknowledged
+(204) without persisting.
+
+Request (per the agent's output schema, `schemas/voievod-outcome.json`):
+```json
+{
+  "status": "done",
+  "output": {
+    "patterns": [
+      { "applies_to_strigoi": "strigoi-spin",
+        "statement": "Tech spin-offs outperform industrial spin-offs",
+        "evidence_symbols": ["GEHC", "KVUE", "SOLV"] }
+    ]
+  }
+}
+```
+
+For each entry, a `patterns` row is inserted with `status = 'PENDING'`,
+`evidence_count = evidence_symbols.length`, and `user_id = 'default'` (single-user
+system, same default used by the fetch endpoint). A proposal is skipped when a
+PENDING pattern with an identical `statement` already exists for the user
+(dedupe on repeated/overlapping runs). Returns 204 either way; the existing
+Chronicle pattern-review UI (approve/reject) picks up PENDING patterns
+automatically — no frontend changes needed.
 
 ## Strigoi-Index Webhooks
 

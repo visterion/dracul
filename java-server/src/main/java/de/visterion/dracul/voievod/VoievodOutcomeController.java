@@ -3,6 +3,7 @@ package de.visterion.dracul.voievod;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
@@ -13,6 +14,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.JsonNode;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -21,11 +23,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Fetch-side of the voievod-outcome agent: surfaces prey whose horizon elapsed more
- * than 30 days ago and that haven't yet been reviewed, condensed with price history
- * since discovery. Does NOT extend {@link de.visterion.dracul.webhook.HuntController}
- * — this agent produces patterns, not prey. The completion endpoint
- * ({@code POST /complete}) is added in a follow-up task.
+ * Fetch- and completion-side of the voievod-outcome agent: surfaces prey whose horizon
+ * elapsed more than 30 days ago and that haven't yet been reviewed, condensed with
+ * price history since discovery; on completion, persists the agent's proposed lessons
+ * as PENDING {@code patterns} rows. Does NOT extend
+ * {@link de.visterion.dracul.webhook.HuntController} — this agent produces patterns,
+ * not prey.
  */
 @RestController
 @ConditionalOnProperty(value = "dracul.voievod-outcome.enabled", havingValue = "true")
@@ -41,14 +44,17 @@ public class VoievodOutcomeController {
     private final BearerTokenVerifier verifier;
     private final PreyRepository preyRepo;
     private final AgoraMarketData marketData;
+    private final PatternRepository patternRepo;
 
     public VoievodOutcomeController(
             @Value("${dracul.voievod-outcome.webhook-token}") String token,
             PreyRepository preyRepo,
-            AgoraMarketData marketData) {
+            AgoraMarketData marketData,
+            PatternRepository patternRepo) {
         this.verifier = new BearerTokenVerifier(token);
         this.preyRepo = preyRepo;
         this.marketData = marketData;
+        this.patternRepo = patternRepo;
     }
 
     @PostMapping("/tools/fetch-elapsed-prey")
@@ -92,6 +98,38 @@ public class VoievodOutcomeController {
                 "prey", wire,
                 "cap", CAP,
                 "capped", capped)));
+    }
+
+    @PostMapping("/complete")
+    public ResponseEntity<Void> complete(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+            @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
+            @RequestBody JsonNode body) {
+        if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        String status = body.path("status").asText("");
+        if (!"done".equals(status) && !"succeeded".equals(status)) {
+            log.warn("voievod-outcome run {} status={} — acknowledging without persisting", runId, status);
+            return ResponseEntity.noContent().build();
+        }
+
+        int inserted = 0;
+        int skipped = 0;
+        for (JsonNode node : body.path("output").path("patterns")) {
+            String appliesToStrigoi = node.path("applies_to_strigoi").asText(null);
+            String statement = node.path("statement").asText(null);
+            if (appliesToStrigoi == null || statement == null) continue;
+
+            int evidenceCount = node.path("evidence_symbols").size();
+            if (patternRepo.existsPendingStatement(USER, statement)) {
+                skipped++;
+                continue;
+            }
+            patternRepo.insertProposal(USER, appliesToStrigoi, statement, evidenceCount);
+            inserted++;
+        }
+        log.info("voievod-outcome run {} persisted {} pattern proposals ({} duplicates skipped)",
+                runId, inserted, skipped);
+        return ResponseEntity.noContent().build();
     }
 
     private Map<String, Object> condensedOhlc(Prey p) {
