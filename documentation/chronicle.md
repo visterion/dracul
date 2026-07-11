@@ -40,6 +40,7 @@ Both documents are required reading before implementing any view.
 | 9 | Portfolio | `/portfolio` | Held positions with P&L and Groparul's latest exit-signal badge | Medium | ✅ |
 | 10 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context | Low (prose) | ✅ |
 | 11 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
+| 12 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders) | High | ✅ Task C2 |
 
 > **Vistierie (Schatzkammer):** Vistierie no longer has a standalone route. It is an
 > embeddable component (`VistierieView` with an `embedded` prop) hosted admin-only
@@ -597,3 +598,48 @@ per-load market-data call is made on read.
 
 Frontend wiring (Decision buttons, Notes textarea, Add-to-Watchlist) is deferred
 to a follow-up etappe.
+
+## Depots view (Task C2)
+
+`DepotsView.vue` (`/depots`) is the live-broker counterpart to Portfolio's
+manual watchlist positions: one `DepotSection` per connected broker
+(`useApi().getDepots()`), Trade-Republic-dense.
+
+- **Summary bar** (always shown, even with a single depot): left side shows
+  Σ equity across depots + total day change (colored, click to toggle);
+  right corner shows total cash, `data-testid="depots-total-cash"`.
+- **Per-depot section** (`DepotSection.vue`): header with id, provider chip,
+  paper/live badge, probe status, and a relative "Stand: …" timestamp
+  (`useRelativeTime`) that gets a `stale` CSS class once older than 15
+  minutes (`isStale()` in `src/lib/depotDisplay.ts`); headline equity + day
+  change + P&L; a cash/invested/buying-power `StatTile` row; a performance
+  `LineChart` with 1T/1W/1M/1J/Max range buttons (default 1M, fetched via
+  `getDepotChart`); a single stacked allocation bar built from each
+  position's `weightPct`; `DepotPositionsTable.vue` (sortable columns:
+  symbol, qty, avg entry, price, market value, P&L, day change, weight %);
+  an orders list; and an inline error alert (`data-testid="depot-error"`)
+  when `depot.error` is set — the rest of the section still renders
+  whatever data the depot does have.
+- **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
+  is a module-level singleton ref persisted to
+  `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change
+  number anywhere in the view (`data-testid="pnl-cell"`) flips the whole
+  view between currency and percent display via the shared `fmtPl()`
+  helper. Values with no quotes/no cost basis always render as an em dash
+  (`—`) — never `0`.
+- **Metric dropdown** above each positions table (`sinceBuy` vs `today`)
+  highlights which of the P&L / day-change columns is the primary sort
+  target; both columns stay visible regardless of the selection.
+- Row click navigates to `depot-position-detail` (`/depots/:connection/:symbol`)
+  — that route is a placeholder (`DepotPositionDetailStub.vue`) pending
+  **Task C3**, which owns the real detail view; the route name must not
+  change.
+- **Known simplification**: the summary bar's Σ equity/cash sum raw numbers
+  across depots even when depots use different account currencies (see
+  `depotTotals()` in `src/lib/depotDisplay.ts`) — acceptable for the mock
+  fixtures currently in play (one USD paper depot, one EUR live depot), but
+  worth revisiting if/when true multi-currency consolidation is needed.
+
+Nav: `useNavItems.ts` gained a `depots` entry (`ph-vault` icon,
+`matchPrefixes: ['/depots']`); Portfolio's icon moved to `ph-chart-pie` to
+free up `ph-vault` for the new broker-facing Depots destination.
