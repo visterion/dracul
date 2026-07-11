@@ -205,10 +205,13 @@ export default {
     },
     filters: {
       title: 'Filter',
+      button: 'Filter',
+      close: 'Close',
       allPrey: 'all prey',
       highConfidence: 'high confidence',
       anomalyClass: 'anomaly class',
       brood: 'The Brood',
+      broodProfiles: 'The Brood — profiles',
     },
     preyCard: {
       signals: 'signals',
