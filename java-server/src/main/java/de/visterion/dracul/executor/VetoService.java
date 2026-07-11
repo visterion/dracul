@@ -243,17 +243,23 @@ public class VetoService {
         } else if ("SELL".equals(signal.direction())) {
             // Mirror for a short entry: chased away means price has already collapsed too far
             // BELOW the reference (the opposite direction of the BUY case below).
-            BigDecimal chaseThreshold = signal.referencePrice()
-                    .subtract(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
+            BigDecimal chaseLimit = ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult()));
+            BigDecimal chaseThreshold = signal.referencePrice().subtract(chaseLimit);
             chasedOk = ctx.price().compareTo(chaseThreshold) >= 0;
-            chasedMeasured = "price " + fmt2(ctx.price()) + (chasedOk ? " >= " : " < ") + fmt2(chaseThreshold)
-                    + " (" + cfg.chaseAtrMult() + "xATR from ref " + fmt2(signal.referencePrice()) + ")";
+            // drift = adverse (downward) distance already travelled from the reference price;
+            // chased away when it exceeds chaseAtrMult x ATR.
+            BigDecimal drift = signal.referencePrice().subtract(ctx.price());
+            chasedMeasured = "drift " + fmt2(drift) + (chasedOk ? " <= " : " > ")
+                    + fmtMult(cfg.chaseAtrMult()) + "xATR " + fmt2(chaseLimit);
         } else {
-            BigDecimal chaseThreshold = signal.referencePrice()
-                    .add(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
+            BigDecimal chaseLimit = ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult()));
+            BigDecimal chaseThreshold = signal.referencePrice().add(chaseLimit);
             chasedOk = ctx.price().compareTo(chaseThreshold) <= 0;
-            chasedMeasured = "price " + fmt2(ctx.price()) + (chasedOk ? " <= " : " > ") + fmt2(chaseThreshold)
-                    + " (" + cfg.chaseAtrMult() + "xATR from ref " + fmt2(signal.referencePrice()) + ")";
+            // drift = how far price has already run above the reference; chased away when it
+            // exceeds chaseAtrMult x ATR.
+            BigDecimal drift = ctx.price().subtract(signal.referencePrice());
+            chasedMeasured = "drift " + fmt2(drift) + (chasedOk ? " <= " : " > ")
+                    + fmtMult(cfg.chaseAtrMult()) + "xATR " + fmt2(chaseLimit);
         }
         results.add(new VetoResult("CHASED_AWAY", chasedOk, chasedMeasured));
         if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
@@ -271,6 +277,11 @@ public class VetoService {
     /** Two-decimal formatting for measured-string amounts (account/instrument ccy). */
     private static String fmt2(BigDecimal v) {
         return v == null ? "n/a" : v.setScale(2, RoundingMode.HALF_UP).toString();
+    }
+
+    /** ATR-multiple formatting: whole values without trailing ".0" ({@code 1xATR}, not {@code 1.0xATR}). */
+    private static String fmtMult(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 
     private boolean isContradictingPair(String mechanismA, String mechanismB) {

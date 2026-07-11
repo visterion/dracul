@@ -814,12 +814,31 @@ class VetoServiceTest {
     }
 
     @Test
-    void chasedAwayMeasuredShowsPriceAndChaseThreshold() {
+    void chasedAwayMeasuredShowsDriftVsAtrLimit_failure() {
+        // ref 50, price 55 -> drift 5.00; chaseAtrMult 2 * atr 2 = 4.00 limit -> fail.
+        // chaseAtrMult renders without trailing ".0" (2xATR, not 2.0xATR).
         EntryContext ctx = ctx().price(BigDecimal.valueOf(55)).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(result(outcome, "CHASED_AWAY").measured())
-                .isEqualTo("price 55.00 > 54.00 (2.0xATR from ref 50.00)");
+        assertThat(result(outcome, "CHASED_AWAY").measured()).isEqualTo("drift 5.00 > 2xATR 4.00");
+    }
+
+    @Test
+    void chasedAwayMeasuredShowsDriftVsAtrLimit_pass() {
+        // ref 50, price 54 -> drift 4.00 exactly at the 2xATR limit 4.00 -> pass
+        EntryContext ctx = ctx().price(BigDecimal.valueOf(54)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "CHASED_AWAY").measured()).isEqualTo("drift 4.00 <= 2xATR 4.00");
+    }
+
+    @Test
+    void budgetMeasuredShowsCashTrancheAndExposureBudget() {
+        // cash 100000, tranche 10000/10 = 1000, exposure 0 + 1000 = 1000, budget 10000
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
+
+        assertThat(result(outcome, "BUDGET").measured())
+                .isEqualTo("cash 100000.00 >= tranche 1000.00; exposure 1000.00 <= budget 10000.00");
     }
 
     @Test
