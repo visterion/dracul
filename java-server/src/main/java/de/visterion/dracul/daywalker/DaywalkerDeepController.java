@@ -59,10 +59,14 @@ public class DaywalkerDeepController {
         }
         BigDecimal confidence = o.path("confidence").isNumber()
                 ? new BigDecimal(o.path("confidence").asText()) : null;
+        // Echoed back from the trigger input (see prompts/daywalker-deep.md) so the
+        // follow-up resolves against the same owner set as the original assessment.
+        String positionId = o.path("position_id").isTextual()
+                ? o.path("position_id").asText() : null;
 
         completionService.persistAssessment(symbol, triggerType,
                 o.path("severity").asText("INFO"), o.path("thesis").asText(""),
-                confidence, runId, null, true);
+                confidence, runId, positionId, true);
         return ResponseEntity.noContent().build();
     }
 }

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -247,6 +248,28 @@ class DaywalkerCompletionServiceTest {
 
         verify(vistierie).triggerRun("daywalker-deep", Map.of(
                 "symbol", "AAPL", "trigger_type", "PRICE_SPIKE", "thesis", "thesis text"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void positionScopedEscalationCarriesPositionIdInTriggerInput() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        var vistierie = mock(VistierieClient.class);
+        // Position-scoped: one HELD owner matching the positionId.
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", true)));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        service(alerts, notifier, vistierie, true, DEFAULT_THRESHOLD)
+                .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
+                        "thesis text", new BigDecimal("0.4"), "run-27", "wid-1");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(vistierie).triggerRun(eq("daywalker-deep"), captor.capture());
+        assertThat(captor.getValue()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "symbol", "AAPL", "trigger_type", "PRICE_SPIKE",
+                "thesis", "thesis text", "position_id", "wid-1"));
     }
 
     @Test

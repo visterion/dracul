@@ -18,6 +18,9 @@ You will receive, in the run's input payload:
 - `trigger_type` — the deterministic trigger that fired (e.g. `PRICE_SPIKE`,
   `VOLUME_SPIKE`, `INSIDER_SELL`, `NEGATIVE_NEWS`, `ANALYST_DOWNGRADE`).
 - `thesis` — the original Daywalker run's stated reasoning for its severity call.
+- `position_id` — present only when the original assessment was scoped to one
+  held position. Copy it into your output VERBATIM; when absent, omit it (or set
+  it to null). Never reason about it, never invent one.
 
 ## Your task
 
@@ -42,7 +45,8 @@ otherwise downgrade to WARNING or INFO and say concretely why.
   fresh market data. Your value is scrutiny of the existing reasoning, not new
   information.
 - Output strictly matches the schema: `{ "symbol", "trigger_type", "severity",
-  "thesis", "confidence" }`. Echo `symbol` and `trigger_type` back unchanged;
-  `thesis` is your own (possibly revised) reasoning, not a copy of the input.
+  "thesis", "confidence", "position_id"? }`. Echo `symbol`, `trigger_type` and
+  (when given) `position_id` back unchanged; `thesis` is your own (possibly
+  revised) reasoning, not a copy of the input.
 - `confidence` is a 0–1 float reflecting your own certainty in your (possibly
   revised) severity call.

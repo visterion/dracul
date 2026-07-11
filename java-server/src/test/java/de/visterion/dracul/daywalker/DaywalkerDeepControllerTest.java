@@ -121,4 +121,56 @@ class DaywalkerDeepControllerTest {
                 eq("confirmed after scrutiny"), eq(new BigDecimal("0.85")),
                 eq("run-5"), isNull(), eq(true));
     }
+
+    @Test
+    void complete_withEchoedPositionId_passesItAsPositionIdArg() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "symbol": "AAPL",
+                    "trigger_type": "PRICE_SPIKE",
+                    "severity": "CRITICAL",
+                    "thesis": "stop breach confirmed",
+                    "confidence": 0.9,
+                    "position_id": "wid-1"
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        var resp = controller.complete(BEARER, "run-6", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(completionService).persistAssessment(
+                eq("AAPL"), eq("PRICE_SPIKE"), eq("CRITICAL"),
+                eq("stop breach confirmed"), eq(new BigDecimal("0.9")),
+                eq("run-6"), eq("wid-1"), eq(true));
+    }
+
+    @Test
+    void complete_withNullPositionId_passesNull() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "symbol": "AAPL",
+                    "trigger_type": "PRICE_SPIKE",
+                    "severity": "WARNING",
+                    "thesis": "watch-only reassessment",
+                    "confidence": 0.7,
+                    "position_id": null
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        var resp = controller.complete(BEARER, "run-7", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(completionService).persistAssessment(
+                eq("AAPL"), eq("PRICE_SPIKE"), eq("WARNING"),
+                eq("watch-only reassessment"), eq(new BigDecimal("0.7")),
+                eq("run-7"), isNull(), eq(true));
+    }
 }
