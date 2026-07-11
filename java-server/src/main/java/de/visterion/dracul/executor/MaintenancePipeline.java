@@ -26,8 +26,10 @@ import java.util.Set;
  *
  * <p>Pipeline order is fixed and matters: {@link ReconcileService} must run first (it detects
  * fills/disappearances against the broker before anything else touches the book), then
- * {@link HardTriggerService} (deterministic exits, code-enforced, never overridden), then
- * {@link StopRatchetService} (trailing-stop maintenance on whatever survived). The final
+ * {@link EntryExpiryService} (cancels — never re-prices — unfilled GTD entries past their expiry,
+ * using the fill state reconcile just refreshed), then {@link HardTriggerService} (deterministic
+ * exits, code-enforced, never overridden), then {@link StopRatchetService} (trailing-stop
+ * maintenance on whatever survived). The final
  * enrichment re-reads {@link ExecutorPositionRepository#findOpen()} rather than reusing the
  * in-memory list, because the ratchet step mutates stops in the DB — but it is intersected with
  * the hard-trigger survivors so positions closed by the hard trigger in this same pass are
@@ -38,6 +40,7 @@ import java.util.Set;
 public class MaintenancePipeline {
 
     private final ReconcileService reconcile;
+    private final EntryExpiryService entryExpiry;
     private final HardTriggerService hardTrigger;
     private final StopRatchetService ratchet;
     private final SoftConditionEvaluator softEval;
@@ -52,6 +55,7 @@ public class MaintenancePipeline {
 
     public MaintenancePipeline(
             ReconcileService reconcile,
+            EntryExpiryService entryExpiry,
             HardTriggerService hardTrigger,
             StopRatchetService ratchet,
             SoftConditionEvaluator softEval,
@@ -64,6 +68,7 @@ public class MaintenancePipeline {
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
         this.reconcile = reconcile;
+        this.entryExpiry = entryExpiry;
         this.hardTrigger = hardTrigger;
         this.ratchet = ratchet;
         this.softEval = softEval;
@@ -79,6 +84,7 @@ public class MaintenancePipeline {
 
     public List<EnrichedPosition> run(String connection, String runId) {
         List<ExecutorPosition> survivors = reconcile.reconcile(connection, runId);
+        entryExpiry.expire(connection, runId);
 
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();

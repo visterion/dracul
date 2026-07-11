@@ -366,6 +366,7 @@ Dracul's read-only design.
 | `DRACUL_EXECUTOR_CHASE_ATR_MULT` | `dracul.executor.chase-atr-mult` | `1.0` | The `CHASED_AWAY` veto rejects an entry once price has moved more than this many ATRs beyond the signal's reference price. |
 | `DRACUL_EXECUTOR_PACE_PER_WEEK` | `dracul.executor.pace-per-week` | `2` | Maximum new positions (tranche-1 entries) per ISO calendar week; enforced by the `PACE_LIMIT` veto. |
 | `DRACUL_EXECUTOR_MAX_TRANCHE` | `dracul.executor.max-tranche` | `2` | Hard cap on tranches per position; `add-tranche` rejects with `MAX_TRANCHE` once `position.tranche() >= max-tranche`. |
+| `DRACUL_EXECUTOR_ENTRY_GTD_DAYS` | `dracul.executor.entry-gtd-days` | `2` | Good-till-date window for a `place-entry` limit bracket: `ExecutorPositionRepository.setEntryExpiresAt` is set to this many trading days after placement (calendar days added, then rolled forward to the next Monday if the result lands on a Saturday or Sunday — a documented approximation, no exchange-holiday calendar in v1). `EntryExpiryService` cancels (never re-prices) any entry still `WORKING`/`PARTIALLY_FILLED` once `entry_expires_at` has passed; see `documentation/api.md`'s `CANCEL_EXPIRED` decision-log action. |
 | `DRACUL_EXECUTOR_INSTRUMENT_CURRENCY` | `dracul.executor.instrument-currency` | `USD` | The currency instrument-side prices/ATR/tranche amounts are assumed to be in (v1: always USD). Used as the `EntryContextAssembler`'s FX-conversion basis and as the fallback account currency when the broker account snapshot is unavailable. |
 
 **Safety notes:**

@@ -1193,11 +1193,13 @@ signal `SKIPPED`. Response: `{ "output": { "recorded": <count> } }`.
 Tool webhook (slice 2). Before returning positions, runs the full exit
 lifecycle server-side for the configured connection: `ReconcileService`
 (sync broker fills, retire closed positions, apply cooldown), then
-`HardTriggerService` (stop-breach / giveback hard exits — always enforced,
-never the LLM's call), then `StopRatchetService` (ratchet the active stop up
-to the chandelier level). Only after that does it read back the still-open
-`executor_position` rows and enrich each with price/ATR/chandelier/R/MFE via
-the maintenance pipeline. Response:
+`EntryExpiryService` (cancel — never re-price — unfilled GTD entries past
+their expiry, see below), then `HardTriggerService` (stop-breach / giveback
+hard exits — always enforced, never the LLM's call), then
+`StopRatchetService` (ratchet the active stop up to the chandelier level).
+Only after that does it read back the still-open `executor_position` rows
+and enrich each with price/ATR/chandelier/R/MFE via the maintenance
+pipeline. Response:
 
 ```json
 { "output": { "positions": [
@@ -1245,6 +1247,28 @@ conditions to match:
 | `REINFORCING_SIGNAL` | A pending signal for the same symbol/direction originates from a mechanism different from the one that opened the position (unavailable if the position's own mechanism is unknown) |
 
 `reason` is `null` when `eligible` is `false`.
+
+**Entry GTD expiry (`EntryExpiryService`).** Every `place-entry` sets
+`entry_expires_at` to `dracul.executor.entry-gtd-days` trading days out (see
+`documentation/configuration.md`). On each maintenance pass,
+`EntryExpiryService` (wired into the pipeline right after `ReconcileService`,
+so it sees freshly-reconciled fill state) looks up any `OPEN` position past
+its `entry_expires_at` and reads the entry order's status from the same
+broker source `ReconcileService` uses (`ExecutionGateway.orders`):
+
+| Entry order status | Effect |
+|---|---|
+| `WORKING` (0 filled) | Cancels the order (`ExecutionGateway.cancelOrder`), marks the position `CANCELLED` (`ExecutorPositionRepository.markCancelled`), marks the source signal `EXPIRED` (skipped if the position has no `source_signal_id`) |
+| `PARTIALLY_FILLED` | Cancels only the unfilled remainder; the position **stays OPEN** with its (reconciled) quantity — this service only ever cancels, never re-prices or re-sizes |
+| `FILLED`, or the order can no longer be found (status unavailable) | No action this run |
+
+Both the full-cancel and partial-cancel paths write one `decision_log` row
+(`trigger_type=MAINTENANCE`, `action=CANCEL_EXPIRED`,
+`reason_code=SIGNAL_EXPIRED`, `order_json={partial: <bool>}`) — `partial` is
+`true` only for the `PARTIALLY_FILLED` case. On `BrokerUnavailableException`
+the book is left untouched and a `trigger_type=MAINTENANCE`,
+`action=ESCALATE`, `reason_code=BROKER_UNAVAILABLE` row is written instead,
+mirroring `ReconcileService`'s/`HardTriggerService`'s broker-outage idiom.
 
 ### `POST /api/executor/tools/exit-position`
 

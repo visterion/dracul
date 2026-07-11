@@ -152,6 +152,13 @@ public class ExecutorPositionRepository {
                 .param("ts", java.sql.Timestamp.from(expiresAt)).param("id", id).update();
     }
 
+    /** Cancels a position whose GTD entry expired unfilled (Task 6, {@code EntryExpiryService}) —
+     *  never a fill, so no exit price/realized R applies here (unlike {@link #close}). */
+    public void markCancelled(long id) {
+        jdbc.sql("UPDATE executor_position SET status = 'CANCELLED', closed_at = now() WHERE id = :id")
+                .param("id", id).update();
+    }
+
     /** Open positions whose entry GTD expiry has passed. Fill detection is a separate concern
      *  (Task 6) — this only filters by expiry. */
     public List<ExecutorPosition> findOpenUnfilledPastExpiry(Instant now) {

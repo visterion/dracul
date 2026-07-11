@@ -28,8 +28,11 @@ import tools.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -579,6 +582,8 @@ public class ExecutorWebhookController {
                     orderPrice, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null));
 
+            positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
+
             signalRepo.markStatus(signalId, "ACCEPTED");
 
             try {
@@ -843,6 +848,18 @@ public class ExecutorWebhookController {
         if (trimCount <= 0) return 0.33;
         if (trimCount == 1) return 0.5;
         return 1.0;
+    }
+
+    /** Entry GTD expiry = {@code now} plus {@code gtdDays} calendar days, weekend-skipped: if the
+     *  result lands on a Saturday or Sunday it rolls forward to the following Monday. This is a
+     *  documented approximation — no exchange-holiday calendar in v1 (see
+     *  {@code documentation/configuration.md}). */
+    static Instant entryExpiry(Instant now, int gtdDays) {
+        ZonedDateTime zdt = now.atZone(ZoneOffset.UTC).plusDays(gtdDays);
+        while (zdt.getDayOfWeek() == DayOfWeek.SATURDAY || zdt.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            zdt = zdt.plusDays(1);
+        }
+        return zdt.toInstant();
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {

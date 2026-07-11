@@ -235,6 +235,16 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                 out.path("accepted").asBoolean(true));
     }
 
+    @Override
+    public void cancelOrder(String connection, String orderId) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("connection", connection);
+        args.put("orderId", orderId);
+
+        JsonNode out = unwrap(call("cancel", args));
+        requireAccepted(out);
+    }
+
     // -------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------

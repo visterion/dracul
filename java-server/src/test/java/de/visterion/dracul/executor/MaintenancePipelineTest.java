@@ -26,6 +26,7 @@ import static org.mockito.Mockito.when;
 class MaintenancePipelineTest {
 
     private final ReconcileService reconcile = mock(ReconcileService.class);
+    private final EntryExpiryService entryExpiry = mock(EntryExpiryService.class);
     private final HardTriggerService hardTrigger = mock(HardTriggerService.class);
     private final StopRatchetService ratchet = mock(StopRatchetService.class);
     private final ExecutorIndicators indicators = mock(ExecutorIndicators.class);
@@ -40,8 +41,9 @@ class MaintenancePipelineTest {
     @BeforeEach
     void setUp() {
         when(signalRepo.findPending(50)).thenReturn(List.of());
-        pipeline = new MaintenancePipeline(reconcile, hardTrigger, ratchet, softEval, indicators,
-                positionRepo, signalRepo, tranche2Detector, killCriteriaEvaluator, 3.0, 22, 20);
+        pipeline = new MaintenancePipeline(reconcile, entryExpiry, hardTrigger, ratchet, softEval,
+                indicators, positionRepo, signalRepo, tranche2Detector, killCriteriaEvaluator,
+                3.0, 22, 20);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
@@ -88,8 +90,9 @@ class MaintenancePipelineTest {
         assertThat(ep.tranche2Eligible()).isTrue();
         assertThat(ep.tranche2Reason()).isEqualTo("R_CONFIRMED");
 
-        InOrder order = inOrder(reconcile, hardTrigger, ratchet);
+        InOrder order = inOrder(reconcile, entryExpiry, hardTrigger, ratchet);
         order.verify(reconcile).reconcile("c", "r1");
+        order.verify(entryExpiry).expire("c", "r1");
         order.verify(hardTrigger).apply(any(), any(), eq("r1"));
         order.verify(ratchet).ratchet(any(), any(), eq("r1"));
 
