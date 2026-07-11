@@ -43,4 +43,17 @@ describe('FilterSheet', () => {
     await w.find('[data-testid="sheet-chip-high"]').trigger('click')
     expect(w.emitted('select')![0]).toEqual(['high'])
   })
+  it('does not emit close on Escape while closed', async () => {
+    const w = make({ open: false })
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await w.vm.$nextTick()
+    expect(w.emitted('close')).toBeUndefined()
+  })
+  it('locks body scroll while open and restores on close', async () => {
+    const w = make({ open: true })
+    await w.vm.$nextTick()
+    expect(document.body.style.overflow).toBe('hidden')
+    await w.setProps({ open: false })
+    expect(document.body.style.overflow).toBe('')
+  })
 })

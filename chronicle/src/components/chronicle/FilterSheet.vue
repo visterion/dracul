@@ -33,13 +33,13 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiStatus } from '../../api/types'
 import BroodMini from '../common/BroodMini.vue'
 import { useEnumLabels } from '../../composables/useEnumLabels'
 
-defineProps<{
+const props = defineProps<{
   open: boolean
   filter: string
   anomalyTypes: string[]
@@ -53,10 +53,21 @@ const { t } = useI18n()
 const { anomalyTypeLabel } = useEnumLabels()
 
 function onKeydown(e: KeyboardEvent) {
+  if (!props.open) return
   if (e.key === 'Escape') emit('close')
 }
+
+function setBodyOverflow(hidden: boolean) {
+  document.body.style.overflow = hidden ? 'hidden' : ''
+}
+
+watch(() => props.open, (isOpen) => setBodyOverflow(isOpen), { immediate: true })
+
 onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  setBodyOverflow(false)
+})
 </script>
 
 <style scoped>
