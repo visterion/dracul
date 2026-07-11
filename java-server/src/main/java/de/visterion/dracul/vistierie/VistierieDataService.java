@@ -67,13 +67,6 @@ public class VistierieDataService {
             List<LlmProvider> providers = providersF.get();
             List<StrigoiStatus> strigoi = strigoiF.get();
 
-            // Phase 2 — one detail call per strigoi, all in flight at once.
-            var detailFutures = new ArrayList<Map.Entry<String, Future<Optional<StrigoiDetail>>>>();
-            for (var s : strigoi) {
-                detailFutures.add(Map.entry(s.name(),
-                        executor.submit(() -> client.getStrigoiDetail(s.name()))));
-            }
-
             double totalCostUsd = providers.stream().mapToDouble(LlmProvider::todayCostUsd).sum();
 
             // Tiers: budgets from config, usedUsd approximated as total provider cost split
@@ -89,18 +82,11 @@ public class VistierieDataService {
                                     : 0.0))
                     .toList();
 
-            // Agent spending: from strigoi detail configurations (order preserved).
-            var agentSpends = new ArrayList<VistierieData.AgentSpend>();
-            double agentTotal = 0.0;
-            for (var entry : detailFutures) {
-                Optional<StrigoiDetail> detail = entry.getValue().get();
-                double cost = detail.map(d -> d.configuration().dailyUsedUsd()).orElse(0.0);
-                agentSpends.add(new VistierieData.AgentSpend(entry.getKey(), cost, 0));
-                agentTotal += cost;
-            }
-            // Add non-strigoi agents.
-            agentSpends.add(new VistierieData.AgentSpend("voievod", 0.0, 0));
-            agentSpends.add(new VistierieData.AgentSpend("daywalker", 0.0, 0));
+            // Agent spending: from the Vistierie cost endpoint (grouped by agent),
+            // falling back to the per-strigoi detail fan-out for older Vistierie
+            // versions that don't support group_by=agent yet.
+            var agentSpends = agentSpends(executor, strigoi);
+            double agentTotal = agentSpends.stream().mapToDouble(VistierieData.AgentSpend::totalUsd).sum();
             agentTotal = Math.max(agentTotal, 0.01); // avoid division by zero
 
             final double finalTotal = agentTotal;
@@ -121,5 +107,49 @@ public class VistierieDataService {
             if (cause instanceof RuntimeException re) throw re;
             throw new IllegalStateException("Failed to aggregate Vistierie data", cause);
         }
+    }
+
+    private List<VistierieData.AgentSpend> agentSpends(
+            java.util.concurrent.ExecutorService executor, List<StrigoiStatus> strigoi)
+            throws InterruptedException, ExecutionException {
+        var monthStart = java.time.LocalDate.now(java.time.ZoneOffset.UTC).withDayOfMonth(1)
+                .atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        java.util.Map<String, Long> costByAgent;
+        try {
+            costByAgent = client.getCostByAgent(monthStart);
+        } catch (org.springframework.web.client.HttpClientErrorException.BadRequest e) {
+            // Older Vistierie without group_by=agent: keep the per-strigoi detail path.
+            return legacyAgentSpends(executor, strigoi);
+        }
+        var spends = new ArrayList<VistierieData.AgentSpend>();
+        var remaining = new java.util.LinkedHashMap<>(costByAgent);
+        for (var s : strigoi) {                       // strigoi order preserved; missing -> 0
+            Long micros = remaining.remove(s.name());
+            spends.add(new VistierieData.AgentSpend(s.name(), micros == null ? 0.0 : micros / 1_000_000.0, 0));
+        }
+        remaining.forEach((agent, micros) ->          // voievod, daywalker, "(unattributed)", …
+                spends.add(new VistierieData.AgentSpend(agent, micros / 1_000_000.0, 0)));
+        return spends;
+    }
+
+    private List<VistierieData.AgentSpend> legacyAgentSpends(
+            java.util.concurrent.ExecutorService executor, List<StrigoiStatus> strigoi)
+            throws InterruptedException, ExecutionException {
+        var detailFutures = new ArrayList<Map.Entry<String, Future<Optional<StrigoiDetail>>>>();
+        for (var s : strigoi) {
+            detailFutures.add(Map.entry(s.name(),
+                    executor.submit(() -> client.getStrigoiDetail(s.name()))));
+        }
+        var spends = new ArrayList<VistierieData.AgentSpend>();
+        var seen = new java.util.HashSet<String>();
+        for (var entry : detailFutures) {
+            if (!seen.add(entry.getKey())) continue;  // dedup by name
+            double cost = entry.getValue().get().map(d -> d.configuration().dailyUsedUsd()).orElse(0.0);
+            spends.add(new VistierieData.AgentSpend(entry.getKey(), cost, 0));
+        }
+        for (var name : List.of("voievod", "daywalker")) {   // append only when missing
+            if (seen.add(name)) spends.add(new VistierieData.AgentSpend(name, 0.0, 0));
+        }
+        return spends;
     }
 }

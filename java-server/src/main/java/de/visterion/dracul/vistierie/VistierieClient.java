@@ -11,6 +11,7 @@ public interface VistierieClient {
     double getTodayCostUsd();
     List<LlmProvider> getProviders();
     List<VistierieData.DailySpend> getDashboardData();
+    java.util.Map<String, Long> getCostByAgent(java.time.Instant from);
 
     // ── agent control ─────────────────────────────────────────────
     void patchAgent(String name, boolean paused);
