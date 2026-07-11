@@ -122,9 +122,10 @@ public class GenericAgentRegistrar {
     /**
      * Checks whether the existing Vistierie agent matches the desired state.
      *
-     * <p>Streaming agents deliberately omit tool comparison (mirroring the former DaywalkerRegistrar):
-     * {@link AgentDetail} carries no streaming fields, so changes to streaming-only fields
-     * cannot be detected here and require a manual re-register. v1 accepts this limitation.
+     * <p>Streaming agents deliberately omit tool comparison (mirroring the former DaywalkerRegistrar),
+     * but compare their three streaming-only fields ({@code event_source_url},
+     * {@code session_duration_seconds}, {@code poll_interval_seconds}) so drift there also
+     * triggers a re-register.
      */
     private boolean matches(AgentDefinition def, AgentDetail existing, CreateAgentRequest desired) {
         boolean base = Objects.equals(existing.system_prompt(), desired.system_prompt())
@@ -136,7 +137,10 @@ public class GenericAgentRegistrar {
                 && Objects.equals(existing.max_turns(), desired.max_turns())
                 && Objects.equals(existing.max_run_seconds(), desired.max_run_seconds());
         if (def.isStreaming()) {
-            return base;
+            return base
+                    && Objects.equals(existing.event_source_url(), desired.event_source_url())
+                    && Objects.equals(existing.session_duration_seconds(), desired.session_duration_seconds())
+                    && Objects.equals(existing.poll_interval_seconds(), desired.poll_interval_seconds());
         }
         return base && Objects.equals(existing.tools(), desired.tools());
     }

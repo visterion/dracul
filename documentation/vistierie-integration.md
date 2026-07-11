@@ -104,6 +104,14 @@ Vistierie, including the Executor:
   with `GET /agents/executor` on Vistierie — `output_schema` /
   `system_prompt` should reflect the change and `version` should bump.
 
+`GenericAgentRegistrar.matches()` also compares StreamingBee-only fields
+(`event_source_url`, `session_duration_seconds`, `poll_interval_seconds`)
+for the Daywalker, so a change to any of those three now triggers a
+re-register on the next `registerAll()`/`onChanged()` pass, the same as a
+prompt or schema change. This closes a former gap where `AgentDetail`
+carried no streaming fields and drift there went undetected until a manual
+re-register.
+
 ## Cost and run history
 
 Dracul does **not** maintain its own cost ledger. It proxies
