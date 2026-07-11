@@ -116,7 +116,7 @@ public class DaywalkerCompletionService {
         log.info("daywalker run {} persisted {} alert(s) for {} ({}), notified={}",
                 runId, eligible.size(), symbol, triggerType, sent);
 
-        maybeEscalate(symbol, triggerType, severity, thesis, confidence, fromEscalation);
+        maybeEscalate(symbol, triggerType, severity, thesis, confidence, positionId, fromEscalation);
     }
 
     /**
@@ -126,17 +126,26 @@ public class DaywalkerCompletionService {
      * completion posts a follow-up assessment through {@link #persistAssessment} with
      * {@code fromEscalation=true}; the existing same-day dedupe/escalation-severity merge
      * (never lowered) reconciles it into the alert row already written above.
+     *
+     * <p>{@code positionId} (nullable) rides along in the trigger input as {@code position_id}
+     * and is echoed back verbatim by the deep agent, so the follow-up assessment resolves
+     * against the SAME owner set as the original (exact holder for position-scoped alerts,
+     * non-held watchers otherwise).
      */
     private void maybeEscalate(String symbol, String triggerType, String severity,
-                               String thesis, BigDecimal confidence, boolean fromEscalation) {
+                               String thesis, BigDecimal confidence, String positionId,
+                               boolean fromEscalation) {
         if (!escalationEnabled || fromEscalation) return;
         if (!"CRITICAL".equalsIgnoreCase(severity)) return;
         if (confidence == null || confidence.compareTo(escalationThreshold) >= 0) return;
 
         vistierie.ifAvailable(v -> {
             try {
-                var input = java.util.Map.<String, Object>of(
-                        "symbol", symbol, "trigger_type", triggerType, "thesis", thesis);
+                var input = new java.util.HashMap<String, Object>();
+                input.put("symbol", symbol);
+                input.put("trigger_type", triggerType);
+                input.put("thesis", thesis);
+                if (positionId != null) input.put("position_id", positionId);
                 v.triggerRun("daywalker-deep", input);
                 log.info("daywalker escalation triggered for {} ({})", symbol, triggerType);
             } catch (Exception e) {

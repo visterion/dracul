@@ -438,26 +438,39 @@ Flow, inside `DaywalkerCompletionService.persistAssessment`:
    (default `true`) **and** `severity == CRITICAL` **and** `confidence != null`
    **and** `confidence < dracul.daywalker.escalation-confidence` (default `0.6`).
    When all hold, it calls `VistierieClient.triggerRun("daywalker-deep", {symbol,
-   trigger_type, thesis})` — a fire-and-forget trigger; any exception is caught and
-   logged at WARN, never propagated (the alert flow above has already completed by
-   this point regardless).
+   trigger_type, thesis, position_id?})` — a fire-and-forget trigger; any exception is
+   caught and logged at WARN, never propagated (the alert flow above has already
+   completed by this point regardless). `position_id` is included only for
+   position-scoped assessments (nullable pass-through of `persistAssessment`'s
+   `positionId` argument).
 3. `daywalker-deep` (`prompts/daywalker-deep.md`, schema
    `schemas/daywalker-deep.json`) is a **trigger-only** Vistierie agent — `schedule`
    is `null`, it is never cron-scheduled, only ever run via step 2's `triggerRun`.
-   It has no tools; the trigger's `payload` (`symbol`/`trigger_type`/`thesis`) is its
-   entire context — it re-scrutinizes the *existing* thesis for rigor rather than
-   re-fetching market data, and confirms or downgrades severity.
+   It has no tools; the trigger's `payload` (`symbol`/`trigger_type`/`thesis`/
+   optional `position_id`) is its entire context — it re-scrutinizes the *existing*
+   thesis for rigor rather than re-fetching market data, and confirms or downgrades
+   severity. The prompt instructs it to echo `position_id` back VERBATIM (or omit it
+   when absent) — never to reason about it.
 4. `daywalker-deep`'s completion (`POST /api/daywalker-deep/complete`,
-   `DaywalkerDeepController`) calls the same `persistAssessment`, but with
+   `DaywalkerDeepController`) parses the echoed `position_id` (null-safe) and calls
+   the same `persistAssessment` with it as the `positionId` argument, plus
    `fromEscalation=true` — the loop guard: an escalation-originated assessment can
    never trigger another escalation, however low its own reported confidence.
+   Threading `position_id` end-to-end matters because `persistAssessment`'s owner
+   resolution branches on it: non-null → exactly the holding owner of that position;
+   null → all non-held watchers. Without the round-trip, a position-scoped follow-up
+   would resolve against the wrong owner set.
 5. The follow-up assessment merges into the **same alert row** via the existing
    same-UTC-day dedup/escalation-severity logic (see above) — `max(existingSeverity,
    newSeverity)`, never downgraded. **v1 acceptance:** if `daywalker-deep` downgrades
    (e.g. CRITICAL → WARNING), the already-notified CRITICAL severity on the row is
    *not* walked back down; only a same-or-higher follow-up severity is reflected. The
    user sees the original CRITICAL alert with its thesis/confidence refreshed to the
-   deep run's, and can judge the revised thesis themselves.
+   deep run's, and can judge the revised thesis themselves. **Residual caveat:** the
+   `position_id` round-trip relies on the model echoing it; if the model fails to
+   echo it, the follow-up falls back to the non-held-watcher owner set (`positionId
+   == null`), and the same-day merge then may not reach the holder — the original
+   alert row is unaffected either way.
 
 Config: `dracul.daywalker.escalation-enabled` / `dracul.daywalker.escalation-confidence`
 (env `DRACUL_DAYWALKER_ESCALATION_ENABLED` / `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE`);
