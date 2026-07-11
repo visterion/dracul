@@ -32,10 +32,8 @@
           @click="$emit('toggle-live')"
         >
           <i class="ph ph-bell" aria-hidden="true"></i>
-          <span class="top-bar__live-dot" :class="`top-bar__live-dot--${live.status}`"></span>
-          <span v-if="live.unread > 0" class="top-bar__live-badge" data-testid="live-unread">
-            {{ live.unread }}
-          </span>
+          <span v-if="live.unread === 1" class="top-bar__live-dot" data-testid="live-unread" />
+          <span v-else-if="live.unread >= 2" class="top-bar__live-badge" data-testid="live-unread">{{ live.unread }}</span>
         </button>
         <!-- Moon icon placeholder — cream/dark toggle (not implemented in scaffold) -->
         <button v-if="!mobile" class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
@@ -223,11 +221,8 @@ const route = useRoute()
 .top-bar__live { position: relative; }
 .top-bar__live-dot {
   position: absolute; top: 7px; right: 8px; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--ash-gray);
+  background: var(--blood-crimson-bright);
 }
-.top-bar__live-dot--open { background: var(--signal-positive); }
-.top-bar__live-dot--connecting { background: var(--cathedral-gold); }
-.top-bar__live-dot--closed { background: var(--ash-gray); }
 .top-bar__live-badge {
   position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 8px; background: var(--blood-crimson); color: var(--bone-ivory);

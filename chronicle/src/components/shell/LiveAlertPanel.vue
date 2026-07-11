@@ -15,6 +15,7 @@
         v-for="(a, i) in store.alerts"
         :key="`${a.symbol}-${a.ts}-${i}`"
         class="live-panel__item"
+        :class="`live-panel__item--${a.severity.toLowerCase()}`"
         data-testid="live-alert-item"
       >
         <div class="live-panel__row">
@@ -65,7 +66,10 @@ const { severityLabel, triggerTypeLabel, connectionStatusLabel } = useEnumLabels
 .live-panel__status--closed { color: var(--ash-gray); }
 .live-panel__close { background: none; border: none; color: var(--ash-gray); cursor: pointer; font-size: 14px; }
 .live-panel__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-.live-panel__item { border: 1px solid rgba(184, 148, 92, 0.1); border-radius: 4px; padding: var(--space-2); }
+.live-panel__item { border: 1px solid rgba(184, 148, 92, 0.1); border-left: 3px solid var(--ash-gray); border-radius: 4px; padding: var(--space-2); }
+.live-panel__item--critical { border-left-color: var(--blood-crimson); }
+.live-panel__item--warning { border-left-color: var(--cathedral-gold); }
+.live-panel__item--info { border-left-color: var(--ash-gray-light); }
 .live-panel__row { display: flex; align-items: center; gap: var(--space-2); }
 .live-panel__sev { font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .live-panel__sev--critical { color: var(--blood-crimson-bright); }
