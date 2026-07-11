@@ -41,7 +41,7 @@ mirroring the watchlist path's `WatchlistCurrencyMapper`.
 |---|---|---|
 | GET | `/api/strigoi` | Roster + last-run status (proxied from Vistierie) |
 | GET | `/api/strigoi/{name}` | Single Strigoi: runs, stats, configuration |
-| POST | `/api/strigoi/{name}/hunt` | Trigger manual one-off hunt (proxied to Vistierie) |
+| POST | `/api/strigoi/{name}/run` | Trigger manual one-off hunt (proxied to Vistierie); 202 `{"runId": "..."}`, 404 unknown strigoi, 409 `AGENT_PAUSED`, 422 `BUDGET_EXCEEDED` |
 
 ## Executor
 
@@ -92,7 +92,7 @@ webhook's `fetch-pending-signals`, see below).
 ### `POST /api/executor/run`
 
 Triggers an ad-hoc Vistierie run of the `executor` agent (same mechanism as
-`POST /api/strigoi/{name}/hunt`). Returns the Vistierie `VistierieRunDetail`.
+`POST /api/strigoi/{name}/run`). Returns the Vistierie `VistierieRunDetail`.
 
 ## Authentication
 
