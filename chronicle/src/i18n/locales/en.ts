@@ -121,6 +121,7 @@ export default {
       loadError: 'Could not load agents.',
       pauseError: 'Could not change the agent state.',
       empty: 'No agents registered.',
+      budgetMissing: 'no budget',
       edit: {
         open: 'Edit',
         title: 'Edit {name}',

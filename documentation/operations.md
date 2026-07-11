@@ -315,6 +315,30 @@ columns to `prey`). Standard Postgres backup / restore is sufficient.
   driver. Key events: Strigoi run start/end, Prey written, Verdict
   created, Daywalker trigger, Telegram notification sent.
 
+## Agent budget guard
+
+A scheduled agent without a Vistierie budget silently never runs: Vistierie
+throws `BudgetException: agent budget missing` on any pause/unpause toggle, and
+`GET /agents/{name}/budget` returns `200` with all-null caps, which masks the
+problem (this bit prod once — Gropar stayed stuck paused and never ran).
+
+`AgentBudgetGuard` (`de.visterion.dracul.agent`) runs once at startup
+(`ApplicationReadyEvent`) and checks every enabled, scheduled agent definition
+(`schedule() != null`) against Vistierie's `GET /agents/{name}/budget`. An
+agent counts as missing a budget when the call fails, or when both
+`dailyCapMicros` and `monthlyCapMicros` come back null. The result is written
+to the `health.agent_budgets` app setting (`OK` or `MISSING:<name>,<name>,...`)
+and logged as a `WARN` per affected agent. `SettingsController` reads that
+flag to set `budgetMissing` on the corresponding `AgentConfigRow`, and the
+Chronicle Settings → Agents view renders a "no budget" warning chip next to
+the affected row.
+
+To fix a flagged agent, set its budget via Vistierie's admin endpoint — see
+the budget-setup procedure for scheduled agents in this repo's project notes
+(agent schema/prompt changes + budgets section). The guard only re-evaluates
+at the next application startup; after fixing the budget, restart the
+`dracul` container (or wait for the next deploy) to clear the flag.
+
 ## Morning report digest
 
 To enable the daily Telegram morning-report digest:

@@ -85,23 +85,35 @@ public class SettingsController {
                 : ("paused".equals(base.state()) ? "resting" : base.state());
         var row = new AgentConfigRow(base.name(), base.role(), newState, body.paused(),
                 base.tier(), base.schedule(), base.nextRunAt(),
-                base.dailyUsedUsd(), base.dailyBudgetUsd(), base.primaryProvider());
+                base.dailyUsedUsd(), base.dailyBudgetUsd(), base.primaryProvider(),
+                base.budgetMissing());
         return ResponseEntity.ok(row);
     }
 
     private AgentConfigRow toAgentConfigRow(StrigoiStatus s) {
+        boolean budgetMissing = isBudgetMissing(s.name());
         var detail = client.getStrigoiDetail(s.name());
         if (detail.isPresent()) {
             var c = detail.get().configuration();
             return new AgentConfigRow(
                     s.name(), role(s.name(), detail.get().anomalyType()), s.state(),
                     c.disabled(), c.tier(), emptyToNull(c.cron()), s.nextRunAt(),
-                    c.dailyUsedUsd(), c.dailyBudgetUsd(), c.primaryProvider());
+                    c.dailyUsedUsd(), c.dailyBudgetUsd(), c.primaryProvider(), budgetMissing);
         }
         return new AgentConfigRow(
                 s.name(), role(s.name(), null), s.state(),
                 "paused".equals(s.state()), null, null, s.nextRunAt(),
-                0.0, 0.0, null);
+                0.0, 0.0, null, budgetMissing);
+    }
+
+    /** Backed by the {@code health.agent_budgets} flag set at startup by
+     *  {@link de.visterion.dracul.agent.AgentBudgetGuard} — see operations.md. */
+    private boolean isBudgetMissing(String agentName) {
+        return settings.get("health.agent_budgets")
+                .filter(flag -> flag.startsWith("MISSING:"))
+                .map(flag -> flag.substring("MISSING:".length()).split(","))
+                .map(names -> java.util.Arrays.asList(names).contains(agentName))
+                .orElse(false);
     }
 
     private static String role(String name, String anomalyType) {

@@ -269,12 +269,12 @@ export class MockApiClient implements ApiClient {
   }
 
   private agents: AgentConfigRow[] = [
-    { name: 'strigoi-spin',    role: 'SPIN',    state: 'hunting',    paused: false, tier: 'Reasoning', schedule: '0 22 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.03, dailyBudgetUsd: 1.0,  primaryProvider: 'anthropic' },
-    { name: 'strigoi-insider', role: 'INSIDER', state: 'resting',    paused: false, tier: 'Reasoning', schedule: '0 21 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0,  dailyBudgetUsd: 1.0,  primaryProvider: 'anthropic' },
-    { name: 'strigoi-echo',    role: 'PEAD',    state: 'resting',    paused: false, tier: 'Reasoning', schedule: '0 20 * * 2,4', nextRunAt: null, dailyUsedUsd: 0.01, dailyBudgetUsd: 0.75, primaryProvider: 'anthropic' },
-    { name: 'strigoi-lazarus', role: 'QUALITY_52W_LOW', state: 'paused', paused: true, tier: 'Reasoning', schedule: '0 6 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0, dailyBudgetUsd: 0.5, primaryProvider: 'anthropic' },
-    { name: 'strigoi-index',   role: 'INDEX',   state: 'resting',    paused: false, tier: 'Reasoning', schedule: '0 7 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0,  dailyBudgetUsd: 0.5,  primaryProvider: 'anthropic' },
-    { name: 'strigoi-merger',  role: 'MERGER_ARB', state: 'budget-hit', paused: false, tier: 'Reasoning', schedule: '0 5 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0, dailyBudgetUsd: 0.5, primaryProvider: 'anthropic' },
+    { name: 'strigoi-spin',    role: 'SPIN',    state: 'hunting',    paused: false, tier: 'Reasoning', schedule: '0 22 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.03, dailyBudgetUsd: 1.0,  primaryProvider: 'anthropic', budgetMissing: false },
+    { name: 'strigoi-insider', role: 'INSIDER', state: 'resting',    paused: false, tier: 'Reasoning', schedule: '0 21 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0,  dailyBudgetUsd: 1.0,  primaryProvider: 'anthropic', budgetMissing: false },
+    { name: 'strigoi-echo',    role: 'PEAD',    state: 'resting',    paused: false, tier: 'Reasoning', schedule: '0 20 * * 2,4', nextRunAt: null, dailyUsedUsd: 0.01, dailyBudgetUsd: 0.75, primaryProvider: 'anthropic', budgetMissing: false },
+    { name: 'strigoi-lazarus', role: 'QUALITY_52W_LOW', state: 'paused', paused: true, tier: 'Reasoning', schedule: '0 6 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0, dailyBudgetUsd: 0.5, primaryProvider: 'anthropic', budgetMissing: false },
+    { name: 'strigoi-index',   role: 'INDEX',   state: 'resting',    paused: false, tier: 'Reasoning', schedule: '0 7 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0,  dailyBudgetUsd: 0.5,  primaryProvider: 'anthropic', budgetMissing: false },
+    { name: 'strigoi-merger',  role: 'MERGER_ARB', state: 'budget-hit', paused: false, tier: 'Reasoning', schedule: '0 5 * * 1-5', nextRunAt: null, dailyUsedUsd: 0.0, dailyBudgetUsd: 0.5, primaryProvider: 'anthropic', budgetMissing: false },
   ]
 
   async getAgents(): Promise<AgentConfigRow[]> {
