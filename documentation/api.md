@@ -1149,7 +1149,8 @@ Response:
 ```
 
 `ohlc` is the daily close history since discovery (`AgoraMarketData.dailyOhlcHistory`,
-`horizon days + 30`), condensed server-side to first/last/min/max closes — the full
+window sized from `discoveredAt` to today, capped at 730 days), condensed server-side
+to first/last/min/max closes so `firstClose` reflects the discovery-time price — the full
 daily series is never shipped (token budget). When Agora is unavailable for a symbol,
 `ohlc` degrades to `{}` and the prey is still returned (fail-soft). Every prey returned
 in the response is marked reviewed at fetch time (`prey.outcome_reviewed_at`) so a
