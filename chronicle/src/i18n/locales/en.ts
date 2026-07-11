@@ -255,7 +255,6 @@ export default {
       consensusLabel: 'Consensus confidence',
       glanceTitle: 'At a glance',
       contributorsTitle: 'Contributors',
-      addToWatchlist: 'Add to watchlist',
       watchlistAdded: 'Added to watchlist.',
     },
     facts: {
