@@ -45,6 +45,16 @@ class StrigoiPromptContractTest {
     }
 
     @Test
+    void mergerPromptDocumentsServerExtractedDealTerms() {
+        String prompt = AgentResources.classpath("prompts/strigoi-merger.md");
+        assertThat(prompt).as("merger prompt must document the server-extracted deal terms")
+                .contains("offerPrice").contains("considerationType")
+                .contains("exchangeRatio").contains("breakFee").contains("spreadPercent");
+        assertThat(prompt).as("merger prompt must instruct preferring spreadPercent over recomputation")
+                .contains("prefer");
+    }
+
+    @Test
     void echoPromptUsesRevisionsDirectionNotGuidanceDirection() {
         String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
         assertThat(prompt)

@@ -58,7 +58,8 @@ class StrigoiMergerWebhookControllerIT {
         when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedMergerCandidate(
                 "TGT", "Target Corp", "DEFM14A", "2026-05-20", "http://sec/u1",
                 "SUMMARY TERM SHEET: $52.00 in cash per share", true,
-                new BigDecimal("47.50"), true)));
+                new BigDecimal("47.50"), true,
+                new BigDecimal("52.00"), "cash", null, null, new BigDecimal("9.47"))));
     }
 
     @Test
