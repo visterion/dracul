@@ -394,6 +394,8 @@ export default {
       allStrigoi: 'Alle Strigoi ({n})',
     },
     evidenceCount: 'Belege: {n}',
+    expand: 'Muster aufklappen',
+    collapse: 'Muster zuklappen',
     actionError: {
       failed: 'Aktion fehlgeschlagen',
       deactivateFailed: 'Deaktivierung fehlgeschlagen',
