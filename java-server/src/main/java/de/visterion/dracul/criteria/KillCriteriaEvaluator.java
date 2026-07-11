@@ -15,13 +15,16 @@ import java.util.regex.Pattern;
 @Component
 public final class KillCriteriaEvaluator {
 
+    // The number capture must not lead into a percent threshold ("above 12%", "above 12.5 %"):
+    // the lookahead rejects when the remaining digits/decimals run into a '%', which also blocks
+    // backtracking tricks like matching "12" out of "125%".
     private static final Pattern BELOW = Pattern.compile(
-            "(?:close[sd]?|closing|price|trade[sd]?|fall[s]?|drop[s]?|break[s]?)\\b[^%\\d]{0,40}?" +
-            "\\b(?:below|under|beneath)\\s*\\$?(\\d+(?:\\.\\d+)?)(?!\\s*%)",
+            "(?:close[sd]?|closing|price|trade[sd]?|fall[s]?|drop[s]?|break[s]?|stop[s]?)\\b[^%\\d]{0,40}?" +
+            "\\b(?:below|under|beneath)\\s*\\$?(\\d+(?:\\.\\d+)?)(?![\\d.]*\\s*%)",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern ABOVE = Pattern.compile(
             "(?:close[sd]?|closing|price|trade[sd]?|rise[s]?|rally|break[s]?|move[s]?)\\b[^%\\d]{0,40}?" +
-            "\\b(?:above|over|exceed[s]?|beyond)\\s*\\$?(\\d+(?:\\.\\d+)?)(?!\\s*%)",
+            "\\b(?:above|over|exceed[s]?|beyond)\\s*\\$?(\\d+(?:\\.\\d+)?)(?![\\d.]*\\s*%)",
             Pattern.CASE_INSENSITIVE);
 
     public List<String> breached(List<String> criteria, BigDecimal close) {
