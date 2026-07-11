@@ -383,6 +383,14 @@ the calling user isn't allowed to see for the live gate is simply absent
 from the response (not an error) — the position-slice endpoint 404s for
 it the same way it 404s for an unknown connection or symbol.
 
+If Agora is fully unreachable, `DepotService.depots()` propagates a
+`DepotUnavailableException` instead of silently returning an empty
+list; `GET /api/depots` catches it and turns it into the 200 +
+top-level-`error` shape below, while `GET
+/api/depots/{connection}/positions/{symbol}` catches it and returns
+`503 SERVICE_UNAVAILABLE` (see that endpoint's section for the full
+error-status matrix).
+
 `asOf` (top-level per depot, and echoed in the position-slice response)
 is the instant Agora's broker fetch (`get_account`/`get_positions`) was
 taken — not a request/response timestamp.
@@ -451,9 +459,19 @@ status stays 200; per-connection failures instead surface as a non-null
 ```
 
 `orders` is filtered to only the orders for `{symbol}` within that
-depot connection. Returns `404` when `{connection}` isn't visible to the
-current user (unknown, or a live connection outside the allow-list) or
-`{symbol}` isn't held in that connection's positions.
+depot connection.
+
+- **`404 NOT_FOUND`** — `{connection}` isn't visible to the current
+  user (unknown, or a live connection outside the allow-list), or
+  `{symbol}` isn't held in that (successfully-fetched) connection's
+  positions.
+- **`503 SERVICE_UNAVAILABLE`** — either the whole read path failed
+  (Agora fully unreachable, `DepotUnavailableException` from
+  `DepotService.depots()`), or `{connection}` was found but its own
+  fetch failed (`DepotDto.error()` non-null / `positions()` null, the
+  same per-connection failure that shows up as an `error` entry in
+  `GET /api/depots`'s `depots[]`). In both cases the response body is
+  the plain error message, not a JSON envelope.
 
 ## Daywalker Alerts
 
