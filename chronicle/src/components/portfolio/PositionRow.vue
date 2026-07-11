@@ -13,7 +13,7 @@
       <span>{{ t('portfolio.cols.entry') }} <MoneyDisplay :amount="item.entryPrice" :currency="item.currency" :native-amount="item.nativeEntryPrice" :native-currency="item.entryCurrency" /></span>
       <span>{{ t('portfolio.cols.size') }} {{ fmt(item.shareCount) }}</span>
       <span>{{ t('portfolio.cols.current') }} <MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
-      <span class="pf-row__pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(1) }}%</span>
+      <span class="pf-row__pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ formatPercent(pnlPct) }}</span>
     </div>
     <span v-if="signal?.thesisStatus" class="pf-row__thesis mono">{{ signal.thesisStatus }}</span>
     <div class="pf-row__actions" @click.stop>
@@ -33,6 +33,7 @@ import { useI18n } from 'vue-i18n'
 import TagPill from '../common/TagPill.vue'
 import MoneyDisplay from '../common/MoneyDisplay.vue'
 import type { WatchlistItem, ExitSignal } from '../../api/types'
+import { formatNumber, formatPercent } from '../../utils/format'
 
 const props = defineProps<{ item: WatchlistItem; signal: ExitSignal | null }>()
 const emit = defineEmits<{ open: [string]; edit: [WatchlistItem]; delete: [WatchlistItem] }>()
@@ -51,7 +52,7 @@ const badgeTone = computed<'gold' | 'crimson' | 'green' | 'ash'>(() => {
   }
 })
 function fmt(n: number | null): string {
-  return n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  return n == null ? '—' : formatNumber(n, 0)
 }
 </script>
 
