@@ -135,7 +135,7 @@
               <span v-if="displayName(item.ticker, item.companyName)" class="wr-name">{{ displayName(item.ticker, item.companyName) }}</span>
               <span class="wr-owner mono" :data-testid="`wl-owner-${item.id}`">{{ item.owner }}</span>
               <span class="wr-flags">
-                <span v-if="item.tag === 'TRACKING'" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
+                <span v-if="showsVerdictBadge(item)" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
                 <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
               </span>
             </div>
@@ -177,7 +177,7 @@
             <div>
               <h1 class="wd-ticker mono">{{ selectedItem.ticker }}</h1>
               <div v-if="displayName(selectedItem.ticker, selectedItem.companyName)" class="wd-name">{{ displayName(selectedItem.ticker, selectedItem.companyName) }}</div>
-              <div v-if="selectedItem.tag === 'TRACKING'" class="wd-since">
+              <div v-if="showsVerdictBadge(selectedItem)" class="wd-since">
                 {{ t('watchlist.detail.subtitleTracking', { date: formatDate(selectedItem.addedAt) }) }}
               </div>
             </div>
@@ -239,6 +239,7 @@ import { ApiError } from '../api/errors'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
 import { formatPercent } from '../utils/format'
 import { displayName } from '../utils/instrument'
+import { showsVerdictBadge } from '../lib/watchlistDisplay'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
