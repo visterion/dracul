@@ -160,6 +160,9 @@ export default {
     adminOnly: 'admin only',
     headTitle: 'What the night costs',
     headSub: 'The treasury — every token counted. By tier, by day, by agent.',
+    banner: {
+      overBudget: 'Monthly cap exceeded',
+    },
     tiles: {
       thisMonth: 'this month',
       ofCap: 'of ${cap} cap',
