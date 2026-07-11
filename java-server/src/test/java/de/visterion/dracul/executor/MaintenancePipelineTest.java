@@ -67,7 +67,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
                         new BigDecimal("108")));
@@ -108,7 +108,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
                         new BigDecimal("103")));
@@ -136,7 +136,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         List<ExecutorPosition> survivors = List.of(aaa, bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("AAA", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
@@ -159,7 +159,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
@@ -186,7 +186,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("110"), new BigDecimal("1.6"), 0, List.of("close below 90"));
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
                         new BigDecimal("85")));
@@ -209,7 +209,7 @@ class MaintenancePipelineTest {
         ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(List.of(aaa, bbb));
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(List.of(aaa, bbb), Set.of()));
         when(entryExpiry.expire("c", "r1")).thenReturn(Set.of(2L));
         when(indicators.levels("AAA", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels("BBB", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
@@ -229,13 +229,88 @@ class MaintenancePipelineTest {
     }
 
     @Test
+    void unfilledPosition_excludedFromHardTriggerAndRatchet_butStillEnriched() {
+        // A never-filled GTD entry (reconcile flags id 2 unfilled) holds nothing at the broker:
+        // it must not reach hardTrigger.apply or ratchet.ratchet, but must still appear in the
+        // enriched output so the book stays visible.
+        ExecutorPosition unfilled = openPosition(2L, "AAA", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition filled = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(
+                new ReconcileService.ReconcileResult(List.of(unfilled, filled), Set.of(2L)));
+        when(indicators.levels("AAA", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(indicators.levels("BBB", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(hardTrigger.apply(any(), any(), eq("r1"))).thenAnswer(inv -> inv.getArgument(0));
+        when(positionRepo.findOpen()).thenReturn(List.of(unfilled, filled));
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExecutorPosition>> hardArg =
+                ArgumentCaptor.forClass((Class) List.class);
+        verify(hardTrigger).apply(hardArg.capture(), any(), eq("r1"));
+        assertThat(hardArg.getValue()).extracting(ExecutorPosition::id).containsExactly(1L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExecutorPosition>> ratchetArg =
+                ArgumentCaptor.forClass((Class) List.class);
+        verify(ratchet).ratchet(ratchetArg.capture(), any(), eq("r1"));
+        assertThat(ratchetArg.getValue()).extracting(ExecutorPosition::id).containsExactly(1L);
+
+        assertThat(result).extracting(EnrichedPosition::symbol)
+                .containsExactlyInAnyOrder("AAA", "BBB");
+    }
+
+    @Test
+    void unfilledPosition_breachedKillCriterion_neverFlattenedOrClosed_realHardTrigger() {
+        // End-to-end gating with a REAL HardTriggerService: kill criterion "close below 40" is
+        // breached (close 39) on a position whose limit-buy entry never filled. Without the
+        // unfilled gating this would flatten a non-existent broker position and fabricate a
+        // CLOSED row + cooldown. It must survive untouched instead.
+        de.visterion.dracul.executor.broker.FakeExecutionGateway fakeGateway =
+                new de.visterion.dracul.executor.broker.FakeExecutionGateway();
+        DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
+        CooldownRepository cooldownRepo = mock(CooldownRepository.class);
+        RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
+        when(ruleVersions.active()).thenReturn("exec-v0.4");
+        HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
+                decisionRepo, cooldownRepo, ruleVersions, new tools.jackson.databind.ObjectMapper(),
+                killCriteriaEvaluator, 0.35, 1.5, 10,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
+                        java.time.ZoneOffset.UTC));
+        MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry,
+                realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
+                tranche2Detector, killCriteriaEvaluator, 3.0, 22, 20);
+
+        ExecutorPosition unfilled = openPosition(2L, "AAA", new BigDecimal("30"),
+                new BigDecimal("110"), null, 0, List.of("close below 40"));
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(
+                new ReconcileService.ReconcileResult(List.of(unfilled), Set.of(2L)));
+        when(indicators.levels("AAA", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("39")));
+        when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
+
+        List<EnrichedPosition> result = gatedPipeline.run("c", "r1");
+
+        assertThat(fakeGateway.flattenedSymbols).isEmpty();
+        verify(positionRepo, org.mockito.Mockito.never()).close(anyLong(), any(), any(), any());
+        verify(cooldownRepo, org.mockito.Mockito.never()).add(any(), any(), any(), any());
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).symbol()).isEqualTo("AAA");
+    }
+
+    @Test
     void buyPosition_lowestPriceDecreases_writesAdverseExtreme() {
         // BUY, lowestPrice previously null (entry 100), close drops to 38 -> new adverse extreme.
         ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
                         new BigDecimal("38")));
@@ -257,7 +332,7 @@ class MaintenancePipelineTest {
                 null, null, null, null, 0, new BigDecimal("39"), null);
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
                         new BigDecimal("40")));
@@ -279,7 +354,7 @@ class MaintenancePipelineTest {
                 null, null, null, null, 0, null, null);
         List<ExecutorPosition> survivors = List.of(aaa);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("AAA", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
                         new BigDecimal("50")));
@@ -297,7 +372,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         List<ExecutorPosition> survivors = List.of(bbb);
 
-        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         // price 100.9 -> R = (100.9-100)/(100-95) = 0.18, no R_CONFIRMED; no entryDayHigh set.
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,

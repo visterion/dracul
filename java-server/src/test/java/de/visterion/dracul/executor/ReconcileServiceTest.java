@@ -66,7 +66,7 @@ class ReconcileServiceTest {
         gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
                 OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("95"), "brk-1"));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
@@ -101,7 +101,7 @@ class ReconcileServiceTest {
         gateway.seedOrder(new BrokerOrder("tp-2", "ref-2", "ACME", OrderRole.TAKE_PROFIT,
                 OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("112"), "brk-2"));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(2L), eq(new BigDecimal("112")), realizedRCaptor.capture(),
@@ -121,7 +121,8 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("108")));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = result.survivors();
 
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
@@ -132,6 +133,8 @@ class ReconcileServiceTest {
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
 
+        // A position the broker actually holds is filled — never flagged unfilled.
+        assertThat(result.unfilledIds()).isEmpty();
         assertThat(survivors).hasSize(1);
         ExecutorPosition survivor = survivors.get(0);
         assertThat(survivor.symbol()).isEqualTo("BBB");
@@ -153,7 +156,7 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("108")));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         assertThat(survivors).hasSize(1);
         ExecutorPosition survivor = survivors.get(0);
@@ -172,7 +175,7 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("SHORT1", "SELL", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("94")));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
@@ -196,7 +199,7 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("SHORT2", "SELL", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("103")));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
@@ -226,7 +229,7 @@ class ReconcileServiceTest {
         gateway.seedOrder(new BrokerOrder("tp-8", "ref-8", "ACME", OrderRole.TAKE_PROFIT,
                 OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("112"), "brk-8"));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
@@ -259,7 +262,7 @@ class ReconcileServiceTest {
         gateway.seedOrder(new BrokerOrder("stop-t2-9", "ref-9", "ACME", OrderRole.STOP_LOSS,
                 OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("90"), "unrelated-parent"));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
@@ -283,13 +286,16 @@ class ReconcileServiceTest {
         gateway.seedOrder(new BrokerOrder("brk-11", "sig-1", "NEWPOS", OrderRole.OTHER,
                 OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = result.survivors();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(decisionRepo, never()).insert(any());
         assertThat(survivors).hasSize(1);
         assertThat(survivors.get(0).id()).isEqualTo(11L);
         assertThat(survivors.get(0).status()).isEqualTo("OPEN");
+        // ... and it must be flagged unfilled, so the pipeline keeps hard triggers off it.
+        assertThat(result.unfilledIds()).containsExactly(11L);
     }
 
     @Test
@@ -302,11 +308,13 @@ class ReconcileServiceTest {
                 OrderStatus.PARTIALLY_FILLED, BigDecimal.TEN, new BigDecimal("4"),
                 new BigDecimal("100"), null));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = result.survivors();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         assertThat(survivors).hasSize(1);
         assertThat(survivors.get(0).id()).isEqualTo(12L);
+        assertThat(result.unfilledIds()).containsExactly(12L);
     }
 
     @Test
@@ -316,7 +324,7 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("GHOST", "BUY", BigDecimal.TEN,
                 new BigDecimal("50"), new BigDecimal("55")));
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run-1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -359,7 +367,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         gateway.unavailable = true;
 
-        List<ExecutorPosition> survivors = service.reconcile("c", "run1");
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
