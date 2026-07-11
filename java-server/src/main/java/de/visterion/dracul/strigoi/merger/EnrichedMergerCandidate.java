@@ -13,5 +13,10 @@ public record EnrichedMergerCandidate(
         String termSheet,
         boolean termSheetAvailable,
         BigDecimal lastPrice,
-        boolean priceAvailable
+        boolean priceAvailable,
+        BigDecimal offerPrice,
+        String considerationType,
+        String exchangeRatio,
+        String breakFee,
+        BigDecimal spreadPercent
 ) {}
