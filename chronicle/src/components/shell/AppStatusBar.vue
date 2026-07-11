@@ -31,12 +31,13 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStatusStore } from '../../stores/status'
+import { formatNumber } from '../../utils/format'
 
 const { t } = useI18n()
 const status = useStatusStore()
 
 const hasVerdict = computed(() => status.lastVerdictRelative !== '—')
-const cost = computed(() => status.dailyCost.toFixed(2))
+const cost = computed(() => formatNumber(status.dailyCost, 2))
 </script>
 
 <style scoped>
