@@ -1205,6 +1205,7 @@ the maintenance pipeline. Response:
     "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
+    "trim_count": 0, "suggested_fraction": 0.33,
     "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1,
       "kill_criteria_breached": [] },
     "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
@@ -1214,6 +1215,11 @@ the maintenance pipeline. Response:
 `signal_id` is the position's source signal id (`ExecutorPosition.sourceSignalId()`,
 null-safe — `null` when the position has none), so the LLM can copy it verbatim
 into a Tranche 2 `ADD_TRANCHE`/`HOLD` decision record without a separate lookup.
+
+`trim_count` and `suggested_fraction` feed `exit-position`'s scale-out trim
+ladder (see below): `suggested_fraction` is the code-computed ladder floor
+for the position's current `trim_count` (0 → 0.33, 1 → 0.5, ≥2 → 1.0) — the
+minimum `fraction` `exit-position` will accept for a partial exit right now.
 
 `soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
@@ -1242,19 +1248,60 @@ conditions to match:
 
 ### `POST /api/executor/tools/exit-position`
 
-Tool webhook (slice 2) — the LLM's soft-judgment full exit; unlike
-`place-entry`, exits are **always permitted** (no veto/order-guard gate).
-Input:
+Tool webhook (slice 2) — the LLM's soft-judgment exit; unlike `place-entry`,
+exits are **always permitted** (no veto/order-guard gate). Supports both a
+full close and a partial scale-out. Input:
 
 ```json
-{ "symbol": "ACME", "reason": "soft trigger confirmed", "confidence": 0.75, "reasoning": "..." }
+{ "symbol": "ACME", "reason": "soft trigger confirmed", "confidence": 0.75,
+  "reasoning": "...", "fraction": 0.33 }
 ```
 
-Looks up the open `executor_position` for `symbol` on the configured
-connection, flattens it via `AgoraTrading`'s broker gateway, computes
-realized R, closes the position row, and adds a `cooldown` entry
-(`dracul.executor.cooldown-days`, "fresh setup only"). Writes one
-`decision_log` row (`trigger_type=SOFT_TRIGGER`). Response:
+`fraction` is optional; omitted or `1.0` means a full close (the
+pre-scale-out behavior, unchanged). Only `0.33`, `0.5`, and `1.0` (or `null`)
+are valid per the tool's input schema — any other value is rejected without
+a broker call.
+
+**Scale-out / trim ladder.** A partial `fraction` (`0.33` or `0.5`) is
+code-gated by an escalation ladder keyed on the position's persisted
+`trim_count` (surfaced by `fetch-open-positions`' `trim_count` /
+`suggested_fraction` fields):
+
+| `trim_count` | Ladder floor |
+|---|---|
+| 0 | 0.33 |
+| 1 | 0.5 |
+| ≥ 2 | 1.0 (must fully flatten) |
+
+The LLM may always exit **more** aggressively than the floor (e.g. skip
+straight to `1.0`), but never less — a `fraction` below the current floor is
+rejected with `{ "output": { "exited": false, "reason": "SCHEMA_INVALID",
+"reasoning": "ladder floor is <floor> (trim_count=<n>); fraction <f> would
+undercut it" } }`, no broker call.
+
+For a valid partial trim: looks up the open `executor_position` for `symbol`
+on the configured connection, flattens `fraction` of it via `AgoraTrading`'s
+broker gateway, computes the remaining quantity as `qty × (1 − fraction)`
+floored to whole shares, and persists it via
+`ExecutorPositionRepository.recordTrim` (bumps `trim_count`, resets
+`soft_confirm_count` to 0). The position **stays OPEN** — no cooldown row is
+added. Writes one `decision_log` row (`trigger_type=SOFT_TRIGGER`,
+`action=TRIM`, `reason_code=null`, `order_json={fraction, qty_closed,
+qty_remaining}`). Response:
+
+```json
+{ "output": { "exited": false, "trimmed": true, "fraction": 0.33,
+  "qty_closed": 3, "qty_remaining": 6 } }
+```
+
+If the computed remaining quantity would drop below one whole share, the
+trim is treated as a full exit instead (fraction-1.0 semantics below) —
+there is no such thing as a sub-1-share open position.
+
+For a full exit (`fraction` absent or `1.0`): computes realized R, closes
+the position row, and adds a `cooldown` entry (`dracul.executor.cooldown-days`,
+"fresh setup only"). Writes one `decision_log` row (`action=EXIT_FULL`).
+Response:
 
 ```json
 { "output": { "exited": true, "exit_reason": "soft trigger confirmed" } }

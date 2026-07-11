@@ -136,7 +136,7 @@ public class MaintenancePipeline {
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
                 ss.chandelierBreach(), ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(),
-                p.sourceSignalId());
+                p.sourceSignalId(), p.trimCount(), ExecutorWebhookController.ladderFloor(p.trimCount()));
     }
 
     private String resolveMechanism(String sourceSignalId) {

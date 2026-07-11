@@ -698,6 +698,8 @@ public class ExecutorWebhookController {
             node.put("mfe_r", p.mfeR());
             node.put("days_held", p.daysHeld());
             node.put("kill_criteria", p.killCriteria());
+            node.put("trim_count", p.trimCount());
+            node.put("suggested_fraction", p.suggestedFraction());
 
             Map<String, Object> softTrigger = new LinkedHashMap<>();
             softTrigger.put("chandelier_breach", p.chandelierBreach());
@@ -746,9 +748,38 @@ public class ExecutorWebhookController {
                     Map.of("exited", false, "reason", "NO_OPEN_POSITION")));
         }
 
+        // The exit_position schema enum pins fraction to exactly 0.33 / 0.5 / 1.0 (or absent,
+        // defaulting to a full 1.0 exit); read as a primitive double and compare with exact
+        // equality against those literals rather than a tolerance-based compare.
+        double fraction = input.path("fraction").isNumber() ? input.path("fraction").asDouble() : 1.0;
+        if (fraction != 0.33 && fraction != 0.5 && fraction != 1.0) {
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "exited", false, "reason", "SCHEMA_INVALID",
+                    "reasoning", "fraction must be one of 0.33, 0.5, 1.0, got " + fraction)));
+        }
+
+        // Code-enforced escalation ladder: the LLM may exit MORE aggressively than the floor
+        // implied by the position's persisted trim_count, but never less.
+        double floor = ladderFloor(position.trimCount());
+        if (fraction < floor) {
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "exited", false, "reason", "SCHEMA_INVALID",
+                    "reasoning", "ladder floor is " + floor + " (trim_count=" + position.trimCount()
+                            + "); fraction " + fraction + " would undercut it")));
+        }
+
+        BigDecimal remaining = position.qty()
+                .multiply(BigDecimal.valueOf(1 - fraction)).setScale(0, RoundingMode.FLOOR);
+        boolean fullExit = fraction == 1.0 || remaining.signum() <= 0;
+
+        // BigDecimal.valueOf(1.0) has scale 1 ("1.0") and is not .equals() to BigDecimal.ONE
+        // (scale 0) -- callers (gateway adapters, tests) expect the canonical BigDecimal.ONE for
+        // a full flatten, matching the pre-scale-out behavior exactly.
+        BigDecimal gatewayFraction = fraction == 1.0 ? BigDecimal.ONE : BigDecimal.valueOf(fraction);
+
         CloseResult cr;
         try {
-            cr = gateway.flatten(connection, symbol, BigDecimal.ONE);
+            cr = gateway.flatten(connection, symbol, gatewayFraction);
         } catch (BrokerUnavailableException e) {
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
@@ -757,6 +788,25 @@ public class ExecutorWebhookController {
                     confidence, null, null));
             return ResponseEntity.ok(Map.of("output",
                     Map.of("exited", false, "reason", "BROKER_ERROR")));
+        }
+
+        if (!fullExit) {
+            BigDecimal qtyClosed = position.qty().subtract(remaining);
+
+            positionRepo.recordTrim(position.id(), remaining, position.trimCount() + 1);
+
+            ObjectNode orderJson = mapper.createObjectNode();
+            orderJson.put("fraction", fraction);
+            orderJson.put("qty_closed", qtyClosed);
+            orderJson.put("qty_remaining", remaining);
+
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "TRIM", null, orderJson, reasoning, confidence, null, null));
+
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "exited", false, "trimmed", true, "fraction", fraction,
+                    "qty_closed", qtyClosed, "qty_remaining", remaining)));
         }
 
         BigDecimal exitPrice = cr.avgFillPrice();
@@ -772,7 +822,7 @@ public class ExecutorWebhookController {
         inputs.put("active_stop", position.activeStop());
 
         ObjectNode orderJson = mapper.createObjectNode();
-        orderJson.put("fraction", 1.0);
+        orderJson.put("fraction", fraction);
 
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "SOFT_TRIGGER", null, null, null, symbol, inputs, null,
@@ -780,6 +830,14 @@ public class ExecutorWebhookController {
 
         return ResponseEntity.ok(Map.of("output",
                 Map.of("exited", true, "exit_reason", reason)));
+    }
+
+    /** Code-enforced trim ladder floor: {@code trimCount} 0 -> 0.33, 1 -> 0.5, >=2 -> 1.0 (must
+     *  fully flatten). The LLM may always exit more aggressively than this floor, never less. */
+    static double ladderFloor(int trimCount) {
+        if (trimCount <= 0) return 0.33;
+        if (trimCount == 1) return 0.5;
+        return 1.0;
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {

@@ -174,6 +174,16 @@ class ExecutorWebhookControllerTest {
                 null, null, null, null, 0, null, null);
     }
 
+    /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
+     *  {@code trimCount} for scale-out/ladder tests. */
+    private ExecutorPosition openPosition(long id, String symbol, String side,
+            BigDecimal entry, BigDecimal initialStop, BigDecimal qty, int trimCount) {
+        return new ExecutorPosition(id, "saxo-sim", symbol, side, qty,
+                entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
+                null, null, null, null, trimCount, null, null);
+    }
+
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
         return signal(signalId, confidence, referencePrice, "PENDING");
     }
@@ -1128,7 +1138,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of("X"),
-                true, false, 1, true, "R_CONFIRMED", "sig-42");
+                true, false, 1, true, "R_CONFIRMED", "sig-42", 0, 0.33);
         when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
@@ -1146,6 +1156,8 @@ class ExecutorWebhookControllerTest {
         assertThat(first.get("current_price")).isEqualTo(new BigDecimal("108"));
         assertThat(first.get("chandelier_level")).isEqualTo(new BigDecimal("104"));
         assertThat(first.get("kill_criteria")).isEqualTo(List.of("X"));
+        assertThat(first.get("trim_count")).isEqualTo(0);
+        assertThat(first.get("suggested_fraction")).isEqualTo(0.33);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> softTrigger = (Map<String, Object>) first.get("soft_trigger");
@@ -1296,6 +1308,145 @@ class ExecutorWebhookControllerTest {
 
         assertThat(resp.getStatusCode().value()).isEqualTo(401);
         verifyNoInteractions(gateway, positionRepo, decisionLogRepo, cooldownRepo);
+    }
+
+    // -------------------------------------------------------------------
+    // exit-position: scale-out — fraction parameter + code-enforced trim ladder
+    // -------------------------------------------------------------------
+
+    @Test
+    void exitPosition_invalidFraction_schemaInvalid_noBrokerCall() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.4}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
+
+        verifyNoInteractions(gateway);
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
+    }
+
+    @Test
+    void exitPosition_trim033_freshPosition_scalesOutAndBumpsLadder() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"), new BigDecimal("112"), "close-1"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+
+        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        // qty 10 * (1-0.33) = 6.7, floored to whole shares -> 6
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("6")), eq(1));
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("TRIM");
+        assertThat(log.reasonCode()).isNull();
+        assertThat(log.orderJson().path("fraction").asDouble()).isEqualTo(0.33);
+        assertThat(log.orderJson().has("qty_closed")).isTrue();
+        assertThat(log.orderJson().path("qty_remaining").asDouble()).isEqualTo(6.0);
+    }
+
+    @Test
+    void exitPosition_fractionBelowLadderFloor_rejectsSchemaInvalid() {
+        // trim_count=1 -> ladder floor is 0.5; LLM may not undercut with 0.33.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("7"), 1);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
+        assertThat(String.valueOf(output.get("reasoning"))).contains("0.5");
+
+        verifyNoInteractions(gateway);
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void exitPosition_fraction1_explicit_fullExitPathUnchanged() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SOFT_CHANDELIER","fraction":1.0}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(true);
+
+        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("EXIT_FULL");
+    }
+
+    @Test
+    void exitPosition_trimRemainingBelowOneShare_treatedAsFullExit() {
+        // qty=2, fraction=0.5 -> remaining = floor(2*0.5)=1, still >=1 share so this is NOT
+        // the below-1-share case; use qty=1 instead so remaining floors to 0 and full-exit
+        // semantics kick in (close + cooldown, not recordTrim).
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("1"), 1);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(true);
+
+        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.5)));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"));
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(cooldownRepo).add(eq("ACME"), eq("SCALE_OUT"), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("EXIT_FULL");
     }
 
     // -------------------------------------------------------------------

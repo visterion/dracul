@@ -83,7 +83,8 @@ class ExecutorDefaults {
                     "symbol": {"type": "string"},
                     "reason": {"type": "string"},
                     "confidence": {"type": ["number", "null"]},
-                    "reasoning": {"type": "string"}
+                    "reasoning": {"type": "string"},
+                    "fraction": {"type": ["number", "null"], "enum": [0.33, 0.5, 1.0, null]}
                   },
                   "required": ["symbol"]
                 }
@@ -120,7 +121,10 @@ class ExecutorDefaults {
                         "Return open positions enriched with price/ATR/chandelier/R/MFE and soft-trigger state (runs reconciliation, hard exits, and stop-ratchet server-side first).",
                         empty, "/api/executor/tools/fetch-open-positions", 30),
                 new ToolCatalogEntry("exit_position",
-                        "Fully close an open position (soft-trigger exit). Always permitted.",
+                        "Close or scale out of an open position (soft-trigger exit). Always permitted. "
+                                + "fraction defaults to 1.0 (full close); 0.33/0.5 partial exits are "
+                                + "code-gated by a trim ladder keyed on the position's trim_count -- "
+                                + "the LLM may exit more aggressively than the ladder floor, never less.",
                         exitPositionInput, "/api/executor/tools/exit-position", 60),
                 new ToolCatalogEntry("add_tranche",
                         "Add a code-verified tranche 2 to an open tranche-1 position "
