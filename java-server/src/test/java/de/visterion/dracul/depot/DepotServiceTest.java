@@ -188,6 +188,54 @@ class DepotServiceTest {
         assertThat(posDto.dayChangePercent()).isNull();
     }
 
+    @Test void malformedQuoteValuesNullOnlyAffectedFieldsNotRequest() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+
+        DepotAccount account = new DepotAccount(new BigDecimal("1000"), new BigDecimal("1000"),
+                new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z");
+        when(depotClient.account("depot-1")).thenReturn(account);
+
+        DepotPosition posA = new DepotPosition("AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1200"), new BigDecimal("200"), "USD");
+        DepotPosition posB = new DepotPosition("MSFT", new BigDecimal("5"), new BigDecimal("300"),
+                new BigDecimal("1600"), new BigDecimal("100"), "USD");
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA, posB), "2026-07-11T10:05:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+
+        // AAPL has malformed price, MSFT is valid
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("""
+                {"quotes":[
+                  {"symbol":"AAPL","price":"not-a-number","dayChangePercent":"also-not-a-number","currency":"USD"},
+                  {"symbol":"MSFT","price":320.0,"dayChangePercent":-1.0,"currency":"USD"}
+                ]}
+                """));
+
+        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        List<DepotDto> result = service.depots("viktor@ufelmann.de");
+
+        assertThat(result).hasSize(1);
+        DepotDto dto = result.getFirst();
+        assertThat(dto.error()).isNull();
+        assertThat(dto.positions()).hasSize(2);
+
+        // AAPL has malformed quote fields, should be null
+        DepotPositionDto posADto = dto.positions().stream().filter(p -> p.symbol().equals("AAPL")).findFirst().orElseThrow();
+        assertThat(posADto.price()).isNull();
+        assertThat(posADto.dayChangePercent()).isNull();
+        // But position data is intact
+        assertThat(posADto.qty()).isEqualByComparingTo("10");
+        assertThat(posADto.unrealizedPl()).isEqualByComparingTo("200");
+
+        // MSFT should have valid quote data
+        DepotPositionDto posBDto = dto.positions().stream().filter(p -> p.symbol().equals("MSFT")).findFirst().orElseThrow();
+        assertThat(posBDto.price()).isEqualByComparingTo("320.0");
+        assertThat(posBDto.dayChangePercent()).isEqualByComparingTo("-1.0");
+    }
+
     @Test void listConnectionsFailureReturnsEmptyList() {
         AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
         AgoraClient agora = Mockito.mock(AgoraClient.class);
