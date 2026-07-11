@@ -502,6 +502,7 @@ export default {
     addButton: '+ Position',
     noSignal: '—',
     cols: { entry: 'Entry', size: 'Shares', current: 'Price', pnl: 'P/L' },
+    summary: { totalValue: 'Total value', pnl: 'Total P&L', count: 'Positions' },
     dialog: {
       addTitle: 'Add position',
       editTitle: 'Edit position',
