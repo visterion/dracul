@@ -445,6 +445,7 @@ export default {
       tracking: 'tracking',
     },
     addButton: '+ Add to watchlist',
+    ownerGroup: 'by {owner}',
     dialog: {
       title: 'Add to watchlist',
       placeholder: 'Ticker (e.g. AVGO)',

@@ -118,45 +118,52 @@
         </div>
 
         <div v-else class="watch-rows">
-          <div
-            v-for="item in filteredItems"
-            :key="item.id"
-            class="watch-row"
-            role="button"
-            tabindex="0"
-            :class="{ active: selectedId === item.id }"
-            data-testid="watchlist-item"
-            @click="selectedId = item.id"
-            @keydown.enter="selectedId = item.id"
-            @keydown.space.prevent="selectedId = item.id"
-          >
-            <div class="wr-id">
-              <span class="wr-ticker mono">{{ item.ticker }}</span>
-              <span v-if="displayName(item.ticker, item.companyName)" class="wr-name">{{ displayName(item.ticker, item.companyName) }}</span>
-              <span class="wr-owner mono" :data-testid="`wl-owner-${item.id}`">{{ item.owner }}</span>
-              <span class="wr-flags">
-                <span v-if="showsVerdictBadge(item)" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
-                <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
-              </span>
+          <template v-for="group in groupedItems" :key="group.owner || '__mine__'">
+            <div
+              v-if="group.owner"
+              class="watch-owner-sep"
+              :data-testid="`wl-owner-${group.owner}`"
+            >{{ t('watchlist.ownerGroup', { owner: group.owner }) }}</div>
+            <div
+              v-for="item in group.items"
+              :key="item.id"
+              class="watch-row"
+              role="button"
+              tabindex="0"
+              :class="{ active: selectedId === item.id }"
+              :data-owner="item.owner"
+              data-testid="watchlist-item"
+              @click="selectedId = item.id"
+              @keydown.enter="selectedId = item.id"
+              @keydown.space.prevent="selectedId = item.id"
+            >
+              <div class="wr-id">
+                <span class="wr-ticker mono">{{ item.ticker }}</span>
+                <span v-if="displayName(item.ticker, item.companyName)" class="wr-name">{{ displayName(item.ticker, item.companyName) }}</span>
+                <span class="wr-flags">
+                  <span v-if="showsVerdictBadge(item)" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
+                  <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
+                </span>
+              </div>
+              <div class="wr-price">
+                <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
+                <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
+                  {{ formatPercent(item.dayChangePercent) }}
+                </span>
+              </div>
+              <div class="wr-meta">
+                <span class="wr-dot" :class="`dot-${dotClass(item.status)}`" />
+                <button
+                  v-if="isMine(item)"
+                  class="wr-delete"
+                  :data-testid="`wl-delete-${item.id}`"
+                  :disabled="rowBusyId === item.id"
+                  :aria-label="t('watchlist.deleteAria')"
+                  @click.stop="onDelete(item)"
+                >✕</button>
+              </div>
             </div>
-            <div class="wr-price">
-              <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
-              <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
-                {{ formatPercent(item.dayChangePercent) }}
-              </span>
-            </div>
-            <div class="wr-meta">
-              <span class="wr-dot" :class="`dot-${dotClass(item.status)}`" />
-              <button
-                v-if="isMine(item)"
-                class="wr-delete"
-                :data-testid="`wl-delete-${item.id}`"
-                :disabled="rowBusyId === item.id"
-                :aria-label="t('watchlist.deleteAria')"
-                @click.stop="onDelete(item)"
-              >✕</button>
-            </div>
-          </div>
+          </template>
         </div>
       </div>
 
@@ -239,7 +246,7 @@ import { ApiError } from '../api/errors'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
 import { formatPercent } from '../utils/format'
 import { displayName } from '../utils/instrument'
-import { showsVerdictBadge } from '../lib/watchlistDisplay'
+import { showsVerdictBadge, groupByOwner } from '../lib/watchlistDisplay'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
@@ -316,6 +323,10 @@ const filteredItems = computed(() =>
       return item.ticker.toLowerCase().includes(q) || item.companyName.toLowerCase().includes(q)
     })
 )
+
+// Own items unlabelled first, then foreign owners grouped under a "von
+// <email>" separator — keeps the row itself free of owner e-mail noise.
+const groupedItems = computed(() => groupByOwner(filteredItems.value, me.value))
 
 // The uppercased search query if it is a valid ticker NOT already on the
 // watchlist; otherwise null. Used to offer an "add this ticker" CTA when the
@@ -468,6 +479,14 @@ function formatDate(isoDate: string): string {
 .watchlist__skeleton { margin-bottom: var(--space-2); }
 
 .watch-rows { display: flex; flex-direction: column; }
+.watch-owner-sep {
+  font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ash-gray);
+  padding: var(--space-4) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--rule);
+}
 .watch-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -489,7 +508,6 @@ function formatDate(isoDate: string): string {
 .wr-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wr-ticker { font-size: var(--text-body); color: var(--bone-ivory); }
 .wr-name { font-size: var(--text-micro); color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wr-owner { font-size: 11px; color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .wr-flags { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .wr-track { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--cathedral-gold); margin-top: 2px; }
 .wr-held { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--signal-positive-bright); margin-top: 2px; }

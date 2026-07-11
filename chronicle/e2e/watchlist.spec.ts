@@ -71,12 +71,15 @@ test.describe('Watchlist View (/watchlist)', () => {
     await expect(page.locator('.watch-rows .wr-price').getByText('urspr.', { exact: false })).toHaveCount(0)
   })
 
-  test('watchlist rows show an owner badge', async ({ page }) => {
-    await expect(page.locator('[data-testid^="wl-owner-"]').first()).toBeVisible()
+  test('foreign rows are grouped under an owner separator, rows carry no email', async ({ page }) => {
+    const sep = page.getByTestId('wl-owner-daniel@dracul.local')
+    await expect(sep).toBeVisible()
+    await expect(sep).toContainText('daniel@dracul.local')
+    await expect(page.locator('.watch-row .wr-owner')).toHaveCount(0)
   })
 
   test('foreign rows are read-only (no delete control)', async ({ page }) => {
-    const foreign = page.locator('.watch-row', { hasText: 'daniel@dracul.local' }).first()
+    const foreign = page.locator('.watch-row[data-owner="daniel@dracul.local"]').first()
     await expect(foreign).toBeVisible()
     await expect(foreign.locator('[data-testid^="wl-delete-"]')).toHaveCount(0)
   })
