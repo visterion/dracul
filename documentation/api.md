@@ -372,6 +372,8 @@ Order ticket fields (`ticket`):
 |---|---|---|
 | GET | `/api/depots` | List depot connections and their positions/orders for the current user |
 | GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders) |
+| GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
+| GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
 
 Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
 /api/depots` calls `DepotService.depots(userEmail)`, which lists Agora's
@@ -472,6 +474,67 @@ depot connection.
   same per-connection failure that shows up as an `error` entry in
   `GET /api/depots`'s `depots[]`). In both cases the response body is
   the plain error message, not a JSON envelope.
+
+### `GET /api/depots/chart` response
+
+Query params: `symbol` (instrument ticker), `range` (`1d` | `1w` | `1m` |
+`1y` | `max`). Pure market data via `DepotChartService`/Agora — no
+user/live-gating concern, unlike the depot-scoped endpoints above.
+
+Range → Agora lookback mapping: `1d` calls `get_intraday`
+(`interval=5m`, `range=1d`, `t` = ISO instant); `1w`/`1m`/`1y`/`max`
+call `get_ohlc` with `days` = `7`/`31`/`365`/`1825` respectively (`t` =
+ISO date). An unrecognized `range` is `400 BAD_REQUEST`.
+
+```json
+{
+  "symbol": "ACME",
+  "range": "1y",
+  "points": [
+    { "t": "2025-07-11", "value": 100.00 },
+    { "t": "2025-07-14", "value": 103.50 }
+  ]
+}
+```
+
+### `GET /api/depots/{connection}/chart` response
+
+Query param: `range` (same values/mapping as above). The connection is
+resolved through `DepotService.depots(CurrentUserHolder.get())` — the
+same call and live-visibility gate `GET /api/depots` uses — so this
+endpoint never leaks a live depot to a user outside the allow-list; its
+positions (already fetched/gated by `DepotService`) are then used to
+compose the curve. Error-status matrix matches
+`GET /api/depots/{connection}/positions/{symbol}`: **`404 NOT_FOUND`**
+if `{connection}` isn't visible to the current user, **`503
+SERVICE_UNAVAILABLE`** if the whole read path failed or that
+connection's own fetch failed.
+
+`value(t) = Σ qty_i × close_i(t) + cash` — the depot's current cash
+plus each held position's quantity times that instrument's close price
+at `t`. Per-symbol close series are fetched independently and aligned
+by **intersection**: only timestamps present in every
+successfully-fetched symbol's series appear in `points`/`relative`. A
+symbol whose series can't be fetched (Agora failure) is skipped —
+the curve is still built from the rest — and sets `partial: true`.
+`relative[].pct` is `(value/points[0].value − 1) × 100`, scale 2
+HALF_UP (so the first point's `pct` is always `0.00`).
+
+```json
+{
+  "connection": "alpaca-paper-1",
+  "range": "1y",
+  "points": [
+    { "t": "2026-07-01", "value": 2250.00 },
+    { "t": "2026-07-02", "value": 2300.00 }
+  ],
+  "relative": [
+    { "t": "2026-07-01", "pct": 0.00 },
+    { "t": "2026-07-02", "pct": 2.22 }
+  ],
+  "partial": false
+}
+```
 
 ## Daywalker Alerts
 
