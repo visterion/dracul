@@ -38,6 +38,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { LlmProvider } from '../../api/types'
+import { formatNumber } from '../../utils/format'
 
 const props = defineProps<{ provider: LlmProvider }>()
 const { t } = useI18n()
@@ -59,9 +60,9 @@ const todayLine = computed(() => {
     return t('settings.providers.todayZero')
   }
   return t('settings.providers.todayUsage', {
-    input: p.todayInputTokens.toLocaleString(),
-    output: p.todayOutputTokens.toLocaleString(),
-    cost: p.todayCostUsd.toFixed(2),
+    input: formatNumber(p.todayInputTokens),
+    output: formatNumber(p.todayOutputTokens),
+    cost: formatNumber(p.todayCostUsd, 2),
   })
 })
 </script>
