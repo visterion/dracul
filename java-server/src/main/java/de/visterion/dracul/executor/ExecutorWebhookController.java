@@ -809,6 +809,7 @@ public class ExecutorWebhookController {
             orderJson.put("fraction", fraction);
             orderJson.put("qty_closed", qtyClosed);
             orderJson.put("qty_remaining", remaining);
+            orderJson.put("price", cr.avgFillPrice());
 
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
