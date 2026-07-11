@@ -69,8 +69,18 @@ public class DaywalkerCompletionService {
                 && notifier.notifyAlert(symbol, triggerType, severity, thesis);
 
         for (var o : eligible) {
-            alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
-                    severity, thesis, confidence, runId, sent);
+            var existing = alerts.findSameUtcDay(o.userId(), symbol, triggerType, now);
+            if (existing.isPresent()) {
+                // Same-day duplicate: refresh text/ts, escalate severity, never lower it.
+                String effective = rank(severity) >= rank(existing.get().severity())
+                        ? severity
+                        : existing.get().severity();
+                alerts.updateSameDayAlert(existing.get().id(), triggerType, effective,
+                        thesis, confidence, runId, sent);
+            } else {
+                alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
+                        severity, thesis, confidence, runId, sent);
+            }
         }
         // Publish only after all rows are persisted (invariant from 7ee36ef), one event per owner
         // so the SSE bridge can deliver the live toast to exactly that owner.
