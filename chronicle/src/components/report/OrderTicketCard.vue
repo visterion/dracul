@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { OrderTicket } from '../../api/types'
+import { formatMoney } from '../../utils/format'
 
 defineProps<{ ticket: OrderTicket }>()
 const { t } = useI18n()
-const fmt = (v: number | null) => (v == null ? '—' : v.toLocaleString())
+const fmt = (v: number | null) => (v == null ? '—' : formatMoney(v, 'USD'))
 </script>
 
 <template>
