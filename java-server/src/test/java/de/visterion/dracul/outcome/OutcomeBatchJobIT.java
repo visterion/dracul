@@ -116,7 +116,9 @@ class OutcomeBatchJobIT {
         assertThat(row.partialExits()).isNotNull();
         assertThat(row.partialExits().get(0).path("price").asDouble()).isEqualTo(110.0);
         assertThat(row.roundtripUnder5d()).isNotNull();
-        assertThat(row.complete()).isTrue();
+        // Closed just now -> inside the 14-calendar-day re-entry window, so the row must stay
+        // incomplete (re-runs keep recomputing reentry_within_10d until the window elapses).
+        assertThat(row.complete()).isFalse();
         assertThat(row.sourceAgent()).isEqualTo("strigoi-spin");
         assertThat(row.agentVersion()).isEqualTo("v1");
         assertThat(row.ruleVersion()).isEqualTo("exec-v0.2");

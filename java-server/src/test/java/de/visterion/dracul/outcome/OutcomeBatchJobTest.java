@@ -210,6 +210,89 @@ class OutcomeBatchJobTest {
         assertThat(rowB.partialExits().get(0).path("log_id").asString()).isEqualTo("trim-B");
     }
 
+    /** Like {@link #closedPosition} but with caller-controlled entry/close dates, for the
+     *  re-entry-window tests below. */
+    private ExecutorPosition closedPositionOn(long id, String symbol, String signalId,
+            LocalDate entryDate, LocalDate closedDate) {
+        return new ExecutorPosition(
+                id, "saxo-sim", symbol, "BUY", bd("10"), bd("100"), bd("95"), bd("95"), 1, bd("5"),
+                List.of(), signalId, "strigoi-spin", entryDate.toString(), null, "CLOSED", null,
+                bd("100"), bd("2.0"), 0, bd("105"), bd("1.0"), "TAKE_PROFIT", closedDate.toString(),
+                null, null, null, null, null, 0, null, null);
+    }
+
+    /** reentry_within_10d can only fire on runs AFTER the close — so a TRADE row must stay
+     *  complete=false inside the 14-calendar-day window (re-runs recompute the flag) and only
+     *  flip complete once the window has elapsed. Marking it complete on the first run would
+     *  freeze reentry at false forever. */
+    @Test
+    void tradeRecord_insideReentryWindow_staysIncomplete_thenCapturesReentryOnRerun() {
+        String symbol = "REENT1";
+        java.time.LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
+        java.time.LocalDate closedDate = today.minusDays(5); // inside the 14d window
+        java.time.LocalDate entryDate = closedDate.minusDays(9);
+
+        DecisionLog enter = decisionRow("enter-re", "sig-re", symbol, "ENTER", null, null, null,
+                "strigoi-spin", "v1");
+        DecisionLog newEnter = decisionRow("enter-re-2", "sig-re-2", symbol, "ENTER", null, null,
+                null, "strigoi-spin", "v1");
+        ExecutorPosition closed = closedPositionOn(9L, symbol, "sig-re", entryDate, closedDate);
+
+        when(positions.findClosed()).thenReturn(List.of(closed));
+        when(decisionLog.findBySignalIdAndAction("sig-re", "ENTER")).thenReturn(enter);
+        when(outcomeLog.isComplete("enter-re")).thenReturn(false);
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("TRIM")), any(), any()))
+                .thenReturn(List.of());
+        when(decisionLog.findBySymbolAndActionsBetween(
+                eq(symbol), eq(List.of("EXIT_FULL", "LOG_HARD_EXIT", "RECONCILE_CLOSE")), any(), any()))
+                .thenReturn(List.of());
+        // First run: no re-entry yet; second run: a fresh ENTER appeared within the window.
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), eq(List.of("ENTER")), any(), any()))
+                .thenReturn(List.of())
+                .thenReturn(List.of(newEnter));
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        assertThat(captor.getValue().complete()).isFalse();
+        assertThat(captor.getValue().reentryWithin10d()).isFalse();
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor2 = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(2)).upsert(captor2.capture());
+        OutcomeLogRow rerun = captor2.getAllValues().get(1);
+        assertThat(rerun.reentryWithin10d()).isTrue();
+        assertThat(rerun.complete()).isFalse(); // window still open — keep recomputing
+    }
+
+    @Test
+    void tradeRecord_afterReentryWindow_marksComplete() {
+        String symbol = "REENT2";
+        java.time.LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
+        java.time.LocalDate closedDate = today.minusDays(14); // window fully elapsed
+        java.time.LocalDate entryDate = closedDate.minusDays(9);
+
+        DecisionLog enter = decisionRow("enter-re3", "sig-re3", symbol, "ENTER", null, null, null,
+                "strigoi-spin", "v1");
+        ExecutorPosition closed = closedPositionOn(10L, symbol, "sig-re3", entryDate, closedDate);
+
+        when(positions.findClosed()).thenReturn(List.of(closed));
+        when(decisionLog.findBySignalIdAndAction("sig-re3", "ENTER")).thenReturn(enter);
+        when(outcomeLog.isComplete("enter-re3")).thenReturn(false);
+        when(decisionLog.findBySymbolAndActionsBetween(eq(symbol), any(), any(), any()))
+                .thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        assertThat(captor.getValue().complete()).isTrue();
+    }
+
     @Test
     void tradeRecord_alreadyComplete_isSkipped() {
         String symbol = "TRD2";
