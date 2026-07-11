@@ -58,11 +58,11 @@ public class PositionSizer {
             BigDecimal atrThree = atr.multiply(BigDecimal.valueOf(3));
             BigDecimal atrQuarter = atr.multiply(new BigDecimal("0.25"));
 
-            BigDecimal buyAnchor = price.subtract(atr.multiply(new BigDecimal("2.5")));
-            boolean swingLowWins = swingLow != null && swingLow.compareTo(buyAnchor) < 0;
+            BigDecimal atrOnlyAnchor = deriveStopAnchor(side, price, atr, null);
             BigDecimal anchor = deriveStopAnchor(side, price, atr, swingLow);
+            boolean swingLowWins = anchor.compareTo(atrOnlyAnchor) != 0;
             stopBasis = swingLowWins
-                    ? "swing_low " + plain(swingLow) + " (wider than entry - 2.5 x ATR22 " + plain(buyAnchor) + ")"
+                    ? "swing_low " + plain(swingLow) + " (wider than entry - 2.5 x ATR22 " + plain(atrOnlyAnchor) + ")"
                     : "entry - 2.5 x ATR22";
 
             BigDecimal buyFloorBase = price.subtract(atrThree);
@@ -79,11 +79,11 @@ public class PositionSizer {
             BigDecimal atrThree = atr.multiply(BigDecimal.valueOf(3));
             BigDecimal atrQuarter = atr.multiply(new BigDecimal("0.25"));
 
-            BigDecimal sellAnchor = price.add(atr.multiply(new BigDecimal("2.5")));
-            boolean swingLowWins = swingLow != null && swingLow.compareTo(sellAnchor) > 0;
+            BigDecimal atrOnlyAnchor = deriveStopAnchor(side, price, atr, null);
             BigDecimal anchor = deriveStopAnchor(side, price, atr, swingLow);
+            boolean swingLowWins = anchor.compareTo(atrOnlyAnchor) != 0;
             stopBasis = swingLowWins
-                    ? "swing_low " + plain(swingLow) + " (wider than entry + 2.5 x ATR22 " + plain(sellAnchor) + ")"
+                    ? "swing_low " + plain(swingLow) + " (wider than entry + 2.5 x ATR22 " + plain(atrOnlyAnchor) + ")"
                     : "entry + 2.5 x ATR22";
 
             BigDecimal sellFloorBase = price.add(atrThree);
