@@ -543,6 +543,7 @@ export default {
     signals: 'Signals',
     risks: 'Risks',
     killCriteria: 'Kill criteria',
+    killCriteriaEmpty: 'No kill criteria defined.',
     confidenceTitle: 'Confidence',
     facts: {
       anomaly: 'Anomaly',
@@ -635,11 +636,13 @@ export default {
       preyPerHuntFoot: 'across {n} runs this month',
       hitRate: 'Hit rate',
       hitRateFoot: '{num} of {den} prey within thesis',
+      hitRateFootEmpty: 'No hits assessable yet',
       hunts: 'Hunts',
       huntsFoot: 'of {n} scheduled',
       tier: 'Tier',
     },
     sections: {
+      statsMonth: 'This month',
       lastRun: 'Last run · trace',
       recentPrey: 'Recent prey',
       configuration: 'Configuration',
@@ -649,7 +652,7 @@ export default {
       yesterday: 'yesterday',
       daysAgo: 'd ago',
       preyUnit: 'prey',
-      none: 'No run recorded yet.',
+      none: 'No run recorded yet (this month).',
     },
     prey: {
       empty: 'The brood sleeps. Trigger a hunt to begin.',

@@ -543,6 +543,7 @@ export default {
     signals: 'Signale',
     risks: 'Risiken',
     killCriteria: 'Kill-Kriterien',
+    killCriteriaEmpty: 'Keine Kill-Kriterien definiert.',
     confidenceTitle: 'Konfidenz',
     facts: {
       anomaly: 'Anomalie',
@@ -635,11 +636,13 @@ export default {
       preyPerHuntFoot: 'über {n} Läufe diesen Monat',
       hitRate: 'Trefferquote',
       hitRateFoot: '{num} von {den} Beute in der These',
+      hitRateFootEmpty: 'Noch keine Treffer bewertbar',
       hunts: 'Jagden',
       huntsFoot: 'von {n} geplant',
       tier: 'Tier',
     },
     sections: {
+      statsMonth: 'Diesen Monat',
       lastRun: 'Letzter Lauf · Trace',
       recentPrey: 'Jüngste Beute',
       configuration: 'Konfiguration',
@@ -649,7 +652,7 @@ export default {
       yesterday: 'gestern',
       daysAgo: 'T zurück',
       preyUnit: 'Beute',
-      none: 'Noch kein Lauf aufgezeichnet.',
+      none: 'Noch kein Lauf aufgezeichnet (diesen Monat).',
     },
     prey: {
       empty: 'Die Brut schläft. Löse eine Jagd aus, um zu beginnen.',

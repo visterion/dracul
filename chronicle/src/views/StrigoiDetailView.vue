@@ -32,6 +32,7 @@
       </template>
     </PageHead>
 
+    <div class="section-head" data-testid="sd-stats-head"><span class="sh-rule" />{{ t('strigoi.sections.statsMonth') }}</div>
     <div class="stat-grid sd-stats">
       <StatTile
         :label="t('strigoi.stats.preyPerHunt')"
@@ -41,7 +42,9 @@
       <StatTile
         :label="t('strigoi.stats.hitRate')"
         :value="`${Math.round(strigoi.hitRate90d * 100)}%`"
-        :foot="t('strigoi.stats.hitRateFoot', { num: strigoi.hitRateNumerator, den: strigoi.hitRateDenominator })"
+        :foot="strigoi.hitRateDenominator === 0
+          ? t('strigoi.stats.hitRateFootEmpty')
+          : t('strigoi.stats.hitRateFoot', { num: strigoi.hitRateNumerator, den: strigoi.hitRateDenominator })"
       />
       <StatTile
         :label="t('strigoi.stats.hunts')"

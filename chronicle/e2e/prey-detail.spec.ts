@@ -89,6 +89,13 @@ test.describe('Prey Detail View (/prey/:id)', () => {
     await expect(page).toHaveURL(/\/prey\//)
     await expect(page.locator('.title-ticker')).toBeVisible()
   })
+
+  test('empty kill criteria show a muted placeholder', async ({ page }) => {
+    await page.goto('/prey/prey-6')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('.sr-list--kill li')).toHaveCount(0)
+    await expect(page.locator('[data-testid="pd-kill-empty"]')).toContainText('Keine Kill-Kriterien definiert.')
+  })
 })
 
 test.describe('Prey Detail View — not-found state', () => {
