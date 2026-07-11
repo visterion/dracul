@@ -55,6 +55,15 @@ class StrigoiPromptContractTest {
     }
 
     @Test
+    void spinPromptDocumentsServerExtractedDistributionTerms() {
+        String prompt = AgentResources.classpath("prompts/strigoi-spin.md");
+        assertThat(prompt).as("spin prompt must document the server-extracted distribution terms")
+                .contains("distributionRatio").contains("recordDate").contains("distributionDate");
+        assertThat(prompt).as("spin prompt must instruct falling back to termSheet when null")
+                .contains("fall back to reading");
+    }
+
+    @Test
     void echoPromptUsesRevisionsDirectionNotGuidanceDirection() {
         String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
         assertThat(prompt)
