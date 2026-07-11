@@ -423,6 +423,50 @@ A single reasoning-tier (Sonnet) assessment per event. The documented
 Haiku pre-filter and Opus critical escalation are deferred; deterministic
 detection plus the cooldown already gate event volume.
 
+### Daywalker reasoning-tier escalation (`daywalker-deep`)
+
+**Implemented 2026-07-11.** A CRITICAL Daywalker assessment with low LLM-reported
+confidence gets a second, more rigorous opinion from a dedicated one-shot reasoning-tier
+agent, **asynchronously** — it never delays or suppresses the original alert (a CRITICAL
+alert arriving late is worse than one that is occasionally over-cautious).
+
+Flow, inside `DaywalkerCompletionService.persistAssessment`:
+
+1. The original assessment is persisted + notified exactly as before (this never
+   changes based on the escalation outcome).
+2. After that block, `maybeEscalate` checks: `dracul.daywalker.escalation-enabled`
+   (default `true`) **and** `severity == CRITICAL` **and** `confidence != null`
+   **and** `confidence < dracul.daywalker.escalation-confidence` (default `0.6`).
+   When all hold, it calls `VistierieClient.triggerRun("daywalker-deep", {symbol,
+   trigger_type, thesis})` — a fire-and-forget trigger; any exception is caught and
+   logged at WARN, never propagated (the alert flow above has already completed by
+   this point regardless).
+3. `daywalker-deep` (`prompts/daywalker-deep.md`, schema
+   `schemas/daywalker-deep.json`) is a **trigger-only** Vistierie agent — `schedule`
+   is `null`, it is never cron-scheduled, only ever run via step 2's `triggerRun`.
+   It has no tools; the trigger's `payload` (`symbol`/`trigger_type`/`thesis`) is its
+   entire context — it re-scrutinizes the *existing* thesis for rigor rather than
+   re-fetching market data, and confirms or downgrades severity.
+4. `daywalker-deep`'s completion (`POST /api/daywalker-deep/complete`,
+   `DaywalkerDeepController`) calls the same `persistAssessment`, but with
+   `fromEscalation=true` — the loop guard: an escalation-originated assessment can
+   never trigger another escalation, however low its own reported confidence.
+5. The follow-up assessment merges into the **same alert row** via the existing
+   same-UTC-day dedup/escalation-severity logic (see above) — `max(existingSeverity,
+   newSeverity)`, never downgraded. **v1 acceptance:** if `daywalker-deep` downgrades
+   (e.g. CRITICAL → WARNING), the already-notified CRITICAL severity on the row is
+   *not* walked back down; only a same-or-higher follow-up severity is reflected. The
+   user sees the original CRITICAL alert with its thesis/confidence refreshed to the
+   deep run's, and can judge the revised thesis themselves.
+
+Config: `dracul.daywalker.escalation-enabled` / `dracul.daywalker.escalation-confidence`
+(env `DRACUL_DAYWALKER_ESCALATION_ENABLED` / `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE`);
+`dracul.daywalker-deep.enabled` / `dracul.daywalker-deep.webhook-token` gate the agent
+definition + controller the same way every other agent is gated
+(`@ConditionalOnProperty`). See `documentation/configuration.md` and
+`documentation/vistierie-integration.md` ("Programmatic run trigger with an input
+payload") for the `triggerRun(name, input)` contract this relies on.
+
 ## Executor (guarded broker-execution agent, slices 1+2)
 
 **Implemented (slices 1+2).** Unlike the six Strigoi, the Executor is not a

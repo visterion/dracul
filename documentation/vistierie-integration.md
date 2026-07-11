@@ -42,6 +42,7 @@ Dracul uses two of Vistierie's Bee lifecycle models:
 | Strigoi (6 agents) | ScheduledBee | Cron nightly |
 | Voievod (synthesizer, Etappe 7) | ScheduledBee | Cron daily on weekdays (~08:00 UTC); reasoning tier. Note: a separate outcome-analysis learning loop (Etappe 8) is a later addition and will run on a different schedule. |
 | Daywalker | StreamingBee | Window-bounded session at market open; polls an event-source webhook every 5 min |
+| Daywalker-Deep | ScheduledBee (never scheduled — `schedule=null`) | Trigger-only: `DaywalkerCompletionService` calls `VistierieClient.triggerRun("daywalker-deep", input)` for a low-confidence CRITICAL assessment; reasoning tier |
 | Executor (slice 1) | ScheduledBee | Cron (`dracul.executor.schedule`, blank by default = manual-only via `POST /api/executor/run`); reasoning tier |
 
 The Executor's `ToolBinding` list (`ExecutorDefaults.executorAgentDefaults`,
@@ -61,6 +62,21 @@ The `StreamingBee` pattern is a Vistierie extension introduced to support
 Dracul's Daywalker. If Vistierie does not yet expose this interface, it
 must be added upstream before the Daywalker can be implemented — never
 patched into Dracul.
+
+## Programmatic run trigger with an input payload
+
+`VistierieClient.triggerRun(String agentName)` (no input) is a default method
+delegating to `triggerRun(String agentName, Map<String, Object> input)`, which POSTs
+`/agents/{name}/run` with body `{"payload": <input>}` — Vistierie's `CreateRunRequest`
+contract (`payload`, `completion_webhook`, `completion_webhook_token`; the latter two
+are omitted so the agent's registered completion webhook is used). `payload` becomes
+the triggered run's context available to the agent turn, which is how
+`DaywalkerCompletionService`'s escalation trigger forwards `symbol`, `trigger_type`,
+and `thesis` to `daywalker-deep` without it needing a tool call to fetch that context
+itself — see "Daywalker reasoning-tier escalation" in `documentation/strigoi.md`.
+`HttpVistierieClient`/`MockVistierieClient` both implement the 2-arg overload; the
+1-arg overload (used by `ExecutorRunController`/`StrigoiRunController` for a plain
+manual trigger) needs no code change.
 
 ## Tool webhooks
 
