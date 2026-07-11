@@ -104,6 +104,11 @@ dracul:
     chase-atr-mult: ${DRACUL_EXECUTOR_CHASE_ATR_MULT:1.0}
     pace-per-week: ${DRACUL_EXECUTOR_PACE_PER_WEEK:2}
     max-tranche: ${DRACUL_EXECUTOR_MAX_TRANCHE:2}
+  depots:
+    agora-base-url: ${DRACUL_DEPOTS_AGORA_BASE_URL:http://agora:8080}
+    agora-readonly-token: ${DRACUL_DEPOTS_AGORA_READONLY_TOKEN:}
+    agora-timeout-ms: ${DRACUL_DEPOTS_AGORA_TIMEOUT_MS:8000}
+    live-visible-emails: ${DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS:viktor@ufelmann.de}
   outcome:
     enabled: ${DRACUL_OUTCOME_ENABLED:true}
     cron: ${DRACUL_OUTCOME_CRON:0 30 22 * * 2-6}
