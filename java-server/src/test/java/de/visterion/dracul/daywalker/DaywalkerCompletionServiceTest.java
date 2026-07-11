@@ -202,5 +202,9 @@ class DaywalkerCompletionServiceTest {
         // text/ts refresh, severity stays CRITICAL
         verify(alerts).updateSameDayAlert("a-1", "PRICE_SPIKE", "CRITICAL",
                 "later, calmer thesis", null, "run-12", false);
+        // the live event must carry the effective (kept-CRITICAL) severity, not incoming INFO,
+        // so the SSE toast matches the persisted row
+        verify(events).publishEvent(new DaywalkerAlertCreatedEvent(
+                "u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "later, calmer thesis"));
     }
 }

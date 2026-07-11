@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Resolves every owner of a completed Daywalker assessment's symbol, fires one Telegram push
@@ -68,25 +70,29 @@ public class DaywalkerCompletionService {
         boolean sent = rank(severity) >= notifyRank
                 && notifier.notifyAlert(symbol, triggerType, severity, thesis);
 
+        Map<String, String> effectiveByOwner = new HashMap<>();
         for (var o : eligible) {
             var existing = alerts.findSameUtcDay(o.userId(), symbol, triggerType, now);
+            String effective;
             if (existing.isPresent()) {
                 // Same-day duplicate: refresh text/ts, escalate severity, never lower it.
-                String effective = rank(severity) >= rank(existing.get().severity())
+                effective = rank(severity) >= rank(existing.get().severity())
                         ? severity
                         : existing.get().severity();
                 alerts.updateSameDayAlert(existing.get().id(), triggerType, effective,
                         thesis, confidence, runId, sent);
             } else {
+                effective = severity;
                 alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
                         severity, thesis, confidence, runId, sent);
             }
+            effectiveByOwner.put(o.userId(), effective);
         }
-        // Publish only after all rows are persisted (invariant from 7ee36ef), one event per owner
-        // so the SSE bridge can deliver the live toast to exactly that owner.
+        // Publish only after all rows are persisted (invariant from 7ee36ef), one event per owner,
+        // carrying the EFFECTIVE severity so the SSE toast matches the persisted row.
         for (var o : eligible) {
             events.publishEvent(new DaywalkerAlertCreatedEvent(
-                    o.userId(), symbol, triggerType, severity, thesis));
+                    o.userId(), symbol, triggerType, effectiveByOwner.get(o.userId()), thesis));
         }
         log.info("daywalker run {} persisted {} alert(s) for {} ({}), notified={}",
                 runId, eligible.size(), symbol, triggerType, sent);
