@@ -1,7 +1,8 @@
 <template>
   <div v-if="open" class="filter-sheet" data-testid="filter-sheet">
     <div class="filter-sheet__backdrop" data-testid="filter-sheet-backdrop" @click="$emit('close')" />
-    <section class="filter-sheet__panel" role="dialog" aria-modal="true" :aria-label="t('chronicle.filters.title')">
+    <section ref="panel" class="filter-sheet__panel" role="dialog" aria-modal="true"
+             :aria-label="t('chronicle.filters.title')" @keydown.tab="onTab">
       <header class="filter-sheet__head">
         <span>{{ t('chronicle.filters.title') }}</span>
         <button class="filter-sheet__close" :aria-label="t('chronicle.filters.close')" @click="$emit('close')">✕</button>
@@ -33,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiStatus } from '../../api/types'
 import BroodMini from '../common/BroodMini.vue'
@@ -52,6 +53,37 @@ const emit = defineEmits<{ close: []; select: [filter: string]; openStrigoi: [s:
 const { t } = useI18n()
 const { anomalyTypeLabel } = useEnumLabels()
 
+const panel = ref<HTMLElement | null>(null)
+let previouslyFocused: HTMLElement | null = null
+
+function focusables(): HTMLElement[] {
+  if (!panel.value) return []
+  return Array.from(
+    panel.value.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter(el => !el.hasAttribute('disabled'))
+}
+
+function onTab(e: KeyboardEvent) {
+  const items = focusables()
+  if (items.length === 0) return
+  const first = items[0]
+  const last = items[items.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+async function trapFocus() {
+  await nextTick()
+  focusables()[0]?.focus()
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (!props.open) return
   if (e.key === 'Escape') emit('close')
@@ -61,7 +93,15 @@ function setBodyOverflow(hidden: boolean) {
   document.body.style.overflow = hidden ? 'hidden' : ''
 }
 
-watch(() => props.open, (isOpen) => setBodyOverflow(isOpen), { immediate: true })
+watch(() => props.open, (isOpen) => {
+  setBodyOverflow(isOpen)
+  if (isOpen) {
+    previouslyFocused = document.activeElement as HTMLElement | null
+    trapFocus()
+  } else {
+    previouslyFocused?.focus()
+  }
+}, { immediate: true })
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
