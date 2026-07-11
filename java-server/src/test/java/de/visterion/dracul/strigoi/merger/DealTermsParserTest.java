@@ -31,6 +31,22 @@ class DealTermsParserTest {
     }
 
     @Test
+    void ignoresParValueBoilerplate() {
+        DealTerms t = parser.parse("...shares of common stock, par value of $0.001 per share, "
+                + "of the Company...");
+        assertThat(t.offerPrice()).isNull();
+        assertThat(t.considerationType()).isNull();
+    }
+
+    @Test
+    void skipsParValueMatchAndFindsRealOfferLater() {
+        DealTerms t = parser.parse("...each share of common stock, par value of $0.001 per share, "
+                + "will be converted into the right to receive $54.20 in cash per share...");
+        assertThat(t.offerPrice()).isEqualByComparingTo("54.20");
+        assertThat(t.considerationType()).isEqualTo("cash");
+    }
+
+    @Test
     void unparseableYieldsNulls() {
         assertThat(parser.parse("no deal language here").offerPrice()).isNull();
         assertThat(parser.parse(null).considerationType()).isNull();

@@ -47,14 +47,29 @@ public final class DealTermsParser {
         }
     }
 
+    /** Chars of context inspected around a candidate offer-price match for par-value boilerplate. */
+    private static final int PAR_VALUE_WINDOW = 40;
+
     private BigDecimal findOfferPrice(String text) {
         Matcher m = OFFER_PRICE.matcher(text);
-        if (!m.find()) return null;
-        try {
-            return new BigDecimal(m.group(1));
-        } catch (NumberFormatException e) {
-            return null;
+        while (m.find()) {
+            // DEFM14A boilerplate like "common stock, par value of $0.001 per share" would
+            // otherwise match first and poison the spread — skip par-value contexts and keep
+            // scanning for the real offer price.
+            if (nearParValue(text, m.start(), m.end())) continue;
+            try {
+                return new BigDecimal(m.group(1));
+            } catch (NumberFormatException e) {
+                // malformed number in this candidate; try the next match
+            }
         }
+        return null;
+    }
+
+    private boolean nearParValue(String text, int start, int end) {
+        int from = Math.max(0, start - PAR_VALUE_WINDOW);
+        int to = Math.min(text.length(), end + PAR_VALUE_WINDOW);
+        return text.substring(from, to).toLowerCase().contains("par value");
     }
 
     private String findFirst(Pattern pattern, String text) {
