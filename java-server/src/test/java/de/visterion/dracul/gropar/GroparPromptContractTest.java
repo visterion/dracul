@@ -92,4 +92,22 @@ class GroparPromptContractTest {
                 .as("gropar prompt must describe the +4R scale-out rung")
                 .contains("+4R");
     }
+
+    @Test
+    void schemaHasViolatedKillCriteriaField() {
+        JsonNode schema = AgentResources.readSchema(
+                JsonMapper.builder().build(), "schemas/exit-signal-list.json");
+        JsonNode items = schema.path("properties").path("signals").path("items");
+        JsonNode field = items.path("properties").path("violated_kill_criteria");
+        assertThat(field.path("type").asText()).isEqualTo("array");
+        // must stay optional — LLM omits it for INTACT/NONE
+        assertThat(items.path("required").toString()).doesNotContain("violated_kill_criteria");
+    }
+
+    @Test
+    void promptExplainsViolatedKillCriteria() {
+        String prompt = AgentResources.classpath("prompts/gropar.md");
+        assertThat(prompt).contains("violated_kill_criteria");
+        assertThat(prompt).contains("killCriteria");
+    }
 }

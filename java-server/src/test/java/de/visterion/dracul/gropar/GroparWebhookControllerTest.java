@@ -350,6 +350,41 @@ class GroparWebhookControllerTest {
     }
 
     // =========================================================================
+    // Test 5b: complete with violated_kill_criteria appends "[Verletzt: ...]"
+    // to the persisted rationale.
+    // =========================================================================
+
+    @Test
+    void complete_invalidatedSignal_appendsViolatedKillCriteriaToRationale() throws Exception {
+        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
+        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "signals": [
+                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL",
+                        "rationale": "These loosen", "confidence": 0.9,
+                        "thesis_status": "INVALIDATED",
+                        "violated_kill_criteria": ["Close below 90"] }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        var resp = controller.complete(BEARER, "run-47", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+
+        ArgumentCaptor<ExitSignal> captor = ArgumentCaptor.forClass(ExitSignal.class);
+        verify(exitSignalRepo).insert(captor.capture(), eq("alice@x"));
+        assertThat(captor.getValue().rationale())
+                .isEqualTo("These loosen [Verletzt: Close below 90]");
+    }
+
+    // =========================================================================
     // Test 6: complete with non-done status → no persist (was Test 5)
     // =========================================================================
 
