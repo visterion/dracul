@@ -15,6 +15,15 @@
       :y1="gy"
       :y2="gy"
     />
+    <line
+      v-if="baselineY !== null"
+      class="baseline"
+      data-testid="chart-baseline"
+      :x1="padL"
+      :x2="W - padR"
+      :y1="baselineY"
+      :y2="baselineY"
+    />
     <g v-for="(s, si) in props.series" :key="si">
       <path
         v-if="props.areaFill && s.fill"
@@ -56,6 +65,10 @@ const props = defineProps<{
   areaFill?: boolean
   labels?: { i: number; t: string }[]
   ariaLabel?: string
+  /** When set, draws a dotted horizontal reference line at this value
+   *  (e.g. the range's first value) so a "since start of timeframe" move
+   *  reads visually against a fixed baseline. */
+  baseline?: number | null
 }>()
 
 const W = 720
@@ -85,6 +98,8 @@ function yPos(v: number): number {
 const gridYs = computed(() =>
   [0, 0.25, 0.5, 0.75, 1].map(f => padT + f * (H.value - padT - padB.value))
 )
+
+const baselineY = computed(() => (props.baseline == null ? null : yPos(props.baseline)))
 
 // SVG path coordinates are not user-facing display formatting, so plain
 // rounding is used here (kept out of the de-DE formatter sweep intentionally,

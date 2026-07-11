@@ -1,0 +1,467 @@
+<template>
+  <div class="content-inner pd-view">
+    <BackLink data-testid="pd-back" @click="goBack">{{ t('depots.detail.back') }}</BackLink>
+
+    <template v-if="loading">
+      <v-skeleton-loader type="heading" />
+      <v-skeleton-loader type="paragraph" class="mt-4" />
+    </template>
+
+    <div v-else-if="notFound" class="empty small" data-testid="pd-notfound">
+      <div class="em-text">{{ t('depots.detail.notFound') }}</div>
+    </div>
+
+    <div v-else-if="brokerDown" class="empty small" data-testid="pd-brokerdown">
+      <div class="em-text">{{ t('depots.detail.brokerDown') }}</div>
+      <button class="btn btn-secondary" data-testid="pd-retry" @click="loadPosition">
+        {{ t('depots.detail.retry') }}
+      </button>
+    </div>
+
+    <template v-else-if="position">
+      <!-- ── Header ─────────────────────────────────────────── -->
+      <div class="pd-head">
+        <div class="pd-head-id">
+          <h1 class="pd-symbol mono" data-testid="pd-symbol">{{ position.symbol }}</h1>
+          <div v-if="companyName" class="pd-name">{{ companyName }}</div>
+        </div>
+        <div class="pd-head-price">
+          <span class="pd-price mono" data-testid="pd-price">{{ formatMoney(position.price ?? position.avgEntryPrice, position.currency) }}</span>
+          <span
+            class="pd-header-change pnl-cell"
+            data-testid="pd-header-change"
+            :class="pnlClass(headerChange.abs)"
+            @click="toggle()"
+          >{{ fmtPl(headerChange.abs, headerChange.pct, mode, position.currency) }}</span>
+        </div>
+      </div>
+
+      <!-- ── Chart ──────────────────────────────────────────── -->
+      <div class="pd-chart-block">
+        <div class="pd-chart-ranges" role="tablist">
+          <button
+            v-for="r in ranges"
+            :key="r.value"
+            class="dp-range-btn"
+            :class="{ active: range === r.value }"
+            :data-testid="`pd-range-${r.value}`"
+            @click="range = r.value"
+          >{{ r.label }}</button>
+        </div>
+        <div v-if="chartLoading" class="dp-chart-loading">{{ t('depots.chart.loading') }}</div>
+        <div v-else-if="chartError" class="dp-chart-error">{{ chartError }}</div>
+        <LineChart
+          v-else-if="chartSeries.length"
+          :series="chartSeries"
+          :baseline="chartSeries[0]?.data[0] ?? null"
+          :height="180"
+        />
+      </div>
+
+      <!-- ── Stat tiles ─────────────────────────────────────── -->
+      <div class="stat-grid pd-stats">
+        <StatTile data-testid="pd-stat-position" :label="t('depots.detail.stat.position')" :value="formatMoney(position.marketValue, position.currency)" />
+        <StatTile
+          data-testid="pd-stat-performance"
+          :label="t('depots.detail.stat.performance')"
+          :value="fmtPl(position.unrealizedPl, position.unrealizedPlPct, mode, position.currency)"
+          :value-class="pnlClass(position.unrealizedPl)"
+        />
+        <StatTile data-testid="pd-stat-qty" :label="t('depots.detail.stat.qty')" :value="formatNumber(position.qty, Number.isInteger(position.qty) ? 0 : 4)" />
+        <StatTile data-testid="pd-stat-entry" :label="t('depots.detail.stat.entry')" :value="formatMoney(position.avgEntryPrice, position.currency)" />
+      </div>
+      <div v-if="asOf" class="pd-asof" :class="{ stale: stale }" data-testid="pd-asof">
+        {{ t('depots.asOf', { time: relativeTime(asOf) }) }}
+      </div>
+
+      <!-- ── Open orders ────────────────────────────────────── -->
+      <div v-if="orders.length" class="dp-orders" data-testid="pd-orders">
+        <div class="section-head">{{ t('depots.detail.orders') }}</div>
+        <div v-for="o in orders" :key="o.brokerOrderId" class="dp-order-row">
+          <span class="mono">{{ o.symbol }}</span>
+          <span class="dp-order-side">{{ o.side }}</span>
+          <span class="mono">{{ formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4) }}</span>
+          <span class="dp-order-type">{{ o.type }}</span>
+          <span class="dp-order-status">{{ o.status }}</span>
+        </div>
+      </div>
+
+      <!-- ── Informationen ──────────────────────────────────── -->
+      <div v-if="profileDescription" class="pd-info" data-testid="pd-info">
+        <div class="section-head">{{ t('depots.detail.info.title') }}</div>
+        <p class="pd-info-text">{{ infoExpanded ? profileDescription : truncatedDescription }}</p>
+        <button v-if="descriptionIsLong" class="pd-info-toggle" data-testid="pd-info-toggle" @click="infoExpanded = !infoExpanded">
+          {{ infoExpanded ? t('depots.detail.info.less') : t('depots.detail.info.more') }}
+        </button>
+      </div>
+
+      <!-- ── News ───────────────────────────────────────────── -->
+      <InfoCardRow v-if="newsItems.length" :title="t('depots.detail.news.title')" testid="pd-section-news">
+        <div v-for="(n, i) in newsItems" :key="i" class="icr-card">
+          <div class="icr-card-title">{{ n.headline }}</div>
+          <div class="icr-card-sub">{{ n.source }}<span v-if="n.publishedAt"> · {{ relativeTime(n.publishedAt) }}</span></div>
+        </div>
+      </InfoCardRow>
+
+      <!-- ── Ereignisse ─────────────────────────────────────── -->
+      <InfoCardRow v-if="eventItems.length" :title="t('depots.detail.events.title')" testid="pd-section-events">
+        <div v-for="(ev, i) in eventItems" :key="i" class="icr-card">
+          <div class="icr-card-badge mono">{{ ev.reportDate }}</div>
+          <div class="icr-card-title">{{ ev.period ?? position.symbol }}</div>
+          <div class="icr-card-sub">{{ eventDaysLabel(ev.reportDate) }}</div>
+        </div>
+      </InfoCardRow>
+
+      <!-- ── Insights ───────────────────────────────────────── -->
+      <InfoCardRow v-if="insightCards.length" :title="t('depots.detail.insights.title')" testid="pd-section-insights">
+        <div v-for="c in insightCards" :key="c.key" class="icr-card">
+          <div class="icr-card-title">{{ c.title }}</div>
+          <div class="icr-card-value mono">{{ c.value }}</div>
+          <div v-if="c.sub" class="icr-card-sub">{{ c.sub }}</div>
+        </div>
+      </InfoCardRow>
+
+      <!-- ── Finanzen ───────────────────────────────────────── -->
+      <InfoCardRow v-if="financeRows.length" :title="t('depots.detail.finance.title')" testid="pd-section-finance">
+        <div class="icr-card icr-finance-table">
+          <div v-for="row in financeRows" :key="row.label" class="icr-finance-row">
+            <span class="icr-finance-k">{{ row.label }}</span>
+            <span class="icr-finance-v mono">{{ row.value }}</span>
+          </div>
+        </div>
+      </InfoCardRow>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
+import BackLink from '../components/common/BackLink.vue'
+import StatTile from '../components/common/StatTile.vue'
+import LineChart from '../components/common/LineChart.vue'
+import InfoCardRow from '../components/depot/InfoCardRow.vue'
+import { useApi } from '../api'
+import type {
+  DepotPositionView, DepotOrderView, DepotChart, InstrumentInfo, ChartRange,
+} from '../api/types'
+import { useDisplayMode } from '../composables/useDisplayMode'
+import { useRelativeTime } from '../composables/useRelativeTime'
+import { fmtPl, isStale } from '../lib/depotDisplay'
+import { formatMoney, formatNumber, formatPercent } from '../utils/format'
+import { displayName } from '../utils/instrument'
+
+const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const api = useApi()
+const { mode, toggle } = useDisplayMode()
+const { relativeTime } = useRelativeTime()
+
+function goBack() { router.push({ name: 'depots' }) }
+
+// ── Position + orders ──────────────────────────────────────────
+
+const loading = ref(true)
+const notFound = ref(false)
+const brokerDown = ref(false)
+const position = ref<DepotPositionView | null>(null)
+const orders = ref<DepotOrderView[]>([])
+const asOf = ref<string | null>(null)
+
+const stale = computed(() => isStale(asOf.value))
+
+function pnlClass(v: number | null): string {
+  if (v == null) return ''
+  return v > 0 ? 'pos' : v < 0 ? 'neg' : ''
+}
+
+let posRequestId = 0
+
+async function loadPosition() {
+  const id = ++posRequestId
+  const connection = String(route.params.connection)
+  const symbol = String(route.params.symbol)
+  loading.value = true
+  notFound.value = false
+  brokerDown.value = false
+  try {
+    const result = await api.getDepotPosition(connection, symbol)
+    if (id !== posRequestId) return
+    position.value = result.position
+    orders.value = result.orders
+    asOf.value = result.asOf
+  } catch (e) {
+    if (id !== posRequestId) return
+    position.value = null
+    orders.value = []
+    asOf.value = null
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('not found')) {
+      notFound.value = true
+    } else {
+      brokerDown.value = true
+    }
+  } finally {
+    if (id === posRequestId) loading.value = false
+  }
+}
+
+const companyName = computed(() => {
+  const p = position.value
+  const profile = profileRecord.value
+  const name = typeof profile?.name === 'string' ? profile.name : ''
+  return p ? displayName(p.symbol, name) : ''
+})
+
+// ── Timeframe chart ─────────────────────────────────────────────
+
+const ranges: { value: ChartRange; label: string }[] = [
+  { value: '1d', label: '1T' },
+  { value: '1w', label: '1W' },
+  { value: '1m', label: '1M' },
+  { value: '1y', label: '1J' },
+  { value: 'max', label: 'Max' },
+]
+
+const range = ref<ChartRange>('1m')
+const chart = ref<DepotChart | null>(null)
+const chartLoading = ref(false)
+const chartError = ref<string | null>(null)
+
+let chartRequestId = 0
+
+async function loadChart() {
+  const id = ++chartRequestId
+  const symbol = String(route.params.symbol)
+  const requestedRange = range.value
+  chartLoading.value = true
+  chartError.value = null
+  try {
+    const result = await api.getInstrumentChart(symbol, requestedRange)
+    if (id !== chartRequestId) return
+    chart.value = result
+  } catch (e) {
+    if (id !== chartRequestId) return
+    chart.value = null
+    chartError.value = e instanceof Error ? e.message : t('depots.chart.error')
+  } finally {
+    if (id === chartRequestId) chartLoading.value = false
+  }
+}
+
+const chartSeries = computed(() => {
+  if (!chart.value || chart.value.points.length === 0) return []
+  return [{ data: chart.value.points.map(p => p.value), color: 'var(--cathedral-gold)' }]
+})
+
+const headerChange = computed<{ abs: number | null; pct: number | null }>(() => {
+  const pts = chart.value?.points ?? []
+  if (pts.length < 2) return { abs: null, pct: null }
+  const first = pts[0].value
+  const last = pts[pts.length - 1].value
+  const abs = Math.round((last - first) * 100) / 100
+  const pct = first !== 0 ? Math.round(((last - first) / first) * 10000) / 100 : null
+  return { abs, pct }
+})
+
+watch(range, loadChart)
+
+// ── Instrument info bundle ──────────────────────────────────────
+
+const info = ref<InstrumentInfo | null>(null)
+let infoRequestId = 0
+
+async function loadInfo() {
+  const id = ++infoRequestId
+  const symbol = String(route.params.symbol)
+  try {
+    const result = await api.getInstrumentInfo(symbol)
+    if (id !== infoRequestId) return
+    info.value = result
+  } catch {
+    // A failed info bundle must never error the page — the sections that
+    // depend on it simply stay hidden (info.value stays null).
+    if (id !== infoRequestId) return
+    info.value = null
+  }
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null
+}
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+function asNumber(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+function asString(v: unknown): string {
+  return typeof v === 'string' ? v : ''
+}
+
+// Informationen (profile description)
+const profileRecord = computed(() => asRecord(info.value?.profile))
+const profileDescription = computed(() => asString(profileRecord.value?.description))
+const infoExpanded = ref(false)
+const DESCRIPTION_LIMIT = 240
+const descriptionIsLong = computed(() => profileDescription.value.length > DESCRIPTION_LIMIT)
+const truncatedDescription = computed(() =>
+  descriptionIsLong.value ? `${profileDescription.value.slice(0, DESCRIPTION_LIMIT)}…` : profileDescription.value,
+)
+
+// News
+interface NewsRow { headline: string; source: string; publishedAt?: string }
+const newsItems = computed<NewsRow[]>(() => {
+  const rec = asRecord(info.value?.news)
+  return asArray(rec?.news)
+    .map(row => asRecord(row))
+    .filter((row): row is Record<string, unknown> => row !== null && typeof row.headline === 'string')
+    .map(row => ({ headline: asString(row.headline), source: asString(row.source), publishedAt: typeof row.publishedAt === 'string' ? row.publishedAt : undefined }))
+})
+
+// Ereignisse (earnings rows, already server-filtered to this symbol)
+interface EarningsRow { period?: string; reportDate: string }
+const eventItems = computed<EarningsRow[]>(() => {
+  const rec = asRecord(info.value?.earnings)
+  return asArray(rec?.earnings)
+    .map(row => asRecord(row))
+    .filter((row): row is Record<string, unknown> => row !== null && typeof row.reportDate === 'string')
+    .map(row => ({ period: typeof row.period === 'string' ? row.period : undefined, reportDate: asString(row.reportDate) }))
+})
+
+function eventDaysLabel(reportDate: string): string {
+  const days = Math.ceil((new Date(reportDate).getTime() - Date.now()) / 86_400_000)
+  if (days === 0) return t('depots.detail.events.today')
+  if (days < 0) return reportDate
+  return t('depots.detail.events.inDays', { n: days })
+}
+
+// Insights (analyst consensus + price target, EPS estimate, fundamental
+// score, insider activity) — each is its own card and only appears when its
+// source section has usable data.
+interface InsightCard { key: string; title: string; value: string; sub?: string }
+const insightCards = computed<InsightCard[]>(() => {
+  const cards: InsightCard[] = []
+
+  const analyst = asRecord(info.value?.analystEstimates)
+  const recommendations = asArray(analyst?.recommendations).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
+  const latestRec = recommendations[recommendations.length - 1]
+  if (latestRec) {
+    const buy = (asNumber(latestRec.buy) ?? 0) + (asNumber(latestRec.strongBuy) ?? 0)
+    const hold = asNumber(latestRec.hold) ?? 0
+    const sell = (asNumber(latestRec.sell) ?? 0) + (asNumber(latestRec.strongSell) ?? 0)
+    const total = buy + hold + sell
+    const consensus = total > 0 && buy >= hold && buy >= sell
+      ? 'Buy' : total > 0 && sell >= buy && sell >= hold ? 'Sell' : total > 0 ? 'Hold' : '—'
+    const priceTarget = asNumber(analyst?.priceTarget) ?? asNumber(analyst?.averagePriceTarget)
+    cards.push({
+      key: 'analyst',
+      title: t('depots.detail.insights.analystConsensus'),
+      value: consensus,
+      sub: priceTarget != null ? `${t('depots.detail.insights.priceTarget')}: ${formatMoney(priceTarget, position.value?.currency ?? 'USD')}` : undefined,
+    })
+  }
+
+  const earningsEst = asRecord(info.value?.earningsEstimates)
+  const estimates = asArray(earningsEst?.estimates).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
+  const latestEst = estimates[estimates.length - 1]
+  const epsAvg = latestEst ? asNumber(latestEst.epsAvg) : null
+  if (epsAvg != null) {
+    const epsLow = asNumber(latestEst?.epsLow)
+    const epsHigh = asNumber(latestEst?.epsHigh)
+    cards.push({
+      key: 'eps',
+      title: t('depots.detail.insights.epsEstimate'),
+      value: formatNumber(epsAvg, 2),
+      sub: epsLow != null && epsHigh != null ? `${formatNumber(epsLow, 2)} – ${formatNumber(epsHigh, 2)}` : undefined,
+    })
+  }
+
+  const score = asNumber(asRecord(info.value?.fundamentalScore)?.score)
+  if (score != null) {
+    cards.push({ key: 'score', title: t('depots.detail.insights.fundamentalScore'), value: formatNumber(score, 0) })
+  }
+
+  const insider = asRecord(info.value?.insiderActivity)
+  const transactions = asArray(insider?.transactions).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
+  if (transactions.length > 0) {
+    const buys = transactions.filter(tx => asString(tx.type).toLowerCase() === 'buy').length
+    const sells = transactions.filter(tx => asString(tx.type).toLowerCase() === 'sell').length
+    cards.push({
+      key: 'insider',
+      title: t('depots.detail.insights.insiderActivity'),
+      value: t('depots.detail.insights.buys', { n: buys }),
+      sub: t('depots.detail.insights.sells', { n: sells }),
+    })
+  }
+
+  return cards
+})
+
+// Finanzen (mini table from fundamentals — only the fields actually present)
+interface FinanceRow { label: string; value: string }
+const financeRows = computed<FinanceRow[]>(() => {
+  const fundamentals = asRecord(info.value?.fundamentals)
+  if (!fundamentals) return []
+  const rows: FinanceRow[] = []
+  const peRatio = asNumber(fundamentals.peRatio)
+  if (peRatio != null) rows.push({ label: t('depots.detail.finance.peRatio'), value: formatNumber(peRatio, 1) })
+  const pbRatio = asNumber(fundamentals.pbRatio)
+  if (pbRatio != null) rows.push({ label: t('depots.detail.finance.pbRatio'), value: formatNumber(pbRatio, 1) })
+  const dividendYield = asNumber(fundamentals.dividendYield)
+  if (dividendYield != null) rows.push({ label: t('depots.detail.finance.dividendYield'), value: formatPercent(dividendYield * 100) })
+  return rows
+})
+
+// ── Route param changes must re-trigger every load ──────────────
+
+watch(() => [route.params.connection, route.params.symbol], () => {
+  infoExpanded.value = false
+  loadPosition()
+  loadChart()
+  loadInfo()
+}, { immediate: true })
+</script>
+
+<style scoped>
+.pd-view { display: flex; flex-direction: column; gap: var(--space-5); }
+
+.pd-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.pd-symbol { color: var(--bone-ivory); font-size: 1.75rem; margin: 0; }
+.pd-name { color: var(--ash-gray); font-size: var(--text-body-sm); }
+.pd-head-price { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+.pd-price { color: var(--bone-ivory); font-size: var(--text-h3); }
+.pd-header-change { cursor: pointer; font-size: var(--text-body); }
+.pd-header-change.pos { color: var(--signal-positive-bright); }
+.pd-header-change.neg { color: var(--blood-crimson-bright); }
+
+.pd-chart-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.pd-chart-ranges { display: flex; gap: var(--space-2); }
+
+.pd-stats { margin-top: var(--space-2); }
+.pd-asof { font-size: var(--text-micro); color: var(--ash-gray); }
+.pd-asof.stale { color: var(--cathedral-gold); }
+
+.pd-info-text { color: var(--bone-ivory-dim); line-height: 1.6; }
+.pd-info-toggle {
+  background: transparent; border: none; color: var(--cathedral-gold);
+  cursor: pointer; font-size: var(--text-body-sm); padding: 0; margin-top: var(--space-2);
+}
+
+.icr-card {
+  background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;
+  padding: var(--space-3) var(--space-4); min-width: 200px; display: flex; flex-direction: column; gap: var(--space-1);
+}
+.icr-card-title { color: var(--bone-ivory); font-size: var(--text-body-sm); }
+.icr-card-sub { color: var(--ash-gray); font-size: var(--text-micro); }
+.icr-card-value { color: var(--cathedral-gold); font-size: var(--text-body); }
+.icr-card-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
+
+.icr-finance-table { min-width: 240px; }
+.icr-finance-row { display: flex; justify-content: space-between; padding: var(--space-1) 0; border-bottom: 1px solid var(--rule); }
+.icr-finance-row:last-child { border-bottom: none; }
+.icr-finance-k { color: var(--ash-gray); font-size: var(--text-body-sm); }
+.icr-finance-v { color: var(--bone-ivory); font-size: var(--text-body-sm); }
+</style>
