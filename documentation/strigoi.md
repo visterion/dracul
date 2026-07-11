@@ -375,12 +375,23 @@ the LLM, which owns only the soft judgment call. Every call to
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,
-`confirm_count`). Once a soft trigger has held for
+`confirm_count`, `kill_criteria_breached`). Once a soft trigger has held for
 `dracul.executor.soft-confirm-min` consecutive runs, the LLM is expected to
 call `exit_position(symbol, reason, confidence, reasoning)`. Unlike
 `place_entry`, exits carry **no veto/order-guard gate** — they are always
 permitted, since closing a position is never something code needs to guard
 against.
+
+`kill_criteria_breached` is populated by `KillCriteriaEvaluator`
+(`de.visterion.dracul.criteria`), a deterministic, stateless, best-effort
+parser that recognizes only absolute **price-level** kill criteria (e.g.
+"Close below $90.00", "Price rises above 120") and evaluates them against
+the position's daily close. It is v1-scoped: percent thresholds (e.g.
+"widens above 12%") and qualitative criteria (e.g. "Merger terminated") are
+left unparsed — those stay in the raw `kill_criteria` list for the LLM to
+judge itself. Anything the evaluator can't confidently parse is silently
+skipped rather than raising an error, so a malformed or free-form criterion
+never blocks the pipeline.
 
 Every decision point (entry, hard exit, stop-ratchet, soft exit) writes a
 `decision_log` row tagged with the active `dracul.executor.rule-version`,

@@ -920,7 +920,7 @@ class ExecutorWebhookControllerTest {
         EnrichedPosition ep = new EnrichedPosition(1L, "saxo-sim", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
-                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of("X"),
                 true, false, 1, true, "R_CONFIRMED", "sig-42");
         when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
 
@@ -944,6 +944,7 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> softTrigger = (Map<String, Object>) first.get("soft_trigger");
         assertThat(softTrigger.get("confirm_count")).isEqualTo(1);
         assertThat(softTrigger.get("chandelier_breach")).isEqualTo(true);
+        assertThat(softTrigger.get("kill_criteria_breached")).isEqualTo(List.of("X"));
 
         @SuppressWarnings("unchecked")
         Map<String, Object> tranche2 = (Map<String, Object>) first.get("tranche2");
