@@ -630,6 +630,10 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo).insert(decCaptor.capture());
         assertThat(decCaptor.getValue().accepted()).isTrue();
         assertThat(decCaptor.getValue().brokerOrderId()).isEqualTo("brk-1");
+
+        // entryGtdDays=2, FIXED_NOW="2026-07-01T00:00:42Z" is a Wednesday -> +2 days lands on
+        // Friday 2026-07-03 (no weekend roll needed).
+        verify(positionRepo).setEntryExpiresAt(77L, Instant.parse("2026-07-03T00:00:42Z"));
     }
 
     @Test
@@ -1814,5 +1818,33 @@ class ExecutorWebhookControllerTest {
     void complete_authRejected() {
         ResponseEntity<Void> resp = controller.complete("Bearer wrong", "run-1", json("{\"status\":\"done\"}"));
         assertThat(resp.getStatusCode().value()).isEqualTo(401);
+    }
+
+    // -------------------------------------------------------------------
+    // entryExpiry — weekend-skip GTD math
+    // -------------------------------------------------------------------
+
+    @Test
+    void entryExpiry_noWeekendInWindow_addsCalendarDaysOnly() {
+        // Wednesday 2026-07-01 + 2 days = Friday 2026-07-03, no roll.
+        Instant now = Instant.parse("2026-07-01T09:00:00Z");
+        assertThat(ExecutorWebhookController.entryExpiry(now, 2))
+                .isEqualTo(Instant.parse("2026-07-03T09:00:00Z"));
+    }
+
+    @Test
+    void entryExpiry_landsOnSaturday_rollsToMonday() {
+        // Thursday 2026-07-02 + 2 days = Saturday 2026-07-04 -> rolls to Monday 2026-07-06.
+        Instant now = Instant.parse("2026-07-02T09:00:00Z");
+        assertThat(ExecutorWebhookController.entryExpiry(now, 2))
+                .isEqualTo(Instant.parse("2026-07-06T09:00:00Z"));
+    }
+
+    @Test
+    void entryExpiry_landsOnSunday_rollsToMonday() {
+        // Friday 2026-07-03 + 2 days = Sunday 2026-07-05 -> rolls to Monday 2026-07-06.
+        Instant now = Instant.parse("2026-07-03T09:00:00Z");
+        assertThat(ExecutorWebhookController.entryExpiry(now, 2))
+                .isEqualTo(Instant.parse("2026-07-06T09:00:00Z"));
     }
 }

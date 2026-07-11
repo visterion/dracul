@@ -17,4 +17,7 @@ public interface ExecutionGateway {
     /** null stop/target = leave that leg unchanged. {@code symbol} is required by Agora's
      *  modify_bracket contract (parent-lookup + symbol-fallback leg resolution). */
     ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target);
+    /** Cancels a still-working order (e.g. an unfilled GTD entry past expiry). Never re-prices —
+     *  callers that want a different price must cancel then place a new order. */
+    void cancelOrder(String connection, String orderId);
 }

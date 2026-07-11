@@ -26,6 +26,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
     public final List<BigDecimal> flattenFractions = new ArrayList<>();
     public final List<ModifyCall> modifyCalls = new ArrayList<>();
     public final List<BracketRequest> placed = new ArrayList<>();
+    public final List<String> cancelledOrderIds = new ArrayList<>();
 
     public boolean unavailable = false;
 
@@ -113,5 +114,11 @@ public class FakeExecutionGateway implements ExecutionGateway {
         checkAvailable();
         modifyCalls.add(new ModifyCall(orderId, symbol, stop, target));
         return new ModifyResult(orderId, stop, target, true);
+    }
+
+    @Override
+    public void cancelOrder(String connection, String orderId) {
+        checkAvailable();
+        cancelledOrderIds.add(orderId);
     }
 }
