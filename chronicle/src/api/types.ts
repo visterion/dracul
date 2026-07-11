@@ -508,3 +508,94 @@ export interface DataSourceHealth {
   rateLimitNote: string
   checkedAt: string
 }
+
+// ── Depots ─────────────────────────────────────────────────────
+
+export interface DepotPositionView {
+  symbol: string
+  qty: number
+  avgEntryPrice: number
+  marketValue: number
+  unrealizedPl: number
+  unrealizedPlPct: number | null
+  price: number | null
+  dayChangePercent: number | null
+  weightPct: number | null
+  currency: string
+}
+
+export interface DepotAggregates {
+  investedValue: number
+  totalUnrealizedPl: number
+  totalUnrealizedPlPct: number | null
+  dayChangeAbs: number | null
+  dayChangePct: number | null
+}
+
+export interface DepotAccountView {
+  cash: number
+  equity: number
+  buyingPower: number
+  currency: string
+  status: string
+  asOf: string
+}
+
+export interface DepotOrderView {
+  brokerOrderId: string
+  symbol: string
+  side: string
+  qty: number
+  type: string
+  status: string
+  role: string | null
+}
+
+export interface Depot {
+  id: string
+  provider: string
+  environment: 'paper' | 'live'
+  status: string
+  probedAt: string | null
+  error: string | null
+  account: DepotAccountView | null
+  aggregates: DepotAggregates | null
+  positions: DepotPositionView[]
+  orders: DepotOrderView[]
+  asOf: string | null
+}
+
+export interface DepotsResponse {
+  depots: Depot[]
+  error: string | null
+}
+
+export interface ChartPoint {
+  t: string
+  value: number
+}
+
+/** Shared by both chart endpoints. The depot curve (`GET /api/depots/{connection}/chart`)
+ *  populates `relative` and `partial`; the instrument chart (`GET /api/depots/chart`) is
+ *  pure market data and only ever sends `points`. */
+export interface DepotChart {
+  points: ChartPoint[]
+  relative?: { t: string; pct: number }[] | null
+  partial?: boolean
+}
+
+export type ChartRange = '1d' | '1w' | '1m' | '1y' | 'max'
+
+export interface InstrumentInfo {
+  symbol: string
+  profile: unknown | null
+  news: unknown | null
+  /** `{ earnings: [...] }` — rows already server-filtered to this symbol, each row carries its own `symbol` */
+  earnings: unknown | null
+  analystEstimates: unknown | null
+  earningsEstimates: unknown | null
+  fundamentalScore: unknown | null
+  fundamentals: unknown | null
+  /** `{ transactions: [...] }` — rows already server-filtered to this symbol, each row carries its own `ticker` */
+  insiderActivity: unknown | null
+}
