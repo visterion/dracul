@@ -16,11 +16,15 @@
     <div v-else-if="error" class="vist-error">{{ error }}</div>
 
     <template v-else-if="data">
+      <div v-if="monthLevel === 'over'" class="vist-banner" role="alert" data-testid="budget-banner">
+        {{ t('vistierie.banner.overBudget') }}
+      </div>
       <div class="stat-grid vist-stat-grid">
         <StatTile
           :label="t('vistierie.tiles.thisMonth')"
           icon="ph-moon"
           :value="formatMoney(data.monthlyTotalUsd, 'USD')"
+          :value-class="monthLevel !== 'ok' ? `vist-value--${monthLevel}` : undefined"
           :foot="t('vistierie.tiles.ofCap', { cap: formatNumber(data.monthlyBudgetUsd, 2) })"
         />
         <StatTile
@@ -73,12 +77,7 @@
                     / {{ formatMoney(data.monthlyBudgetUsd, 'USD') }}
                   </span>
                 </div>
-                <div class="ledger-track">
-                  <span
-                    class="ledger-fill low"
-                    :style="{ width: monthFillWidth }"
-                  />
-                </div>
+                <SpendBar :value="data.monthlyTotalUsd" :max="data.monthlyBudgetUsd" :level="monthLevel" />
               </div>
             </div>
           </div>
@@ -142,6 +141,7 @@ import StatTile from '../components/common/StatTile.vue'
 import SpendBar from '../components/common/SpendBar.vue'
 import LineChart from '../components/common/LineChart.vue'
 import { formatMoney, formatNumber } from '../utils/format'
+import { budgetLevel } from '../utils/budget'
 
 defineProps<{ embedded?: boolean }>()
 
@@ -182,11 +182,9 @@ function fillWidth(tier: TierBudget): string {
   return `${Math.max(pct, tier.usedUsd > 0 ? 2 : 0)}%`
 }
 
-const monthFillWidth = computed(() => {
-  const d = data.value
-  if (!d || !d.monthlyBudgetUsd) return '0%'
-  return `${Math.max(0, Math.min((d.monthlyTotalUsd / d.monthlyBudgetUsd) * 100, 100))}%`
-})
+const monthLevel = computed(() =>
+  data.value ? budgetLevel(data.value.monthlyTotalUsd, data.value.monthlyBudgetUsd) : 'ok'
+)
 
 const chartSeries = computed(() => [{
   data: (data.value?.dailySpend30d ?? []).map(e => e.totalUsd),
@@ -211,7 +209,17 @@ function formatLabel(iso: string): string {
 <style scoped>
 /* .ledger* / .vist-* / .agent-spend / .as-* / .month-total are NOT global — scoped (styles.css:320-340) */
 .vist-error { color: var(--blood-crimson); padding: var(--space-8) 0; }
+.vist-banner {
+  background: rgba(161,29,44,0.12);
+  border: 1px solid var(--blood-crimson);
+  color: var(--bone-ivory);
+  border-radius: 4px;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+}
 .vist-stat-grid { grid-template-columns: repeat(2, 1fr); margin-bottom: var(--space-8); }
+.vist-stat-grid :deep(.vist-value--warn) { color: var(--signal-warning); }
+.vist-stat-grid :deep(.vist-value--over) { color: var(--blood-crimson-bright); }
 
 .vist-grid {
   display: grid;

@@ -160,6 +160,9 @@ export default {
     adminOnly: 'nur Admin',
     headTitle: 'Was die Nacht kostet',
     headSub: 'Die Schatzkammer — jedes Token gezählt. Nach Tier, nach Tag, nach Agent.',
+    banner: {
+      overBudget: 'Monatslimit überschritten',
+    },
     tiles: {
       thisMonth: 'diesen Monat',
       ofCap: 'von ${cap} Limit',
