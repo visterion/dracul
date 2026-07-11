@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Loads {@code prompts/prompt_registry.json} at startup: the expected
@@ -47,6 +48,6 @@ public class PromptRegistry {
     public Set<String> knownHashes() {
         return entries.values().stream()
                 .map(Entry::bodyHash)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                .collect(Collectors.toUnmodifiableSet());
     }
 }
