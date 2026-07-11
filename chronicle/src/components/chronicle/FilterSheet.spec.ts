@@ -101,4 +101,12 @@ describe('FilterSheet', () => {
     w.unmount()
     trigger.remove()
   })
+
+  it('does not repeat the panel title "Filter" as a section head', () => {
+    const w = make()
+    const headTexts = w.findAll('.fg-head').map(el => el.text())
+    // Header already shows "Filter"; the first fg-head section must be a real
+    // grouping ("Anomalie-Klasse"), not a second "Filter" label.
+    expect(headTexts).not.toContain('Filter')
+  })
 })
