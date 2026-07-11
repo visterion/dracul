@@ -68,7 +68,9 @@ A `verdict.kill_criteria_breached` SSE event (see `documentation/api.md`) is
 also surfaced in the live panel — one panel entry per poll, with a `KILL: …`
 thesis per newly-breached criterion — and additionally triggers a chronicle
 overview reload (`useChronicleStore().load()`) so the affected verdict's
-summary state refreshes without a manual page reload.
+list-level summary data refreshes without a manual page reload. The breach
+criteria themselves (the badge described below) are not part of the
+overview list payload — they only render on the Verdict Detail view.
 
 On the Verdict Detail view (`/verdict/:id`), a breached verdict shows a
 `TagPill tone="crimson"` badge per breached criterion (`KILL: <criterion>`,

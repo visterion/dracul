@@ -553,6 +553,7 @@ export default {
       ANALYST_DOWNGRADE: 'Analysten-Abstufung',
       STOP_PROXIMITY: 'Stop-Nähe',
       STOP_BREACHED: 'Stop gerissen',
+      KILL_CRITERIA_BREACHED: 'Kill-Kriterium gerissen',
     },
     severity: {
       INFO: 'Info',

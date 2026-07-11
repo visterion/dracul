@@ -553,6 +553,7 @@ export default {
       ANALYST_DOWNGRADE: 'Analyst downgrade',
       STOP_PROXIMITY: 'Approaching stop',
       STOP_BREACHED: 'Stop breached',
+      KILL_CRITERIA_BREACHED: 'Kill criterion breached',
     },
     severity: {
       INFO: 'Info',

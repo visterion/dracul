@@ -403,7 +403,7 @@ rather than `place-entry`'s veto pipeline.
 in doubt, fail" — a missing account snapshot, price, ATR, ADV20 notional,
 sector, or (for `place-entry` only) signal reference/age never falls back
 to a stale or default value. Any one of them missing at assembly time
-short-circuits straight to `DATA_UNAVAILABLE`, before any of the 13 vetos
+short-circuits straight to `DATA_UNAVAILABLE`, before any of the 14 vetos
 even run, and is recorded as an audited rejection (`executor_decision` row,
 `missing` fields joined into the reject detail) rather than a silent
 skip or a guessed trade.
