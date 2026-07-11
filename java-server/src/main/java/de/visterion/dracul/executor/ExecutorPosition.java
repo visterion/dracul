@@ -33,5 +33,8 @@ public record ExecutorPosition(
         String sector,
         BigDecimal entryDayHigh,
         String tranche2OrderId,
-        String tranche2StopOrderId) {
+        String tranche2StopOrderId,
+        int trimCount,
+        BigDecimal lowestPrice,
+        String entryExpiresAt) {
 }

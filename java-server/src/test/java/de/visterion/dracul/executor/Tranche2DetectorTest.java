@@ -18,7 +18,7 @@ class Tranche2DetectorTest {
             BigDecimal initialStop, BigDecimal entryDayHigh, String symbol, String status) {
         return new ExecutorPosition(1L, "c", symbol, side, BigDecimal.TEN, entryPrice, initialStop,
                 initialStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01", null, status,
-                "brk-1", null, null, 0, null, null, null, null, "stop-1", null, entryDayHigh, null, null);
+                "brk-1", null, null, 0, null, null, null, null, "stop-1", null, entryDayHigh, null, null, 0, null, null);
     }
 
     private ExecutorSignal signal(String symbol, String direction, String mechanism) {

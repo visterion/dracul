@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.List;
 
 /** Persists the executor position book. */
@@ -38,12 +39,14 @@ public class ExecutorPositionRepository {
                    tranche, r_value, kill_criteria, source_signal_id, source_agent, mfe, status,
                    broker_order_id, highest_price, mfe_r, soft_confirm_count, exit_price,
                    realized_r, exit_reason, stop_order_id, sector, entry_day_high,
-                   tranche2_order_id, tranche2_stop_order_id)
+                   tranche2_order_id, tranche2_stop_order_id, trim_count, lowest_price,
+                   entry_expires_at)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
                         :exitPrice, :realizedR, :exitReason, :stopOrderId, :sector, :entryDayHigh,
-                        :tranche2OrderId, :tranche2StopOrderId)
+                        :tranche2OrderId, :tranche2StopOrderId, :trimCount, :lowestPrice,
+                        CAST(:entryExpiresAt AS timestamptz))
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -71,6 +74,9 @@ public class ExecutorPositionRepository {
                 .param("entryDayHigh", p.entryDayHigh())
                 .param("tranche2OrderId", p.tranche2OrderId())
                 .param("tranche2StopOrderId", p.tranche2StopOrderId())
+                .param("trimCount", p.trimCount())
+                .param("lowestPrice", p.lowestPrice())
+                .param("entryExpiresAt", p.entryExpiresAt())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -124,6 +130,35 @@ public class ExecutorPositionRepository {
                 .param("t2o", tranche2OrderId).param("t2s", tranche2StopOrderId)
                 .param("id", id)
                 .update();
+    }
+
+    /** Records a scale-out trim: shrinks {@code qty}, bumps {@code trim_count}, and resets the
+     *  soft-confirm streak (a fresh qty level restarts trailing-stop soft confirmation). */
+    public void recordTrim(long id, BigDecimal newQty, int newTrimCount) {
+        jdbc.sql("UPDATE executor_position SET qty = :qty, trim_count = :tc, soft_confirm_count = 0 WHERE id = :id")
+                .param("qty", newQty).param("tc", newTrimCount).param("id", id).update();
+    }
+
+    /** Persists the adverse-excursion extreme (lowest price seen while the position is open),
+     *  used for MAE (max adverse excursion) tracking. */
+    public void updateAdverseExtreme(long id, BigDecimal lowestPrice) {
+        jdbc.sql("UPDATE executor_position SET lowest_price = :lp WHERE id = :id")
+                .param("lp", lowestPrice).param("id", id).update();
+    }
+
+    /** Sets the good-till-date expiry for an unfilled entry order. */
+    public void setEntryExpiresAt(long id, Instant expiresAt) {
+        jdbc.sql("UPDATE executor_position SET entry_expires_at = :ts WHERE id = :id")
+                .param("ts", java.sql.Timestamp.from(expiresAt)).param("id", id).update();
+    }
+
+    /** Open positions whose entry GTD expiry has passed. Fill detection is a separate concern
+     *  (Task 6) — this only filters by expiry. */
+    public List<ExecutorPosition> findOpenUnfilledPastExpiry(Instant now) {
+        return jdbc.sql("SELECT * FROM executor_position WHERE status = 'OPEN' AND entry_expires_at IS NOT NULL AND entry_expires_at < :now")
+                .param("now", java.sql.Timestamp.from(now))
+                .query(this::mapRow)
+                .list();
     }
 
     public ExecutorPosition findById(long id) {
@@ -189,7 +224,15 @@ public class ExecutorPositionRepository {
                 rs.getString("sector"),
                 rs.getBigDecimal("entry_day_high"),
                 rs.getString("tranche2_order_id"),
-                rs.getString("tranche2_stop_order_id"));
+                rs.getString("tranche2_stop_order_id"),
+                rs.getInt("trim_count"),
+                rs.getBigDecimal("lowest_price"),
+                entryExpiresAtOrNull(rs));
+    }
+
+    private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {
+        Object entryExpiresAtObj = rs.getObject("entry_expires_at");
+        return entryExpiresAtObj == null ? null : entryExpiresAtObj.toString();
     }
 
     private String closedAtOrNull(ResultSet rs) throws SQLException {

@@ -162,7 +162,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "saxo-sim", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null);
+                null, null, null, null, 0, null, null);
     }
 
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
@@ -1243,7 +1243,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
@@ -1267,7 +1267,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
 
         JsonNode body = json("""
