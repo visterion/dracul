@@ -74,6 +74,8 @@
         role="button"
         tabindex="0"
         @click="selectedIdx = i"
+        @keydown.enter="selectedIdx = i"
+        @keydown.space.prevent="selectedIdx = i"
       >
         <div class="brc-title">{{ r.strigoi }} · {{ r.universe }} · {{ r.span }}</div>
         <div class="brc-stats">
