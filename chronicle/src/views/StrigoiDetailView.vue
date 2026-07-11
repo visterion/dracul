@@ -35,7 +35,7 @@
     <div class="stat-grid sd-stats">
       <StatTile
         :label="t('strigoi.stats.preyPerHunt')"
-        :value="strigoi.avgPreyPerHunt.toFixed(1)"
+        :value="formatNumber(strigoi.avgPreyPerHunt, 1)"
         :foot="t('strigoi.stats.preyPerHuntFoot', { n: strigoi.huntsThisMonth })"
       />
       <StatTile
@@ -65,7 +65,7 @@
               <span class="sd-dot">·</span>
               <span class="mono">{{ lastRun.preyCount }} {{ t('strigoi.run.preyUnit') }}</span>
               <span class="sd-dot">·</span>
-              <span class="mono">${{ lastRun.costUsd.toFixed(3) }}</span>
+              <span class="mono">${{ formatNumber(lastRun.costUsd, 3) }}</span>
               <span class="sd-dot">·</span>
               <span class="mono sd-run-model">{{ lastRun.model }}</span>
             </div>
@@ -117,13 +117,13 @@
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.dailyBudget') }}</span>
               <span class="kv-v mono">
-                ${{ strigoi.configuration.dailyUsedUsd.toFixed(2) }} / ${{ strigoi.configuration.dailyBudgetUsd.toFixed(2) }}
+                {{ formatMoney(strigoi.configuration.dailyUsedUsd, 'USD') }} / {{ formatMoney(strigoi.configuration.dailyBudgetUsd, 'USD') }}
               </span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.monthlyBudget') }}</span>
               <span class="kv-v mono">
-                ${{ strigoi.configuration.monthlyUsedUsd.toFixed(2) }} / ${{ strigoi.configuration.monthlyBudgetUsd.toFixed(2) }}
+                {{ formatMoney(strigoi.configuration.monthlyUsedUsd, 'USD') }} / {{ formatMoney(strigoi.configuration.monthlyBudgetUsd, 'USD') }}
               </span>
             </div>
             <div class="kv-row">
@@ -162,6 +162,7 @@ import RunTrace from '../components/common/RunTrace.vue'
 import PreyCard from '../components/common/PreyCard.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
+import { formatMoney, formatNumber } from '../utils/format'
 
 const { t, locale } = useI18n()
 const { anomalyTypeLabel, agentTierLabel } = useEnumLabels()
