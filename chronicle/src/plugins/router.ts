@@ -30,13 +30,10 @@ const router = createRouter({
     },
     { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
     { path: '/depots', name: 'depots', component: () => import('../views/DepotsView.vue') },
-    // Placeholder for Task C3 (depot position detail view). DepotsView's
-    // positions table already navigates here on row click; C3 replaces this
-    // stub component with the real detail view — do not remove the route name.
     {
       path: '/depots/:connection/:symbol',
       name: 'depot-position-detail',
-      component: () => import('../views/DepotPositionDetailStub.vue'),
+      component: () => import('../views/DepotPositionDetailView.vue'),
     },
     { path: '/exit-signal/:id', name: 'exit-signal-detail', component: () => import('../views/ExitSignalDetailView.vue') },
     { path: '/report', name: 'morning-report', component: () => import('../views/MorningReportView.vue') },
