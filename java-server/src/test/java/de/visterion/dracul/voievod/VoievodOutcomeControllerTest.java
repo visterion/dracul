@@ -3,10 +3,14 @@ package de.visterion.dracul.voievod;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -24,13 +28,15 @@ class VoievodOutcomeControllerTest {
 
     private PreyRepository preyRepo;
     private AgoraMarketData marketData;
+    private PatternRepository patternRepo;
     private VoievodOutcomeController controller;
 
     @BeforeEach
     void setUp() {
         preyRepo = mock(PreyRepository.class);
         marketData = mock(AgoraMarketData.class);
-        controller = new VoievodOutcomeController("tok", preyRepo, marketData);
+        patternRepo = mock(PatternRepository.class);
+        controller = new VoievodOutcomeController("tok", preyRepo, marketData, patternRepo);
     }
 
     private Prey prey(String id, String symbol, String discoveredAt, String horizon) {
@@ -202,5 +208,126 @@ class VoievodOutcomeControllerTest {
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         verify(preyRepo).findElapsedUnreviewed(eq("default"), eq(90));
+    }
+
+    // =========================================================================
+    // /complete: bad/missing bearer token → 401, nothing touched
+    // =========================================================================
+
+    @Test
+    void complete_badToken_returns401() throws Exception {
+        JsonNode body = JsonMapper.builder().build().readTree("{\"status\":\"done\",\"output\":{\"patterns\":[]}}");
+
+        var resp = controller.complete("Bearer wrong", "run-1", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(401);
+        verifyNoInteractions(patternRepo);
+    }
+
+    // =========================================================================
+    // /complete: non-done status → acknowledged (204) without persisting
+    // =========================================================================
+
+    @Test
+    void complete_nonDoneStatus_acknowledgesWithoutPersisting() throws Exception {
+        String json = """
+                {
+                  "status": "failed",
+                  "output": { "patterns": [] }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+
+        var resp = controller.complete(BEARER, "run-2", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verifyNoInteractions(patternRepo);
+    }
+
+    // =========================================================================
+    // /complete: done status inserts a PENDING pattern per proposal, with
+    // evidence_count = evidence_symbols.length
+    // =========================================================================
+
+    @Test
+    void complete_doneStatus_insertsPendingPatternWithEvidenceCount() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-spin",
+                        "statement": "Tech spin-offs outperform industrial spin-offs",
+                        "evidence_symbols": ["GEHC", "KVUE", "SOLV"] }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), anyString())).thenReturn(false);
+
+        var resp = controller.complete(BEARER, "run-3", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        ArgumentCaptor<Integer> evidenceCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(patternRepo).insertProposal(eq("default"), eq("strigoi-spin"),
+                eq("Tech spin-offs outperform industrial spin-offs"), evidenceCaptor.capture());
+        assertThat(evidenceCaptor.getValue()).isEqualTo(3);
+    }
+
+    // =========================================================================
+    // /complete: duplicate statement (existsPendingStatement true) is skipped
+    // =========================================================================
+
+    @Test
+    void complete_duplicateStatement_skipsInsert() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-spin",
+                        "statement": "Tech spin-offs outperform industrial spin-offs",
+                        "evidence_symbols": ["GEHC"] }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"),
+                eq("Tech spin-offs outperform industrial spin-offs"))).thenReturn(true);
+
+        var resp = controller.complete(BEARER, "run-4", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(patternRepo, never()).insertProposal(any(), any(), any(), anyInt());
+    }
+
+    // =========================================================================
+    // /complete: succeeded status also persists (same as done)
+    // =========================================================================
+
+    @Test
+    void complete_succeededStatus_insertsPendingPattern() throws Exception {
+        String json = """
+                {
+                  "status": "succeeded",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-insider",
+                        "statement": "CFO presence in insider clusters lifts follow-through",
+                        "evidence_symbols": ["TRNS", "MDLY"] }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), anyString())).thenReturn(false);
+
+        var resp = controller.complete(BEARER, "run-5", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(patternRepo).insertProposal(eq("default"), eq("strigoi-insider"),
+                eq("CFO presence in insider clusters lifts follow-through"), eq(2));
     }
 }

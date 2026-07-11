@@ -84,6 +84,36 @@ public class PatternRepository {
                 .update();
     }
 
+    /** True when a PENDING pattern with an identical statement already exists for the
+     *  user — used by the voievod-outcome completion handler to dedupe proposals. */
+    public boolean existsPendingStatement(String userId, String statement) {
+        Integer count = jdbc.sql("""
+                SELECT COUNT(*) FROM patterns
+                WHERE user_id = :userId AND status = 'PENDING' AND statement = :statement
+                """)
+                .param("userId", userId)
+                .param("statement", statement)
+                .query(Integer.class)
+                .single();
+        return count != null && count > 0;
+    }
+
+    /** Inserts a new PENDING pattern proposal from the voievod-outcome agent. */
+    public void insertProposal(String userId, String appliesToStrigoi, String statement,
+                                int evidenceCount) {
+        jdbc.sql("""
+                INSERT INTO patterns (id, applies_to_strigoi, statement, status,
+                                      evidence_count, proposed_at, user_id)
+                VALUES (gen_random_uuid(), :strigoi, :statement, 'PENDING',
+                        :evidence, now(), :userId)
+                """)
+                .param("strigoi", appliesToStrigoi)
+                .param("statement", statement)
+                .param("evidence", evidenceCount)
+                .param("userId", userId)
+                .update();
+    }
+
     private PatternCase mapCaseRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         var returnPercent = rs.getObject("return_percent");
         return new PatternCase(
