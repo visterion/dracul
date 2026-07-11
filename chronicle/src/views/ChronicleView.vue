@@ -52,8 +52,8 @@
             <span class="sh-rule" />{{ t('chronicle.sections.individualPrey') }}<span class="sh-sub">{{ t('chronicle.sections.individualPreySub') }}</span>
           </div>
 
-          <template v-for="group in preyGroups" :key="group.key">
-            <div class="feed-daymark">{{ group.label }}</div>
+          <template v-for="group in visibleGroups" :key="group.key">
+            <div class="feed-daymark">{{ group.label }} <span class="daymark-caption">· {{ t('chronicle.daymark.byConfidence') }}</span></div>
             <PreyCard
               v-for="prey in group.items"
               :key="prey.id"
@@ -61,6 +61,10 @@
               @open="openPrey"
             />
           </template>
+
+          <button v-if="hasMoreGroups" class="show-older" data-testid="show-older" @click="showOlder">
+            {{ t('chronicle.showOlder') }}
+          </button>
 
           <div v-if="filteredPrey.length === 0" class="empty">
             <div class="em-icon"><BatGlyph :size="30" /></div>
@@ -139,6 +143,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import FilterSheet from '../components/chronicle/FilterSheet.vue'
 import { filterToQuery, queryToFilter } from '../utils/filterQuery'
 import { useScrollMemory } from '../composables/useScrollMemory'
+import { buildPreyGroups, visibleGroupCount } from '../utils/preyGroups'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -219,22 +224,18 @@ function dayLabel(iso: string): string {
   return new Intl.DateTimeFormat(locale.value, { day: 'numeric', month: 'long' }).format(new Date(iso))
 }
 
-const preyGroups = computed(() => {
-  const sorted = [...filteredPrey.value].sort(
-    (a, b) => new Date(b.discoveredAt).getTime() - new Date(a.discoveredAt).getTime(),
-  )
-  const groups: { key: string; label: string; items: Prey[] }[] = []
-  for (const p of sorted) {
-    const key = dayKey(p.discoveredAt)
-    let g = groups.find(x => x.key === key)
-    if (!g) {
-      g = { key, label: dayLabel(p.discoveredAt), items: [] }
-      groups.push(g)
-    }
-    g.items.push(p)
-  }
-  return groups
-})
+const preyGroups = computed(() => buildPreyGroups(filteredPrey.value, dayKey, dayLabel))
+
+const EXTRA_KEY = 'chronicle:extraGroups'
+const extraGroups = ref<number>(Number(sessionStorage.getItem(EXTRA_KEY) ?? 0))
+watch(extraGroups, v => sessionStorage.setItem(EXTRA_KEY, String(v)))
+watch(filter, () => { extraGroups.value = 0 }) // filter change resets chunking
+
+const visibleGroups = computed(() =>
+  preyGroups.value.slice(0, visibleGroupCount(preyGroups.value.map(g => g.items.length), extraGroups.value)),
+)
+const hasMoreGroups = computed(() => visibleGroups.value.length < preyGroups.value.length)
+function showOlder() { extraGroups.value++ }
 
 // ── brood counts: real current prey per strigoi (by discoveredBy) ──
 const broodCounts = computed<Record<string, number>>(() => {
@@ -324,6 +325,23 @@ function openStrigoi(strigoi: StrigoiStatus) {
   flex: 1;
   height: 1px;
   background: rgba(184, 148, 92, 0.1);
+}
+
+.daymark-caption {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: rgba(107, 107, 112, 0.75);
+}
+
+.show-older {
+  min-height: 44px;
+  background: none;
+  border: 1px solid var(--ash-gray);
+  color: var(--bone-ivory);
+  border-radius: 4px;
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  align-self: center;
 }
 
 .filters {
