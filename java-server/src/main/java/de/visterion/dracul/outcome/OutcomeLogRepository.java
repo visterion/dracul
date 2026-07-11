@@ -120,6 +120,136 @@ public class OutcomeLogRepository {
                 .list();
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Analytics aggregates (Task 10) — read-only queries feeding CalibrationController. SQL
+    // aggregation/filtering lives here; the math (Brier score, percentiles, grouping) lives in
+    // CalibrationService.
+    // ---------------------------------------------------------------------------------------
+
+    /** (confidence_in_decision, realized_r > 0) pairs for completed TRADE outcomes, joined back
+     *  to the ENTER decision row that opened the position. Feeds the executor-level Brier score. */
+    public List<CalibrationService.BrierPoint> findExecutorBrierPoints() {
+        return jdbc.sql("""
+                SELECT dl.confidence_in_decision AS predicted, ol.realized_r AS realized_r
+                FROM outcome_log ol
+                JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
+                WHERE ol.kind = 'TRADE' AND ol.complete = true
+                  AND dl.action = 'ENTER'
+                  AND dl.confidence_in_decision IS NOT NULL
+                  AND ol.realized_r IS NOT NULL
+                """)
+                .query((rs, n) -> new CalibrationService.BrierPoint(
+                        rs.getDouble("predicted"), rs.getBigDecimal("realized_r").signum() > 0))
+                .list();
+    }
+
+    /** (hunter agent, predicted signal_confidence, hunter_label) triples for every outcome_log
+     *  row (TRADE or COUNTERFACTUAL) whose ENTER/REJECT decision row carries a signal
+     *  confidence. Feeds the per-hunter Brier score. */
+    public List<CalibrationService.AgentBrierPoint> findHunterBrierPoints() {
+        return jdbc.sql("""
+                SELECT ol.source_agent AS agent,
+                       (dl.inputs_snapshot ->> 'signal_confidence') AS predicted,
+                       ol.hunter_label AS hunter_label
+                FROM outcome_log ol
+                JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
+                WHERE dl.trigger_type = 'SIGNAL'
+                  AND ol.source_agent IS NOT NULL
+                  AND ol.hunter_label IS NOT NULL
+                  AND dl.inputs_snapshot ->> 'signal_confidence' IS NOT NULL
+                """)
+                .query((rs, n) -> new CalibrationService.AgentBrierPoint(
+                        rs.getString("agent"),
+                        Double.parseDouble(rs.getString("predicted")),
+                        rs.getBoolean("hunter_label")))
+                .list();
+    }
+
+    /** One row per COUNTERFACTUAL outcome, carrying reason_code + the hypothetical fields
+     *  needed for veto-precision stats. Skipped rows still come back (skipped=true, null
+     *  hypothetical fields) so the caller can count them separately from the means. */
+    public List<CalibrationService.VetoRow> findVetoRows() {
+        return jdbc.sql("""
+                SELECT ol.reason_code AS reason_code,
+                       (ol.hypothetical ->> 'skipped_reason') IS NOT NULL AS skipped,
+                       (ol.hypothetical ->> 'r_after_20d') AS r_after_20d,
+                       (ol.hypothetical ->> 'r_after_60d') AS r_after_60d,
+                       (ol.hypothetical ->> 'would_have_stopped_out') AS would_have_stopped_out
+                FROM outcome_log ol
+                WHERE ol.kind = 'COUNTERFACTUAL' AND ol.reason_code IS NOT NULL
+                """)
+                .query((rs, n) -> new CalibrationService.VetoRow(
+                        rs.getString("reason_code"),
+                        rs.getBoolean("skipped"),
+                        parseDouble(rs.getString("r_after_20d")),
+                        parseDouble(rs.getString("r_after_60d")),
+                        parseBoolean(rs.getString("would_have_stopped_out"))))
+                .list();
+    }
+
+    /** trigger_to_order_seconds latency (seconds) of every HARD_TRIGGER decision row. */
+    public List<Long> findHardTriggerLatencySeconds() {
+        return jdbc.sql("""
+                SELECT (latency ->> 'trigger_to_order_seconds') AS seconds
+                FROM decision_log
+                WHERE trigger_type = 'HARD_TRIGGER'
+                  AND latency ->> 'trigger_to_order_seconds' IS NOT NULL
+                """)
+                .query((rs, n) -> Long.parseLong(rs.getString("seconds")))
+                .list();
+    }
+
+    /** (reentry_within_10d, roundtrip_under_5d) flag pairs of every TRADE outcome row. */
+    public List<CalibrationService.WhipsawRowPair> findWhipsawFlags() {
+        return jdbc.sql("""
+                SELECT reentry_within_10d, roundtrip_under_5d
+                FROM outcome_log
+                WHERE kind = 'TRADE'
+                """)
+                .query((rs, n) -> new CalibrationService.WhipsawRowPair(
+                        (Boolean) rs.getObject("reentry_within_10d"),
+                        (Boolean) rs.getObject("roundtrip_under_5d")))
+                .list();
+    }
+
+    /** Raw stop_basis string (from the ENTER order) + realized/MAE R of every completed TRADE
+     *  outcome. Feeds the stop-basis comparison table. */
+    public List<CalibrationService.StopBasisRow> findStopBasisRows() {
+        return jdbc.sql("""
+                SELECT (dl.order_json ->> 'stop_basis') AS stop_basis,
+                       ol.realized_r AS realized_r, ol.mae_r AS mae_r
+                FROM outcome_log ol
+                JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
+                WHERE ol.kind = 'TRADE' AND ol.complete = true
+                  AND dl.action = 'ENTER'
+                  AND dl.order_json ->> 'stop_basis' IS NOT NULL
+                  AND ol.realized_r IS NOT NULL AND ol.mae_r IS NOT NULL
+                """)
+                .query((rs, n) -> new CalibrationService.StopBasisRow(
+                        rs.getString("stop_basis"),
+                        rs.getBigDecimal("realized_r").doubleValue(),
+                        rs.getBigDecimal("mae_r").doubleValue()))
+                .list();
+    }
+
+    /** slippage_vs_limit of every TRADE outcome row that has one. */
+    public List<Double> findSlippageValues() {
+        return jdbc.sql("""
+                SELECT slippage_vs_limit FROM outcome_log
+                WHERE kind = 'TRADE' AND slippage_vs_limit IS NOT NULL
+                """)
+                .query((rs, n) -> rs.getBigDecimal("slippage_vs_limit").doubleValue())
+                .list();
+    }
+
+    private static Double parseDouble(String s) {
+        return s == null ? null : Double.parseDouble(s);
+    }
+
+    private static Boolean parseBoolean(String s) {
+        return s == null ? null : Boolean.parseBoolean(s);
+    }
+
     private OutcomeLogRow mapRow(ResultSet rs, int n) throws SQLException {
         Object positionIdObj = rs.getObject("position_id");
         return new OutcomeLogRow(
