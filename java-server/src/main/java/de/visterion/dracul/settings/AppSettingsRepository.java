@@ -3,6 +3,8 @@ package de.visterion.dracul.settings;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.util.Optional;
+
 @Repository
 public class AppSettingsRepository {
 
@@ -53,6 +55,27 @@ public class AppSettingsRepository {
                 """)
                 .param("key", DISPLAY_CURRENCY_KEY)
                 .param("value", currency)
+                .update();
+    }
+
+    /** Generic KV read for ad-hoc settings (e.g. health flags) that don't warrant
+     *  their own typed accessor. */
+    public Optional<String> get(String key) {
+        return jdbc.sql("SELECT value FROM app_settings WHERE key = :key")
+                .param("key", key)
+                .query(String.class)
+                .optional();
+    }
+
+    /** Generic KV upsert; see {@link #get(String)}. */
+    public void put(String key, String value) {
+        jdbc.sql("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (:key, :value, now())
+                ON CONFLICT (key) DO UPDATE SET value = :value, updated_at = now()
+                """)
+                .param("key", key)
+                .param("value", value)
                 .update();
     }
 }

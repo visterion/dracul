@@ -79,6 +79,45 @@ row is seeded automatically on the next boot — no manual step). The
 `rule_versions` row is an audit-trail record, it does not itself push the
 new prompt text to Vistierie.
 
+### Prompt registry & archive
+
+`java-server/src/main/resources/prompts/prompt_registry.json` maps every
+bundled agent (`daywalker`, `executor`, `gropar`, `strigoi-echo`,
+`strigoi-index`, `strigoi-insider`, `strigoi-lazarus`, `strigoi-merger`,
+`strigoi-spin`, `voievod`) to the `version` and `body_hash` its current
+`prompts/<agent>.md` file is expected to have (`body_hash` =
+`"p-" + sha256(body).substring(0, 12)`, the same derivation the runtime
+`agent_version` uses — see `PromptHashes` in `de.visterion.dracul.agent`).
+
+**Editing a prompt (version bump workflow):**
+
+1. Before editing, copy the current `prompts/<agent>.md` unchanged to
+   `prompts/archive/<agent>/<old-version>.md` (see
+   `prompts/archive/README.md`). This is a source-tree convention, not a
+   runtime dependency — nothing reads `archive/` at startup.
+2. Edit the live file: change the body and bump the `version:` field in its
+   `<!-- agent-meta -->` header.
+3. Update `prompt_registry.json`: bump that agent's `version` to match, and
+   recompute `body_hash` from the new body.
+4. `PromptRegistryTest` fails the build if steps 2–3 drift apart — it is the
+   CI guard that forces a registry bump alongside every prompt edit.
+5. Deploy, then follow the usual definition-reset step (see above) so the DB
+   row and Vistierie pick up the new prompt — the registry only tracks what's
+   *bundled in the jar*, not what's live in the DB.
+
+**Bootstrap validation:** `PromptRegistryValidator` runs once on
+`ApplicationReadyEvent` and, for every enabled agent, compares the bundled
+`prompts/<agent>.md` (header version + body hash) against the registry, and
+separately compares the DB-stored `prompt_text` hash against the registry.
+A registry-vs-file mismatch (missing registry entry, version mismatch, or
+hash mismatch) is a hard error: it's logged as a WARN and recorded in
+`app_settings` under key `health.prompt_registry` as
+`MISMATCH:<agent1,agent2,...>` (or `OK` if everything lines up). A
+DB-vs-registry hash mismatch alone is only logged at INFO and does **not**
+set the health flag — a user-edited prompt in the DB is legitimate and not
+itself a problem; it will show as "prompt file changed" only if it also
+disagrees with the *bundled file*.
+
 ### Rule-version change discipline
 
 `rule_versions` is an append-only audit trail — `RuleVersionProvider.seed()`
