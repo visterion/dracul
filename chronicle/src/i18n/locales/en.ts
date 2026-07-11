@@ -450,6 +450,10 @@ export default {
       placeholder: 'Ticker (e.g. AVGO)',
       cancel: 'Cancel',
       add: 'Add',
+      notFound: 'Symbol {symbol} not found.',
+    },
+    toast: {
+      added: '{symbol} added to watchlist',
     },
     empty: 'No instruments match this filter.',
     tagLabel: {

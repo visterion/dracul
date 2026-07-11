@@ -79,6 +79,7 @@
               maxlength="10"
               data-testid="wl-add-symbol"
               @input="addSymbol = addSymbol.toUpperCase()"
+              @keydown.enter="onAddSymbol"
             />
             <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
             <div class="watchlist__dialog-actions">
@@ -131,7 +132,7 @@
           >
             <div class="wr-id">
               <span class="wr-ticker mono">{{ item.ticker }}</span>
-              <span class="wr-name">{{ item.companyName }}</span>
+              <span v-if="displayName(item.ticker, item.companyName)" class="wr-name">{{ displayName(item.ticker, item.companyName) }}</span>
               <span class="wr-owner mono" :data-testid="`wl-owner-${item.id}`">{{ item.owner }}</span>
               <span class="wr-flags">
                 <span v-if="item.tag === 'TRACKING'" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
@@ -175,7 +176,7 @@
           <div class="wd-head">
             <div>
               <h1 class="wd-ticker mono">{{ selectedItem.ticker }}</h1>
-              <div class="wd-name">{{ selectedItem.companyName }}</div>
+              <div v-if="displayName(selectedItem.ticker, selectedItem.companyName)" class="wd-name">{{ displayName(selectedItem.ticker, selectedItem.companyName) }}</div>
               <div v-if="selectedItem.tag === 'TRACKING'" class="wd-since">
                 {{ t('watchlist.detail.subtitleTracking', { date: formatDate(selectedItem.addedAt) }) }}
               </div>
@@ -233,14 +234,18 @@ import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
+import { useToast } from '../composables/useToast'
+import { ApiError } from '../api/errors'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
 import { formatPercent } from '../utils/format'
+import { displayName } from '../utils/instrument'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
 
 const api = useApi()
 const me = useMe()
+const toast = useToast()
 const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
@@ -343,10 +348,13 @@ async function onAddSymbol() {
   try {
     const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING' })
     items.value = [created, ...items.value.filter(i => i.id !== created.id)]
+    toast.show(t('watchlist.toast.added', { symbol: created.ticker }))
     addOpen.value = false
     addSymbol.value = ''
   } catch (e) {
-    addError.value = (e as Error).message
+    addError.value = e instanceof ApiError && (e.status === 404 || e.status === 422)
+      ? t('watchlist.dialog.notFound', { symbol: addSymbol.value })
+      : (e as Error).message
   } finally {
     addSubmitting.value = false
   }

@@ -1,4 +1,5 @@
 import type { ApiClient } from './ApiClient'
+import { ApiError } from './errors'
 import type {
   ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
   WatchlistItem, Pattern, LlmProvider, VistierieData,
@@ -144,7 +145,7 @@ export class HttpApiClient implements ApiClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
     })
-    if (!res.ok) throw new Error(`createWatchlistItem failed: HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(`createWatchlistItem failed: HTTP ${res.status}`, res.status)
     return res.json() as Promise<WatchlistItem>
   }
 
