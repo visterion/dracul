@@ -187,7 +187,7 @@ export default {
     },
     dusk: {
       newPrey: 'new prey',
-      verdicts: 'verdict | verdicts',
+      verdicts: 'verdict today | verdicts today',
       alerts: 'daywalker alert | daywalker alerts',
       lessons: 'lesson pending | lessons pending',
     },
