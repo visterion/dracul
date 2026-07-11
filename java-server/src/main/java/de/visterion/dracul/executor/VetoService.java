@@ -4,6 +4,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -32,7 +33,7 @@ public class VetoService {
         if (ctx.missing() != null && !ctx.missing().isEmpty()) {
             String joined = String.join(",", ctx.missing());
             return new Outcome(false, RejectReason.DATA_UNAVAILABLE,
-                    List.of(new VetoResult("DATA_UNAVAILABLE:" + joined, false)), null);
+                    List.of(new VetoResult("DATA_UNAVAILABLE:" + joined, false, joined)), null);
         }
 
         List<VetoResult> results = new ArrayList<>();
@@ -47,12 +48,35 @@ public class VetoService {
                 && signal.killCriteria() != null && !signal.killCriteria().isEmpty()
                 && signal.mechanism() != null && !signal.mechanism().isBlank()
                 && signal.agentVersion() != null && !signal.agentVersion().isBlank();
-        results.add(new VetoResult("SCHEMA_INVALID", schemaOk));
+        String schemaMeasured;
+        if (signal == null) {
+            schemaMeasured = "missing: signal";
+        } else if (signal.symbol() == null || signal.symbol().isBlank()) {
+            schemaMeasured = "missing: symbol";
+        } else if (signal.direction() == null || signal.direction().isBlank()) {
+            schemaMeasured = "missing: direction";
+        } else if (signal.confidence() == null) {
+            schemaMeasured = "missing: confidence";
+        } else if (signal.killCriteria() == null || signal.killCriteria().isEmpty()) {
+            schemaMeasured = "missing: kill_criteria";
+        } else if (signal.mechanism() == null || signal.mechanism().isBlank()) {
+            schemaMeasured = "missing: mechanism";
+        } else if (signal.agentVersion() == null || signal.agentVersion().isBlank()) {
+            schemaMeasured = "missing: agent_version";
+        } else {
+            schemaMeasured = "kill_criteria: " + signal.killCriteria().size()
+                    + ", mechanism: " + signal.mechanism()
+                    + ", agent_version: " + signal.agentVersion();
+        }
+        results.add(new VetoResult("SCHEMA_INVALID", schemaOk, schemaMeasured));
         if (!schemaOk && firstFailure == null) firstFailure = RejectReason.SCHEMA_INVALID;
 
         // 2 LOW_CONFIDENCE (only meaningful once schema passed, confidence non-null)
         boolean confidenceOk = schemaOk && signal.confidence() >= cfg.minConfidence();
-        results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk));
+        String confidenceMeasured = (signal != null && signal.confidence() != null)
+                ? signal.confidence() + (confidenceOk ? " >= " : " < ") + cfg.minConfidence()
+                : "confidence unavailable";
+        results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk, confidenceMeasured));
         if (!confidenceOk && firstFailure == null) firstFailure = RejectReason.LOW_CONFIDENCE;
 
         // 3 COOLDOWN — deterministic v1 rule: ANY active cooldown row matching the symbol fails
@@ -68,20 +92,25 @@ public class VetoService {
         // schema-invalid signal's trace shows PASS for all of them while SCHEMA_INVALID itself is
         // firstFailure (trace consistency, matches SCHEMA_INVALID/LOW_CONFIDENCE ordering).
         boolean cooldownOk = true;
+        String cooldownMeasured = "not on list";
         if (schemaOk) {
             for (Cooldown cd : ctx.activeCooldowns()) {
                 if (signal.symbol().equals(cd.symbol())) {
                     cooldownOk = false;
+                    cooldownMeasured = (cd.exceptionCondition() != null && !cd.exceptionCondition().isBlank())
+                            ? "active_with_fresh_setup"
+                            : "active until " + cd.expiresAt();
                     break;
                 }
             }
         }
-        results.add(new VetoResult("COOLDOWN", cooldownOk));
+        results.add(new VetoResult("COOLDOWN", cooldownOk, cooldownMeasured));
         if (!cooldownOk && firstFailure == null) firstFailure = RejectReason.COOLDOWN;
 
         // 4 MAX_POSITIONS
         boolean capacityOk = ctx.openPositions().size() < cfg.maxPositions();
-        results.add(new VetoResult("MAX_POSITIONS", capacityOk));
+        String maxPositionsMeasured = ctx.openPositions().size() + (capacityOk ? " < " : " >= ") + cfg.maxPositions();
+        results.add(new VetoResult("MAX_POSITIONS", capacityOk, maxPositionsMeasured));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
 
         // 5 BUDGET + 6 HEAT_LIMIT — all account ccy; shared arithmetic with
@@ -91,12 +120,23 @@ public class VetoService {
                 ctx.openHeat(), sizing.newRiskAccountCcy(), cfg.totalBudget(), cfg.trancheCount(),
                 cfg.heatPct());
         boolean budgetOk = bounds.budgetOk();
-        results.add(new VetoResult("BUDGET", budgetOk));
+        BigDecimal cash = ctx.account() != null ? ctx.account().cash() : BigDecimal.ZERO;
+        BigDecimal exposureAfter = ctx.openExposure().add(bounds.trancheAccountCcy());
+        String budgetMeasured = "cash " + fmt2(cash) + (cash.compareTo(bounds.trancheAccountCcy()) >= 0 ? " >= " : " < ")
+                + "tranche " + fmt2(bounds.trancheAccountCcy())
+                + "; exposure " + fmt2(exposureAfter) + (exposureAfter.compareTo(cfg.totalBudget()) <= 0 ? " <= " : " > ")
+                + "budget " + fmt2(cfg.totalBudget());
+        results.add(new VetoResult("BUDGET", budgetOk, budgetMeasured));
         if (!budgetOk && firstFailure == null) firstFailure = RejectReason.BUDGET;
 
         // 6 HEAT_LIMIT
         boolean heatOk = bounds.heatOk();
-        results.add(new VetoResult("HEAT_LIMIT", heatOk));
+        BigDecimal heatUsed = ctx.openHeat().add(sizing.newRiskAccountCcy());
+        double usedPct = cfg.totalBudget().signum() == 0 ? 0.0
+                : heatUsed.divide(cfg.totalBudget(), 6, RoundingMode.HALF_UP).doubleValue() * 100;
+        double limitPct = cfg.heatPct() * 100;
+        String heatMeasured = String.format("%.1f%% %s %.1f%%", usedPct, heatOk ? "<=" : ">", limitPct);
+        results.add(new VetoResult("HEAT_LIMIT", heatOk, heatMeasured));
         if (!heatOk && firstFailure == null) firstFailure = RejectReason.HEAT_LIMIT;
 
         // 7 CONCENTRATION — case-insensitive sector match
@@ -105,16 +145,24 @@ public class VetoService {
                         && p.sector().equalsIgnoreCase(ctx.candidateSector()))
                 .count();
         boolean concentrationOk = sameSectorCount < cfg.maxPerSector();
-        results.add(new VetoResult("CONCENTRATION", concentrationOk));
+        String concentrationMeasured = sameSectorCount + (concentrationOk ? " < " : " >= ") + cfg.maxPerSector()
+                + " in sector " + ctx.candidateSector();
+        results.add(new VetoResult("CONCENTRATION", concentrationOk, concentrationMeasured));
         if (!concentrationOk && firstFailure == null) firstFailure = RejectReason.CONCENTRATION;
 
         // 8 CORRELATED — same sector AND same mechanism as an existing open position
         String candSector = ctx.candidateSector();
         String mech = signal == null ? null : signal.mechanism();
-        boolean uncorrelated = candSector == null || mech == null || ctx.openPositions().stream()
-                .noneMatch(p -> candSector.equalsIgnoreCase(p.sector())
-                        && mech.equalsIgnoreCase(ctx.openMechanisms().getOrDefault(p.symbol(), "")));
-        results.add(new VetoResult("CORRELATED", uncorrelated));
+        ExecutorPosition correlatedMatch = (candSector == null || mech == null) ? null
+                : ctx.openPositions().stream()
+                        .filter(p -> candSector.equalsIgnoreCase(p.sector())
+                                && mech.equalsIgnoreCase(ctx.openMechanisms().getOrDefault(p.symbol(), "")))
+                        .findFirst().orElse(null);
+        boolean uncorrelated = correlatedMatch == null;
+        String correlatedMeasured = uncorrelated
+                ? "no open position shares sector+mechanism"
+                : "matches " + correlatedMatch.symbol() + " in sector " + candSector;
+        results.add(new VetoResult("CORRELATED", uncorrelated, correlatedMeasured));
         if (!uncorrelated && firstFailure == null) firstFailure = RejectReason.CORRELATED;
 
         // 9 CONTRADICTION — MERGER_ARB vs {PEAD, SPINOFF, INSIDER_CLUSTER, INDEX_INCLUSION,
@@ -138,25 +186,42 @@ public class VetoService {
                 }
             }
         }
-        results.add(new VetoResult("CONTRADICTION", contradictionOk));
+        String contradictionMeasured;
+        if (contradictionOk) {
+            contradictionMeasured = "no incompatible mechanism in book";
+        } else if (contradictingSignalId != null) {
+            contradictionMeasured = "conflicts with pending signal " + contradictingSignalId;
+        } else {
+            contradictionMeasured = "conflicts with open position mechanism "
+                    + ctx.openMechanisms().get(signal.symbol());
+        }
+        results.add(new VetoResult("CONTRADICTION", contradictionOk, contradictionMeasured));
         if (!contradictionOk && firstFailure == null) firstFailure = RejectReason.CONTRADICTION;
 
         // 10 REDUNDANCY — same mechanism already open on the same symbol
         boolean redundancyOk = !(schemaOk
                 && signal.mechanism().equals(ctx.openMechanisms().get(signal.symbol())));
-        results.add(new VetoResult("REDUNDANCY", redundancyOk));
+        String redundancyMeasured = redundancyOk
+                ? "no open position with same mechanism on symbol"
+                : "mechanism " + signal.mechanism() + " already open on " + signal.symbol();
+        results.add(new VetoResult("REDUNDANCY", redundancyOk, redundancyMeasured));
         if (!redundancyOk && firstFailure == null) firstFailure = RejectReason.REDUNDANCY;
 
         // 11 LIQUIDITY
-        boolean liquidityOk = ctx.price().compareTo(cfg.minPrice()) >= 0
-                && ctx.adv20Notional().compareTo(
-                        ctx.trancheAmount().multiply(BigDecimal.valueOf(cfg.advMultiple()))) >= 0;
-        results.add(new VetoResult("LIQUIDITY", liquidityOk));
+        boolean priceOk = ctx.price().compareTo(cfg.minPrice()) >= 0;
+        boolean advOk = ctx.adv20Notional().compareTo(
+                ctx.trancheAmount().multiply(BigDecimal.valueOf(cfg.advMultiple()))) >= 0;
+        boolean liquidityOk = priceOk && advOk;
+        String liquidityMeasured = "price " + fmt2(ctx.price()) + (priceOk ? " >= " : " < ") + fmt2(cfg.minPrice())
+                + ", adv " + (advOk ? "ok" : "insufficient");
+        results.add(new VetoResult("LIQUIDITY", liquidityOk, liquidityMeasured));
         if (!liquidityOk && firstFailure == null) firstFailure = RejectReason.LIQUIDITY;
 
         // 12 SIGNAL_EXPIRED
         boolean expiredOk = ctx.signalAgeTradingDays() <= cfg.maxSignalAgeDays();
-        results.add(new VetoResult("SIGNAL_EXPIRED", expiredOk));
+        String expiredMeasured = ctx.signalAgeTradingDays() + (expiredOk ? " <= " : " > ")
+                + cfg.maxSignalAgeDays() + " days";
+        results.add(new VetoResult("SIGNAL_EXPIRED", expiredOk, expiredMeasured));
         if (!expiredOk && firstFailure == null) firstFailure = RejectReason.SIGNAL_EXPIRED;
 
         // 13 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
@@ -168,31 +233,44 @@ public class VetoService {
         // null reference price into the DATA_UNAVAILABLE pre-veto, so this branch is defense-in-depth
         // for direct/pure calls to evaluate().
         boolean chasedOk;
+        String chasedMeasured;
         if (!schemaOk) {
             chasedOk = true;
+            chasedMeasured = "not evaluated (schema invalid)";
         } else if (signal.referencePrice() == null) {
             chasedOk = false;
+            chasedMeasured = "reference price unavailable";
         } else if ("SELL".equals(signal.direction())) {
             // Mirror for a short entry: chased away means price has already collapsed too far
             // BELOW the reference (the opposite direction of the BUY case below).
             BigDecimal chaseThreshold = signal.referencePrice()
                     .subtract(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
             chasedOk = ctx.price().compareTo(chaseThreshold) >= 0;
+            chasedMeasured = "price " + fmt2(ctx.price()) + (chasedOk ? " >= " : " < ") + fmt2(chaseThreshold)
+                    + " (" + cfg.chaseAtrMult() + "xATR from ref " + fmt2(signal.referencePrice()) + ")";
         } else {
             BigDecimal chaseThreshold = signal.referencePrice()
                     .add(ctx.atr().multiply(BigDecimal.valueOf(cfg.chaseAtrMult())));
             chasedOk = ctx.price().compareTo(chaseThreshold) <= 0;
+            chasedMeasured = "price " + fmt2(ctx.price()) + (chasedOk ? " <= " : " > ") + fmt2(chaseThreshold)
+                    + " (" + cfg.chaseAtrMult() + "xATR from ref " + fmt2(signal.referencePrice()) + ")";
         }
-        results.add(new VetoResult("CHASED_AWAY", chasedOk));
+        results.add(new VetoResult("CHASED_AWAY", chasedOk, chasedMeasured));
         if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
 
         // 14 PACE_LIMIT
         boolean paceOk = ctx.entriesThisWeek() < cfg.pacePerWeek();
-        results.add(new VetoResult("PACE_LIMIT", paceOk));
+        String paceMeasured = ctx.entriesThisWeek() + (paceOk ? " < " : " >= ") + cfg.pacePerWeek() + " this week";
+        results.add(new VetoResult("PACE_LIMIT", paceOk, paceMeasured));
         if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;
 
         boolean passed = firstFailure == null;
         return new Outcome(passed, firstFailure, results, contradictingSignalId);
+    }
+
+    /** Two-decimal formatting for measured-string amounts (account/instrument ccy). */
+    private static String fmt2(BigDecimal v) {
+        return v == null ? "n/a" : v.setScale(2, RoundingMode.HALF_UP).toString();
     }
 
     private boolean isContradictingPair(String mechanismA, String mechanismB) {

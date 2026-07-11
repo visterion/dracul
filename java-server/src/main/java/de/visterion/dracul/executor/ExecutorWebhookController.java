@@ -344,7 +344,7 @@ public class ExecutorWebhookController {
         VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig);
         List<String> vetoTrace = new ArrayList<>();
         for (VetoResult r : veto.results()) {
-            vetoTrace.add(r.check() + ":" + (r.passed() ? "PASS" : "FAIL"));
+            vetoTrace.add(r.check() + ":" + (r.passed() ? "PASS" : "FAIL") + " (" + r.measured() + ")");
         }
 
         if (!veto.passed()) {
