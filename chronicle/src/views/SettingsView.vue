@@ -327,7 +327,8 @@ const navItems = computed(() => [
   { id: 'budgets',      icon: 'ph-coin',          label: t('settings.nav.budgets'),      admin: false, disabled: false, badge: null as string | null },
   { id: 'data-sources', icon: 'ph-chart-bar',     label: t('settings.nav.dataSources'),  admin: false, disabled: false, badge: null as string | null },
   { id: 'messenger',    icon: 'ph-chat-circle',   label: t('settings.nav.messenger'),    admin: false, disabled: false, badge: null as string | null },
-  { id: 'multi-user',   icon: 'ph-users',         label: t('settings.nav.multiUser'),    admin: false, disabled: true,  badge: 'Phase 2' },
+  // Phase 2 — hidden until multi-user lands:
+  // { id: 'multi-user', icon: 'ph-users', label: t('settings.nav.multiUser'), admin: false, disabled: true, badge: 'Phase 2' },
   { id: 'backup',       icon: 'ph-floppy-disk',   label: t('settings.nav.backup'),       admin: false, disabled: false, badge: null as string | null },
   { id: 'language',     icon: 'ph-globe',         label: t('settings.nav.language'),     admin: false, disabled: false, badge: null as string | null },
   { id: 'currency',     icon: 'ph-currency-circle-dollar', label: t('settings.nav.currency'), admin: false, disabled: false, badge: null as string | null },
