@@ -392,10 +392,13 @@ giving a single, richer audit trail across the whole lifecycle (see
 The injection seam (`POST /api/executor/signals`) is still the only way
 signals reach the executor — there is no automatic wiring from a Strigoi's
 Prey or gropar's exit signal into the executor's queue. `RejectReason`
-already declares `MAX_TRANCHE` for a later slice's position-scaling logic,
-but `VetoService` does not enforce it yet. Position tranching and the fuller
-veto catalog (kill-criteria monitoring, correlation/exposure limits) remain
-out of scope and land in later slices.
+declares `MAX_TRANCHE`, and it is now enforced (was declared-only): the
+`add-tranche` tool rejects with `MAX_TRANCHE` (writing a `decision_log`
+entry, same as the other reject paths) once a position's `tranche` count
+reaches `dracul.executor.max-tranche` (default 2), so tranching beyond the
+configured cap is blocked before any eligibility/sizing work runs. The
+fuller veto catalog (kill-criteria monitoring, correlation/exposure limits)
+remains out of scope and lands in later slices.
 
 See `documentation/architecture.md` for the doctrine note on why guarded
 execution is the one deliberate exception to Dracul's read-only design, and

@@ -365,6 +365,7 @@ Dracul's read-only design.
 | `DRACUL_EXECUTOR_MAX_SIGNAL_AGE_DAYS` | `dracul.executor.max-signal-age-days` | `5` | Maximum signal age, in trading days since `createdAt`, before the `SIGNAL_EXPIRED` veto rejects it. |
 | `DRACUL_EXECUTOR_CHASE_ATR_MULT` | `dracul.executor.chase-atr-mult` | `1.0` | The `CHASED_AWAY` veto rejects an entry once price has moved more than this many ATRs beyond the signal's reference price. |
 | `DRACUL_EXECUTOR_PACE_PER_WEEK` | `dracul.executor.pace-per-week` | `2` | Maximum new positions (tranche-1 entries) per ISO calendar week; enforced by the `PACE_LIMIT` veto. |
+| `DRACUL_EXECUTOR_MAX_TRANCHE` | `dracul.executor.max-tranche` | `2` | Hard cap on tranches per position; `add-tranche` rejects with `MAX_TRANCHE` once `position.tranche() >= max-tranche`. |
 | `DRACUL_EXECUTOR_INSTRUMENT_CURRENCY` | `dracul.executor.instrument-currency` | `USD` | The currency instrument-side prices/ATR/tranche amounts are assumed to be in (v1: always USD). Used as the `EntryContextAssembler`'s FX-conversion basis and as the fallback account currency when the broker account snapshot is unavailable. |
 
 **Safety notes:**
