@@ -169,6 +169,11 @@ On each run:
 1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls all HELD watchlist items
    **across all users** with their entry price and share count. Each position carries an opaque
    `positionId` (the watchlist-item id) the LLM echoes back so signals can be routed to their owner.
+   When the position has an originating verdict, its `thesis` block also carries `killCriteria` —
+   the deduplicated union of `killCriteria` across the verdict's contributing prey (via
+   `VerdictRepository.contributingPreyIdsById` + `PreyRepository.findByIds`), so the LLM can judge
+   whether a hold's original invalidation conditions have since been met. The key is omitted when
+   there are none, or fail-soft (logged, omitted) if the lookup fails.
 2. `GroparExitIndicators` assembles the exit-indicator bundle for each position. The technical
    indicators are sourced from Agora's bundled `get_indicators` MCP tool (one call per position)
    via the `AgoraResearch` facade — Dracul no longer computes them locally:
