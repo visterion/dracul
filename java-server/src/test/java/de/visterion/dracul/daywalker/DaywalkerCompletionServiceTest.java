@@ -147,4 +147,60 @@ class DaywalkerCompletionServiceTest {
         verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), any(), any(), any(), any(), any(), any(), anyBoolean());
         verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
     }
+
+    @Test
+    void freshAlertStillInserts() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(eq("u1@x.com"), eq("AAPL"), eq("PRICE_SPIKE"), any()))
+                .thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "INFO",
+                "thesis", null, "run-10");
+
+        verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
+                eq("INFO"), eq("thesis"), isNull(), eq("run-10"), eq(false));
+        verify(alerts, never()).updateSameDayAlert(any(), any(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void sameDayDuplicateUpdatesInsteadOfInserting() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
+        // outside the 3600s cooldown, but on the same UTC day
+        when(alerts.lastAlertAt("u1@x.com", "AAPL", "PRICE_SPIKE"))
+                .thenReturn(Optional.of(Instant.now().minusSeconds(7200)));
+        when(alerts.findSameUtcDay(eq("u1@x.com"), eq("AAPL"), eq("PRICE_SPIKE"), any()))
+                .thenReturn(Optional.of(new DaywalkerAlertRepository.SameDayAlert("a-1", "INFO")));
+
+        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "WARNING",
+                "updated thesis", new BigDecimal("0.8"), "run-11");
+
+        verify(alerts).updateSameDayAlert("a-1", "PRICE_SPIKE", "WARNING",
+                "updated thesis", new BigDecimal("0.8"), "run-11", false); // INFO -> WARNING escalates
+        verify(alerts, never()).insert(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(events).publishEvent(new DaywalkerAlertCreatedEvent(
+                "u1@x.com", "AAPL", "PRICE_SPIKE", "WARNING", "updated thesis"));
+    }
+
+    @Test
+    void sameDaySeverityIsNeverLowered() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
+        when(alerts.lastAlertAt("u1@x.com", "AAPL", "PRICE_SPIKE"))
+                .thenReturn(Optional.of(Instant.now().minusSeconds(7200)));
+        when(alerts.findSameUtcDay(eq("u1@x.com"), eq("AAPL"), eq("PRICE_SPIKE"), any()))
+                .thenReturn(Optional.of(new DaywalkerAlertRepository.SameDayAlert("a-1", "CRITICAL")));
+
+        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "INFO",
+                "later, calmer thesis", null, "run-12");
+
+        // text/ts refresh, severity stays CRITICAL
+        verify(alerts).updateSameDayAlert("a-1", "PRICE_SPIKE", "CRITICAL",
+                "later, calmer thesis", null, "run-12", false);
+    }
 }

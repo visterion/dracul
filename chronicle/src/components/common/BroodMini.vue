@@ -10,6 +10,7 @@
       <StateDot :state="st.state" />
       <span class="font-mono">{{ st.name }}</span>
       <span class="fc-count font-mono">{{ counts?.[st.name] ?? 0 }}</span>
+      <i class="ph ph-caret-right brood-chevron" aria-hidden="true" />
     </button>
   </div>
 </template>
@@ -38,6 +39,7 @@ defineEmits<{ (e: 'open', strigoi: StrigoiStatus): void }>()
   align-items: center;
   gap: var(--space-3);
   width: 100%;
+  min-height: 44px;
   background: transparent;
   border: none;
   color: var(--bone-ivory-dim);
@@ -57,5 +59,10 @@ defineEmits<{ (e: 'open', strigoi: StrigoiStatus): void }>()
   margin-left: auto;
   color: var(--ash-gray);
   font-family: var(--font-mono);
+}
+
+.brood-chevron {
+  font-size: 12px;
+  color: var(--ash-gray);
 }
 </style>

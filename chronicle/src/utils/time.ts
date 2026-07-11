@@ -14,3 +14,17 @@ export function formatRelativeTime(value: string, locale: string, now: number = 
   if (abs < 604800) return rtf.format(Math.round(diffSec / 86400), 'day')
   return new Date(then).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
+/** Today at 00:00 local time. */
+export function localMidnight(now: Date = new Date()): Date {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+}
+
+/** Count ISO instants at or after `since`; unparseable dates are ignored. */
+export function countSince(isoDates: string[], since: Date): number {
+  const t = since.getTime()
+  return isoDates.filter(iso => {
+    const d = new Date(iso).getTime()
+    return !Number.isNaN(d) && d >= t
+  }).length
+}

@@ -28,7 +28,7 @@ test.describe('Prey Detail View (/prey/:id)', () => {
   test('renders confidence bar', async ({ page }) => {
     const conf = page.locator('.conf-row')
     await expect(conf).toBeVisible()
-    await expect(conf).toContainText('0.84')
+    await expect(conf).toContainText('0,84')
   })
 
   test('renders at-a-glance kv facts (anomaly, horizon)', async ({ page }) => {
@@ -88,6 +88,13 @@ test.describe('Prey Detail View (/prey/:id)', () => {
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(/\/prey\//)
     await expect(page.locator('.title-ticker')).toBeVisible()
+  })
+
+  test('empty kill criteria show a muted placeholder', async ({ page }) => {
+    await page.goto('/prey/prey-6')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('.sr-list--kill li')).toHaveCount(0)
+    await expect(page.locator('[data-testid="pd-kill-empty"]')).toContainText('Keine Kill-Kriterien definiert.')
   })
 })
 

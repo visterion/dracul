@@ -209,6 +209,27 @@ public class HttpVistierieClient implements VistierieClient {
         }
     }
 
+    // Intentionally OHNE try/catch: a 400 from an older Vistierie without
+    // group_by=agent support must propagate so the caller can fall back.
+    @Override
+    public Map<String, Long> getCostByAgent(Instant from) {
+        var body = adminClient.get()
+                .uri("/admin/cost?group_by=agent&granularity=none&from={from}&tenant=dracul", from.toString())
+                .retrieve().body(JsonNode.class);
+        var result = new LinkedHashMap<String, Long>();
+        if (body == null) return result;
+        // Vistierie /admin/cost shape: {"buckets":[{"groups":[{"dimensions":{"agent":<name>},"cost_micros":<n>}]}]}
+        // granularity=none -> one bucket; NULL agent_id arrives pre-labelled as "(unattributed)" (F2).
+        for (var bucket : body.path("buckets")) {
+            for (var group : bucket.path("groups")) {
+                var agent = group.path("dimensions").path("agent").asText("");
+                if (agent.isBlank()) agent = "(unattributed)";
+                result.merge(agent, group.path("cost_micros").asLong(0), Long::sum);
+            }
+        }
+        return result;
+    }
+
     private List<VistierieData.DailySpend> zeroSpend() {
         var result = new ArrayList<VistierieData.DailySpend>();
         var today = LocalDate.now();

@@ -4,7 +4,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,10 +63,7 @@ public class DaywalkerAlertRepository {
         // Map the precise severity onto the frontend's WatchlistAlert level vocabulary
         // ('elevated' | 'info' | 'neutral'); the exact severity is preserved in the
         // `severity` column for downstream (Telegram / SSE) consumers.
-        String level = switch (severity == null ? "" : severity.toUpperCase()) {
-            case "CRITICAL", "WARNING" -> "elevated";
-            default -> "info";
-        };
+        String level = levelFor(severity);
         UUID wid;
         try {
             wid = UUID.fromString(watchlistItemId);
@@ -94,5 +94,59 @@ public class DaywalkerAlertRepository {
                 .param("run", runId)
                 .param("notified", notificationSent)
                 .update();
+    }
+
+    /** An existing alert row for (owner, symbol, trigger_type) on one UTC day. */
+    public record SameDayAlert(String id, String severity) {}
+
+    /** Latest alert for (owner, symbol, trigger_type) created on the same UTC day as {@code now}. */
+    public Optional<SameDayAlert> findSameUtcDay(String userId, String symbol, String triggerType, Instant now) {
+        LocalDate day = now.atZone(ZoneOffset.UTC).toLocalDate();
+        Instant from = day.atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant to = day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+        var rows = jdbc.sql("""
+                SELECT id, severity FROM daywalker_alerts
+                WHERE user_id = :u AND symbol = :s AND trigger_type = :tt
+                  AND created_at >= :from AND created_at < :to
+                ORDER BY created_at DESC
+                LIMIT 1
+                """)
+                .param("u", userId).param("s", symbol).param("tt", triggerType)
+                .param("from", Timestamp.from(from)).param("to", Timestamp.from(to))
+                .query((rs, n) -> new SameDayAlert(rs.getString("id"), rs.getString("severity")))
+                .list();
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    /** Refresh a same-day duplicate in place: new text/timestamps/run. Severity is
+     *  passed by the caller, which escalates and never lowers it. */
+    public void updateSameDayAlert(String id, String triggerType, String severity, String thesis,
+                                   BigDecimal confidence, String runId, boolean notificationSent) {
+        jdbc.sql("""
+                UPDATE daywalker_alerts
+                   SET at = :at, message = :msg, level = :lvl, thesis = :th, confidence = :conf,
+                       severity = :sev, vistierie_run_id = :run,
+                       notification_sent = notification_sent OR :notified,
+                       created_at = now()
+                 WHERE id = :id
+                """)
+                .param("id", UUID.fromString(id))
+                .param("at", Instant.now().toString())
+                .param("msg", thesis == null || thesis.isBlank() ? triggerType : thesis)
+                .param("lvl", levelFor(severity))
+                .param("th", thesis)
+                .param("conf", confidence)
+                .param("sev", severity)
+                .param("run", runId)
+                .param("notified", notificationSent)
+                .update();
+    }
+
+    /** Frontend WatchlistAlert level vocabulary for a precise severity. */
+    private static String levelFor(String severity) {
+        return switch (severity == null ? "" : severity.toUpperCase()) {
+            case "CRITICAL", "WARNING" -> "elevated";
+            default -> "info";
+        };
     }
 }

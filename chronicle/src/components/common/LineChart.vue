@@ -86,10 +86,17 @@ const gridYs = computed(() =>
   [0, 0.25, 0.5, 0.75, 1].map(f => padT + f * (H.value - padT - padB.value))
 )
 
+// SVG path coordinates are not user-facing display formatting, so plain
+// rounding is used here (kept out of the de-DE formatter sweep intentionally,
+// see utils/format.ts).
+function round1(v: number): number {
+  return Math.round(v * 10) / 10
+}
+
 function linePath(s: Series): string {
   if (s.data.length === 0) return ''
   return s.data
-    .map((v, i) => `${i === 0 ? 'M' : 'L'} ${xPos(i).toFixed(1)} ${yPos(v).toFixed(1)}`)
+    .map((v, i) => `${i === 0 ? 'M' : 'L'} ${round1(xPos(i))} ${round1(yPos(v))}`)
     .join(' ')
 }
 
@@ -97,6 +104,6 @@ function areaPath(s: Series): string {
   if (s.data.length === 0) return ''
   const line = linePath(s)
   const last = s.data.length - 1
-  return `${line} L ${xPos(last).toFixed(1)} ${H.value - padB.value} L ${xPos(0).toFixed(1)} ${H.value - padB.value} Z`
+  return `${line} L ${round1(xPos(last))} ${H.value - padB.value} L ${round1(xPos(0))} ${H.value - padB.value} Z`
 }
 </script>

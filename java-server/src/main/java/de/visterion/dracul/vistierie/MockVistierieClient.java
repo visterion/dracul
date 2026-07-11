@@ -79,6 +79,17 @@ public class MockVistierieClient implements VistierieClient {
     }
 
     @Override
+    public java.util.Map<String, Long> getCostByAgent(Instant from) {
+        var m = new java.util.LinkedHashMap<String, Long>();
+        m.put("strigoi-spin", 800_000L);
+        m.put("strigoi-insider", 400_000L);
+        m.put("voievod", 240_000L);
+        m.put("daywalker", 160_000L);
+        m.put("(unattributed)", 20_000L);
+        return m;
+    }
+
+    @Override
     public void patchAgent(String name, boolean paused) { /* no-op in mock */ }
 
     @Override

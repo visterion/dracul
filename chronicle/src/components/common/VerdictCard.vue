@@ -5,7 +5,7 @@
         <span class="vc-ticker font-mono">{{ verdict.symbol }}</span>
         <span class="vc-name">{{ verdict.companyName }}</span>
         <span class="vc-spacer" />
-        <span class="vc-meta font-mono tabular">{{ t('chronicle.verdictCard.consensus') }}: {{ verdict.consensusScore.toFixed(2) }}</span>
+        <span class="vc-meta font-mono tabular">{{ t('chronicle.verdictCard.consensus') }}: {{ formatNumber(verdict.consensusScore, 2) }}</span>
       </header>
 
       <div class="vc-attrib">
@@ -48,6 +48,7 @@ import type { Verdict } from '../../api/types'
 import { useRelativeTime } from '../../composables/useRelativeTime'
 import ConsensusRing from './ConsensusRing.vue'
 import BatGlyph from './BatGlyph.vue'
+import { formatNumber } from '../../utils/format'
 
 defineProps<{ verdict: Verdict }>()
 defineEmits<{ (e: 'open', verdict: Verdict): void }>()

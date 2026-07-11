@@ -129,4 +129,18 @@ export const mockPrey: Prey[] = [
     discoveredBy: 'strigoi-lazarus',
     discoveredAt: ago(10),
   },
+  {
+    id: 'prey-6',
+    symbol: 'KD',
+    companyName: 'Kyndryl Holdings',
+    anomalyType: 'SPIN',
+    confidence: 0.58,
+    thesis: 'Recently separated IT-services spin-off trades below book value while service-contract renewals stabilize.',
+    signals: ['Renewal rate stabilizing above 90%', 'Trades below tangible book value'],
+    risks: ['Legacy contract margin pressure'],
+    killCriteria: [],
+    horizon: '90d',
+    discoveredBy: 'strigoi-spin',
+    discoveredAt: ago(30),
+  },
 ]

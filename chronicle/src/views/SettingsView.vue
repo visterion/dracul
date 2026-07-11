@@ -1,26 +1,36 @@
 <template>
   <div class="content-inner full-bleed">
     <div class="settings-grid" :class="{ 'settings-grid--mobile': smAndDown }">
-      <aside class="settings-nav" :class="{ 'settings-nav--chips': smAndDown }">
-        <button
-          v-for="item in navItems"
-          :key="item.id"
-          type="button"
-          class="set-nav-item"
-          :class="{
-            active: active === item.id,
-            disabled: item.disabled,
-            'admin-only': item.admin,
-          }"
-          :aria-current="active === item.id ? 'page' : undefined"
-          :disabled="item.disabled"
-          @click="active = item.id"
-        >
-          <i v-if="item.icon" :class="['ph', item.icon]" />
-          <span>{{ item.label }}</span>
-          <span v-if="item.admin" class="set-badge admin">{{ t('settings.adminBadge') }}</span>
-          <span v-else-if="item.badge" class="set-badge">{{ item.badge }}</span>
-        </button>
+      <aside
+        class="settings-nav"
+        :class="{
+          'settings-nav--chips': smAndDown,
+          'hscroll-fade': smAndDown,
+          'hscroll-fade--left': smAndDown && fadeLeft,
+          'hscroll-fade--right': smAndDown && fadeRight,
+        }"
+      >
+        <div ref="chipsEl" class="settings-nav__scroll">
+          <button
+            v-for="item in navItems"
+            :key="item.id"
+            type="button"
+            class="set-nav-item"
+            :class="{
+              active: active === item.id,
+              disabled: item.disabled,
+              'admin-only': item.admin,
+            }"
+            :aria-current="active === item.id ? 'page' : undefined"
+            :disabled="item.disabled"
+            @click="active = item.id"
+          >
+            <i v-if="item.icon" :class="['ph', item.icon]" />
+            <span>{{ item.label }}</span>
+            <span v-if="item.admin" class="set-badge admin">{{ t('settings.adminBadge') }}</span>
+            <span v-else-if="item.badge" class="set-badge">{{ item.badge }}</span>
+          </button>
+        </div>
       </aside>
 
       <div class="settings-body">
@@ -73,14 +83,14 @@
                 <label class="set-budget-label">{{ t('settings.budgets.dailyCap') }}</label>
                 <input class="set-budget-input" v-model="tenantEdit.dailyCapUsd" placeholder="∞" />
                 <div class="set-budget-usage">
-                  {{ t('settings.budgets.used', { amount: (budgetData.tenant.dailyUsageMicros / 1_000_000).toFixed(4) }) }}
+                  {{ t('settings.budgets.used', { amount: formatNumber(budgetData.tenant.dailyUsageMicros / 1_000_000, 4) }) }}
                 </div>
               </div>
               <div class="set-budget-field">
                 <label class="set-budget-label">{{ t('settings.budgets.monthlyCap') }}</label>
                 <input class="set-budget-input" v-model="tenantEdit.monthlyCapUsd" placeholder="∞" />
                 <div class="set-budget-usage">
-                  {{ t('settings.budgets.used', { amount: (budgetData.tenant.monthlyUsageMicros / 1_000_000).toFixed(2) }) }}
+                  {{ t('settings.budgets.used', { amount: formatNumber(budgetData.tenant.monthlyUsageMicros / 1_000_000, 2) }) }}
                 </div>
               </div>
               <div class="set-budget-field">
@@ -122,8 +132,8 @@
                     <td class="set-budget-agent">{{ agent.name }}</td>
                     <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].dailyCapUsd" placeholder="∞" /></td>
                     <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].monthlyCapUsd" placeholder="∞" /></td>
-                    <td class="set-budget-num">${{ (agent.budget.dailyUsageMicros / 1_000_000).toFixed(4) }}</td>
-                    <td class="set-budget-num">${{ (agent.budget.monthlyUsageMicros / 1_000_000).toFixed(2) }}</td>
+                    <td class="set-budget-num">${{ formatNumber(agent.budget.dailyUsageMicros / 1_000_000, 4) }}</td>
+                    <td class="set-budget-num">${{ formatNumber(agent.budget.monthlyUsageMicros / 1_000_000, 2) }}</td>
                     <td>
                       <button
                         class="btn btn-secondary"
@@ -198,8 +208,15 @@
                 <span>{{ agentSchedule(row) }}</span>
                 <span v-if="row.tier">{{ agentTierLabel(row.tier) }}</span>
                 <span v-if="row.primaryProvider">{{ row.primaryProvider }}</span>
-                <span>${{ row.dailyUsedUsd.toFixed(2) }} / ${{ row.dailyBudgetUsd.toFixed(2) }}</span>
+                <span>${{ formatNumber(row.dailyUsedUsd, 2) }} / ${{ formatNumber(row.dailyBudgetUsd, 2) }}</span>
               </div>
+              <button
+                class="btn btn-secondary agent-row__run"
+                :disabled="row.paused || triggeringRun === row.name"
+                :title="row.paused ? t('strigoi.trigger.pausedTooltip') : undefined"
+                :data-testid="`agent-run-${row.name}`"
+                @click="triggerRun(row)"
+              >{{ t('settings.agentConfig.run') }}</button>
               <button
                 class="btn btn-secondary agent-row__toggle"
                 :disabled="pausing === row.name"
@@ -282,6 +299,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import { useApi } from '../api'
+import { useToast } from '../composables/useToast'
 import { setLocale } from '../i18n'
 import type { LlmProvider, BudgetPatch, SettingsBudgetData, AgentConfigRow, DataSourceHealth } from '../api/types'
 import VistierieView from './VistierieView.vue'
@@ -292,12 +310,18 @@ import ProviderCard from '../components/common/ProviderCard.vue'
 import AgentEditDialog from '../components/settings/AgentEditDialog.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
+import { useEdgeFades } from '../composables/useEdgeFades'
 import { useDisplayCurrencyStore } from '../stores/displayCurrency'
+import { formatNumber, microsToUsdInput } from '../utils/format'
 
 const { t, locale } = useI18n()
 const { agentRoleLabel, agentTierLabel, agentStateLabel } = useEnumLabels()
 const api = useApi()
+const toast = useToast()
 const { smAndDown } = useDisplay()
+
+const chipsEl = ref<HTMLElement | null>(null)
+const { left: fadeLeft, right: fadeRight } = useEdgeFades(chipsEl)
 
 // No user/admin store exists in Chronicle — Dracul is single-operator, so the
 // operator is always the admin (matches the prototype's isAdmin default).
@@ -312,7 +336,8 @@ const navItems = computed(() => [
   { id: 'budgets',      icon: 'ph-coin',          label: t('settings.nav.budgets'),      admin: false, disabled: false, badge: null as string | null },
   { id: 'data-sources', icon: 'ph-chart-bar',     label: t('settings.nav.dataSources'),  admin: false, disabled: false, badge: null as string | null },
   { id: 'messenger',    icon: 'ph-chat-circle',   label: t('settings.nav.messenger'),    admin: false, disabled: false, badge: null as string | null },
-  { id: 'multi-user',   icon: 'ph-users',         label: t('settings.nav.multiUser'),    admin: false, disabled: true,  badge: 'Phase 2' },
+  // Phase 2 — hidden until multi-user lands:
+  // { id: 'multi-user', icon: 'ph-users', label: t('settings.nav.multiUser'), admin: false, disabled: true, badge: 'Phase 2' },
   { id: 'backup',       icon: 'ph-floppy-disk',   label: t('settings.nav.backup'),       admin: false, disabled: false, badge: null as string | null },
   { id: 'language',     icon: 'ph-globe',         label: t('settings.nav.language'),     admin: false, disabled: false, badge: null as string | null },
   { id: 'currency',     icon: 'ph-currency-circle-dollar', label: t('settings.nav.currency'), admin: false, disabled: false, badge: null as string | null },
@@ -359,10 +384,6 @@ const budgetError   = ref<string | null>(null)
 const tenantEdit = ref({ dailyCapUsd: '', monthlyCapUsd: '', dailyWarnPct: '80', monthlyWarnPct: '80' })
 const agentEdits = ref<Record<string, { dailyCapUsd: string; monthlyCapUsd: string }>>({})
 
-function microsToUsd(micros: number | null): string {
-  if (micros === null) return '∞'
-  return (micros / 1_000_000).toFixed(2)
-}
 function usdToMicros(usd: string): number | null {
   if (usd === '∞' || usd === '') return null
   const n = parseFloat(usd)
@@ -376,15 +397,15 @@ async function loadBudgets() {
     budgetData.value = await api.getSettingsBudgets()
     const tb = budgetData.value.tenant
     tenantEdit.value = {
-      dailyCapUsd:    microsToUsd(tb.dailyCapMicros),
-      monthlyCapUsd:  microsToUsd(tb.monthlyCapMicros),
+      dailyCapUsd:    microsToUsdInput(tb.dailyCapMicros),
+      monthlyCapUsd:  microsToUsdInput(tb.monthlyCapMicros),
       dailyWarnPct:   String(tb.dailyWarnPercent ?? 80),
       monthlyWarnPct: String(tb.monthlyWarnPercent ?? 80),
     }
     for (const a of budgetData.value.agents) {
       agentEdits.value[a.name] = {
-        dailyCapUsd:   microsToUsd(a.budget.dailyCapMicros),
-        monthlyCapUsd: microsToUsd(a.budget.monthlyCapMicros),
+        dailyCapUsd:   microsToUsdInput(a.budget.dailyCapMicros),
+        monthlyCapUsd: microsToUsdInput(a.budget.monthlyCapMicros),
       }
     }
   } catch (e) {
@@ -436,6 +457,7 @@ const agentData = ref<AgentConfigRow[] | null>(null)
 const agentsLoading = ref(false)
 const agentError = ref<string | null>(null)
 const pausing = ref<string | null>(null)
+const triggeringRun = ref<string | null>(null)
 const editOpen = ref(false)
 const editAgent = ref('')
 
@@ -472,6 +494,19 @@ async function togglePause(row: AgentConfigRow) {
     agentError.value = t('settings.agentConfig.pauseError')
   } finally {
     pausing.value = null
+  }
+}
+
+async function triggerRun(row: AgentConfigRow) {
+  triggeringRun.value = row.name
+  try {
+    await api.triggerStrigoiRun(row.name)
+    toast.show(t('strigoi.trigger.started'), { type: 'success' })
+    await loadAgents()
+  } catch (e) {
+    toast.show((e as Error).message, { type: 'error' })
+  } finally {
+    triggeringRun.value = null
   }
 }
 
@@ -532,10 +567,14 @@ onMounted(async () => {
 .settings-nav {
   border-right: var(--hairline);
   padding: var(--space-5) var(--space-3);
+  overflow: hidden;
+}
+.settings-nav__scroll {
   display: flex;
   flex-direction: column;
   gap: 2px;
   overflow-y: auto;
+  height: 100%;
 }
 .set-nav-item {
   display: flex;
@@ -647,16 +686,20 @@ onMounted(async () => {
 /* ── Mobile: nav becomes a horizontal chip row (styles.css:537-543) ── */
 .settings-grid--mobile { grid-template-columns: 1fr; height: auto; }
 .settings-nav--chips {
-  flex-direction: row;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
   border-right: none;
   border-bottom: var(--hairline);
   padding: var(--space-3);
-  gap: var(--space-2);
 }
-.settings-nav--chips::-webkit-scrollbar { display: none; }
-.settings-nav--chips .set-nav-item { flex: 0 0 auto; white-space: nowrap; width: auto; }
+.settings-nav--chips .settings-nav__scroll {
+  flex-direction: row;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.settings-nav--chips .settings-nav__scroll::-webkit-scrollbar { display: none; }
+.settings-nav--chips .set-nav-item { flex: 0 0 auto; white-space: nowrap; width: auto; min-height: 44px; }
 .settings-grid--mobile .set-budget-grid { grid-template-columns: 1fr; }
 
 /* ── Agent Config ─────────────────────────────────────────────── */
@@ -669,6 +712,7 @@ onMounted(async () => {
   font-size: 12px; color: var(--ash-gray); }
 .agent-row__state[data-state="paused"] { color: var(--cathedral-gold); }
 .agent-row__state[data-state="budget-hit"] { color: var(--blood-red); }
+.agent-row__run { flex: 0 0 auto; }
 .agent-row__toggle { flex: 0 0 auto; }
 
 /* ── Data Sources ─────────────────────────────────────────────── */

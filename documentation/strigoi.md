@@ -157,6 +157,29 @@ On startup `AgentDefinitionBootstrap` iterates all `AgentDefaultProvider` beans 
 
 Add one `@ConditionalOnProperty` guard (e.g. `dracul.strigoi.<name>.enabled`) and one webhook-token property (e.g. `dracul.strigoi.<name>.webhook-token`). Document both in `documentation/configuration.md`. No new `dracul.agents.*` namespace — each agent owns its own property prefix.
 
+## Manual hunt trigger
+
+Every Strigoi can be run on demand, in addition to its cron schedule, from two
+places in the Chronicle frontend — both call `POST /api/strigoi/{name}/run`
+(see `documentation/api.md`), which proxies to Vistierie's `POST
+/agents/{name}/run` and returns `202 {"runId": "..."}`.
+
+- **Strigoi Detail** (`/strigoi/:name`): a primary button in the page header
+  (`data-testid="sd-trigger-hunt"`) labelled "Jagd starten" / "running…" while
+  in flight. Disabled while a trigger is already in flight or while the agent
+  is paused (tooltip explains why). On success it refetches the Strigoi detail
+  so the new run/stats appear without a full reload; on failure it shows the
+  error via the toast system.
+- **Settings → Agent config**: each row in the agent list has a
+  "Run"/"Ausführen" button (`data-testid="agent-run-{name}"`), disabled while
+  paused or while a run for that row is already in flight. On success it shows
+  a success toast and reloads the agent list; on failure it shows the error
+  message as a toast.
+
+Both surfaces surface the same backend error mapping: 404 unknown Strigoi, 409
+`AGENT_PAUSED`, 422 `BUDGET_EXCEEDED` — rendered as the raw error message in
+the toast rather than a bespoke per-code UI.
+
 ## Groparul (exit-timing agent)
 
 **Implemented 2026-06-14.** Dracul's exit-timing agent. Groparul ("the gravedigger")
@@ -315,6 +338,19 @@ symbol event** on the global live stream, not per owner.
 
 A per-`(owner, symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
 condition from generating repeat rows for the same owner on every poll.
+
+**Same-UTC-day dedup.** Within the cooldown window, if an owner already has an
+alert row for `(owner, symbol, trigger_type)` on the same UTC calendar day
+(`DaywalkerAlertRepository.findSameUtcDay`), no new row is inserted. Instead
+the existing row is updated in place: text/timestamp/run-id/confidence/
+notification-sent all refresh to the new assessment, and severity is
+**escalated, never downgraded** — the effective severity is
+`max(existingSeverity, newSeverity)` by the INFO < WARNING < CRITICAL rank
+order (`DaywalkerCompletionService.rank`). A later, calmer re-assessment on
+the same day therefore cannot silently walk a CRITICAL alert back down to
+WARNING/INFO; a fresh CRITICAL escalates a same-day WARNING row in place. The
+dedup is scoped to the owner's own calendar day, so different owners of the
+same symbol are deduped independently.
 
 ### Trigger types (v1)
 

@@ -70,13 +70,18 @@
         v-for="(r, i) in RECENT"
         :key="i"
         class="bt-recent-card"
-        :class="{ active: r.active }"
+        :class="{ active: i === selectedIdx }"
+        role="button"
+        tabindex="0"
+        @click="selectedIdx = i"
+        @keydown.enter="selectedIdx = i"
+        @keydown.space.prevent="selectedIdx = i"
       >
         <div class="brc-title">{{ r.strigoi }} · {{ r.universe }} · {{ r.span }}</div>
         <div class="brc-stats">
           <span>{{ t('backtest.runStats.hitRate') }} <b class="mono">{{ Math.round(r.hit * 100) }}%</b></span>
           <span class="brc-sep">·</span>
-          <span>{{ t('backtest.runStats.avgReturn') }} <b class="mono pos">+{{ (r.avg * 100).toFixed(1) }}%</b></span>
+          <span>{{ t('backtest.runStats.avgReturn') }} <b class="mono pos">{{ formatPercent(r.avg * 100) }}</b></span>
         </div>
         <div class="brc-when">{{ r.when }}</div>
       </div>
@@ -84,6 +89,9 @@
 
     <!-- results -->
     <SectionHeader :label="t('backtest.sections.results')" />
+    <div class="bt-context mono" data-testid="bt-context">
+      {{ selectedRun.strigoi }} · {{ selectedRun.universe }} · {{ selectedRun.span }}
+    </div>
     <div class="bt-restabs" role="tablist" :aria-label="t('backtest.sections.results')">
       <button
         v-for="tab in tabs"
@@ -116,7 +124,7 @@
               <td class="mono">{{ tr.in }}</td>
               <td class="mono">{{ tr.out }}</td>
               <td class="num" :class="tr.ret >= 0 ? 'pos' : 'neg'">
-                {{ tr.ret >= 0 ? '+' : '' }}{{ (tr.ret * 100).toFixed(1) }}%
+                {{ formatPercent(tr.ret * 100) }}
               </td>
               <td class="num">
                 <i
@@ -145,15 +153,15 @@
       <div class="vist-foot">
         <div>
           <div class="vf-k">{{ t('backtest.chart.footStrigoi') }}</div>
-          <div class="vf-v mono pos">+{{ lastStrigoi.toFixed(1) }}%</div>
+          <div class="vf-v mono pos">{{ formatPercent(lastStrigoi) }}</div>
         </div>
         <div>
           <div class="vf-k">{{ t('backtest.chart.footBenchmark') }}</div>
-          <div class="vf-v mono">+{{ lastBench.toFixed(1) }}%</div>
+          <div class="vf-v mono">{{ formatPercent(lastBench) }}</div>
         </div>
         <div>
           <div class="vf-k">{{ t('backtest.chart.footEdge') }}</div>
-          <div class="vf-v mono pos">+{{ (lastStrigoi - lastBench).toFixed(1) }} pts</div>
+          <div class="vf-v mono pos">{{ formatNumber(lastStrigoi - lastBench, 1) }} pts</div>
         </div>
       </div>
     </div>
@@ -167,6 +175,7 @@ import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import LineChart from '../components/common/LineChart.vue'
+import { formatNumber, formatPercent } from '../utils/format'
 
 const { t } = useI18n()
 
@@ -181,6 +190,9 @@ const RECENT = [
   { strigoi: 'Strigoi-Echo', universe: 'S&P 500', span: '2023–2026', hit: 0.54, avg: 0.091, when: 'vor 1d', active: false },
   { strigoi: 'Strigoi-Spin', universe: 'NASDAQ 100', span: '2022–2026', hit: 0.61, avg: 0.118, when: 'vor 3d', active: false },
 ]
+
+const selectedIdx = ref(RECENT.findIndex(r => r.active))
+const selectedRun = computed(() => RECENT[selectedIdx.value] ?? RECENT[0])
 
 const TRADES = [
   { sym: 'AVGO', in: '2024-03-15', out: '2024-09-15', ret: 0.284, thesis: true },
@@ -246,6 +258,8 @@ const toDate = '07.06.2026'
 .brc-stats b { color: var(--bone-ivory); font-weight: 500; }
 .brc-sep { color: rgba(107, 107, 112, 0.5); }
 .brc-when { font-size: var(--text-micro); color: var(--ash-gray); margin-top: var(--space-2); }
+
+.bt-context { font-size: var(--text-body-sm); color: var(--bone-ivory-dim); margin-bottom: var(--space-3); }
 
 /* ---- result tabs ---- */
 .bt-restabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-5); border-bottom: 1px solid var(--rule); }

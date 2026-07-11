@@ -48,12 +48,56 @@ Both documents are required reading before implementing any view.
 > redirected to `/`.
 
 
+## Chronicle feed: filtering, day grouping, chunking
+
+The individual-prey feed on the Chronicle view (`/`) groups items by calendar
+day (newest day first) and sorts each day's items by confidence descending
+(`buildPreyGroups()` in `src/utils/preyGroups.ts`). Day labels are localized —
+"Heute"/"Today", "Gestern"/"Yesterday", then a full date for older days.
+
+- **Filter state lives in the URL** (`src/utils/filterQuery.ts`): the active
+  filter round-trips through the query string as `?filter=high` (high
+  confidence) or `?class=<AnomalyType>` (e.g. `?class=PEAD`); no query param
+  means "all". This makes a filtered view linkable/bookmarkable/shareable and
+  survives a page reload.
+- **Chunked rendering**: `visibleGroupCount()` renders whole day-groups up to
+  a ~30-card budget, then an "Ältere Beute anzeigen" / "Show older prey" button
+  (`data-testid="show-older"`) reveals one more day-group per click. The reveal
+  count persists per-session (`sessionStorage`, key `chronicle:extraGroups`)
+  so it survives a reload but resets whenever the active filter changes (a new
+  filter starts from the same ~30-card first page).
+- **Mobile filter sheet**: below the 960px breakpoint the desktop filter rail
+  (aside) is replaced by a floating filter button (`data-testid="filter-fab"`,
+  shows the active filter count) that opens **`FilterSheet.vue`** — a
+  bottom-sheet modal (backdrop + slide-up panel, Escape-to-close, body-scroll
+  lock while open) listing the same filter chips (All / High confidence /
+  per-anomaly-class) plus the Brood mini-profiles, sharing the same counts
+  computed from `store.prey` as the desktop rail. Selecting a chip applies the
+  filter and closes the sheet.
+
+## Toast feedback
+
+`useToast()` (`src/composables/useToast.ts`) is a module-level singleton
+outlet rendered once by `AppToast.vue` in the app shell. Any view can call
+`toast.show(message, { type: 'success' | 'error' })`; toasts stack and
+auto-dismiss after `TOAST_DISMISS_MS` (4s). Used for the manual hunt trigger
+(Strigoi Detail, Settings agent-config row) and other fire-and-forget
+mutations to confirm success or surface a backend error message without a
+blocking dialog.
+
 ## Live alert panel
 
 A top-bar indicator (🔔 with a connection dot + unread badge) opens a dedicated
 live-alert panel. The panel subscribes to `GET /api/events` over SSE and lists
 incoming Daywalker alerts (severity, symbol, trigger, thesis) newest-first, with
 a connection status. Active only against a real backend (disabled in mock mode).
+
+The unread indicator (`useLiveAlertsStore`, `data-testid="live-unread"`) only
+renders while `unread > 0`: a plain dot for exactly one unread alert, a
+numeric badge for two or more. Opening the panel (`markRead()`) resets
+`unread` to zero and clears the indicator — it is purely a "something arrived
+since you last opened the panel" signal, not a persistent count tied to
+alert-read state in the backend.
 
 Two additional trigger types emitted by the stop-proximity watcher now appear in the live panel and the persistent alert list:
 
@@ -248,8 +292,11 @@ not already tracked, an "‚{symbol}' hinzufügen" CTA opens the add dialog pref
 that symbol), two tabs (**Alle** / **Aktuelle Alarme** — counts derived from tracking
 items: all = `trackingItems.length`, alerts = `alerts.length > 0`), an add-to-watchlist
 dialog (creates a `TRACKING` item; no tag choice), and `.watch-row` rows showing ticker,
-company, price, day change (pos/neg color), status dot (calm→positive, elevated→warning,
-alert→danger), and an owner badge; own rows have a delete control, foreign rows are
+company, price, day change (pos/neg color), and status dot (calm→positive, elevated→warning,
+alert→danger). Rows are grouped by owner via `groupByOwner()` (`lib/watchlistDisplay.ts`):
+own items render first and unlabelled, foreign items follow under a `.watch-owner-sep`
+separator ("von {owner}" / "by {owner}", one per foreign owner, alphabetical) — no row
+carries the raw owner e-mail anymore. Own rows have a delete control, foreign rows are
 read-only. Right pane: header (mono ticker, company, tracked-since, live quote), the
 Daywalker alert feed (the `AlertRow` atom, level elevated→warning / info→info /
 neutral→neutral), and the linked-verdict card (when `verdictId` is set). Selected state is

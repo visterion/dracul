@@ -16,7 +16,7 @@
           :key="item.name"
           :to="{ name: item.name }"
           class="top-bar__tab"
-          active-class="top-bar__tab--active"
+          :class="{ 'top-bar__tab--active': isNavActive(item.matchPrefixes, route.path) }"
         >
           {{ item.label }}
         </router-link>
@@ -32,14 +32,8 @@
           @click="$emit('toggle-live')"
         >
           <i class="ph ph-bell" aria-hidden="true"></i>
-          <span class="top-bar__live-dot" :class="`top-bar__live-dot--${live.status}`"></span>
-          <span v-if="live.unread > 0" class="top-bar__live-badge" data-testid="live-unread">
-            {{ live.unread }}
-          </span>
-        </button>
-        <!-- Moon icon placeholder — cream/dark toggle (not implemented in scaffold) -->
-        <button v-if="!mobile" class="top-bar__icon-btn" aria-label="Toggle light mode" title="Light mode (coming soon)">
-          <i class="ph ph-moon" aria-hidden="true"></i>
+          <span v-if="live.unread === 1" class="top-bar__live-dot" data-testid="live-unread" />
+          <span v-else-if="live.unread >= 2" class="top-bar__live-badge" data-testid="live-unread">{{ live.unread }}</span>
         </button>
         <span v-if="me && !mobile" class="top-bar__user mono" data-testid="topbar-user">{{ me }}</span>
         <a v-if="me && me !== 'default'" class="top-bar__icon-btn" href="/cdn-cgi/access/logout"
@@ -55,8 +49,9 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
-import { useNavItems } from '../../composables/useNavItems'
+import { useNavItems, isNavActive } from '../../composables/useNavItems'
 import { useMe } from '../../composables/useMe'
 
 defineProps<{ mobile?: boolean }>()
@@ -66,6 +61,7 @@ const { t } = useI18n()
 const live = useLiveAlertsStore()
 const navItems = useNavItems()
 const me = useMe()
+const route = useRoute()
 </script>
 
 <style scoped>
@@ -221,11 +217,8 @@ const me = useMe()
 .top-bar__live { position: relative; }
 .top-bar__live-dot {
   position: absolute; top: 7px; right: 8px; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--ash-gray);
+  background: var(--blood-crimson-bright);
 }
-.top-bar__live-dot--open { background: var(--signal-positive); }
-.top-bar__live-dot--connecting { background: var(--cathedral-gold); }
-.top-bar__live-dot--closed { background: var(--ash-gray); }
 .top-bar__live-badge {
   position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 8px; background: var(--blood-crimson); color: var(--bone-ivory);

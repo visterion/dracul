@@ -72,4 +72,28 @@ test.describe('Backtest View (/backtest)', () => {
     await expect(page.locator('.chart-card')).toHaveCount(0)
     await expect(page.locator('table.dt')).toBeVisible()
   })
+
+  test('results carry a context header from the selected run', async ({ page }) => {
+    await expect(page.getByTestId('bt-context')).toContainText('Strigoi-Spin · Russell 2000 · 2024–2026')
+    await page.locator('.bt-recent-card', { hasText: 'Strigoi-Echo' }).click()
+    await expect(page.getByTestId('bt-context')).toContainText('Strigoi-Echo · S&P 500 · 2023–2026')
+  })
+
+  test('keyboard activation of recent cards (Enter) updates context', async ({ page }) => {
+    // The second card contains 'Strigoi-Echo'; focus and press Enter
+    const secondCard = page.locator('.bt-recent-card').nth(1)
+    await secondCard.focus()
+    await page.keyboard.press('Enter')
+    // Verify the context updates to show Strigoi-Echo
+    await expect(page.getByTestId('bt-context')).toContainText('Strigoi-Echo · S&P 500 · 2023–2026')
+  })
+
+  test('keyboard activation of recent cards (Space) updates context', async ({ page }) => {
+    // The second card contains 'Strigoi-Echo'; focus and press Space
+    const secondCard = page.locator('.bt-recent-card').nth(1)
+    await secondCard.focus()
+    await page.keyboard.press('Space')
+    // Verify the context updates to show Strigoi-Echo
+    await expect(page.getByTestId('bt-context')).toContainText('Strigoi-Echo · S&P 500 · 2023–2026')
+  })
 })

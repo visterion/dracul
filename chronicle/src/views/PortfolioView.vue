@@ -2,6 +2,23 @@
   <div class="content-inner portfolio-view">
     <PageHead :title="t('portfolio.title')" :sub="t('portfolio.subtitle')" />
 
+    <div v-if="!loading && !error && positions.length" class="pf-summary" data-testid="pf-summary">
+      <div class="pf-sum">
+        <span class="pf-sum-k">{{ t('portfolio.summary.totalValue') }}</span>
+        <span class="pf-sum-v mono">{{ formatMoney(summary.totalValue, summaryCurrency) }}</span>
+      </div>
+      <div class="pf-sum">
+        <span class="pf-sum-k">{{ t('portfolio.summary.pnl') }}</span>
+        <span class="pf-sum-v mono" :class="summary.totalPnl >= 0 ? 'pos' : 'neg'">
+          {{ formatMoney(summary.totalPnl, summaryCurrency) }}<template v-if="summary.totalPnlPct !== null"> ({{ formatPercent(summary.totalPnlPct) }})</template>
+        </span>
+      </div>
+      <div class="pf-sum">
+        <span class="pf-sum-k">{{ t('portfolio.summary.count') }}</span>
+        <span class="pf-sum-v mono">{{ summary.count }}</span>
+      </div>
+    </div>
+
     <div class="pf-toolbar">
       <button class="btn btn-crimson-ghost" data-testid="pf-open-add" @click="openAdd">{{ t('portfolio.addButton') }}</button>
     </div>
@@ -48,6 +65,8 @@ import PositionDialog from '../components/portfolio/PositionDialog.vue'
 import CalibrationCard from '../components/CalibrationCard.vue'
 import { useApi } from '../api'
 import type { WatchlistItem, ExitSignal } from '../api/types'
+import { portfolioSummary } from '../lib/portfolioDisplay'
+import { formatMoney, formatPercent } from '../utils/format'
 
 const { t } = useI18n()
 const api = useApi()
@@ -59,6 +78,8 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 
 const positions = computed(() => items.value.filter(i => i.entryPrice != null && i.shareCount != null))
+const summary = computed(() => portfolioSummary(positions.value))
+const summaryCurrency = computed(() => positions.value[0]?.currency ?? 'EUR')
 
 function signalFor(item: WatchlistItem): ExitSignal | null {
   return signals.value.find(s => s.watchlistItemId === item.id)
@@ -135,4 +156,14 @@ async function onDelete(item: WatchlistItem) {
 .pf-toolbar { display: flex; justify-content: flex-end; margin-bottom: var(--space-4); }
 .pf-rows { display: flex; flex-direction: column; gap: var(--space-2); }
 .pf-calibration { margin-top: var(--space-8); }
+.pf-summary {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6);
+  background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
+}
+.pf-sum { display: flex; flex-direction: column; gap: 2px; }
+.pf-sum-k { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ash-gray); }
+.pf-sum-v { font-size: var(--text-body); color: var(--bone-ivory); }
+.pf-sum-v.pos { color: var(--cathedral-gold); }
+.pf-sum-v.neg { color: var(--blood-crimson-bright); }
 </style>

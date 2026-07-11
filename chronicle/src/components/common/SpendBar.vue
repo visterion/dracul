@@ -1,6 +1,6 @@
 <template>
   <span class="spend-bar" role="meter" :aria-valuenow="value" :aria-valuemin="0" :aria-valuemax="max" :aria-label="`Spend ${value} of ${max}`">
-    <span class="spend-fill" :style="{ width: pct + '%' }" />
+    <span class="spend-fill" :class="`spend-fill--${level ?? 'ok'}`" :style="{ width: pct + '%' }" />
   </span>
 </template>
 
@@ -10,6 +10,7 @@ import { computed } from 'vue'
 const props = defineProps<{
   value: number
   max: number
+  level?: 'ok' | 'warn' | 'over'
 }>()
 
 const pct = computed(() => props.max ? Math.min(100, (props.value / props.max) * 100) : 0)
@@ -32,4 +33,7 @@ const pct = computed(() => props.max ? Math.min(100, (props.value / props.max) *
   border-radius: 3px;
   transition: width var(--transition-slow);
 }
+
+.spend-fill--warn { background: var(--signal-warning); }
+.spend-fill--over { background: var(--signal-danger); }
 </style>

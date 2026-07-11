@@ -1,12 +1,16 @@
 <template>
-  <nav class="bottom-nav" data-testid="bottom-nav" aria-label="Main navigation">
-    <div class="bottom-nav__scroll">
+  <nav
+    class="bottom-nav hscroll-fade"
+    :class="{ 'hscroll-fade--left': left, 'hscroll-fade--right': right }"
+    data-testid="bottom-nav" aria-label="Main navigation"
+  >
+    <div ref="scrollEl" class="bottom-nav__scroll">
       <router-link
         v-for="item in navItems"
         :key="item.name"
         :to="{ name: item.name }"
         class="bottom-nav__tab"
-        active-class="bottom-nav__tab--active"
+        :class="{ 'bottom-nav__tab--active': isNavActive(item.matchPrefixes, route.path) }"
       >
         <i class="ph bottom-nav__icon" :class="item.icon" aria-hidden="true"></i>
         <span class="bottom-nav__label">{{ item.label }}</span>
@@ -16,8 +20,21 @@
 </template>
 
 <script setup lang="ts">
-import { useNavItems } from '../../composables/useNavItems'
+import { nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { useNavItems, isNavActive } from '../../composables/useNavItems'
+import { useEdgeFades } from '../../composables/useEdgeFades'
 const navItems = useNavItems()
+const scrollEl = ref<HTMLElement | null>(null)
+const { left, right } = useEdgeFades(scrollEl)
+
+const route = useRoute()
+watch(() => route.path, async () => {
+  await nextTick()
+  scrollEl.value
+    ?.querySelector('.bottom-nav__tab--active, .router-link-active')
+    ?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+})
 </script>
 
 <style scoped>
@@ -28,12 +45,14 @@ const navItems = useNavItems()
   background: var(--crypt-black-elevated);
   border-top: var(--hairline);
   padding-bottom: env(safe-area-inset-bottom);
+  --fade-bg: var(--crypt-black-elevated);
 }
 .bottom-nav__scroll {
   display: flex;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  scroll-snap-type: x proximity;
 }
 .bottom-nav__scroll::-webkit-scrollbar { display: none; }
 .bottom-nav__tab {
@@ -50,6 +69,7 @@ const navItems = useNavItems()
   text-decoration: none;
   color: var(--ash-gray);
   transition: color var(--transition-fast);
+  scroll-snap-align: center;
 }
 .bottom-nav__icon { font-size: 22px; line-height: 1; }
 .bottom-nav__label { font-size: 10px; letter-spacing: 0.02em; white-space: nowrap; }

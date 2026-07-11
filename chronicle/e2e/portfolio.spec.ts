@@ -57,4 +57,15 @@ test.describe('Portfolio View (/portfolio)', () => {
     await row.getByTestId('pf-delete-AVGO').click()
     await expect(page.locator('[data-testid="portfolio-row"][data-symbol="AVGO"]')).toHaveCount(0)
   })
+
+  test('row action buttons expose >=44px touch targets', async ({ page }) => {
+    const box = await page.locator('[data-testid^="pf-edit-"]').first().boundingBox()
+    expect(box!.width).toBeGreaterThanOrEqual(44)
+    expect(box!.height).toBeGreaterThanOrEqual(44)
+  })
+
+  test('shows a summary header with total value, P&L and position count', async ({ page }) => {
+    await expect(page.getByTestId('pf-summary')).toBeVisible()
+    await expect(page.getByTestId('pf-summary')).toContainText('Gesamtwert')
+  })
 })

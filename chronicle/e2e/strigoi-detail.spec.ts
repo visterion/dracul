@@ -52,4 +52,30 @@ test.describe('Strigoi Detail View (/strigoi/:name)', () => {
     await page.waitForLoadState('networkidle')
     await expect(page.locator('.kv-v', { hasText: /werktags|weekdays/ }).first()).toBeVisible()
   })
+
+  test('stats section carries a "Diesen Monat" heading', async ({ page }) => {
+    await expect(page.locator('[data-testid="sd-stats-head"]')).toContainText('Diesen Monat')
+  })
+
+  test('strigoi without runs shows month-scoped empty texts', async ({ page }) => {
+    await page.goto('/strigoi/strigoi-lazarus')
+    await page.waitForLoadState('networkidle')
+    await expect(page.locator('.sd .empty .em-text').first())
+      .toContainText('Noch kein Lauf aufgezeichnet (diesen Monat)')
+    await expect(page.locator('.stat-grid')).toContainText('Noch keine Treffer bewertbar')
+    await expect(page.locator('.stat-grid')).not.toContainText('0 von 0')
+  })
+
+  test('trigger-hunt button starts a hunt and shows a toast', async ({ page }) => {
+    await page.getByTestId('sd-trigger-hunt').click()
+    await expect(page.getByText('Jagd gestartet')).toBeVisible()
+  })
+
+  test('trigger-hunt button is disabled for a paused strigoi', async ({ page }) => {
+    await page.goto('/strigoi/strigoi-lazarus')
+    await page.waitForLoadState('networkidle')
+    const btn = page.getByTestId('sd-trigger-hunt')
+    await expect(btn).toBeDisabled()
+    await expect(btn).toHaveAttribute('title', 'Agent pausiert')
+  })
 })

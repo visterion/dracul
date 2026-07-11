@@ -50,6 +50,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import OrderTicketCard from '../components/report/OrderTicketCard.vue'
 import { useApi } from '../api'
 import type { MorningReport } from '../api/types'
+import { formatMoney, formatPercent } from '../utils/format'
 
 const { t } = useI18n()
 const api = useApi()
@@ -68,8 +69,8 @@ onMounted(async () => {
   }
 })
 
-const fmt = (v: number | null) => (v == null ? '—' : v.toLocaleString())
-const pct = (v: number | null) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`)
+const fmt = (v: number | null) => (v == null ? '—' : formatMoney(v, 'USD'))
+const pct = (v: number | null) => (v == null ? '—' : formatPercent(v))
 
 function actionPillClass(action: string): string {
   switch (action.toUpperCase()) {

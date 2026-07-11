@@ -71,12 +71,15 @@ test.describe('Watchlist View (/watchlist)', () => {
     await expect(page.locator('.watch-rows .wr-price').getByText('urspr.', { exact: false })).toHaveCount(0)
   })
 
-  test('watchlist rows show an owner badge', async ({ page }) => {
-    await expect(page.locator('[data-testid^="wl-owner-"]').first()).toBeVisible()
+  test('foreign rows are grouped under an owner separator, rows carry no email', async ({ page }) => {
+    const sep = page.getByTestId('wl-owner-daniel@dracul.local')
+    await expect(sep).toBeVisible()
+    await expect(sep).toContainText('daniel@dracul.local')
+    await expect(page.locator('.watch-row .wr-owner')).toHaveCount(0)
   })
 
   test('foreign rows are read-only (no delete control)', async ({ page }) => {
-    const foreign = page.locator('.watch-row', { hasText: 'daniel@dracul.local' }).first()
+    const foreign = page.locator('.watch-row[data-owner="daniel@dracul.local"]').first()
     await expect(foreign).toBeVisible()
     await expect(foreign.locator('[data-testid^="wl-delete-"]')).toHaveCount(0)
   })
@@ -105,5 +108,28 @@ test.describe('Watchlist View (/watchlist)', () => {
     await page.getByTestId('wl-open-add').click()
     await page.getByTestId('wl-add-symbol').fill('3750.HK')
     await expect(page.getByTestId('wl-add-submit')).toBeEnabled()
+  })
+
+  test('pressing Enter in the add dialog submits and shows a success toast', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('TSLA')
+    await page.getByTestId('wl-add-symbol').press('Enter')
+    await expect(page.getByTestId('app-toast')).toBeVisible()
+    await expect(page.locator('[data-testid="watchlist-item"]:has-text("TSLA")')).toBeVisible()
+  })
+
+  test('a row whose name equals its symbol renders the symbol only once', async ({ page }) => {
+    await page.getByTestId('wl-open-add').click()
+    await page.getByTestId('wl-add-symbol').fill('PYPL')
+    await page.getByTestId('wl-add-symbol').press('Enter')
+    const row = page.locator('[data-testid="watchlist-item"]:has-text("PYPL")').first()
+    await expect(row).toBeVisible()
+    await expect(row.locator('.wr-name')).toHaveCount(0)
+  })
+
+  test('delete control exposes a >=44px touch target', async ({ page }) => {
+    const box = await page.locator('[data-testid^="wl-delete-"]').first().boundingBox()
+    expect(box!.width).toBeGreaterThanOrEqual(44)
+    expect(box!.height).toBeGreaterThanOrEqual(44)
   })
 })

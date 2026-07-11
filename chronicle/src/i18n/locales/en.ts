@@ -23,7 +23,7 @@ export default {
       chronicle: 'chronicle',
       watchlist: 'watchlist',
       portfolio: 'portfolio',
-      report: 'Report',
+      report: 'report',
       patternLibrary: 'pattern library',
       backtest: 'backtest',
       settings: 'settings',
@@ -115,6 +115,7 @@ export default {
     agentConfig: {
       title: 'Agents',
       subtitle: 'Pause or resume each agent. Tier, schedule and budget are configured in code.',
+      run: 'Hunt',
       pause: 'Pause',
       resume: 'Resume',
       loadError: 'Could not load agents.',
@@ -159,6 +160,9 @@ export default {
     adminOnly: 'admin only',
     headTitle: 'What the night costs',
     headSub: 'The treasury — every token counted. By tier, by day, by agent.',
+    banner: {
+      overBudget: 'Monthly cap exceeded',
+    },
     tiles: {
       thisMonth: 'this month',
       ofCap: 'of ${cap} cap',
@@ -187,7 +191,7 @@ export default {
     },
     dusk: {
       newPrey: 'new prey',
-      verdicts: 'verdict | verdicts',
+      verdicts: 'verdict today | verdicts today',
       alerts: 'daywalker alert | daywalker alerts',
       lessons: 'lesson pending | lessons pending',
     },
@@ -202,13 +206,18 @@ export default {
     daymark: {
       today: 'today',
       yesterday: 'yesterday',
+      byConfidence: 'by confidence',
     },
+    showOlder: 'Show older prey',
     filters: {
       title: 'Filter',
+      button: 'Filter',
+      close: 'Close',
       allPrey: 'all prey',
       highConfidence: 'high confidence',
       anomalyClass: 'anomaly class',
       brood: 'The Brood',
+      broodProfiles: 'The Brood — profiles',
     },
     preyCard: {
       signals: 'signals',
@@ -250,7 +259,6 @@ export default {
       consensusLabel: 'Consensus confidence',
       glanceTitle: 'At a glance',
       contributorsTitle: 'Contributors',
-      addToWatchlist: 'Add to watchlist',
       watchlistAdded: 'Added to watchlist.',
     },
     facts: {
@@ -390,6 +398,8 @@ export default {
       allStrigoi: 'All Strigoi ({n})',
     },
     evidenceCount: 'evidence: {n}',
+    expand: 'Expand pattern',
+    collapse: 'Collapse pattern',
     actionError: {
       failed: 'Action failed',
       deactivateFailed: 'Deactivate failed',
@@ -440,11 +450,16 @@ export default {
       tracking: 'tracking',
     },
     addButton: '+ Add to watchlist',
+    ownerGroup: 'by {owner}',
     dialog: {
       title: 'Add to watchlist',
       placeholder: 'Ticker (e.g. AVGO)',
       cancel: 'Cancel',
       add: 'Add',
+      notFound: 'Symbol {symbol} not found.',
+    },
+    toast: {
+      added: '{symbol} added to watchlist',
     },
     empty: 'No instruments match this filter.',
     tagLabel: {
@@ -492,6 +507,7 @@ export default {
     addButton: '+ Position',
     noSignal: '—',
     cols: { entry: 'Entry', size: 'Shares', current: 'Price', pnl: 'P/L' },
+    summary: { totalValue: 'Total value', pnl: 'Total P&L', count: 'Positions' },
     dialog: {
       addTitle: 'Add position',
       editTitle: 'Edit position',
@@ -566,6 +582,7 @@ export default {
     signals: 'Signals',
     risks: 'Risks',
     killCriteria: 'Kill criteria',
+    killCriteriaEmpty: 'No kill criteria defined.',
     confidenceTitle: 'Confidence',
     facts: {
       anomaly: 'Anomaly',
@@ -658,11 +675,13 @@ export default {
       preyPerHuntFoot: 'across {n} runs this month',
       hitRate: 'Hit rate',
       hitRateFoot: '{num} of {den} prey within thesis',
+      hitRateFootEmpty: 'No hits assessable yet',
       hunts: 'Hunts',
       huntsFoot: 'of {n} scheduled',
       tier: 'Tier',
     },
     sections: {
+      statsMonth: 'This month',
       lastRun: 'Last run · trace',
       recentPrey: 'Recent prey',
       configuration: 'Configuration',
@@ -672,7 +691,7 @@ export default {
       yesterday: 'yesterday',
       daysAgo: 'd ago',
       preyUnit: 'prey',
-      none: 'No run recorded yet.',
+      none: 'No run recorded yet (this month).',
     },
     prey: {
       empty: 'The brood sleeps. Trigger a hunt to begin.',
@@ -690,6 +709,12 @@ export default {
       monthlyBudget: 'Monthly budget',
       primary: 'Primary',
       fallback: 'Fallback',
+    },
+    trigger: {
+      button: 'Trigger hunt',
+      running: 'Triggering …',
+      started: 'Hunt started',
+      pausedTooltip: 'Agent paused',
     },
   },
 }
