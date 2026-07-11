@@ -27,5 +27,6 @@ public enum RejectReason {
     DUPLICATE,
     NO_POSITION,
     NOT_ELIGIBLE,
-    CORRELATED
+    CORRELATED,
+    UNKNOWN_VERSION
 }

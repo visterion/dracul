@@ -322,6 +322,18 @@ untouched. This does not make the hunters themselves execute anything — they
 still only produce prey; the executor remains the sole code-guarded agent that
 acts on the resulting signals.
 
+**`UNKNOWN_VERSION` intake gate.** Before `PreySignalEmitter` inserts a
+mapped `executor_signal`, it checks the signal's `agent_version` against
+`PromptRegistry.knownHashes()` (the bundled `prompts/prompt_registry.json`
+body hashes for all agents) and, as a fallback, `AgentVersionResolver
+.versionFor(source)` (the emitting agent's live DB-stored prompt hash — this
+keeps operator-edited prompts working even though they're no longer in the
+static registry). `"operator"`-sourced (manual) signals are exempt, since
+they carry no prompt hash. A signal that matches neither is dropped with a
+WARN log and never reaches `signalRepo.insert(...)` — it produces no
+`executor_signal` row and no audit trail, ensuring a signal from an
+unversioned or foreign prompt never reaches the executor.
+
 **Prey kill-criteria column (V19):**
 - `kill_criteria` (JSONB, NOT NULL DEFAULT '[]') — 1-5 hunter-emitted falsifiable exit conditions (a measurable threshold, a concrete date, or a single unambiguous public event under which the thesis is dead), carried onto `executor_signal` by the Prey→ExecutorSignal adapter (`PreySignalMapper`).
 
