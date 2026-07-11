@@ -22,9 +22,9 @@ export const mockWatchlistItems: WatchlistItem[] = [
     tag: 'TRACKING',
     verdictId: 'verdict-1',
     alerts: [
-      { id: 'a-1', at: '14:23 today', message: 'price spike +4.2% on elevated volume', level: 'elevated' },
-      { id: 'a-2', at: 'yesterday 16:45', message: 'positive analyst note from Goldman Sachs', level: 'info' },
-      { id: 'a-3', at: '3 days ago', message: 'added to watchlist', level: 'neutral' },
+      { id: 'a-1', at: '14:23 today', message: 'price spike +4.2% on elevated volume', level: 'elevated', severity: 'CRITICAL' },
+      { id: 'a-2', at: 'yesterday 16:45', message: 'positive analyst note from Goldman Sachs', level: 'info', severity: 'INFO' },
+      { id: 'a-3', at: '3 days ago', message: 'added to watchlist', level: 'neutral', severity: null },
     ],
     priceHistory30d: priceHistory(1247.50, 1),
     entryPrice: 1094.80,
@@ -47,8 +47,8 @@ export const mockWatchlistItems: WatchlistItem[] = [
     tag: 'HELD',
     verdictId: null,
     alerts: [
-      { id: 'a-4', at: '09:45 today', message: 'volume 2.3x average on open', level: 'elevated' },
-      { id: 'a-5', at: '2 days ago', message: 'added to watchlist', level: 'neutral' },
+      { id: 'a-4', at: '09:45 today', message: 'volume 2.3x average on open', level: 'elevated', severity: 'WARNING' },
+      { id: 'a-5', at: '2 days ago', message: 'added to watchlist', level: 'neutral', severity: null },
     ],
     priceHistory30d: priceHistory(143.20, -1),
     entryPrice: 146.00,
@@ -113,7 +113,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     tag: 'TRACKING',
     verdictId: null,
     alerts: [
-      { id: 'a-6', at: '11:02 today', message: 'unusual options activity detected', level: 'elevated' },
+      { id: 'a-6', at: '11:02 today', message: 'unusual options activity detected', level: 'elevated', severity: 'WARNING' },
     ],
     priceHistory30d: priceHistory(167.45, 1.5),
     entryPrice: 154.20,
@@ -157,7 +157,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     tag: 'TRACKING',
     verdictId: null,
     alerts: [
-      { id: 'a-7', at: 'yesterday 14:30', message: 'price declined below 30d moving average', level: 'elevated' },
+      { id: 'a-7', at: 'yesterday 14:30', message: 'price declined below 30d moving average', level: 'elevated', severity: 'WARNING' },
     ],
     priceHistory30d: priceHistory(312.40, -1.2),
     entryPrice: null,

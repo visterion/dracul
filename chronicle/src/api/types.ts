@@ -188,6 +188,7 @@ export interface WatchlistAlert {
   at: string
   message: string
   level: 'elevated' | 'info' | 'neutral'
+  severity: string | null
 }
 
 export interface LiveAlert {
