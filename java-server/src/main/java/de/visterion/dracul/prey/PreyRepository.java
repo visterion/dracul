@@ -71,7 +71,7 @@ public class PreyRepository {
     public List<Prey> findElapsedUnreviewed(String userId, Integer lookbackDays) {
         String lookbackClause = lookbackDays == null
                 ? ""
-                : " AND discovered_at >= now() - (:lookbackDays::text || ' days')::interval";
+                : " AND discovered_at >= now() - (:lookbackDays::text || ' days')::interval ";
         var spec = jdbc.sql("""
                 SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
                        signals, risks, kill_criteria, horizon, discovered_by, discovered_at
