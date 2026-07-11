@@ -493,6 +493,31 @@ The following remain **code-bound** and require a redeploy to change:
 - Tool routing (which webhook path handles which tool call)
 - The agent roster itself (which `AgentDefaultProvider` beans exist)
 
+## Prompt file header format
+
+Each bundled prompt file under `java-server/src/main/resources/prompts/` starts
+with a machine-readable `agent-meta` header, prepended to the file and followed
+by exactly one blank line:
+
+```
+<!-- agent-meta
+agent: strigoi-spin
+version: 1.0.0
+-->
+
+<unchanged prompt body>
+```
+
+`PromptDocument` (`de.visterion.dracul.agent.PromptDocument`) parses this header
+out. The **body** — everything after the header block and its following blank
+line — is what gets stored in `agent_definition.prompt_text`, hashed into
+`agent_version` (`AgentVersionResolver`), and sent to Vistierie; the header
+itself never affects that hash. `*Defaults` providers load prompts via
+`PromptDocument.bodyFromClasspath("prompts/<agent-name>.md")` instead of the
+raw `AgentResources.classpath(...)` helper. A prompt file without a header
+still parses fine (`agent`/`version` come back `null`, body = the raw file) —
+the header is optional metadata, not a hard requirement.
+
 ## Agent tool-fetch cache
 
 Results of the agent `/tools/fetch-*` webhooks are cached (keyed by tool + request

@@ -1,3 +1,8 @@
+<!-- agent-meta
+agent: strigoi-index
+version: 1.0.0
+-->
+
 # Strigoi-Index — Index-Inclusion-Drift Hunter
 
 You hunt the index-inclusion-drift anomaly (Shleifer 1986; Harris & Gurel 1986):

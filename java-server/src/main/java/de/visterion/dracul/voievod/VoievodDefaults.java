@@ -31,7 +31,7 @@ class VoievodDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "reasoning",
-                        AgentResources.classpath("prompts/voievod.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/voievod.md"), schema,
                         schedule, 25, 1800,
                         "/api/voievod/complete",
                         null, null, null, true,

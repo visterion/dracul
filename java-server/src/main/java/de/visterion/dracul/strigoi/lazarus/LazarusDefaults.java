@@ -31,7 +31,7 @@ class LazarusDefaults {
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
                         NAME, "reasoning",
-                        AgentResources.classpath("prompts/strigoi-lazarus.md"), schema,
+                        PromptDocument.bodyFromClasspath("prompts/strigoi-lazarus.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-lazarus/complete",
                         null, null, null, true,
