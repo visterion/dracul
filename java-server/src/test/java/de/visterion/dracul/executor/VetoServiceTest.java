@@ -33,7 +33,7 @@ class VetoServiceTest {
 
     private Sizing sizing() {
         return new Sizing(BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(100),
-                BigDecimal.ZERO, BigDecimal.ZERO, true);
+                BigDecimal.ZERO, BigDecimal.ZERO, true, "entry - 2.5 x ATR22");
     }
 
     private VetoConfig cfg() {

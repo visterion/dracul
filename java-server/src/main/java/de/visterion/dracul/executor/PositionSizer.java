@@ -42,7 +42,8 @@ public class PositionSizer {
                     BigDecimal.ZERO,
                     BigDecimal.ZERO,
                     BigDecimal.ZERO,
-                    false
+                    false,
+                    null
             );
         }
 
@@ -50,6 +51,7 @@ public class PositionSizer {
         BigDecimal stopMin, stopMax;
         BigDecimal rPerShare;
         boolean stopInWindow;
+        String stopBasis;
 
         if ("BUY".equalsIgnoreCase(side)) {
             // BUY: anchor = min(price - 2.5×atr, swingLow), floor uses min and -
@@ -58,7 +60,11 @@ public class PositionSizer {
             BigDecimal atrQuarter = atr.multiply(new BigDecimal("0.25"));
 
             BigDecimal buyAnchor = price.subtract(atrTwoHalf);
-            BigDecimal anchor = swingLow != null ? min(buyAnchor, swingLow) : buyAnchor;
+            boolean swingLowWins = swingLow != null && swingLow.compareTo(buyAnchor) < 0;
+            BigDecimal anchor = swingLowWins ? swingLow : buyAnchor;
+            stopBasis = swingLowWins
+                    ? "swing_low " + plain(swingLow) + " (wider than entry - 2.5 x ATR22 " + plain(buyAnchor) + ")"
+                    : "entry - 2.5 x ATR22";
 
             BigDecimal buyFloorBase = price.subtract(atrThree);
             BigDecimal floorBeforeAdjust = swingLow != null ? min(buyFloorBase, swingLow) : buyFloorBase;
@@ -76,7 +82,11 @@ public class PositionSizer {
             BigDecimal atrQuarter = atr.multiply(new BigDecimal("0.25"));
 
             BigDecimal sellAnchor = price.add(atrTwoHalf);
-            BigDecimal anchor = swingLow != null ? max(sellAnchor, swingLow) : sellAnchor;
+            boolean swingLowWins = swingLow != null && swingLow.compareTo(sellAnchor) > 0;
+            BigDecimal anchor = swingLowWins ? swingLow : sellAnchor;
+            stopBasis = swingLowWins
+                    ? "swing_low " + plain(swingLow) + " (wider than entry + 2.5 x ATR22 " + plain(sellAnchor) + ")"
+                    : "entry + 2.5 x ATR22";
 
             BigDecimal sellFloorBase = price.add(atrThree);
             BigDecimal floorBeforeAdjust = swingLow != null ? max(sellFloorBase, swingLow) : sellFloorBase;
@@ -92,7 +102,7 @@ public class PositionSizer {
         BigDecimal newRiskAccountCcy = qty.multiply(rPerShare).multiply(fxToAccount)
                 .setScale(4, RoundingMode.HALF_UP);
 
-        return new Sizing(qty, rPerShare, newRiskAccountCcy, stopMin, stopMax, stopInWindow);
+        return new Sizing(qty, rPerShare, newRiskAccountCcy, stopMin, stopMax, stopInWindow, stopBasis);
     }
 
     private BigDecimal min(BigDecimal a, BigDecimal b) {
@@ -101,5 +111,11 @@ public class PositionSizer {
 
     private BigDecimal max(BigDecimal a, BigDecimal b) {
         return a.compareTo(b) > 0 ? a : b;
+    }
+
+    /** Trailing-zero-free plain string for stop-basis audit text (e.g. {@code 38.10} not
+     *  {@code 38.100000}). */
+    private String plain(BigDecimal v) {
+        return v.stripTrailingZeros().toPlainString();
     }
 }

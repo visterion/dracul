@@ -12,5 +12,8 @@ public record Sizing(
         BigDecimal newRiskAccountCcy,
         BigDecimal stopMin,
         BigDecimal stopMax,
-        boolean stopInWindow
+        boolean stopInWindow,
+        /** Human-readable audit trail of which anchor won: the ATR-only baseline, or a wider
+         *  swing-low. Null only when qty is zero and no anchor was ever chosen. */
+        String stopBasis
 ) {}

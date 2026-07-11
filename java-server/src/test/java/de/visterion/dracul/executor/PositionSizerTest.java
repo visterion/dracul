@@ -59,4 +59,42 @@ class PositionSizerTest {
         assertThat(s.stopInWindow()).isTrue();
         assertThat(s.rPerShare()).isEqualByComparingTo("11");
     }
+
+    // ---- stopBasis: which anchor won (ATR-only baseline vs a wider swing-low) ----
+
+    @Test
+    void stopBasisIsAtrWhenNoSwingLow() { // no swingLow -> ATR-only anchor always wins
+        Sizing s = sizer.size("BUY", bd("100"), bd("4"), null, bd("89.0"), bd("1000"), BigDecimal.ONE);
+        assertThat(s.stopBasis()).contains("ATR");
+    }
+
+    @Test
+    void stopBasisIsAtrWhenAtrAnchorWiderThanSwingLow() { // swingLow 88 is TIGHTER than ATR anchor 90 -> ATR wins
+        Sizing s = sizer.size("BUY", bd("100"), bd("4"), bd("88"), bd("89.0"), bd("1000"), BigDecimal.ONE);
+        assertThat(s.stopBasis()).contains("ATR");
+    }
+
+    @Test
+    void stopBasisIsSwingLowWhenWiderThanAtrAnchor() { // swingLow 85 < ATR anchor 90 -> swing_low wins
+        Sizing s = sizer.size("BUY", bd("100"), bd("4"), bd("85"), bd("84.5"), bd("1000"), BigDecimal.ONE);
+        assertThat(s.stopBasis()).contains("swing_low");
+    }
+
+    @Test
+    void stopBasisSellMirror_atrWinsWhenNoSwingLow() {
+        Sizing s = sizer.size("SELL", bd("100"), bd("4"), null, bd("111"), bd("1000"), BigDecimal.ONE);
+        assertThat(s.stopBasis()).contains("ATR");
+    }
+
+    @Test
+    void stopBasisSellMirror_swingLowWinsWhenWider() { // sellAnchor=110; swingLow 115 > 110 -> swing_low wins
+        Sizing s = sizer.size("SELL", bd("100"), bd("4"), bd("115"), bd("116"), bd("1000"), BigDecimal.ONE);
+        assertThat(s.stopBasis()).contains("swing_low");
+    }
+
+    @Test
+    void stopBasisNullWhenQtyZero() {
+        Sizing s = sizer.size("BUY", bd("1200"), bd("10"), null, bd("1150"), bd("1000"), BigDecimal.ONE);
+        assertThat(s.stopBasis()).isNull();
+    }
 }

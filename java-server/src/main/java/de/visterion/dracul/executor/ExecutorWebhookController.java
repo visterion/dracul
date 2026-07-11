@@ -22,12 +22,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,6 +92,7 @@ public class ExecutorWebhookController {
     private final int swingPeriod;
     private final int cooldownDays;
     private final int maxTranche;
+    private final int entryGtdDays;
 
     public ExecutorWebhookController(
             ExecutorSignalRepository signalRepo,
@@ -124,7 +128,55 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays,
             @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
             @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek,
-            @Value("${dracul.executor.max-tranche:2}") int maxTranche) {
+            @Value("${dracul.executor.max-tranche:2}") int maxTranche,
+            @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays) {
+        this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
+                pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
+                tranche2Detector, telegram, webhookToken, connection, minConfidence, maxPositions, atrPeriod,
+                swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct, maxPerSector, minPrice,
+                advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche, entryGtdDays,
+                Clock.systemUTC());
+    }
+
+    /** Package-private overload with an injectable {@link Clock}, so tests can assert
+     *  deterministic {@code latency.signal_to_decision_seconds} values. */
+    ExecutorWebhookController(
+            ExecutorSignalRepository signalRepo,
+            ExecutorPositionRepository positionRepo,
+            ExecutorDecisionRepository decisionRepo,
+            VetoService vetoService,
+            OrderGuard orderGuard,
+            ExecutionGateway gateway,
+            ExecutorIndicators executorIndicators,
+            MaintenancePipeline pipeline,
+            DecisionLogRepository decisionLogRepo,
+            CooldownRepository cooldownRepo,
+            RuleVersionProvider ruleVersions,
+            ObjectMapper mapper,
+            EntryContextAssembler assembler,
+            PositionSizer sizer,
+            SignalRanker ranker,
+            Tranche2Detector tranche2Detector,
+            TelegramNotifier telegram,
+            String webhookToken,
+            String connection,
+            double minConfidence,
+            int maxPositions,
+            int atrPeriod,
+            int swingPeriod,
+            int cooldownDays,
+            java.math.BigDecimal totalBudget,
+            int trancheCount,
+            double heatPct,
+            int maxPerSector,
+            java.math.BigDecimal minPrice,
+            int advMultiple,
+            int maxSignalAgeDays,
+            double chaseAtrMult,
+            int pacePerWeek,
+            int maxTranche,
+            int entryGtdDays,
+            Clock clock) {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
@@ -138,7 +190,7 @@ public class ExecutorWebhookController {
         this.cooldownRepo = cooldownRepo;
         this.ruleVersions = ruleVersions;
         this.mapper = mapper;
-        this.clock = Clock.systemUTC();
+        this.clock = clock;
         this.connection = connection;
         this.minConfidence = minConfidence;
         this.maxPositions = maxPositions;
@@ -146,6 +198,7 @@ public class ExecutorWebhookController {
         this.swingPeriod = swingPeriod;
         this.cooldownDays = cooldownDays;
         this.maxTranche = maxTranche;
+        this.entryGtdDays = entryGtdDays;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
@@ -269,6 +322,91 @@ public class ExecutorWebhookController {
     }
 
     // -------------------------------------------------------------------
+    // rich decision_log construction — inputs snapshot, measured vetos, latency.
+    // Mirrors HardTriggerService's decision-log idiom; every place-entry outcome (accept or
+    // reject) gets one of these rows, joined later by Task 9's outcome-analytics batch job.
+    // -------------------------------------------------------------------
+
+    /** {@code check/passed/measured} for every veto, in evaluation order. */
+    private ArrayNode vetoResultsNode(List<VetoResult> results) {
+        ArrayNode arr = mapper.createArrayNode();
+        for (VetoResult r : results) {
+            ObjectNode n = mapper.createObjectNode();
+            n.put("check", r.check());
+            n.put("passed", r.passed());
+            n.put("measured", r.measured());
+            arr.add(n);
+        }
+        return arr;
+    }
+
+    /**
+     * The full inputs snapshot required by the decision-log spec. Values already computed by
+     * {@link VetoService#evaluate} are read from {@code veto.snapshot()} rather than
+     * recomputed here; {@code order_price}/{@code atr} come straight from what the controller
+     * already has in scope. {@code signal_age_trading_days} uses {@code ctx}'s own {@code -1}
+     * "unparseable" sentinel to decide null vs. a real value — never fabricated.
+     */
+    private ObjectNode inputsSnapshotNode(ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
+            VetoService.Outcome veto) {
+        ObjectNode n = mapper.createObjectNode();
+        n.put("signal_confidence", signal.confidence());
+        n.put("signal_mechanism", signal.mechanism());
+        long ageDays = ctx.signalAgeTradingDays();
+        if (ageDays < 0) n.putNull("signal_age_trading_days");
+        else n.put("signal_age_trading_days", ageDays);
+        n.put("order_price", orderPrice);
+        n.put("atr", ctx.atr());
+        n.put("book_positions_count", ctx.openPositions() == null ? 0 : ctx.openPositions().size());
+
+        // Ternaries like `snap == null ? (Double) null : snap.heatBeforePct()` are a classic trap:
+        // binary numeric promotion forces the null branch through unboxing too, NPEing exactly
+        // when snap IS null. Plain if/else avoids it.
+        VetoService.Snapshot snap = veto.snapshot();
+        if (snap == null) {
+            n.putNull("portfolio_heat_before_pct");
+            n.putNull("portfolio_heat_after_pct");
+            n.putNull("budget_free");
+            n.putNull("new_positions_this_week");
+            n.putNull("sector_count_same");
+            n.putNull("cooldown_status");
+        } else {
+            n.put("portfolio_heat_before_pct", snap.heatBeforePct());
+            n.put("portfolio_heat_after_pct", snap.heatAfterPct());
+            n.put("budget_free", snap.budgetFree());
+            n.put("new_positions_this_week", snap.newPositionsThisWeek());
+            n.put("sector_count_same", snap.sectorCountSame());
+            n.put("cooldown_status", snap.cooldownStatus());
+        }
+        return n;
+    }
+
+    /** {@code latency.signal_to_decision_seconds}, omitted entirely (null) when the signal's
+     *  {@code createdAt} is missing or unparseable rather than guessed. */
+    private ObjectNode latencyNode(String signalCreatedAt, Instant now) {
+        if (signalCreatedAt == null) return null;
+        try {
+            Instant created = Instant.parse(signalCreatedAt);
+            ObjectNode n = mapper.createObjectNode();
+            n.put("signal_to_decision_seconds", Duration.between(created, now).getSeconds());
+            return n;
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /** Inserts one rich {@code decision_log} row for a place-entry accept or reject. */
+    private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
+            BigDecimal orderPrice, VetoService.Outcome veto, String action, String reasonCode,
+            ObjectNode orderJson, Instant now) {
+        decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
+                signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
+                inputsSnapshotNode(signal, ctx, orderPrice, veto), vetoResultsNode(veto.results()),
+                action, reasonCode, orderJson, null, null,
+                latencyNode(signal.createdAt(), now), null));
+    }
+
+    // -------------------------------------------------------------------
     // place-entry — the guarded core
     // -------------------------------------------------------------------
 
@@ -338,7 +476,7 @@ public class ExecutorWebhookController {
                     ctx.trancheAmount(), ctx.fxToAccount());
         } else {
             orderPrice = null;
-            sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false);
+            sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false, null);
         }
 
         VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig);
@@ -352,6 +490,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected by veto: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, clock.instant());
 
             if (veto.firstFailure() == RejectReason.CONTRADICTION
                     && veto.contradictingSignalId() != null) {
@@ -370,6 +509,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
@@ -391,6 +531,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
         }
@@ -421,6 +562,8 @@ public class ExecutorWebhookController {
                     "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
                     null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
+            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", "BROKER_ERROR", null,
+                    clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
         }
@@ -441,9 +584,22 @@ public class ExecutorWebhookController {
             try {
                 decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
                         null, vetoTrace, "entry placed", brokerOrderId, runId, null));
+
+                ObjectNode orderJson = mapper.createObjectNode();
+                orderJson.put("type", "limit_bracket");
+                orderJson.put("qty", qty);
+                orderJson.put("limit_price", limitPrice);
+                orderJson.put("stop_price", stopPrice);
+                orderJson.put("take_profit", takeProfit);
+                orderJson.put("stop_basis", sizing.stopBasis());
+                orderJson.put("r_per_share", sizing.rPerShare());
+                orderJson.put("position_risk", sizing.newRiskAccountCcy());
+                orderJson.put("gtd_days", entryGtdDays);
+                logEntryDecision(runId, signal, ctx, orderPrice, veto, "ENTER", null, orderJson,
+                        clock.instant());
             } catch (RuntimeException e) {
                 // Position and signal status are durably persisted — the order is managed.
-                // Only the accepted-audit row is missing; log it, but do not flip the response
+                // Only the accepted-audit row(s) are missing; log it, but do not flip the response
                 // into a false ORPHANED_ORDER (that would contradict persisted state).
                 log.error("accepted-audit decisionRepo.insert failed for signal {} position {} "
                                 + "broker order {}: {}",
