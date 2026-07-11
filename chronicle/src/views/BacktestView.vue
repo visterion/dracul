@@ -70,7 +70,10 @@
         v-for="(r, i) in RECENT"
         :key="i"
         class="bt-recent-card"
-        :class="{ active: r.active }"
+        :class="{ active: i === selectedIdx }"
+        role="button"
+        tabindex="0"
+        @click="selectedIdx = i"
       >
         <div class="brc-title">{{ r.strigoi }} · {{ r.universe }} · {{ r.span }}</div>
         <div class="brc-stats">
@@ -84,6 +87,9 @@
 
     <!-- results -->
     <SectionHeader :label="t('backtest.sections.results')" />
+    <div class="bt-context mono" data-testid="bt-context">
+      {{ selectedRun.strigoi }} · {{ selectedRun.universe }} · {{ selectedRun.span }}
+    </div>
     <div class="bt-restabs" role="tablist" :aria-label="t('backtest.sections.results')">
       <button
         v-for="tab in tabs"
@@ -183,6 +189,9 @@ const RECENT = [
   { strigoi: 'Strigoi-Spin', universe: 'NASDAQ 100', span: '2022–2026', hit: 0.61, avg: 0.118, when: 'vor 3d', active: false },
 ]
 
+const selectedIdx = ref(RECENT.findIndex(r => r.active))
+const selectedRun = computed(() => RECENT[selectedIdx.value] ?? RECENT[0])
+
 const TRADES = [
   { sym: 'AVGO', in: '2024-03-15', out: '2024-09-15', ret: 0.284, thesis: true },
   { sym: 'MELI', in: '2024-04-02', out: '2024-10-02', ret: 0.197, thesis: true },
@@ -247,6 +256,8 @@ const toDate = '07.06.2026'
 .brc-stats b { color: var(--bone-ivory); font-weight: 500; }
 .brc-sep { color: rgba(107, 107, 112, 0.5); }
 .brc-when { font-size: var(--text-micro); color: var(--ash-gray); margin-top: var(--space-2); }
+
+.bt-context { font-size: var(--text-body-sm); color: var(--bone-ivory-dim); margin-bottom: var(--space-3); }
 
 /* ---- result tabs ---- */
 .bt-restabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-5); border-bottom: 1px solid var(--rule); }
