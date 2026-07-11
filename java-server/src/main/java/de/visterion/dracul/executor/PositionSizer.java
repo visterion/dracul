@@ -55,13 +55,12 @@ public class PositionSizer {
 
         if ("BUY".equalsIgnoreCase(side)) {
             // BUY: anchor = min(price - 2.5×atr, swingLow), floor uses min and -
-            BigDecimal atrTwoHalf = atr.multiply(new BigDecimal("2.5"));
             BigDecimal atrThree = atr.multiply(BigDecimal.valueOf(3));
             BigDecimal atrQuarter = atr.multiply(new BigDecimal("0.25"));
 
-            BigDecimal buyAnchor = price.subtract(atrTwoHalf);
+            BigDecimal buyAnchor = price.subtract(atr.multiply(new BigDecimal("2.5")));
             boolean swingLowWins = swingLow != null && swingLow.compareTo(buyAnchor) < 0;
-            BigDecimal anchor = swingLowWins ? swingLow : buyAnchor;
+            BigDecimal anchor = deriveStopAnchor(side, price, atr, swingLow);
             stopBasis = swingLowWins
                     ? "swing_low " + plain(swingLow) + " (wider than entry - 2.5 x ATR22 " + plain(buyAnchor) + ")"
                     : "entry - 2.5 x ATR22";
@@ -77,13 +76,12 @@ public class PositionSizer {
 
         } else {
             // SELL: anchor = max(price + 2.5×atr, swingLow), floor uses max and +
-            BigDecimal atrTwoHalf = atr.multiply(new BigDecimal("2.5"));
             BigDecimal atrThree = atr.multiply(BigDecimal.valueOf(3));
             BigDecimal atrQuarter = atr.multiply(new BigDecimal("0.25"));
 
-            BigDecimal sellAnchor = price.add(atrTwoHalf);
+            BigDecimal sellAnchor = price.add(atr.multiply(new BigDecimal("2.5")));
             boolean swingLowWins = swingLow != null && swingLow.compareTo(sellAnchor) > 0;
-            BigDecimal anchor = swingLowWins ? swingLow : sellAnchor;
+            BigDecimal anchor = deriveStopAnchor(side, price, atr, swingLow);
             stopBasis = swingLowWins
                     ? "swing_low " + plain(swingLow) + " (wider than entry + 2.5 x ATR22 " + plain(sellAnchor) + ")"
                     : "entry + 2.5 x ATR22";
@@ -103,6 +101,32 @@ public class PositionSizer {
                 .setScale(4, RoundingMode.HALF_UP);
 
         return new Sizing(qty, rPerShare, newRiskAccountCcy, stopMin, stopMax, stopInWindow, stopBasis);
+    }
+
+    /**
+     * Derives the protective-stop anchor (single source of truth, also used by
+     * {@link de.visterion.dracul.outcome.HypotheticalREngine} to walk hypothetical price paths
+     * without needing the full {@link #size} call, which requires a tranche amount / FX rate
+     * irrelevant to a stop-only computation).
+     *
+     * <p>BUY: {@code min(price - 2.5*atr, swingLow)}. SELL: {@code max(price + 2.5*atr, swingLow)}.
+     * {@code swingLow} may be null, in which case the ATR-only anchor is used.
+     *
+     * @param side "BUY" or "SELL"
+     * @param price entry/reference price (instrument currency)
+     * @param atr average true range (instrument currency)
+     * @param swingLow recent swing low, nullable (instrument currency)
+     * @return the anchor stop price (instrument currency)
+     */
+    public static BigDecimal deriveStopAnchor(String side, BigDecimal price, BigDecimal atr, BigDecimal swingLow) {
+        BigDecimal atrTwoHalf = atr.multiply(new BigDecimal("2.5"));
+        if ("BUY".equalsIgnoreCase(side)) {
+            BigDecimal buyAnchor = price.subtract(atrTwoHalf);
+            return (swingLow != null && swingLow.compareTo(buyAnchor) < 0) ? swingLow : buyAnchor;
+        } else {
+            BigDecimal sellAnchor = price.add(atrTwoHalf);
+            return (swingLow != null && swingLow.compareTo(sellAnchor) > 0) ? swingLow : sellAnchor;
+        }
     }
 
     private BigDecimal min(BigDecimal a, BigDecimal b) {
