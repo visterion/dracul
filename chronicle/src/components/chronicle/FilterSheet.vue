@@ -8,7 +8,6 @@
         <button class="filter-sheet__close" :aria-label="t('chronicle.filters.close')" @click="$emit('close')">✕</button>
       </header>
 
-      <div class="fg-head">{{ t('chronicle.filters.title') }}</div>
       <button class="filter-chip sheet-chip" :class="{ active: filter === 'all' }"
               data-testid="sheet-chip-all" @click="$emit('select', 'all')">
         {{ t('chronicle.filters.allPrey') }} <span class="fc-count font-mono">{{ counts.all ?? 0 }}</span>
