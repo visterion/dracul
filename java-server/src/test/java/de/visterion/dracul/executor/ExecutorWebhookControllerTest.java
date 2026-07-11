@@ -1473,14 +1473,18 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
-    void exitPosition_trimRemainingBelowOneShare_treatedAsFullExit() {
+    void exitPosition_trimRemainingBelowOneShare_treatedAsFullExit_brokerFlattensFully() {
         // qty=2, fraction=0.5 -> remaining = floor(2*0.5)=1, still >=1 share so this is NOT
         // the below-1-share case; use qty=1 instead so remaining floors to 0 and full-exit
         // semantics kick in (close + cooldown, not recordTrim).
+        //
+        // CRITICAL: when the book treats this as a full exit, the BROKER must be flattened
+        // fully too (fraction ONE, not 0.5) — otherwise the book closes while the broker
+        // still holds an unmanaged remainder.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("1"), 1);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
                 .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1492,7 +1496,8 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("exited")).isEqualTo(true);
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.5)));
+        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(gateway, never()).flatten(any(), any(), eq(BigDecimal.valueOf(0.5)));
         verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(cooldownRepo).add(eq("ACME"), eq("SCALE_OUT"), any(), any());

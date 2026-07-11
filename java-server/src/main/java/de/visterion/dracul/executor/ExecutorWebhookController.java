@@ -784,10 +784,13 @@ public class ExecutorWebhookController {
                 .setScale(0, RoundingMode.FLOOR);
         boolean fullExit = fraction == 1.0 || remaining.signum() <= 0;
 
-        // BigDecimal.valueOf(1.0) has scale 1 ("1.0") and is not .equals() to BigDecimal.ONE
-        // (scale 0) -- callers (gateway adapters, tests) expect the canonical BigDecimal.ONE for
-        // a full flatten, matching the pre-scale-out behavior exactly.
-        BigDecimal gatewayFraction = fraction == 1.0 ? BigDecimal.ONE : BigDecimal.valueOf(fraction);
+        // The broker fraction must follow the BOOK's exit semantics, not the raw request:
+        // whenever the book treats this as a full exit (explicit fraction 1.0 OR a small-qty
+        // trim whose remainder floors to 0 shares), the broker must be flattened fully too --
+        // otherwise the book would close (+ cooldown) while the broker keeps an unmanaged
+        // remainder. BigDecimal.ONE (scale 0, not BigDecimal.valueOf(1.0) with scale 1) is the
+        // canonical full-flatten value callers (gateway adapters, tests) expect.
+        BigDecimal gatewayFraction = fullExit ? BigDecimal.ONE : BigDecimal.valueOf(fraction);
 
         CloseResult cr;
         try {
