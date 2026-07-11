@@ -8,6 +8,7 @@ const i18n = createI18n({ legacy: false, locale: 'de', messages: { de } })
 
 function make(props = {}) {
   return mount(FilterSheet, {
+    attachTo: document.body,
     props: {
       open: true, filter: 'all', anomalyTypes: ['SPIN', 'PEAD'],
       counts: { all: 5, high: 2, SPIN: 3, PEAD: 2 },
@@ -55,5 +56,39 @@ describe('FilterSheet', () => {
     expect(document.body.style.overflow).toBe('hidden')
     await w.setProps({ open: false })
     expect(document.body.style.overflow).toBe('')
+  })
+
+  it('moves focus into the panel when opened', async () => {
+    const w = make({ open: true })
+    await w.vm.$nextTick()
+    const panel = w.find('[role="dialog"]').element
+    expect(panel.contains(document.activeElement)).toBe(true)
+    w.unmount()
+  })
+
+  it('wraps focus from the last focusable element to the first on Tab', async () => {
+    const w = make({ open: true })
+    await w.vm.$nextTick()
+    const focusables = w.find('[role="dialog"]').element
+      .querySelectorAll<HTMLElement>('button')
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    last.focus()
+    await w.find('[role="dialog"]').trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(first)
+    w.unmount()
+  })
+
+  it('returns focus to the triggering element on close', async () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+    const w = make({ open: true })
+    await w.vm.$nextTick()
+    await w.setProps({ open: false })
+    await w.vm.$nextTick()
+    expect(document.activeElement).toBe(trigger)
+    w.unmount()
+    trigger.remove()
   })
 })
