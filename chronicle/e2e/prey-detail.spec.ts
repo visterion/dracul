@@ -28,7 +28,7 @@ test.describe('Prey Detail View (/prey/:id)', () => {
   test('renders confidence bar', async ({ page }) => {
     const conf = page.locator('.conf-row')
     await expect(conf).toBeVisible()
-    await expect(conf).toContainText('0.84')
+    await expect(conf).toContainText('0,84')
   })
 
   test('renders at-a-glance kv facts (anomaly, horizon)', async ({ page }) => {
