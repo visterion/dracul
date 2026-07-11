@@ -205,6 +205,11 @@
               </div>
               <div class="agent-row__meta mono">
                 <span class="agent-row__state" :data-state="row.state">{{ agentStateLabel(row.state) }}</span>
+                <span
+                  v-if="row.budgetMissing"
+                  class="agent-row__budget-warn"
+                  :data-testid="`agent-budget-missing-${row.name}`"
+                >{{ t('settings.agentConfig.budgetMissing') }}</span>
                 <span>{{ agentSchedule(row) }}</span>
                 <span v-if="row.tier">{{ agentTierLabel(row.tier) }}</span>
                 <span v-if="row.primaryProvider">{{ row.primaryProvider }}</span>
@@ -712,6 +717,8 @@ onMounted(async () => {
   font-size: 12px; color: var(--ash-gray); }
 .agent-row__state[data-state="paused"] { color: var(--cathedral-gold); }
 .agent-row__state[data-state="budget-hit"] { color: var(--blood-red); }
+.agent-row__budget-warn { color: var(--blood-red); font-weight: 600;
+  border: 1px solid var(--blood-red); border-radius: 4px; padding: 1px 6px; }
 .agent-row__run { flex: 0 0 auto; }
 .agent-row__toggle { flex: 0 0 auto; }
 

@@ -121,6 +121,7 @@ export default {
       loadError: 'Agenten konnten nicht geladen werden.',
       pauseError: 'Zustand konnte nicht geändert werden.',
       empty: 'Keine Agenten registriert.',
+      budgetMissing: 'kein Budget',
       edit: {
         open: 'Bearbeiten',
         title: '{name} bearbeiten',

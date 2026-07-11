@@ -11,5 +11,6 @@ public record AgentConfigRow(
         String nextRunAt,       // ISO instant or null
         double dailyUsedUsd,
         double dailyBudgetUsd,  // 0 when uncapped/unavailable
-        String primaryProvider  // null if detail unavailable
+        String primaryProvider, // null if detail unavailable
+        boolean budgetMissing   // true when a scheduled agent has no Vistierie budget configured
 ) {}
