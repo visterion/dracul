@@ -11,7 +11,7 @@
     <div v-if="error" class="empty small"><div class="em-text">{{ error }}</div></div>
 
     <template v-else-if="loading">
-      <div class="dp-loading">{{ t('depots.loading') }}</div>
+      <v-skeleton-loader v-for="i in 3" :key="i" type="list-item-two-line" />
     </template>
 
     <div v-else-if="depots.length === 0" class="empty small" data-testid="depots-empty">
@@ -85,8 +85,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.dp-loading { color: var(--ash-gray); padding: var(--space-8) 0; text-align: center; }
-
 .depots-summary {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap;
   background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;

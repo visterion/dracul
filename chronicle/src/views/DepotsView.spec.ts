@@ -3,9 +3,24 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DepotsView from './DepotsView.vue'
+import LineChart from '../components/common/LineChart.vue'
 import de from '../i18n/locales/de'
-import type { Depot, DepotsResponse, DepotChart } from '../api/types'
+import type { Depot, DepotsResponse, DepotChart, ChartRange } from '../api/types'
 import { mockDepotChart } from '../mocks/depots'
+
+function chartFixture(markerValue: number): DepotChart {
+  return {
+    points: [
+      { t: '2026-07-01', value: markerValue },
+      { t: '2026-07-02', value: markerValue },
+    ],
+    relative: [
+      { t: '2026-07-01', pct: markerValue },
+      { t: '2026-07-02', pct: markerValue },
+    ],
+    partial: false,
+  }
+}
 
 function depot(overrides: Partial<Depot> = {}): Depot {
   return {
@@ -36,11 +51,13 @@ function depot(overrides: Partial<Depot> = {}): Depot {
 }
 
 let depotsResponse: DepotsResponse
+let getDepotChartImpl: (connection: string, range: ChartRange) => Promise<DepotChart> =
+  async () => mockDepotChart
 
 vi.mock('../api', () => ({
   useApi: () => ({
     getDepots: vi.fn(async () => depotsResponse),
-    getDepotChart: vi.fn(async (): Promise<DepotChart> => mockDepotChart),
+    getDepotChart: vi.fn((connection: string, range: ChartRange) => getDepotChartImpl(connection, range)),
   }),
 }))
 
@@ -60,6 +77,7 @@ function mountView() {
 beforeEach(() => {
   localStorage.clear()
   router.push('/depots')
+  getDepotChartImpl = async () => mockDepotChart
 })
 
 describe('DepotsView', () => {
@@ -123,9 +141,61 @@ describe('DepotsView', () => {
     const w = mountView()
     await flushPromises()
 
-    const dayChangeCells = w.findAll('[data-testid="day-change-cell"]').map(c => c.text())
-    // ABB has dayChangePercent: null in the fixture above
-    expect(dayChangeCells).toContain('—')
-    expect(dayChangeCells.some(t => t === '0' || t.includes('0,00'))).toBe(false)
+    // ABB has dayChangePercent: null in the fixture above; switch to the "Heute" metric
+    // so the change column actually renders day-change values.
+    await w.find('[data-testid="depot-metric-select"]').setValue('today')
+    await flushPromises()
+
+    const changeCells = w.findAll('[data-testid="change-cell"]').map(c => c.text())
+    expect(changeCells).toContain('—')
+    expect(changeCells.some(t => t === '0' || t.includes('0,00'))).toBe(false)
+  })
+
+  it('metric selector switches the change column between since-buy and day-change', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    // Default metric is "Seit Kauf" (sinceBuy): both rows have a real unrealizedPl value.
+    const sinceBuyCells = w.findAll('[data-testid="change-cell"]').map(c => c.text())
+    expect(sinceBuyCells.some(t => t === '—')).toBe(false)
+
+    await w.find('[data-testid="depot-metric-select"]').setValue('today')
+    await flushPromises()
+
+    // "Heute": ABB's dayChangePercent is null, so its cell must now show the dash,
+    // and the rendered values must differ from the since-buy figures.
+    const todayCells = w.findAll('[data-testid="change-cell"]').map(c => c.text())
+    expect(todayCells).toContain('—')
+    expect(todayCells).not.toEqual(sinceBuyCells)
+  })
+
+  it('ignores a stale chart response when the range is switched again before it resolves', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
+
+    const resolvers: Partial<Record<ChartRange, (v: DepotChart) => void>> = {}
+    getDepotChartImpl = (_connection, range) =>
+      new Promise(resolve => {
+        resolvers[range] = resolve
+      })
+
+    const w = mountView()
+    await flushPromises()
+    resolvers['1m']?.(chartFixture(1)) // resolve the initial onMounted load ('1m' is the default range)
+    await flushPromises()
+
+    await w.find('[data-testid="depot-range-1w"]').trigger('click')
+    await flushPromises()
+    await w.find('[data-testid="depot-range-1y"]').trigger('click')
+    await flushPromises()
+
+    // Resolve out of order: the stale '1w' request resolves AFTER the newer '1y' one.
+    resolvers['1y']?.(chartFixture(999))
+    await flushPromises()
+    resolvers['1w']?.(chartFixture(111))
+    await flushPromises()
+
+    const chart = w.findComponent(LineChart)
+    expect(chart.props('series')[0].data).toEqual([999, 999])
   })
 })
