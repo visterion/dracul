@@ -707,4 +707,39 @@ class HttpVistierieClientTest {
         wm.stubFor(get(urlPathEqualTo("/runs/Rx/transcript")).willReturn(aResponse().withStatus(404)));
         assertThat(client.getRunTranscript("Rx", "digest")).isNull();
     }
+
+    // -------------------------------------------------------------------------
+    // getCostByAgent
+    // -------------------------------------------------------------------------
+
+    @Test
+    void getCostByAgent_parsesRowsAndMapsNullGroupToUnattributed() {
+        wm.stubFor(get(urlPathEqualTo("/admin/cost"))
+                .withQueryParam("group_by", equalTo("agent"))
+                .withQueryParam("tenant", equalTo("dracul"))
+                .willReturn(okJson("""
+                        {"buckets":[{"groups":[
+                          {"dimensions":{"agent":"strigoi-spin"},"cost_micros":800000},
+                          {"dimensions":{"agent":"voievod"},"cost_micros":240000},
+                          {"dimensions":{"agent":"(unattributed)"},"cost_micros":20000}
+                        ]}]}
+                        """)));
+
+        var result = client.getCostByAgent(java.time.Instant.parse("2026-07-01T00:00:00Z"));
+
+        assertThat(result)
+                .containsEntry("strigoi-spin", 800_000L)
+                .containsEntry("voievod", 240_000L)
+                .containsEntry("(unattributed)", 20_000L); // Vistierie F2 liefert NULL-agent_id bereits als "(unattributed)"-Gruppe
+    }
+
+    @Test
+    void getCostByAgent_propagates400ForOldVistierie() {
+        wm.stubFor(get(urlPathEqualTo("/admin/cost"))
+                .withQueryParam("group_by", equalTo("agent"))
+                .willReturn(aResponse().withStatus(400)));
+
+        assertThatThrownBy(() -> client.getCostByAgent(java.time.Instant.parse("2026-07-01T00:00:00Z")))
+                .isInstanceOf(org.springframework.web.client.HttpClientErrorException.BadRequest.class);
+    }
 }
