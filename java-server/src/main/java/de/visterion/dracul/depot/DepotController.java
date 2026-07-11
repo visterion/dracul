@@ -41,21 +41,7 @@ public class DepotController {
 
     @GetMapping("/{connection}/positions/{symbol}")
     public PositionDetailResponse positionDetail(@PathVariable String connection, @PathVariable String symbol) {
-        List<DepotDto> depots;
-        try {
-            depots = service.depots(CurrentUserHolder.get());
-        } catch (DepotUnavailableException e) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
-        }
-
-        DepotDto depot = depots.stream()
-                .filter(d -> connection.equals(d.id()))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown depot connection"));
-
-        if (depot.error() != null || depot.positions() == null) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, depot.error());
-        }
+        DepotDto depot = resolveDepot(connection);
 
         DepotPositionDto position = depot.positions().stream()
                 .filter(p -> symbol.equals(p.symbol()))
@@ -79,6 +65,23 @@ public class DepotController {
 
     @GetMapping("/{connection}/chart")
     public DepotChartResponse depotChart(@PathVariable String connection, @RequestParam String range) {
+        DepotDto depot = resolveDepot(connection);
+
+        List<DepotPosition> positions = depot.positions().stream()
+                .map(p -> new DepotPosition(p.symbol(), p.qty(), null, null, null, null))
+                .toList();
+        BigDecimal cash = depot.account() != null ? depot.account().cash() : null;
+
+        DepotChartService.DepotCurve curve = chartService.depotCurve(range, positions, cash);
+        return new DepotChartResponse(connection, range, curve.points(), curve.relative(), curve.partial());
+    }
+
+    /**
+     * Resolves a depot connection to its {@link DepotDto}, gating on Agora availability, the
+     * connection existing, and the depot's own fetch having succeeded. Shared by
+     * {@link #positionDetail} and {@link #depotChart} which both need a live, error-free depot.
+     */
+    private DepotDto resolveDepot(String connection) {
         List<DepotDto> depots;
         try {
             depots = service.depots(CurrentUserHolder.get());
@@ -95,13 +98,7 @@ public class DepotController {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, depot.error());
         }
 
-        List<DepotPosition> positions = depot.positions().stream()
-                .map(p -> new DepotPosition(p.symbol(), p.qty(), null, null, null, null))
-                .toList();
-        BigDecimal cash = depot.account() != null ? depot.account().cash() : null;
-
-        DepotChartService.DepotCurve curve = chartService.depotCurve(range, positions, cash);
-        return new DepotChartResponse(connection, range, curve.points(), curve.relative(), curve.partial());
+        return depot;
     }
 
     /** Response wrapper for {@code GET /api/depots}; {@code error} is non-null when Agora is unavailable. */
