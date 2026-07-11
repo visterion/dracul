@@ -165,6 +165,22 @@ class PreySignalEmitterTest {
     }
 
     @Test
+    void unknownSentinelVersionFromUnregisteredSourceIsSkipped() {
+        // Source agent has no DB row -> versions.versionFor returns the "unknown" sentinel.
+        // A signal carrying version "unknown" for that same source must NOT be treated as
+        // known just because the two sentinel strings are equal.
+        stubNoOpenOrPending();
+        ExecutorSignal mapped = mapperSignal("unknown");
+        when(mapper.map(any(Prey.class))).thenReturn(mapped);
+        when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
+        when(versions.versionFor("strigoi-spin")).thenReturn("unknown");
+
+        emitter.emit(List.of(samplePrey()));
+
+        verify(signalRepo, never()).insert(any(ExecutorSignal.class));
+    }
+
+    @Test
     void versionMissingFromRegistryButMatchingLiveDbVersionIsEmitted() {
         stubNoOpenOrPending();
         ExecutorSignal mapped = mapperSignal("p-edited");

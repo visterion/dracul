@@ -97,9 +97,15 @@ public class PreySignalEmitter {
      * must be a registry-known body hash, or the live-DB fallback keeps legitimately
      * user-edited prompts (registry miss, but matching the agent's current stored prompt)
      * working.
+     *
+     * <p>The live-DB fallback excludes the {@code "unknown"} sentinel: {@code versions.versionFor}
+     * returns {@code "unknown"} when the source agent has no DB row, and a signal from that same
+     * unregistered source can also carry version {@code "unknown"} — without this exclusion the
+     * two sentinel strings would compare equal and the gate would wrongly treat it as known.
      */
     private boolean isKnownVersion(String source, String version) {
         if ("operator".equals(source)) return true;
-        return registry.knownHashes().contains(version) || versions.versionFor(source).equals(version);
+        String live = versions.versionFor(source);
+        return registry.knownHashes().contains(version) || (!"unknown".equals(live) && live.equals(version));
     }
 }
