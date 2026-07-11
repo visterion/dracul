@@ -19,18 +19,21 @@ public class StrigoiIndexWebhookController extends HuntController {
 
     private final AgoraReference reference;
     private final IndexScreener screener;
+    private final IndexEnrichmentService enrichment;
     private final int defaultLookback;
 
     public StrigoiIndexWebhookController(
             @Value("${dracul.strigoi.index.webhook-token}") String token,
             AgoraReference reference,
             IndexScreener screener,
+            IndexEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             @Value("${dracul.strigoi.index.lookback-days:30}") int defaultLookback) {
         super(token, preyRepo, cache);
         this.reference = reference;
         this.screener = screener;
+        this.enrichment = enrichment;
         this.defaultLookback = defaultLookback;
     }
 
@@ -44,7 +47,8 @@ public class StrigoiIndexWebhookController extends HuntController {
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
         var raw = reference.constituents();
-        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.screen(raw.items(), lookback), raw.health());
+        var enriched = enrichment.enrich(screener.screen(raw.items(), lookback));
+        return new de.visterion.dracul.hunting.DataSourceResult<>(enriched, raw.health());
     }
 
     @PostMapping("/tools/fetch-candidates")
