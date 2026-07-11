@@ -29,6 +29,11 @@
       :error="dialogError" :submitting="submitting"
       @submit="onSubmit"
     />
+
+    <div class="pf-calibration">
+      <SectionHeader :label="t('calibration.sectionLabel')" />
+      <CalibrationCard />
+    </div>
   </div>
 </template>
 
@@ -37,8 +42,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import PageHead from '../components/common/PageHead.vue'
+import SectionHeader from '../components/common/SectionHeader.vue'
 import PositionRow from '../components/portfolio/PositionRow.vue'
 import PositionDialog from '../components/portfolio/PositionDialog.vue'
+import CalibrationCard from '../components/CalibrationCard.vue'
 import { useApi } from '../api'
 import type { WatchlistItem, ExitSignal } from '../api/types'
 
@@ -127,4 +134,5 @@ async function onDelete(item: WatchlistItem) {
 <style scoped>
 .pf-toolbar { display: flex; justify-content: flex-end; margin-bottom: var(--space-4); }
 .pf-rows { display: flex; flex-direction: column; gap: var(--space-2); }
+.pf-calibration { margin-top: var(--space-8); }
 </style>

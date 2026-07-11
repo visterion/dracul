@@ -423,6 +423,74 @@ export interface AgentDefinitionEdit {
   tools: { toolName: string; description: string | null }[]
 }
 
+// ── Executor calibration / behavior (operator analytics) ───────
+
+export interface CalibrationBucket {
+  range: string
+  n: number
+  predicted: number
+  observed: number
+}
+
+/** Brier calibration for one unit (the executor overall, or one hunter). */
+export interface CalibrationUnit {
+  brier: number | null
+  n: number
+  insufficient: boolean
+  buckets: CalibrationBucket[]
+}
+
+export interface HunterCalibration extends CalibrationUnit {
+  agent: string
+}
+
+export interface ExecutorCalibration {
+  executor: CalibrationUnit
+  hunters: HunterCalibration[]
+}
+
+export interface VetoPrecisionRow {
+  reason_code: string
+  n: number
+  skipped: number
+  mean_hypothetical_r_20d: number | null
+  mean_hypothetical_r_60d: number | null
+  stopped_out_pct: number | null
+}
+
+export interface HardExitLatency {
+  n: number
+  max_seconds: number | null
+  p95_seconds: number | null
+}
+
+export interface WhipsawStats {
+  reentry_within_10d: number
+  roundtrip_under_5d: number
+}
+
+export interface StopBasisRow {
+  basis: string
+  n: number
+  mean_realized_r: number | null
+  mean_mae_r: number | null
+}
+
+export interface SlippageStats {
+  n: number
+  mean: number | null
+  worst: number | null
+}
+
+export interface ExecutorBehavior {
+  veto_precision: VetoPrecisionRow[]
+  caveats: string[]
+  hard_exit_latency: HardExitLatency
+  whipsaw: WhipsawStats
+  stop_basis: StopBasisRow[]
+  slippage: SlippageStats
+}
+
 // ── Settings / Data Sources ────────────────────────────────────
 
 export interface DataSourceHealth {

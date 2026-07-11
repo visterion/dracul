@@ -6,6 +6,7 @@ import type {
   CreateWatchlistRequest, PatchWatchlistRequest, PatchPositionRequest, LanguageSetting, CurrencySetting,
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
+  ExecutorCalibration, ExecutorBehavior,
 } from './types'
 
 export interface ApiClient {
@@ -44,4 +45,6 @@ export interface ApiClient {
   getMe(): Promise<Me>
   getExitSignals(): Promise<ExitSignal[]>
   getMorningReport(): Promise<MorningReport>
+  getExecutorCalibration(): Promise<ExecutorCalibration>
+  getExecutorBehavior(): Promise<ExecutorBehavior>
 }

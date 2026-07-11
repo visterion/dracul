@@ -6,6 +6,7 @@ import type {
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
+  ExecutorCalibration, ExecutorBehavior,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -282,5 +283,17 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/morning-report`)
     if (!res.ok) throw new Error(`getMorningReport failed: HTTP ${res.status}`)
     return res.json() as Promise<MorningReport>
+  }
+
+  async getExecutorCalibration(): Promise<ExecutorCalibration> {
+    const res = await fetch(`${this.baseUrl}/api/executor/calibration`)
+    if (!res.ok) throw new Error(`getExecutorCalibration failed: HTTP ${res.status}`)
+    return res.json() as Promise<ExecutorCalibration>
+  }
+
+  async getExecutorBehavior(): Promise<ExecutorBehavior> {
+    const res = await fetch(`${this.baseUrl}/api/executor/behavior`)
+    if (!res.ok) throw new Error(`getExecutorBehavior failed: HTTP ${res.status}`)
+    return res.json() as Promise<ExecutorBehavior>
   }
 }
