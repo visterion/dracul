@@ -74,4 +74,16 @@ class VerdictRepositoryIT {
         var active = repo.findActiveBySymbol("RTMR", "default").orElseThrow();
         assertThat(active.contributingPreyIds()).containsExactlyInAnyOrder("p3", "p4");
     }
+
+    @Test
+    void contributingPreyIdsById_returnsIds() {
+        String id = insert("RTST", "summary", List.of("prey-1", "prey-2"));
+        assertThat(repo.contributingPreyIdsById(id)).containsExactly("prey-1", "prey-2");
+        assertThat(repo.contributingPreyIdsById("00000000-0000-0000-0000-000000000000")).isEmpty();
+    }
+
+    @Test
+    void contributingPreyIdsById_unknownFormatReturnsEmpty() {
+        assertThat(repo.contributingPreyIdsById("not-a-uuid")).isEmpty();
+    }
 }

@@ -58,4 +58,25 @@ class PreyRepositoryIT {
                 .satisfies(x -> assertThat(x.killCriteria())
                         .containsExactly("Close below 42.50", "No approval by 2026-10-15"));
     }
+
+    @Test
+    void findByIds_returnsMatchingPreyWithKillCriteriaRoundTrip() {
+        Prey p1raw = preyFixture("FBID1", "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        Prey p1 = new Prey(p1raw.id(), p1raw.symbol(), p1raw.companyName(), p1raw.anomalyType(), p1raw.confidence(),
+                p1raw.thesis(), p1raw.signals(), p1raw.risks(), List.of("Close below 42.50"),
+                p1raw.horizon(), p1raw.discoveredBy(), p1raw.discoveredAt());
+        Prey p2 = preyFixture("FBID2", "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+
+        List<Prey> inserted = repo.insertAll(List.of(p1, p2));
+        assertThat(inserted).hasSize(2);
+
+        List<Prey> found = repo.findByIds(List.of(p1.id(), p2.id()));
+        assertThat(found).hasSize(2);
+        assertThat(found).filteredOn(x -> x.id().equals(p1.id()))
+                .singleElement()
+                .satisfies(x -> assertThat(x.killCriteria()).containsExactly("Close below 42.50"));
+
+        assertThat(repo.findByIds(List.of())).isEmpty();
+        assertThat(repo.findByIds(null)).isEmpty();
+    }
 }

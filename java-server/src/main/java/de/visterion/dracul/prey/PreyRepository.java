@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 
 @Repository
@@ -45,6 +46,20 @@ public class PreyRepository {
                 """)
                 .param("discoveredBy", discoveredBy)
                 .param("userId", userId)
+                .query(this::mapRow)
+                .list();
+    }
+
+    /** Fetches prey by id. Empty list for null/empty input. */
+    public List<Prey> findByIds(Collection<String> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return jdbc.sql("""
+                SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
+                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at
+                FROM prey
+                WHERE id::text IN (:ids)
+                """)
+                .param("ids", ids)
                 .query(this::mapRow)
                 .list();
     }
