@@ -27,8 +27,11 @@ public class VersionMetricsRepository {
     }
 
     /** One row per {@code (source_agent, agent_version, rule_version)} group of completed
-     *  {@code TRADE} outcomes, joined to {@code decision_log} for the first/last decision
-     *  timestamp of the group. {@code avg_return} is the mean {@code realized_r} (quantity-
+     *  {@code TRADE} outcomes with a non-null {@code realized_r} (a {@code complete=true} row can
+     *  still carry a null R — the completeness flag comes from the reentry window elapsing, not
+     *  from R being computable; same exclusion as
+     *  {@code OutcomeLogRepository.findExecutorBrierPoints}), joined to {@code decision_log} for
+     *  the first/last decision timestamp of the group. {@code avg_return} is the mean {@code realized_r} (quantity-
      *  weighted R-multiple); {@code hit_rate} is the fraction of rows with {@code realized_r > 0},
      *  matching the "won" definition used by {@code OutcomeLogRepository.findExecutorBrierPoints}. */
     public List<Row> findGroupedByVersion() {
@@ -42,7 +45,7 @@ public class VersionMetricsRepository {
                        SUM(CASE WHEN o.realized_r > 0 THEN 1 ELSE 0 END)::float / COUNT(*) AS hit_rate
                 FROM outcome_log o
                 JOIN decision_log d ON d.log_id::text = o.log_id_ref
-                WHERE o.kind = 'TRADE' AND o.complete = true
+                WHERE o.kind = 'TRADE' AND o.complete = true AND o.realized_r IS NOT NULL
                 GROUP BY o.source_agent, o.agent_version, o.rule_version
                 ORDER BY o.source_agent, MIN(d.created_at)
                 """)
