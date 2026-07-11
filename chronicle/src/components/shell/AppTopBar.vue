@@ -16,7 +16,7 @@
           :key="item.name"
           :to="{ name: item.name }"
           class="top-bar__tab"
-          active-class="top-bar__tab--active"
+          :class="{ 'top-bar__tab--active': isNavActive(item.matchPrefixes, route.path) }"
         >
           {{ item.label }}
         </router-link>
@@ -55,8 +55,9 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
-import { useNavItems } from '../../composables/useNavItems'
+import { useNavItems, isNavActive } from '../../composables/useNavItems'
 import { useMe } from '../../composables/useMe'
 
 defineProps<{ mobile?: boolean }>()
@@ -66,6 +67,7 @@ const { t } = useI18n()
 const live = useLiveAlertsStore()
 const navItems = useNavItems()
 const me = useMe()
+const route = useRoute()
 </script>
 
 <style scoped>
