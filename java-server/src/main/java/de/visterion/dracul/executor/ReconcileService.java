@@ -20,7 +20,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Reconciles the executor's position book against the broker's actual state: detects
@@ -88,7 +90,18 @@ public class ReconcileService {
         this.clock = clock;
     }
 
-    public List<ExecutorPosition> reconcile(String connection, String runId) {
+    /**
+     * Result of one reconcile pass: the still-open {@code survivors}, plus the subset of their
+     * ids whose GTD limit ENTRY is still working at the broker with no position held
+     * ({@code unfilledIds}). Unfilled entries have no broker holdings, so downstream hard
+     * triggers / stop ratcheting must not act on them — flattening a position that was never
+     * filled would either escalate spuriously or fabricate a CLOSED row with a made-up
+     * realized R (and a cooldown) while the still-WORKING entry order stays live.
+     * {@link EntryExpiryService} remains the lifecycle owner of unfilled entries.
+     */
+    public record ReconcileResult(List<ExecutorPosition> survivors, Set<Long> unfilledIds) {}
+
+    public ReconcileResult reconcile(String connection, String runId) {
         List<ExecutorPosition> open = positionRepo.findOpen().stream()
                 .filter(p -> connection.equals(p.connection()))
                 .toList();
@@ -103,7 +116,10 @@ public class ReconcileService {
                     "MAINTENANCE", null, null, null, null, null, null,
                     "ESCALATE", "BROKER_UNAVAILABLE", null,
                     "broker unavailable during reconcile: " + e.getMessage(), null, null, null));
-            return open;
+            // Fill state is unknown -> no ids flagged unfilled; downstream hard triggers stay
+            // safe regardless, because any flatten attempt hits the same broker outage and
+            // escalates without touching the book.
+            return new ReconcileResult(open, Set.of());
         }
 
         // Orphan scan (broker→DB): a live broker position with no open book row means an
@@ -125,6 +141,7 @@ public class ReconcileService {
         }
 
         List<ExecutorPosition> survivors = new ArrayList<>();
+        Set<Long> unfilledIds = new HashSet<>();
         for (ExecutorPosition p : open) {
             BrokerPosition bp = brokerPositions.stream()
                     .filter(x -> x.symbol().equals(p.symbol()))
@@ -139,15 +156,17 @@ public class ReconcileService {
                 // No broker position exists because the GTD limit ENTRY is still working (or only
                 // partially filled) — this is NOT "position gone", so it must not be closed as
                 // RECONCILE_GONE. EntryExpiryService owns this lifecycle now (cancel after
-                // entry-gtd-days); keep the row OPEN and untouched here.
+                // entry-gtd-days); keep the row OPEN and untouched here, and flag it unfilled so
+                // the pipeline keeps hard triggers / ratcheting off it (no broker holdings).
                 survivors.add(p);
+                unfilledIds.add(p.id());
             } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, runId);
             } else {
                 survivors.add(updateMaintenance(p, bp));
             }
         }
-        return survivors;
+        return new ReconcileResult(survivors, unfilledIds);
     }
 
     /** True while the position's ENTRY order ({@code brokerOrderId}) is still reported by the

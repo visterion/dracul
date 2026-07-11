@@ -29,7 +29,10 @@ import java.util.Set;
  * {@link EntryExpiryService} (cancels — never re-prices — unfilled GTD entries past their expiry,
  * using the fill state reconcile just refreshed), then {@link HardTriggerService} (deterministic
  * exits, code-enforced, never overridden), then {@link StopRatchetService} (trailing-stop
- * maintenance on whatever survived). The final
+ * maintenance on whatever survived). Positions whose GTD entry has no confirmed fill yet
+ * ({@link ReconcileService.ReconcileResult#unfilledIds()}) are excluded from both the
+ * hard-trigger and ratchet steps — they hold nothing at the broker to flatten or ratchet — but
+ * remain in the final enrichment so the book stays visible. The final
  * enrichment re-reads {@link ExecutorPositionRepository#findOpen()} rather than reusing the
  * in-memory list, because the ratchet step mutates stops in the DB — but it is intersected with
  * the hard-trigger survivors so positions closed by the hard trigger in this same pass are
@@ -83,7 +86,9 @@ public class MaintenancePipeline {
     }
 
     public List<EnrichedPosition> run(String connection, String runId) {
-        List<ExecutorPosition> survivors = reconcile.reconcile(connection, runId);
+        ReconcileService.ReconcileResult reconciled = reconcile.reconcile(connection, runId);
+        List<ExecutorPosition> survivors = reconciled.survivors();
+        Set<Long> unfilledIds = reconciled.unfilledIds();
 
         // The expiry step cancels unfilled GTD entries in the DB; drop those ids from the
         // in-memory reconcile survivors too, or a just-cancelled position could still be
@@ -104,15 +109,26 @@ public class MaintenancePipeline {
             if (lv.atr() != null) atrBySymbol.put(p.symbol(), lv.atr());
         }
 
-        List<ExecutorPosition> afterHard = hardTrigger.apply(survivors, closeBySymbol, runId);
+        // Hard triggers and stop ratcheting act on broker holdings — a position whose GTD
+        // entry never filled has none, so a breached kill criterion / stop level on it must
+        // NOT flatten or close anything (EntryExpiryService owns that lifecycle). Unfilled
+        // positions are excluded here but kept for the final enrichment, so the book stays
+        // visible to the agent.
+        List<ExecutorPosition> filledSurvivors = unfilledIds.isEmpty() ? survivors
+                : survivors.stream().filter(p -> !unfilledIds.contains(p.id())).toList();
+
+        List<ExecutorPosition> afterHard = hardTrigger.apply(filledSurvivors, closeBySymbol, runId);
         ratchet.ratchet(afterHard, atrBySymbol, runId);
 
-        Set<Long> afterHardIds = new HashSet<>();
-        for (ExecutorPosition p : afterHard) afterHardIds.add(p.id());
+        Set<Long> keepIds = new HashSet<>();
+        for (ExecutorPosition p : afterHard) keepIds.add(p.id());
+        for (ExecutorPosition p : survivors) {
+            if (unfilledIds.contains(p.id())) keepIds.add(p.id());
+        }
 
         List<ExecutorPosition> finalOpen = positionRepo.findOpen().stream()
                 .filter(p -> connection.equals(p.connection()))
-                .filter(p -> afterHardIds.contains(p.id()))
+                .filter(p -> keepIds.contains(p.id()))
                 .toList();
 
         List<ExecutorSignal> pendings = signalRepo.findPending(50);
