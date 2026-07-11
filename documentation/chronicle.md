@@ -73,7 +73,9 @@ summary state refreshes without a manual page reload.
 On the Verdict Detail view (`/verdict/:id`), a breached verdict shows a
 `TagPill tone="crimson"` badge per breached criterion (`KILL: <criterion>`,
 `data-testid="vd-kill-breach"`) in the decision card next to the decision
-badge, sourced from `VerdictDetail.killCriteriaBreached`.
+badge, sourced from `VerdictDetail.killCriteriaBreached`. Breaches are
+cumulative and never clear automatically — a kill criterion marks the thesis
+as dead, so a later price recovery does not remove the badge.
 
 ## Application shell
 
