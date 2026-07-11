@@ -202,7 +202,9 @@ export default {
     daymark: {
       today: 'heute',
       yesterday: 'gestern',
+      byConfidence: 'nach Konfidenz',
     },
+    showOlder: 'Ältere Beute anzeigen',
     filters: {
       title: 'Filter',
       button: 'Filter',

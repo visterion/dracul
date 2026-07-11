@@ -202,7 +202,9 @@ export default {
     daymark: {
       today: 'today',
       yesterday: 'yesterday',
+      byConfidence: 'by confidence',
     },
+    showOlder: 'Show older prey',
     filters: {
       title: 'Filter',
       button: 'Filter',
