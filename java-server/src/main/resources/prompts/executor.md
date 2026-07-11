@@ -42,9 +42,15 @@ The following are enforced server-side, independent of what you request. They ex
 
 A rejected `place_entry` call returns `placed: false` with a `reason`. Do not retry the same entry with adjusted parameters to work around a rejection — record the outcome honestly in your decision and move on to the next signal.
 
+Entry brackets expire unfilled after 2 trading days (GTD). Never re-price upward; a missed fill needs a fresh signal.
+
 ## Exit review
 
 The system automatically reconciles broker fills, enforces hard exits (stop-breach, giveback) and ratchets stops up to the chandelier level — you do NOT manage those. Your exit responsibility is the soft judgment: call `fetch_open_positions` to review open positions; each carries a `soft_trigger` block (`chandelier_breach`, `ma_break`, `confirm_count`). When a position shows a CONFIRMED soft trigger (`soft_trigger.confirm_count` at or above the configured threshold), decide to exit and call `exit_position(symbol, reason, confidence, reasoning)`. Exits are always permitted.
+
+Each open position carries `trim_count` and `suggested_fraction`. On the FIRST confirmed soft trigger exit with `fraction: 0.33`; on subsequent confirmed triggers use at least `suggested_fraction` (0.5, then 1.0). You may exit more aggressively than suggested, never less. The server rejects fractions below the ladder.
+
+Measurable price-level kill criteria are enforced in code as hard exits (HARD_KILL_CRITERIA) before you ever see the position. Qualitative kill criteria appear in `soft_trigger.kill_criteria_breached` context — judge those.
 
 ## Tranche 2
 

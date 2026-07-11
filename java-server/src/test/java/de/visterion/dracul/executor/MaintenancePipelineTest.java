@@ -229,6 +229,69 @@ class MaintenancePipelineTest {
     }
 
     @Test
+    void buyPosition_lowestPriceDecreases_writesAdverseExtreme() {
+        // BUY, lowestPrice previously null (entry 100), close drops to 38 -> new adverse extreme.
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("38")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+
+        pipeline.run("c", "r1");
+
+        verify(positionRepo).updateAdverseExtreme(eq(1L), eq(new BigDecimal("38")));
+    }
+
+    @Test
+    void buyPosition_lowestPriceAlreadyLower_doesNotWriteAdverseExtreme() {
+        // BUY, lowestPrice already 39, close rises to 40 -> never a new low, no write.
+        ExecutorPosition bbb = new ExecutorPosition(1L, "c", "BBB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
+                List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
+                new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
+                null, null, null, null, 0, new BigDecimal("39"), null);
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("40")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+
+        pipeline.run("c", "r1");
+
+        verify(positionRepo, org.mockito.Mockito.never()).updateAdverseExtreme(anyLong(), any());
+    }
+
+    @Test
+    void sellPosition_neverWritesLowestPrice() {
+        // SELL side: adverse extreme is the highest close, already tracked via highestPrice/ratchet.
+        ExecutorPosition aaa = new ExecutorPosition(1L, "c", "AAA", "SELL", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("105"), new BigDecimal("105"), 1, null,
+                List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
+                new BigDecimal("90"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
+                null, null, null, null, 0, null, null);
+        List<ExecutorPosition> survivors = List.of(aaa);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(survivors);
+        when(indicators.levels("AAA", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("50")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(aaa));
+
+        pipeline.run("c", "r1");
+
+        verify(positionRepo, org.mockito.Mockito.never()).updateAdverseExtreme(anyLong(), any());
+    }
+
+    @Test
     void tranche2Eligible_surfacesReinforcingSignal_fromPendingsFetchedOnce() {
         ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);

@@ -47,6 +47,21 @@ change and `version` should have bumped. The executor's `MAX_TRANCHE`/
 `CORRELATED` vetoes and the verdict kill-criteria watcher (V22 migration)
 need no reset — they are pure Dracul-side code, not agent definitions.
 
+### Post-deploy: agent definition reset (executor scale-out ladder / hard-kill / GTD prompt guidance)
+
+Deploying the trim-ladder, hard-kill-trigger, and GTD-entry-expiry change
+set updates `prompts/executor.md` (three additions: scale-out ladder
+guidance, a hard-kill note, and a GTD note) — same insert-if-absent caveat
+as above applies to the `executor` agent definition itself. Reset it after
+deploy:
+
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/executor/definition/reset
+
+Verify via `GET /agents/executor` on Vistierie (`:8090`, tenant token): the
+`system_prompt` should include the new ladder/hard-kill/GTD paragraphs and
+`version` should have bumped.
+
 ## Environment variables
 
 See [configuration.md](./configuration.md) for the full list.
