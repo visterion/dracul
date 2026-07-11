@@ -6,6 +6,7 @@ import type {
   VerdictDecision, VerdictNote, DecisionResponse, CreateWatchlistRequest, PatchWatchlistRequest,
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
+  ExecutorCalibration, ExecutorBehavior,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -20,6 +21,7 @@ import { mockVerdictNotes } from '../mocks/verdictNotes'
 import { mockProviders } from '../mocks/providers'
 import { mockExitSignals } from '../mocks/exitSignals'
 import { mockMorningReport } from '../mocks/morningReport'
+import { mockExecutorCalibration, mockExecutorBehavior } from '../mocks/executorCalibration'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -358,6 +360,16 @@ export class MockApiClient implements ApiClient {
   async getMorningReport(): Promise<MorningReport> {
     await delay(50)
     return structuredClone(mockMorningReport)
+  }
+
+  async getExecutorCalibration(): Promise<ExecutorCalibration> {
+    await delay(50)
+    return structuredClone(mockExecutorCalibration)
+  }
+
+  async getExecutorBehavior(): Promise<ExecutorBehavior> {
+    await delay(50)
+    return structuredClone(mockExecutorBehavior)
   }
 
   async getDataSources(_refresh = false): Promise<DataSourceHealth[]> {

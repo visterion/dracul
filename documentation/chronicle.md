@@ -297,6 +297,29 @@ Positions live in exactly one place: the Portfolio holds them (`entryPrice != nu
 the Watchlist holds tracked candidates (`entryPrice == null`). The two surfaces are
 fully separated.
 
+**Calibration card** (`CalibrationCard.vue`, `data-testid="calibration-card"`):
+sits below the position list on the Portfolio view. Self-fetching (loads its own
+data on mount, independent of the position list's load lifecycle) from the
+read-only operator-analytics endpoints added in the executor-sim-completion
+backend work: `GET /api/executor/calibration` and `GET /api/executor/behavior`.
+Three blocks, tables and stat chips only — no charts:
+
+- **Brier score**: the executor's overall Brier score plus a per-hunter table
+  (agent / n / Brier). A unit whose sample size is `insufficient` (`n < 30`)
+  renders a muted `TagPill` ("insufficient data (n=X < 30)") in place of the
+  score, both for the executor line and for individual hunter rows.
+- **Veto precision**: one row per veto `reason_code` — n, skipped count, mean
+  hypothetical R at 20d/60d, and stopped-out % — followed by the three fixed
+  `caveats` strings as a footnote list (`data-testid="calibration-caveats"`).
+- **Behavior**: a stat-tile grid for hard-exit latency (max/p95), whipsaw
+  counts (re-entry within 10d, roundtrip under 5d), and slippage (mean/worst).
+
+Wire types live in `api/types.ts` as `ExecutorCalibration` / `ExecutorBehavior`
+and mirror the backend's snake_case JSON keys verbatim (e.g. `reason_code`,
+`mean_hypothetical_r_20d`) rather than the camelCase convention used elsewhere
+in `types.ts` — this endpoint pair is the one place the wire format itself is
+snake_case (see `documentation/api.md`).
+
 **Exit Signal Detail** (`/exit-signal/:id`): the deep-read for one signal. It
 renders the `action` badge, the full `rationale` prose, the `firedRules[]` as a
 list with plain-text explanations (`exitSignal.rules.<rule>` i18n keys, falling
@@ -480,7 +503,7 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 
 ## E2E Test Suite (Etappe 15)
 
-**Playwright E2E tests** (`chronicle/e2e/`): 22 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and six `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, portfolio/exit-signal/settings mobile layout, backtest breakpoint, detail-title gap). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+**Playwright E2E tests** (`chronicle/e2e/`): 23 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and six `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, portfolio/exit-signal/settings mobile layout, backtest breakpoint, detail-title gap). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills) and `calibration.spec.ts` (7 tests for the Portfolio view's Calibration card: container visibility, executor/hunter Brier scores, the insufficient-data chip, veto-precision rows, the caveats footnote list, and behavior stat tiles). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
 
 Run locally: `cd chronicle && npm run test:e2e`
 
