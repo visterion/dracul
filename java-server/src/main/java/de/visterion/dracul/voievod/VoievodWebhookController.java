@@ -1,5 +1,6 @@
 package de.visterion.dracul.voievod;
 
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
@@ -27,16 +28,19 @@ public class VoievodWebhookController {
     private final ConsensusDetector detector;
     private final PreyRepository preyRepo;
     private final VerdictSynthesizer synthesizer;
+    private final PatternRepository patternRepo;
 
     public VoievodWebhookController(
             @Value("${dracul.voievod.webhook-token}") String token,
             ConsensusDetector detector,
             PreyRepository preyRepo,
-            VerdictSynthesizer synthesizer) {
+            VerdictSynthesizer synthesizer,
+            PatternRepository patternRepo) {
         this.verifier = new BearerTokenVerifier(token);
         this.detector = detector;
         this.preyRepo = preyRepo;
         this.synthesizer = synthesizer;
+        this.patternRepo = patternRepo;
     }
 
     @PostMapping("/tools/fetch-candidates")
@@ -70,7 +74,11 @@ public class VoievodWebhookController {
                     "discoverySpreadDays", ann.discoverySpreadDays(),
                     "prey", preyWire));
         }
-        return ResponseEntity.ok(Map.of("output", Map.of("clusters", wire)));
+        // Learning-loop feedback for the weekly reviewer: every accepted pattern across
+        // all hunters (not scoped to a single strigoi — Voievod judges cross-family
+        // consensus clusters). Computed fresh on every call (no ToolFetchCache here).
+        return ResponseEntity.ok(Map.of("output",
+                Map.of("clusters", wire, "active_patterns", patternRepo.findAllAccepted())));
     }
 
     @PostMapping("/complete")

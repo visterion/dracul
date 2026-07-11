@@ -28,13 +28,14 @@ class PromptRegistryValidatorTest {
     void matchingFileAndDbSetsOkFlag() {
         String body = PromptDocument.bodyFromClasspath("prompts/strigoi-spin.md");
         String hash = PromptHashes.hash(body);
+        String version = PromptDocument.fromClasspath("prompts/strigoi-spin.md").version();
 
         AgentDefinitionStore store = mock(AgentDefinitionStore.class);
         when(store.findAllEnabled()).thenReturn(List.of(defWithPrompt("strigoi-spin", body)));
 
         PromptRegistry registry = mock(PromptRegistry.class);
         when(registry.entry("strigoi-spin"))
-                .thenReturn(Optional.of(new PromptRegistry.Entry("1.0.0", hash)));
+                .thenReturn(Optional.of(new PromptRegistry.Entry(version, hash)));
 
         AppSettingsRepository settings = mock(AppSettingsRepository.class);
 
@@ -87,6 +88,7 @@ class PromptRegistryValidatorTest {
     void dbDivergenceAloneDoesNotSetMismatchFlag() {
         String fileBody = PromptDocument.bodyFromClasspath("prompts/strigoi-spin.md");
         String fileHash = PromptHashes.hash(fileBody);
+        String version = PromptDocument.fromClasspath("prompts/strigoi-spin.md").version();
 
         AgentDefinitionStore store = mock(AgentDefinitionStore.class);
         // DB prompt text differs from the bundled default (a legitimate user edit).
@@ -95,7 +97,7 @@ class PromptRegistryValidatorTest {
 
         PromptRegistry registry = mock(PromptRegistry.class);
         when(registry.entry("strigoi-spin"))
-                .thenReturn(Optional.of(new PromptRegistry.Entry("1.0.0", fileHash)));
+                .thenReturn(Optional.of(new PromptRegistry.Entry(version, fileHash)));
 
         AppSettingsRepository settings = mock(AppSettingsRepository.class);
 

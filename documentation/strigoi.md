@@ -78,9 +78,10 @@ Every Strigoi follows the same three-step shape:
    and filters to the ones worth spending tokens on.
 
 2. **LLM evaluation** via Vistierie — a Sonnet-tier (`reasoning`) or
-   Haiku-tier (`routine`) call. The prompt includes any `ACTIVE` patterns
-   from the Pattern Library that apply to this Strigoi. Returns structured
-   `Prey` JSON, including:
+   Haiku-tier (`routine`) call. The fetch-tool response includes `active_patterns`
+   — the statements of every `ACTIVE` pattern scoped to this Strigoi (plus any
+   scoped `'all'`), so approved user lessons weigh directly on this hunt (see
+   "Learning loop" below). Returns structured `Prey` JSON, including:
    - `kill_criteria` (1–5 strings, required): falsifiable exit conditions — a measurable
      threshold, a concrete date, or a single unambiguous public event under which the
      thesis is dead. They flow through the Prey→ExecutorSignal adapter; the executor
@@ -133,6 +134,34 @@ public class StrigoiSpin implements Bee<HuntRequest, List<Prey>> {
     }
 }
 ```
+
+## Learning loop (accepted patterns feed back into hunts)
+
+When the user approves a proposed pattern (`PATCH /api/patterns/{id}` with
+`action: "approve"`), `PatternController` sets its status to `ACTIVE` and
+assigns it a slug `name`. From that point on, every hunter's fetch-tool
+response — the payload returned from e.g. `/api/strigoi-spin/tools/fetch-candidates`
+— carries an `active_patterns` array: the `statement` text of every `ACTIVE`
+pattern where `applies_to_strigoi` equals that hunter's agent name or `'all'`
+(`PatternRepository.findAcceptedByStrigoi`, wired into `HuntController#handleFetch`
+via a field-injected `ObjectProvider<PatternRepository>`, mirroring the existing
+`PreySignalEmitter` pattern — if the bean is ever absent, the key is simply
+omitted rather than failing the hunt). Voievod's own fetch tool
+(`VoievodWebhookController`, which does not extend `HuntController`) includes the
+same key, but scoped to `PatternRepository.findAllAccepted()` — every `ACTIVE`
+pattern regardless of `applies_to_strigoi` — since Voievod judges consensus
+clusters spanning multiple hunters rather than a single anomaly type.
+
+Each of the 6 hunter prompts and the Voievod prompt (bumped to `1.1.0`, see
+`prompts/prompt_registry.json` and the archived `1.0.0` bodies under
+`prompts/archive/<agent>/`) instructs the agent to weigh candidates against
+`active_patterns` as user-confirmed lessons from past hunts.
+
+**Cache-expiry caveat:** `handleFetch` responses are served through
+`ToolFetchCache` (per-tool TTL). A pattern approved or rejected after a tool's
+cache entry was populated only becomes visible in `active_patterns` once that
+cache entry expires — acceptable for v1; there is no cache-invalidation hook
+on pattern-status changes.
 
 ## Adding a new agent
 
