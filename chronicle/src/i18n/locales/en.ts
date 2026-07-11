@@ -23,7 +23,7 @@ export default {
       chronicle: 'chronicle',
       watchlist: 'watchlist',
       portfolio: 'portfolio',
-      report: 'Report',
+      report: 'report',
       patternLibrary: 'pattern library',
       backtest: 'backtest',
       settings: 'settings',
