@@ -394,6 +394,8 @@ export default {
       allStrigoi: 'All Strigoi ({n})',
     },
     evidenceCount: 'evidence: {n}',
+    expand: 'Expand pattern',
+    collapse: 'Collapse pattern',
     actionError: {
       failed: 'Action failed',
       deactivateFailed: 'Deactivate failed',

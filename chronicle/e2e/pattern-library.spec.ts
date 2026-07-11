@@ -49,6 +49,21 @@ test.describe('Pattern Library View (/patterns)', () => {
     await expect(firstRow.locator('button:has-text("Deaktivieren")')).toBeVisible()
   })
 
+  test('active rows show a statement excerpt as title, slug as tooltip', async ({ page }) => {
+    const name = page.locator('[data-testid="active-pattern-row"] .patterns__active-name').first()
+    await expect(name).toContainText('Technology-sector spin-offs')
+    await expect(name).toHaveAttribute('title', 'tech-spinoffs-outperform-industrials')
+  })
+
+  test('expand button exposes aria-expanded and rotates the chevron', async ({ page }) => {
+    const row = page.locator('[data-testid="active-pattern-row"]').first()
+    const btn = row.locator('.patterns__expand-btn')
+    await expect(btn).toHaveAttribute('aria-expanded', 'false')
+    await btn.click()
+    await expect(btn).toHaveAttribute('aria-expanded', 'true')
+    await expect(btn.locator('i.ph-caret-right')).toHaveClass(/patterns__chevron--open/)
+  })
+
   test('clicking supporting-cases link opens the cases dialog with rows', async ({ page }) => {
     const firstCard = page.locator('[data-testid="pending-pattern-card"]').first()
     await firstCard.locator('button.pt-cases').click()
