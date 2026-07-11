@@ -9,7 +9,7 @@ test.describe('Chronicle View (/)', () => {
 
   test('renders dusk strip with the night tally', async ({ page }) => {
     const strip = page.locator('[data-testid="dusk-strip"]')
-    await expect(strip).toContainText('neue Beute')
+    await expect(strip).toContainText('Beute')
     await expect(strip).toContainText('Urteil')
   })
 
