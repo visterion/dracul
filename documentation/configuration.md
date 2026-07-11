@@ -94,6 +94,27 @@ first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
 same degradation contract as the old adapter chain, so scheduled refreshes never
 crash.
 
+## Depots (portfolio/positions view)
+
+Chronicle's `/depots` view and `/api/depots` read Agora's broker-connection
+snapshot (account, positions, orders) via a **dedicated, read-only** Agora
+client — separate from both the research `AgoraClient` (`dracul.agora.*`)
+and the executor's trading client (`dracul.executor.*`). It never places or
+modifies an order.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_DEPOTS_AGORA_BASE_URL` (`dracul.depots.agora-base-url`) | `http://agora:8080` | Base URL of Agora's MCP front-door used for the depot read path (`AgoraDepotClient`). |
+| `DRACUL_DEPOTS_AGORA_READONLY_TOKEN` (`dracul.depots.agora-readonly-token`) | _(blank)_ | Bearer token sent on depot read calls. Must be one of Agora's `AGORA_TRADING_LIVE_TOKENS_READONLY` (or a paper-scoped trading token) — a token that can list connections/account/positions/orders but **cannot** place or modify an order. Never reuse a full live trading token here. |
+| `DRACUL_DEPOTS_AGORA_TIMEOUT_MS` (`dracul.depots.agora-timeout-ms`) | `8000` | Connect+read timeout (ms) on the depot Agora client. |
+| `DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS` (`dracul.depots.live-visible-emails`) | `viktor@ufelmann.de` | Comma-separated, case-insensitive allow-list of Cloudflare-Access emails permitted to see **live**-environment connections (`DepotConnection.environment() == "live"`). This is a server-side gate in `DepotService.isLiveVisible`: paper/sim connections are visible to every authenticated user regardless of this list, but a live connection is filtered out of `GET /api/depots` entirely for any email not on the list (not just hidden in the UI) — an unlisted caller never receives the live depot's account/positions/orders payload. An unauthenticated call (no email resolved) is treated as not-visible for any live connection. |
+
+See `documentation/api.md` for the `/api/depots` and instrument-bundle
+endpoint shapes, and `documentation/operations.md` for the required
+Agora-side deploy step (`AGORA_TRADING_LIVE_TOKENS_READONLY` +
+`saxo-sim`→`depot-1` connection-key rename) that must land alongside these
+Dracul env vars.
+
 ## Yahoo Finance (FX adapter)
 
 Yahoo is no longer a price/OHLC provider (Agora hosts those), and as of
