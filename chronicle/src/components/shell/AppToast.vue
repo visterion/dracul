@@ -32,7 +32,7 @@ const { toasts, dismiss } = useToast()
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-  z-index: 300;
+  z-index: 400; /* above FilterSheet panel (300) and its backdrop (290) */
   pointer-events: none;
 }
 @media (min-width: 960px) {
