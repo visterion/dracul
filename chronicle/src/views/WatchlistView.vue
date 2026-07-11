@@ -64,7 +64,7 @@
           </button>
         </div>
 
-        <button class="btn btn-crimson-ghost watch-add" data-testid="wl-open-add" @click="addOpen = true">
+        <button class="btn btn-crimson-ghost watch-add" data-testid="wl-open-add" @click="openAddDialog">
           {{ t('watchlist.addButton') }}
         </button>
 
@@ -352,6 +352,12 @@ const addSubmitting = ref(false)
 const addError = ref<string | null>(null)
 
 const rowBusyId = ref<string | null>(null)
+
+function openAddDialog() {
+  addSymbol.value = ''
+  addError.value = null
+  addOpen.value = true
+}
 
 async function onAddSymbol() {
   if (!TICKER_RE.test(addSymbol.value)) return
