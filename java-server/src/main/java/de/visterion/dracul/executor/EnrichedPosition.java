@@ -26,5 +26,7 @@ public record EnrichedPosition(
         int softConfirmCount,
         boolean tranche2Eligible,
         String tranche2Reason,
-        String sourceSignalId) {
+        String sourceSignalId,
+        int trimCount,
+        double suggestedFraction) {
 }
