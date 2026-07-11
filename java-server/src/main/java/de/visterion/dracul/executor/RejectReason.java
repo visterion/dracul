@@ -26,5 +26,6 @@ public enum RejectReason {
     NON_SIM_CONNECTION,
     DUPLICATE,
     NO_POSITION,
-    NOT_ELIGIBLE
+    NOT_ELIGIBLE,
+    CORRELATED
 }

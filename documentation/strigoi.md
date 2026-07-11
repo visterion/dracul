@@ -396,9 +396,13 @@ declares `MAX_TRANCHE`, and it is now enforced (was declared-only): the
 `add-tranche` tool rejects with `MAX_TRANCHE` (writing a `decision_log`
 entry, same as the other reject paths) once a position's `tranche` count
 reaches `dracul.executor.max-tranche` (default 2), so tranching beyond the
-configured cap is blocked before any eligibility/sizing work runs. The
-fuller veto catalog (kill-criteria monitoring, correlation/exposure limits)
-remains out of scope and lands in later slices.
+configured cap is blocked before any eligibility/sizing work runs.
+`VetoService` also now enforces `CORRELATED`: an entry is rejected when an
+open position already exists in the same sector (case-insensitive) with the
+same `mechanism` (anomaly type) as the candidate signal — this blocks
+doubling up on one anomaly within a sector even below the `CONCENTRATION`
+cap; a null sector or mechanism passes (fail-soft). The fuller veto catalog
+(kill-criteria monitoring) remains out of scope and lands in later slices.
 
 See `documentation/architecture.md` for the doctrine note on why guarded
 execution is the one deliberate exception to Dracul's read-only design, and
