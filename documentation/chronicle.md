@@ -248,8 +248,11 @@ not already tracked, an "‚{symbol}' hinzufügen" CTA opens the add dialog pref
 that symbol), two tabs (**Alle** / **Aktuelle Alarme** — counts derived from tracking
 items: all = `trackingItems.length`, alerts = `alerts.length > 0`), an add-to-watchlist
 dialog (creates a `TRACKING` item; no tag choice), and `.watch-row` rows showing ticker,
-company, price, day change (pos/neg color), status dot (calm→positive, elevated→warning,
-alert→danger), and an owner badge; own rows have a delete control, foreign rows are
+company, price, day change (pos/neg color), and status dot (calm→positive, elevated→warning,
+alert→danger). Rows are grouped by owner via `groupByOwner()` (`lib/watchlistDisplay.ts`):
+own items render first and unlabelled, foreign items follow under a `.watch-owner-sep`
+separator ("von {owner}" / "by {owner}", one per foreign owner, alphabetical) — no row
+carries the raw owner e-mail anymore. Own rows have a delete control, foreign rows are
 read-only. Right pane: header (mono ticker, company, tracked-since, live quote), the
 Daywalker alert feed (the `AlertRow` atom, level elevated→warning / info→info /
 neutral→neutral), and the linked-verdict card (when `verdictId` is set). Selected state is
