@@ -559,22 +559,24 @@ eight calls fail, the response is still `200` with every section
 
 `get_earnings_window` and `get_form4_transactions` take no `symbol`
 input in Agora — they are market-wide, date-windowed queries (each
-result row carries its own `symbol`) — so the `earnings` and
-`insiderActivity` sections are Agora's **raw, unfiltered** output for
-its own default date window, not pre-filtered to `{symbol}`; the
-caller/GUI filters by symbol if needed.
+`earnings` row carries its own `symbol`, each `transactions` row its
+own `ticker`) — so `DepotInstrumentService` filters their rows
+server-side down to the requested `{symbol}` (case-insensitive) before
+returning them; the `earnings` and `insiderActivity` sections here only
+ever contain rows for `{symbol}`, with the rest of Agora's envelope
+(e.g. `truncated`) preserved as-is.
 
 ```json
 {
   "symbol": "ACME",
   "profile": { "symbol": "ACME", "name": "Acme Corp", "industry": "...", "exchange": "...", "marketCap": 123456789 },
   "news": { "symbol": "ACME", "news": [ { "...": "..." } ] },
-  "earnings": { "events": [ { "symbol": "ACME", "...": "..." } ] },
+  "earnings": { "earnings": [ { "symbol": "ACME", "...": "..." } ] },
   "analystEstimates": { "symbol": "ACME", "recommendations": [ { "...": "..." } ] },
   "earningsEstimates": { "symbol": "ACME", "estimates": [ { "...": "..." } ] },
   "fundamentalScore": { "symbol": "ACME", "score": 7 },
   "fundamentals": { "symbol": "ACME", "peRatio": 20.1 },
-  "insiderActivity": { "transactions": [ { "symbol": "ACME", "...": "..." } ] }
+  "insiderActivity": { "transactions": [ { "ticker": "ACME", "...": "..." } ] }
 }
 ```
 
