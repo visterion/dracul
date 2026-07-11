@@ -150,25 +150,18 @@
               v-for="opt in decisionOptions"
               :key="opt.value"
               class="btn btn-block"
-              :class="opt.cssClass"
+              :class="[opt.cssClass, { 'btn--selected': currentDecision?.decision === opt.value }]"
+              :aria-pressed="currentDecision?.decision === opt.value"
               :disabled="decisionSubmitting"
               :data-testid="`vd-decide-${opt.value.toLowerCase()}`"
               @click="onDecision(opt.value)"
             >{{ opt.label }}</button>
           </div>
           <p v-if="decisionError" class="vd-error" role="alert">{{ decisionError }}</p>
+          <p v-else-if="watchlistAdded" class="vd-success" role="status" data-testid="vd-watchlist-added">
+            {{ t('verdict.aside.watchlistAdded') }}
+          </p>
         </div>
-
-        <button
-          class="btn btn-primary btn-block"
-          :disabled="watchlistSubmitting"
-          data-testid="vd-add-watchlist"
-          @click="onAddToWatchlist"
-        >{{ t('verdict.aside.addToWatchlist') }}</button>
-        <p v-if="watchlistError" class="vd-error" role="alert">{{ watchlistError }}</p>
-        <p v-else-if="watchlistAdded" class="vd-success" role="status" data-testid="vd-watchlist-added">
-          {{ t('verdict.aside.watchlistAdded') }}
-        </p>
       </aside>
     </div>
   </article>
@@ -210,8 +203,6 @@ const currentDecision = ref<DecisionResponse | null>(null)
 const decisionSubmitting = ref(false)
 const decisionError = ref<string | null>(null)
 
-const watchlistSubmitting = ref(false)
-const watchlistError = ref<string | null>(null)
 const watchlistAdded = ref(false)
 
 const paragraphs = computed(() =>
@@ -225,7 +216,7 @@ const decisionOptions = computed<{ value: VerdictDecision; label: string; cssCla
   { value: 'TRACK',       label: t('verdict.decisions.track'),       cssClass: 'btn-primary'       },
   { value: 'INTERESTING', label: t('verdict.decisions.interesting'), cssClass: 'btn-secondary'     },
   { value: 'ACTED',       label: t('verdict.decisions.acted'),       cssClass: 'btn-secondary'     },
-  { value: 'DISMISS',     label: t('verdict.decisions.dismiss'),     cssClass: 'btn-crimson-ghost' },
+  { value: 'DISMISS',     label: t('verdict.decisions.dismiss'),     cssClass: 'btn-secondary'     },
 ])
 
 let requestId = 0
@@ -240,7 +231,6 @@ watch(() => route.params.id as string, async (id) => {
   noteError.value = null
   currentDecision.value = null
   decisionError.value = null
-  watchlistError.value = null
   watchlistAdded.value = false
   try {
     const v = await api.getVerdictDetail(id)
@@ -285,24 +275,6 @@ async function onDecision(decision: VerdictDecision) {
     decisionError.value = (e as Error).message
   } finally {
     decisionSubmitting.value = false
-  }
-}
-
-async function onAddToWatchlist() {
-  if (!verdict.value) return
-  watchlistSubmitting.value = true
-  watchlistError.value = null
-  try {
-    await api.createWatchlistItem({
-      symbol: verdict.value.symbol,
-      tag: 'TRACKING',
-      sourceVerdictId: verdict.value.id,
-    })
-    watchlistAdded.value = true
-  } catch (e) {
-    watchlistError.value = (e as Error).message
-  } finally {
-    watchlistSubmitting.value = false
   }
 }
 
@@ -388,6 +360,7 @@ async function onAddNote() {
 }
 .vd-kill-breach-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.btn--selected { outline: 1px solid var(--cathedral-gold); outline-offset: 1px; }
 
 .vd-error { color: var(--blood-crimson); font-size: var(--text-micro); margin: var(--space-2) 0 0 0; }
 .vd-success { color: var(--cathedral-gold); font-size: var(--text-micro); margin: var(--space-2) 0 0 0; }

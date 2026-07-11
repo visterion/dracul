@@ -94,8 +94,16 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
     await expect(page.getByTestId('vd-decision-badge')).toContainText('TRACK')
   })
 
-  test('add to watchlist shows confirmation', async ({ page }) => {
-    await page.getByTestId('vd-add-watchlist').click()
+  test('decision panel is the only action group — no standalone watchlist button', async ({ page }) => {
+    await expect(page.getByTestId('vd-add-watchlist')).toHaveCount(0)
+    await expect(page.locator('.vd-decision-buttons .btn')).toHaveCount(4)
+    await expect(page.getByTestId('vd-decide-track')).toHaveClass(/btn-primary/)
+  })
+
+  test('track marks the decision as selected and confirms watchlist add', async ({ page }) => {
+    await page.getByTestId('vd-decide-track').click()
+    await expect(page.getByTestId('vd-decide-track')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('vd-decision-badge')).toContainText('TRACK')
     await expect(page.getByTestId('vd-watchlist-added')).toBeVisible()
   })
 
