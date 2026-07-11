@@ -211,6 +211,13 @@
                 <span>${{ formatNumber(row.dailyUsedUsd, 2) }} / ${{ formatNumber(row.dailyBudgetUsd, 2) }}</span>
               </div>
               <button
+                class="btn btn-secondary agent-row__run"
+                :disabled="row.paused || triggeringRun === row.name"
+                :title="row.paused ? t('strigoi.trigger.pausedTooltip') : undefined"
+                :data-testid="`agent-run-${row.name}`"
+                @click="triggerRun(row)"
+              >{{ t('settings.agentConfig.run') }}</button>
+              <button
                 class="btn btn-secondary agent-row__toggle"
                 :disabled="pausing === row.name"
                 :data-testid="`agent-pause-${row.name}`"
@@ -292,6 +299,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import { useApi } from '../api'
+import { useToast } from '../composables/useToast'
 import { setLocale } from '../i18n'
 import type { LlmProvider, BudgetPatch, SettingsBudgetData, AgentConfigRow, DataSourceHealth } from '../api/types'
 import VistierieView from './VistierieView.vue'
@@ -309,6 +317,7 @@ import { formatNumber, microsToUsdInput } from '../utils/format'
 const { t, locale } = useI18n()
 const { agentRoleLabel, agentTierLabel, agentStateLabel } = useEnumLabels()
 const api = useApi()
+const toast = useToast()
 const { smAndDown } = useDisplay()
 
 const chipsEl = ref<HTMLElement | null>(null)
@@ -448,6 +457,7 @@ const agentData = ref<AgentConfigRow[] | null>(null)
 const agentsLoading = ref(false)
 const agentError = ref<string | null>(null)
 const pausing = ref<string | null>(null)
+const triggeringRun = ref<string | null>(null)
 const editOpen = ref(false)
 const editAgent = ref('')
 
@@ -484,6 +494,19 @@ async function togglePause(row: AgentConfigRow) {
     agentError.value = t('settings.agentConfig.pauseError')
   } finally {
     pausing.value = null
+  }
+}
+
+async function triggerRun(row: AgentConfigRow) {
+  triggeringRun.value = row.name
+  try {
+    await api.triggerStrigoiRun(row.name)
+    toast.show(t('strigoi.trigger.started'), { type: 'success' })
+    await loadAgents()
+  } catch (e) {
+    toast.show((e as Error).message, { type: 'error' })
+  } finally {
+    triggeringRun.value = null
   }
 }
 
@@ -689,6 +712,7 @@ onMounted(async () => {
   font-size: 12px; color: var(--ash-gray); }
 .agent-row__state[data-state="paused"] { color: var(--cathedral-gold); }
 .agent-row__state[data-state="budget-hit"] { color: var(--blood-red); }
+.agent-row__run { flex: 0 0 auto; }
 .agent-row__toggle { flex: 0 0 auto; }
 
 /* ── Data Sources ─────────────────────────────────────────────── */

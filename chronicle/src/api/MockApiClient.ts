@@ -54,6 +54,14 @@ export class MockApiClient implements ApiClient {
     return mockStrigoiDetails.find(s => s.name === name) ?? null
   }
 
+  async triggerStrigoiRun(name: string): Promise<{ runId: string }> {
+    await delay(150)
+    const agent = this.agents.find(a => a.name === name)
+    if (!agent) throw new Error(`unknown strigoi: ${name}`)
+    if (agent.paused) throw new Error('agent is paused')
+    return { runId: `run-mock-${name}` }
+  }
+
   async getWatchlistItems(): Promise<WatchlistItem[]> {
     await delay(50)
     return this.watchlist.map(i => ({ ...i, currency: this._currency }))

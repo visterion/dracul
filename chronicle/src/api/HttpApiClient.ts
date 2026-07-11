@@ -38,6 +38,16 @@ export class HttpApiClient implements ApiClient {
     return res.json() as Promise<StrigoiDetail>
   }
 
+  async triggerStrigoiRun(name: string): Promise<{ runId: string }> {
+    const res = await fetch(`${this.baseUrl}/api/strigoi/${encodeURIComponent(name)}/run`, { method: 'POST' })
+    if (!res.ok) {
+      let msg = `triggerStrigoiRun failed: HTTP ${res.status}`
+      try { const b = await res.json(); if (b?.message) msg = b.message as string } catch { /* ignore */ }
+      throw new Error(msg)
+    }
+    return res.json() as Promise<{ runId: string }>
+  }
+
   async getWatchlistItems(): Promise<WatchlistItem[]> {
     const res = await fetch(`${this.baseUrl}/api/watchlist`)
     if (!res.ok) throw new Error(`getWatchlistItems failed: HTTP ${res.status}`)

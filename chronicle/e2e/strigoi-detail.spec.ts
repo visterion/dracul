@@ -65,4 +65,17 @@ test.describe('Strigoi Detail View (/strigoi/:name)', () => {
     await expect(page.locator('.stat-grid')).toContainText('Noch keine Treffer bewertbar')
     await expect(page.locator('.stat-grid')).not.toContainText('0 von 0')
   })
+
+  test('trigger-hunt button starts a hunt and shows a toast', async ({ page }) => {
+    await page.getByTestId('sd-trigger-hunt').click()
+    await expect(page.getByText('Jagd gestartet')).toBeVisible()
+  })
+
+  test('trigger-hunt button is disabled for a paused strigoi', async ({ page }) => {
+    await page.goto('/strigoi/strigoi-lazarus')
+    await page.waitForLoadState('networkidle')
+    const btn = page.getByTestId('sd-trigger-hunt')
+    await expect(btn).toBeDisabled()
+    await expect(btn).toHaveAttribute('title', 'Agent pausiert')
+  })
 })
