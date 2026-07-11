@@ -3,7 +3,10 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.ContainerConfig;
 import de.visterion.dracul.outcome.OutcomeLogRepository;
 import de.visterion.dracul.outcome.OutcomeLogRow;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -27,6 +30,7 @@ import static org.assertj.core.api.Assertions.offset;
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")
 @TestPropertySource(properties = "dracul.executor.enabled=true")
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class VersionMetricsRepositoryIT {
 
     @Autowired VersionMetricsRepository versionMetricsRepo;
@@ -47,18 +51,21 @@ class VersionMetricsRepositoryIT {
 
         var outcome = new OutcomeLogRow(
                 "TRADE", logId, null, "ACME", null, true, new BigDecimal("100"), new BigDecimal("0"),
-                10, new BigDecimal("1.0"), new BigDecimal("-0.5"), new BigDecimal(realizedR), "STOP",
+                10, new BigDecimal("1.0"), new BigDecimal("-0.5"),
+                realizedR == null ? null : new BigDecimal(realizedR), "STOP",
                 null, empty("[]"), false, false, empty("{}"), true, sourceAgent, agentVersion,
                 ruleVersion, true);
         outcomeLogRepo.upsert(outcome);
     }
 
     @Test
+    @Order(1)
     void emptyDbYieldsEmptyList() {
         assertThat(versionMetricsRepo.findGroupedByVersion()).isEmpty();
     }
 
     @Test
+    @Order(2)
     void groupsByAgentVersionRuleVersionAndAggregatesRealizedR() {
         String idA = UUID.randomUUID().toString();
         String idB = UUID.randomUUID().toString();
@@ -85,5 +92,26 @@ class VersionMetricsRepositoryIT {
                 .filter(r -> r.ruleVersion().equals("v4")).findFirst().orElseThrow();
         assertThat(groupV4.decisions()).isEqualTo(1);
         assertThat(groupV4.hitRate()).isCloseTo(1.0, offset(1e-9));
+    }
+
+    @Test
+    @Order(3)
+    void completeRowsWithNullRealizedRAreExcluded() {
+        // complete=true does NOT imply realized_r is set — completeness comes from the reentry
+        // window elapsing, so a null-R row must not count toward decisions or drag hit_rate down.
+        String idWin = UUID.randomUUID().toString();
+        String idNullR = UUID.randomUUID().toString();
+
+        seedDecisionAndOutcome(idWin, "voievod", "3", "v7", "0.8");
+        seedDecisionAndOutcome(idNullR, "voievod", "3", "v7", null);
+
+        List<VersionMetricsRepository.Row> rows = versionMetricsRepo.findGroupedByVersion().stream()
+                .filter(r -> r.agent().equals("voievod")).toList();
+
+        assertThat(rows).hasSize(1);
+        VersionMetricsRepository.Row group = rows.get(0);
+        assertThat(group.decisions()).isEqualTo(1);
+        assertThat(group.avgReturn()).isCloseTo(0.8, offset(1e-9));
+        assertThat(group.hitRate()).isCloseTo(1.0, offset(1e-9));
     }
 }
