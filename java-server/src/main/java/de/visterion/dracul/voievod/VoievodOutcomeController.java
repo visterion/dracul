@@ -29,7 +29,7 @@ import java.util.Map;
  */
 @RestController
 @ConditionalOnProperty(value = "dracul.voievod-outcome.enabled", havingValue = "true")
-@RequestMapping("/webhook/voievod-outcome")
+@RequestMapping("/api/voievod-outcome")
 public class VoievodOutcomeController {
 
     private static final Logger log = LoggerFactory.getLogger(VoievodOutcomeController.class);

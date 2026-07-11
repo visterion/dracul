@@ -27,7 +27,7 @@ class VoievodOutcomeDefaults {
         var entry = new ToolCatalogEntry(FETCH,
                 "Returns prey whose horizon elapsed more than 30 days ago and that have not "
                         + "yet been reviewed, with condensed price history since discovery.",
-                input, "/webhook/voievod-outcome/tools/fetch-elapsed-prey", 30);
+                input, "/api/voievod-outcome/tools/fetch-elapsed-prey", 30);
         return new AgentDefaultProvider() {
             @Override
             public AgentDefinition defaultDefinition() {
@@ -35,7 +35,7 @@ class VoievodOutcomeDefaults {
                         NAME, "reasoning",
                         PromptDocument.bodyFromClasspath("prompts/voievod-outcome.md"), schema,
                         schedule, 25, 1800,
-                        "/webhook/voievod-outcome/complete",
+                        "/api/voievod-outcome/complete",
                         null, null, null, true,
                         List.of(new ToolBinding(FETCH, null, null, 0)));
             }
