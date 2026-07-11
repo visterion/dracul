@@ -16,7 +16,7 @@
         <span class="wcmp-name">{{ row.companyName }}</span>
         <span class="wcmp-px mono"><MoneyDisplay :amount="row.currentPrice" :currency="row.mine.currency" :native-amount="row.mine.nativeCurrentPrice" :native-currency="row.mine.nativeCurrency" /></span>
         <span class="wcmp-chg mono" :class="row.dayChangePercent >= 0 ? 'pos' : 'neg'">
-          {{ row.dayChangePercent >= 0 ? '+' : '' }}{{ row.dayChangePercent.toFixed(1) }}%
+          {{ formatPercent(row.dayChangePercent) }}
         </span>
       </div>
       <div class="wcmp-side">
@@ -72,6 +72,7 @@ import SectionHeader from '../common/SectionHeader.vue'
 import MoneyDisplay from '../common/MoneyDisplay.vue'
 import { buildComparison } from '../../lib/watchlistComparison'
 import type { WatchlistItem, WatchlistStatus } from '../../api/types'
+import { formatPercent } from '../../utils/format'
 
 const props = defineProps<{
   items: WatchlistItem[]

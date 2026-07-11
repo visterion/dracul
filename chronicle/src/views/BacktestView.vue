@@ -76,7 +76,7 @@
         <div class="brc-stats">
           <span>{{ t('backtest.runStats.hitRate') }} <b class="mono">{{ Math.round(r.hit * 100) }}%</b></span>
           <span class="brc-sep">·</span>
-          <span>{{ t('backtest.runStats.avgReturn') }} <b class="mono pos">+{{ (r.avg * 100).toFixed(1) }}%</b></span>
+          <span>{{ t('backtest.runStats.avgReturn') }} <b class="mono pos">{{ formatPercent(r.avg * 100) }}</b></span>
         </div>
         <div class="brc-when">{{ r.when }}</div>
       </div>
@@ -116,7 +116,7 @@
               <td class="mono">{{ tr.in }}</td>
               <td class="mono">{{ tr.out }}</td>
               <td class="num" :class="tr.ret >= 0 ? 'pos' : 'neg'">
-                {{ tr.ret >= 0 ? '+' : '' }}{{ (tr.ret * 100).toFixed(1) }}%
+                {{ formatPercent(tr.ret * 100) }}
               </td>
               <td class="num">
                 <i
@@ -145,15 +145,15 @@
       <div class="vist-foot">
         <div>
           <div class="vf-k">{{ t('backtest.chart.footStrigoi') }}</div>
-          <div class="vf-v mono pos">+{{ lastStrigoi.toFixed(1) }}%</div>
+          <div class="vf-v mono pos">{{ formatPercent(lastStrigoi) }}</div>
         </div>
         <div>
           <div class="vf-k">{{ t('backtest.chart.footBenchmark') }}</div>
-          <div class="vf-v mono">+{{ lastBench.toFixed(1) }}%</div>
+          <div class="vf-v mono">{{ formatPercent(lastBench) }}</div>
         </div>
         <div>
           <div class="vf-k">{{ t('backtest.chart.footEdge') }}</div>
-          <div class="vf-v mono pos">+{{ (lastStrigoi - lastBench).toFixed(1) }} pts</div>
+          <div class="vf-v mono pos">{{ formatNumber(lastStrigoi - lastBench, 1) }} pts</div>
         </div>
       </div>
     </div>
@@ -167,6 +167,7 @@ import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import LineChart from '../components/common/LineChart.vue'
+import { formatNumber, formatPercent } from '../utils/format'
 
 const { t } = useI18n()
 

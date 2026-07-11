@@ -1,5 +1,5 @@
 <template>
-  <div class="consensus-ring" :style="{ width: size + 'px', height: size + 'px' }" role="meter" :aria-valuenow="value" :aria-valuemin="0" :aria-valuemax="1" :aria-label="`Consensus score ${value.toFixed(2)}`">
+  <div class="consensus-ring" :style="{ width: size + 'px', height: size + 'px' }" role="meter" :aria-valuenow="value" :aria-valuemin="0" :aria-valuemax="1" :aria-label="`Consensus score ${formatNumber(value, 2)}`">
     <svg :width="size" :height="size" :viewBox="`0 0 ${size} ${size}`" aria-hidden="true">
       <circle
         :cx="size / 2"
@@ -22,12 +22,13 @@
         :transform="`rotate(-90 ${size / 2} ${size / 2})`"
       />
     </svg>
-    <div class="consensus-ring-num mono">{{ value.toFixed(2) }}</div>
+    <div class="consensus-ring-num mono">{{ formatNumber(value, 2) }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatNumber } from '../../utils/format'
 
 const props = withDefaults(defineProps<{
   value: number
