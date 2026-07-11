@@ -40,6 +40,8 @@ Both documents are required reading before implementing any view.
 | 9 | Portfolio | `/portfolio` | Held positions with P&L and Groparul's latest exit-signal badge | Medium | ✅ |
 | 10 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context | Low (prose) | ✅ |
 | 11 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
+| 12 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders) | High | ✅ Task C2 |
+| 13 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
 
 > **Vistierie (Schatzkammer):** Vistierie no longer has a standalone route. It is an
 > embeddable component (`VistierieView` with an `embedded` prop) hosted admin-only
@@ -597,3 +599,117 @@ per-load market-data call is made on read.
 
 Frontend wiring (Decision buttons, Notes textarea, Add-to-Watchlist) is deferred
 to a follow-up etappe.
+
+## Depots view (Task C2)
+
+`DepotsView.vue` (`/depots`) is the live-broker counterpart to Portfolio's
+manual watchlist positions: one `DepotSection` per connected broker
+(`useApi().getDepots()`), Trade-Republic-dense.
+
+- **Summary bar** (always shown, even with a single depot): left side shows
+  Σ equity across depots + total day change (colored, click to toggle);
+  right corner shows total cash, `data-testid="depots-total-cash"`.
+- **Per-depot section** (`DepotSection.vue`): header with id, provider chip,
+  paper/live badge, probe status, and a relative "Stand: …" timestamp
+  (`useRelativeTime`) that gets a `stale` CSS class once older than 15
+  minutes (`isStale()` in `src/lib/depotDisplay.ts`); headline equity + day
+  change + P&L; a cash/invested/buying-power `StatTile` row; a performance
+  `LineChart` with 1T/1W/1M/1J/Max range buttons (default 1M, fetched via
+  `getDepotChart`); a single stacked allocation bar built from each
+  position's `weightPct`; `DepotPositionsTable.vue` (sortable columns:
+  symbol, qty, avg entry, price, market value, P&L, day change, weight %);
+  an orders list; and an inline error alert (`data-testid="depot-error"`)
+  when `depot.error` is set — the rest of the section still renders
+  whatever data the depot does have.
+- **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
+  is a module-level singleton ref persisted to
+  `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change
+  number anywhere in the view (`data-testid="pnl-cell"`) flips the whole
+  view between currency and percent display via the shared `fmtPl()`
+  helper. Values with no quotes/no cost basis always render as an em dash
+  (`—`) — never `0`.
+- **Metric dropdown** above each positions table (`sinceBuy` vs `today`)
+  highlights which of the P&L / day-change columns is the primary sort
+  target; both columns stay visible regardless of the selection.
+- Row click navigates to `depot-position-detail` (`/depots/:connection/:symbol`),
+  the Trade-Republic-style instrument page described below (Task C3).
+- **Known simplification**: the summary bar's Σ equity/cash sum raw numbers
+  across depots even when depots use different account currencies (see
+  `depotTotals()` in `src/lib/depotDisplay.ts`) — acceptable for the mock
+  fixtures currently in play (one USD paper depot, one EUR live depot), but
+  worth revisiting if/when true multi-currency consolidation is needed.
+
+Nav: `useNavItems.ts` gained a `depots` entry (`ph-vault` icon,
+`matchPrefixes: ['/depots']`); Portfolio's icon moved to `ph-chart-pie` to
+free up `ph-vault` for the new broker-facing Depots destination.
+
+## Depot position detail view (Task C3)
+
+`DepotPositionDetailView.vue` (`/depots/:connection/:symbol`, route name
+`depot-position-detail`) is the Trade-Republic-style instrument page reached
+by clicking a row in a `DepotSection`'s positions table.
+
+- **Loading/error states**: a skeleton while `getDepotPosition` is in
+  flight; a dedicated `data-testid="pd-notfound"` empty state when the
+  backend returns 404 (`Position nicht gefunden`); a dedicated
+  `data-testid="pd-brokerdown"` error state with a `data-testid="pd-retry"`
+  button when it returns 503 — distinguished purely by matching on the
+  thrown `Error`'s message (`"not found"` vs. anything else), same
+  convention as `HttpApiClient`/`MockApiClient`'s `getDepotPosition`.
+- **Header**: symbol, company name (via `displayName()`, hidden when the
+  profile has no name beyond the ticker), current price (`position.price`),
+  and the change **for the currently selected chart timeframe** — computed
+  from the instrument chart's first→last point (not `position`'s own
+  day-change field), colored and rendered through the shared `fmtPl()` +
+  `useDisplayMode()` abs/%-toggle.
+- **Timeframe chart**: 1T/1W/1M/1J/Max range buttons drive
+  `getInstrumentChart(symbol, range)`, guarded by the same
+  request-id-supersession pattern as `DepotSection`'s chart loader (a stale
+  response from an abandoned range switch can never overwrite a newer one).
+  `LineChart.vue` gained an optional `baseline?: number | null` prop — when
+  set it draws a dotted reference `<line>` (`.baseline` in
+  `src/styles/global.css`) at that y-value; this view passes the range's
+  first chart value so the timeframe move reads visually against a fixed
+  start point.
+- **Stat tiles**: Position (market value), Performance seit Kauf
+  (`unrealizedPl`/`unrealizedPlPct` via `fmtPl`), Stückzahl, Einstand (avg
+  entry price), and a `data-testid="pd-asof"` "Stand: …" stamp that gets the
+  `stale` class past 15 minutes (`isStale()`).
+- **Open orders**: reuses the same row layout as `DepotSection`'s orders
+  list, scoped to this symbol (`getDepotPosition`'s `orders` are already
+  server-filtered).
+- **Informationen**: the profile's `description` field (Finnhub-style
+  passthrough object under `InstrumentInfo.profile`, shape otherwise
+  `unknown`) — truncated at 240 chars with a "Mehr/Weniger anzeigen"
+  toggle when longer. Absent when there's no description.
+- **Horizontally scrollable info card rows** — a new generic
+  `InfoCardRow.vue` (`title` prop + default slot,
+  `overflow-x:auto`/`scroll-snap-type:x mandatory`, cards
+  `scroll-snap-align:start`), instantiated four times:
+  - **News**: headline/source/relative-publish-age, from `info.news.news[]`.
+  - **Ereignisse**: one card per row in `info.earnings.earnings[]` (already
+    server-filtered to this symbol), date badge + "in N Tagen"/"heute".
+  - **Insights**: up to four cards — analyst consensus (majority vote across
+    `buy`/`hold`/`sell`/`strongBuy`/`strongSell` in the latest
+    `analystEstimates.recommendations[]` entry) with an optional price-target
+    sub-line if the backend ever sends one; EPS estimate (latest
+    `earningsEstimates.estimates[]` entry, `epsAvg` + low–high range);
+    fundamental score (`fundamentalScore.score`); insider activity (buy/sell
+    counts from `insiderActivity.transactions[]`, already server-filtered).
+  - **Finanzen**: a mini key/value table from `fundamentals` (P/E, P/B,
+    dividend yield) — only the fields actually present render a row; no
+    YoY % since the mock/backend only ever sends a single snapshot, not a
+    time series.
+- **Defensive access to `unknown` sections**: every `InstrumentInfo` field
+  beyond `earnings`/`insiderActivity`'s documented row shapes is typed
+  `unknown`. The view never trusts the shape — small `asRecord`/`asArray`/
+  `asNumber`/`asString` guards gate every field access, and **each section
+  renders only when its computed data is non-empty**; a null, malformed, or
+  failed section (including a rejected `getInstrumentInfo` call) simply
+  disappears — it never throws or blanks the rest of the page.
+- **Route param changes re-trigger every load**: a single
+  `watch(() => [route.params.connection, route.params.symbol], …, { immediate: true })`
+  drives `loadPosition()`/`loadChart()`/`loadInfo()` together, each guarded
+  by its own monotonically-increasing request id — the known bug class from
+  the 2026-07-10 review (a param-only route reuse not re-fetching) does not
+  apply here.

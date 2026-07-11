@@ -402,6 +402,220 @@ Order ticket fields (`ticket`):
 > operator can decide whether and how to act — it does **not** route, submit, or
 > manage orders with any broker or exchange.
 
+## Depots
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/depots` | List depot connections and their positions/orders for the current user |
+| GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders) |
+| GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
+| GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
+| GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
+
+Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
+/api/depots` calls `DepotService.depots(userEmail)`, which lists Agora's
+configured broker connections and gates any **live**-environment
+connection behind an allow-listed set of user emails
+(`dracul.depots.live-visible-emails`, default `viktor@ufelmann.de`);
+**paper**-environment connections are visible to everyone. A connection
+the calling user isn't allowed to see for the live gate is simply absent
+from the response (not an error) — the position-slice endpoint 404s for
+it the same way it 404s for an unknown connection or symbol.
+
+If Agora is fully unreachable, `DepotService.depots()` propagates a
+`DepotUnavailableException` instead of silently returning an empty
+list; `GET /api/depots` catches it and turns it into the 200 +
+top-level-`error` shape below, while `GET
+/api/depots/{connection}/positions/{symbol}` catches it and returns
+`503 SERVICE_UNAVAILABLE` (see that endpoint's section for the full
+error-status matrix).
+
+`asOf` (top-level per depot, and echoed in the position-slice response)
+is the instant Agora's broker fetch (`get_account`/`get_positions`) was
+taken — not a request/response timestamp.
+
+### `GET /api/depots` response
+
+```json
+{
+  "depots": [
+    {
+      "id": "alpaca-paper-1",
+      "provider": "alpaca",
+      "environment": "paper",
+      "status": "connected",
+      "probedAt": "2026-07-11T08:00:00Z",
+      "error": null,
+      "account": { "...": "..." },
+      "aggregates": { "...": "..." },
+      "positions": [
+        {
+          "symbol": "ACME",
+          "qty": 10,
+          "avgEntryPrice": 12.50,
+          "marketValue": 145.00,
+          "unrealizedPl": 20.00,
+          "unrealizedPlPct": 16.00,
+          "price": 14.50,
+          "dayChangePercent": 0.85,
+          "weightPct": 42.30,
+          "currency": "USD"
+        }
+      ],
+      "orders": [ { "...": "..." } ],
+      "asOf": "2026-07-11T08:00:00Z"
+    }
+  ],
+  "error": null
+}
+```
+
+`error` is non-null (with `depots` an empty list) only when Agora is
+unreachable for the whole read path (`DepotUnavailableException`) — HTTP
+status stays 200; per-connection failures instead surface as a non-null
+`error` on that one entry in `depots[]` (see `DepotDto`).
+
+### `GET /api/depots/{connection}/positions/{symbol}` response
+
+```json
+{
+  "depot": { "id": "alpaca-paper-1", "provider": "alpaca", "environment": "paper" },
+  "position": {
+    "symbol": "ACME",
+    "qty": 10,
+    "avgEntryPrice": 12.50,
+    "marketValue": 145.00,
+    "unrealizedPl": 20.00,
+    "unrealizedPlPct": 16.00,
+    "price": 14.50,
+    "dayChangePercent": 0.85,
+    "weightPct": 42.30,
+    "currency": "USD"
+  },
+  "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry" } ],
+  "asOf": "2026-07-11T08:00:00Z"
+}
+```
+
+`orders` is filtered to only the orders for `{symbol}` within that
+depot connection.
+
+- **`404 NOT_FOUND`** — `{connection}` isn't visible to the current
+  user (unknown, or a live connection outside the allow-list), or
+  `{symbol}` isn't held in that (successfully-fetched) connection's
+  positions.
+- **`503 SERVICE_UNAVAILABLE`** — either the whole read path failed
+  (Agora fully unreachable, `DepotUnavailableException` from
+  `DepotService.depots()`), or `{connection}` was found but its own
+  fetch failed (`DepotDto.error()` non-null / `positions()` null, the
+  same per-connection failure that shows up as an `error` entry in
+  `GET /api/depots`'s `depots[]`). In both cases the response body is
+  the plain error message, not a JSON envelope.
+
+### `GET /api/depots/chart` response
+
+Query params: `symbol` (instrument ticker), `range` (`1d` | `1w` | `1m` |
+`1y` | `max`). Pure market data via `DepotChartService`/Agora — no
+user/live-gating concern, unlike the depot-scoped endpoints above.
+
+Range → Agora lookback mapping: `1d` calls `get_intraday`
+(`interval=5m`, `range=1d`, `t` = ISO instant); `1w`/`1m`/`1y`/`max`
+call `get_ohlc` with `days` = `7`/`31`/`365`/`1825` respectively (`t` =
+ISO date). An unrecognized `range` is `400 BAD_REQUEST`.
+
+```json
+{
+  "symbol": "ACME",
+  "range": "1y",
+  "points": [
+    { "t": "2025-07-11", "value": 100.00 },
+    { "t": "2025-07-14", "value": 103.50 }
+  ]
+}
+```
+
+### `GET /api/depots/{connection}/chart` response
+
+Query param: `range` (same values/mapping as above). The connection is
+resolved through `DepotService.depots(CurrentUserHolder.get())` — the
+same call and live-visibility gate `GET /api/depots` uses — so this
+endpoint never leaks a live depot to a user outside the allow-list; its
+positions (already fetched/gated by `DepotService`) are then used to
+compose the curve. Error-status matrix matches
+`GET /api/depots/{connection}/positions/{symbol}`: **`404 NOT_FOUND`**
+if `{connection}` isn't visible to the current user, **`503
+SERVICE_UNAVAILABLE`** if the whole read path failed or that
+connection's own fetch failed.
+
+`value(t) = Σ qty_i × close_i(t) + cash` — the depot's current cash
+plus each held position's quantity times that instrument's close price
+at `t`. Per-symbol close series are fetched independently and aligned
+by **intersection**: only timestamps present in every
+successfully-fetched symbol's series appear in `points`/`relative`. A
+symbol whose series can't be fetched (Agora failure) — or that Agora
+fetches without error but returns zero bars for — is skipped; the
+curve is still built from the rest — and sets `partial: true`.
+`relative[].pct` is `(value/points[0].value − 1) × 100`, scale 2
+HALF_UP (so the first point's `pct` is always `0.00`).
+
+```json
+{
+  "connection": "alpaca-paper-1",
+  "range": "1y",
+  "points": [
+    { "t": "2026-07-01", "value": 2250.00 },
+    { "t": "2026-07-02", "value": 2300.00 }
+  ],
+  "relative": [
+    { "t": "2026-07-01", "pct": 0.00 },
+    { "t": "2026-07-02", "pct": 2.22 }
+  ],
+  "partial": false
+}
+```
+
+### `GET /api/depots/instrument/{symbol}` response
+
+Pure market data via `DepotInstrumentService`/Agora — no user/live-gating
+concern, same as `GET /api/depots/chart`. Feeds the GUI's
+Trade-Republic-style instrument page (profile, news, events, insights,
+financials shown as independent sections).
+
+Backed by eight Agora tool calls, made **sequentially**
+(`AgoraClient.callTool` is `synchronized`, so parallelizing them buys
+nothing) and each wrapped in its own try/catch: `get_company_profile`,
+`get_company_news` (window: `from` = today − 14 days, `to` = today),
+`get_earnings_window`, `get_analyst_estimates`, `get_earnings_estimates`,
+`get_fundamental_score`, `get_fundamentals`, `get_form4_transactions`.
+**Every section is independently nullable** — a single tool failing
+(Agora error, timeout, etc.) sets only that section to `null`; the
+other sections and the `200 OK` response shape are unaffected. If all
+eight calls fail, the response is still `200` with every section
+`null`.
+
+`get_earnings_window` and `get_form4_transactions` take no `symbol`
+input in Agora — they are market-wide, date-windowed queries (each
+`earnings` row carries its own `symbol`, each `transactions` row its
+own `ticker`) — so `DepotInstrumentService` filters their rows
+server-side down to the requested `{symbol}` (case-insensitive) before
+returning them; the `earnings` and `insiderActivity` sections here only
+ever contain rows for `{symbol}`, with the rest of Agora's envelope
+(e.g. `truncated`) preserved as-is.
+
+```json
+{
+  "symbol": "ACME",
+  "profile": { "symbol": "ACME", "name": "Acme Corp", "industry": "...", "exchange": "...", "marketCap": 123456789 },
+  "news": { "symbol": "ACME", "news": [ { "...": "..." } ] },
+  "earnings": { "earnings": [ { "symbol": "ACME", "...": "..." } ] },
+  "analystEstimates": { "symbol": "ACME", "recommendations": [ { "...": "..." } ] },
+  "earningsEstimates": { "symbol": "ACME", "estimates": [ { "...": "..." } ] },
+  "fundamentalScore": { "symbol": "ACME", "score": 7 },
+  "fundamentals": { "symbol": "ACME", "peRatio": 20.1 },
+  "insiderActivity": { "transactions": [ { "ticker": "ACME", "...": "..." } ] }
+}
+```
+
 ## Daywalker Alerts
 
 | Method | Path | Purpose |
@@ -1266,7 +1480,7 @@ Response:
 
 ### `POST /api/executor/tools/get-account`
 
-Tool webhook. Input: `{ "connection": "saxo-sim" }` (optional; defaults to
+Tool webhook. Input: `{ "connection": "depot-1" }` (optional; defaults to
 `dracul.executor.connection`). Proxies Agora's `get_account` trading tool via
 `AgoraTrading`. Response: `{ "output": <account snapshot> }`, or
 `{ "output": { "available": false, "error": "..." } }` if Agora/the broker

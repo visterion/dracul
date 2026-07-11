@@ -34,7 +34,7 @@ class PreySignalEmitterIT {
 
     private ExecutorPosition openPosition(String symbol) {
         return new ExecutorPosition(
-                null, "saxo-sim", symbol, "BUY",
+                null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, new BigDecimal("5"),
                 List.of(), "sig-" + symbol, "strigoi-spin", null,

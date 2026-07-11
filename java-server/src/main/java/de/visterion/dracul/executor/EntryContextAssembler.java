@@ -57,7 +57,7 @@ public class EntryContextAssembler {
     public EntryContextAssembler(AgoraClient agora, ExecutionGateway gateway, FxService fx,
             ExecutorPositionRepository positionRepo, CooldownRepository cooldownRepo,
             ExecutorSignalRepository signalRepo, ObjectMapper mapper,
-            @Value("${dracul.executor.connection:saxo-sim}") String connection,
+            @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
             @Value("${dracul.executor.total-budget:10000}") BigDecimal totalBudget,

@@ -44,10 +44,10 @@ class EntryContextAssemblerTest {
     @BeforeEach
     void setUp() {
         assembler = new EntryContextAssembler(agora, gateway, fx, positionRepo, cooldownRepo,
-                signalRepo, mapper, "saxo-sim", 22, 20,
+                signalRepo, mapper, "depot-1", 22, 20,
                 new BigDecimal("10000"), 10, "USD", CLOCK);
 
-        when(gateway.account("saxo-sim"))
+        when(gateway.account("depot-1"))
                 .thenReturn(new AccountSnapshot(new BigDecimal("50000"), new BigDecimal("50000"), "USD"));
         when(positionRepo.findOpen()).thenReturn(List.of());
         when(cooldownRepo.active(any())).thenReturn(List.of());
@@ -89,7 +89,7 @@ class EntryContextAssemblerTest {
 
     private ExecutorPosition openPosition(String symbol, BigDecimal qty, BigDecimal entryPrice,
             BigDecimal activeStop, String sourceSignalId) {
-        return new ExecutorPosition(1L, "saxo-sim", symbol, "BUY", qty, entryPrice,
+        return new ExecutorPosition(1L, "depot-1", symbol, "BUY", qty, entryPrice,
                 entryPrice, activeStop, 1, null, List.of(), sourceSignalId, "agent", "2026-07-01",
                 null, "OPEN", "brk-1", null, null, 0, null, null, null, null,
                 "stop-1", null, null, null, null, 0, null, null);
@@ -178,7 +178,7 @@ class EntryContextAssemblerTest {
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
         when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
-        when(gateway.account("saxo-sim"))
+        when(gateway.account("depot-1"))
                 .thenReturn(new AccountSnapshot(new BigDecimal("50000"), new BigDecimal("50000"), "EUR"));
         // fx is a mock: hasRate() is not stubbed here, so it defaults to false — no cached rate.
 
@@ -287,7 +287,7 @@ class EntryContextAssemblerTest {
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
         when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
         // Gateway returns account with null cash but valid buyingPower and currency
-        when(gateway.account("saxo-sim"))
+        when(gateway.account("depot-1"))
                 .thenReturn(new AccountSnapshot(null, new BigDecimal("50000"), "USD"));
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");

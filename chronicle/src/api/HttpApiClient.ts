@@ -8,6 +8,7 @@ import type {
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
+  DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -306,5 +307,52 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/executor/behavior`)
     if (!res.ok) throw new Error(`getExecutorBehavior failed: HTTP ${res.status}`)
     return res.json() as Promise<ExecutorBehavior>
+  }
+
+  async getDepots(): Promise<DepotsResponse> {
+    const res = await fetch(`${this.baseUrl}/api/depots`)
+    if (!res.ok) throw new Error(`getDepots failed: HTTP ${res.status}`)
+    return res.json() as Promise<DepotsResponse>
+  }
+
+  async getDepotChart(connection: string, range: ChartRange): Promise<DepotChart> {
+    const res = await fetch(
+      `${this.baseUrl}/api/depots/${encodeURIComponent(connection)}/chart?range=${encodeURIComponent(range)}`,
+    )
+    if (res.status === 404) throw new Error(`getDepotChart: connection not found: ${connection}`)
+    if (res.status === 503) throw new Error(`getDepotChart: depot unavailable: ${connection}`)
+    if (!res.ok) throw new Error(`getDepotChart failed: HTTP ${res.status}`)
+    return res.json() as Promise<DepotChart>
+  }
+
+  async getInstrumentChart(symbol: string, range: ChartRange): Promise<DepotChart> {
+    const res = await fetch(
+      `${this.baseUrl}/api/depots/chart?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}`,
+    )
+    if (!res.ok) throw new Error(`getInstrumentChart failed: HTTP ${res.status}`)
+    return res.json() as Promise<DepotChart>
+  }
+
+  async getInstrumentInfo(symbol: string): Promise<InstrumentInfo> {
+    const res = await fetch(`${this.baseUrl}/api/depots/instrument/${encodeURIComponent(symbol)}`)
+    if (!res.ok) throw new Error(`getInstrumentInfo failed: HTTP ${res.status}`)
+    return res.json() as Promise<InstrumentInfo>
+  }
+
+  async getDepotPosition(
+    connection: string,
+    symbol: string,
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }> {
+    const res = await fetch(
+      `${this.baseUrl}/api/depots/${encodeURIComponent(connection)}/positions/${encodeURIComponent(symbol)}`,
+    )
+    if (res.status === 404) {
+      throw new Error(`getDepotPosition: not found: ${connection}/${symbol}`)
+    }
+    if (res.status === 503) {
+      throw new Error(`getDepotPosition: depot unavailable: ${connection}/${symbol}`)
+    }
+    if (!res.ok) throw new Error(`getDepotPosition failed: HTTP ${res.status}`)
+    return res.json() as Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }>
   }
 }
