@@ -205,10 +205,13 @@ export default {
     },
     filters: {
       title: 'Filter',
+      button: 'Filter',
+      close: 'Schließen',
       allPrey: 'alle Beute',
       highConfidence: 'hohe Konfidenz',
       anomalyClass: 'Anomalie-Klasse',
       brood: 'Die Brut',
+      broodProfiles: 'Die Brut — Profile',
     },
     preyCard: {
       signals: 'Signale',
