@@ -22,8 +22,8 @@ export default {
     nav: {
       chronicle: 'chronicle',
       watchlist: 'watchlist',
-      portfolio: 'Portfolio',
-      report: 'Report',
+      portfolio: 'portfolio',
+      report: 'report',
       patternLibrary: 'pattern library',
       backtest: 'backtest',
       settings: 'settings',
@@ -57,11 +57,11 @@ export default {
     stubSub: 'Dieser Bereich wird in einer kommenden Iteration ausgebaut.',
     nav: {
       schatzkammer: 'Schatzkammer · Vistierie',
-      llmProviders: 'LLM Providers',
-      agentConfig: 'Agent Configuration',
-      budgets: 'Budgets & Cost Control',
-      dataSources: 'Data Sources',
-      messenger: 'Messenger & Notifications',
+      llmProviders: 'LLM-Provider',
+      agentConfig: 'Agenten',
+      budgets: 'Budgets & Kosten',
+      dataSources: 'Datenquellen',
+      messenger: 'Messenger & Benachrichtigungen',
       multiUser: 'Multi-User Settings',
       backup: 'Backup & Export',
       language: 'Sprache',
@@ -115,6 +115,7 @@ export default {
     agentConfig: {
       title: 'Agenten',
       subtitle: 'Pausiere oder aktiviere jeden Agenten. Tier, Schedule und Budget werden im Code konfiguriert.',
+      run: 'Jagd',
       pause: 'Pausieren',
       resume: 'Aktivieren',
       loadError: 'Agenten konnten nicht geladen werden.',
@@ -159,6 +160,9 @@ export default {
     adminOnly: 'nur Admin',
     headTitle: 'Was die Nacht kostet',
     headSub: 'Die Schatzkammer — jedes Token gezählt. Nach Tier, nach Tag, nach Agent.',
+    banner: {
+      overBudget: 'Monatslimit überschritten',
+    },
     tiles: {
       thisMonth: 'diesen Monat',
       ofCap: 'von ${cap} Limit',
@@ -187,7 +191,7 @@ export default {
     },
     dusk: {
       newPrey: 'neue Beute',
-      verdicts: 'Urteil | Urteile',
+      verdicts: 'Urteil heute | Urteile heute',
       alerts: 'Tagesläufer-Alarm | Tagesläufer-Alarme',
       lessons: 'Lektion ausstehend | Lektionen ausstehend',
     },
@@ -202,13 +206,18 @@ export default {
     daymark: {
       today: 'heute',
       yesterday: 'gestern',
+      byConfidence: 'nach Konfidenz',
     },
+    showOlder: 'Ältere Beute anzeigen',
     filters: {
       title: 'Filter',
+      button: 'Filter',
+      close: 'Schließen',
       allPrey: 'alle Beute',
       highConfidence: 'hohe Konfidenz',
       anomalyClass: 'Anomalie-Klasse',
       brood: 'Die Brut',
+      broodProfiles: 'Die Brut — Profile',
     },
     preyCard: {
       signals: 'Signale',
@@ -250,7 +259,6 @@ export default {
       consensusLabel: 'Konsens-Konfidenz',
       glanceTitle: 'Auf einen Blick',
       contributorsTitle: 'Beitragende',
-      addToWatchlist: 'Zur Watchlist hinzufügen',
       watchlistAdded: 'Zur Watchlist hinzugefügt.',
     },
     facts: {
@@ -390,6 +398,8 @@ export default {
       allStrigoi: 'Alle Strigoi ({n})',
     },
     evidenceCount: 'Belege: {n}',
+    expand: 'Muster aufklappen',
+    collapse: 'Muster zuklappen',
     actionError: {
       failed: 'Aktion fehlgeschlagen',
       deactivateFailed: 'Deaktivierung fehlgeschlagen',
@@ -440,11 +450,16 @@ export default {
       tracking: 'verfolgt',
     },
     addButton: '+ Zur Watchlist hinzufügen',
+    ownerGroup: 'von {owner}',
     dialog: {
       title: 'Zur Watchlist hinzufügen',
       placeholder: 'Ticker (z. B. AVGO)',
       cancel: 'Abbrechen',
       add: 'Hinzufügen',
+      notFound: 'Symbol {symbol} nicht gefunden.',
+    },
+    toast: {
+      added: '{symbol} zur Watchlist hinzugefügt',
     },
     empty: 'Keine Instrumente für diesen Filter.',
     tagLabel: {
@@ -492,6 +507,7 @@ export default {
     addButton: '+ Position',
     noSignal: '—',
     cols: { entry: 'Einstieg', size: 'Stück', current: 'Kurs', pnl: 'G&V' },
+    summary: { totalValue: 'Gesamtwert', pnl: 'Gesamt-G&V', count: 'Positionen' },
     dialog: {
       addTitle: 'Position hinzufügen',
       editTitle: 'Position bearbeiten',
@@ -566,6 +582,7 @@ export default {
     signals: 'Signale',
     risks: 'Risiken',
     killCriteria: 'Kill-Kriterien',
+    killCriteriaEmpty: 'Keine Kill-Kriterien definiert.',
     confidenceTitle: 'Konfidenz',
     facts: {
       anomaly: 'Anomalie',
@@ -658,11 +675,13 @@ export default {
       preyPerHuntFoot: 'über {n} Läufe diesen Monat',
       hitRate: 'Trefferquote',
       hitRateFoot: '{num} von {den} Beute in der These',
+      hitRateFootEmpty: 'Noch keine Treffer bewertbar',
       hunts: 'Jagden',
       huntsFoot: 'von {n} geplant',
       tier: 'Tier',
     },
     sections: {
+      statsMonth: 'Diesen Monat',
       lastRun: 'Letzter Lauf · Trace',
       recentPrey: 'Jüngste Beute',
       configuration: 'Konfiguration',
@@ -672,7 +691,7 @@ export default {
       yesterday: 'gestern',
       daysAgo: 'T zurück',
       preyUnit: 'Beute',
-      none: 'Noch kein Lauf aufgezeichnet.',
+      none: 'Noch kein Lauf aufgezeichnet (diesen Monat).',
     },
     prey: {
       empty: 'Die Brut schläft. Löse eine Jagd aus, um zu beginnen.',
@@ -690,6 +709,12 @@ export default {
       monthlyBudget: 'Monatsbudget',
       primary: 'Primär',
       fallback: 'Fallback',
+    },
+    trigger: {
+      button: 'Jagd auslösen',
+      running: 'Wird ausgelöst …',
+      started: 'Jagd gestartet',
+      pausedTooltip: 'Agent pausiert',
     },
   },
 }

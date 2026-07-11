@@ -83,6 +83,24 @@ class MorningReportServiceTest {
     }
 
     @Test
+    void fractionalPositionKeepsDecimalTicketShares() {
+        var s = held("1", "TSM", 100, 0.73);
+        var risk = Map.of("1", new PositionRisk("1", "2026-01-01", new BigDecimal("70"),
+                new BigDecimal("80"), new BigDecimal("160"), new BigDecimal("95"), null));
+
+        var trim = List.of(new ExitSignal("x", "1", "TSM", "TRIM", List.of(), 5.0,
+                "WEAKENING", "teilverkauf", 0.6, "run", "2026-06-22T22:00:00Z"));
+        var line = svc(List.of(s), risk, trim).build("u@x.com").positions().get(0);
+        assertThat(line.shareCount()).isEqualTo(0.73);        // same source as /api/portfolio
+        assertThat(line.ticket().shares()).isEqualTo(0.2433); // third of 0.73, 4 dp — not floored to 0
+
+        var sell = List.of(new ExitSignal("y", "1", "TSM", "SELL", List.of(), 5.0,
+                "INVALIDATED", "raus", 0.9, "run", "2026-06-22T22:00:00Z"));
+        var line2 = svc(List.of(s), risk, sell).build("u@x.com").positions().get(0);
+        assertThat(line2.ticket().shares()).isEqualTo(0.73);
+    }
+
+    @Test
     void positionWithoutSnapshotStillAppearsAsHold() {
         var s = held("1", "AAA", 100, 30);
         var line = svc(List.of(s), Map.of(), List.of()).build("u@x.com")

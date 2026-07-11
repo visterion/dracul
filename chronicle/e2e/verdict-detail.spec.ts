@@ -20,7 +20,7 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
 
   test('renders tag pills (consensus, horizon, anomaly classes)', async ({ page }) => {
     await expect(page.locator('.verdict-tags .tag-pill').first()).toBeVisible()
-    await expect(page.locator('.verdict-tags')).toContainText('0.84')
+    await expect(page.locator('.verdict-tags')).toContainText('0,84')
     await expect(page.locator('.verdict-tags')).toContainText('90 Tage')
   })
 
@@ -41,11 +41,11 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
   test('renders consensus ring in the aside', async ({ page }) => {
     const ring = page.locator('.verdict-aside .consensus-ring')
     await expect(ring).toBeVisible()
-    await expect(ring).toContainText('0.84')
+    await expect(ring).toContainText('0,84')
   })
 
   test('renders "at a glance" facts including avg confidence', async ({ page }) => {
-    await expect(page.locator('.kv-list')).toContainText('0.78')
+    await expect(page.locator('.kv-list')).toContainText('0,78')
   })
 
   test('current-price fact shows converted EUR plus native USD original', async ({ page }) => {
@@ -68,7 +68,7 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
   test('lists contributing strigoi with confidence', async ({ page }) => {
     const first = page.getByTestId('vd-contributor').first()
     await expect(first).toBeVisible()
-    await expect(first).toContainText(/\d\.\d{2}/)
+    await expect(first).toContainText(/\d,\d{2}/)
   })
 
   test('back link navigates to /', async ({ page }) => {
@@ -94,8 +94,16 @@ test.describe('Verdict Detail View (/verdict/:id)', () => {
     await expect(page.getByTestId('vd-decision-badge')).toContainText('TRACK')
   })
 
-  test('add to watchlist shows confirmation', async ({ page }) => {
-    await page.getByTestId('vd-add-watchlist').click()
+  test('decision panel is the only action group — no standalone watchlist button', async ({ page }) => {
+    await expect(page.getByTestId('vd-add-watchlist')).toHaveCount(0)
+    await expect(page.locator('.vd-decision-buttons .btn')).toHaveCount(4)
+    await expect(page.getByTestId('vd-decide-track')).toHaveClass(/btn-primary/)
+  })
+
+  test('track marks the decision as selected and confirms watchlist add', async ({ page }) => {
+    await page.getByTestId('vd-decide-track').click()
+    await expect(page.getByTestId('vd-decide-track')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('vd-decision-badge')).toContainText('TRACK')
     await expect(page.getByTestId('vd-watchlist-added')).toBeVisible()
   })
 

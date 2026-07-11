@@ -93,7 +93,7 @@ public class MorningReportService {
         double shares = item.shareCount();
         double ticketShares = switch (action) {
             case "SELL" -> shares;
-            case "TRIM" -> Math.floor(shares / 3.0);
+            case "TRIM" -> trimShares(shares);
             default -> 0.0;
         };
         OrderTicket ticket = new OrderTicket(action, item.ticker(), ticketShares,
@@ -116,5 +116,16 @@ public class MorningReportService {
         return "HELD".equals(item.tag())
                 && item.entryPrice() != null
                 && item.shareCount() != null;
+    }
+
+    /** One third of the position for a TRIM ticket. Whole-share positions keep
+     *  whole-share tickets (floor, unchanged behaviour); fractional positions
+     *  keep 4 decimals (share_count is NUMERIC(12,4)) instead of flooring a
+     *  0.73-share position to a "0 Stück" ticket. */
+    private static double trimShares(double shares) {
+        if (shares == Math.floor(shares)) return Math.floor(shares / 3.0);
+        return BigDecimal.valueOf(shares)
+                .divide(BigDecimal.valueOf(3), 4, RoundingMode.DOWN)
+                .doubleValue();
     }
 }

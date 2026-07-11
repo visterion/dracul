@@ -39,7 +39,7 @@ public class WatchlistRepository {
 
         var alertsByItem = new HashMap<String, List<WatchlistAlert>>();
         jdbc.sql("""
-                SELECT id, watchlist_item_id, at, message, level
+                SELECT id, watchlist_item_id, at, message, level, severity
                 FROM daywalker_alerts
                 ORDER BY watchlist_item_id, ctid
                 """)
@@ -50,7 +50,8 @@ public class WatchlistRepository {
                                     rs.getString("id"),
                                     rs.getString("at"),
                                     rs.getString("message"),
-                                    rs.getString("level")
+                                    rs.getString("level"),
+                                    rs.getString("severity")
                             ));
                     return null;
                 })
@@ -76,7 +77,7 @@ public class WatchlistRepository {
 
         var alertsByItem = new HashMap<String, List<WatchlistAlert>>();
         jdbc.sql("""
-                SELECT id, watchlist_item_id, at, message, level
+                SELECT id, watchlist_item_id, at, message, level, severity
                 FROM daywalker_alerts
                 WHERE user_id = :userId
                 ORDER BY watchlist_item_id, ctid
@@ -89,7 +90,8 @@ public class WatchlistRepository {
                                     rs.getString("id"),
                                     rs.getString("at"),
                                     rs.getString("message"),
-                                    rs.getString("level")
+                                    rs.getString("level"),
+                                    rs.getString("severity")
                             ));
                     return null;
                 })
@@ -192,7 +194,7 @@ public class WatchlistRepository {
 
         var alertsByItem = new HashMap<String, List<WatchlistAlert>>();
         jdbc.sql("""
-                SELECT id, watchlist_item_id, at, message, level
+                SELECT id, watchlist_item_id, at, message, level, severity
                 FROM daywalker_alerts
                 WHERE watchlist_item_id = :id
                 ORDER BY ctid
@@ -205,7 +207,8 @@ public class WatchlistRepository {
                                     rs.getString("id"),
                                     rs.getString("at"),
                                     rs.getString("message"),
-                                    rs.getString("level")
+                                    rs.getString("level"),
+                                    rs.getString("severity")
                             ));
                     return null;
                 })

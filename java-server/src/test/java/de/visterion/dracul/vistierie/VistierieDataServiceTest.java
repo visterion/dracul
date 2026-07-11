@@ -60,6 +60,15 @@ class VistierieDataServiceTest {
                 }
                 return super.getStrigoiDetail(name);
             }
+
+            @Override
+            public java.util.Map<String, Long> getCostByAgent(java.time.Instant from) {
+                // Force the legacy per-strigoi detail fan-out so this test still
+                // exercises (and proves) parallel detail-call execution.
+                throw org.springframework.web.client.HttpClientErrorException.create(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "Bad Request",
+                        org.springframework.http.HttpHeaders.EMPTY, new byte[0], null);
+            }
         };
 
         var service = new VistierieDataService(props(), client, 30);
@@ -110,5 +119,50 @@ class VistierieDataServiceTest {
         assertThat(calls.get())
                 .as("TTL of 0 disables caching")
                 .isEqualTo(2);
+    }
+
+    @Test
+    void spendingByAgentUsesCostEndpointWithoutDuplicates() {
+        // Vistierie lists voievod as a regular agent AND reports its cost — no duplicate row allowed.
+        var client = new MockVistierieClient() {
+            @Override
+            public List<StrigoiStatus> listStrigoi() {
+                var l = new java.util.ArrayList<>(super.listStrigoi());
+                l.add(new StrigoiStatus("voievod", "resting", null, null));
+                return l;
+            }
+        };
+        var data = new VistierieDataService(props(), client, 0).getData();
+
+        var names = data.spendingByAgent().stream().map(VistierieData.AgentSpend::agent).toList();
+        assertThat(names).doesNotHaveDuplicates();
+        assertThat(names).contains("(unattributed)", "voievod", "daywalker");
+        assertThat(data.spendingByAgent().stream()
+                .filter(a -> a.agent().equals("strigoi-spin")).findFirst().orElseThrow().totalUsd())
+                .isEqualTo(0.80);
+        // strigoi without reported cost still appear, with zero.
+        assertThat(data.spendingByAgent().stream()
+                .filter(a -> a.agent().equals("strigoi-echo")).findFirst().orElseThrow().totalUsd())
+                .isEqualTo(0.0);
+    }
+
+    @Test
+    void fallsBackToDetailPathWhenGroupByUnsupported() {
+        var client = new MockVistierieClient() {
+            @Override
+            public java.util.Map<String, Long> getCostByAgent(java.time.Instant from) {
+                throw org.springframework.web.client.HttpClientErrorException.create(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "Bad Request",
+                        org.springframework.http.HttpHeaders.EMPTY, new byte[0], null);
+            }
+        };
+        var data = new VistierieDataService(props(), client, 0).getData();
+
+        var names = data.spendingByAgent().stream().map(VistierieData.AgentSpend::agent).toList();
+        assertThat(names).doesNotHaveDuplicates();
+        assertThat(names).contains("voievod", "daywalker");            // legacy append, deduped
+        assertThat(data.spendingByAgent().stream()
+                .filter(a -> a.agent().equals("strigoi-spin")).findFirst().orElseThrow().totalUsd())
+                .isEqualTo(0.03);                                      // SPIN_CFG dailyUsedUsd
     }
 }

@@ -6,7 +6,7 @@ test.describe('Settings on mobile', () => {
   test('budget table scrolls inside its own wrapper, not the whole tab', async ({ page }) => {
     await page.goto('/settings')
     await page.waitForLoadState('networkidle')
-    await page.locator('.set-nav-item', { hasText: 'Budgets & Cost Control' }).click()
+    await page.locator('.set-nav-item', { hasText: 'Budgets & Kosten' }).click()
     await expect(page.locator('.set-budget-table')).toBeVisible()
 
     // The settings body itself must not pan horizontally anymore.
@@ -25,7 +25,7 @@ test.describe('Settings on mobile', () => {
   test('agent rows wrap; pause/edit buttons stay inside the viewport', async ({ page }) => {
     await page.goto('/settings')
     await page.waitForLoadState('networkidle')
-    await page.locator('.set-nav-item', { hasText: 'Agent Configuration' }).click()
+    await page.locator('.set-nav-item', { hasText: 'Agenten' }).click()
     const row = page.locator('.agent-row').first()
     await expect(row).toBeVisible()
 

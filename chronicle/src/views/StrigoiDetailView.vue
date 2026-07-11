@@ -30,18 +30,30 @@
           {{ stateLabel }} · {{ scheduleSummary }}
         </span>
       </template>
+      <template #right>
+        <button
+          class="btn btn-primary"
+          :disabled="triggering || isPaused"
+          :title="isPaused ? t('strigoi.trigger.pausedTooltip') : undefined"
+          data-testid="sd-trigger-hunt"
+          @click="onTriggerHunt"
+        >{{ triggering ? t('strigoi.trigger.running') : t('strigoi.trigger.button') }}</button>
+      </template>
     </PageHead>
 
+    <div class="section-head" data-testid="sd-stats-head"><span class="sh-rule" />{{ t('strigoi.sections.statsMonth') }}</div>
     <div class="stat-grid sd-stats">
       <StatTile
         :label="t('strigoi.stats.preyPerHunt')"
-        :value="strigoi.avgPreyPerHunt.toFixed(1)"
+        :value="formatNumber(strigoi.avgPreyPerHunt, 1)"
         :foot="t('strigoi.stats.preyPerHuntFoot', { n: strigoi.huntsThisMonth })"
       />
       <StatTile
         :label="t('strigoi.stats.hitRate')"
         :value="`${Math.round(strigoi.hitRate90d * 100)}%`"
-        :foot="t('strigoi.stats.hitRateFoot', { num: strigoi.hitRateNumerator, den: strigoi.hitRateDenominator })"
+        :foot="strigoi.hitRateDenominator === 0
+          ? t('strigoi.stats.hitRateFootEmpty')
+          : t('strigoi.stats.hitRateFoot', { num: strigoi.hitRateNumerator, den: strigoi.hitRateDenominator })"
       />
       <StatTile
         :label="t('strigoi.stats.hunts')"
@@ -65,7 +77,7 @@
               <span class="sd-dot">·</span>
               <span class="mono">{{ lastRun.preyCount }} {{ t('strigoi.run.preyUnit') }}</span>
               <span class="sd-dot">·</span>
-              <span class="mono">${{ lastRun.costUsd.toFixed(3) }}</span>
+              <span class="mono">${{ formatNumber(lastRun.costUsd, 3) }}</span>
               <span class="sd-dot">·</span>
               <span class="mono sd-run-model">{{ lastRun.model }}</span>
             </div>
@@ -117,13 +129,13 @@
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.dailyBudget') }}</span>
               <span class="kv-v mono">
-                ${{ strigoi.configuration.dailyUsedUsd.toFixed(2) }} / ${{ strigoi.configuration.dailyBudgetUsd.toFixed(2) }}
+                {{ formatMoney(strigoi.configuration.dailyUsedUsd, 'USD') }} / {{ formatMoney(strigoi.configuration.dailyBudgetUsd, 'USD') }}
               </span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('strigoi.config.monthlyBudget') }}</span>
               <span class="kv-v mono">
-                ${{ strigoi.configuration.monthlyUsedUsd.toFixed(2) }} / ${{ strigoi.configuration.monthlyBudgetUsd.toFixed(2) }}
+                {{ formatMoney(strigoi.configuration.monthlyUsedUsd, 'USD') }} / {{ formatMoney(strigoi.configuration.monthlyBudgetUsd, 'USD') }}
               </span>
             </div>
             <div class="kv-row">
@@ -153,6 +165,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiDetail, Prey } from '../api/types'
 import { useApi } from '../api'
+import { useToast } from '../composables/useToast'
 import BackLink from '../components/common/BackLink.vue'
 import PageHead from '../components/common/PageHead.vue'
 import StatTile from '../components/common/StatTile.vue'
@@ -162,16 +175,22 @@ import RunTrace from '../components/common/RunTrace.vue'
 import PreyCard from '../components/common/PreyCard.vue'
 import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
+import { formatMoney, formatNumber } from '../utils/format'
 
 const { t, locale } = useI18n()
 const { anomalyTypeLabel, agentTierLabel } = useEnumLabels()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
+const toast = useToast()
 
 const strigoi = ref<StrigoiDetail | null>(null)
 const loading = ref(true)
 const fetchError = ref<string | null>(null)
+const triggering = ref(false)
+
+const isPaused = computed(() =>
+  strigoi.value?.state === 'paused' || strigoi.value?.configuration.disabled === true)
 
 const lastRun = computed(() => strigoi.value?.recentRuns[0] ?? null)
 
@@ -219,6 +238,21 @@ function onBack() {
 
 function onOpenPrey(prey: Prey) {
   router.push({ name: 'prey-detail', params: { id: prey.id } })
+}
+
+async function onTriggerHunt() {
+  if (!strigoi.value || triggering.value) return
+  triggering.value = true
+  try {
+    await api.triggerStrigoiRun(strigoi.value.name)
+    toast.show(t('strigoi.trigger.started'), { type: 'success' })
+    const refreshed = await api.getStrigoiDetail(strigoi.value.name)
+    if (refreshed) strigoi.value = refreshed
+  } catch (e) {
+    toast.show((e as Error).message, { type: 'error' })
+  } finally {
+    triggering.value = false
+  }
 }
 
 function formatRunDate(iso: string): string {

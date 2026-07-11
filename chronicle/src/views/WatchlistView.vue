@@ -79,6 +79,7 @@
               maxlength="10"
               data-testid="wl-add-symbol"
               @input="addSymbol = addSymbol.toUpperCase()"
+              @keydown.enter="onAddSymbol"
             />
             <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
             <div class="watchlist__dialog-actions">
@@ -117,45 +118,52 @@
         </div>
 
         <div v-else class="watch-rows">
-          <div
-            v-for="item in filteredItems"
-            :key="item.id"
-            class="watch-row"
-            role="button"
-            tabindex="0"
-            :class="{ active: selectedId === item.id }"
-            data-testid="watchlist-item"
-            @click="selectedId = item.id"
-            @keydown.enter="selectedId = item.id"
-            @keydown.space.prevent="selectedId = item.id"
-          >
-            <div class="wr-id">
-              <span class="wr-ticker mono">{{ item.ticker }}</span>
-              <span class="wr-name">{{ item.companyName }}</span>
-              <span class="wr-owner mono" :data-testid="`wl-owner-${item.id}`">{{ item.owner }}</span>
-              <span class="wr-flags">
-                <span v-if="item.tag === 'TRACKING'" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
-                <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
-              </span>
+          <template v-for="group in groupedItems" :key="group.owner || '__mine__'">
+            <div
+              v-if="group.owner"
+              class="watch-owner-sep"
+              :data-testid="`wl-owner-${group.owner}`"
+            >{{ t('watchlist.ownerGroup', { owner: group.owner }) }}</div>
+            <div
+              v-for="item in group.items"
+              :key="item.id"
+              class="watch-row"
+              role="button"
+              tabindex="0"
+              :class="{ active: selectedId === item.id }"
+              :data-owner="item.owner"
+              data-testid="watchlist-item"
+              @click="selectedId = item.id"
+              @keydown.enter="selectedId = item.id"
+              @keydown.space.prevent="selectedId = item.id"
+            >
+              <div class="wr-id">
+                <span class="wr-ticker mono">{{ item.ticker }}</span>
+                <span v-if="displayName(item.ticker, item.companyName)" class="wr-name">{{ displayName(item.ticker, item.companyName) }}</span>
+                <span class="wr-flags">
+                  <span v-if="showsVerdictBadge(item)" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
+                  <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
+                </span>
+              </div>
+              <div class="wr-price">
+                <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
+                <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
+                  {{ formatPercent(item.dayChangePercent) }}
+                </span>
+              </div>
+              <div class="wr-meta">
+                <span class="wr-dot" :class="`dot-${dotClass(item.status)}`" />
+                <button
+                  v-if="isMine(item)"
+                  class="wr-delete"
+                  :data-testid="`wl-delete-${item.id}`"
+                  :disabled="rowBusyId === item.id"
+                  :aria-label="t('watchlist.deleteAria')"
+                  @click.stop="onDelete(item)"
+                >✕</button>
+              </div>
             </div>
-            <div class="wr-price">
-              <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
-              <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
-                {{ item.dayChangePercent >= 0 ? '+' : '' }}{{ item.dayChangePercent.toFixed(1) }}%
-              </span>
-            </div>
-            <div class="wr-meta">
-              <span class="wr-dot" :class="`dot-${dotClass(item.status)}`" />
-              <button
-                v-if="isMine(item)"
-                class="wr-delete"
-                :data-testid="`wl-delete-${item.id}`"
-                :disabled="rowBusyId === item.id"
-                :aria-label="t('watchlist.deleteAria')"
-                @click.stop="onDelete(item)"
-              >✕</button>
-            </div>
-          </div>
+          </template>
         </div>
       </div>
 
@@ -175,15 +183,15 @@
           <div class="wd-head">
             <div>
               <h1 class="wd-ticker mono">{{ selectedItem.ticker }}</h1>
-              <div class="wd-name">{{ selectedItem.companyName }}</div>
-              <div v-if="selectedItem.tag === 'TRACKING'" class="wd-since">
+              <div v-if="displayName(selectedItem.ticker, selectedItem.companyName)" class="wd-name">{{ displayName(selectedItem.ticker, selectedItem.companyName) }}</div>
+              <div v-if="showsVerdictBadge(selectedItem)" class="wd-since">
                 {{ t('watchlist.detail.subtitleTracking', { date: formatDate(selectedItem.addedAt) }) }}
               </div>
             </div>
             <div class="wd-quote">
               <span class="wd-px mono"><MoneyDisplay :amount="selectedItem.currentPrice" :currency="selectedItem.currency" :native-amount="selectedItem.nativeCurrentPrice" :native-currency="selectedItem.nativeCurrency" /></span>
               <span class="wd-chg mono" :class="selectedItem.dayChangePercent >= 0 ? 'pos' : 'neg'">
-                {{ selectedItem.dayChangePercent >= 0 ? '+' : '' }}{{ selectedItem.dayChangePercent.toFixed(1) }}% {{ t('watchlist.detail.today') }}
+                {{ formatPercent(selectedItem.dayChangePercent) }} {{ t('watchlist.detail.today') }}
               </span>
             </div>
           </div>
@@ -233,13 +241,19 @@ import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
+import { useToast } from '../composables/useToast'
+import { ApiError } from '../api/errors'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
+import { formatPercent } from '../utils/format'
+import { displayName } from '../utils/instrument'
+import { showsVerdictBadge, groupByOwner } from '../lib/watchlistDisplay'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()
 
 const api = useApi()
 const me = useMe()
+const toast = useToast()
 const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
@@ -310,6 +324,10 @@ const filteredItems = computed(() =>
     })
 )
 
+// Own items unlabelled first, then foreign owners grouped under a "von
+// <email>" separator — keeps the row itself free of owner e-mail noise.
+const groupedItems = computed(() => groupByOwner(filteredItems.value, me.value))
+
 // The uppercased search query if it is a valid ticker NOT already on the
 // watchlist; otherwise null. Used to offer an "add this ticker" CTA when the
 // filter is empty. Returns null when the ticker exists (even if hidden by the
@@ -342,10 +360,13 @@ async function onAddSymbol() {
   try {
     const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING' })
     items.value = [created, ...items.value.filter(i => i.id !== created.id)]
+    toast.show(t('watchlist.toast.added', { symbol: created.ticker }))
     addOpen.value = false
     addSymbol.value = ''
   } catch (e) {
-    addError.value = (e as Error).message
+    addError.value = e instanceof ApiError && (e.status === 404 || e.status === 422)
+      ? t('watchlist.dialog.notFound', { symbol: addSymbol.value })
+      : (e as Error).message
   } finally {
     addSubmitting.value = false
   }
@@ -458,6 +479,14 @@ function formatDate(isoDate: string): string {
 .watchlist__skeleton { margin-bottom: var(--space-2); }
 
 .watch-rows { display: flex; flex-direction: column; }
+.watch-owner-sep {
+  font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ash-gray);
+  padding: var(--space-4) var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--rule);
+}
 .watch-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -479,7 +508,6 @@ function formatDate(isoDate: string): string {
 .wr-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wr-ticker { font-size: var(--text-body); color: var(--bone-ivory); }
 .wr-name { font-size: var(--text-micro); color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wr-owner { font-size: 11px; color: var(--ash-gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 .wr-flags { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .wr-track { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--cathedral-gold); margin-top: 2px; }
 .wr-held { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--signal-positive-bright); margin-top: 2px; }
@@ -511,9 +539,15 @@ function formatDate(isoDate: string): string {
   border: none;
   color: var(--ash-gray);
   cursor: pointer;
-  padding: 0 var(--space-1);
   font-size: var(--text-body-sm);
   line-height: 1;
+  /* >=44x44 hit area without growing the visual row */
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  padding: var(--space-2);
+  margin: calc(var(--space-2) * -1) calc(var(--space-2) * -1) calc(var(--space-2) * -1) 0;
 }
 .wr-delete:hover { color: var(--blood-crimson); }
 .wr-delete[disabled] { opacity: 0.5; cursor: not-allowed; }

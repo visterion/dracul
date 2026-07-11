@@ -9,6 +9,7 @@
       <AppBottomNav v-if="smAndDown" />
     </div>
     <LiveAlertPanel :open="panelOpen" @close="panelOpen = false" />
+    <AppToast />
   </v-app>
 </template>
 
@@ -19,6 +20,7 @@ import AppTopBar from './components/shell/AppTopBar.vue'
 import AppStatusBar from './components/shell/AppStatusBar.vue'
 import AppBottomNav from './components/shell/AppBottomNav.vue'
 import LiveAlertPanel from './components/shell/LiveAlertPanel.vue'
+import AppToast from './components/shell/AppToast.vue'
 import { useStatusStore } from './stores/status'
 import { useLiveAlertsStore } from './stores/liveAlerts'
 

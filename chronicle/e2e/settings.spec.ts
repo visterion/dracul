@@ -23,17 +23,17 @@ test.describe('Settings View (/settings)', () => {
   })
 
   test('Providers section renders provider cards', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("LLM Providers")')
+    await page.click('.set-nav-item:has-text("LLM-Provider")')
     await expect(page.locator('.provider-card').first()).toBeVisible()
   })
 
   test('renders Anthropic provider card', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("LLM Providers")')
+    await page.click('.set-nav-item:has-text("LLM-Provider")')
     await expect(page.locator('.provider-card .pv-name:has-text("Anthropic")')).toBeVisible()
   })
 
   test('Providers section shows the add-provider button', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("LLM Providers")')
+    await page.click('.set-nav-item:has-text("LLM-Provider")')
     await expect(page.locator('.add-provider')).toBeVisible()
   })
 
@@ -68,14 +68,14 @@ test.describe('Settings View (/settings)', () => {
   })
 
   test('Agent config section lists agents', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.click('.set-nav-item:has-text("Agenten")')
     await expect(page.locator('[data-testid="agent-config-list"]')).toBeVisible()
     await expect(page.locator('.agent-row').first()).toBeVisible()
     await expect(page.locator('.agent-row[data-agent="strigoi-spin"]')).toBeVisible()
   })
 
   test('Pause toggles an agent to paused', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.click('.set-nav-item:has-text("Agenten")')
     const toggle = page.locator('[data-testid="agent-pause-strigoi-spin"]')
     await expect(toggle).toHaveText(/Pause|Pausieren/)
     await toggle.click()
@@ -87,7 +87,7 @@ test.describe('Settings View (/settings)', () => {
   })
 
   test('Data sources section lists the single Agora source with health', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("Data Sources")')
+    await page.click('.set-nav-item:has-text("Datenquellen")')
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
     await expect(page.locator('.ds-row')).toHaveCount(1)
     await expect(page.locator('.ds-row[data-source="agora"]')).toBeVisible()
@@ -95,7 +95,7 @@ test.describe('Settings View (/settings)', () => {
   })
 
   test('Re-check reloads data sources', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("Data Sources")')
+    await page.click('.set-nav-item:has-text("Datenquellen")')
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
     await page.click('[data-testid="ds-recheck"]')
     await expect(page.locator('[data-testid="data-sources-list"]')).toBeVisible()
@@ -105,7 +105,7 @@ test.describe('Settings View (/settings)', () => {
   test('agent config rows show localized role + state labels', async ({ page }) => {
     await page.goto('/settings')
     await page.waitForLoadState('networkidle')
-    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.click('.set-nav-item:has-text("Agenten")')
     const roles = page.locator('.agent-row__role')
     await expect(roles.first()).toBeVisible()
     const roleTexts = await roles.allTextContents()
@@ -114,7 +114,7 @@ test.describe('Settings View (/settings)', () => {
   })
 
   test('opens the agent edit dialog with prompt + tools populated and saves', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.click('.set-nav-item:has-text("Agenten")')
     await page.locator('[data-testid="agent-edit-strigoi-spin"]').click()
     const dialog = page.locator('[data-testid="agent-edit-dialog"]')
     await expect(dialog).toBeVisible()
@@ -127,16 +127,24 @@ test.describe('Settings View (/settings)', () => {
   })
 
   test('advanced section reveals schedule', async ({ page }) => {
-    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.click('.set-nav-item:has-text("Agenten")')
     await page.locator('[data-testid="agent-edit-strigoi-spin"]').click()
     const dialog = page.locator('[data-testid="agent-edit-dialog"]')
     await dialog.locator('[data-testid="schema-form-advanced"]').click()
     await expect(dialog.locator('#sf-schedule')).toBeVisible()
   })
 
+  test('agent rows offer a run trigger; paused agents are disabled', async ({ page }) => {
+    await page.click('.set-nav-item:has-text("Agenten")')
+    await expect(page.locator('[data-testid="agent-config-list"]')).toBeVisible()
+    await expect(page.getByTestId('agent-run-strigoi-lazarus')).toBeDisabled()
+    await page.getByTestId('agent-run-strigoi-spin').click()
+    await expect(page.getByText('Jagd gestartet')).toBeVisible()
+  })
+
   test('reset repopulates the form to the default prompt', async ({ page }) => {
     page.on('dialog', d => d.accept())
-    await page.click('.set-nav-item:has-text("Agent Configuration")')
+    await page.click('.set-nav-item:has-text("Agenten")')
     await page.locator('[data-testid="agent-edit-strigoi-spin"]').click()
     const dialog = page.locator('[data-testid="agent-edit-dialog"]')
     const prompt = dialog.locator('textarea').first()

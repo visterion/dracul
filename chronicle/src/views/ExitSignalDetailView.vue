@@ -49,7 +49,7 @@
           <span>{{ t('exitSignal.posEntry') }} <MoneyDisplay :amount="position.entryPrice" :currency="position.currency" :native-amount="position.nativeEntryPrice" :native-currency="position.entryCurrency" /></span>
           <span>{{ t('exitSignal.posSize') }} {{ fmt(position.shareCount) }}</span>
           <span>{{ t('exitSignal.posCurrent') }} <MoneyDisplay :amount="position.currentPrice" :currency="position.currency" :native-amount="position.nativeCurrentPrice" :native-currency="position.nativeCurrency" /></span>
-          <span class="ed-pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ pnlPct >= 0 ? '+' : '' }}{{ pnlPct.toFixed(1) }}%</span>
+          <span class="ed-pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ formatPercent(pnlPct) }}</span>
         </div>
         <router-link
           v-if="position.verdictId" class="ed-verdict"
@@ -71,6 +71,7 @@ import TagPill from '../components/common/TagPill.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import type { WatchlistItem, ExitSignal } from '../api/types'
+import { formatNumber, formatPercent } from '../utils/format'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -99,7 +100,7 @@ function ruleText(r: string): string {
   const txt = t(key)
   return txt === key ? r : txt
 }
-function fmt(n: number | null): string { return n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2 }) }
+function fmt(n: number | null): string { return n == null ? '—' : formatNumber(n, 0) }
 function goBack() { router.push({ name: 'portfolio' }) }
 
 let requestId = 0

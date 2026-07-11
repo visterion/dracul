@@ -80,12 +80,18 @@
             @click="toggleExpand(pattern.id)"
           >
             <BatGlyph :size="13" :dim="false" class="patterns__bat" />
-            <span class="patterns__active-name mono">{{ pattern.name ?? pattern.id }}</span>
+            <span class="patterns__active-name mono" :title="pattern.name ?? pattern.id">{{ patternTitle(pattern.statement) }}</span>
             <span class="patterns__strigoi-chip">{{ pattern.appliesToStrigoi.replace('strigoi-', '') }}</span>
             <span class="patterns__evidence-count mono">{{ t('patterns.evidenceCount', { n: pattern.evidenceCount }) }}</span>
             <span class="patterns__activated">{{ monthsAgo(pattern.proposedAt) }}</span>
-            <button class="patterns__expand-btn" @click.stop="toggleExpand(pattern.id)">
-              {{ expandedIds.has(pattern.id) ? '▼' : '▶' }}
+            <button
+              class="patterns__expand-btn"
+              :aria-expanded="expandedIds.has(pattern.id)"
+              :aria-label="expandedIds.has(pattern.id) ? t('patterns.collapse') : t('patterns.expand')"
+              @click.stop="toggleExpand(pattern.id)"
+            >
+              <i class="ph ph-caret-right patterns__chevron"
+                 :class="{ 'patterns__chevron--open': expandedIds.has(pattern.id) }" aria-hidden="true" />
             </button>
           </div>
           <div v-if="expandedIds.has(pattern.id)" class="patterns__active-body">
@@ -124,6 +130,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import PatternCard from '../components/common/PatternCard.vue'
 import PatternCasesDialog from '../components/common/PatternCasesDialog.vue'
 import { useRelativeTime } from '../composables/useRelativeTime'
+import { patternTitle } from '../utils/patternTitle'
 
 const { t } = useI18n()
 const { monthsAgo } = useRelativeTime()
@@ -310,6 +317,11 @@ function toggleExpand(id: string) {
   font-size: 12px;
   flex-shrink: 0;
 }
+.patterns__chevron {
+  display: inline-block;
+  transition: transform var(--transition-fast);
+}
+.patterns__chevron--open { transform: rotate(90deg); }
 
 .patterns__active-body {
   padding: 12px 16px 12px 36px;

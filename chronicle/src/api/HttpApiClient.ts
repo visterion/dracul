@@ -1,4 +1,5 @@
 import type { ApiClient } from './ApiClient'
+import { ApiError } from './errors'
 import type {
   ChronicleData, SystemStatus, VerdictDetail, StrigoiDetail,
   WatchlistItem, Pattern, LlmProvider, VistierieData,
@@ -36,6 +37,16 @@ export class HttpApiClient implements ApiClient {
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`getStrigoiDetail failed: HTTP ${res.status}`)
     return res.json() as Promise<StrigoiDetail>
+  }
+
+  async triggerStrigoiRun(name: string): Promise<{ runId: string }> {
+    const res = await fetch(`${this.baseUrl}/api/strigoi/${encodeURIComponent(name)}/run`, { method: 'POST' })
+    if (!res.ok) {
+      let msg = `triggerStrigoiRun failed: HTTP ${res.status}`
+      try { const b = await res.json(); if (b?.message) msg = b.message as string } catch { /* ignore */ }
+      throw new Error(msg)
+    }
+    return res.json() as Promise<{ runId: string }>
   }
 
   async getWatchlistItems(): Promise<WatchlistItem[]> {
@@ -145,7 +156,7 @@ export class HttpApiClient implements ApiClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
     })
-    if (!res.ok) throw new Error(`createWatchlistItem failed: HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(`createWatchlistItem failed: HTTP ${res.status}`, res.status)
     return res.json() as Promise<WatchlistItem>
   }
 
