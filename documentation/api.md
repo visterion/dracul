@@ -770,15 +770,19 @@ Response:
   { "symbol": "SPN", "companyName": "Acme Spinco Inc", "formType": "10-12B",
     "filingDate": "2026-05-20", "filingUrl": "https://www.sec.gov/Archives/...",
     "termSheet": "The distribution ratio is one share of SpinCo for every four shares...",
-    "termSheetAvailable": true }
+    "termSheetAvailable": true,
+    "distributionRatio": "1:4", "recordDate": "2026-06-10", "distributionDate": "2026-06-24" }
 ] } }
 ```
 
 `termSheet` / `termSheetAvailable` are advisory annotations — the cleaned
 summary-term-sheet text of the filing (via Agora's `get_filing_text`, fetched
-by `AgoraFilings.filingText(filingUrl)`) and whether it was available. The LLM
-extracts parent/ratio/record-date/size from it; fail-soft (`termSheetAvailable
-= false`, empty text) on any Agora failure — no candidate is dropped for it.
+by `AgoraFilings.filingText(filingUrl)`) and whether it was available.
+`distributionRatio` / `recordDate` / `distributionDate` are deterministically
+parsed from `termSheet` by `SpinTermsParser` (`null` when the pattern isn't
+found in the text — the LLM still extracts parent/ratio/record-date/size from
+the raw `termSheet` as a fallback); fail-soft (`termSheetAvailable = false`,
+empty text) on any Agora failure — no candidate is dropped for it.
 `output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-spin/complete`
@@ -808,18 +812,24 @@ Response:
   { "symbol": "TGT", "companyName": "Target Co Inc", "formType": "DEFM14A",
     "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/...",
     "termSheet": "Each share of common stock will be converted into the right to receive $58.00 in cash...",
-    "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true }
+    "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true,
+    "offerPrice": 58.00, "considerationType": "CASH", "exchangeRatio": null,
+    "breakFee": "$120 million", "spreadPercent": 7.21 }
 ] } }
 ```
 
 `termSheet` / `termSheetAvailable` and `lastPrice` / `priceAvailable` are
 advisory annotations — the cleaned summary-term-sheet text of the filing (via
 Agora's `get_filing_text`, fetched by `AgoraFilings.filingText(filingUrl)`)
-plus the current quote, for the LLM to interpret. The LLM extracts
-offer/consideration/conditions/termination-fee from `termSheet` and computes
-the spread vs `lastPrice`; fail-soft (`*Available = false`) on any Agora
-failure — no candidate is dropped for it. `output_schema` (the final verdict)
-is unchanged.
+plus the current quote, for the LLM to interpret. `offerPrice` /
+`considerationType` / `exchangeRatio` / `breakFee` are deterministically
+parsed from `termSheet` by `DealTermsParser` (fields are `null` when not
+found in the text); `spreadPercent` is server-computed from `offerPrice` and
+`lastPrice` when both are available (`(offerPrice - lastPrice) / lastPrice *
+100`). The LLM still extracts offer/consideration/conditions/termination-fee
+from `termSheet` itself as a fallback and interprets the spread; fail-soft
+(`*Available = false`) on any Agora failure — no candidate is dropped for it.
+`output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-merger/complete`
 
@@ -852,10 +862,20 @@ Response:
       "ma_fast": 135.0, "ma_slow": 121.0, "ma_cross": "BULLISH",
       "week52Low": 89.0, "week52High": 155.0,
       "atr22": 4.2
+    },
+    "thesis": {
+      "summary": "...", "signals": ["..."], "risks": ["..."],
+      "anomalyTypes": ["PEAD"], "horizon": "3m",
+      "killCriteria": ["EPS miss next quarter", "Price closes below $120 for 3 sessions"]
     }
   }
 ] } }
 ```
+
+`thesis` is only present when the position's originating verdict is
+resolvable; `thesis.killCriteria` is the deduped union of `kill_criteria`
+across the verdict's contributing prey, omitted entirely (no empty array)
+when none of them declared any.
 
 ### `POST /api/gropar/complete`
 
@@ -868,13 +888,21 @@ Request body:
 ```json
 { "run_id": "...", "status": "succeeded",
   "output": { "signals": [
-    { "symbol": "ACME", "verdict": "SELL", "rationale": "...", "confidence": 0.8 }
+    { "position_id": "...", "symbol": "ACME", "action": "EXIT",
+      "thesis_status": "INVALIDATED", "rationale": "...", "confidence": 0.8,
+      "gain_loss_pct": -8.4, "fired_rules": ["INITIAL_STOP"],
+      "violated_kill_criteria": ["Price closes below $120 for 3 sessions"] }
   ] } }
 ```
 
-Returns 204. If `status != "succeeded"` or the `output.signals` array is absent,
-the endpoint acknowledges (204) without persisting and logs the run-id. SELL or
-TRIM verdicts also trigger a best-effort Telegram push.
+`violated_kill_criteria` is prompt-enforced (`prompts/gropar.md`): the LLM
+must name at least one violated entry whenever `thesis_status` =
+`INVALIDATED`, verbatim from the position's `thesis.killCriteria`; omitted
+for `INTACT`/`WEAKENING`/`NONE`. When present it is appended to the persisted
+`rationale` (`"[Verletzt: ...]"`). Returns 204. If `status != "succeeded"` or
+the `output.signals` array is absent, the endpoint acknowledges (204) without
+persisting and logs the run-id. Any non-`HOLD` `action` also triggers a
+best-effort Telegram push.
 
 ## Voievod Webhooks
 
@@ -985,9 +1013,18 @@ Input `lookback_days` range: 1–90; default 30.
 Response:
 ```json
 { "output": { "candidates": [
-  { "symbol": "ACME", "companyName": "Acme Corp", "dateAdded": "2026-05-15" }
+  { "symbol": "ACME", "companyName": "Acme Corp", "dateAdded": "2026-05-15",
+    "adv": 48250000.00, "marketCap": 12500000000.0, "avgVolume20d": 950000,
+    "metricsAvailable": true }
 ] } }
 ```
+
+`adv` (20-day average daily dollar volume, close × volume), `marketCap`, and
+`avgVolume20d` (20-day average daily share volume) let the LLM judge
+forced-buying magnitude against real liquidity/size instead of guessing. Any
+of the three may be `null` on a per-candidate data-source failure (fail-soft);
+`metricsAvailable` is `false` only when all three are `null` — no candidate
+is dropped for it.
 
 ### `POST /api/strigoi-index/complete`
 

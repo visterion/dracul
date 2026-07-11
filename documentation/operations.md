@@ -15,6 +15,38 @@
   3. Optionally lower `DRACUL_DAYWALKER_NOTIFY_LEVEL` to `WARNING` for more alerts.
   A blank token or chat id disables push; alerts are still persisted and visible in Chronicle.
 
+### Post-deploy: agent definition resets (executor vetoes / kill-criteria / strigoi enrichment change set)
+
+Deploying the executor MAX_TRANCHE/CORRELATED/kill-criteria change set, the
+verdict kill-criteria watcher, and the strigoi-index/-merger/-spin
+enrichment fields updates the *code defaults* for several agents' output
+schemas and prompts, but `AgentDefinitionBootstrap` is insert-if-absent — an
+already-registered agent's stored definition is **not** overwritten by the
+new image alone (see `GenericAgentRegistrar.matches()`). After deploying
+this change set, explicitly reset each affected agent's definition so
+Vistierie picks up the new schema/prompt:
+
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/gropar/definition/reset
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/strigoi-index/definition/reset
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/strigoi-merger/definition/reset
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/strigoi-spin/definition/reset
+
+(`gropar` — new `violated_kill_criteria` schema field + prompt;
+`strigoi-index`/`strigoi-merger`/`strigoi-spin` — prompts updated to reason
+over the new enrichment fields (`adv`/`marketCap`/`avgVolume20d`;
+`offerPrice`/`considerationType`/`exchangeRatio`/`breakFee`/`spreadPercent`;
+`distributionRatio`/`recordDate`/`distributionDate`).) Each endpoint is
+behind Cloudflare Access — use [Local Access](#local-access-cloudflare-bypass)
+to call it from the host. Verify via `GET /agents/<name>` on Vistierie
+(`:8090`, tenant token): `output_schema`/`system_prompt` should show the
+change and `version` should have bumped. The executor's `MAX_TRANCHE`/
+`CORRELATED` vetoes and the verdict kill-criteria watcher (V22 migration)
+need no reset — they are pure Dracul-side code, not agent definitions.
+
 ## Environment variables
 
 See [configuration.md](./configuration.md) for the full list.
