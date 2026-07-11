@@ -39,6 +39,17 @@ export const mockPatterns: Pattern[] = [
     avgUpliftPercent: null,
     proposedAt: daysAgo(1),
   },
+  {
+    id: 'pattern-e2e-pending',
+    appliesToStrigoi: 'strigoi-echo',
+    statement:
+      'E2E seed: PEAD candidates announced on Fridays drift 1.3x stronger than mid-week announcements. Boost Friday announcements by +0.05 confidence.',
+    status: 'PENDING',
+    evidenceCount: 5,
+    supportedCount: 4,
+    avgUpliftPercent: 7,
+    proposedAt: daysAgo(0.5),
+  },
 
   // ── Active ────────────────────────────────────────────────────
   {
