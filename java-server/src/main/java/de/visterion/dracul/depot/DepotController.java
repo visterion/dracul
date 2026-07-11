@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -24,10 +25,13 @@ public class DepotController {
 
     private final DepotService service;
     private final DepotChartService chartService;
+    private final DepotInstrumentService instrumentService;
 
-    public DepotController(DepotService service, DepotChartService chartService) {
+    public DepotController(DepotService service, DepotChartService chartService,
+            DepotInstrumentService instrumentService) {
         this.service = service;
         this.chartService = chartService;
+        this.instrumentService = instrumentService;
     }
 
     @GetMapping
@@ -77,6 +81,20 @@ public class DepotController {
     }
 
     /**
+     * Instrument info bundle for the GUI's instrument page: profile, news, earnings window,
+     * analyst estimates, earnings estimates, fundamental score, fundamentals, and insider
+     * activity — ungated market data (no depot/live-visibility concern, unlike the endpoints
+     * above). Each section is independently nullable; see {@link DepotInstrumentService}.
+     */
+    @GetMapping("/instrument/{symbol}")
+    public InstrumentResponse instrument(@PathVariable String symbol) {
+        DepotInstrumentService.InstrumentBundle bundle = instrumentService.bundle(symbol);
+        return new InstrumentResponse(bundle.symbol(), bundle.profile(), bundle.news(), bundle.earnings(),
+                bundle.analystEstimates(), bundle.earningsEstimates(), bundle.fundamentalScore(),
+                bundle.fundamentals(), bundle.insiderActivity());
+    }
+
+    /**
      * Resolves a depot connection to its {@link DepotDto}, gating on Agora availability, the
      * connection existing, and the depot's own fetch having succeeded. Shared by
      * {@link #positionDetail} and {@link #depotChart} which both need a live, error-free depot.
@@ -120,5 +138,14 @@ public class DepotController {
     public record DepotChartResponse(String connection, String range,
             List<DepotChartService.ChartPoint> points, List<DepotChartService.RelativePoint> relative,
             boolean partial) {
+    }
+
+    /**
+     * Response for {@code GET /api/depots/instrument/{symbol}}: each section is the raw Agora
+     * tool output, {@code null} when that section's call failed.
+     */
+    public record InstrumentResponse(String symbol, JsonNode profile, JsonNode news, JsonNode earnings,
+            JsonNode analystEstimates, JsonNode earningsEstimates, JsonNode fundamentalScore,
+            JsonNode fundamentals, JsonNode insiderActivity) {
     }
 }

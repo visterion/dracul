@@ -374,6 +374,7 @@ Order ticket fields (`ticket`):
 | GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders) |
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
+| GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
 
 Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
 /api/depots` calls `DepotService.depots(userEmail)`, which lists Agora's
@@ -534,6 +535,46 @@ HALF_UP (so the first point's `pct` is always `0.00`).
     { "t": "2026-07-02", "pct": 2.22 }
   ],
   "partial": false
+}
+```
+
+### `GET /api/depots/instrument/{symbol}` response
+
+Pure market data via `DepotInstrumentService`/Agora — no user/live-gating
+concern, same as `GET /api/depots/chart`. Feeds the GUI's
+Trade-Republic-style instrument page (profile, news, events, insights,
+financials shown as independent sections).
+
+Backed by eight Agora tool calls, made **sequentially**
+(`AgoraClient.callTool` is `synchronized`, so parallelizing them buys
+nothing) and each wrapped in its own try/catch: `get_company_profile`,
+`get_company_news` (window: `from` = today − 14 days, `to` = today),
+`get_earnings_window`, `get_analyst_estimates`, `get_earnings_estimates`,
+`get_fundamental_score`, `get_fundamentals`, `get_form4_transactions`.
+**Every section is independently nullable** — a single tool failing
+(Agora error, timeout, etc.) sets only that section to `null`; the
+other sections and the `200 OK` response shape are unaffected. If all
+eight calls fail, the response is still `200` with every section
+`null`.
+
+`get_earnings_window` and `get_form4_transactions` take no `symbol`
+input in Agora — they are market-wide, date-windowed queries (each
+result row carries its own `symbol`) — so the `earnings` and
+`insiderActivity` sections are Agora's **raw, unfiltered** output for
+its own default date window, not pre-filtered to `{symbol}`; the
+caller/GUI filters by symbol if needed.
+
+```json
+{
+  "symbol": "ACME",
+  "profile": { "symbol": "ACME", "name": "Acme Corp", "industry": "...", "exchange": "...", "marketCap": 123456789 },
+  "news": { "symbol": "ACME", "news": [ { "...": "..." } ] },
+  "earnings": { "events": [ { "symbol": "ACME", "...": "..." } ] },
+  "analystEstimates": { "symbol": "ACME", "recommendations": [ { "...": "..." } ] },
+  "earningsEstimates": { "symbol": "ACME", "estimates": [ { "...": "..." } ] },
+  "fundamentalScore": { "symbol": "ACME", "score": 7 },
+  "fundamentals": { "symbol": "ACME", "peRatio": 20.1 },
+  "insiderActivity": { "transactions": [ { "symbol": "ACME", "...": "..." } ] }
 }
 ```
 
