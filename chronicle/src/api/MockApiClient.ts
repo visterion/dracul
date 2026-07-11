@@ -7,6 +7,7 @@ import type {
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
+  DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
 } from './types'
 import { mockPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -22,6 +23,9 @@ import { mockProviders } from '../mocks/providers'
 import { mockExitSignals } from '../mocks/exitSignals'
 import { mockMorningReport } from '../mocks/morningReport'
 import { mockExecutorCalibration, mockExecutorBehavior } from '../mocks/executorCalibration'
+import {
+  mockDepots, mockDepotsResponse, mockDepotChart, mockInstrumentChart, mockInstrumentInfo,
+} from '../mocks/depots'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -387,5 +391,43 @@ export class MockApiClient implements ApiClient {
     return [
       { id: 'agora', label: 'Agora', configured: true, status: 'ok', httpStatus: null, detail: null, latencyMs: 34, usedBy: ['quotes', 'ohlc', 'filings', 'fundamentals', 'earnings', 'news', 'index', 'intraday', 'fx'], rateLimitNote: 'in-cluster MCP', checkedAt: now },
     ]
+  }
+
+  async getDepots(): Promise<DepotsResponse> {
+    await delay(50)
+    return structuredClone(mockDepotsResponse)
+  }
+
+  async getDepotChart(connection: string, _range: ChartRange): Promise<DepotChart> {
+    await delay(50)
+    const depot = mockDepots.find(d => d.id === connection)
+    if (!depot) throw new Error(`getDepotChart: connection not found: ${connection}`)
+    return structuredClone(mockDepotChart)
+  }
+
+  async getInstrumentChart(_symbol: string, _range: ChartRange): Promise<DepotChart> {
+    await delay(50)
+    return structuredClone(mockInstrumentChart)
+  }
+
+  async getInstrumentInfo(symbol: string): Promise<InstrumentInfo> {
+    await delay(50)
+    return { ...structuredClone(mockInstrumentInfo), symbol }
+  }
+
+  async getDepotPosition(
+    connection: string,
+    symbol: string,
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }> {
+    await delay(50)
+    const depot = mockDepots.find(d => d.id === connection)
+    if (!depot) throw new Error(`getDepotPosition: connection not found: ${connection}`)
+    const position = depot.positions.find(p => p.symbol === symbol)
+    if (!position) throw new Error(`getDepotPosition: not found: ${connection}/${symbol}`)
+    return {
+      position: { ...position },
+      orders: depot.orders.filter(o => o.symbol === symbol).map(o => ({ ...o })),
+      asOf: depot.asOf,
+    }
   }
 }

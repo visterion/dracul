@@ -29,6 +29,12 @@ const router = createRouter({
       component: () => import('../views/WatchlistView.vue'),
     },
     { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
+    { path: '/depots', name: 'depots', component: () => import('../views/DepotsView.vue') },
+    {
+      path: '/depots/:connection/:symbol',
+      name: 'depot-position-detail',
+      component: () => import('../views/DepotPositionDetailView.vue'),
+    },
     { path: '/exit-signal/:id', name: 'exit-signal-detail', component: () => import('../views/ExitSignalDetailView.vue') },
     { path: '/report', name: 'morning-report', component: () => import('../views/MorningReportView.vue') },
     {

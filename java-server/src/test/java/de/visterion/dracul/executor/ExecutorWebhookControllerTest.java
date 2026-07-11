@@ -82,7 +82,7 @@ class ExecutorWebhookControllerTest {
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram,
-                "tkn", "saxo-sim", 0.6, 3, 22, 20, 10,
+                "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, fixedClock);
     }
@@ -168,7 +168,7 @@ class ExecutorWebhookControllerTest {
 
     private ExecutorPosition openPosition(long id, String symbol, String side,
             BigDecimal entry, BigDecimal initialStop) {
-        return new ExecutorPosition(id, "saxo-sim", symbol, side, new BigDecimal("10"),
+        return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
                 null, null, null, null, 0, null, null);
@@ -178,7 +178,7 @@ class ExecutorWebhookControllerTest {
      *  {@code trimCount} for scale-out/ladder tests. */
     private ExecutorPosition openPosition(long id, String symbol, String side,
             BigDecimal entry, BigDecimal initialStop, BigDecimal qty, int trimCount) {
-        return new ExecutorPosition(id, "saxo-sim", symbol, side, qty,
+        return new ExecutorPosition(id, "depot-1", symbol, side, qty,
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
                 null, null, null, null, trimCount, null, null);
@@ -587,7 +587,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_happyPath_placesAndBooks() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -603,7 +603,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("position_id")).isEqualTo(77L);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.symbol()).isEqualTo("ACME");
         assertThat(req.side()).isEqualTo("BUY");
@@ -639,7 +639,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_happyPath_writesRichDecisionLog() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -705,7 +705,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_confidence_landsInDecisionLog_enter() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -743,7 +743,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_noConfidenceArgument_logsNullNeverFabricated() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -761,7 +761,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_brokerError_noPositionBooked() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenThrow(new BrokerUnavailableException("broker down"));
 
         JsonNode body = json("""
@@ -795,7 +795,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_dbFailureAfterPlacedBracket_escalatesOrphanedOrder() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("bracket-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenThrow(new RuntimeException("db down"));
 
@@ -826,7 +826,7 @@ class ExecutorWebhookControllerTest {
         // decisionRepo.insert throws. The response must NOT flip into a false ORPHANED_ORDER
         // -- that would contradict persisted state.
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("bracket-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
         doThrow(new RuntimeException("audit db down")).when(decisionRepo)
@@ -861,7 +861,7 @@ class ExecutorWebhookControllerTest {
         // NO_STOP. CHASED_AWAY only fires when price rises away from the reference, so a falling
         // price never trips it here (price(100) <= referencePrice(110) + atr(2) trivially holds).
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("110")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -875,7 +875,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(true);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         // qty basis is the fresh ctx.price()=100, not the stale reference=110: floor(1000/100)=10
         assertThat(reqCaptor.getValue().qty()).isEqualByComparingTo("10");
 
@@ -891,7 +891,7 @@ class ExecutorWebhookControllerTest {
         // basis for sizing and booking (BracketRequest.limitPrice itself is untouched -- it always
         // carries the LLM's raw argument, null or not).
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -905,7 +905,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(true);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         // qty basis is limit_price=99, not ctx.price()=100: floor(1000/99)=10
         assertThat(reqCaptor.getValue().qty()).isEqualByComparingTo("10");
         assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("99");
@@ -923,7 +923,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_noTakeProfit_synthesizesWide3RTarget_buy() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
 
@@ -936,7 +936,7 @@ class ExecutorWebhookControllerTest {
         controller.placeEntry(BEARER, "r1", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().takeProfitLimit()).isNotNull();
         assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("115");
     }
@@ -944,7 +944,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_noTakeProfit_synthesizesWide3RTarget_sell() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
 
@@ -957,7 +957,7 @@ class ExecutorWebhookControllerTest {
         controller.placeEntry(BEARER, "r1", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().takeProfitLimit()).isNotNull();
         assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("85");
     }
@@ -965,7 +965,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_explicitTakeProfit_usedUnchanged() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
 
@@ -978,7 +978,7 @@ class ExecutorWebhookControllerTest {
         controller.placeEntry(BEARER, "r1", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("108");
     }
 
@@ -989,7 +989,7 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_vistierieEnvelope_placesIdenticallyToTopLevel() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
-        when(gateway.placeBracket(eq("saxo-sim"), any(BracketRequest.class)))
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-9", "stop-9", null, "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(42L);
 
@@ -1006,7 +1006,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("position_id")).isEqualTo(42L);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway, times(1)).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.side()).isEqualTo("BUY");
         assertThat(req.qty()).isEqualByComparingTo("10");
@@ -1109,7 +1109,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void getAccount_unavailableEnvelope() {
-        when(gateway.account("saxo-sim")).thenThrow(new BrokerUnavailableException("no session"));
+        when(gateway.account("depot-1")).thenThrow(new BrokerUnavailableException("no session"));
 
         ResponseEntity<?> resp = controller.getAccount(BEARER, json("{}"));
 
@@ -1121,7 +1121,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void getAccount_happy() {
-        when(gateway.account("saxo-sim")).thenReturn(
+        when(gateway.account("depot-1")).thenReturn(
                 new AccountSnapshot(new BigDecimal("1000"), new BigDecimal("1000"), "USD"));
 
         ResponseEntity<?> resp = controller.getAccount(BEARER, json("{}"));
@@ -1194,12 +1194,12 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void fetchOpenPositions_runsPipelineAndSerializes() {
-        EnrichedPosition ep = new EnrichedPosition(1L, "saxo-sim", "ACME", "BUY",
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of("X"),
                 true, false, 1, true, "R_CONFIRMED", "sig-42", 0, 0.33, true);
-        when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
 
@@ -1242,11 +1242,11 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void fetchOpenPositions_serializesEntryFilledFalseForUnfilledEntry() {
-        EnrichedPosition ep = new EnrichedPosition(1L, "saxo-sim", "ACME", "BUY",
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 null, null, null, null, null, 0, List.of(), List.of(),
                 false, false, 0, false, null, "sig-42", 0, 0.33, false);
-        when(pipeline.run(eq("saxo-sim"), any())).thenReturn(List.of(ep));
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
 
@@ -1266,7 +1266,7 @@ class ExecutorWebhookControllerTest {
         // entry_expires_at != null marks a GTD entry with no confirmed fill (set at placement,
         // cleared by reconcile on fill / by expiry on cancel). An LLM exit on it would flatten
         // zero broker holdings and fabricate a close -> rejected NOT_FILLED, no broker call.
-        ExecutorPosition unfilled = new ExecutorPosition(7L, "saxo-sim", "ACME", "BUY",
+        ExecutorPosition unfilled = new ExecutorPosition(7L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0, null, null,
@@ -1301,7 +1301,7 @@ class ExecutorWebhookControllerTest {
     void exitPosition_fullExit() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
                 .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1314,7 +1314,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(true);
         assertThat(output.get("exit_reason")).isEqualTo("SOFT_CHANDELIER");
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
 
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
@@ -1336,7 +1336,7 @@ class ExecutorWebhookControllerTest {
     void exitPosition_vistierieEnvelope_fullExit() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
                 .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1350,7 +1350,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(true);
         assertThat(output.get("exit_reason")).isEqualTo("SOFT_CHANDELIER");
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1381,7 +1381,7 @@ class ExecutorWebhookControllerTest {
     void exitPosition_brokerError() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
                 .thenThrow(new BrokerUnavailableException("broker down"));
 
         JsonNode body = json("""
@@ -1455,7 +1455,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
                 .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"), new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1467,7 +1467,7 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("exited")).isEqualTo(false);
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
+        verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         // qty 10 * (1-0.33) = 6.7, floored to whole shares -> 6
         verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("6")), eq(1));
@@ -1491,7 +1491,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("100"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
                 .thenReturn(new CloseResult(new BigDecimal("33"), new BigDecimal("67"), new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1505,7 +1505,7 @@ class ExecutorWebhookControllerTest {
         assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("67");
         assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("33");
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
+        verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
         verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("67")), eq(1));
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1519,7 +1519,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("200"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
                 .thenReturn(new CloseResult(new BigDecimal("66"), new BigDecimal("134"), new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1560,7 +1560,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
                 .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1572,7 +1572,7 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("exited")).isEqualTo(true);
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
@@ -1594,7 +1594,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("1"), 1);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE)))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
                 .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
 
         JsonNode body = json("""
@@ -1606,7 +1606,7 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("exited")).isEqualTo(true);
 
-        verify(gateway, times(1)).flatten(eq("saxo-sim"), eq("ACME"), eq(BigDecimal.ONE));
+        verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(gateway, never()).flatten(any(), any(), eq(BigDecimal.valueOf(0.5)));
         verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
@@ -1628,7 +1628,7 @@ class ExecutorWebhookControllerTest {
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
-        when(gateway.placeBracket(eq("saxo-sim"), any()))
+        when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-11", "stop-11", "tp-11", "t2-sig-1", OrderStatus.WORKING));
 
         // price=102, trancheAmount=750 -> sizer floors qty to 7 (750/102 = 7.35).
@@ -1664,7 +1664,7 @@ class ExecutorWebhookControllerTest {
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
-        when(gateway.placeBracket(eq("saxo-sim"), any()))
+        when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
 
         JsonNode body = json("""
@@ -1679,7 +1679,7 @@ class ExecutorWebhookControllerTest {
         assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("10");
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.symbol()).isEqualTo("ACME");
         assertThat(req.side()).isEqualTo("BUY");
@@ -1710,7 +1710,7 @@ class ExecutorWebhookControllerTest {
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
-        when(gateway.placeBracket(eq("saxo-sim"), any()))
+        when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("bracket-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
         doThrow(new RuntimeException("db down")).when(positionRepo)
                 .updateTranche2(eq(7L), any(), any(), any(), any());
@@ -1744,7 +1744,7 @@ class ExecutorWebhookControllerTest {
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
-        when(gateway.placeBracket(eq("saxo-sim"), any()))
+        when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
         doThrow(new RuntimeException("audit db down")).when(decisionRepo)
                 .insert(argThat(d -> d != null && d.accepted()));
@@ -1765,7 +1765,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void addTranche_nullSourceSignalId_clientRefFallsBackToPositionId() {
-        ExecutorPosition open = new ExecutorPosition(42L, "saxo-sim", "ACME", "BUY",
+        ExecutorPosition open = new ExecutorPosition(42L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
@@ -1773,7 +1773,7 @@ class ExecutorWebhookControllerTest {
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
-        when(gateway.placeBracket(eq("saxo-sim"), any()))
+        when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-42", "stop-42", "tp-42", "t2-pos-42", OrderStatus.WORKING));
 
         JsonNode body = json("""
@@ -1783,13 +1783,13 @@ class ExecutorWebhookControllerTest {
         controller.addTranche(BEARER, "run-1", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
-        verify(gateway).placeBracket(eq("saxo-sim"), reqCaptor.capture());
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().clientRef()).isEqualTo("t2-pos-42");
     }
 
     @Test
     void addTranche_rejectsWhenTrancheLimitReached() {
-        ExecutorPosition open = new ExecutorPosition(7L, "saxo-sim", "ACME", "BUY",
+        ExecutorPosition open = new ExecutorPosition(7L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
