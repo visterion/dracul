@@ -405,6 +405,24 @@ call `exit_position(symbol, reason, confidence, reasoning)`. Unlike
 permitted, since closing a position is never something code needs to guard
 against.
 
+Exits also carry an optional `fraction` for scale-out: each open position
+surfaces `trim_count` and `suggested_fraction`, and the prompt instructs the
+LLM to exit `0.33` on the first confirmed soft trigger, then at least
+`suggested_fraction` (`0.5`, then `1.0`) on subsequent ones — code enforces
+the ladder floor server-side, the LLM may only exit more aggressively, never
+less. See `documentation/api.md`'s "Scale-out / trim ladder" section for the
+full floor table and rejection shape.
+
+**MAE (adverse-excursion) tracking.** Every maintenance pass also updates
+`executor_position.lowest_price` for BUY positions: the new floor is
+`min(previous lowest_price (or entry price if never set), current close)`,
+written only when the close is a new low. SELL positions never write
+`lowest_price` — their adverse extreme is the *highest* close, already
+tracked as `highest_price` by the ratchet step, so `mae_r` for a SELL
+position derives from `highest_price` instead. This groundwork feeds the R
+distribution / backtest work that reads `mae_r` off the closed-position
+history.
+
 `kill_criteria_breached` is populated by `KillCriteriaEvaluator`
 (`de.visterion.dracul.criteria`), a deterministic, stateless, best-effort
 parser that recognizes only absolute **price-level** kill criteria (e.g.

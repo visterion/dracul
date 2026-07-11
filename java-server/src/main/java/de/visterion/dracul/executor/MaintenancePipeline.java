@@ -147,6 +147,17 @@ public class MaintenancePipeline {
         positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), ss.confirmCount(),
                 p.activeStop(), null);
 
+        // Adverse-extreme (MAE) tracking: BUY positions track the lowest close seen while open,
+        // written only when it decreases below the current floor. SELL positions do NOT write
+        // lowest_price — their adverse extreme is the HIGHEST close, already tracked as
+        // highestPrice via the ratchet step; mae_r for SELL positions derives from highest_price.
+        if (!sell && currentPrice != null) {
+            BigDecimal floor = p.lowestPrice() != null ? p.lowestPrice() : p.entryPrice();
+            if (currentPrice.compareTo(floor) < 0) {
+                positionRepo.updateAdverseExtreme(p.id(), currentPrice);
+            }
+        }
+
         return new EnrichedPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                 p.entryPrice(), p.activeStop(), currentPrice, atr, chandelierLevel, rCurrent,
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
