@@ -304,6 +304,32 @@ ticker across hunters is treated as coincidence (multiple-testing / FDR
 concern) until a concrete independent mechanism is named, and an empty
 verdict list is treated as a valid, respectable outcome.
 
+## Voievod-Outcome (elapsed-hunt pattern reviewer)
+
+**Implemented 2026-07-11 (fetch side; completion side is a follow-up).** A second,
+separate agent from Voievod above — reviews **elapsed** hunts (not consensus) and
+proposes generalizable patterns. Runs weekly, Saturday morning (default cron
+`0 0 7 * * 6`, UTC), reasoning tier (model_purpose `reasoning`).
+
+`POST /webhook/voievod-outcome/tools/fetch-elapsed-prey` (bearer-token auth via
+`DRACUL_VOIEVOD_OUTCOME_TOKEN`, only registered when `DRACUL_VOIEVOD_OUTCOME_ENABLED=true`)
+returns every prey whose horizon elapsed more than 30 days ago
+(`!Horizons.isOpen(discoveredAt, horizon, today.minusDays(30))`) and that has not yet been
+reviewed, oldest-discovered first, capped at 25 prey per run (the response notes whether the
+cap was applied). Each entry carries `symbol`, `anomalyType`, `thesis`, `killCriteria`,
+`discoveredAt`, `horizon`, and `ohlc` — daily close history since discovery (via
+`AgoraMarketData.dailyOhlcHistory`, `horizon days + 30`) condensed server-side to
+`firstClose` / `lastClose` / `minClose` / `maxClose` (token budget — the full daily series is
+never shipped). Fetched prey are marked reviewed **at fetch time**
+(`prey.outcome_reviewed_at`, migration V24) — the simplest correct v1; a re-run never
+re-surfaces the same prey even if the agent run itself later fails.
+
+The LLM judges each prey against its original thesis and kill criteria using the condensed
+OHLC, and proposes a pattern only when **at least 3 separate prey** support the same
+statement — see `prompts/voievod-outcome.md`. `POST /webhook/voievod-outcome/complete`
+(persisting `Pattern` rows) is a follow-up task; the agent definition's `completionPath`
+already points at it.
+
 ## Daywalker (streaming guardian)
 
 **Implemented 2026-06-04** as a Vistierie `StreamingBee` consumer (Daywalker

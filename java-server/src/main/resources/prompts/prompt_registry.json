@@ -8,5 +8,6 @@
   "strigoi-lazarus": { "version": "1.0.0", "body_hash": "p-62148ae17808" },
   "strigoi-merger": { "version": "1.0.0", "body_hash": "p-3450ab500bda" },
   "strigoi-spin": { "version": "1.0.0", "body_hash": "p-8dd63a09dac0" },
-  "voievod": { "version": "1.0.0", "body_hash": "p-caa4b3e7d515" }
+  "voievod": { "version": "1.0.0", "body_hash": "p-caa4b3e7d515" },
+  "voievod-outcome": { "version": "1.0.0", "body_hash": "p-64e203d18308" }
 }

@@ -17,12 +17,13 @@ class PromptRegistryTest {
 
     private static final Set<String> AGENTS = Set.of(
             "daywalker", "executor", "gropar", "strigoi-echo", "strigoi-index",
-            "strigoi-insider", "strigoi-lazarus", "strigoi-merger", "strigoi-spin", "voievod");
+            "strigoi-insider", "strigoi-lazarus", "strigoi-merger", "strigoi-spin", "voievod",
+            "voievod-outcome");
 
     private final PromptRegistry registry = new PromptRegistry(new ObjectMapper());
 
     @Test
-    void hasExactlyTheTenBundledAgents() {
+    void hasExactlyTheElevenBundledAgents() {
         for (String agent : AGENTS) {
             assertThat(registry.entry(agent)).as("registry entry for %s", agent).isPresent();
         }
