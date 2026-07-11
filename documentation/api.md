@@ -1154,7 +1154,8 @@ the maintenance pipeline. Response:
     "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
-    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1 },
+    "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1,
+      "kill_criteria_breached": [] },
     "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
 ] } }
 ```
@@ -1166,6 +1167,12 @@ into a Tranche 2 `ADD_TRANCHE`/`HOLD` decision record without a separate lookup.
 `soft_trigger.confirm_count` is the number of consecutive runs a soft-exit
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
 to act once it reaches `dracul.executor.soft-confirm-min`.
+
+`soft_trigger.kill_criteria_breached` is the subset of `kill_criteria` that
+`KillCriteriaEvaluator` deterministically matched against the current close
+— v1 recognizes only absolute price-level criteria ("close below 90",
+"rises above 120"); percent thresholds and qualitative criteria are left
+unparsed for the LLM to judge from the raw `kill_criteria` list.
 
 `tranche2` (`Tranche2Detector`, pure decision logic, no I/O) reports whether
 this tranche-1 position is eligible for a second tranche via `add-tranche`.

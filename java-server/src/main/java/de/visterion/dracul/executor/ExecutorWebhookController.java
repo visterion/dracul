@@ -547,6 +547,7 @@ public class ExecutorWebhookController {
             softTrigger.put("chandelier_breach", p.chandelierBreach());
             softTrigger.put("ma_break", p.maBreak());
             softTrigger.put("confirm_count", p.softConfirmCount());
+            softTrigger.put("kill_criteria_breached", p.killCriteriaBreached());
             node.put("soft_trigger", softTrigger);
 
             Map<String, Object> tranche2 = new LinkedHashMap<>();
