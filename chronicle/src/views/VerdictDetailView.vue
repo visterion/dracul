@@ -28,7 +28,7 @@
     </PageHead>
 
     <div class="verdict-tags">
-      <TagPill tone="gold">{{ t('verdict.tags.consensus', { value: verdict.consensusScore.toFixed(2) }) }}</TagPill>
+      <TagPill tone="gold">{{ t('verdict.tags.consensus', { value: formatNumber(verdict.consensusScore, 2) }) }}</TagPill>
       <TagPill tone="ash">{{ t('verdict.tags.horizon', { value: horizonLabel(verdict.horizon) }) }}</TagPill>
       <TagPill v-for="type in verdict.anomalyTypes" :key="type" tone="crimson">{{ anomalyTypeLabel(type) }}</TagPill>
     </div>
@@ -94,11 +94,11 @@
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.consensus') }}</span>
-              <span class="kv-v mono">{{ verdict.consensusScore.toFixed(2) }}</span>
+              <span class="kv-v mono">{{ formatNumber(verdict.consensusScore, 2) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.avgConfidence') }}</span>
-              <span class="kv-v mono">{{ verdict.avgConfidence.toFixed(2) }}</span>
+              <span class="kv-v mono">{{ formatNumber(verdict.avgConfidence, 2) }}</span>
             </div>
             <div class="kv-row">
               <span class="kv-k">{{ t('verdict.facts.horizon') }}</span>
@@ -127,7 +127,7 @@
             >
               <BatGlyph :size="13" />
               <span class="cb-name mono">{{ c.name }}</span>
-              <span class="cb-conf mono">{{ c.confidence.toFixed(2) }}</span>
+              <span class="cb-conf mono">{{ formatNumber(c.confidence, 2) }}</span>
             </button>
           </div>
         </div>
@@ -188,6 +188,7 @@ import TagPill from '../components/common/TagPill.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import ConsensusRing from '../components/common/ConsensusRing.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
+import { formatNumber } from '../utils/format'
 
 const { t } = useI18n()
 const { anomalyTypeLabel, horizonLabel } = useEnumLabels()

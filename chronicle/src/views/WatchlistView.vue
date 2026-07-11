@@ -141,7 +141,7 @@
             <div class="wr-price">
               <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
               <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
-                {{ item.dayChangePercent >= 0 ? '+' : '' }}{{ item.dayChangePercent.toFixed(1) }}%
+                {{ formatPercent(item.dayChangePercent) }}
               </span>
             </div>
             <div class="wr-meta">
@@ -183,7 +183,7 @@
             <div class="wd-quote">
               <span class="wd-px mono"><MoneyDisplay :amount="selectedItem.currentPrice" :currency="selectedItem.currency" :native-amount="selectedItem.nativeCurrentPrice" :native-currency="selectedItem.nativeCurrency" /></span>
               <span class="wd-chg mono" :class="selectedItem.dayChangePercent >= 0 ? 'pos' : 'neg'">
-                {{ selectedItem.dayChangePercent >= 0 ? '+' : '' }}{{ selectedItem.dayChangePercent.toFixed(1) }}% {{ t('watchlist.detail.today') }}
+                {{ formatPercent(selectedItem.dayChangePercent) }} {{ t('watchlist.detail.today') }}
               </span>
             </div>
           </div>
@@ -234,6 +234,7 @@ import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
+import { formatPercent } from '../utils/format'
 
 const { t, locale } = useI18n()
 const { smAndDown } = useDisplay()

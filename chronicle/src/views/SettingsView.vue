@@ -83,14 +83,14 @@
                 <label class="set-budget-label">{{ t('settings.budgets.dailyCap') }}</label>
                 <input class="set-budget-input" v-model="tenantEdit.dailyCapUsd" placeholder="∞" />
                 <div class="set-budget-usage">
-                  {{ t('settings.budgets.used', { amount: (budgetData.tenant.dailyUsageMicros / 1_000_000).toFixed(4) }) }}
+                  {{ t('settings.budgets.used', { amount: formatNumber(budgetData.tenant.dailyUsageMicros / 1_000_000, 4) }) }}
                 </div>
               </div>
               <div class="set-budget-field">
                 <label class="set-budget-label">{{ t('settings.budgets.monthlyCap') }}</label>
                 <input class="set-budget-input" v-model="tenantEdit.monthlyCapUsd" placeholder="∞" />
                 <div class="set-budget-usage">
-                  {{ t('settings.budgets.used', { amount: (budgetData.tenant.monthlyUsageMicros / 1_000_000).toFixed(2) }) }}
+                  {{ t('settings.budgets.used', { amount: formatNumber(budgetData.tenant.monthlyUsageMicros / 1_000_000, 2) }) }}
                 </div>
               </div>
               <div class="set-budget-field">
@@ -132,8 +132,8 @@
                     <td class="set-budget-agent">{{ agent.name }}</td>
                     <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].dailyCapUsd" placeholder="∞" /></td>
                     <td><input class="set-budget-input set-budget-input--sm" v-model="agentEdits[agent.name].monthlyCapUsd" placeholder="∞" /></td>
-                    <td class="set-budget-num">${{ (agent.budget.dailyUsageMicros / 1_000_000).toFixed(4) }}</td>
-                    <td class="set-budget-num">${{ (agent.budget.monthlyUsageMicros / 1_000_000).toFixed(2) }}</td>
+                    <td class="set-budget-num">${{ formatNumber(agent.budget.dailyUsageMicros / 1_000_000, 4) }}</td>
+                    <td class="set-budget-num">${{ formatNumber(agent.budget.monthlyUsageMicros / 1_000_000, 2) }}</td>
                     <td>
                       <button
                         class="btn btn-secondary"
@@ -208,7 +208,7 @@
                 <span>{{ agentSchedule(row) }}</span>
                 <span v-if="row.tier">{{ agentTierLabel(row.tier) }}</span>
                 <span v-if="row.primaryProvider">{{ row.primaryProvider }}</span>
-                <span>${{ row.dailyUsedUsd.toFixed(2) }} / ${{ row.dailyBudgetUsd.toFixed(2) }}</span>
+                <span>${{ formatNumber(row.dailyUsedUsd, 2) }} / ${{ formatNumber(row.dailyBudgetUsd, 2) }}</span>
               </div>
               <button
                 class="btn btn-secondary agent-row__toggle"
@@ -304,6 +304,7 @@ import { humanScheduleText } from '../utils/schedule'
 import { useEnumLabels } from '../composables/useEnumLabels'
 import { useEdgeFades } from '../composables/useEdgeFades'
 import { useDisplayCurrencyStore } from '../stores/displayCurrency'
+import { formatNumber, microsToUsdInput } from '../utils/format'
 
 const { t, locale } = useI18n()
 const { agentRoleLabel, agentTierLabel, agentStateLabel } = useEnumLabels()
@@ -373,10 +374,6 @@ const budgetError   = ref<string | null>(null)
 const tenantEdit = ref({ dailyCapUsd: '', monthlyCapUsd: '', dailyWarnPct: '80', monthlyWarnPct: '80' })
 const agentEdits = ref<Record<string, { dailyCapUsd: string; monthlyCapUsd: string }>>({})
 
-function microsToUsd(micros: number | null): string {
-  if (micros === null) return '∞'
-  return (micros / 1_000_000).toFixed(2)
-}
 function usdToMicros(usd: string): number | null {
   if (usd === '∞' || usd === '') return null
   const n = parseFloat(usd)
@@ -390,15 +387,15 @@ async function loadBudgets() {
     budgetData.value = await api.getSettingsBudgets()
     const tb = budgetData.value.tenant
     tenantEdit.value = {
-      dailyCapUsd:    microsToUsd(tb.dailyCapMicros),
-      monthlyCapUsd:  microsToUsd(tb.monthlyCapMicros),
+      dailyCapUsd:    microsToUsdInput(tb.dailyCapMicros),
+      monthlyCapUsd:  microsToUsdInput(tb.monthlyCapMicros),
       dailyWarnPct:   String(tb.dailyWarnPercent ?? 80),
       monthlyWarnPct: String(tb.monthlyWarnPercent ?? 80),
     }
     for (const a of budgetData.value.agents) {
       agentEdits.value[a.name] = {
-        dailyCapUsd:   microsToUsd(a.budget.dailyCapMicros),
-        monthlyCapUsd: microsToUsd(a.budget.monthlyCapMicros),
+        dailyCapUsd:   microsToUsdInput(a.budget.dailyCapMicros),
+        monthlyCapUsd: microsToUsdInput(a.budget.monthlyCapMicros),
       }
     }
   } catch (e) {

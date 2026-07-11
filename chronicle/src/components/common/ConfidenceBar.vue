@@ -1,6 +1,6 @@
 <template>
   <div class="conf-row" role="meter" :aria-valuenow="score" :aria-valuemin="0" :aria-valuemax="1">
-    <span class="conf-score">{{ score.toFixed(2) }}</span>
+    <span class="conf-score">{{ formatNumber(score, 2) }}</span>
     <span class="conf-track"><span class="conf-fill" :class="cls" :style="{ width: `${score * 100}%` }" /></span>
     <span class="conf-tag">{{ cls }}</span>
   </div>
@@ -8,6 +8,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatNumber } from '../../utils/format'
 
 const props = defineProps<{ score: number }>()
 
