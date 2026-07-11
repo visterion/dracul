@@ -123,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
@@ -138,6 +138,7 @@ import BroodMini from '../components/common/BroodMini.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import FilterSheet from '../components/chronicle/FilterSheet.vue'
 import { filterToQuery, queryToFilter } from '../utils/filterQuery'
+import { useScrollMemory } from '../composables/useScrollMemory'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -147,10 +148,14 @@ const statusStore = useStatusStore()
 const { anomalyTypeLabel } = useEnumLabels()
 const { smAndDown } = useDisplay()
 const sheetOpen = ref(false)
+const scrollMemory = useScrollMemory('chronicle')
 
-onMounted(() => {
-  store.load()
+onMounted(async () => {
+  const loading = store.load()
   if (!statusStore.status) statusStore.load()
+  await loading
+  await nextTick()
+  scrollMemory.restore()
 })
 
 // ── filter state ────────────────────────────────────────────────
