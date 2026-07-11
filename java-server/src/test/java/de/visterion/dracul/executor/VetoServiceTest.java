@@ -715,6 +715,156 @@ class VetoServiceTest {
         assertThat(actualOrder).isEqualTo(expectedOrder);
     }
 
+    // ---- measured: every result carries a non-blank value+threshold string ----
+
+    @Test
+    void everyVetoResultCarriesMeasured() {
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
+
+        assertThat(outcome.results()).isNotEmpty()
+                .allSatisfy(r -> assertThat(r.measured()).isNotBlank());
+        assertThat(result(outcome, "LOW_CONFIDENCE").measured()).isEqualTo("0.8 >= 0.6");
+    }
+
+    @Test
+    void failedVetoMeasuredShowsValueAndThreshold() {
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "s", "v1", "ACME", "LONG", 0.4, "PEAD",
+                List.of("kill"), "20d", BigDecimal.valueOf(50), "PENDING", "2026-07-08T00:00:00Z");
+        VetoService.Outcome outcome = vetoService.evaluate(sig, ctx().build(), sizing(), cfg());
+
+        assertThat(result(outcome, "LOW_CONFIDENCE").measured()).isEqualTo("0.4 < 0.6");
+    }
+
+    @Test
+    void dataUnavailableMeasuredIsJoinedMissingFields() {
+        EntryContext ctx = ctx().missing(List.of("price", "atr")).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.results().get(0).measured()).isEqualTo("price,atr");
+    }
+
+    @Test
+    void schemaInvalidMeasuredNamesMissingField() {
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "s", "v1", null, "LONG", 0.8, "PEAD",
+                List.of("kill"), "20d", BigDecimal.valueOf(50), "PENDING", "2026-07-08T00:00:00Z");
+        VetoService.Outcome outcome = vetoService.evaluate(sig, ctx().build(), sizing(), cfg());
+
+        assertThat(result(outcome, "SCHEMA_INVALID").measured()).isEqualTo("missing: symbol");
+    }
+
+    @Test
+    void schemaValidMeasuredSummarizesFields() {
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
+
+        assertThat(result(outcome, "SCHEMA_INVALID").measured())
+                .isEqualTo("kill_criteria: 1, mechanism: PEAD, agent_version: v1");
+    }
+
+    @Test
+    void cooldownMeasuredShowsExpiryOnFailure() {
+        Cooldown cd = new Cooldown(1L, "ACME", "stopped out", "2026-08-01", null, "2026-07-01");
+        EntryContext ctx = ctx().activeCooldowns(List.of(cd)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "COOLDOWN").measured()).isEqualTo("active until 2026-08-01");
+    }
+
+    @Test
+    void maxPositionsMeasuredShowsCountVsLimit() {
+        List<ExecutorPosition> open = List.of(position("A", "Tech"), position("B", "Tech"),
+                position("C", "Tech"), position("D", "Tech"), position("E", "Tech"));
+        EntryContext ctx = ctx().openPositions(open).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "MAX_POSITIONS").measured()).isEqualTo("5 >= 5");
+    }
+
+    @Test
+    void heatLimitMeasuredIsPercentageWithOneDecimal() {
+        EntryContext ctx = ctx().openHeat(BigDecimal.valueOf(500)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "HEAT_LIMIT").measured()).isEqualTo("6.0% <= 6.0%");
+    }
+
+    @Test
+    void concentrationMeasuredIncludesSector() {
+        List<ExecutorPosition> open = List.of(position("A", "Tech"), position("B", "Tech"),
+                position("C", "Tech"));
+        EntryContext ctx = ctx().openPositions(open).candidateSector("Tech").build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "CONCENTRATION").measured()).isEqualTo("3 >= 3 in sector Tech");
+    }
+
+    @Test
+    void liquidityMeasuredShowsPriceAndThreshold() {
+        EntryContext ctx = ctx().price(BigDecimal.valueOf(4)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "LIQUIDITY").measured()).isEqualTo("price 4.00 < 5.00, adv ok");
+    }
+
+    @Test
+    void signalExpiredMeasuredShowsDaysVsMax() {
+        EntryContext ctx = ctx().signalAgeTradingDays(6).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "SIGNAL_EXPIRED").measured()).isEqualTo("6 > 5 days");
+    }
+
+    @Test
+    void chasedAwayMeasuredShowsPriceAndChaseThreshold() {
+        EntryContext ctx = ctx().price(BigDecimal.valueOf(55)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "CHASED_AWAY").measured())
+                .isEqualTo("price 55.00 > 54.00 (2.0xATR from ref 50.00)");
+    }
+
+    @Test
+    void paceLimitMeasuredShowsCountVsCap() {
+        EntryContext ctx = ctx().entriesThisWeek(3).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "PACE_LIMIT").measured()).isEqualTo("3 >= 3 this week");
+    }
+
+    @Test
+    void contradictionMeasuredNamesContradictingSignal() {
+        ExecutorSignal candidate = new ExecutorSignal("sig-1", "s", "v1", "ACME", "LONG", 0.8,
+                "MERGER_ARB", List.of("kill"), "20d", BigDecimal.valueOf(50), "PENDING",
+                "2026-07-08T00:00:00Z");
+        ExecutorSignal contradicting = pending("sig-2", "ACME", "PEAD");
+        EntryContext ctx = ctx().pendingSignals(List.of(contradicting)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(candidate, ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "CONTRADICTION").measured())
+                .isEqualTo("conflicts with pending signal sig-2");
+    }
+
+    @Test
+    void redundancyMeasuredNamesMechanismAndSymbol() {
+        EntryContext ctx = ctx().openMechanisms(Map.of("ACME", "PEAD")).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "REDUNDANCY").measured())
+                .isEqualTo("mechanism PEAD already open on ACME");
+    }
+
+    @Test
+    void correlatedMeasuredNamesMatchingSymbol() {
+        ExecutorSignal s = signal(); // default mechanism "PEAD"
+        EntryContext ctx = ctx()
+                .openPositions(List.of(position("XYZ", "Technology")))
+                .openMechanisms(Map.of("XYZ", s.mechanism()))
+                .candidateSector("Technology")
+                .build();
+        VetoService.Outcome outcome = vetoService.evaluate(s, ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "CORRELATED").measured()).isEqualTo("matches XYZ in sector Technology");
+    }
+
     private VetoResult result(VetoService.Outcome outcome, String check) {
         return outcome.results().stream()
                 .filter(r -> r.check().equals(check))
