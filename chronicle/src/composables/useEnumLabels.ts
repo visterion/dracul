@@ -1,4 +1,5 @@
 import { useI18n } from 'vue-i18n'
+import { formatHorizon } from '../utils/format'
 
 /**
  * Localizes backend domain codes (enums and open-ended upstream strings) for display.
@@ -16,7 +17,7 @@ export function useEnumLabels() {
     triggerTypeLabel: (v: string) => label(`enums.triggerType.${v}`, v),
     severityLabel: (v: string) => label(`enums.severity.${v}`, v),
     anomalyTypeLabel: (v: string) => label(`enums.anomalyType.${v}`, v),
-    horizonLabel: (v: string) => label(`enums.horizon.${v}`, v),
+    horizonLabel: (v: string) => (te(`enums.horizon.${v}`) ? t(`enums.horizon.${v}`) : formatHorizon(v)),
     connectionStatusLabel: (v: string) => label(`enums.connectionStatus.${v}`, v),
     agentRoleLabel: (v: string) => label(`enums.agentRole.${v}`, v),
     agentTierLabel: (v: string | null | undefined) => label(`enums.agentTier.${v}`, v),
