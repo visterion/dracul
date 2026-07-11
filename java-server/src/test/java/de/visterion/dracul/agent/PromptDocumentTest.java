@@ -85,13 +85,13 @@ class PromptDocumentTest {
             Map.entry("daywalker", "64bef970682b"),
             Map.entry("executor", "766853df4624"),
             Map.entry("gropar", "625d2484ce49"),
-            Map.entry("strigoi-echo", "894eea1390cc"),
-            Map.entry("strigoi-index", "afbd0ccc88e1"),
-            Map.entry("strigoi-insider", "27de31f5b607"),
-            Map.entry("strigoi-lazarus", "62148ae17808"),
-            Map.entry("strigoi-merger", "3450ab500bda"),
-            Map.entry("strigoi-spin", "8dd63a09dac0"),
-            Map.entry("voievod", "caa4b3e7d515")
+            Map.entry("strigoi-echo", "ad753c04c703"),
+            Map.entry("strigoi-index", "46c546c67281"),
+            Map.entry("strigoi-insider", "91059590df69"),
+            Map.entry("strigoi-lazarus", "238a931ad45f"),
+            Map.entry("strigoi-merger", "475203828483"),
+            Map.entry("strigoi-spin", "9517b89a850e"),
+            Map.entry("voievod", "ad44dfcc3cfd")
     );
 
     @Test

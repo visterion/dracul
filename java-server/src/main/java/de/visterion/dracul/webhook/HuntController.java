@@ -2,6 +2,7 @@ package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.executor.PreySignalEmitter;
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.PreyRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,12 @@ public abstract class HuntController {
      *  subclass constructors stay unchanged. When absent, hunts still complete. */
     @Autowired
     private ObjectProvider<PreySignalEmitter> signalEmitter;
+
+    /** Optional: PatternRepository is always registered in practice, but field-injected
+     *  via ObjectProvider for symmetry with signalEmitter and so a missing bean degrades
+     *  gracefully (fetch response simply omits active_patterns) rather than failing hunts. */
+    @Autowired
+    private ObjectProvider<PatternRepository> patternRepo;
 
     protected HuntController(String token, PreyRepository preyRepo, ToolFetchCache cache) {
         this.verifier = new BearerTokenVerifier(token);
@@ -72,6 +79,12 @@ public abstract class HuntController {
                     Map<String, Object> output = new java.util.HashMap<>();
                     output.put(fetchOutputKey(), r.items());
                     output.put("data_source_health", healthMap(r.health()));
+                    // Learning-loop feedback: user-accepted patterns relevant to this hunter.
+                    // Rides the ToolFetchCache above, so a pattern approved/rejected after
+                    // this tool was last invoked only becomes visible once the cache entry
+                    // expires (see ToolFetchCache TTL) — acceptable for v1.
+                    patternRepo.ifAvailable(repo ->
+                            output.put("active_patterns", repo.findAcceptedByStrigoi(agentName())));
                     return Map.of("output", output);
                 },
                 HuntController::isHealthyPayload);

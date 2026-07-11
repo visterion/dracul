@@ -68,6 +68,34 @@ public class PatternRepository {
                 .list();
     }
 
+    /** Accepted-pattern statements relevant to a hunter's fetch response: ACTIVE
+     *  patterns scoped to this strigoi plus ACTIVE patterns scoped to 'all'.
+     *  Used to feed the learning loop back into hunter tool-fetch output
+     *  ({@code active_patterns}) — see HuntController#handleFetch. */
+    public List<String> findAcceptedByStrigoi(String strigoi) {
+        return jdbc.sql("""
+                SELECT statement FROM patterns
+                WHERE status = 'ACTIVE' AND (applies_to_strigoi = :strigoi OR applies_to_strigoi = 'all')
+                ORDER BY proposed_at DESC
+                """)
+                .param("strigoi", strigoi)
+                .query(String.class)
+                .list();
+    }
+
+    /** Every ACTIVE pattern statement regardless of scope — used by Voievod, which
+     *  reviews consensus clusters spanning multiple hunters and so benefits from the
+     *  full accepted-lesson set rather than a single strigoi's slice. */
+    public List<String> findAllAccepted() {
+        return jdbc.sql("""
+                SELECT statement FROM patterns
+                WHERE status = 'ACTIVE'
+                ORDER BY proposed_at DESC
+                """)
+                .query(String.class)
+                .list();
+    }
+
     public void updateStatus(String id, String userId, String status) {
         jdbc.sql("UPDATE patterns SET status = :status WHERE id = :id::uuid AND user_id = :userId")
                 .param("status", status)
