@@ -20,12 +20,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useNavItems } from '../../composables/useNavItems'
 import { useEdgeFades } from '../../composables/useEdgeFades'
 const navItems = useNavItems()
 const scrollEl = ref<HTMLElement | null>(null)
 const { left, right } = useEdgeFades(scrollEl)
+
+const route = useRoute()
+watch(() => route.path, async () => {
+  await nextTick()
+  scrollEl.value
+    ?.querySelector('.bottom-nav__tab--active, .router-link-active')
+    ?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+})
 </script>
 
 <style scoped>
