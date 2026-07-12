@@ -63,6 +63,12 @@ public class ToolFetchCache {
         return payload;
     }
 
+    /** Drops all cached entries. Intended for test isolation (the bean is a singleton shared
+     *  across test methods in a Spring context); production code relies on TTL expiry instead. */
+    public void clear() {
+        store.clear();
+    }
+
     private long resolveTtlNanos(String toolName) {
         ToolCatalogEntry entry = catalog.find(toolName).orElse(null);
         if (entry == null || !entry.cacheable()) {

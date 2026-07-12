@@ -154,9 +154,10 @@ public abstract class HuntController {
      * only the prey actually written this delivery (duplicates already filtered by the natural-key
      * ON CONFLICT), so an override sees each emitted prey exactly once across retried deliveries.
      *
-     * <p>Default is a deliberate no-op: five of the six hunters have no post-persistence work and
-     * inherit this unchanged. {@code strigoi-spin} overrides it to mark the originating
-     * {@code spin_candidate} row promoted (idempotency stamp; see StrigoiSpinWebhookController).
+     * <p>Default is a deliberate no-op: four of the six hunters have no post-persistence work and
+     * inherit this unchanged. {@code strigoi-spin} and {@code strigoi-index} override it to mark the
+     * originating {@code spin_candidate} / {@code index_event} row promoted (idempotency stamp; see
+     * StrigoiSpinWebhookController / StrigoiIndexWebhookController).
      * Overrides must be fail-soft — this runs after the prey are durably persisted, so a throw here
      * must not fail the completion.
      */

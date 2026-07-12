@@ -7,3 +7,10 @@ dracul:
       # Spin lifecycle reconciler tunables (defaults mirror application.yaml).
       abandon-after-days: ${SPIN_ABANDON_AFTER_DAYS:180}
       promotion-window-days: ${SPIN_PROMOTION_WINDOW_DAYS:90}
+    index:
+      # Index lifecycle reconciler tunables (defaults mirror application.yaml).
+      observation-window-days: ${INDEX_OBSERVATION_WINDOW_DAYS:30}
+      abandon-after-days: ${INDEX_ABANDON_AFTER_DAYS:45}
+      # Per-source prey-promotion windows (days-to-effective); mirror application.yaml.
+      promotion-window-days-sp: ${INDEX_PROMOTION_WINDOW_DAYS_SP:5}
+      promotion-window-days-russell: ${INDEX_PROMOTION_WINDOW_DAYS_RUSSELL:20}

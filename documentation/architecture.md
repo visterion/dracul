@@ -512,6 +512,42 @@ CONFLICT DO NOTHING` + guarded compare-and-set UPDATEs), mirroring `PreyReposito
 - Like the Executor tables, `spin_candidate` carries **no** `user_id` column — it
   backs the single research pipeline, not per-user data.
 
+**Index-reconstitution lifecycle table (V27): `index_event`.** Backs strigoi-index's
+announcement-anchored lifecycle (see `documentation/strigoi.md`, "Strigoi-Index:
+announcement-anchored lifecycle"), turning the hunter from a stateless single-shot
+constituents scan into a tracker that follows each announced S&P/Russell constituent
+change from its public announcement (window still open) through the effective day
+into the run-up/reversal observation window. One row per announced change;
+`IndexEventRepository` is JdbcClient-based (explicit `INSERT … ON CONFLICT DO NOTHING`
++ guarded compare-and-set UPDATEs), mirroring `SpinCandidateRepository` / `PreyRepository`.
+
+| Group | Columns |
+|---|---|
+| Change identity | `symbol` (NOT NULL), `company_name` (nullable — the change feed emits ticker-level changes only), `index_name` (NOT NULL — `sp500`/`russell1000`/`russell2000`), `action` (NOT NULL — `add`/`remove`), `source` (NOT NULL — `sp_press`/`russell_reconstitution`), `announcement_date` (DATE NOT NULL), `effective_date` (DATE NOT NULL) |
+| Lifecycle | `status` (TEXT DEFAULT `'ANNOUNCED'`, validated by the Java `IndexEventStatus` enum — **not** a DB enum, same convention as `spin_candidate.status`), plus audit timestamps `discovered_at`, `last_checked_at`, `effective_at`, `closed_at`, `abandoned_at` |
+| Stage enrichment | `announced_snapshot`, `post_snapshot` (JSONB — the demand/liquidity and run-up/reversal snapshots; **only two** because EFFECTIVE is a transient calendar tick with no observation stage of its own, so its drift read lands in `post_snapshot`) |
+| Promotion | `promoted_at`, `promoted_prey_id` (a **soft** link to the emitted prey — TEXT, no hard FK) |
+
+- **Status enum** (`IndexEventStatus`): `ANNOUNCED` → `EFFECTIVE` → `POST` →
+  `CLOSED`, with `ANNOUNCED` → `ABANDONED` as a terminal safety-valve. Forward-only;
+  `CLOSED` and `ABANDONED` are terminal. Every status change is a guarded CAS
+  (`WHERE status = <from>`), so a concurrent or duplicate reconcile is a no-op and a
+  transition never reverses. Transitions are **pure calendar** (zero Agora calls in
+  the reconciler — the effective date is already authoritative on every row).
+- **Idempotency:** expression unique index `uq_index_event_natural` on
+  `(index_name, upper(symbol), action, effective_date)` — one row per announced
+  change. Subjects are existing ticker-bearing companies, so there is no CIK/name
+  degradation like spin's natural key. The ingestion upsert (`ON CONFLICT DO
+  NOTHING`) targets this exact expression, so a re-run never duplicates a change nor
+  resets its lifecycle. Rows missing an announcement or effective date are dropped at
+  ingest (both back NOT NULL columns).
+- **Supporting indexes:** `idx_index_event_last_checked` on `last_checked_at` (the
+  reconciler's oldest-checked-first work-queue scan); partial
+  `idx_index_event_promotable` on `(status, effective_date) WHERE promoted_at IS NULL`
+  (the ANNOUNCED-not-yet-promoted promotion / active-window scans).
+- Like the Executor and `spin_candidate` tables, `index_event` carries **no**
+  `user_id` column — it backs the single research pipeline, not per-user data.
+
 ## Data Flow
 
 ```
