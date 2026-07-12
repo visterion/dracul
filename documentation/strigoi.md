@@ -27,6 +27,51 @@ logic and the hunt pattern.
 | strigoi-index | **implemented 2026-06-06; liquidity enrichment 2026-07-11** — Wikipedia S&P 500 main constituents table (`Date added` column), routine tier (model_purpose `routine`), agent registered with Vistierie on startup; surfaces recently-added S&P 500 constituents; the routine-tier LLM judges whether the inclusion-drift window is still open and emits `INDEX_INCLUSION` Prey. Each candidate now carries `adv` / `avgVolume20d` (20 trading-day average dollar/share volume from Agora `get_ohlc`, via `IndexEnrichmentService`) plus `marketCap` / `metricsAvailable` (via `EquityMetricsExtractor`); the LLM judges forced-buying magnitude against `avgVolume20d` and size/liquidity via `marketCap`/`adv`, fail-soft (lower confidence, no invented judgment) when unavailable |
 | strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured deal terms + server-computed spread 2026-07-11; expected-value data (Mitchell & Pulvino) 2026-07-12** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`) — plus `lastPrice` / `priceAvailable`; the LLM extracts offer/consideration/conditions/termination-fee from the term sheet and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable. A deterministic `DealTermsParser` now regex-extracts `offerPrice` / `considerationType` (cash/stock/mixed) / `exchangeRatio` / `breakFee` from `termSheet` server-side, and `MergerEnrichmentService` computes `spreadPercent = (offerPrice − lastPrice) / lastPrice × 100` when both are available; the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null`. `DealTermsParser` also extracts the deal time-axis dates — `agreementDate` (the announcement anchor; the feed's DEFM14A/SC TO-T land weeks/months after announcement, so `lastPrice` is already the arb price), `expectedCloseDate` (quarter/half estimates mapped conservatively to the period end), and a separate `outsideDate` (End Date, never used as the close estimate). `MergerEnrichmentService` then adds the Mitchell & Pulvino (2001) expected-value inputs: `unaffectedPrice` / `unaffectedPriceAvailable` (close of the last trading day before `agreementDate`, from ONE ~400-day Agora daily-OHLC query per candidate, same latency-guard/source-down short-circuit as Lazarus), `daysToClose`, `annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, guarded to `daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice) / lastPrice × 100`, the deal-break cliff). The prompt (v1.2.0) reframes the judgement around expected value — weigh `annualizedSpreadPercent` against `breakDownsidePercent`, don't chase wide spreads, dampen stock/mixed deals (unhedged acquirer risk), couple the horizon to `expectedCloseDate`/form type, and treat the payoff as negatively-skewed with an event-based (not trailing-stop) exit |
 
+### Strigoi-Spin: planned full-lifecycle persistence (roadmap)
+
+**🚧 Planned (not yet shipped) — full-lifecycle persistence.** The
+shipped strigoi-spin above is single-shot and stateless: each hunt
+searches Form-10-12B registrations, screens, enriches the term sheet,
+and persists tradeable prey — nothing survives the run. The following
+lifecycle model is **designed but not yet implemented**; it is recorded
+here as roadmap and does not describe current behavior.
+
+The plan makes strigoi-spin stateful, tracking each spin-co from its
+registration through the trading window via a persisted candidate row
+(see `spin_candidate` in `architecture.md`). A forward-only state
+machine, validated by the `SpinStatus` enum, advances each candidate:
+
+- `REGISTERED` — a fresh Form-10-12B hit with an unseen natural key.
+- `WHEN_ISSUED` — pure calendar: the record date has passed but the
+  distribution date has not.
+- `DISTRIBUTED` — the spin-co trades (a positive price for its symbol).
+  This is the forced-selling window.
+- `SETTLED` — the spin-co has filed its first standalone financial
+  report.
+- `ABANDONED` — terminal age-out for candidates that never distribute,
+  kept for audit.
+
+Transitions are forward-only and guarded (compare-and-set on the source
+state); `SETTLED` and `ABANDONED` are terminal.
+
+Enrichment becomes **stage-appropriate** (each field null until its
+stage is reached): `REGISTERED` attaches balance-sheet facts
+(total assets, total liabilities, retained earnings, industry);
+`DISTRIBUTED` adds spin-co and parent market caps, the size ratio,
+days-since-distribution, and post-spin insider buying; `SETTLED` adds
+valuation multiples (price-to-book, EV/EBIT, FCF yield).
+
+**Promotion to prey** happens only at `DISTRIBUTED` (the forced-selling
+window is open), exactly once per candidate, once size and market-cap
+data are known and the candidate is still within the promotion window.
+Candidates in `REGISTERED`/`WHEN_ISSUED`/`SETTLED` are tracked but not
+promoted.
+
+The `strigoi-spin.md` prompt is planned to move to `1.3.0` to document
+the new nullable fields, a confidence rubric, and a horizon split
+(≈3-month forced-selling compression vs. 6–12-month fundamental
+re-rating). The emitted prey output schema is unchanged.
+
 ### Strigoi-Echo SP2: market-reaction signals
 
 **SP2 market-reaction signals (deterministic, added 2026-06-27).** Each surviving
