@@ -121,6 +121,7 @@ symbol's lookup/backfill/close failure is skipped without aborting the rest.
 
 | Env var / property | Default | Purpose |
 |---|---|---|
+| `DRACUL_POSITION_ENABLED` (`dracul.position.enabled`) | `true` | Master switch for the `PositionReconciler` scheduled job, mirroring the other Strigoi/peer components' `enabled` gate. |
 | `DRACUL_POSITION_CONNECTION` (`dracul.position.connection`) | `depot-1` | The depot connection reconciled against (same identifier space as `dracul.executor.connection`). |
 | `DRACUL_POSITION_RECONCILE_CRON` (`dracul.position.reconcile-cron`) | `0 0 12 * * *` | Spring cron (server-local zone) for the reconcile pass. Default: once daily at 12:00. |
 

@@ -108,6 +108,18 @@ class PositionReconcilerTest {
     }
 
     @Test
+    void doesNotCloseAnOpenRowWhenDepotSymbolDiffersOnlyInCase() {
+        when(depotClient.positions(CONNECTION)).thenReturn(
+                new PositionsSnapshot(List.of(depotPosition("AAPL")), "2026-07-13T00:00:00Z"));
+        when(contextRepo.findOpenBySymbol(CONNECTION, "AAPL")).thenReturn(Optional.of(openRow("aapl")));
+        when(contextRepo.findAllOpen(CONNECTION)).thenReturn(List.of(openRow("aapl")));
+
+        reconciler.reconcile();
+
+        verify(contextRepo, never()).markClosed(anyString());
+    }
+
+    @Test
     void depotUnavailableIsANoOpAndDoesNotThrow() {
         when(depotClient.positions(CONNECTION)).thenThrow(new DepotUnavailableException("agora down"));
 

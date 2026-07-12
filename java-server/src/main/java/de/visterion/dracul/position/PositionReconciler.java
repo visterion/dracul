@@ -8,14 +8,16 @@ import de.visterion.dracul.verdict.VerdictRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -32,6 +34,7 @@ import java.util.Set;
  * rest of the pass.
  */
 @Component
+@ConditionalOnProperty(value = "dracul.position.enabled", matchIfMissing = true)
 public class PositionReconciler {
 
     private static final Logger log = LoggerFactory.getLogger(PositionReconciler.class);
@@ -98,11 +101,19 @@ public class PositionReconciler {
         }
     }
 
-    /** Closes every open context row whose symbol has left the depot. */
+    /** Closes every open context row whose symbol has left the depot. Comparison is
+     *  case-insensitive (normalized to upper-case) because {@code position_context} is
+     *  case-insensitive at the DB layer (unique index on {@code lower(symbol)}), so a depot
+     *  symbol differing only in case from the stored context symbol must still count as held. */
     private void close(Set<String> depotSymbols) {
+        Set<String> depotSymbolsUpper = new LinkedHashSet<>();
+        for (String symbol : depotSymbols) {
+            depotSymbolsUpper.add(symbol.toUpperCase(Locale.ROOT));
+        }
+
         for (PositionContextRow row : contextRepo.findAllOpen(connection)) {
             try {
-                if (!depotSymbols.contains(row.symbol())) {
+                if (!depotSymbolsUpper.contains(row.symbol().toUpperCase(Locale.ROOT))) {
                     contextRepo.markClosed(row.id());
                 }
             } catch (RuntimeException e) {
@@ -125,6 +136,9 @@ public class PositionReconciler {
                     .toList();
             return killCriteria.isEmpty() ? null : mapper.valueToTree(killCriteria);
         } catch (RuntimeException e) {
+            // Deliberate inner catch (in addition to backfill()'s outer one): a kill-criteria
+            // resolution failure degrades this single field to null rather than skipping the
+            // whole row's backfill.
             log.warn("position reconcile: failed to resolve kill criteria for verdict {} -- omitting: {}",
                     verdictId, e.getMessage());
             return null;
@@ -132,7 +146,7 @@ public class PositionReconciler {
     }
 
     private JsonNode thesisSnapshot(VerdictRepository.LatestVerdictForSymbol v) {
-        Map<String, Object> thesis = new HashMap<>();
+        Map<String, Object> thesis = new LinkedHashMap<>();
         thesis.put("summary", v.summary());
         thesis.put("signals", v.signals());
         thesis.put("risks", v.risks());
