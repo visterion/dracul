@@ -8,5 +8,6 @@ public record SpinoffFiling(
         String companyName,
         String formType,
         LocalDate filingDate,
-        String filingUrl
+        String filingUrl,
+        String cik            // spin-co registrant CIK parsed from filingUrl; null when not parseable
 ) {}

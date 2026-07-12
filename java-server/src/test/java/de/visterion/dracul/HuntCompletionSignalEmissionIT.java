@@ -3,8 +3,6 @@ package de.visterion.dracul;
 import de.visterion.dracul.executor.ExecutorSignalRepository;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
-import de.visterion.dracul.strigoi.spin.EnrichedSpinCandidate;
-import de.visterion.dracul.strigoi.spin.SpinEnrichmentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,7 +44,6 @@ class HuntCompletionSignalEmissionIT {
     @Autowired JsonMapper objectMapper;
     @Autowired ExecutorSignalRepository signalRepo;
     @MockitoBean AgoraFilings filings;
-    @MockitoBean SpinEnrichmentService enrichment;
 
     RestClient rest;
 
@@ -58,9 +55,6 @@ class HuntCompletionSignalEmissionIT {
                 .build();
         when(filings.searchSpinoffs(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
-        when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedSpinCandidate(
-                "SPN", "SpinCo Inc", "10-12B", "2026-05-20", "http://sec/s1", "SUMMARY", true,
-                null, null, null)));
     }
 
     @Test

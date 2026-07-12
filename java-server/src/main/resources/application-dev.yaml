@@ -1,2 +1,9 @@
 # dev profile: MockVistierieClient active, no real Vistierie service needed
 # Activate: ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+
+dracul:
+  strigoi:
+    spin:
+      # Spin lifecycle reconciler tunables (defaults mirror application.yaml).
+      abandon-after-days: ${SPIN_ABANDON_AFTER_DAYS:180}
+      promotion-window-days: ${SPIN_PROMOTION_WINDOW_DAYS:90}

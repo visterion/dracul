@@ -45,7 +45,7 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 
 | Strigoi | Facade + Agora tool(s) |
 |---|---|
-| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date extraction) |
+| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B; the spin-co's registrant CIK is parsed from the filing URL via `CikExtractor.fromFilingUrl` and preserved on `SpinoffFiling.cik`) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet capture) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date / best-effort parent ticker). **Lifecycle enrichment (2026-07-12):** `AgoraMarketData.quotes` (batched distribution-detection price probe) + `AgoraFilings.conceptStrict` (`get_company_concept` **by CIK** — pre-distribution balance sheet + settlement `Assets`/`filed` probe + settled-stage valuation, a ticker not yet existing at 10-12B time) + `EquityMetricsExtractor` (Finnhub market caps for spin-co and parent → `sizeRatio`) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, post-spin open-market insider buying) + `AgoraCompanyData.fundamentals`/`profile` (settled-stage P/B, FCF yield, industry) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`, cluster screen) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, routine/opportunistic classification — one call per cluster) + `EquityMetricsExtractor` / `AgoraMarketData.dailyOhlcHistory` / `AgoraCompanyData.recommendationsStrict` / `AgoraEarnings` (context enrichment) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
 | strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, Altman-Z XBRL inputs) + Agora daily OHLC (timing signals) |
@@ -53,18 +53,6 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `DealTermsParser` (regex-based offer price / consideration / exchange ratio / break-fee extraction) + `AgoraMarketData.quotes` (spread computation) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
 | gropar | Agora `get_ohlc` (daily OHLC history, for RiskMetrics + currentClose) + Agora `get_indicators` (bundled exit TA per position via `AgoraResearch`) — unchanged from pre-7c |
-
-**🚧 Planned (not yet shipped) — full-lifecycle persistence.** The
-roadmap lifecycle for strigoi-spin (see `strigoi.md`) preserves the
-spin-co's SEC registrant CIK — parsed from the EDGAR filing URL by
-`CikExtractor` — as the candidate's natural key, so a pre-ticker spin-co
-can be tracked before it trades. It adds three planned Agora tool uses,
-all **Dracul-side with zero Agora changes** (each tool already exists):
-`get_company_concept` fetched **by CIK** for the pre-ticker balance-sheet
-facts at `REGISTERED`; a **batched** `get_quotes` price probe to detect
-the `DISTRIBUTED` transition; and `get_form4_owner_history`
-(`AgoraFilings.ownerHistoryStrict`) for post-spin insider buying once the
-symbol trades. No new market-data adapter is introduced.
 
 ## Cost considerations
 
@@ -130,8 +118,13 @@ consumed through five neutral domain facades in
   `epsHistory` (SEC XBRL companyconcept series, used for the Sloan accrual
   ratio and EPS-quarter shaping respectively; `conceptStrict` is the same
   fetch but propagates `AgoraUnavailableException` instead of degrading to an
-  empty series, so batch callers — currently the lazarus Altman-Z enrichment —
-  can short-circuit a down source instead of burning their latency budget),
+  empty series, so batch callers — the lazarus Altman-Z enrichment and the
+  strigoi-spin lifecycle enrichment — can short-circuit a down source instead
+  of burning their latency budget. `conceptStrict` also has a CIK-keyed overload
+  (`conceptStrict(symbol, cik, tag)`): Agora's `get_company_concept` accepts a
+  `cik` as an alternative to a ticker, which strigoi-spin relies on to read a
+  pre-ticker spin-co's XBRL facts by its registrant CIK, and exposes the XBRL
+  `filed` date on `ConceptSeries.Point` for the spin settlement probe),
   `fundamentalScore`
   (`get_fundamental_score` — a real Piotroski F-Score computed by Agora from
   SEC companyfacts, with a strict pass/fail per criterion plus a

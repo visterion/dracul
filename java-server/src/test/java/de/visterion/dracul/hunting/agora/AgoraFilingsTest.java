@@ -101,6 +101,25 @@ class AgoraFilingsTest {
         assertThat(args.getValue().path("to").asString()).isEqualTo("2026-07-01");
     }
 
+    @Test void searchSpinoffsParsesCikFromEdgarUrl() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("search_filings"), any())).thenReturn(json(
+                "{\"filings\":[" +
+                // real EDGAR archive shape -> registrant CIK 123456, zero-padded to 10 digits
+                "{\"ticker\":\"SPN\",\"company\":\"Acme Spinco Inc\",\"form\":\"10-12B\"," +
+                "\"filedDate\":\"2026-06-20\"," +
+                "\"url\":\"https://www.sec.gov/Archives/edgar/data/123456/000012345626000001/form10.htm\"}," +
+                // non-EDGAR url -> cik null (fail-soft)
+                "{\"ticker\":\"NOC\",\"company\":\"NoCik Co\",\"form\":\"10-12B\"," +
+                "\"filedDate\":\"2026-06-21\",\"url\":\"http://sec/u2\"}]}"));
+
+        DataSourceResult<SpinoffFiling> r = new AgoraFilings(client)
+                .searchSpinoffs(LocalDate.parse("2026-05-01"), LocalDate.parse("2026-07-01"));
+
+        assertThat(r.items()).extracting(SpinoffFiling::cik)
+                .containsExactly("0000123456", null);
+    }
+
     @Test void searchSpinoffsUnavailableOnAgoraFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("search_filings"), any())).thenThrow(new AgoraUnavailableException("down"));
@@ -168,6 +187,61 @@ class AgoraFilingsTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> new AgoraFilings(client).conceptStrict("AAPL", "Assets"))
                 .isInstanceOf(AgoraUnavailableException.class);
+    }
+
+    @Test void conceptStrictByCikSendsCikInsteadOfSymbol() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_concept"), any())).thenReturn(json(
+                "{\"cik\":\"0000123456\",\"tag\":\"Assets\",\"unit\":\"USD\",\"datapoints\":[]}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        // pre-ticker fetch: only a CIK is known
+        filings.conceptStrict(null, "0000123456", "Assets");
+
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        Mockito.verify(client).callTool(eq("get_company_concept"), args.capture());
+        assertThat(args.getValue().has("symbol")).isFalse();           // blank symbol not forwarded
+        assertThat(args.getValue().path("cik").asString()).isEqualTo("0000123456");
+        assertThat(args.getValue().path("tag").asString()).isEqualTo("Assets");
+    }
+
+    @Test void conceptStrictByCikForwardsBothWhenSymbolAlsoPresent() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_concept"), any())).thenReturn(json(
+                "{\"cik\":\"0000123456\",\"tag\":\"Assets\",\"unit\":\"USD\",\"datapoints\":[]}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        filings.conceptStrict("SPN", "0000123456", "Assets");
+
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        Mockito.verify(client).callTool(eq("get_company_concept"), args.capture());
+        assertThat(args.getValue().path("symbol").asString()).isEqualTo("SPN");
+        assertThat(args.getValue().path("cik").asString()).isEqualTo("0000123456");
+        assertThat(args.getValue().path("tag").asString()).isEqualTo("Assets");
+    }
+
+    @Test void conceptStrictByCikRejectsBothBlank() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        AgoraFilings filings = new AgoraFilings(client);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> filings.conceptStrict("  ", null, "Assets"))
+                .isInstanceOf(IllegalArgumentException.class);
+        Mockito.verifyNoInteractions(client);   // no tool call with a missing identifier
+    }
+
+    @Test void conceptMapsFiledDateAndNullFiled() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_concept"), any())).thenReturn(json(
+                "{\"cik\":\"0000320193\",\"tag\":\"Assets\",\"unit\":\"USD\",\"datapoints\":[" +
+                "{\"periodStart\":null,\"periodEnd\":\"2025-12-31\",\"value\":50000,\"filed\":\"2026-02-01\"}," +
+                "{\"periodStart\":null,\"periodEnd\":\"2024-12-31\",\"value\":40000,\"filed\":null}]}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        ConceptSeries s = filings.concept("AAPL", "Assets");
+        assertThat(s.points()).hasSize(2);
+        assertThat(s.points().get(0).filed()).isEqualTo(LocalDate.parse("2026-02-01"));
+        assertThat(s.points().get(1).filed()).isNull();               // omitted filed -> null
     }
 
     @Test void epsHistoryMapsRows() {
