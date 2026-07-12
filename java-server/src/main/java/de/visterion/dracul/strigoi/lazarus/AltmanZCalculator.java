@@ -9,6 +9,8 @@ import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Classic Altman Z-Score (1968) over Agora XBRL concept series:
@@ -17,6 +19,10 @@ import java.time.temporal.ChronoUnit;
  * X3 = EBIT / total assets, X4 = market value of equity / total liabilities,
  * X5 = sales / total assets.
  *
+ * <p>All XBRL inputs are pulled in ONE bulk {@link AgoraFilings#companyFactsStrict} call
+ * (previously up to eight sequential {@code get_company_concept} calls) and every ratio is then
+ * computed from the in-memory map — no fetch is triggered per helper.
+ *
  * <p>Input conventions (documented choices):
  * <ul>
  *   <li>Balance-sheet inputs (Assets, AssetsCurrent, LiabilitiesCurrent, Liabilities,
@@ -24,19 +30,30 @@ import java.time.temporal.ChronoUnit;
  *       of them must share the exact balance-sheet date of the latest Assets instant —
  *       mixing balance-sheet dates (e.g. a filer that stopped reporting a concept years
  *       ago) makes the score unavailable rather than silently stale.</li>
+ *   <li>Liabilities-derivation fallback: many filers report
+ *       {@code LiabilitiesAndStockholdersEquity} and {@code StockholdersEquity} but omit the
+ *       standalone {@code Liabilities} tag. When the reported tag is absent or non-positive at
+ *       the anchor date, liabilities are derived from the accounting identity at the SAME date
+ *       (used only when both operands are present and the difference is positive).</li>
  *   <li>Flow inputs (EBIT ≈ {@code OperatingIncomeLoss}, sales = {@code Revenues} with the
  *       same fallback tags the F-score uses) are the latest reported FISCAL-YEAR durations
  *       (350–380 days, matching {@code SloanAccrualCalculator}) — not TTM — and both must
  *       end on the same fiscal-year end; a revenue tag whose annual points do not reach that
  *       end (stale pre-tag-switch history) falls through to the next tag of the chain.</li>
+ *   <li>Restatement (latest-filed) dedup: EDGAR keeps every filing forever, so a single
+ *       (periodStart, periodEnd) can appear multiple times — original plus a later
+ *       amendment/restatement. Among points matching the same period the helpers prefer the
+ *       one with the GREATEST {@code filed} date (a null {@code filed} sorts oldest), so the
+ *       score is deterministic across a restatement.</li>
  *   <li>Market value of equity is Finnhub's {@code marketCapitalization}, which is quoted
  *       in USD MILLIONS while every XBRL value is raw USD: it is converted (×10⁶) here.</li>
  * </ul>
  *
  * <p>No partial Z: the score is only meaningful with ALL five ratios, so the first missing
- * input yields {@link AltmanZ#unavailable()} and stops fetching further concepts (each fetch
- * is a remote Agora call). {@link de.visterion.dracul.marketdata.AgoraUnavailableException}
- * from the strict concept fetch is deliberately NOT caught here — the enrichment service
+ * input yields {@link AltmanZ#unavailable()}. Since every tag arrives in the one bulk fetch,
+ * there is no per-input remote call to save by bailing early — an early return simply avoids
+ * pointless arithmetic. {@link de.visterion.dracul.marketdata.AgoraUnavailableException}
+ * from the strict bulk fetch is deliberately NOT caught here — the enrichment service
  * uses it to short-circuit a down source for the rest of the batch.
  */
 @Component
@@ -49,6 +66,14 @@ public class AltmanZCalculator {
 
     private static final String[] REVENUE_TAGS = {
             "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"};
+
+    /** Every us-gaap tag the Z needs, fetched in one bulk call: balance-sheet instants, the
+     *  two Liabilities-derivation operands, the EBIT flow, then the revenue fallback chain. */
+    private static final List<String> BULK_TAGS = List.of(
+            "Assets", "AssetsCurrent", "LiabilitiesCurrent", "Liabilities",
+            "LiabilitiesAndStockholdersEquity", "StockholdersEquity",
+            "RetainedEarningsAccumulatedDeficit", "OperatingIncomeLoss",
+            "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
 
     private final AgoraFilings filings;
 
@@ -68,22 +93,24 @@ public class AltmanZCalculator {
     public AltmanZ zScore(String symbol, Double marketCapMillions) {
         if (marketCapMillions == null || marketCapMillions <= 0) return AltmanZ.unavailable();
 
-        Dated assets = latestInstant(filings.conceptStrict(symbol, "Assets"));
-        if (assets == null || assets.value().signum() <= 0) return AltmanZ.unavailable();
+        Map<String, ConceptSeries> facts = filings.companyFactsStrict(symbol, BULK_TAGS);
 
-        BigDecimal currentAssets = instantAt(assets.end(), filings.conceptStrict(symbol, "AssetsCurrent"));
+        Dated assets = latestInstant(series(facts, "Assets"));
+        if (assets == null || assets.value().signum() <= 0) return AltmanZ.unavailable();
+        LocalDate anchor = assets.end();
+
+        BigDecimal currentAssets = instantAt(anchor, series(facts, "AssetsCurrent"));
         if (currentAssets == null) return AltmanZ.unavailable();
-        BigDecimal currentLiabilities = instantAt(assets.end(), filings.conceptStrict(symbol, "LiabilitiesCurrent"));
+        BigDecimal currentLiabilities = instantAt(anchor, series(facts, "LiabilitiesCurrent"));
         if (currentLiabilities == null) return AltmanZ.unavailable();
-        BigDecimal liabilities = instantAt(assets.end(), filings.conceptStrict(symbol, "Liabilities"));
+        BigDecimal liabilities = liabilitiesAt(anchor, facts);
         if (liabilities == null || liabilities.signum() <= 0) return AltmanZ.unavailable();
-        BigDecimal retainedEarnings = instantAt(assets.end(),
-                filings.conceptStrict(symbol, "RetainedEarningsAccumulatedDeficit"));
+        BigDecimal retainedEarnings = instantAt(anchor, series(facts, "RetainedEarningsAccumulatedDeficit"));
         if (retainedEarnings == null) return AltmanZ.unavailable();
 
-        Dated ebit = latestAnnualDuration(filings.conceptStrict(symbol, "OperatingIncomeLoss"));
+        Dated ebit = latestAnnualDuration(series(facts, "OperatingIncomeLoss"));
         if (ebit == null) return AltmanZ.unavailable();
-        BigDecimal revenue = firstAnnualRevenueAt(symbol, ebit.end());
+        BigDecimal revenue = firstAnnualRevenueAt(facts, ebit.end());
         if (revenue == null) return AltmanZ.unavailable();
 
         BigDecimal totalAssets = assets.value();
@@ -104,6 +131,23 @@ public class AltmanZCalculator {
         return new AltmanZ(z, true);
     }
 
+    /** Total liabilities at the anchor balance-sheet date. Prefers the reported
+     *  {@code Liabilities} instant; when that is absent or non-positive, derives it from the
+     *  accounting identity — Assets = Liabilities + Equity, and
+     *  {@code LiabilitiesAndStockholdersEquity == total Assets}, so
+     *  {@code Liabilities = LiabilitiesAndStockholdersEquity - StockholdersEquity} at the SAME
+     *  date. The derived value is used only when both operands are present and the difference
+     *  is strictly positive; otherwise null (Z unavailable). */
+    private static BigDecimal liabilitiesAt(LocalDate anchor, Map<String, ConceptSeries> facts) {
+        BigDecimal reported = instantAt(anchor, series(facts, "Liabilities"));
+        if (reported != null && reported.signum() > 0) return reported;
+        BigDecimal lse = instantAt(anchor, series(facts, "LiabilitiesAndStockholdersEquity"));
+        BigDecimal equity = instantAt(anchor, series(facts, "StockholdersEquity"));
+        if (lse == null || equity == null) return null;
+        BigDecimal derived = lse.subtract(equity);
+        return derived.signum() > 0 ? derived : null;
+    }
+
     /** Sales for the fiscal year ending exactly at {@code fyEnd} (the EBIT fiscal-year end),
      *  from the first revenue tag of the fallback chain that has an annual point on that end.
      *  The FY match must happen PER TAG, not after picking the first tag with any annual
@@ -111,55 +155,86 @@ public class AltmanZCalculator {
      *  ASC-606 cohort that moved from {@code Revenues} to
      *  {@code RevenueFromContractWithCustomerExcludingAssessedTax}) still carries stale
      *  annual points under the old tag — those must fall through to the tag that is actually
-     *  still filed instead of making the Z permanently unavailable. Each fallback costs one
-     *  more remote call, so the primary tag is tried first. */
-    private BigDecimal firstAnnualRevenueAt(String symbol, LocalDate fyEnd) {
+     *  still filed instead of making the Z permanently unavailable. All tags are already in the
+     *  bulk map, so trying the whole chain costs nothing extra; the primary tag still wins. */
+    private static BigDecimal firstAnnualRevenueAt(Map<String, ConceptSeries> facts, LocalDate fyEnd) {
         for (String tag : REVENUE_TAGS) {
-            BigDecimal v = annualDurationAt(fyEnd, filings.conceptStrict(symbol, tag));
+            BigDecimal v = annualDurationAt(fyEnd, series(facts, tag));
             if (v != null) return v;
         }
         return null;
     }
 
-    /** Annual (350-380d) duration point ending exactly at {@code end}; null if none. */
+    /** Bulk-map lookup: every requested tag is present as at least an empty series, but guard
+     *  defensively so a stray absent key degrades to empty rather than NPEs. */
+    private static ConceptSeries series(Map<String, ConceptSeries> facts, String tag) {
+        ConceptSeries s = facts.get(tag);
+        return s != null ? s : ConceptSeries.empty(tag);
+    }
+
+    /** Annual (350-380d) duration point ending exactly at {@code end}; among restatements of
+     *  that period the greatest-{@code filed} value wins. Null if none. */
     private static BigDecimal annualDurationAt(LocalDate end, ConceptSeries series) {
+        ConceptSeries.Point best = null;
         for (ConceptSeries.Point p : series.points()) {
             if (p.periodStart() == null || p.value() == null || !end.equals(p.periodEnd())) continue;
             long days = ChronoUnit.DAYS.between(p.periodStart(), p.periodEnd());
-            if (days >= MIN_ANNUAL_DAYS && days <= MAX_ANNUAL_DAYS) return p.value();
+            if (days < MIN_ANNUAL_DAYS || days > MAX_ANNUAL_DAYS) continue;
+            if (best == null || filedAfter(p.filed(), best.filed())) best = p;
         }
-        return null;
+        return best == null ? null : best.value();
     }
 
-    /** Most recent ~annual (350-380d) duration point, by period end; null if none. */
+    /** Most recent ~annual (350-380d) duration point, by period end; {@code filed} breaks a tie
+     *  between two points sharing the same period end (latest-filed restatement wins). */
     private static Dated latestAnnualDuration(ConceptSeries series) {
-        Dated best = null;
+        ConceptSeries.Point best = null;
         for (ConceptSeries.Point p : series.points()) {
             if (p.periodStart() == null || p.periodEnd() == null || p.value() == null) continue;
             long days = ChronoUnit.DAYS.between(p.periodStart(), p.periodEnd());
             if (days < MIN_ANNUAL_DAYS || days > MAX_ANNUAL_DAYS) continue;
-            if (best == null || p.periodEnd().isAfter(best.end())) best = new Dated(p.periodEnd(), p.value());
+            if (best == null || moreRecent(p, best)) best = p;
         }
-        return best;
+        return best == null ? null : new Dated(best.periodEnd(), best.value());
     }
 
-    /** Most recent instant point (no periodStart), by end; null if none. */
+    /** Most recent instant point (no periodStart), by end; {@code filed} breaks a tie between
+     *  two points sharing the same period end (latest-filed restatement wins). */
     private static Dated latestInstant(ConceptSeries series) {
-        Dated best = null;
+        ConceptSeries.Point best = null;
         for (ConceptSeries.Point p : series.points()) {
             if (p.periodEnd() == null || p.value() == null) continue;
             if (p.periodStart() != null) continue;   // instant facts only
-            if (best == null || p.periodEnd().isAfter(best.end())) best = new Dated(p.periodEnd(), p.value());
+            if (best == null || moreRecent(p, best)) best = p;
         }
-        return best;
+        return best == null ? null : new Dated(best.periodEnd(), best.value());
     }
 
-    /** Instant point at exactly {@code end} (the anchor balance-sheet date); null if none. */
+    /** Instant point at exactly {@code end} (the anchor balance-sheet date); among restatements
+     *  of that date the greatest-{@code filed} value wins. Null if none. */
     private static BigDecimal instantAt(LocalDate end, ConceptSeries series) {
+        ConceptSeries.Point best = null;
         for (ConceptSeries.Point p : series.points()) {
             if (p.periodStart() != null || p.value() == null) continue;   // instant facts only
-            if (end.equals(p.periodEnd())) return p.value();
+            if (!end.equals(p.periodEnd())) continue;
+            if (best == null || filedAfter(p.filed(), best.filed())) best = p;
         }
-        return null;
+        return best == null ? null : best.value();
+    }
+
+    /** "Most recent" ordering: primary key is the period end, {@code filed} is the tie-breaker
+     *  (only when two points share the same period end). */
+    private static boolean moreRecent(ConceptSeries.Point cand, ConceptSeries.Point best) {
+        int cmp = cand.periodEnd().compareTo(best.periodEnd());
+        if (cmp != 0) return cmp > 0;
+        return filedAfter(cand.filed(), best.filed());
+    }
+
+    /** True if {@code a} is a later filing than {@code b}. A null {@code filed} sorts oldest:
+     *  it never beats a dated point, and any dated point beats it. */
+    private static boolean filedAfter(LocalDate a, LocalDate b) {
+        if (a == null) return false;
+        if (b == null) return true;
+        return a.isAfter(b);
     }
 }
