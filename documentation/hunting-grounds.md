@@ -54,6 +54,18 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
 | gropar | Agora `get_ohlc` (daily OHLC history, for RiskMetrics + currentClose) + Agora `get_indicators` (bundled exit TA per position via `AgoraResearch`) — unchanged from pre-7c |
 
+**🚧 Planned (not yet shipped) — full-lifecycle persistence.** The
+roadmap lifecycle for strigoi-spin (see `strigoi.md`) preserves the
+spin-co's SEC registrant CIK — parsed from the EDGAR filing URL by
+`CikExtractor` — as the candidate's natural key, so a pre-ticker spin-co
+can be tracked before it trades. It adds three planned Agora tool uses,
+all **Dracul-side with zero Agora changes** (each tool already exists):
+`get_company_concept` fetched **by CIK** for the pre-ticker balance-sheet
+facts at `REGISTERED`; a **batched** `get_quotes` price probe to detect
+the `DISTRIBUTED` transition; and `get_form4_owner_history`
+(`AgoraFilings.ownerHistoryStrict`) for post-spin insider buying once the
+symbol trades. No new market-data adapter is introduced.
+
 ## Cost considerations
 
 ALL deterministic hunting fetch (filings, news, recommendations, fundamentals,
