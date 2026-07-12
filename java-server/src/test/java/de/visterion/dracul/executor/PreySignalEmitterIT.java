@@ -17,7 +17,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")
-@TestPropertySource(properties = "dracul.executor.enabled=true")
+@TestPropertySource(properties = {
+        "dracul.executor.enabled=true",
+        // The prey under test are discovered by "strigoi-spin". The emitter's version gate
+        // resolves the agent version from the agent_definition row, which is only seeded when
+        // the strigoi-spin provider bean exists. Enabling it here makes this test's own context
+        // bootstrap that row, so versionFor() returns a known hash (not the "unknown" sentinel
+        // that makes the emitter skip the fresh prey) regardless of test ordering.
+        "dracul.strigoi.spin.enabled=true"
+})
 class PreySignalEmitterIT {
 
     @Autowired PreySignalEmitter emitter;

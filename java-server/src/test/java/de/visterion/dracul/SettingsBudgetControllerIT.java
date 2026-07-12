@@ -16,7 +16,16 @@ import org.springframework.web.client.RestClient;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
-@SpringBootTest(webEnvironment = RANDOM_PORT)
+@SpringBootTest(webEnvironment = RANDOM_PORT, properties = {
+        // The strigoi AgentDefaultProvider beans are @ConditionalOnProperty and default
+        // to disabled, so /api/settings/budgets only lists agents when they are enabled.
+        // Declare them here (mirrors SettingsControllerRosterTest) so the "agents hasSize 6"
+        // assertion is deterministic instead of depending on a cached context created by
+        // some other IT that happened to enable them.
+        "dracul.strigoi.spin.enabled=true", "dracul.strigoi.echo.enabled=true",
+        "dracul.strigoi.insider.enabled=true", "dracul.strigoi.lazarus.enabled=true",
+        "dracul.strigoi.merger.enabled=true", "dracul.strigoi.index.enabled=true"
+})
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")
 class SettingsBudgetControllerIT {
