@@ -101,7 +101,10 @@ describe('DepotPositionDetailView', () => {
     expect(w.find('[data-testid="pd-stat-performance"]').exists()).toBe(true)
     expect(w.find('[data-testid="pd-stat-qty"]').text()).toContain('10')
     expect(w.find('[data-testid="pd-stat-entry"]').exists()).toBe(true)
-    expect(w.find('[data-testid="pd-asof"]').exists()).toBe(true)
+    const asOfEl = w.find('[data-testid="pd-asof"]')
+    expect(asOfEl.exists()).toBe(true)
+    expect(asOfEl.text()).toMatch(/\d{2}\.\d{2}\., \d{2}:\d{2}:\d{2}/)
+    expect(asOfEl.text()).not.toMatch(/vor|gerade eben|ago/i)
     expect(w.find('[data-testid="pd-orders"]').exists()).toBe(true)
   })
 

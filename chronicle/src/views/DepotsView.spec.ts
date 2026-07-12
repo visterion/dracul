@@ -81,23 +81,91 @@ beforeEach(() => {
 })
 
 describe('DepotsView', () => {
-  it('renders one section per depot', async () => {
+  it('renders exactly one depot section — the selected depot — via a dropdown selector', async () => {
     depotsResponse = { depots: [depot({ id: 'depot-1' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
     const w = mountView()
     await flushPromises()
 
     const sections = w.findAll('[data-testid="depot-section"]')
-    expect(sections).toHaveLength(2)
+    expect(sections).toHaveLength(1)
+
+    const select = w.find('[data-testid="depot-select"]')
+    expect(select.exists()).toBe(true)
+    const options = select.findAll('option')
+    expect(options).toHaveLength(2)
+    expect(options[0].text()).toContain('depot-1')
+    expect(options[0].text()).toContain('alpaca')
+    expect(options[1].text()).toContain('saxo-live-1')
   })
 
-  it('shows total cash in the summary bar', async () => {
-    depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
+  it('switches the rendered depot when a different option is selected', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    expect(w.find('[data-testid="depot-section"]').attributes('data-connection')).toBe('depot-1')
+
+    await w.find('[data-testid="depot-select"]').setValue('saxo-live-1')
+    await flushPromises()
+
+    const sections = w.findAll('[data-testid="depot-section"]')
+    expect(sections).toHaveLength(1)
+    expect(sections[0].attributes('data-connection')).toBe('saxo-live-1')
+  })
+
+  it('persists the selected depot in localStorage and restores it on next mount', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    await w.find('[data-testid="depot-select"]').setValue('saxo-live-1')
+    await flushPromises()
+    expect(localStorage.getItem('dracul.depots.selected')).toBe('saxo-live-1')
+
+    const w2 = mountView()
+    await flushPromises()
+    expect(w2.find('[data-testid="depot-section"]').attributes('data-connection')).toBe('saxo-live-1')
+  })
+
+  it('falls back to the first depot when the persisted selection no longer exists', async () => {
+    localStorage.setItem('dracul.depots.selected', 'ghost-depot')
+    depotsResponse = { depots: [depot({ id: 'depot-1' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    expect(w.find('[data-testid="depot-section"]').attributes('data-connection')).toBe('depot-1')
+  })
+
+  it('shows the selected depot cash and no cross-depot total', async () => {
+    depotsResponse = {
+      depots: [
+        depot({ id: 'depot-1', account: { cash: 500, equity: 4795, buyingPower: 1000, currency: 'USD', status: 'ACTIVE', asOf: '2026-07-11T08:00:00Z' } }),
+        depot({ id: 'saxo-live-1', environment: 'live', account: { cash: 9999, equity: 4795, buyingPower: 1000, currency: 'USD', status: 'ACTIVE', asOf: '2026-07-11T08:00:00Z' } }),
+      ],
+      error: null,
+    }
     const w = mountView()
     await flushPromises()
 
     const cash = w.find('[data-testid="depots-total-cash"]')
     expect(cash.exists()).toBe(true)
     expect(cash.text()).toContain('500')
+    expect(w.find('[data-testid="depots-summary"]').exists()).toBe(false)
+
+    await w.find('[data-testid="depot-select"]').setValue('saxo-live-1')
+    await flushPromises()
+    expect(w.find('[data-testid="depots-total-cash"]').text()).toContain('9.999')
+  })
+
+  it('renders an absolute "Stand:" timestamp, never relative wording', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    const asOf = w.find('[data-testid="depot-asof"]')
+    expect(asOf.exists()).toBe(true)
+    expect(asOf.text()).toMatch(/\d{2}\.\d{2}\., \d{2}:\d{2}:\d{2}/)
+    expect(asOf.text()).not.toMatch(/vor|gerade eben|ago/i)
   })
 
   it('flips all P&L cells from currency to percent when one is clicked', async () => {
@@ -117,7 +185,7 @@ describe('DepotsView', () => {
     expect(after.every(t => t.includes('%') || t === '—')).toBe(true)
   })
 
-  it('shows an inline alert for an errored depot while the other still renders', async () => {
+  it('shows an inline alert for an errored depot, and the other depot still renders once selected', async () => {
     depotsResponse = {
       depots: [
         depot({ id: 'depot-1', error: 'connection refused', account: null, aggregates: null, positions: [] }),
@@ -128,12 +196,15 @@ describe('DepotsView', () => {
     const w = mountView()
     await flushPromises()
 
-    const sections = w.findAll('[data-testid="depot-section"]')
-    expect(sections).toHaveLength(2)
+    expect(w.findAll('[data-testid="depot-section"]')).toHaveLength(1)
     expect(w.find('[data-testid="depot-error"]').exists()).toBe(true)
     expect(w.find('[data-testid="depot-error"]').text()).toContain('connection refused')
-    // the healthy depot still shows its positions table
+
+    // switching to the healthy depot shows its positions table
+    await w.find('[data-testid="depot-select"]').setValue('saxo-live-1')
+    await flushPromises()
     expect(w.find('[data-testid="depot-positions-table"]').exists()).toBe(true)
+    expect(w.find('[data-testid="depot-error"]').exists()).toBe(false)
   })
 
   it('renders null day-change values as a dash, never as 0', async () => {

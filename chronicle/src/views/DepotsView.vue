@@ -19,54 +19,65 @@
     </div>
 
     <template v-else>
-      <div class="depots-summary" data-testid="depots-summary">
-        <div class="ds-left">
-          <span class="ds-value mono">{{ formatMoney(totals.totalValue, totals.currency) }}</span>
-          <span
-            class="ds-day pnl-cell"
-            data-testid="pnl-cell"
-            :class="pnlClass(totals.totalDayChangeAbs)"
-            @click="toggle()"
-          >{{ fmtPl(totals.totalDayChangeAbs, totals.totalDayChangePct, mode, totals.currency) }}</span>
-        </div>
-        <div class="ds-right">
-          <span class="ds-cash-k">{{ t('depots.summary.cash') }}</span>
-          <span class="ds-cash-v mono" data-testid="depots-total-cash">{{ formatMoney(totals.totalCash, totals.currency) }}</span>
-        </div>
-      </div>
+      <label class="depots-selector">
+        <span class="depots-selector-label">{{ t('depots.selector.label') }}</span>
+        <select
+          v-model="selectedId"
+          class="depots-selector-select"
+          data-testid="depot-select"
+        >
+          <option v-for="d in depots" :key="d.id" :value="d.id">{{ d.id }} · {{ d.provider }}</option>
+        </select>
+      </label>
 
-      <div class="depots-list">
-        <DepotSection v-for="d in depots" :key="d.id" :depot="d" />
-      </div>
+      <DepotSection v-if="selectedDepot" :depot="selectedDepot" />
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PageHead from '../components/common/PageHead.vue'
 import DepotSection from '../components/depot/DepotSection.vue'
 import { useApi } from '../api'
 import type { Depot } from '../api/types'
-import { useDisplayMode } from '../composables/useDisplayMode'
-import { depotTotals, fmtPl } from '../lib/depotDisplay'
-import { formatMoney } from '../utils/format'
 
 const { t } = useI18n()
 const api = useApi()
-const { mode, toggle } = useDisplayMode()
+
+const SELECTED_STORAGE_KEY = 'dracul.depots.selected'
 
 const depots = ref<Depot[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
+const selectedId = ref<string | null>(null)
 
-const totals = computed(() => depotTotals(depots.value))
+const selectedDepot = computed(() => depots.value.find(d => d.id === selectedId.value) ?? null)
 
-function pnlClass(v: number | null): string {
-  if (v == null) return ''
-  return v > 0 ? 'pos' : v < 0 ? 'neg' : ''
+/** Restores the persisted selection if it still points at a visible depot,
+ *  otherwise falls back to the first depot in the (backend-ordered) list. */
+function resolveSelection(list: Depot[]): string | null {
+  if (list.length === 0) return null
+  let persisted: string | null = null
+  try {
+    persisted = localStorage.getItem(SELECTED_STORAGE_KEY)
+  } catch {
+    persisted = null
+  }
+  return persisted != null && list.some(d => d.id === persisted) ? persisted : list[0].id
 }
+
+// Persist every selection change (user pick or the initial resolved default)
+// so the choice survives a reload.
+watch(selectedId, id => {
+  if (id == null) return
+  try {
+    localStorage.setItem(SELECTED_STORAGE_KEY, id)
+  } catch {
+    // private browsing / storage disabled — selection still works in-memory
+  }
+})
 
 async function load() {
   loading.value = true
@@ -74,6 +85,7 @@ async function load() {
   try {
     const res = await api.getDepots()
     depots.value = res.depots
+    selectedId.value = resolveSelection(res.depots)
     if (res.error) error.value = res.error
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('depots.loadError')
@@ -85,19 +97,16 @@ onMounted(load)
 </script>
 
 <style scoped>
-.depots-summary {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); flex-wrap: wrap;
-  background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;
-  padding: var(--space-4) var(--space-5); margin-bottom: var(--space-5);
+.depots-selector {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
-.ds-left { display: flex; align-items: baseline; gap: var(--space-4); }
-.ds-value { font-size: var(--text-h3); color: var(--bone-ivory); }
-.pnl-cell { cursor: pointer; }
-.pnl-cell.pos { color: var(--signal-positive-bright); }
-.pnl-cell.neg { color: var(--blood-crimson-bright); }
-.ds-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.ds-cash-k { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ash-gray); }
-.ds-cash-v { font-size: var(--text-body-lg); color: var(--bone-ivory); }
-
-.depots-list { display: flex; flex-direction: column; gap: var(--space-5); }
+.depots-selector-label {
+  font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ash-gray);
+}
+.depots-selector-select {
+  background: var(--crypt-black-elevated); border: var(--hairline); color: var(--bone-ivory);
+  border-radius: 4px; padding: var(--space-2) var(--space-4); font-size: var(--text-body);
+  min-width: 240px;
+}
 </style>
