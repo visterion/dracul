@@ -30,11 +30,13 @@ import java.util.Map;
  *       of them must share the exact balance-sheet date of the latest Assets instant —
  *       mixing balance-sheet dates (e.g. a filer that stopped reporting a concept years
  *       ago) makes the score unavailable rather than silently stale.</li>
- *   <li>Liabilities-derivation fallback: many filers report
- *       {@code LiabilitiesAndStockholdersEquity} and {@code StockholdersEquity} but omit the
- *       standalone {@code Liabilities} tag. When the reported tag is absent or non-positive at
- *       the anchor date, liabilities are derived from the accounting identity at the SAME date
- *       (used only when both operands are present and the difference is positive).</li>
+ *   <li>Liabilities-derivation fallback: many filers report {@code StockholdersEquity} but omit
+ *       the standalone {@code Liabilities} tag. When the reported tag is absent or non-positive
+ *       at the anchor date, liabilities are derived from the accounting identity
+ *       {@code Liabilities = Assets - StockholdersEquity} at the SAME date (used only when
+ *       {@code StockholdersEquity} is present and the difference is positive). When that identity
+ *       is also unavailable, a second fallback sums {@code LiabilitiesCurrent +
+ *       LiabilitiesNoncurrent} at the same date.</li>
  *   <li>Flow inputs (EBIT ≈ {@code OperatingIncomeLoss}, sales = {@code Revenues} with the
  *       same fallback tags the F-score uses) are the latest reported FISCAL-YEAR durations
  *       (350–380 days, matching {@code SloanAccrualCalculator}) — not TTM — and both must
@@ -68,10 +70,11 @@ public class AltmanZCalculator {
             "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"};
 
     /** Every us-gaap tag the Z needs, fetched in one bulk call: balance-sheet instants, the
-     *  two Liabilities-derivation operands, the EBIT flow, then the revenue fallback chain. */
+     *  Liabilities-derivation operands (identity primary, current+noncurrent fallback), the
+     *  EBIT flow, then the revenue fallback chain. */
     private static final List<String> BULK_TAGS = List.of(
             "Assets", "AssetsCurrent", "LiabilitiesCurrent", "Liabilities",
-            "LiabilitiesAndStockholdersEquity", "StockholdersEquity",
+            "LiabilitiesNoncurrent", "StockholdersEquity",
             "RetainedEarningsAccumulatedDeficit", "OperatingIncomeLoss",
             "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
 
@@ -103,7 +106,7 @@ public class AltmanZCalculator {
         if (currentAssets == null) return AltmanZ.unavailable();
         BigDecimal currentLiabilities = instantAt(anchor, series(facts, "LiabilitiesCurrent"));
         if (currentLiabilities == null) return AltmanZ.unavailable();
-        BigDecimal liabilities = liabilitiesAt(anchor, facts);
+        BigDecimal liabilities = liabilitiesAt(anchor, assets.value(), currentLiabilities, facts);
         if (liabilities == null || liabilities.signum() <= 0) return AltmanZ.unavailable();
         BigDecimal retainedEarnings = instantAt(anchor, series(facts, "RetainedEarningsAccumulatedDeficit"));
         if (retainedEarnings == null) return AltmanZ.unavailable();
@@ -133,19 +136,30 @@ public class AltmanZCalculator {
 
     /** Total liabilities at the anchor balance-sheet date. Prefers the reported
      *  {@code Liabilities} instant; when that is absent or non-positive, derives it from the
-     *  accounting identity — Assets = Liabilities + Equity, and
-     *  {@code LiabilitiesAndStockholdersEquity == total Assets}, so
-     *  {@code Liabilities = LiabilitiesAndStockholdersEquity - StockholdersEquity} at the SAME
-     *  date. The derived value is used only when both operands are present and the difference
-     *  is strictly positive; otherwise null (Z unavailable). */
-    private static BigDecimal liabilitiesAt(LocalDate anchor, Map<String, ConceptSeries> facts) {
+     *  accounting identity {@code Liabilities = Assets - StockholdersEquity} at the SAME date
+     *  (used only when {@code StockholdersEquity} is present and the difference is strictly
+     *  positive). When that identity is also unavailable, falls back to
+     *  {@code LiabilitiesCurrent + LiabilitiesNoncurrent} at the same date (the current-liability
+     *  operand is already fetched by the caller for X1, so it is passed in rather than looked up
+     *  twice). Null (Z unavailable) only when none of the three sources yields a positive value. */
+    private static BigDecimal liabilitiesAt(LocalDate anchor, BigDecimal assets, BigDecimal currentLiabilities,
+                                             Map<String, ConceptSeries> facts) {
         BigDecimal reported = instantAt(anchor, series(facts, "Liabilities"));
         if (reported != null && reported.signum() > 0) return reported;
-        BigDecimal lse = instantAt(anchor, series(facts, "LiabilitiesAndStockholdersEquity"));
+
         BigDecimal equity = instantAt(anchor, series(facts, "StockholdersEquity"));
-        if (lse == null || equity == null) return null;
-        BigDecimal derived = lse.subtract(equity);
-        return derived.signum() > 0 ? derived : null;
+        if (equity != null) {
+            BigDecimal derived = assets.subtract(equity);
+            if (derived.signum() > 0) return derived;
+        }
+
+        BigDecimal noncurrentLiabilities = instantAt(anchor, series(facts, "LiabilitiesNoncurrent"));
+        if (noncurrentLiabilities != null) {
+            BigDecimal summed = currentLiabilities.add(noncurrentLiabilities);
+            if (summed.signum() > 0) return summed;
+        }
+
+        return null;
     }
 
     /** Sales for the fiscal year ending exactly at {@code fyEnd} (the EBIT fiscal-year end),
