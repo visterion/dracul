@@ -271,6 +271,15 @@ Spin reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
 Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
 needed.
 
+**🚧 Planned (not yet shipped) — lifecycle config.** The roadmap
+spin-off lifecycle (see `strigoi.md`) adds two config keys. They are
+**not yet read by any code**; the values below are the designed defaults:
+
+| Key | Planned default | Purpose |
+|---|---|---|
+| `abandon_after` | `180d` | Age-out to `ABANDONED` for a candidate that never distributes. |
+| `promotion_window_days` | `90` | Maximum days-since-distribution for a `DISTRIBUTED` candidate to still be promoted to prey. |
+
 ## Strigoi Lazarus
 
 | Env var | Default | Purpose |
