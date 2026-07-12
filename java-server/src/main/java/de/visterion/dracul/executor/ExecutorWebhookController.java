@@ -8,6 +8,7 @@ import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.position.PositionContextRepository;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -79,6 +80,7 @@ public class ExecutorWebhookController {
     private final VetoConfig vetoConfig;
     private final Tranche2Detector tranche2Detector;
     private final TelegramNotifier telegram;
+    private final PositionContextRepository positionContextRepo;
 
     /**
      * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
@@ -117,6 +119,7 @@ public class ExecutorWebhookController {
             SignalRanker ranker,
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
+            PositionContextRepository positionContextRepo,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
@@ -137,10 +140,10 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
-                tranche2Detector, telegram, webhookToken, connection, minConfidence, maxPositions, atrPeriod,
-                swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct, maxPerSector, minPrice,
-                advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche, entryGtdDays,
-                Clock.systemUTC());
+                tranche2Detector, telegram, positionContextRepo, webhookToken, connection, minConfidence,
+                maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
+                maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
+                entryGtdDays, Clock.systemUTC());
     }
 
     /** Package-private overload with an injectable {@link Clock}, so tests can assert
@@ -163,6 +166,7 @@ public class ExecutorWebhookController {
             SignalRanker ranker,
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
+            PositionContextRepository positionContextRepo,
             String webhookToken,
             String connection,
             double minConfidence,
@@ -210,6 +214,7 @@ public class ExecutorWebhookController {
         this.ranker = ranker;
         this.tranche2Detector = tranche2Detector;
         this.telegram = telegram;
+        this.positionContextRepo = positionContextRepo;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
                 trancheCount);
@@ -700,6 +705,10 @@ public class ExecutorWebhookController {
         List<EnrichedPosition> positions = pipeline.run(connection, runId);
         List<Map<String, Object>> serialized = new ArrayList<>();
         for (EnrichedPosition p : positions) {
+            if (p.entryFilled()) {
+                recordPositionContext(p);
+            }
+
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("symbol", p.symbol());
             node.put("signal_id", p.sourceSignalId());
@@ -733,6 +742,44 @@ public class ExecutorWebhookController {
             serialized.add(node);
         }
         return ResponseEntity.ok(Map.of("output", Map.of("positions", serialized)));
+    }
+
+    /**
+     * Records (or idempotently confirms) the {@code position_context} row for a confirmed-filled
+     * position, so the depot position is later joinable to its research thesis / kill-criteria /
+     * stops (the depot-as-single-source-of-truth goal). Called once per {@code fetch-open-positions}
+     * pass for every {@code entryFilled} position; {@link PositionContextRepository#upsertOnOpen}
+     * is idempotent (ON CONFLICT DO NOTHING against the open partial unique index), so repeating
+     * this on every pass for an already-recorded symbol is a cheap no-op, not a duplicate write.
+     *
+     * <p>{@code ExecutorSignal}/{@code ExecutorPosition} carry no {@code verdictId} — the
+     * executor's own signal pipeline (Prey -> {@code PreySignalMapper} -> {@code ExecutorSignal})
+     * has no link back to a {@code Verdict} row, unlike gropar's {@code WatchlistItem.verdictId()}.
+     * So {@code verdictId} and {@code thesisSnapshot} are always {@code null} here (never
+     * fabricated); {@code killCriteria}/{@code horizon} are still populated because they are the
+     * executor's own real, already-persisted signal/position data, not derived from a verdict.
+     *
+     * <p>Fail-soft: any failure here is logged at WARN and swallowed — a context-write failure
+     * must never fail {@code fetch-open-positions} or the maintenance pipeline it reports on.
+     */
+    private void recordPositionContext(EnrichedPosition p) {
+        try {
+            JsonNode killCriteria = (p.killCriteria() == null || p.killCriteria().isEmpty())
+                    ? null : mapper.valueToTree(p.killCriteria());
+            String horizon = resolveHorizon(p.sourceSignalId());
+            positionContextRepo.upsertOnOpen(connection, p.symbol(), null, killCriteria, horizon,
+                    null, p.activeStop(), "executor");
+        } catch (RuntimeException e) {
+            log.warn("position_context write failed for filled position {} ({}): {}",
+                    p.id(), p.symbol(), e.getMessage(), e);
+        }
+    }
+
+    /** Same null-safe signal lookup idiom as {@link #resolvePositionMechanism}. */
+    private String resolveHorizon(String sourceSignalId) {
+        if (sourceSignalId == null) return null;
+        ExecutorSignal source = signalRepo.findById(sourceSignalId);
+        return source == null ? null : source.horizon();
     }
 
     // -------------------------------------------------------------------

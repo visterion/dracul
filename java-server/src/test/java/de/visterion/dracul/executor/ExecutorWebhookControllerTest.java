@@ -8,6 +8,7 @@ import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.position.PositionContextRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -44,6 +45,7 @@ class ExecutorWebhookControllerTest {
     private SignalRanker ranker;
     private Tranche2Detector tranche2Detector;
     private TelegramNotifier telegram;
+    private PositionContextRepository positionContextRepo;
     private JsonMapper mapper;
 
     /** Fixed at 42s after every test signal's createdAt ("2026-07-01T00:00:00Z"), so
@@ -69,6 +71,7 @@ class ExecutorWebhookControllerTest {
         ranker = new SignalRanker(); // pure, real instance
         tranche2Detector = mock(Tranche2Detector.class);
         telegram = mock(TelegramNotifier.class);
+        positionContextRepo = mock(PositionContextRepository.class);
         mapper = JsonMapper.builder().build();
 
         when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
@@ -81,7 +84,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker, tranche2Detector, telegram,
+                assembler, sizer, ranker, tranche2Detector, telegram, positionContextRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, fixedClock);
@@ -1255,6 +1258,50 @@ class ExecutorWebhookControllerTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> first = (Map<String, Object>) ((List<?>) output.get("positions")).get(0);
         assertThat(first.get("entry_filled")).isEqualTo(false);
+
+        verifyNoInteractions(positionContextRepo);
+    }
+
+    @Test
+    void fetchOpenPositions_entryFilled_writesPositionContext() {
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X", "Y"), List.of(),
+                false, false, 1, false, null, "sig-42", 0, 0.33, true);
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
+
+        ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
+                0.8, "SPINOFF", List.of("X", "Y"), "6-12mo", new BigDecimal("100"), "ACCEPTED", null);
+        when(signalRepo.findById("sig-42")).thenReturn(signal);
+
+        controller.fetchOpenPositions(BEARER, "run-1");
+
+        ArgumentCaptor<JsonNode> killCriteriaCaptor = ArgumentCaptor.forClass(JsonNode.class);
+        verify(positionContextRepo).upsertOnOpen(eq("depot-1"), eq("ACME"), isNull(),
+                killCriteriaCaptor.capture(), eq("6-12mo"), isNull(), eq(new BigDecimal("95")),
+                eq("executor"));
+        assertThat(killCriteriaCaptor.getValue().toString()).contains("X").contains("Y");
+    }
+
+    @Test
+    void fetchOpenPositions_positionContextWriteFails_doesNotFailFetch() {
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
+                false, false, 1, false, null, "sig-42", 0, 0.33, true);
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
+        when(signalRepo.findById("sig-42")).thenReturn(null);
+        when(positionContextRepo.upsertOnOpen(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("db down"));
+
+        ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        assertThat((List<?>) output.get("positions")).hasSize(1);
     }
 
     // -------------------------------------------------------------------
