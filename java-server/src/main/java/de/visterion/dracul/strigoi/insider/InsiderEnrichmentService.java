@@ -8,6 +8,7 @@ import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import de.visterion.dracul.strigoi.echo.AnalystCoverage;
 import de.visterion.dracul.strigoi.echo.EquityMetrics;
 import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
@@ -35,7 +36,7 @@ import java.util.Optional;
  *  returns every reporting owner of the company at once, so an N-filer cluster still costs a
  *  single call); the current-purchase context (shares owned following, relative conviction,
  *  10b5-1 plan flag) is derived from that same response — no per-filer call. It obeys the same
- *  {@code markIfSourceDown} availability guard as the other sources.
+ *  {@link EnrichmentSourceGuard} availability guard as the other sources.
  *
  *  <p>Latency guard (the tool webhook has a 30s budget, a dead Agora call burns ~16s):
  *  clusters are sorted by {@code totalDollarValue} descending and bounded to {@link #MAX};
@@ -117,7 +118,7 @@ public class InsiderEnrichmentService {
                 EquityMetrics em = equityMetrics.metrics(c.ticker());
                 if (em.available()) marketCap = em.marketCap();
             } catch (RuntimeException e) {
-                health.metricsDown = markIfSourceDown(e, "equity metrics");
+                health.metricsDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "equity metrics");
                 log.debug("insider enrichment: equity metrics unavailable for {}: {}", c.ticker(), e.getMessage());
             }
         }
@@ -130,7 +131,7 @@ public class InsiderEnrichmentService {
                 adv = advFrom(bars);
                 ytdReturn = ytdReturnFrom(bars);
             } catch (RuntimeException e) {
-                health.ohlcDown = markIfSourceDown(e, "ohlc history");
+                health.ohlcDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "ohlc history");
                 log.debug("insider enrichment: ohlc history unavailable for {}: {}", c.ticker(), e.getMessage());
             }
         }
@@ -143,7 +144,7 @@ public class InsiderEnrichmentService {
                 coverage = cov.coverage();
                 coverageAvailable = cov.available();
             } catch (RuntimeException e) {
-                health.coverageDown = markIfSourceDown(e, "recommendations");
+                health.coverageDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "recommendations");
                 log.debug("insider enrichment: recommendations unavailable for {}: {}", c.ticker(), e.getMessage());
             }
         }
@@ -158,7 +159,7 @@ public class InsiderEnrichmentService {
                     daysToEarnings = (int) ChronoUnit.DAYS.between(LocalDate.now(), nextEarnings);
                 }
             } catch (RuntimeException e) {
-                health.earningsDown = markIfSourceDown(e, "next-earnings");
+                health.earningsDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "next-earnings");
                 log.debug("insider enrichment: next-earnings unavailable for {}: {}", c.ticker(), e.getMessage());
             }
         }
@@ -172,7 +173,7 @@ public class InsiderEnrichmentService {
                 Form4OwnerHistory history = filings.ownerHistoryStrict(c.ticker());
                 classification = classify(c, history);
             } catch (RuntimeException e) {
-                health.ownerHistoryDown = markIfSourceDown(e, "form4 owner history");
+                health.ownerHistoryDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "form4 owner history");
                 log.debug("insider enrichment: owner history unavailable for {}: {}", c.ticker(), e.getMessage());
             }
         }
@@ -305,19 +306,6 @@ public class InsiderEnrichmentService {
             if (Boolean.FALSE.equals(flag)) anyFalse = true;
         }
         return anyFalse ? Boolean.FALSE : null;
-    }
-
-    /** True (and logs) when the failure is availability-related — the source/backend is down,
-     *  so retrying it for the next cluster would only burn the webhook's latency budget.
-     *  Symbol-specific failures (e.g. NOT_FOUND) leave the source up. */
-    private static boolean markIfSourceDown(RuntimeException e, String source) {
-        boolean availabilityFailure = e instanceof AgoraUnavailableException
-                || (e instanceof MarketDataException m && m.kind() == MarketDataException.Kind.UNAVAILABLE);
-        if (availabilityFailure) {
-            log.warn("insider enrichment: {} source down ({}), skipping it for the remaining clusters",
-                    source, e.getMessage());
-        }
-        return availabilityFailure;
     }
 
     /** Enough history to cover Jan 1 of the current year (YTD) and the 20-day ADV window. */
