@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -114,6 +115,36 @@ public class MarketSignalService {
         }
 
         return new MarketSignals(car1d, car3d, carAvailable, abnormalVolume, momentum, adv);
+    }
+
+    /**
+     * Shared residual (abnormal) daily-return series: for every stock bar {@code i >= 1},
+     * {@code stockRet(i) - beta*marketRet(sameDate)}, skipping any bar whose market return is
+     * unresolvable (no aligned market bar / no prior close). Beta defaults to {@code 1.0} when null
+     * or non-positive — the exact {@code effBeta} rule {@link #compute} applies — so the two callers
+     * agree on the market-adjustment. Degenerate inputs (null/empty stock or market bars) yield an
+     * empty list; never throws.
+     *
+     * <p>Extracted from {@link #compute}'s per-index {@link #abnormalReturn} building block so the
+     * strigoi-index idiosyncratic-volatility snapshot can reuse the identical residual machinery.
+     * Purely additive: {@code compute} is unchanged and keeps computing announcement-window CAR from
+     * the same primitive, so the echo CAR suite is unaffected.
+     */
+    public static List<BigDecimal> residualReturns(List<OhlcBar> stockBars, List<OhlcBar> marketBars,
+                                                   Double beta) {
+        if (stockBars == null || stockBars.isEmpty() || marketBars == null || marketBars.isEmpty()) {
+            return List.of();
+        }
+        double effBeta = (beta != null && beta > 0) ? beta : 1.0;
+        Map<LocalDate, Integer> mIdx = new HashMap<>();
+        for (int j = 0; j < marketBars.size(); j++) mIdx.put(marketBars.get(j).date(), j);
+
+        List<BigDecimal> out = new ArrayList<>();
+        for (int i = 1; i < stockBars.size(); i++) {
+            BigDecimal abn = abnormalReturn(stockBars, marketBars, mIdx, i, effBeta);
+            if (abn != null) out.add(abn);
+        }
+        return out;
     }
 
     /** Abnormal return on stock bar i: stockRet(i) - beta*marketRet(sameDate). null if unresolvable. */

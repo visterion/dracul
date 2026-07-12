@@ -22,33 +22,50 @@ class AgoraReferenceTest {
 
     private JsonNode json(String s) { return mapper.readTree(s); }
 
-    @Test void constituentsMapsRowsAndSkipsNullDateAdded() {
+    @Test void indexChangesMapsRowsUppercasesSymbolAndSkipsMalformed() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
-        when(client.callTool(eq("get_index_constituents"), any())).thenReturn(json(
-                "{\"index\":\"sp500\",\"constituents\":[" +
-                "{\"symbol\":\"NEWO\",\"name\":\"NewCo Inc\",\"sector\":\"Industrials\",\"dateAdded\":\"2026-06-20\"}," +
-                "{\"symbol\":\"NODT\",\"name\":\"NoDate Co\",\"sector\":null,\"dateAdded\":null}," +
-                "{\"symbol\":\"\",\"name\":\"NoSym Co\",\"sector\":null,\"dateAdded\":\"2026-06-21\"}]}"));
+        when(client.callTool(eq("get_index_constituent_changes"), any())).thenReturn(json(
+                "{\"index\":\"sp500\",\"changes\":[" +
+                "{\"symbol\":\"newo\",\"action\":\"add\",\"index\":\"sp500\"," +
+                "  \"announcementDate\":\"2026-06-18\",\"effectiveDate\":\"2026-06-24\",\"source\":\"sp_press\"}," +
+                "{\"symbol\":\"NOEFF\",\"action\":\"remove\",\"index\":\"sp500\"," +
+                "  \"announcementDate\":\"2026-06-18\",\"effectiveDate\":null,\"source\":\"sp_press\"}," +
+                "{\"symbol\":\"\",\"action\":\"add\",\"index\":\"sp500\"," +
+                "  \"announcementDate\":\"2026-06-18\",\"effectiveDate\":\"2026-06-24\",\"source\":\"sp_press\"}," +
+                "{\"symbol\":\"NOANN\",\"action\":\"add\",\"index\":\"sp500\"," +
+                "  \"effectiveDate\":\"2026-06-25\",\"source\":\"russell_reconstitution\"}]}"));
         AgoraReference reference = new AgoraReference(client);
 
-        DataSourceResult<Sp500Constituent> r = reference.constituents();
+        DataSourceResult<IndexChangeEvent> r = reference.indexChanges("sp500", 30);
         assertThat(r.health().isHealthy()).isTrue();
-        assertThat(r.health().source()).isEqualTo("agora");
-        assertThat(r.items()).hasSize(1);
-        assertThat(r.items().get(0).symbol()).isEqualTo("NEWO");
-        assertThat(r.items().get(0).companyName()).isEqualTo("NewCo Inc");
-        assertThat(r.items().get(0).dateAdded()).isEqualTo(LocalDate.parse("2026-06-20"));
+        // newo mapped (uppercased); NOEFF dropped (null effectiveDate); "" dropped (blank symbol);
+        // NOANN kept (missing announcementDate is lenient -> null).
+        assertThat(r.items()).hasSize(2);
+
+        IndexChangeEvent first = r.items().get(0);
+        assertThat(first.symbol()).isEqualTo("NEWO");
+        assertThat(first.companyName()).isEmpty();
+        assertThat(first.index()).isEqualTo("sp500");
+        assertThat(first.action()).isEqualTo("add");
+        assertThat(first.announcementDate()).isEqualTo(LocalDate.parse("2026-06-18"));
+        assertThat(first.effectiveDate()).isEqualTo(LocalDate.parse("2026-06-24"));
+        assertThat(first.source()).isEqualTo("sp_press");
+
+        IndexChangeEvent noann = r.items().get(1);
+        assertThat(noann.symbol()).isEqualTo("NOANN");
+        assertThat(noann.announcementDate()).isNull();
 
         ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
-        Mockito.verify(client).callTool(eq("get_index_constituents"), args.capture());
+        Mockito.verify(client).callTool(eq("get_index_constituent_changes"), args.capture());
         assertThat(args.getValue().path("index").asString()).isEqualTo("sp500");
+        assertThat(args.getValue().path("lookback_days").asInt()).isEqualTo(30);
     }
 
-    @Test void constituentsUnavailableOnAgoraFailure() {
+    @Test void indexChangesUnavailableOnAgoraFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
-        when(client.callTool(eq("get_index_constituents"), any()))
+        when(client.callTool(eq("get_index_constituent_changes"), any()))
                 .thenThrow(new AgoraUnavailableException("down"));
-        DataSourceResult<Sp500Constituent> r = new AgoraReference(client).constituents();
+        DataSourceResult<IndexChangeEvent> r = new AgoraReference(client).indexChanges("sp500", 30);
         assertThat(r.items()).isEmpty();
         assertThat(r.health().isHealthy()).isFalse();
         assertThat(r.health().source()).isEqualTo("agora");

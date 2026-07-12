@@ -15,7 +15,7 @@ import java.util.List;
 class IndexDefaults {
 
     private static final String NAME = "strigoi-index";
-    private static final String FETCH = "fetch_recent_index_additions";
+    private static final String FETCH = "fetch_index_reconstitution_events";
 
     @Bean
     AgentDefaultProvider indexDefaultProvider(
@@ -25,7 +25,9 @@ class IndexDefaults {
         JsonNode input = AgentResources.parseJson(mapper,
                 "{\"type\":\"object\",\"properties\":{\"lookback_days\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":90}}}");
         var entry = new ToolCatalogEntry(FETCH,
-                "Returns S&P 500 constituents added to the index within the last N days.",
+                "Returns tracked index-reconstitution events (S&P 500 and Russell add/remove "
+                        + "announcements) whose announcement fell within the last N days, each with its "
+                        + "announcement date, effective date, and lifecycle status.",
                 input, "/api/strigoi-index/tools/fetch-candidates", 30);
         return new AgentDefaultProvider() {
             @Override

@@ -316,11 +316,23 @@ needed.
 | `STRIGOI_INDEX_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
 | `STRIGOI_INDEX_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
 | `DRACUL_INDEX_SCHEDULE` | `0 0 7 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 07:00 UTC weekdays. |
-| `INDEX_LOOKBACK_DAYS` | `30` | Default S&P 500 `Date added` lookback window (days) for the pre-screen (1–90). |
+| `INDEX_LOOKBACK_DAYS` | `30` | Default lookback window (days) for the announced-constituent-change ingest — only changes **announced** within this many days are ingested (1–90). |
+| `INDEX_OBSERVATION_WINDOW_DAYS` (`dracul.strigoi.index.observation-window-days`) | `30` | Lifecycle reconciler: days past the `effective_date` after which a `POST` row transitions to the terminal `CLOSED` state (the run-up/reversal observation window). Pure calendar; see `documentation/strigoi.md`, "Strigoi-Index: announcement-anchored lifecycle". |
+| `INDEX_ABANDON_AFTER_DAYS` (`dracul.strigoi.index.abandon-after-days`) | `45` | Lifecycle reconciler safety-valve: days an `ANNOUNCED` row may sit past its `announcement_date` while its `effective_date` is still in the future before it is transitioned to the terminal `ABANDONED` state (a source/data anomaly, not the normal ANNOUNCED → EFFECTIVE path). Kept for audit, never re-checked. |
+| `INDEX_PROMOTION_WINDOW_DAYS_SP` (`dracul.strigoi.index.promotion-window-days-sp`) | `5` | Prey-promotion gate for `sp_press`-sourced events: an `ANNOUNCED` event is only promoted while `effective_date` is in the future and no more than this many days away (S&P's forced-buy window is a few trading days). EFFECTIVE/POST rows never promote. |
+| `INDEX_PROMOTION_WINDOW_DAYS_RUSSELL` (`dracul.strigoi.index.promotion-window-days-russell`) | `20` | Prey-promotion gate for `russell_reconstitution`-sourced events: the wider window (days-to-effective) matching Russell's multi-week preliminary→final reconstitution. |
+| `INDEX_MARKET_PROXY` (`dracul.strigoi.index.market-proxy`) | `SPY` | Market-proxy symbol for the idiosyncratic-vol residual regression in `IndexDemandSnapshotter` (reuses echo's shared residual machinery). |
+| `INDEX_IDIO_VOL_LOOKBACK_DAYS` (`dracul.strigoi.index.idio-vol-lookback-days`) | `90` | Number of trailing daily residual returns whose sample stddev is the `idiosyncraticVol` demand-snapshot field. |
+| `INDEX_PASSIVE_AUM_SP500_BILLIONS` / `INDEX_PASSIVE_AUM_RUSSELL1000_BILLIONS` / `INDEX_PASSIVE_AUM_RUSSELL2000_BILLIONS` (`dracul.strigoi.index.passive-aum-{sp500,russell1000,russell2000}-billions`) | `11500` / `700` / `350` | **Coarse per-index config constants (rough estimates, NOT live feeds)**: assets tracking each index, in USD billions. An input to `demandToAdvRatioEstimate`. |
+| `INDEX_MKTCAP_SP500_BILLIONS` / `INDEX_MKTCAP_RUSSELL1000_BILLIONS` / `INDEX_MKTCAP_RUSSELL2000_BILLIONS` (`dracul.strigoi.index.index-market-cap-{sp500,russell1000,russell2000}-billions`) | `50000` / `57000` / `3500` | **Coarse per-index config constants (rough estimates, NOT live feeds)**: each index's total market cap, in USD billions. The other input to `demandToAdvRatioEstimate`. Every value the estimate produces is proxy/estimate-labelled and judged qualitatively by the prompt — never quoted as precise. |
 
 Index reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
 Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
-needed.
+needed. As of 2026-07-12 it ingests announced constituent changes from Agora's
+`get_index_constituent_changes` (S&P press-release RSS + Russell reconstitution)
+and tracks each through an `ANNOUNCED → EFFECTIVE → POST → CLOSED/ABANDONED`
+lifecycle in the `index_event` table (V27); see `documentation/strigoi.md` and
+`documentation/architecture.md`.
 
 ## Voievod (consensus synthesizer)
 
@@ -471,10 +483,12 @@ The digest only sends on days with at least one **actionable** position (`SELL` 
 
 ## Wikipedia
 
-Strigoi-Index resolves S&P 500 constituents via Agora
-(`AgoraReference.constituents`), not Wikipedia directly. The variables below
-feed **only** the Settings → Data-Sources health probe (flagged stale,
-slated for 7d realignment to probe Agora).
+Strigoi-Index resolves announced constituent changes via Agora
+(`AgoraReference.indexChanges` / `get_index_constituent_changes`), not Wikipedia
+directly — and, as of the 2026-07-12 lifecycle rebuild, no longer via the old
+`AgoraReference.constituents` / `get_index_constituents` route either. The
+variables below feed **only** the Settings → Data-Sources health probe (flagged
+stale, slated for 7d realignment to probe Agora).
 
 | Env var | Default | Purpose |
 |---|---|---|

@@ -65,6 +65,33 @@ dracul:
       webhook-token: ${STRIGOI_INDEX_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_INDEX_SCHEDULE:0 0 7 * * 1-5}
       lookback-days: ${INDEX_LOOKBACK_DAYS:30}
+      # POST -> CLOSED this many days past the effective date (run-up/reversal
+      # observation window). Pure calendar; see IndexLifecycleReconciler.
+      observation-window-days: ${INDEX_OBSERVATION_WINDOW_DAYS:30}
+      # Safety-valve: ANNOUNCED -> ABANDONED once an announcement has sat this many
+      # days with its effective date still in the future (source data anomaly, not the
+      # normal ANNOUNCED -> EFFECTIVE path). No cancellation-signal logic in v1.
+      abandon-after-days: ${INDEX_ABANDON_AFTER_DAYS:45}
+      # Promotion window (days-to-effective) within which an ANNOUNCED event is eligible for prey
+      # promotion, chosen per source: S&P's forced-buy window is a few trading days; Russell's
+      # preliminary->final reconstitution is weeks. Only the open, pre-effective window promotes
+      # (StrigoiIndexWebhookController.withinAnnouncedWindow); EFFECTIVE/POST never do.
+      promotion-window-days-sp: ${INDEX_PROMOTION_WINDOW_DAYS_SP:5}
+      promotion-window-days-russell: ${INDEX_PROMOTION_WINDOW_DAYS_RUSSELL:20}
+      # --- ANNOUNCED-stage demand snapshot (IndexDemandSnapshotter) ---
+      # Market proxy for the idiosyncratic-vol residual regression (shared echo residual machinery).
+      market-proxy: ${INDEX_MARKET_PROXY:SPY}
+      # Idiosyncratic vol = stddev of the last N daily residuals (stock - beta*market).
+      idio-vol-lookback-days: ${INDEX_IDIO_VOL_LOOKBACK_DAYS:90}
+      # COARSE per-index constants (NOT feeds) driving demandToAdvRatioEstimate: assets tracking the
+      # index (USD billions) and the index's total market cap (USD billions). Rough magnitudes only;
+      # every value the estimate produces is proxy/estimate-labelled and judged qualitatively.
+      passive-aum-sp500-billions: ${INDEX_PASSIVE_AUM_SP500_BILLIONS:11500}
+      passive-aum-russell1000-billions: ${INDEX_PASSIVE_AUM_RUSSELL1000_BILLIONS:700}
+      passive-aum-russell2000-billions: ${INDEX_PASSIVE_AUM_RUSSELL2000_BILLIONS:350}
+      index-market-cap-sp500-billions: ${INDEX_MKTCAP_SP500_BILLIONS:50000}
+      index-market-cap-russell1000-billions: ${INDEX_MKTCAP_RUSSELL1000_BILLIONS:57000}
+      index-market-cap-russell2000-billions: ${INDEX_MKTCAP_RUSSELL2000_BILLIONS:3500}
   voievod:
     enabled: ${DRACUL_VOIEVOD_ENABLED:false}
     webhook-token: ${DRACUL_VOIEVOD_TOKEN:dev-token-change-me}

@@ -93,4 +93,37 @@ class MarketSignalServiceTest {
         assertThat(noMarket.announcementCar1d()).isNull();
         assertThat(noMarket.abnormalVolume()).isNotNull(); // volume still computable
     }
+
+    // --- residualReturns: the shared helper extracted for the index idiosyncratic-vol snapshot ---
+
+    @Test
+    void residualReturnsComputesMarketAdjustedSeries() {
+        // stock +5% then flat; market +1% then flat -> residuals [0.04, 0.00] (beta defaults to 1).
+        List<OhlcBar> stock = bars(new double[]{100, 105, 105}, flatVol(3, 1_000));
+        List<OhlcBar> market = bars(new double[]{200, 202, 202}, flatVol(3, 1));
+
+        List<BigDecimal> residuals = MarketSignalService.residualReturns(stock, market, null);
+
+        assertThat(residuals).hasSize(2);
+        assertThat(residuals.get(0)).isEqualByComparingTo("0.04");
+        assertThat(residuals.get(1)).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void residualReturnsAppliesBeta() {
+        List<OhlcBar> stock = bars(new double[]{100, 105, 105}, flatVol(3, 1_000));
+        List<OhlcBar> market = bars(new double[]{200, 202, 202}, flatVol(3, 1));
+
+        List<BigDecimal> residuals = MarketSignalService.residualReturns(stock, market, 2.0);
+
+        assertThat(residuals.get(0)).isEqualByComparingTo("0.03"); // 5% - 2*1%
+    }
+
+    @Test
+    void residualReturnsDegradesToEmptyOnMissingInputs() {
+        List<OhlcBar> stock = bars(new double[]{100, 105}, flatVol(2, 1_000));
+        assertThat(MarketSignalService.residualReturns(List.of(), List.of(), null)).isEmpty();
+        assertThat(MarketSignalService.residualReturns(stock, null, null)).isEmpty();
+        assertThat(MarketSignalService.residualReturns(stock, List.of(), null)).isEmpty();
+    }
 }

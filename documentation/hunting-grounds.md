@@ -49,7 +49,7 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`, cluster screen) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, routine/opportunistic classification — one call per cluster) + `EquityMetricsExtractor` / `AgoraMarketData.dailyOhlcHistory` / `AgoraCompanyData.recommendationsStrict` / `AgoraEarnings` (context enrichment) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
 | strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, Altman-Z XBRL inputs) + Agora daily OHLC (timing signals) |
-| strigoi-index | `AgoraReference.constituents` (`get_index_constituents`) + `AgoraMarketData.dailyOhlcHistory` (`get_ohlc`, ADV/volume enrichment) + `EquityMetricsExtractor` (market cap enrichment) |
+| strigoi-index | `AgoraReference.indexChanges` (`get_index_constituent_changes` — announced S&P/Russell adds/removes with announcement + effective dates; called once per index) + `AgoraMarketData.dailyOhlcHistory` (`get_ohlc`, ADV/volume + idiosyncratic-vol residual + run-up/reversal enrichment) + `EquityMetricsExtractor` (market cap + beta + share-count enrichment) + `MarketSignalService.residualReturns` (idiosyncratic vol) + `ConfounderScreen` (overlapping-event screen). **The old `AgoraReference.constituents` / `get_index_constituents` route was removed** in the 2026-07-12 announcement-anchored lifecycle rebuild |
 | strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `DealTermsParser` (regex-based offer price / consideration / exchange ratio / break-fee extraction) + `AgoraMarketData.quotes` (spread computation) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
 | gropar | Agora `get_ohlc` (daily OHLC history, for RiskMetrics + currentClose) + Agora `get_indicators` (bundled exit TA per position via `AgoraResearch`) — unchanged from pre-7c |
@@ -141,17 +141,46 @@ consumed through five neutral domain facades in
   `profile`.
 - **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates),
   `nextEarningsDate`.
-- **`AgoraReference`** — `constituents` (S&P 500 index membership).
+- **`AgoraReference`** — `indexChanges` (`get_index_constituent_changes` —
+  announced index-constituent changes: an add/remove ticker with its announcement
+  and effective dates and a `source` of `sp_press` or `russell_reconstitution`,
+  normalised to `IndexChangeEvent`; rows without a symbol or effective date are
+  skipped, symbols upper-cased to the persisted natural key). The old
+  `constituents` (`get_index_constituents`, S&P 500 membership) method was removed
+  when strigoi-index flipped to the announcement-anchored `index_event` lifecycle
+  (2026-07-12).
 - **`AgoraIntraday`** — `candles` (intraday closes/volumes for daywalker).
 
 Each facade normalises Agora's tool output straight into the retained Dracul
 domain records (`SpinoffFiling`, `MergerFiling`, `Form4Filing`, `NewsHeadline`,
-`RecommendationTrend`, `Sp500Constituent`, `IntradayCandles`, `ConceptSeries`,
+`RecommendationTrend`, `IndexChangeEvent`, `IntradayCandles`, `ConceptSeries`,
 `EarningsObservation`) and wraps the result in `DataSourceResult` with
 `source = "agora"`. **Graceful degradation:** any Agora failure surfaces as
 `DataSourceResult.unavailable("agora", …)` — callers treat that exactly like
 the old adapters' empty-list/null degradation; no Strigoi run dies on an
 Agora hiccup.
+
+**Index-constituent-change data provenance (Agora-side, cached).** The
+`get_index_constituent_changes` tool aggregates two independently-degradable
+providers inside Agora; Dracul never sees the raw feeds:
+
+- **S&P press-release RSS** — the S&P Global press RSS is parsed for
+  "Set to Join / be Removed from S&P 500" releases, with the effective date
+  regex-extracted from each release's full text (`source = sp_press`). This is
+  the announcement-lead half that the strigoi-index lifecycle was verified against.
+- **Russell reconstitution** — a config-driven schedule (announcement =
+  preliminary date, effective date) plus the free LSEG Russell-3000
+  additions/deletions PDFs (PDFBox text extraction; the preliminary-dated list is
+  fetched during the pre-effective lead, the final effective-dated list once
+  published; `source = russell_reconstitution`). The PDFs carry only **Russell
+  3000** granularity; the R1000-vs-R2000 bucket is resolved against the iShares
+  IWB/IWM holdings CSVs, which are **bot-walled from server IPs** — an
+  unresolvable ticker defaults to `russell2000`, so `russell1000` degrades to
+  empty while `russell2000` still carries every change (a documented, safe skew).
+
+Both providers are fail-soft (empty on unavailability), cached with per-source
+TTLs, and emit only extracted structured fields (no raw RSS/PDF/CSV prose, per the
+LSEG/BlackRock and S&P terms).
 
 Domain-shaping (Sloan accruals, confounder scan, revisions proxy,
 equity-metric extraction, EPS quarter-filtering, BasicFinancials extraction)
