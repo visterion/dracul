@@ -296,6 +296,28 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | `cooldown` | (V18) Symbols temporarily excluded from fresh entries after any exit (hard or soft): `symbol`, `reason`, `expires_at` (`dracul.executor.cooldown-days` out), `exception_condition` |
 | `outcome_log` | (V23) One row per `decision_log` entry/reject signal, written exclusively by the nightly `OutcomeBatchJob` — the Executor itself never reads or writes this table. `kind` is `TRADE` (a closed position's realized outcome: quantity-weighted `realized_r` across partial exits, `mae_r`/`mfe_r`, `slippage_vs_limit`, whipsaw flags `reentry_within_10d`/`roundtrip_under_5d`) or `COUNTERFACTUAL` (a rejected signal's "what would have happened", via `HypotheticalREngine`: `hypothetical` JSONB with `r_after_20d`/`r_after_60d`/`would_have_stopped_out`/`skipped_reason`, plus `hunter_label` — the triple-barrier +1R-before-1R label used for hunter-confidence calibration). Unique on `log_id_ref` (the source `decision_log.log_id`), upserted idempotently (`ON CONFLICT ... DO UPDATE`) so re-runs refine rather than duplicate a row. See "Outcome batch job" below |
 
+**🚧 Planned (not yet shipped) — `spin_candidate` (V26).** Migration
+`V26__spin_candidate.sql` is committed, but no running code reads or
+writes the table yet; it backs the roadmap spin-off lifecycle (see
+`strigoi.md`). One row tracks a single spin-co from its Form-10-12B
+registration through the trading window. Key columns: `status` (plain
+`TEXT`, validated by the Java `SpinStatus` enum — same convention as
+`executor_signal.status`, not a Postgres enum), `cik`/`symbol`,
+`filing_date`/`record_date`/`distribution_date`, three per-stage JSONB
+snapshots (`registered_snapshot`, `distributed_snapshot`,
+`settled_snapshot`), and a soft `promoted_prey_id` (no hard FK to
+`prey`). Idempotency is a unique expression index on
+`COALESCE(cik, lower(company_name))` — one row per spin-co, keyed on CIK
+when known and degrading to the lowercased company name before a CIK is
+available (the same technique as V21's `uq_prey_natural_day`).
+
+The planned hunt runs on the existing spin cron in four phases —
+**INGEST** (upsert `REGISTERED` rows, `ON CONFLICT DO NOTHING`),
+**RECONCILE** (calendar + a single batched quote probe + settlement
+check), **ENRICH** (stage-appropriate, reusing the existing per-run
+enrichment cap), **RESPOND** (feed unpromoted candidates to the LLM) —
+with no new scheduler.
+
 **Doctrine note:** Dracul is deliberately, otherwise strictly, read-only —
 no order routing, no broker integration, no auto-trading (see `README.md`
 "Project values"). The Executor agent is the one intentional exception, and
