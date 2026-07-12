@@ -880,12 +880,34 @@ Response:
     "clusters": [
       {
         "ticker": "...", "companyName": "...",
-        "filers": ["..."],
+        "filers": [
+          {
+            "name": "...", "role": "Chief Executive Officer",
+            "classification": "OPPORTUNISTIC",
+            "sharesOwnedFollowing": 9000,
+            "purchaseAsPctOfHoldings": 0.18,
+            "planned10b5_1": false
+          }
+        ],
         "windowStart": "2026-05-15", "windowEnd": "2026-05-25",
         "totalDollarValue": 1234567,
         "totalShares": 1000,
         "concurrentInsiderSells": 0,
-        "netInsiderDollar": 1234567
+        "netInsiderDollar": 1234567,
+        "marketCap": 850.0,
+        "adv": 10000000,
+        "metricsAvailable": true,
+        "analystCoverage": 4,
+        "coverageAvailable": true,
+        "ytdReturn": -0.43,
+        "ytdReturnAvailable": true,
+        "nextEarningsDate": "2026-07-20",
+        "daysToEarnings": 8,
+        "earningsDateAvailable": true,
+        "opportunisticShare": 0.67,
+        "classifiedFilers": 3,
+        "unknownFilers": 0,
+        "classificationAvailable": true
       }
     ]
   }
@@ -893,6 +915,10 @@ Response:
 ```
 
 `concurrentInsiderSells` (integer) is the count of distinct insiders who sold within the same window as the buy cluster, and `netInsiderDollar` (number) is `totalDollarValue` minus the dollar value of those concurrent sales. Both are advisory signal-strength inputs for the LLM — no cluster is dropped by the deterministic screener because of them.
+
+Each `filers[]` entry is an object: `name`, `role` (free-text Form-4 officer title, empty for non-officers), plus the routine/opportunistic classification (Cohen, Malloy & Pomorski 2012, derived from Agora `get_form4_owner_history`): `classification` (`OPPORTUNISTIC` / `ROUTINE` / `UNKNOWN`), `sharesOwnedFollowing` (shares held after the filer's most recent purchase in the window), `purchaseAsPctOfHoldings` (window purchase shares ÷ `sharesOwnedFollowing`, relative conviction), and `planned10b5_1` (tri-state Rule 10b5-1(c) plan flag — `true`/`false`/`null`, where `null` means unknown, not false). The cluster-level rollup is `opportunisticShare` (opportunistic ÷ classifiable filers, `null` when none classifiable), `classifiedFilers` (routine + opportunistic), `unknownFilers`, and `classificationAvailable` (`false` when the owner-history source was down/skipped — then every filer is `UNKNOWN` and `opportunisticShare` is `null`).
+
+The remaining fields are deterministic context enrichment (`InsiderEnrichmentService`, fail-soft — a lookup failure nulls that group and sets its availability flag to `false`, never aborts the hunt): `marketCap` (provider units, USD millions) and `adv` (20-trading-day average daily dollar volume) with `metricsAvailable`; `analystCoverage` (analyst count from the latest recommendation-trend period) with `coverageAvailable`; `ytdReturn` (calendar-year-to-date return as a decimal fraction) with `ytdReturnAvailable`; `nextEarningsDate` / `daysToEarnings` with `earningsDateAvailable` (informational only, no gate). Individual fields may be null even when their group flag is true (the group's lookups are independent — e.g. `adv` present, `marketCap` null). Enrichment is bounded for latency: clusters are sorted by `totalDollarValue` descending and capped at 25; the routine/opportunistic classification costs ONE `get_form4_owner_history` call per cluster (the tool returns every reporting owner of the company at once, so an N-filer cluster is still a single call); a source failing with an availability error is skipped for the rest of the batch, and with two or more sources down the remaining clusters are returned unenriched (all flags `false`).
 
 ### `POST /api/strigoi-insider/complete`
 
@@ -1138,10 +1164,13 @@ Response:
 { "output": { "candidates": [
   { "symbol": "TGT", "companyName": "Target Co Inc", "formType": "DEFM14A",
     "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/...",
-    "termSheet": "Each share of common stock will be converted into the right to receive $58.00 in cash...",
+    "termSheet": "...Agreement and Plan of Merger, dated as of March 15, 2026... each share of common stock will be converted into the right to receive $58.00 in cash... expected to close in the fourth quarter of 2026...",
     "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true,
-    "offerPrice": 58.00, "considerationType": "CASH", "exchangeRatio": null,
-    "breakFee": "$120 million", "spreadPercent": 7.21 }
+    "offerPrice": 58.00, "considerationType": "cash", "exchangeRatio": null,
+    "breakFee": "$120 million", "spreadPercent": 7.21,
+    "agreementDate": "2026-03-15", "expectedCloseDate": "2026-12-31", "outsideDate": null,
+    "unaffectedPrice": 41.90, "unaffectedPriceAvailable": true, "daysToClose": 217,
+    "annualizedSpreadPercent": 12.13, "breakDownsidePercent": 22.55 }
 ] } }
 ```
 
@@ -1149,13 +1178,24 @@ Response:
 advisory annotations — the cleaned summary-term-sheet text of the filing (via
 Agora's `get_filing_text`, fetched by `AgoraFilings.filingText(filingUrl)`)
 plus the current quote, for the LLM to interpret. `offerPrice` /
-`considerationType` / `exchangeRatio` / `breakFee` are deterministically
-parsed from `termSheet` by `DealTermsParser` (fields are `null` when not
-found in the text); `spreadPercent` is server-computed from `offerPrice` and
-`lastPrice` when both are available (`(offerPrice - lastPrice) / lastPrice *
-100`). The LLM still extracts offer/consideration/conditions/termination-fee
-from `termSheet` itself as a fallback and interprets the spread; fail-soft
-(`*Available = false`) on any Agora failure — no candidate is dropped for it.
+`considerationType` (`cash`/`stock`/`mixed`) / `exchangeRatio` / `breakFee` are
+deterministically parsed from `termSheet` by `DealTermsParser` (fields are
+`null` when not found in the text); `spreadPercent` is server-computed from
+`offerPrice` and `lastPrice` when both are available (`(offerPrice - lastPrice)
+/ lastPrice * 100`). `DealTermsParser` also extracts the deal time-axis dates —
+`agreementDate` (announcement anchor), `expectedCloseDate` (quarter/half
+estimates mapped to the period end), and a separate `outsideDate` (End Date,
+never used as the expected close). `MergerEnrichmentService` then adds the
+expected-value inputs: `unaffectedPrice` / `unaffectedPriceAvailable` (close of
+the last trading day before `agreementDate`, from one ~400-day daily-OHLC query
+per candidate; `false` both when no `agreementDate` was parsed and when the
+price is out of reach), `daysToClose` (today → `expectedCloseDate`),
+`annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, only when
+`daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice)
+/ lastPrice × 100`, the deal-break cliff). The LLM still extracts
+offer/consideration/conditions/termination-fee from `termSheet` itself as a
+fallback and interprets the spread; fail-soft (`*Available = false`, numeric
+fields `null`) on any Agora failure — no candidate is dropped for it.
 `output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-merger/complete`

@@ -15,10 +15,11 @@ class LazarusScreenerTest {
     private static final double MAX_PB = 1e9;
     private static final double MAX_PFCF = 1e9;
 
-    // healthy financials: 52w-low 10, ROA 5%, low leverage, positive FCF, cheap P/B (1.2)
+    // healthy financials: 52w-low 10, ROA 5%, low leverage, positive FCF, cheap P/B (1.2),
+    // market cap 900 (Finnhub USD millions)
     private static BasicFinancials healthy(double low) {
         return new BasicFinancials(low, low * 4, 5.0, 1.8, 0.4,
-                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3);
+                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3, 900.0);
     }
 
     @Test
@@ -28,6 +29,7 @@ class LazarusScreenerTest {
         assertThat(out).hasSize(1);
         assertThat(out.get(0).symbol()).isEqualTo("ACME");
         assertThat(out.get(0).pctAboveLow()).isCloseTo(0.05, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(out.get(0).marketCap()).isEqualTo(900.0); // carried through for the Z enrichment
     }
 
     @Test
@@ -39,7 +41,7 @@ class LazarusScreenerTest {
     @Test
     void insolventRejected() {
         var sick = new BasicFinancials(10.0, 40.0, -3.0, 0.5, 0.4,
-                10.0, -5.0, -8.0, -9.0, 0.6, null, -1.0);
+                10.0, -5.0, -8.0, -9.0, 0.6, null, -1.0, null);
         var raws = List.of(new LazarusRaw("SICK", "Sick Inc", 10.50, sick));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, MAX_PB, MAX_PFCF)).isEmpty();
     }
@@ -47,7 +49,7 @@ class LazarusScreenerTest {
     @Test
     void bothSolvencyMetricsNullRejected() {
         var blackBox = new BasicFinancials(10.0, 40.0, null, 1.5, 0.3,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
         var raws = List.of(new LazarusRaw("BLK", "BlackBox Inc", 10.50, blackBox));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, MAX_PB, MAX_PFCF)).isEmpty();
     }
@@ -55,7 +57,7 @@ class LazarusScreenerTest {
     @Test
     void highLeverageRejected() {
         var levered = new BasicFinancials(10.0, 40.0, 5.0, 1.8, 5.0,
-                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3);
+                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3, null);
         var raws = List.of(new LazarusRaw("LEV", "Levered Inc", 10.50, levered));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, MAX_PB, MAX_PFCF)).isEmpty();
     }
@@ -63,7 +65,7 @@ class LazarusScreenerTest {
     @Test
     void nullLeverageNotExcluded() {
         var f = new BasicFinancials(10.0, 40.0, 5.0, 1.8, null,
-                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3);
+                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3, null);
         var raws = List.of(new LazarusRaw("NLV", "NoLeverage Inc", 10.50, f));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, MAX_PB, MAX_PFCF)).hasSize(1);
     }
@@ -77,7 +79,7 @@ class LazarusScreenerTest {
     @Test
     void missingOrZeroLowSkipped() {
         var noLow = new BasicFinancials(null, 40.0, 5.0, 1.8, 0.4,
-                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3);
+                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3, null);
         var raws = List.of(new LazarusRaw("NLO", "NoLow Inc", 10.50, noLow));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, MAX_PB, MAX_PFCF)).isEmpty();
     }
@@ -92,7 +94,7 @@ class LazarusScreenerTest {
     @Test
     void cheapByPriceToBookPasses() {
         var f = new BasicFinancials(10.0, 40.0, 5.0, 1.8, 0.4,
-                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, null);
+                35.0, 8.0, 4.0, 3.0, 1.2, 11.0, null, null);
         var raws = List.of(new LazarusRaw("PB", "PriceToBook Inc", 10.50, f));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, 1.5, MAX_PFCF)).hasSize(1);
     }
@@ -100,7 +102,7 @@ class LazarusScreenerTest {
     @Test
     void cheapByPriceToFcfPassesWhenPriceToBookNull() {
         var f = new BasicFinancials(10.0, 40.0, 5.0, 1.8, 0.4,
-                35.0, 8.0, 4.0, 3.0, null, 11.0, 2.0);
+                35.0, 8.0, 4.0, 3.0, null, 11.0, 2.0, null);
         // currentPrice / fcfPerShare = 10.50 / 2.0 = 5.25 <= maxPFcf(6.0)
         var raws = List.of(new LazarusRaw("PFCF", "PriceToFcf Inc", 10.50, f));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, 1.5, 6.0)).hasSize(1);
@@ -109,7 +111,7 @@ class LazarusScreenerTest {
     @Test
     void expensivePriceToBookAndNullFcfRejected() {
         var f = new BasicFinancials(10.0, 40.0, 5.0, 1.8, 0.4,
-                35.0, 8.0, 4.0, 3.0, 5.0, 11.0, null);
+                35.0, 8.0, 4.0, 3.0, 5.0, 11.0, null, null);
         var raws = List.of(new LazarusRaw("EXP", "Expensive Inc", 10.50, f));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, 1.5, 6.0)).isEmpty();
     }
@@ -117,7 +119,7 @@ class LazarusScreenerTest {
     @Test
     void bothValuationMetricsNullRejected() {
         var f = new BasicFinancials(10.0, 40.0, 5.0, 1.8, 0.4,
-                35.0, 8.0, 4.0, 3.0, null, 11.0, null);
+                35.0, 8.0, 4.0, 3.0, null, 11.0, null, null);
         var raws = List.of(new LazarusRaw("NOVAL", "NoValuation Inc", 10.50, f));
         assertThat(screener.screen(raws, MAX_ABOVE_LOW, MAX_DE, 1.5, 6.0)).isEmpty();
     }

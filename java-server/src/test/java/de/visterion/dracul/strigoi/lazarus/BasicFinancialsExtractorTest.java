@@ -15,7 +15,8 @@ class BasicFinancialsExtractorTest {
                 "{\"52WeekLow\":10.0,\"52WeekHigh\":40.0,\"roaTTM\":5.0," +
                 "\"currentRatioQuarterly\":1.8,\"totalDebt/totalEquityQuarterly\":0.4," +
                 "\"grossMarginTTM\":35.0,\"netProfitMarginTTM\":8.0,\"revenueGrowthTTMYoy\":4.0," +
-                "\"epsGrowthTTMYoy\":3.0,\"pbAnnual\":1.2,\"peTTM\":11.0,\"freeCashFlowPerShareTTM\":2.3}");
+                "\"epsGrowthTTMYoy\":3.0,\"pbAnnual\":1.2,\"peTTM\":11.0,\"freeCashFlowPerShareTTM\":2.3," +
+                "\"marketCapitalization\":900.0}");
         BasicFinancials f = BasicFinancialsExtractor.extract(metrics);
         assertThat(f).isNotNull();
         assertThat(f.week52Low()).isEqualTo(10.0);
@@ -30,6 +31,7 @@ class BasicFinancialsExtractorTest {
         assertThat(f.priceToBook()).isEqualTo(1.2);
         assertThat(f.peTtm()).isEqualTo(11.0);
         assertThat(f.fcfPerShare()).isEqualTo(2.3);
+        assertThat(f.marketCap()).isEqualTo(900.0); // Finnhub USD millions, feeds the Altman-Z X4
     }
 
     @Test void absentOrNonNumericFieldsAreNullNotZero() {
@@ -38,6 +40,7 @@ class BasicFinancialsExtractorTest {
         assertThat(f.week52Low()).isEqualTo(10.0);
         assertThat(f.roaTtm()).isNull();
         assertThat(f.peTtm()).isNull();
+        assertThat(f.marketCap()).isNull();
     }
 
     @Test void nullOrNonObjectInputYieldsNull() {

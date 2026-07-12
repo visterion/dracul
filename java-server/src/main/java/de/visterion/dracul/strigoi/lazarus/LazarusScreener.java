@@ -48,7 +48,8 @@ public class LazarusScreener {
                     low, f.week52High() == null ? 0.0 : f.week52High(), pctAboveLow,
                     f.roaTtm(), f.currentRatio(), f.debtToEquity(),
                     f.grossMargin(), f.netMargin(), f.revenueGrowthYoy(),
-                    f.epsGrowthYoy(), f.priceToBook(), f.peTtm(), f.fcfPerShare()));
+                    f.epsGrowthYoy(), f.priceToBook(), f.peTtm(), f.fcfPerShare(),
+                    f.marketCap()));
         }
         return out;
     }

@@ -1,10 +1,13 @@
 package de.visterion.dracul.agent;
 
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -78,25 +81,27 @@ class PromptDocumentTest {
     }
 
     /**
-     * sha256sum of each prompt file's contents captured BEFORE headers were added
-     * (12-hex prefix, same derivation as AgentVersionResolver.versionFor).
+     * Expected body hashes DERIVED from {@code prompt_registry.json} — the single source of
+     * truth, not a third hand-maintained copy. The "prompt body edited without a registry
+     * bump" CI guard lives in {@link PromptRegistryTest#everyEntryHashMatchesTheLivePromptFile}
+     * (and at runtime in {@code PromptRegistryValidator}); what THIS class adds on top is an
+     * independent re-derivation of the hash (raw SHA-256 here vs {@code PromptHashes} there),
+     * pinning that header stripping and the hash derivation itself behave as specified.
      */
-    private static final Map<String, String> PRE_HEADER_BODY_SHA256_12 = Map.ofEntries(
-            Map.entry("daywalker", "64bef970682b"),
-            Map.entry("executor", "766853df4624"),
-            Map.entry("gropar", "625d2484ce49"),
-            Map.entry("strigoi-echo", "ad753c04c703"),
-            Map.entry("strigoi-index", "46c546c67281"),
-            Map.entry("strigoi-insider", "91059590df69"),
-            Map.entry("strigoi-lazarus", "238a931ad45f"),
-            Map.entry("strigoi-merger", "475203828483"),
-            Map.entry("strigoi-spin", "9517b89a850e"),
-            Map.entry("voievod", "ad44dfcc3cfd")
-    );
+    private static Map<String, String> registryBodyHashes() {
+        JsonNode root = AgentResources.readSchema(new ObjectMapper(), "prompts/prompt_registry.json");
+        Map<String, String> out = new LinkedHashMap<>();
+        for (var field : root.properties()) {
+            out.put(field.getKey(), field.getValue().path("body_hash").asString(null));
+        }
+        return out;
+    }
 
     @Test
     void allBundledPromptsHaveValidHeaderAndStableBody() {
-        for (String agent : PRE_HEADER_BODY_SHA256_12.keySet()) {
+        Map<String, String> registry = registryBodyHashes();
+        assertThat(registry).isNotEmpty();
+        for (String agent : registry.keySet()) {
             String path = "prompts/" + agent + ".md";
             PromptDocument doc = PromptDocument.fromClasspath(path);
 
@@ -108,15 +113,15 @@ class PromptDocumentTest {
     }
 
     @Test
-    void agentVersionUnchangedByHeader() {
-        for (Map.Entry<String, String> entry : PRE_HEADER_BODY_SHA256_12.entrySet()) {
+    void registryBodyHashIsThePreHeaderBodySha256() {
+        for (Map.Entry<String, String> entry : registryBodyHashes().entrySet()) {
             String agent = entry.getKey();
-            String expectedPrefix = entry.getValue();
             String body = PromptDocument.bodyFromClasspath("prompts/" + agent + ".md");
 
-            assertThat(sha256Hex12(body))
-                    .as("body hash for %s must equal the pre-header file hash", agent)
-                    .isEqualTo(expectedPrefix);
+            assertThat("p-" + sha256Hex12(body))
+                    .as("registry body_hash for %s must equal the pre-header body hash "
+                            + "(independent SHA-256 derivation)", agent)
+                    .isEqualTo(entry.getValue());
         }
     }
 

@@ -20,16 +20,19 @@ public class StrigoiInsiderWebhookController extends HuntController {
 
     private final AgoraFilings filings;
     private final InsiderClusterScreener screener;
+    private final InsiderEnrichmentService enrichment;
 
     public StrigoiInsiderWebhookController(
             @Value("${dracul.strigoi.insider.webhook-token}") String token,
             AgoraFilings filings,
             InsiderClusterScreener screener,
+            InsiderEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache) {
         super(token, preyRepo, cache);
         this.filings = filings;
         this.screener = screener;
+        this.enrichment = enrichment;
     }
 
     @Override protected String agentName() { return "strigoi-insider"; }
@@ -42,7 +45,8 @@ public class StrigoiInsiderWebhookController extends HuntController {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
         var raw = filings.recentForm4(to.minusDays(lookback), to);
-        return new de.visterion.dracul.hunting.DataSourceResult<>(screener.cluster(raw.items()), raw.health());
+        var enriched = enrichment.enrich(screener.cluster(raw.items()));
+        return new de.visterion.dracul.hunting.DataSourceResult<>(enriched, raw.health());
     }
 
     @PostMapping("/tools/fetch-clusters")

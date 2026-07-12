@@ -54,6 +54,10 @@ class StrigoiInsiderWebhookControllerIT {
                 .build();
         when(filings.recentForm4(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        // Owner-history (routine/opportunistic classification) is unreachable in this test context,
+        // so classification degrades fail-soft exactly like the other Agora-backed enrichment.
+        when(filings.ownerHistoryStrict(any(String.class)))
+                .thenThrow(new de.visterion.dracul.marketdata.AgoraUnavailableException("down"));
     }
 
     @Test
@@ -187,5 +191,22 @@ class StrigoiInsiderWebhookControllerIT {
         assertThat(cluster.path("ticker").asText()).isEqualTo("NETT");
         assertThat(cluster.path("concurrentInsiderSells").asInt()).isEqualTo(1);
         assertThat(cluster.path("netInsiderDollar").decimalValue()).isEqualByComparingTo("1400000");
+        // Enrichment context (InsiderEnrichmentService) is on the wire. Agora is unreachable
+        // in this test context, so the fail-soft availability flags must be present-and-false
+        // rather than the fields being absent or the fetch failing.
+        assertThat(cluster.path("metricsAvailable").isBoolean()).isTrue();
+        assertThat(cluster.path("coverageAvailable").isBoolean()).isTrue();
+        assertThat(cluster.path("ytdReturnAvailable").isBoolean()).isTrue();
+        assertThat(cluster.path("earningsDateAvailable").isBoolean()).isTrue();
+        assertThat(cluster.path("metricsAvailable").asBoolean()).isFalse();
+        assertThat(cluster.path("ytdReturn").isNumber()).isFalse();
+        // Routine/opportunistic classification is on the wire and fail-soft (owner history down):
+        // the flag is present-and-false, opportunisticShare is absent (null), and every filer
+        // is classified UNKNOWN rather than the fields being missing.
+        assertThat(cluster.path("classificationAvailable").isBoolean()).isTrue();
+        assertThat(cluster.path("classificationAvailable").asBoolean()).isFalse();
+        assertThat(cluster.path("opportunisticShare").isNumber()).isFalse();
+        assertThat(cluster.path("classifiedFilers").asInt()).isEqualTo(0);
+        assertThat(cluster.path("filers").get(0).path("classification").asText()).isEqualTo("UNKNOWN");
     }
 }

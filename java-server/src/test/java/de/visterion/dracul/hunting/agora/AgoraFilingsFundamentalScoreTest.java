@@ -47,6 +47,15 @@ class AgoraFilingsFundamentalScoreTest {
         assertThat(s.available()).isFalse();
     }
 
+    @Test void fundamentalScoreStrictPropagatesAgoraFailureForBatchGuards() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_fundamental_score"), any()))
+                .thenThrow(new AgoraUnavailableException("down"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new AgoraFilings(client).fundamentalScoreStrict("AAPL"))
+                .isInstanceOf(AgoraUnavailableException.class);
+    }
+
     @Test void fundamentalScoreUnavailableWhenPiotroskiFMissing() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_fundamental_score"), any())).thenReturn(json(

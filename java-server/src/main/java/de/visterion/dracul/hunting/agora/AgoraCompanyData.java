@@ -17,7 +17,10 @@ import java.util.List;
  * Per-company data facade backed by Agora (get_company_news / get_analyst_estimates /
  * get_fundamentals / get_company_profile over MCP). fundamentals/profile are returned as the
  * RAW provider blobs (opaque JsonNode) — key extraction is a consumer-side concern. Never
- * throws: Agora failure degrades to an empty list / null (the replaced adapters' contracts).
+ * throws: Agora failure degrades to an empty list / null (the replaced adapters' contracts) —
+ * except the health-aware variants ({@link #fundamentalsResult} and
+ * {@link #recommendationsStrict}), which exist precisely so guard-carrying callers can tell
+ * an Agora outage apart from "no data for this symbol".
  */
 @Component
 public class AgoraCompanyData {
@@ -53,16 +56,28 @@ public class AgoraCompanyData {
         return out;
     }
 
-    /** Analyst recommendation trend, newest-first as delivered; empty list on any failure. */
+    /** Analyst recommendation trend, newest-first as delivered; empty list on any failure
+     *  (an Agora outage is swallowed — the replaced adapter's contract, kept for echo). */
     public List<RecommendationTrend> recommendations(String symbol) {
-        JsonNode res;
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol);
-            res = agora.callTool("get_analyst_estimates", args);
+            return recommendationsStrict(symbol);
         } catch (AgoraUnavailableException e) {
             return List.of();
         }
+    }
+
+    /**
+     * Strict variant of {@link #recommendations(String)}: propagates
+     * {@link AgoraUnavailableException} instead of degrading to an empty list, so callers
+     * with a per-batch source-down guard (lazarus/insider enrichment) can tell "Agora is
+     * down" apart from "no recommendations for this symbol" and stop burning a dead ~16s
+     * remote call per remaining candidate. Same split as {@code AgoraFilings}'
+     * {@code fundamentalScoreStrict} vs the swallowing default.
+     */
+    public List<RecommendationTrend> recommendationsStrict(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode res = agora.callTool("get_analyst_estimates", args);
         List<RecommendationTrend> out = new ArrayList<>();
         for (JsonNode n : res.path("recommendations")) {
             try {

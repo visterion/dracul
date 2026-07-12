@@ -44,7 +44,7 @@ public class InsiderClusterScreener {
                             (existing, incoming) -> existing.isBlank() ? incoming : existing);
                 }
                 List<InsiderFiler> filers = roleByFiler.entrySet().stream()
-                        .map(e -> new InsiderFiler(e.getKey(), e.getValue()))
+                        .map(e -> InsiderFiler.unclassified(e.getKey(), e.getValue()))
                         .toList();
                 BigDecimal totalDollar = window.stream()
                         .map(Form4Filing::dollarValue)
