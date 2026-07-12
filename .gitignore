@@ -15,6 +15,7 @@ java-server/src/main/resources/static/
 .DS_Store
 .serena/
 .worktrees/
+.claude/worktrees/
 .superpowers/
 .env
 .playwright-mcp/
