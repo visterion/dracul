@@ -34,7 +34,7 @@ class SpinDistributionSnapshotterTest {
         equityMetrics = mock(EquityMetricsExtractor.class);
         filings = mock(AgoraFilings.class);
         // default: metrics unavailable; no insider history
-        when(equityMetrics.metrics(anyString())).thenReturn(EquityMetrics.unavailable());
+        when(equityMetrics.metricsWithoutSector(anyString())).thenReturn(EquityMetrics.unavailable());
         when(filings.ownerHistoryStrict(anyString())).thenReturn(history());
         snapshotter = new SpinDistributionSnapshotter(equityMetrics, filings);
     }
@@ -54,8 +54,8 @@ class SpinDistributionSnapshotterTest {
     }
 
     @Test void computesSizeRatioDaysAndPostSpinBuying() {
-        when(equityMetrics.metrics("SPN")).thenReturn(cap(300.0));
-        when(equityMetrics.metrics("PAR")).thenReturn(cap(1500.0));
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
+        when(equityMetrics.metricsWithoutSector("PAR")).thenReturn(cap(1500.0));
         when(filings.ownerHistoryStrict("SPN"))
                 .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));   // open-market buy after DIST
 
@@ -71,7 +71,7 @@ class SpinDistributionSnapshotterTest {
     }
 
     @Test void blankParentLeavesParentFieldsAndRatioNull() {
-        when(equityMetrics.metrics("SPN")).thenReturn(cap(300.0));
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
 
         var s = snapshotter.snapshot("SPN", "", DIST, TODAY);
 
@@ -79,7 +79,7 @@ class SpinDistributionSnapshotterTest {
         assertThat(s.parentMarketCapMillions()).isNull();
         assertThat(s.sizeRatio()).isNull();
         assertThat(s.marketCapAvailable()).isTrue();
-        verify(equityMetrics, never()).metrics("");               // blank parent never looked up
+        verify(equityMetrics, never()).metricsWithoutSector("");               // blank parent never looked up
     }
 
     @Test void marketCapSourceUnavailableDegradesWithoutThrow() {
@@ -98,7 +98,7 @@ class SpinDistributionSnapshotterTest {
     }
 
     @Test void onlyPreDistributionOrNonPurchaseActivityIsNotPostSpinBuying() {
-        when(equityMetrics.metrics("SPN")).thenReturn(cap(300.0));
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
         when(filings.ownerHistoryStrict("SPN")).thenReturn(history(
                 tx(LocalDate.of(2026, 5, 20), "P"),               // purchase BEFORE distribution
                 tx(LocalDate.of(2026, 6, 20), "S")));             // post-distribution SALE, not a buy
@@ -110,7 +110,7 @@ class SpinDistributionSnapshotterTest {
     }
 
     @Test void nullDistributionDateDegradesCalendarAndInsiderFields() {
-        when(equityMetrics.metrics("SPN")).thenReturn(cap(300.0));
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
 
         var s = snapshotter.snapshot("SPN", "PAR", null, TODAY);
 
@@ -122,7 +122,7 @@ class SpinDistributionSnapshotterTest {
     }
 
     @Test void ownerHistoryOutagePropagatesForTheBatchGuard() {
-        when(equityMetrics.metrics("SPN")).thenReturn(cap(300.0));
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
         when(filings.ownerHistoryStrict("SPN")).thenThrow(new AgoraUnavailableException("down"));
 
         assertThatThrownBy(() -> snapshotter.snapshot("SPN", "PAR", DIST, TODAY))
