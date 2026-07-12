@@ -266,19 +266,15 @@ from Agora's earnings-window and EPS-history facade output.
 | `STRIGOI_SPIN_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for tool + completion webhooks. **Change in production.** |
 | `DRACUL_SPIN_SCHEDULE` | `0 0 4 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 04:00 UTC weekdays. |
 | `SPIN_LOOKBACK_DAYS` | `60` | Default Form-10-12B lookback window (days) for the pre-screen. |
+| `SPIN_ABANDON_AFTER_DAYS` (`dracul.strigoi.spin.abandon-after-days`) | `180` | Lifecycle reconciler: days a tracked spin-co may sit non-distributed (`REGISTERED`/`WHEN_ISSUED`) since `discovered_at` before it is transitioned to the terminal `ABANDONED` state (kept for audit, never re-checked). See `documentation/strigoi.md`, "Strigoi-Spin: lifecycle persistence". |
+| `SPIN_PROMOTION_WINDOW_DAYS` (`dracul.strigoi.spin.promotion-window-days`) | `90` | Prey-promotion gate: a `DISTRIBUTED` candidate is only promoted to prey while `daysSinceDistribution` is within this forced-selling window (days since distribution). Together with a resolved `spincoMarketCapMillions` this is the promotion condition; `sizeRatio` is deliberately **not** a hard gate (see `documentation/strigoi.md`). |
 
 Spin reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
 Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
-needed.
-
-**🚧 Planned (not yet shipped) — lifecycle config.** The roadmap
-spin-off lifecycle (see `strigoi.md`) adds two config keys. They are
-**not yet read by any code**; the values below are the designed defaults:
-
-| Key | Planned default | Purpose |
-|---|---|---|
-| `abandon_after` | `180d` | Age-out to `ABANDONED` for a candidate that never distributes. |
-| `promotion_window_days` | `90` | Maximum days-since-distribution for a `DISTRIBUTED` candidate to still be promoted to prey. |
+needed. As of 2026-07-12 it persists every registration to the `spin_candidate`
+table (V26) and tracks it through a REGISTERED → WHEN_ISSUED → DISTRIBUTED →
+SETTLED/ABANDONED lifecycle across hunts (see `documentation/strigoi.md` and
+`documentation/architecture.md`).
 
 ## Strigoi Lazarus
 

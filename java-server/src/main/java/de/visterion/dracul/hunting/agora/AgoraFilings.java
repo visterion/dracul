@@ -76,10 +76,12 @@ public class AgoraFilings {
                 String company = f.path("company").asString("");
                 JsonNode filed = f.path("filedDate");
                 if ((ticker.isEmpty() && company.isEmpty()) || filed.isMissingNode() || filed.isNull()) continue;
+                String url = f.path("url").asString("");
                 out.add(new SpinoffFiling(ticker, company,
                         f.path("form").asString("10-12B"),
                         LocalDate.parse(filed.asString()),
-                        f.path("url").asString("")));
+                        url,
+                        CikExtractor.fromFilingUrl(url)));   // spin-co registrant CIK; null if unparseable
             } catch (RuntimeException ignored) { /* skip malformed row */ }
         }
         return DataSourceResult.healthy(SOURCE, out);
@@ -126,6 +128,27 @@ public class AgoraFilings {
     public ConceptSeries conceptStrict(String symbol, String tag) {
         ObjectNode args = mapper.createObjectNode();
         args.put("symbol", symbol).put("tag", tag);
+        return series(tag, agora.callTool("get_company_concept", args).path("datapoints"));
+    }
+
+    /** Like {@link #conceptStrict(String, String)} but resolves the company by {@code symbol}
+     *  OR {@code cik} — Agora's {@code get_company_concept} accepts a CIK as an alternative to a
+     *  ticker, which lets a spin-off's XBRL balance sheet be fetched by its registrant CIK BEFORE
+     *  a ticker exists (the pre-distribution REGISTERED stage). Whichever of {@code symbol}/{@code cik}
+     *  is non-blank is forwarded (both when both are set); at least one must be non-blank (both
+     *  blank throws {@link IllegalArgumentException} — the tool requires an identifier). Propagates
+     *  {@link AgoraUnavailableException} for the same batch-guard reason as
+     *  {@link #conceptStrict(String, String)}. */
+    public ConceptSeries conceptStrict(String symbol, String cik, String tag) {
+        boolean hasSymbol = symbol != null && !symbol.isBlank();
+        boolean hasCik = cik != null && !cik.isBlank();
+        if (!hasSymbol && !hasCik) {
+            throw new IllegalArgumentException("conceptStrict requires a non-blank symbol or cik");
+        }
+        ObjectNode args = mapper.createObjectNode();
+        if (hasSymbol) args.put("symbol", symbol);
+        if (hasCik) args.put("cik", cik);
+        args.put("tag", tag);
         return series(tag, agora.callTool("get_company_concept", args).path("datapoints"));
     }
 
@@ -247,7 +270,7 @@ public class AgoraFilings {
                 if (v.isMissingNode() || v.isNull()) continue;
                 points.add(new ConceptSeries.Point(
                         date(r.path("periodStart")), date(r.path("periodEnd")),
-                        new BigDecimal(v.asString())));
+                        new BigDecimal(v.asString()), date(r.path("filed"))));
             } catch (RuntimeException ignored) { /* skip malformed row */ }
         }
         return new ConceptSeries(tag, List.copyOf(points));

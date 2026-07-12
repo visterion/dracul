@@ -8,7 +8,7 @@
   "strigoi-insider": { "version": "1.3.0", "body_hash": "p-b286794163c6" },
   "strigoi-lazarus": { "version": "1.2.0", "body_hash": "p-a4a0079008b6" },
   "strigoi-merger": { "version": "1.2.0", "body_hash": "p-bfedecec0a4a" },
-  "strigoi-spin": { "version": "1.2.0", "body_hash": "p-3e13b874234d" },
+  "strigoi-spin": { "version": "1.3.0", "body_hash": "p-d97494e41565" },
   "voievod": { "version": "1.1.0", "body_hash": "p-ad44dfcc3cfd" },
   "voievod-outcome": { "version": "1.0.0", "body_hash": "p-64e203d18308" }
 }

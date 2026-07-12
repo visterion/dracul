@@ -44,6 +44,11 @@ dracul:
       webhook-token: ${STRIGOI_SPIN_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_SPIN_SCHEDULE:0 0 4 * * 1-5}
       lookback-days: ${SPIN_LOOKBACK_DAYS:60}
+      # Days a spin-co may sit non-distributed before the reconciler ABANDONs it (audit-kept).
+      abandon-after-days: ${SPIN_ABANDON_AFTER_DAYS:180}
+      # Forced-selling window (days since distribution) within which a DISTRIBUTED candidate is
+      # eligible for prey promotion. Used by E4; declared now so config stays complete.
+      promotion-window-days: ${SPIN_PROMOTION_WINDOW_DAYS:90}
     lazarus:
       enabled: ${STRIGOI_LAZARUS_ENABLED:false}
       webhook-token: ${STRIGOI_LAZARUS_TOKEN:dev-token-change-me}

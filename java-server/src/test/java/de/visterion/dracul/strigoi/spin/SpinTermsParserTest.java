@@ -18,6 +18,22 @@ class SpinTermsParserTest {
     }
 
     @Test
+    void parentTickerFromExchangeParenthetical() {
+        assertThat(parser.parentTicker(
+                "SpinCo will be separated from Big Parent Corporation (NYSE: BPC) in the distribution."))
+                .isEqualTo("BPC");
+        assertThat(parser.parentTicker("... (NASDAQ: ABCD) ...")).isEqualTo("ABCD");
+    }
+
+    @Test
+    void parentTickerNullWhenOnlyName() {
+        // a bare parent name (no exchange:ticker) is NOT resolved to a ticker
+        assertThat(parser.parentTicker(
+                "SpinCo will be separated from Big Parent Corporation in the distribution.")).isNull();
+        assertThat(parser.parentTicker(null)).isNull();
+    }
+
+    @Test
     void unparseableYieldsNulls() {
         SpinTerms t = parser.parse("registration statement without ratio language");
         assertThat(t.distributionRatio()).isNull();

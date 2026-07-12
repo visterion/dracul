@@ -20,57 +20,12 @@ logic and the hunt pattern.
 
 | Strigoi | Status |
 |---|---|
-| strigoi-spin | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured distribution fields 2026-07-11** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted). Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`); the LLM extracts parent/ratio/record-date/size from it, fail-soft (conservative judgement) when unavailable. A deterministic `SpinTermsParser` now regex-extracts `distributionRatio` / `recordDate` / `distributionDate` from `termSheet` server-side (parent extraction deliberately omitted — no reliable heuristic; the filing header/companyName already identifies the issuer); the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null` |
+| strigoi-spin | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured distribution fields 2026-07-11; full lifecycle persistence 2026-07-12** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted). Each candidate carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`); the LLM extracts parent/ratio/record-date/size from it, fail-soft (conservative judgement) when unavailable. A deterministic `SpinTermsParser` regex-extracts `distributionRatio` / `recordDate` / `distributionDate` from `termSheet` server-side (and a best-effort `parentSymbol` from an exchange-qualified parenthetical); the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null`. **As of the 2026-07-12 lifecycle rebuild** the hunter is no longer single-shot/stateless: every 10-12B registration is persisted to `spin_candidate` (V26) and tracked through a REGISTERED → WHEN_ISSUED → DISTRIBUTED → SETTLED/ABANDONED state machine across hunts, with stage-appropriate enrichment (pre-distribution balance sheet, post-distribution size/forced-selling read, post-settlement valuation) and prey promotion gated to the DISTRIBUTED forced-selling window. Prompt bumped to `1.3.0` (new nullable stage fields, confidence rubric, 3m/6-12m horizon split). See "Strigoi-Spin: lifecycle persistence" below for the full flow |
 | strigoi-insider | **implemented 2026-05-25; context enrichment 2026-07-12** — Form-4 cluster screener, Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases). Each clustered filer now carries its free-text Form-4 officer `role` (empty for non-officers), so the LLM's CEO/CFO-diversity rubric can actually weigh it. `fetch_recent_clusters` also annotates each cluster with `netInsiderDollar` (purchases minus concurrent insider sales in the window) and `concurrentInsiderSells` (distinct selling insiders); this is advisory only — the LLM weighs it into confidence, no cluster is dropped for it. Each cluster is further enriched by `InsiderEnrichmentService` (added 2026-07-12, fail-soft with per-group availability flags, never gates): `marketCap` / `adv` + `metricsAvailable` (via `EquityMetricsExtractor` and Agora `get_ohlc`, 20-day average dollar volume — same mechanism as strigoi-index), `analystCoverage` + `coverageAvailable` (Finnhub recommendation-trend analyst count, semantics as in echo SP3, fetched via `AgoraCompanyData.recommendationsStrict` — the outage-propagating variant, so the source-down guard below is real for this source; the swallowing default `recommendations()` stays with echo), `ytdReturn` + `ytdReturnAvailable` (calendar-YTD fraction from Agora OHLC), and `nextEarningsDate` / `daysToEarnings` + `earningsDateAvailable` (Agora earnings calendar via `AgoraEarnings`, informational only — no hard gate, unlike echo). Latency guard: clusters are sorted by `totalDollarValue` descending before the 25-cluster cap (truncation is logged, the smallest are dropped); a source failing with an availability error (`AgoraUnavailableException` / `MarketDataException(UNAVAILABLE)`, as opposed to symbol-specific failures) is skipped for the rest of the batch, and with ≥2 sources down enrichment is skipped entirely for the remaining clusters — a dead Agora tool cannot blow the 30s webhook budget. The prompt's rubric (v2, `1.2.0`) up-weights small/mid-cap + low-coverage names (Lakonishok-Lee information asymmetry), dampens well-covered large caps, backs the value-trap risk with the `ytdReturn` number, adds a `daysToEarnings` < ~10 timing caveat to risks, and demotes CEO/CFO role diversity to a secondary refinement of the cluster/conviction picture. **Routine/opportunistic classification (added 2026-07-12, prompt `1.3.0`)**: each filer is classified `OPPORTUNISTIC` / `ROUTINE` / `UNKNOWN` (Cohen, Malloy & Pomorski 2012) from their multi-year Form-4 history fetched via `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`) — ONE call per cluster (the tool returns every reporting owner of the company at once), obeying the same availability source-down guard as the other enrichment sources. `RoutineClassifier` rule: ROUTINE when ≥2 distinct prior calendar years each carry an open-market purchase (code `P`) in the same month ±1 as the current buy (Dec/Jan wrap included; a positive cadence wins even on a `truncated` history); UNKNOWN when the history is `truncated` or carries fewer than 3 purchases (absence of a cadence is not trusted — never scored as opportunistic); OPPORTUNISTIC otherwise. The cluster carries `opportunisticShare` (opportunistic ÷ classifiable), `classifiedFilers`, `unknownFilers`, `classificationAvailable`; each filer also carries `sharesOwnedFollowing`, `purchaseAsPctOfHoldings` (relative conviction) and `planned10b5_1` (tri-state Rule 10b5-1(c) plan flag — derived from the same owner history, `null` = unknown ≠ false). 10b5-1-planned buys are **marked, not dropped** (aff10b5One is tri-state; `null` is not `false`, so a hard drop would silently discard unknown-plan buys). The `1.3.0` prompt makes `opportunisticShare` the PRIMARY criterion — a routine-dominated cluster is skipped/dampened regardless of dollar size or filer count — uses `purchaseAsPctOfHoldings` as an amplifier, dampens 10b5-1 buys, treats UNKNOWN/`classificationAvailable=false` conservatively (never as opportunistic), and reworks the confidence bands around the opportunistic read rather than raw filer-count + dollar. |
 | strigoi-echo | **implemented 2026-06-02; signal upgrade (v2 SP1) 2026-06-24; market-reaction signals (v2 SP2) 2026-06-27** — Haiku tier (model_purpose `routine`), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (current price ≥ $5). Earnings announcements come from **Finnhub `/calendar/earnings`** (primary), with the Yahoo earnings calendar demoted to a config-selectable fallback. A deterministic enrichment layer replaces the old raw-5%-surprise signal with academic PEAD signals: **time-series SUE** (Foster seasonal-random-walk, from SEC EDGAR quarterly diluted-EPS history with date-based seasonal alignment) ranked cross-sectionally into **deciles** (z-band fallback for thin batches), **revenue-surprise / double-beat**, and **consecutive seasonal beats**. SP2 further enriches surviving candidates with market-reaction signals from daily OHLC and Finnhub metrics (see SP2 section below). The LLM applies a SUE-based confidence rubric (not a fixed 5% threshold); each emitted prey echoes its numeric **SUE + decile** in `signals`. Long-only. |
 | strigoi-lazarus | **implemented 2026-06-05; real Piotroski F-score (Slice 2b) 2026-07-07** — watchlist-scoped; screens watchlist names within ~10% of their 52-week low with a light solvency gate (positive ROA or free cash flow, modest leverage), plus a **cheapness (valuation) gate** (must be cheap by price-to-book or price/FCF-per-share) and a hard drop on high Sloan accruals — both deterministic and applied server-side. The F-Score is no longer judged qualitatively by the LLM: it is computed deterministically via Agora's `get_fundamental_score` tool (strict scoring + a `fScoreCriteriaAvailable` coverage count from SEC companyfacts) and attached to each surviving candidate. The reasoning-tier LLM then applies the ranking/confidence rubric — rank by `fScore`, skip below 6, dampen confidence when `fScoreCriteriaAvailable` is thin — and narrates the thesis, rather than scoring the F-Score itself, and emits `QUALITY_52W_LOW` Prey. Each enriched candidate also carries `cfoExceedsNetIncome` **plus `cfoExceedsNetIncomeAvailable`** (added 2026-07-12): because the accruals hard-drop already removes every candidate with an available-but-false signal server-side, a wire-level `false` only ever means "not computable" — the availability flag makes that explicit, and the prompt treats unavailable as unknown (mild confidence dampening), not as a quality warning. **Timing/stabilization signals (added 2026-07-12)**: each surviving candidate additionally carries three deterministic signals computed server-side from one Agora daily-OHLC query (~260 trading days) — `priceVs50dMa` (last close vs the 50-day MA, decimal fraction), `weeksSinceNewLow` (full weeks since the ~52-week closing low; 0 = fresh low), `momentum3m` (~63-bar price change, decimal fraction) — plus `timingAvailable` (false only when all three are null; individual fields may still be null on short history). The prompt uses them for a "no falling knife" rule: a fresh low (≤ ~2 weeks) with the price clearly below the 50-day MA means skip or dampen hard regardless of `fScore`; ≥ ~4 weeks since the low or price above the 50d MA reinforces the setup; `momentum3m` near zero after a decline reads as base building. Fail-soft per candidate; an availability-kind OHLC failure disables the OHLC source for the remaining candidates of the batch (symbol-specific NOT_FOUND does not). **Altman-Z distress screen (added 2026-07-12)**: each surviving candidate also carries `zScore` (classic Altman Z, 1968; scale 2) + `zScoreAvailable`, computed server-side by `AltmanZCalculator` from SEC XBRL concepts via Agora's `get_company_concept` (Assets, AssetsCurrent, LiabilitiesCurrent, Liabilities, RetainedEarningsAccumulatedDeficit as same-date balance-sheet instants; OperatingIncomeLoss as EBIT and Revenues — with the F-score's fallback tag chain — as latest-fiscal-year annual flows) plus the Finnhub market cap already fetched for the screen (USD millions, converted ×10⁶ to USD for X4). No partial Z: any missing input, date misalignment, or non-positive liabilities → `zScoreAvailable=false`, `zScore=null`. Z is only attempted when the candidate's F-score itself resolved (both read the same EDGAR companyfacts, so a resolved F-score proves the symbol is known to EDGAR); an Agora availability failure during the concept fetches then genuinely means "source down" and disables the Z enrichment for the remaining candidates of the batch. The prompt applies a distress VETO: Z < 1.8 → do not emit, regardless of `fScore`/timing; 1.8–3.0 → grey zone (dampened confidence, Z named in `risks`); > 3.0 → solid; `zScoreAvailable=false` → unknown, judge conservatively, never invent a Z. Caveat in the prompt: Z is calibrated on industrials and unreliable for financials (banks/insurers, recognized by `companyName` patterns since the payload has no sector field) — there it is ignored in either direction. **Batch cap + F-score guard (added 2026-07-12)**: the enrichment sorts candidates by `pctAboveLow` ascending (closest to the 52w low first — the only meaningful priority available before any enrichment data is fetched) and caps at 25 per batch (log line on truncation, mirroring the insider cap). The F-score fetch itself now uses the strict variant (`fundamentalScoreStrict`): an Agora availability failure disables the fetch for the remaining candidates of the batch (candidates ride through score-less/fail-soft, exactly as with an unavailable score). **Forward revisions + analyst coverage (added 2026-07-12)**: each surviving candidate also carries `netEstimateRevisionsProxy` / `netEstimateRevisionsDirection` (the echo SP3 recommendation-trend delta, reused via `RevisionsProxy` — latest-period net minus previous-period net of strongBuy+buy−sell−strongSell; `up`/`down`/`flat`) and `analystCoverage` (latest-period analyst count via `AnalystCoverage`, from the SAME `get_analyst_estimates` response — no extra call), plus ONE shared `revisionsAvailable` flag (echo's two flags are always equal by construction, so lazarus carries one; false ⇒ all three fields null). Costs one additional Agora call per candidate, fail-soft, with the same availability-kind source-down guard as the OHLC/concept fetches (symbol-specific failures do not disable the source) — fetched via `AgoraCompanyData.recommendationsStrict`, the outage-propagating variant (the default `recommendations()` swallows outages into an empty list, which would make the guard dead code and burn a dead ~16s call per remaining candidate). The prompt uses it as a forward-looking check on the backward-looking TTM fundamentals: a clearly negative revisions direction = value-trap warning → dampen confidence + name it in `risks` — explicitly a DAMPENER, not a veto (severity ladder: fScore<6 skip > Z<1.8 veto > falling-knife veto > revisions dampener); `up`/`flat` near the low = quiet reinforcer; low `analystCoverage` = mild advisory neglect up-weight, high = mild dampener; `revisionsAvailable` false = unknown/conservative, never invented. |
 | strigoi-index | **implemented 2026-06-06; liquidity enrichment 2026-07-11** — Wikipedia S&P 500 main constituents table (`Date added` column), routine tier (model_purpose `routine`), agent registered with Vistierie on startup; surfaces recently-added S&P 500 constituents; the routine-tier LLM judges whether the inclusion-drift window is still open and emits `INDEX_INCLUSION` Prey. Each candidate now carries `adv` / `avgVolume20d` (20 trading-day average dollar/share volume from Agora `get_ohlc`, via `IndexEnrichmentService`) plus `marketCap` / `metricsAvailable` (via `EquityMetricsExtractor`); the LLM judges forced-buying magnitude against `avgVolume20d` and size/liquidity via `marketCap`/`adv`, fail-soft (lower confidence, no invented judgment) when unavailable |
 | strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured deal terms + server-computed spread 2026-07-11; expected-value data (Mitchell & Pulvino) 2026-07-12** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`) — plus `lastPrice` / `priceAvailable`; the LLM extracts offer/consideration/conditions/termination-fee from the term sheet and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable. A deterministic `DealTermsParser` now regex-extracts `offerPrice` / `considerationType` (cash/stock/mixed) / `exchangeRatio` / `breakFee` from `termSheet` server-side, and `MergerEnrichmentService` computes `spreadPercent = (offerPrice − lastPrice) / lastPrice × 100` when both are available; the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null`. `DealTermsParser` also extracts the deal time-axis dates — `agreementDate` (the announcement anchor; the feed's DEFM14A/SC TO-T land weeks/months after announcement, so `lastPrice` is already the arb price), `expectedCloseDate` (quarter/half estimates mapped conservatively to the period end), and a separate `outsideDate` (End Date, never used as the close estimate). `MergerEnrichmentService` then adds the Mitchell & Pulvino (2001) expected-value inputs: `unaffectedPrice` / `unaffectedPriceAvailable` (close of the last trading day before `agreementDate`, from ONE ~400-day Agora daily-OHLC query per candidate, same latency-guard/source-down short-circuit as Lazarus), `daysToClose`, `annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, guarded to `daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice) / lastPrice × 100`, the deal-break cliff). The prompt (v1.2.0) reframes the judgement around expected value — weigh `annualizedSpreadPercent` against `breakDownsidePercent`, don't chase wide spreads, dampen stock/mixed deals (unhedged acquirer risk), couple the horizon to `expectedCloseDate`/form type, and treat the payoff as negatively-skewed with an event-based (not trailing-stop) exit |
-
-### Strigoi-Spin: planned full-lifecycle persistence (roadmap)
-
-**🚧 Planned (not yet shipped) — full-lifecycle persistence.** The
-shipped strigoi-spin above is single-shot and stateless: each hunt
-searches Form-10-12B registrations, screens, enriches the term sheet,
-and persists tradeable prey — nothing survives the run. The following
-lifecycle model is **designed but not yet implemented**; it is recorded
-here as roadmap and does not describe current behavior.
-
-The plan makes strigoi-spin stateful, tracking each spin-co from its
-registration through the trading window via a persisted candidate row
-(see `spin_candidate` in `architecture.md`). A forward-only state
-machine, validated by the `SpinStatus` enum, advances each candidate:
-
-- `REGISTERED` — a fresh Form-10-12B hit with an unseen natural key.
-- `WHEN_ISSUED` — pure calendar: the record date has passed but the
-  distribution date has not.
-- `DISTRIBUTED` — the spin-co trades (a positive price for its symbol).
-  This is the forced-selling window.
-- `SETTLED` — the spin-co has filed its first standalone financial
-  report.
-- `ABANDONED` — terminal age-out for candidates that never distribute,
-  kept for audit.
-
-Transitions are forward-only and guarded (compare-and-set on the source
-state); `SETTLED` and `ABANDONED` are terminal.
-
-Enrichment becomes **stage-appropriate** (each field null until its
-stage is reached): `REGISTERED` attaches balance-sheet facts
-(total assets, total liabilities, retained earnings, industry);
-`DISTRIBUTED` adds spin-co and parent market caps, the size ratio,
-days-since-distribution, and post-spin insider buying; `SETTLED` adds
-valuation multiples (price-to-book, EV/EBIT, FCF yield).
-
-**Promotion to prey** happens only at `DISTRIBUTED` (the forced-selling
-window is open), exactly once per candidate, once size and market-cap
-data are known and the candidate is still within the promotion window.
-Candidates in `REGISTERED`/`WHEN_ISSUED`/`SETTLED` are tracked but not
-promoted.
-
-The `strigoi-spin.md` prompt is planned to move to `1.3.0` to document
-the new nullable fields, a confidence rubric, and a horizon split
-(≈3-month forced-selling compression vs. 6–12-month fundamental
-re-rating). The emitted prey output schema is unchanged.
 
 ### Strigoi-Echo SP2: market-reaction signals
 
@@ -114,6 +69,108 @@ trend) and `coverageAvailable`. Low coverage marks an under-followed name where 
 tends to be stronger and persist longer — the prompt treats it as a mild neglect-premium
 up-weight (high coverage is a mild dampener); it is advisory only, the LLM decides.
 
+### Strigoi-Spin: lifecycle persistence
+
+**Full lifecycle persistence (added 2026-07-12).** A spin-off's key evidence —
+relative size, trading status, valuation, post-spin insider buying — only exists
+*after* the Distribution Date, weeks or months after the early Form-10-12B
+registration. A stateless single-shot hunter could only ever judge filing
+metadata. Strigoi-spin therefore persists every registration to the `spin_candidate`
+table (V26, see `architecture.md`) and tracks it across hunts through a
+forward-only state machine, enriching each row with stage-appropriate data as the
+spin-off matures.
+
+The same webhook cron runs a **four-phase hunt** (`StrigoiSpinWebhookController.hunt`,
+no new scheduler):
+
+1. **INGEST** — `AgoraFilings.searchSpinoffs` (10-12B, default 60-day lookback) →
+   `SpinoffScreener` (CIK-first dedup, collapsing amendments) → `upsertRegistered`
+   writes each spin-co as a `REGISTERED` row. Idempotent: `INSERT … ON CONFLICT DO
+   NOTHING` on the natural key `COALESCE(cik, lower(company_name))`, so a re-run never
+   duplicates a spin-co nor resets its lifecycle. The spin-co's registrant CIK is
+   parsed from the EDGAR filing URL (`CikExtractor.fromFilingUrl`) and preserved.
+2. **RECONCILE** — `SpinLifecycleReconciler` recomputes the desired state from the
+   persisted non-terminal rows and applies forward-only transitions via guarded
+   compare-and-set. Two phases: calendar transitions (pure SQL/Java, **zero** Agora
+   calls) and **one** batched `AgoraMarketData.quotes()` probe across every
+   symbol-bearing pre-distribution row.
+3. **ENRICH** — `SpinCandidateEnricher` fetches stage-appropriate data for a bounded
+   work-set (rows that transitioned this run first, then non-terminal rows
+   oldest-checked, deduped and capped at **25/run** to hold the webhook latency
+   budget) and persists it as per-stage JSONB snapshots.
+4. **RESPOND** — the LLM payload (`EnrichedSpinCandidate` rows) is rebuilt from the
+   persisted columns + snapshots of the **active, unpromoted** window {`REGISTERED`,
+   `WHEN_ISSUED`, `DISTRIBUTED`}, newest-discovered first — not read straight from
+   the live search. The ingest search's data-source health rides the response as
+   before.
+
+**State transitions and their triggers** (all guarded CAS, `WHERE status = <from>`;
+never reversed):
+
+| Transition | Trigger | Agora cost |
+|---|---|---|
+| _new_ → `REGISTERED` | an unseen 10-12B natural key ingested | — (rides the ingest search) |
+| `REGISTERED` → `WHEN_ISSUED` | calendar: `record_date` reached and distribution not yet (`record_date` ≤ today, and `distribution_date` null or today < it) | 0 |
+| `REGISTERED`/`WHEN_ISSUED` → `DISTRIBUTED` | the batched `quotes()` probe returns a positive price for the symbol (stamps `distributed_at`) — a formality when `distribution_date` is known and past, the **primary** distribution signal when it is unknown | 1 shared batched call |
+| `REGISTERED`/`WHEN_ISSUED` → `ABANDONED` | sat non-distributed past `abandon-after-days` (default 180) since `discovered_at`; terminal, kept for audit | 0 |
+| `DISTRIBUTED` → `SETTLED` | first XBRL `Assets` datapoint whose `periodEnd` **and** `filed` both fall strictly after the effective distribution date (the term-sheet `distribution_date`, else the `distributed_at` detection date) — the spin-co's first standalone report | 1 `conceptStrict` probe (in the enrich phase) |
+
+The `SETTLED` transition is detected in the enrich phase (not the reconciler): a
+`DISTRIBUTED` row issues **one** dedicated `conceptStrict(cik, "Assets")` probe, and
+the (terminal) SETTLED compare-and-set is committed **only after** the valuation
+snapshot is secured — so a transient valuation-fetch failure leaves the row
+`DISTRIBUTED` (retried next run) instead of burning SETTLED with an empty,
+never-revisited snapshot.
+
+**Stage-appropriate enrichment** (each field nullable and fail-soft; snapshots stored
+as JSONB):
+
+- **`REGISTERED` / `WHEN_ISSUED`** — the term sheet is captured once (fetch +
+  `SpinTermsParser` → `distribution_ratio`/`record_date`/`distribution_date`, the raw
+  `term_sheet_text` prose, and a best-effort `parent_symbol`), then the
+  pre-distribution **balance sheet by CIK** (`SpinBalanceSheetSnapshotter`):
+  `totalAssets`, `totalLiabilities`, `retainedEarnings` (XBRL concepts anchored to a
+  single balance-sheet instant, no cross-date mixing) plus Finnhub `industry` when a
+  ticker exists. No market-cap ratios — there is no market capitalisation before the
+  distribution.
+- **`DISTRIBUTED`** — the size / forced-selling read (`SpinDistributionSnapshotter`):
+  `spincoMarketCapMillions` / `parentMarketCapMillions` (Finnhub via
+  `EquityMetricsExtractor`, parent keyed on the best-effort `parent_symbol`),
+  `sizeRatio` (spinco ÷ parent market cap, the small-spin-off effect; null unless both
+  caps resolve), `daysSinceDistribution`, and `postSpinInsiderBuying` (any Form-4
+  open-market purchase — code `P` — on or after the distribution date, from one
+  `ownerHistoryStrict` call).
+- **`SETTLED`** — the fundamental re-rating read (`SpinValuationSnapshotter`):
+  `priceToBook` (Finnhub `pbAnnual`), `fcfYield` (reciprocal of Finnhub
+  `pfcfShareTTM`), `bookValue` (XBRL Assets − Liabilities), and `evToEbit`. **`evToEbit`
+  is a coarse, upward-biased book enterprise-value proxy** — `EV = marketCap +
+  totalLiabilities − cash`, divided by the latest annual XBRL `OperatingIncomeLoss` —
+  and uses total liabilities in place of pure interest-bearing debt (a known upward
+  bias, left in deliberately because isolating debt cleanly from XBRL is unreliable);
+  the prompt treats it as a rough screen, not a precise multiple.
+
+**Promotion (candidate → prey)** rides the one shared-base-class hook,
+`HuntController.afterPersist(inserted, body)` — a no-op for the other five hunters,
+overridden by strigoi-spin. For every newly-persisted prey it matches the symbol back
+to a `DISTRIBUTED`, unpromoted row (`findPromotableBySymbol`) and stamps it promoted
+(`markPromoted`, guarded on `promoted_at IS NULL`), so the candidate leaves the active
+window and can never be re-emitted. This is **idempotency marking, not the emit
+decision** — the LLM already decided what to emit from the RESPOND payload; the hook
+only closes the double-emission loop. Gate (deliberately relaxed from the blueprint):
+`status = DISTRIBUTED` and `promoted_at IS NULL` (both enforced by the SQL lookup), a
+non-null `spincoMarketCapMillions`, and `daysSinceDistribution ≤ promotion-window-days`
+(default 90). **`sizeRatio` is NOT a hard condition** — parent/sizeRatio are often
+unresolvable and gating on them would silence the hunter, so `sizeRatio` is a
+confidence booster in the prompt instead. Exactly-once is layered: the delivery-level
+filter in `complete()` (only newly-inserted prey reach the hook), the row-level
+`promoted_at IS NULL` CAS, and the prey same-day natural-key unique index (V21) as the
+final backstop. A prey matching no promotable row is skipped fail-soft — it is already
+persisted regardless.
+
+**Horizon.** The prompt (`1.3.0`) splits the thesis into a ~3-month
+forced-selling/index-drop compression window and a 6-12-month fundamental re-rating;
+the controller's default horizon is `6m`.
+
 ## Hunt Pattern
 
 Every Strigoi follows the same three-step shape:
@@ -147,6 +204,12 @@ Every Strigoi follows the same three-step shape:
    exactly as before.
 
 ### Reference implementation
+
+> **Note:** the sketch below illustrates the *generic* three-step hunt shape.
+> Strigoi-spin itself no longer follows this single-shot form — since 2026-07-12
+> it runs the four-phase lifecycle hunt over the persisted `spin_candidate` table
+> (see "Strigoi-Spin: lifecycle persistence" above), extending `HuntController` and
+> fetching via the `AgoraFilings` facade rather than a direct `EdgarClient`.
 
 ```java
 @Component

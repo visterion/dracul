@@ -3,6 +3,7 @@ package de.visterion.dracul.webhook;
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.executor.PreySignalEmitter;
 import de.visterion.dracul.pattern.PatternRepository;
+import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import tools.jackson.databind.JsonNode;
 
+import java.util.List;
 import java.util.Map;
 
 /** Base for the 6 prey-producing hunters. Subclasses declare their own
@@ -136,6 +138,29 @@ public abstract class HuntController {
         // Feed the executor when it is enabled; a disabled executor wires no bean
         // and the hunt still completes normally.
         signalEmitter.ifAvailable(e -> e.emit(inserted));
+        // Post-persistence hook (no-op by default; overridden by strigoi-spin for
+        // candidate→prey promotion). Invoked exactly once per completion that persisted
+        // at least one NEW prey, with the non-empty {@code inserted} list — never on the
+        // "no prey" or "all-duplicates" early returns above. This mirrors signalEmitter:
+        // only newly-inserted prey trigger downstream effects, so a retried/duplicate
+        // delivery (inserted empty) skips the hook and can never re-fire promotion.
+        afterPersist(inserted, body);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Extension point called at the end of a successful {@link #complete} that persisted at least
+     * one new prey, after the prey insertion and executor emission. The {@code inserted} list holds
+     * only the prey actually written this delivery (duplicates already filtered by the natural-key
+     * ON CONFLICT), so an override sees each emitted prey exactly once across retried deliveries.
+     *
+     * <p>Default is a deliberate no-op: five of the six hunters have no post-persistence work and
+     * inherit this unchanged. {@code strigoi-spin} overrides it to mark the originating
+     * {@code spin_candidate} row promoted (idempotency stamp; see StrigoiSpinWebhookController).
+     * Overrides must be fail-soft — this runs after the prey are durably persisted, so a throw here
+     * must not fail the completion.
+     */
+    protected void afterPersist(List<Prey> inserted, JsonNode body) {
+        // no-op
     }
 }

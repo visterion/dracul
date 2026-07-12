@@ -296,28 +296,6 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | `cooldown` | (V18) Symbols temporarily excluded from fresh entries after any exit (hard or soft): `symbol`, `reason`, `expires_at` (`dracul.executor.cooldown-days` out), `exception_condition` |
 | `outcome_log` | (V23) One row per `decision_log` entry/reject signal, written exclusively by the nightly `OutcomeBatchJob` — the Executor itself never reads or writes this table. `kind` is `TRADE` (a closed position's realized outcome: quantity-weighted `realized_r` across partial exits, `mae_r`/`mfe_r`, `slippage_vs_limit`, whipsaw flags `reentry_within_10d`/`roundtrip_under_5d`) or `COUNTERFACTUAL` (a rejected signal's "what would have happened", via `HypotheticalREngine`: `hypothetical` JSONB with `r_after_20d`/`r_after_60d`/`would_have_stopped_out`/`skipped_reason`, plus `hunter_label` — the triple-barrier +1R-before-1R label used for hunter-confidence calibration). Unique on `log_id_ref` (the source `decision_log.log_id`), upserted idempotently (`ON CONFLICT ... DO UPDATE`) so re-runs refine rather than duplicate a row. See "Outcome batch job" below |
 
-**🚧 Planned (not yet shipped) — `spin_candidate` (V26).** Migration
-`V26__spin_candidate.sql` is committed, but no running code reads or
-writes the table yet; it backs the roadmap spin-off lifecycle (see
-`strigoi.md`). One row tracks a single spin-co from its Form-10-12B
-registration through the trading window. Key columns: `status` (plain
-`TEXT`, validated by the Java `SpinStatus` enum — same convention as
-`executor_signal.status`, not a Postgres enum), `cik`/`symbol`,
-`filing_date`/`record_date`/`distribution_date`, three per-stage JSONB
-snapshots (`registered_snapshot`, `distributed_snapshot`,
-`settled_snapshot`), and a soft `promoted_prey_id` (no hard FK to
-`prey`). Idempotency is a unique expression index on
-`COALESCE(cik, lower(company_name))` — one row per spin-co, keyed on CIK
-when known and degrading to the lowercased company name before a CIK is
-available (the same technique as V21's `uq_prey_natural_day`).
-
-The planned hunt runs on the existing spin cron in four phases —
-**INGEST** (upsert `REGISTERED` rows, `ON CONFLICT DO NOTHING`),
-**RECONCILE** (calendar + a single batched quote probe + settlement
-check), **ENRICH** (stage-appropriate, reusing the existing per-run
-enrichment cap), **RESPOND** (feed unpromoted candidates to the LLM) —
-with no new scheduler.
-
 **Doctrine note:** Dracul is deliberately, otherwise strictly, read-only —
 no order routing, no broker integration, no auto-trading (see `README.md`
 "Project values"). The Executor agent is the one intentional exception, and
@@ -499,6 +477,40 @@ wrapped so one bad symbol/position never aborts the rest.
   next nightly run retries. `complete` otherwise flips to `true` once 60
   bars exist; a re-run before then re-walks and upserts the same row
   (`ON CONFLICT (log_id_ref) DO UPDATE`) rather than duplicating it.
+
+**Spin-off lifecycle table (V26): `spin_candidate`.** Backs strigoi-spin's full
+lifecycle persistence (see `documentation/strigoi.md`, "Strigoi-Spin: lifecycle
+persistence"), turning the hunter from a stateless single-shot scan into a tracker
+that follows each Form-10-12B registration across hunts. One row per tracked
+spin-co; `SpinCandidateRepository` is JdbcClient-based (explicit `INSERT … ON
+CONFLICT DO NOTHING` + guarded compare-and-set UPDATEs), mirroring `PreyRepository`
+— no Spring Data JPA.
+
+| Group | Columns |
+|---|---|
+| Filing identity | `cik` (spin-co registrant CIK, parsed from the filing URL), `symbol`, `company_name` (NOT NULL), `form_type`, `filing_date`, `filing_url` |
+| Parsed term sheet | `distribution_ratio`, `record_date`, `distribution_date`, `term_sheet_available`, `term_sheet_text` (raw information-statement prose kept for the LLM to read the spin thesis), `parent_symbol` (best-effort parent ticker for the size-ratio) |
+| Lifecycle | `status` (TEXT, validated by the Java `SpinStatus` enum — **not** a DB enum, same convention as `executor_signal.status`), plus audit timestamps `discovered_at`, `last_checked_at`, `distributed_at`, `settled_at`, `abandoned_at` |
+| Stage enrichment | `registered_snapshot`, `distributed_snapshot`, `settled_snapshot` (JSONB — the per-stage balance-sheet / size-forced-selling / valuation snapshots) |
+| Promotion | `promoted_at`, `promoted_prey_id` (a **soft** link to the emitted prey — no hard FK) |
+
+- **Status enum** (`SpinStatus`): `REGISTERED` → `WHEN_ISSUED` → `DISTRIBUTED` →
+  `SETTLED` / `ABANDONED`. Forward-only; `SETTLED` and `ABANDONED` are terminal.
+  Every status change is a guarded CAS (`WHERE status = <from>`), so a concurrent or
+  duplicate reconcile is a no-op and a transition never reverses.
+- **Idempotency:** expression unique index `uq_spin_candidate_natural` on
+  `COALESCE(cik, lower(company_name))` — one row per spin-co, keyed on its CIK when
+  known, degrading to the lowercased company name before a CIK is available. The
+  ingestion upsert (`ON CONFLICT DO NOTHING`) targets this expression and the
+  `SpinoffScreener` dedup key mirrors it exactly (same technique as V21's
+  `uq_prey_natural_day`), so a re-run never duplicates a spin-co nor resets its
+  lifecycle.
+- **Supporting indexes:** `idx_spin_candidate_last_checked` on `last_checked_at`
+  (the reconciler's oldest-checked-first work-queue scan); partial
+  `idx_spin_candidate_promotable` on `(status, distributed_at) WHERE promoted_at IS
+  NULL` (the DISTRIBUTED-not-yet-promoted promotion scan).
+- Like the Executor tables, `spin_candidate` carries **no** `user_id` column — it
+  backs the single research pipeline, not per-user data.
 
 ## Data Flow
 

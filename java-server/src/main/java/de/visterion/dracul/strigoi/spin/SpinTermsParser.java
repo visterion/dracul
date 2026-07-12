@@ -16,8 +16,9 @@ import java.util.regex.Pattern;
  *  from a filing's plain-English information-statement summary text via regex heuristics.
  *  Stateless, fail-soft: any unparseable input yields an all-null {@link SpinTerms}, never
  *  throws. Mirrors {@code de.visterion.dracul.strigoi.merger.DealTermsParser}.
- *  Parent extraction is deliberately omitted (no reliable heuristic; the filing header /
- *  companyName already identifies the issuer). */
+ *  The parent ticker is extracted best-effort by {@link #parentTicker} ONLY from an
+ *  exchange-qualified parenthetical (e.g. "Parent Corp (NYSE: XYZ)"); a bare name yields null —
+ *  no unreliable name&rarr;ticker heuristic. */
 @Component
 public final class SpinTermsParser {
 
@@ -60,6 +61,14 @@ public final class SpinTermsParser {
                     + "(?:(?!record date)[^.]){0,80}?" + MONTH_DATE,
             Pattern.CASE_INSENSITIVE);
 
+    // An exchange-qualified ticker parenthetical: "(NYSE: XYZ)", "(NASDAQ: ABC)",
+    // "(NYSE American: DEF)", "(Nasdaq Global Select Market: GHI)". Captures the 1-5 char,
+    // upper-case (optionally dotted, e.g. BRK.B) ticker. Info statements name the PARENT this
+    // way because the spin-co itself is not yet trading; a bare company name (no exchange:ticker)
+    // never matches -> null (fail-soft, no guessing).
+    private static final Pattern EXCHANGE_TICKER = Pattern.compile(
+            "\\((?:NYSE|NASDAQ|Nasdaq|NYSE American|NYSE Arca|Cboe)[^:)]*:\\s*([A-Z]{1,5}(?:\\.[A-Z])?)\\s*\\)");
+
     public SpinTerms parse(String termSheet) {
         if (termSheet == null || termSheet.isBlank()) {
             return new SpinTerms(null, null, null);
@@ -72,6 +81,23 @@ public final class SpinTermsParser {
         } catch (Exception e) {
             log.debug("spin terms parse failed: {}", e.getMessage());
             return new SpinTerms(null, null, null);
+        }
+    }
+
+    /**
+     * Best-effort parent ticker from the first exchange-qualified parenthetical in the term sheet
+     * (e.g. "Parent Corp (NYSE: XYZ)" &rarr; {@code "XYZ"}). Returns null when no such
+     * exchange:ticker pattern appears (a bare parent name is NOT resolved to a ticker). The caller
+     * is responsible for discarding a match that equals the spin-co's own symbol.
+     */
+    public String parentTicker(String termSheet) {
+        if (termSheet == null || termSheet.isBlank()) return null;
+        try {
+            Matcher m = EXCHANGE_TICKER.matcher(termSheet);
+            return m.find() ? m.group(1) : null;
+        } catch (RuntimeException e) {
+            log.debug("spin terms: parent-ticker extraction failed: {}", e.getMessage());
+            return null;
         }
     }
 
