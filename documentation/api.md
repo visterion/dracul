@@ -1446,27 +1446,45 @@ Both require `Authorization: Bearer <STRIGOI_INDEX_TOKEN>`; only registered when
 
 ### `POST /api/strigoi-index/tools/fetch-candidates`
 
-Tool webhook. Returns recently-added S&P 500 constituents (deterministic, metadata-only).
+Tool webhook (`fetch_index_reconstitution_events`). Returns tracked index-reconstitution
+events as DB-backed lifecycle rows (`index_event`, V27) — not the live constituents list.
+Each hunt runs four phases on the webhook cron: **INGEST** announced changes for S&P 500 +
+Russell 1000/2000 (idempotent upsert on the natural key), **RECONCILE** pure-calendar stage
+transitions (ANNOUNCED → EFFECTIVE → POST → CLOSED/ABANDONED; zero Agora calls), **ENRICH**
+per-stage snapshots over a bounded, fail-soft work queue, **RESPOND** with the unpromoted
+{ANNOUNCED, EFFECTIVE, POST} rows. The thesis is forced index-fund demand inside the
+announcement→effective window (the logic-flip: judge `today → effectiveDate`, not a past
+`dateAdded`).
 
-Request: `{ "run_id": "...", "tool_name": "fetch_recent_index_additions", "input": { "lookback_days": 30 } }`
+Request: `{ "run_id": "...", "tool_name": "fetch_index_reconstitution_events", "input": { "lookback_days": 30 } }`
 
 Input `lookback_days` range: 1–90; default 30.
 
 Response:
 ```json
 { "output": { "candidates": [
-  { "symbol": "ACME", "companyName": "Acme Corp", "dateAdded": "2026-05-15",
+  { "symbol": "ACME", "companyName": "Acme Corp", "index": "sp500",
+    "action": "add", "source": "sp_press",
+    "announcementDate": "2026-05-15", "effectiveDate": "2026-05-22", "status": "ANNOUNCED",
     "adv": 48250000.00, "marketCap": 12500000000.0, "avgVolume20d": 950000,
-    "metricsAvailable": true }
+    "idiosyncraticVol": 0.018, "freeFloatProxyMillions": 8200.0,
+    "demandToAdvRatioEstimate": 3.4, "confounders": [],
+    "runUpPct": null, "postEffectivePct": null, "reversalObserved": null,
+    "daysSinceEffective": null }
 ] } }
 ```
 
-`adv` (20-day average daily dollar volume, close × volume), `marketCap`, and
-`avgVolume20d` (20-day average daily share volume) let the LLM judge
-forced-buying magnitude against real liquidity/size instead of guessing. Any
-of the three may be `null` on a per-candidate data-source failure (fail-soft);
-`metricsAvailable` is `false` only when all three are `null` — no candidate
-is dropped for it.
+Fields are **stage-gated** and additive — a row progresses ANNOUNCED → EFFECTIVE → POST and
+each stage fills its own block, so a `null` field means "that stage's data isn't available
+yet", never a judgement. Base/identity (`symbol`, `companyName`, `index`, `action` add/remove,
+`source` `sp_press`/`russell_reconstitution`, `announcementDate`, `effectiveDate`, `status`)
+replaces the old single `dateAdded` anchor. ANNOUNCED-stage demand proxies — `adv` (20d avg
+daily dollar volume, close × volume), `marketCap`, `avgVolume20d` (20d avg daily share
+volume), `idiosyncraticVol`, `freeFloatProxyMillions`, `demandToAdvRatioEstimate`,
+`confounders` — and EFFECTIVE/POST-stage drift fields — `runUpPct` (announcement→effective),
+`postEffectivePct` (effective→latest), `reversalObserved`, `daysSinceEffective` — are all
+coarse proxies/observations (so named), used as prompt-side confidence signals, not gates. Any
+may be `null` per-row on a data-source failure (fail-soft); no event is dropped for it.
 
 ### `POST /api/strigoi-index/complete`
 
