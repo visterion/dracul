@@ -162,6 +162,14 @@ class AgoraFilingsTest {
         assertThat(new AgoraFilings(client).concept("AAPL", "Assets").isEmpty()).isTrue();
     }
 
+    @Test void conceptStrictPropagatesAgoraFailureForBatchGuards() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_concept"), any())).thenThrow(new AgoraUnavailableException("down"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new AgoraFilings(client).conceptStrict("AAPL", "Assets"))
+                .isInstanceOf(AgoraUnavailableException.class);
+    }
+
     @Test void epsHistoryMapsRows() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_eps_history"), any())).thenReturn(json(
@@ -179,5 +187,85 @@ class AgoraFilingsTest {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_eps_history"), any())).thenThrow(new AgoraUnavailableException("down"));
         assertThat(new AgoraFilings(client).epsHistory("AAPL").isEmpty()).isTrue();
+    }
+
+    @Test void ownerHistoryMapsOwnersTransactionsTriStateAndTruncated() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_form4_owner_history"), any())).thenReturn(json(
+                "{\"cik\":\"0000320193\",\"from\":\"2023-07-12\",\"to\":\"2026-07-12\",\"owners\":[" +
+                "{\"name\":\"Jane Doe\",\"cik\":\"0001111\",\"role\":\"Chief Executive Officer\"," +
+                "\"transactions\":[" +
+                "{\"transactionDate\":\"2026-06-30\",\"code\":\"P\",\"acquiredDisposedCode\":\"A\",\"form\":\"4\"," +
+                "\"shares\":1500,\"price\":12.50,\"dollarValue\":18750,\"sharesOwnedFollowing\":9000,\"aff10b5One\":true}," +
+                "{\"transactionDate\":\"2025-06-20\",\"code\":\"P\",\"acquiredDisposedCode\":\"A\",\"form\":\"4\"," +
+                "\"shares\":1000,\"price\":null,\"dollarValue\":null,\"sharesOwnedFollowing\":null,\"aff10b5One\":false}," +
+                "{\"transactionDate\":\"2024-06-10\",\"code\":\"P\",\"acquiredDisposedCode\":\"A\",\"form\":\"4\"," +
+                "\"shares\":800,\"dollarValue\":9600,\"aff10b5One\":null}]}," +
+                "{\"name\":\"John Roe\",\"cik\":\"\",\"role\":\"\",\"transactions\":[]}]," +
+                "\"truncated\":true}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        Form4OwnerHistory h = filings.ownerHistoryStrict("AAPL");
+
+        assertThat(h.cik()).isEqualTo("0000320193");
+        assertThat(h.from()).isEqualTo(LocalDate.parse("2023-07-12"));
+        assertThat(h.truncated()).isTrue();
+        assertThat(h.owners()).hasSize(2);
+
+        var jane = h.owners().get(0);
+        assertThat(jane.name()).isEqualTo("Jane Doe");
+        assertThat(jane.cik()).isEqualTo("0001111");
+        assertThat(jane.role()).isEqualTo("Chief Executive Officer");
+        assertThat(jane.transactions()).hasSize(3);
+
+        var t0 = jane.transactions().get(0);
+        assertThat(t0.transactionDate()).isEqualTo(LocalDate.parse("2026-06-30"));
+        assertThat(t0.code()).isEqualTo("P");
+        assertThat(t0.price()).isEqualByComparingTo("12.50");
+        assertThat(t0.sharesOwnedFollowing()).isEqualByComparingTo("9000");
+        assertThat(t0.aff10b5One()).isTrue();                       // explicit true
+
+        var t1 = jane.transactions().get(1);
+        assertThat(t1.price()).isNull();                            // null preserved (not zero)
+        assertThat(t1.sharesOwnedFollowing()).isNull();
+        assertThat(t1.aff10b5One()).isFalse();                      // explicit false
+
+        var t2 = jane.transactions().get(2);
+        assertThat(t2.aff10b5One()).isNull();                       // tri-state unknown (pre-2023)
+        assertThat(t2.price()).isNull();                            // absent -> null
+
+        assertThat(h.owners().get(1).transactions()).isEmpty();
+
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        Mockito.verify(client).callTool(eq("get_form4_owner_history"), args.capture());
+        assertThat(args.getValue().path("symbol").asString()).isEqualTo("AAPL");
+    }
+
+    @Test void ownerHistorySkipsMalformedTransactionKeepingTheRest() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_form4_owner_history"), any())).thenReturn(json(
+                "{\"cik\":\"0000320193\",\"owners\":[" +
+                "{\"name\":\"Jane Doe\",\"cik\":\"0001111\",\"role\":\"CEO\",\"transactions\":[" +
+                "{\"transactionDate\":\"not-a-date\",\"code\":\"P\",\"shares\":100}," +   // unparseable date
+                "{\"transactionDate\":\"2026-06-30\",\"code\":\"P\",\"shares\":200}]}]," +
+                "\"truncated\":false}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        Form4OwnerHistory h = filings.ownerHistoryStrict("AAPL");
+
+        // the whole owner history survives; only the one broken-date transaction is dropped
+        assertThat(h.owners()).hasSize(1);
+        assertThat(h.owners().get(0).transactions()).hasSize(1);
+        assertThat(h.owners().get(0).transactions().get(0).transactionDate())
+                .isEqualTo(LocalDate.parse("2026-06-30"));
+        assertThat(h.owners().get(0).transactions().get(0).shares()).isEqualByComparingTo("200");
+    }
+
+    @Test void ownerHistoryPropagatesAgoraFailureForBatchGuards() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_form4_owner_history"), any())).thenThrow(new AgoraUnavailableException("down"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new AgoraFilings(client).ownerHistoryStrict("AAPL"))
+                .isInstanceOf(AgoraUnavailableException.class);
     }
 }

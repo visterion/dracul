@@ -3,7 +3,9 @@ package de.visterion.dracul.strigoi.lazarus;
 /**
  * Subset of Finnhub's basic-financials ("metric") object. All fields are boxed
  * Double so an absent metric (null) is distinguishable from a real 0. Percent
- * metrics (ROA, margins, growth) are in Finnhub's native percent units.
+ * metrics (ROA, margins, growth) are in Finnhub's native percent units;
+ * {@code marketCap} is in Finnhub's native unit of USD MILLIONS (convert
+ * before mixing with raw-USD XBRL values).
  */
 public record BasicFinancials(
         Double week52Low,
@@ -17,5 +19,6 @@ public record BasicFinancials(
         Double epsGrowthYoy,
         Double priceToBook,
         Double peTtm,
-        Double fcfPerShare
+        Double fcfPerShare,
+        Double marketCap
 ) {}

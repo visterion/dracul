@@ -26,7 +26,8 @@ public final class BasicFinancialsExtractor {
                 dbl(metrics, "epsGrowthTTMYoy"),
                 dbl(metrics, "pbAnnual"),
                 dbl(metrics, "peTTM"),
-                dbl(metrics, "freeCashFlowPerShareTTM"));
+                dbl(metrics, "freeCashFlowPerShareTTM"),
+                dbl(metrics, "marketCapitalization"));
     }
 
     private static Double dbl(JsonNode metric, String field) {

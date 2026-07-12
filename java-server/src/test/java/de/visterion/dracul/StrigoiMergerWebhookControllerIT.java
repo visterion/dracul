@@ -59,7 +59,10 @@ class StrigoiMergerWebhookControllerIT {
                 "TGT", "Target Corp", "DEFM14A", "2026-05-20", "http://sec/u1",
                 "SUMMARY TERM SHEET: $52.00 in cash per share", true,
                 new BigDecimal("47.50"), true,
-                new BigDecimal("52.00"), "cash", null, null, new BigDecimal("9.47"))));
+                new BigDecimal("52.00"), "cash", null, null, new BigDecimal("9.47"),
+                LocalDate.of(2026, 3, 15), LocalDate.of(2026, 12, 31), null,
+                new BigDecimal("40.00"), true, 217,
+                new BigDecimal("15.90"), new BigDecimal("15.79"))));
     }
 
     @Test

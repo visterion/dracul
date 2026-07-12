@@ -111,15 +111,22 @@ public class AgoraFilings {
 
     /** XBRL concept datapoints (us-gaap tag) for a symbol; empty series on any failure. */
     public ConceptSeries concept(String symbol, String tag) {
-        JsonNode res;
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol).put("tag", tag);
-            res = agora.callTool("get_company_concept", args);
+            return conceptStrict(symbol, tag);
         } catch (AgoraUnavailableException e) {
             return ConceptSeries.empty(tag);
         }
-        return series(tag, res.path("datapoints"));
+    }
+
+    /** Like {@link #concept} but propagates {@link AgoraUnavailableException} instead of
+     *  degrading to an empty series, so batch callers (e.g. the lazarus Altman-Z enrichment)
+     *  can tell "Agora/EDGAR is down" apart from "concept not filed" (which still comes back
+     *  as an empty {@code datapoints} array) and short-circuit the source for the rest of the
+     *  batch rather than burning their latency budget on further dead calls. */
+    public ConceptSeries conceptStrict(String symbol, String tag) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol).put("tag", tag);
+        return series(tag, agora.callTool("get_company_concept", args).path("datapoints"));
     }
 
     /** Reported EPS datapoints for a symbol; empty series on any failure. */
@@ -137,14 +144,20 @@ public class AgoraFilings {
 
     /** Piotroski F-Score for a symbol via get_fundamental_score; unavailable on any failure. */
     public FundamentalScore fundamentalScore(String symbol) {
-        JsonNode res;
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol);
-            res = agora.callTool("get_fundamental_score", args);
+            return fundamentalScoreStrict(symbol);
         } catch (AgoraUnavailableException e) {
             return FundamentalScore.unavailable();
         }
+    }
+
+    /** Like {@link #fundamentalScore} but propagates {@link AgoraUnavailableException} (same
+     *  rationale as {@link #conceptStrict}: lets batch callers — the lazarus enrichment —
+     *  short-circuit a down source instead of burning one dead call per candidate). */
+    public FundamentalScore fundamentalScoreStrict(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode res = agora.callTool("get_fundamental_score", args);
         JsonNode p = res.path("scores").path("piotroskiF");
         if (p.isMissingNode() || p.isNull()) return FundamentalScore.unavailable();
         JsonNode cfoGtNi = p.path("criteria").path("cfoExceedsNetIncome");
@@ -171,6 +184,51 @@ public class AgoraFilings {
         } catch (AgoraUnavailableException e) {
             return FilingText.unavailable();
         }
+    }
+
+    /** Multi-year Form-4 owner history for one company (Agora {@code get_form4_owner_history}),
+     *  grouped per reporting owner, for the routine/opportunistic classification. Propagates
+     *  {@link AgoraUnavailableException} (strict, mirroring {@link #conceptStrict} /
+     *  {@code AgoraCompanyData.recommendationsStrict}) so the insider enrichment's per-batch
+     *  source-down guard can short-circuit a dead source instead of burning one ~16s dead call
+     *  per remaining cluster. The wire's tri-state {@code aff10b5One} is mapped to a nullable
+     *  {@link Boolean} (null = pre-2023 filing, i.e. unknown, NOT false) and {@code truncated}
+     *  is passed through verbatim. Uses the tool's default window (3 years). */
+    public Form4OwnerHistory ownerHistoryStrict(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode res = agora.callTool("get_form4_owner_history", args);
+
+        List<Form4OwnerHistory.Owner> owners = new ArrayList<>();
+        for (JsonNode o : res.path("owners")) {
+            try {
+                List<Form4OwnerHistory.Transaction> txs = new ArrayList<>();
+                for (JsonNode t : o.path("transactions")) {
+                    try {
+                        txs.add(new Form4OwnerHistory.Transaction(
+                                date(t.path("transactionDate")),
+                                t.path("code").asString(""),
+                                t.path("acquiredDisposedCode").asString(""),
+                                t.path("form").asString(""),
+                                bdOrNull(t.path("shares")),
+                                bdOrNull(t.path("price")),
+                                bdOrNull(t.path("dollarValue")),
+                                bdOrNull(t.path("sharesOwnedFollowing")),
+                                triState(t.path("aff10b5One"))));
+                    } catch (RuntimeException ignored) { /* skip one malformed transaction row */ }
+                }
+                owners.add(new Form4OwnerHistory.Owner(
+                        o.path("name").asString(""),
+                        o.path("cik").asString(""),
+                        o.path("role").asString(""),
+                        List.copyOf(txs)));
+            } catch (RuntimeException ignored) { /* skip one malformed owner */ }
+        }
+        return new Form4OwnerHistory(
+                res.path("cik").asString(""),
+                date(res.path("from")), date(res.path("to")),
+                List.copyOf(owners),
+                res.path("truncated").asBoolean(false));
     }
 
     private ObjectNode searchArgs(List<String> forms, LocalDate from, LocalDate to) {
@@ -204,5 +262,17 @@ public class AgoraFilings {
     private static BigDecimal bd(JsonNode n) {
         if (n == null || n.isNull() || n.isMissingNode()) return BigDecimal.ZERO;
         try { return new BigDecimal(n.asString("0")); } catch (NumberFormatException e) { return BigDecimal.ZERO; }
+    }
+
+    /** Like {@link #bd} but keeps "absent" distinct from "zero" (null on missing/unparsable). */
+    private static BigDecimal bdOrNull(JsonNode n) {
+        if (n == null || n.isNull() || n.isMissingNode()) return null;
+        try { return new BigDecimal(n.asString("")); } catch (NumberFormatException e) { return null; }
+    }
+
+    /** Tri-state boolean: null on missing/null/non-boolean (preserves "unknown" vs "false"). */
+    private static Boolean triState(JsonNode n) {
+        if (n == null || n.isNull() || n.isMissingNode() || !n.isBoolean()) return null;
+        return n.asBoolean(false);
     }
 }

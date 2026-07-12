@@ -4,11 +4,11 @@
   "executor": { "version": "1.0.0", "body_hash": "p-766853df4624" },
   "gropar": { "version": "1.0.0", "body_hash": "p-625d2484ce49" },
   "strigoi-echo": { "version": "1.1.0", "body_hash": "p-ad753c04c703" },
-  "strigoi-index": { "version": "1.1.0", "body_hash": "p-46c546c67281" },
-  "strigoi-insider": { "version": "1.1.0", "body_hash": "p-91059590df69" },
-  "strigoi-lazarus": { "version": "1.1.0", "body_hash": "p-238a931ad45f" },
-  "strigoi-merger": { "version": "1.1.0", "body_hash": "p-475203828483" },
-  "strigoi-spin": { "version": "1.1.0", "body_hash": "p-9517b89a850e" },
+  "strigoi-index": { "version": "1.2.0", "body_hash": "p-1580b15d15ec" },
+  "strigoi-insider": { "version": "1.3.0", "body_hash": "p-b286794163c6" },
+  "strigoi-lazarus": { "version": "1.2.0", "body_hash": "p-a4a0079008b6" },
+  "strigoi-merger": { "version": "1.2.0", "body_hash": "p-bfedecec0a4a" },
+  "strigoi-spin": { "version": "1.2.0", "body_hash": "p-3e13b874234d" },
   "voievod": { "version": "1.1.0", "body_hash": "p-ad44dfcc3cfd" },
   "voievod-outcome": { "version": "1.0.0", "body_hash": "p-64e203d18308" }
 }

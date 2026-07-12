@@ -46,9 +46,9 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | Strigoi | Facade + Agora tool(s) |
 |---|---|
 | strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date extraction) |
-| strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`) |
+| strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`, cluster screen) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, routine/opportunistic classification — one call per cluster) + `EquityMetricsExtractor` / `AgoraMarketData.dailyOhlcHistory` / `AgoraCompanyData.recommendationsStrict` / `AgoraEarnings` (context enrichment) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
-| strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScore` (`get_fundamental_score`) |
+| strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, Altman-Z XBRL inputs) + Agora daily OHLC (timing signals) |
 | strigoi-index | `AgoraReference.constituents` (`get_index_constituents`) + `AgoraMarketData.dailyOhlcHistory` (`get_ohlc`, ADV/volume enrichment) + `EquityMetricsExtractor` (market cap enrichment) |
 | strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `DealTermsParser` (regex-based offer price / consideration / exchange ratio / break-fee extraction) + `AgoraMarketData.quotes` (spread computation) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
@@ -111,13 +111,23 @@ consumed through five neutral domain facades in
 `de.visterion.dracul.hunting.agora`:
 
 - **`AgoraFilings`** — `searchSpinoffs` (10-12B), `searchMergers` (DEFM14A,
-  SC TO-T), `recentForm4` (Form-4 insider transactions), `concept` /
+  SC TO-T), `recentForm4` (Form-4 insider transactions), `ownerHistoryStrict`
+  (`get_form4_owner_history` — multi-year per-owner Form-4 history for the
+  strigoi-insider routine/opportunistic classification; strict, propagates
+  `AgoraUnavailableException` for the batch source-down guard), `concept` /
   `epsHistory` (SEC XBRL companyconcept series, used for the Sloan accrual
-  ratio and EPS-quarter shaping respectively), `fundamentalScore`
+  ratio and EPS-quarter shaping respectively; `conceptStrict` is the same
+  fetch but propagates `AgoraUnavailableException` instead of degrading to an
+  empty series, so batch callers — currently the lazarus Altman-Z enrichment —
+  can short-circuit a down source instead of burning their latency budget),
+  `fundamentalScore`
   (`get_fundamental_score` — a real Piotroski F-Score computed by Agora from
   SEC companyfacts, with a strict pass/fail per criterion plus a
   `fScoreCriteriaAvailable` coverage count; consumed by strigoi-lazarus's
-  enrichment step, degrading to "unavailable" on any Agora failure), `filingText`
+  enrichment step, degrading to "unavailable" on any Agora failure;
+  `fundamentalScoreStrict` propagates `AgoraUnavailableException` like
+  `conceptStrict`, letting the lazarus batch short-circuit a down source),
+  `filingText`
   (`get_filing_text` — fetches a filing's primary document as cleaned
   summary-term-sheet text; consumed via `AgoraFilings.filingText(url)` →
   `FilingText(text, available)` by strigoi-merger and strigoi-spin, fail-soft
