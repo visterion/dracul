@@ -146,6 +146,7 @@ dracul:
     agora-timeout-ms: ${DRACUL_DEPOTS_AGORA_TIMEOUT_MS:8000}
     live-visible-emails: ${DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS:viktor@ufelmann.de}
   position:
+    enabled: ${DRACUL_POSITION_ENABLED:true}
     connection: ${DRACUL_POSITION_CONNECTION:depot-1}
     reconcile-cron: ${DRACUL_POSITION_RECONCILE_CRON:0 0 12 * * *}
   outcome:
