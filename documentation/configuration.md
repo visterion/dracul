@@ -109,6 +109,21 @@ modifies an order.
 | `DRACUL_DEPOTS_AGORA_TIMEOUT_MS` (`dracul.depots.agora-timeout-ms`) | `8000` | Connect+read timeout (ms) on the depot Agora client. |
 | `DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS` (`dracul.depots.live-visible-emails`) | `viktor@ufelmann.de` | Comma-separated, case-insensitive allow-list of Cloudflare-Access emails permitted to see **live**-environment connections (`DepotConnection.environment() == "live"`). This is a server-side gate in `DepotService.isLiveVisible`: paper/sim connections are visible to every authenticated user regardless of this list, but a live connection is filtered out of `GET /api/depots` entirely for any email not on the list (not just hidden in the UI) — an unlisted caller never receives the live depot's account/positions/orders payload. An unauthenticated call (no email resolved) is treated as not-visible for any live connection. |
 
+### `PositionReconciler` (position-context sync)
+
+Keeps `position_context` in sync with the live depot so the depot -- not the
+research pipeline -- is the source of truth for "what's currently open".
+Runs on a schedule: backfills a context row (verdict-linked when a matching
+verdict exists, a minimal `source="none"` row otherwise) for depot positions
+that have none yet, and closes context rows whose symbol has left the depot.
+Fail-soft: an unreachable depot makes the whole pass a no-op, and a single
+symbol's lookup/backfill/close failure is skipped without aborting the rest.
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_POSITION_CONNECTION` (`dracul.position.connection`) | `depot-1` | The depot connection reconciled against (same identifier space as `dracul.executor.connection`). |
+| `DRACUL_POSITION_RECONCILE_CRON` (`dracul.position.reconcile-cron`) | `0 0 12 * * *` | Spring cron (server-local zone) for the reconcile pass. Default: once daily at 12:00. |
+
 See `documentation/api.md` for the `/api/depots` and instrument-bundle
 endpoint shapes, and `documentation/operations.md` for the required
 Agora-side deploy step (`AGORA_TRADING_LIVE_TOKENS_READONLY` +

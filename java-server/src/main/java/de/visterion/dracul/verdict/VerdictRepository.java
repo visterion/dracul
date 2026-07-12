@@ -267,6 +267,34 @@ public class VerdictRepository {
                 .list();
     }
 
+    /**
+     * The most-recent verdict for a symbol, across all users, used by
+     * {@code de.visterion.dracul.position.PositionReconciler} to backfill
+     * {@code position_context} for depot positions that lack a linked verdict.
+     */
+    public record LatestVerdictForSymbol(String id, String horizon, String summary,
+            List<String> signals, List<String> risks, List<String> anomalyTypes) {}
+
+    /** The most-recent verdict for a symbol (any user), or empty if none exists. */
+    public Optional<LatestVerdictForSymbol> findLatestBySymbol(String symbol) {
+        return jdbc.sql("""
+                SELECT id, horizon, summary, signals, risks, anomaly_types
+                FROM verdicts
+                WHERE symbol = :symbol
+                ORDER BY created_at DESC
+                LIMIT 1
+                """)
+                .param("symbol", symbol)
+                .query((rs, rowNum) -> new LatestVerdictForSymbol(
+                        rs.getString("id"),
+                        rs.getString("horizon"),
+                        rs.getString("summary"),
+                        readList(rs.getString("signals")),
+                        readList(rs.getString("risks")),
+                        readList(rs.getString("anomaly_types"))))
+                .optional();
+    }
+
     public java.util.List<String> distinctCurrencies() {
         return jdbc.sql("SELECT DISTINCT currency FROM verdicts WHERE currency IS NOT NULL")
                 .query(String.class)
