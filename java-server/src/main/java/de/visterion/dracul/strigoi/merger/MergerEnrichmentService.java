@@ -7,6 +7,7 @@ import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.marketdata.Quote;
+import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -92,7 +93,7 @@ public class MergerEnrichmentService {
                 try {
                     unaffectedPrice = unaffectedPriceFor(c.symbol(), terms.agreementDate());
                 } catch (RuntimeException e) {
-                    ohlcDown = markIfSourceDown(e, "ohlc history");
+                    ohlcDown = EnrichmentSourceGuard.isSourceDown(e, "merger", "candidates", "ohlc history");
                     log.debug("merger enrichment: ohlc history unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
             }
@@ -143,19 +144,6 @@ public class MergerEnrichmentService {
         return lastPrice.subtract(unaffectedPrice)
                 .divide(lastPrice, 6, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /** True (and logs) when the failure is availability-related — the source's backend is down,
-     *  so retrying it for the next candidate would only burn the webhook's latency budget.
-     *  Symbol-specific failures (e.g. NOT_FOUND) leave the source up. */
-    private static boolean markIfSourceDown(RuntimeException e, String source) {
-        boolean availabilityFailure = e instanceof AgoraUnavailableException
-                || (e instanceof MarketDataException m && m.kind() == MarketDataException.Kind.UNAVAILABLE);
-        if (availabilityFailure) {
-            log.warn("merger enrichment: {} source down ({}), skipping it for the remaining candidates",
-                    source, e.getMessage());
-        }
-        return availabilityFailure;
     }
 
     /** {@link AgoraFilings#filingText} is already fail-soft, but wrap it too so an unforeseen

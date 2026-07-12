@@ -7,6 +7,7 @@ import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import de.visterion.dracul.strigoi.echo.AnalystCoverage;
 import de.visterion.dracul.strigoi.echo.EarningsRevisions;
 import de.visterion.dracul.strigoi.echo.RevisionsProxy;
@@ -135,7 +136,7 @@ public class LazarusEnrichmentService {
                 try {
                     t = timingSignalsFrom(marketData.dailyOhlcHistory(c.symbol(), OHLC_LOOKBACK_DAYS));
                 } catch (RuntimeException e) {
-                    ohlcDown = markIfSourceDown(e, "ohlc");
+                    ohlcDown = EnrichmentSourceGuard.isSourceDown(e, "lazarus", "candidates", "ohlc");
                     log.debug("lazarus enrichment: ohlc history unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
             }
@@ -162,7 +163,7 @@ public class LazarusEnrichmentService {
                     rev = revisionsProxy.revisions(trend);
                     cov = AnalystCoverage.of(trend);
                 } catch (RuntimeException e) {
-                    revisionsDown = markIfSourceDown(e, "recommendations");
+                    revisionsDown = EnrichmentSourceGuard.isSourceDown(e, "lazarus", "candidates", "recommendations");
                     log.debug("lazarus enrichment: recommendations unavailable for {}: {}",
                             c.symbol(), e.getMessage());
                 }
@@ -178,19 +179,6 @@ public class LazarusEnrichmentService {
                     rev.netProxy(), rev.direction(), cov.coverage(), rev.available()));
         }
         return out;
-    }
-
-    /** True (and logs) when the failure is availability-related — the source's backend is down,
-     *  so retrying it for the next candidate would only burn the webhook's latency budget.
-     *  Symbol-specific failures (e.g. NOT_FOUND) leave the source up. */
-    private static boolean markIfSourceDown(RuntimeException e, String source) {
-        boolean availabilityFailure = e instanceof AgoraUnavailableException
-                || (e instanceof MarketDataException m && m.kind() == MarketDataException.Kind.UNAVAILABLE);
-        if (availabilityFailure) {
-            log.warn("lazarus enrichment: {} source down ({}), skipping it for the remaining candidates",
-                    source, e.getMessage());
-        }
-        return availabilityFailure;
     }
 
     /** All three timing signals from one oldest-first daily-OHLC series; bars without a
