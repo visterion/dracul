@@ -17,9 +17,10 @@ import java.util.List;
 
 /**
  * Regulatory-filings facade backed by Agora (get_form4_transactions / search_filings /
- * get_company_concept / get_eps_history over MCP). Fetch + map to neutral Dracul DTOs only;
- * all interpretation stays in the strigoi helpers. Never throws: Agora failure degrades to
- * an unavailable DataSourceResult or an empty ConceptSeries.
+ * get_company_concept / get_company_facts / get_eps_history over MCP). Fetch + map to neutral
+ * Dracul DTOs only; all interpretation stays in the strigoi helpers. Never throws (except the
+ * deliberately strict variants): Agora failure degrades to an unavailable DataSourceResult or
+ * an empty ConceptSeries.
  */
 @Component
 public class AgoraFilings {
@@ -150,6 +151,34 @@ public class AgoraFilings {
         if (hasCik) args.put("cik", cik);
         args.put("tag", tag);
         return series(tag, agora.callTool("get_company_concept", args).path("datapoints"));
+    }
+
+    /** Bulk XBRL fetch: MANY us-gaap tags for a symbol in ONE cached Agora call
+     *  ({@code get_company_facts}), each tag's {@code datapoints} in the exact same shape as
+     *  {@link #conceptStrict(String, String)}. Collapses what would otherwise be one remote
+     *  call per tag into a single round trip — the lazarus Altman-Z path uses this to fetch
+     *  all balance-sheet, flow and revenue-fallback tags at once.
+     *
+     *  <p>The returned {@link java.util.LinkedHashMap} preserves the requested {@code tags}
+     *  order and always carries an entry for EVERY requested tag: a tag the company never filed
+     *  comes back as an EMPTY series (present in the map, NOT missing), exactly like a
+     *  {@code get_company_concept} call with an empty {@code datapoints} array.
+     *
+     *  <p>STRICT: {@link AgoraUnavailableException} is deliberately NOT caught here — it
+     *  propagates for the same batch-guard reason as {@link #conceptStrict(String, String)},
+     *  letting a batch caller tell "Agora/EDGAR is down" apart from "tag not filed" (empty
+     *  series) and short-circuit a down source for the rest of the batch. */
+    public java.util.Map<String, ConceptSeries> companyFactsStrict(String symbol, List<String> tags) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        ArrayNode ta = args.putArray("tags");
+        tags.forEach(ta::add);
+        JsonNode facts = agora.callTool("get_company_facts", args).path("facts");
+        java.util.Map<String, ConceptSeries> out = new java.util.LinkedHashMap<>();
+        for (String tag : tags) {
+            out.put(tag, series(tag, facts.path(tag).path("datapoints")));
+        }
+        return out;
     }
 
     /** Reported EPS datapoints for a symbol; empty series on any failure. */

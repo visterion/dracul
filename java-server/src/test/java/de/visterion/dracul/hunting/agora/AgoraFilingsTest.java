@@ -10,6 +10,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -228,6 +230,47 @@ class AgoraFilingsTest {
                         () -> filings.conceptStrict("  ", null, "Assets"))
                 .isInstanceOf(IllegalArgumentException.class);
         Mockito.verifyNoInteractions(client);   // no tool call with a missing identifier
+    }
+
+    @Test void companyFactsStrictReturnsSeriesPerTagIncludingAbsentAsEmpty() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        // one cached bulk call: two tags filed, "Liabilities" never filed by this company
+        when(client.callTool(eq("get_company_facts"), any())).thenReturn(json(
+                "{\"facts\":{" +
+                "\"Assets\":{\"datapoints\":[" +
+                "{\"periodStart\":null,\"periodEnd\":\"2025-12-31\",\"value\":50000,\"filed\":\"2026-02-01\"}]}," +
+                "\"Revenues\":{\"datapoints\":[" +
+                "{\"periodStart\":\"2025-01-01\",\"periodEnd\":\"2025-12-31\",\"value\":1000,\"filed\":\"2026-02-01\"}]}" +
+                "}}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        Map<String, ConceptSeries> facts =
+                filings.companyFactsStrict("AAPL", List.of("Assets", "Revenues", "Liabilities"));
+
+        // every requested tag present; order preserved
+        assertThat(facts).containsOnlyKeys("Assets", "Revenues", "Liabilities");
+        assertThat(facts.keySet()).containsExactly("Assets", "Revenues", "Liabilities");
+        assertThat(facts.get("Assets").points()).hasSize(1);
+        assertThat(facts.get("Assets").points().get(0).value()).isEqualByComparingTo("50000");
+        assertThat(facts.get("Assets").points().get(0).filed()).isEqualTo(LocalDate.parse("2026-02-01"));
+        assertThat(facts.get("Revenues").points()).hasSize(1);
+        assertThat(facts.get("Revenues").points().get(0).periodStart()).isEqualTo(LocalDate.parse("2025-01-01"));
+        assertThat(facts.get("Liabilities").isEmpty()).isTrue();   // absent tag -> empty series, NOT missing
+
+        // exactly one tool call, carrying symbol + the requested tag array
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        Mockito.verify(client).callTool(eq("get_company_facts"), args.capture());
+        assertThat(args.getValue().path("symbol").asString()).isEqualTo("AAPL");
+        assertThat(args.getValue().path("tags").size()).isEqualTo(3);
+        assertThat(args.getValue().path("tags").get(0).asString()).isEqualTo("Assets");
+    }
+
+    @Test void companyFactsStrictPropagatesAgoraFailureForBatchGuards() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_facts"), any())).thenThrow(new AgoraUnavailableException("down"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> new AgoraFilings(client).companyFactsStrict("AAPL", List.of("Assets")))
+                .isInstanceOf(AgoraUnavailableException.class);
     }
 
     @Test void conceptMapsFiledDateAndNullFiled() {
