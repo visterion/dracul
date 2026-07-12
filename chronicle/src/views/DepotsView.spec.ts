@@ -269,4 +269,38 @@ describe('DepotsView', () => {
     const chart = w.findComponent(LineChart)
     expect(chart.props('series')[0].data).toEqual([999, 999])
   })
+
+  it('reloads the chart when switching to a different depot (with DepotSection remount)', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
+
+    // Track which connections were requested
+    const requestedConnections: string[] = []
+    getDepotChartImpl = (connection: string, _range: ChartRange) => {
+      requestedConnections.push(connection)
+      return Promise.resolve(mockDepotChart)
+    }
+
+    const w = mountView()
+    await flushPromises()
+
+    // Clear the history from the initial mount
+    requestedConnections.length = 0
+
+    // Switch to the second depot
+    await w.find('[data-testid="depot-select"]').setValue('saxo-live-1')
+    await flushPromises()
+
+    // Verify getDepotChart was called with the new connection ID
+    expect(requestedConnections).toContain('saxo-live-1')
+  })
+
+  it('appends " · LIVE" to the depot dropdown option text for live environments', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1', environment: 'paper' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    const options = w.find('[data-testid="depot-select"]').findAll('option')
+    expect(options[0].text()).not.toContain('LIVE')
+    expect(options[1].text()).toContain('LIVE')
+  })
 })

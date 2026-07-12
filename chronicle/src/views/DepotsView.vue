@@ -26,11 +26,11 @@
           class="depots-selector-select"
           data-testid="depot-select"
         >
-          <option v-for="d in depots" :key="d.id" :value="d.id">{{ d.id }} · {{ d.provider }}</option>
+          <option v-for="d in depots" :key="d.id" :value="d.id">{{ d.id }} · {{ d.provider }}{{ d.environment === 'live' ? ' · LIVE' : '' }}</option>
         </select>
       </label>
 
-      <DepotSection v-if="selectedDepot" :depot="selectedDepot" />
+      <DepotSection v-if="selectedDepot" :key="selectedDepot.id" :depot="selectedDepot" />
     </template>
   </div>
 </template>
