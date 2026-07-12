@@ -17,6 +17,7 @@ java-server/src/main/resources/static/
 .worktrees/
 .claude/worktrees/
 .superpowers/
+.mcp.json
 .env
 .playwright-mcp/
 /PLAN.md
