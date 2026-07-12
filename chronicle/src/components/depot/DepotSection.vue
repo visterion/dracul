@@ -9,8 +9,14 @@
         </TagPill>
         <span class="dp-status">{{ depot.status }}</span>
       </div>
-      <div v-if="depot.asOf" class="dp-asof" :class="{ stale: stale }" data-testid="depot-asof">
-        {{ t('depots.asOf', { time: relativeTime(depot.asOf) }) }}
+      <div class="dp-head-right">
+        <div v-if="depot.account" class="dp-head-cash">
+          <span class="dp-cash-k">{{ t('depots.summary.cash') }}</span>
+          <span class="dp-cash-v mono" data-testid="depots-total-cash">{{ formatMoney(depot.account.cash, depot.account.currency) }}</span>
+        </div>
+        <div v-if="depot.asOf" class="dp-asof" :class="{ stale: stale }" data-testid="depot-asof">
+          {{ t('depots.asOf', { time: formatAbsoluteTime(depot.asOf) }) }}
+        </div>
       </div>
     </header>
 
@@ -123,8 +129,7 @@ import DepotPositionsTable from './DepotPositionsTable.vue'
 import { useApi } from '../../api'
 import type { Depot, DepotChart, ChartRange } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
-import { useRelativeTime } from '../../composables/useRelativeTime'
-import { fmtPl, allocationSegments, isStale } from '../../lib/depotDisplay'
+import { fmtPl, allocationSegments, isStale, formatAbsoluteTime } from '../../lib/depotDisplay'
 import { formatMoney, formatNumber } from '../../utils/format'
 
 const props = defineProps<{ depot: Depot }>()
@@ -133,7 +138,6 @@ const { t } = useI18n()
 const router = useRouter()
 const api = useApi()
 const { mode, toggle } = useDisplayMode()
-const { relativeTime } = useRelativeTime()
 
 const stale = computed(() => isStale(props.depot.asOf))
 
@@ -221,6 +225,10 @@ const chartLabels = computed(() => {
 .dp-head-left { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .dp-id { color: var(--bone-ivory); font-size: var(--text-body); }
 .dp-status { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ash-gray-light); }
+.dp-head-right { display: flex; align-items: center; gap: var(--space-4); }
+.dp-head-cash { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.dp-cash-k { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ash-gray); }
+.dp-cash-v { font-size: var(--text-body-lg); color: var(--bone-ivory); }
 .dp-asof { font-size: var(--text-micro); color: var(--ash-gray); }
 .dp-asof.stale { color: var(--cathedral-gold); }
 

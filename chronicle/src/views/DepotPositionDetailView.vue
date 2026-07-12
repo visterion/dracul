@@ -71,7 +71,7 @@
         <StatTile data-testid="pd-stat-entry" :label="t('depots.detail.stat.entry')" :value="formatMoney(position.avgEntryPrice, position.currency)" />
       </div>
       <div v-if="asOf" class="pd-asof" :class="{ stale: stale }" data-testid="pd-asof">
-        {{ t('depots.asOf', { time: relativeTime(asOf) }) }}
+        {{ t('depots.asOf', { time: formatAbsoluteTime(asOf) }) }}
       </div>
 
       <!-- ── Open orders ────────────────────────────────────── -->
@@ -148,7 +148,7 @@ import type {
 } from '../api/types'
 import { useDisplayMode } from '../composables/useDisplayMode'
 import { useRelativeTime } from '../composables/useRelativeTime'
-import { fmtPl, isStale } from '../lib/depotDisplay'
+import { fmtPl, isStale, formatAbsoluteTime } from '../lib/depotDisplay'
 import { formatMoney, formatNumber, formatPercent } from '../utils/format'
 import { displayName } from '../utils/instrument'
 
