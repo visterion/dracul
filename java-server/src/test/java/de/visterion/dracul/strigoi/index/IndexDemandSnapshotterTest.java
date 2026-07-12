@@ -53,7 +53,7 @@ class IndexDemandSnapshotterTest {
         // defaults: 30 flat stock + market bars (close 100 / 200, vol 1000), so adv & idio-vol resolve
         when(marketData.dailyOhlcHistory(eq(SYM), anyInt())).thenReturn(flatBars(30, 100, 1_000));
         when(marketData.dailyOhlcHistory(eq(PROXY), anyInt())).thenReturn(flatBars(30, 200, 1));
-        when(equityMetrics.metrics(SYM)).thenReturn(new EquityMetrics(1.0, 6000.0, null, null, null, true));
+        when(equityMetrics.metricsWithoutSector(SYM)).thenReturn(new EquityMetrics(1.0, 6000.0, null, null, null, true));
         when(companyData.fundamentals(SYM)).thenReturn(mapper.readTree("{\"shareOutstanding\":50}"));
         when(confounderScreen.confounders(anyString(), any())).thenReturn(List.of("dilution"));
 
@@ -139,7 +139,7 @@ class IndexDemandSnapshotterTest {
     }
 
     @Test void marketCapSourceUnavailableDegradesToNullWithoutThrow() {
-        when(equityMetrics.metrics(SYM)).thenReturn(EquityMetrics.unavailable());
+        when(equityMetrics.metricsWithoutSector(SYM)).thenReturn(EquityMetrics.unavailable());
 
         var s = snapshotter.snapshot(SYM, "sp500", ANN);
 

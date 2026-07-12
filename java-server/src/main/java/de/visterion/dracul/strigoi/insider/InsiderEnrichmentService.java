@@ -115,7 +115,7 @@ public class InsiderEnrichmentService {
         Double marketCap = null;
         if (!health.metricsDown) {
             try {
-                EquityMetrics em = equityMetrics.metrics(c.ticker());
+                EquityMetrics em = equityMetrics.metricsWithoutSector(c.ticker());
                 if (em.available()) marketCap = em.marketCap();
             } catch (RuntimeException e) {
                 health.metricsDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "equity metrics");

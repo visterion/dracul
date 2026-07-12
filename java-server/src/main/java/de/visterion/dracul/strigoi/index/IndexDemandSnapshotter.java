@@ -155,7 +155,7 @@ public class IndexDemandSnapshotter {
         }
 
         // Market cap + beta + share count from the swallowing Finnhub facades.
-        EquityMetrics em = equityMetrics.metrics(symbol);
+        EquityMetrics em = equityMetrics.metricsWithoutSector(symbol);
         Double marketCap = em.available() ? em.marketCap() : null;
         Double beta = em.available() ? em.beta() : null;
 

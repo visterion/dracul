@@ -106,7 +106,7 @@ public class SpinDistributionSnapshotter {
      *  swallowing metrics lookup came back unavailable. */
     private Double marketCapMillions(String symbol) {
         if (symbol == null || symbol.isBlank()) return null;
-        EquityMetrics m = equityMetrics.metrics(symbol);
+        EquityMetrics m = equityMetrics.metricsWithoutSector(symbol);
         return m.available() ? m.marketCap() : null;
     }
 

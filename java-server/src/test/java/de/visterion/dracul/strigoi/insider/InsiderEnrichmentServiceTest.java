@@ -125,7 +125,7 @@ class InsiderEnrichmentServiceTest {
 
     private static EquityMetricsExtractor equityMetrics(Double marketCap, boolean available) {
         EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metrics(anyString())).thenReturn(
+        when(m.metricsWithoutSector(anyString())).thenReturn(
                 available ? new EquityMetrics(1.0, marketCap, 100.0, 200.0, "Technology", true)
                         : EquityMetrics.unavailable());
         return m;
@@ -298,9 +298,9 @@ class InsiderEnrichmentServiceTest {
     @Test
     void symbolSpecificFailureDoesNotDisableTheSource() {
         EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metrics("AAA")).thenThrow(
+        when(m.metricsWithoutSector("AAA")).thenThrow(
                 new MarketDataException(MarketDataException.Kind.NOT_FOUND, "no such symbol"));
-        when(m.metrics("BBB")).thenReturn(new EquityMetrics(1.0, 850.0, 100.0, 200.0, "Technology", true));
+        when(m.metricsWithoutSector("BBB")).thenReturn(new EquityMetrics(1.0, 850.0, 100.0, 200.0, "Technology", true));
 
         var svc = enrichmentService(marketDataReturning(bars()),
                 m, companyData(TREND), earnings(Optional.empty()));
@@ -308,8 +308,8 @@ class InsiderEnrichmentServiceTest {
         var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB")));
 
         // NOT_FOUND is symbol-specific: AAA degrades, BBB is still queried and fully enriched
-        verify(m, times(1)).metrics("AAA");
-        verify(m, times(1)).metrics("BBB");
+        verify(m, times(1)).metricsWithoutSector("AAA");
+        verify(m, times(1)).metricsWithoutSector("BBB");
         var a = out.stream().filter(x -> x.ticker().equals("AAA")).findFirst().orElseThrow();
         var b = out.stream().filter(x -> x.ticker().equals("BBB")).findFirst().orElseThrow();
         assertThat(a.marketCap()).isNull();
@@ -320,7 +320,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void availabilityFailureSkipsThatSourceForRemainingClusters() {
         EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metrics(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
+        when(m.metricsWithoutSector(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
         AgoraCompanyData cd = companyData(TREND);
         AgoraEarnings earn = earnings(Optional.empty());
 
@@ -329,7 +329,7 @@ class InsiderEnrichmentServiceTest {
         var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB")));
 
         // the down source is queried exactly once, then skipped for the rest of the batch
-        verify(m, times(1)).metrics(anyString());
+        verify(m, times(1)).metricsWithoutSector(anyString());
         // the other sources keep serving every cluster
         verify(cd, times(2)).recommendationsStrict(anyString());
         verify(earn, times(2)).nextEarningsDate(anyString());
@@ -366,7 +366,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void twoSourcesDownSkipEnrichmentForRemainingClusters() {
         EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metrics(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
+        when(m.metricsWithoutSector(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
         AgoraCompanyData cd = companyData(TREND);
         AgoraEarnings earn = earnings(Optional.of(LocalDate.now().plusDays(30)));
 
@@ -375,7 +375,7 @@ class InsiderEnrichmentServiceTest {
         var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB"), cluster("CCC")));
 
         // metrics + ohlc are marked down during cluster 1 -> no source is queried again at all
-        verify(m, times(1)).metrics(anyString());
+        verify(m, times(1)).metricsWithoutSector(anyString());
         verify(cd, times(1)).recommendationsStrict(anyString());
         verify(earn, times(1)).nextEarningsDate(anyString());
         assertThat(out).hasSize(3);
