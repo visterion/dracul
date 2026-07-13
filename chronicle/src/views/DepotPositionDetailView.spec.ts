@@ -107,7 +107,13 @@ describe('DepotPositionDetailView', () => {
     expect(asOfEl.exists()).toBe(true)
     expect(asOfEl.text()).toMatch(/\d{2}\.\d{2}\., \d{2}:\d{2}:\d{2}/)
     expect(asOfEl.text()).not.toMatch(/vor|gerade eben|ago/i)
-    expect(w.find('[data-testid="pd-orders"]').exists()).toBe(true)
+    const ordersEl = w.find('[data-testid="pd-orders"]')
+    expect(ordersEl.exists()).toBe(true)
+    // Readable German label from orderDisplay ("ausgeführt"), not the raw
+    // broker status string ("filled"), plus the order role ("Einstieg").
+    expect(ordersEl.text()).toContain('ausgeführt')
+    expect(ordersEl.text()).not.toMatch(/\bfilled\b/)
+    expect(ordersEl.text()).toContain('Einstieg')
   })
 
   it('hides info sections entirely when their data is null', async () => {
