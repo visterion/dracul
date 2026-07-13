@@ -1366,6 +1366,24 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void fetchPending_enrichesWithStopWindowWhenLevelsAvailable() {
+        ExecutorSignal sig = signal("sig-1", 0.8, new BigDecimal("100"));
+        when(signalRepo.findPending(50)).thenReturn(List.of(sig));
+        when(executorIndicators.levels("ACME", 22, 20)).thenReturn(
+                new ExecutorIndicators.Levels(true, new BigDecimal("2.5"), new BigDecimal("92"), new BigDecimal("100")));
+
+        StopWindow expected = sizer.stopWindow(
+                sig.direction(), new BigDecimal("100"), new BigDecimal("2.5"), new BigDecimal("92"));
+
+        ResponseEntity<?> resp = controller.fetchPendingSignals(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> first = (Map<String, Object>) ((List<?>) outputOf(resp).get("signals")).get(0);
+        assertThat(first.get("stop_min")).isEqualTo(expected.stopMin());
+        assertThat(first.get("stop_max")).isEqualTo(expected.stopMax());
+    }
+
+    @Test
     void fetchPending_ranksByMechanismDiversityThenConfidence() {
         ExecutorSignal heldHigh = signal("held-high", 0.95, new BigDecimal("100"), "PENDING", "PEAD");
         ExecutorSignal newLow = signal("new-low", 0.30, new BigDecimal("100"), "PENDING", "MERGER_ARB");
@@ -1397,6 +1415,8 @@ class ExecutorWebhookControllerTest {
         Map<String, Object> first = (Map<String, Object>) ((List<?>) outputOf(resp).get("signals")).get(0);
         assertThat(first.get("atr")).isNull();
         assertThat(first.get("swing_low")).isNull();
+        assertThat(first.get("stop_min")).isNull();
+        assertThat(first.get("stop_max")).isNull();
     }
 
     // -------------------------------------------------------------------
