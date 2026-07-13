@@ -4,16 +4,16 @@ import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.events.VerdictKillCriteriaBreachedEvent;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
-import de.visterion.dracul.prey.Prey;
-import de.visterion.dracul.prey.PreyRepository;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -21,62 +21,62 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Deterministic (no-LLM) watcher: for every open (non-DISMISSed), non-held verdict, evaluates
- *  the contributing prey's kill criteria against the current quote and persists any breach.
- *  Runs after US close, before gropar. Never throws out of the scheduled method; a failure on
- *  one verdict never blocks the rest. */
+/** Deterministic (no-LLM) watcher: for every live depot position carrying research context
+ *  (a linked verdict + its kill criteria, copied into {@code position_context} at entry time),
+ *  evaluates the kill criteria against the current quote and persists any breach on the linked
+ *  verdict. Runs after US close, before gropar. Never throws out of the scheduled method; a
+ *  failure on one position never blocks the rest.
+ *
+ * <p>Positions are read from {@link HeldPositionService} (depot ⨝ {@code position_context}),
+ * not the watchlist -- the depot is the single source of truth for what's held. A position
+ * with no context row, no kill criteria, or no linked verdict is skipped: there is nothing to
+ * watch (or nowhere to persist a breach), and that is never an error. */
 @Component
 @ConditionalOnProperty(value = "dracul.verdict-killwatch.enabled", havingValue = "true", matchIfMissing = true)
 public class VerdictKillCriteriaWatcher {
 
     private static final Logger log = LoggerFactory.getLogger(VerdictKillCriteriaWatcher.class);
 
+    private final HeldPositionService heldPositions;
     private final VerdictRepository verdictRepo;
-    private final WatchlistRepository watchlistRepo;
-    private final PreyRepository preyRepo;
     private final AgoraMarketData marketData;
     private final KillCriteriaEvaluator evaluator;
     private final ApplicationEventPublisher events;
+    private final String connection;
+    private final String owner;
 
-    public VerdictKillCriteriaWatcher(VerdictRepository verdictRepo, WatchlistRepository watchlistRepo,
-            PreyRepository preyRepo, AgoraMarketData marketData, KillCriteriaEvaluator evaluator,
-            ApplicationEventPublisher events) {
+    public VerdictKillCriteriaWatcher(HeldPositionService heldPositions, VerdictRepository verdictRepo,
+            AgoraMarketData marketData, KillCriteriaEvaluator evaluator,
+            ApplicationEventPublisher events,
+            @Value("${dracul.position.connection:depot-1}") String connection,
+            @Value("${dracul.primary-user-email:}") String primaryUser) {
+        this.heldPositions = heldPositions;
         this.verdictRepo = verdictRepo;
-        this.watchlistRepo = watchlistRepo;
-        this.preyRepo = preyRepo;
         this.marketData = marketData;
         this.evaluator = evaluator;
         this.events = events;
+        this.connection = connection;
+        this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
     }
 
     @Scheduled(cron = "${dracul.verdict-killwatch.cron:0 30 21 * * 1-5}", zone = "UTC")
     public void poll() {
         try {
-            List<VerdictRepository.OpenVerdictForCheck> open = verdictRepo.findOpenForKillCheck();
-            if (open.isEmpty()) return;
-
-            // Held-skip is scoped per owner: user A holding a symbol must not suppress
-            // the kill-criteria check of user B's verdict on the same symbol.
-            Set<String> heldByOwner = watchlistRepo.findAll().stream()
-                    .filter(this::isHeld)
-                    .map(it -> heldKey(it.owner(), it.ticker()))
-                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-
-            List<VerdictRepository.OpenVerdictForCheck> watched = open.stream()
-                    .filter(v -> !heldByOwner.contains(heldKey(v.userId(), v.symbol())))
+            List<HeldPosition> watched = heldPositions.openPositions(connection).stream()
+                    .filter(p -> p.killCriteria() != null && p.verdictId() != null)
                     .toList();
             if (watched.isEmpty()) return;
 
             Set<String> symbols = new LinkedHashSet<>();
-            for (var v : watched) symbols.add(v.symbol());
+            for (HeldPosition p : watched) symbols.add(p.symbol());
             Map<String, Quote> quotes = marketData.quotes(symbols);
 
-            for (var v : watched) {
+            for (HeldPosition p : watched) {
                 try {
-                    checkOne(v, quotes.get(v.symbol()));
+                    checkOne(p, quotes.get(p.symbol()));
                 } catch (RuntimeException e) {
-                    log.warn("verdict-killwatch: failed to check verdict {} ({}): {}",
-                            v.id(), v.symbol(), e.getMessage());
+                    log.warn("verdict-killwatch: failed to check position {} (verdict {}): {}",
+                            p.symbol(), p.verdictId(), e.getMessage());
                 }
             }
         } catch (RuntimeException e) {
@@ -84,46 +84,40 @@ public class VerdictKillCriteriaWatcher {
         }
     }
 
-    private void checkOne(VerdictRepository.OpenVerdictForCheck v, Quote quote) {
+    private void checkOne(HeldPosition p, Quote quote) {
         if (quote == null || quote.price() == null) return;
 
-        List<Prey> prey = preyRepo.findByIds(v.contributingPreyIds());
-        // LinkedHashSet dedupes identical criterion texts contributed by multiple prey
-        // (keeps insertion order), so the persisted list / SSE payload never carry duplicates.
-        Set<String> allCriteria = new LinkedHashSet<>();
-        for (Prey p : prey) {
-            if (p.killCriteria() != null) allCriteria.addAll(p.killCriteria());
-        }
+        List<String> allCriteria = toStringList(p.killCriteria());
         if (allCriteria.isEmpty()) return;
 
-        List<String> freshlyBreached = evaluator.breached(List.copyOf(allCriteria), quote.price());
+        List<String> freshlyBreached = evaluator.breached(allCriteria, quote.price());
 
         // Breaches are CUMULATIVE: a kill criterion is a falsifiable thesis-death condition —
         // once breached, the thesis is dead; a price recovery never un-breaches it. Persisting
         // the union also means a re-dip can never count as "newly breached" again (no
         // flapping/duplicate SSE events).
-        List<String> alreadyBreached = v.alreadyBreached() == null ? List.of() : v.alreadyBreached();
+        List<String> alreadyBreached = verdictRepo.killCriteriaBreachedFor(p.verdictId());
         List<String> newlyBreached = freshlyBreached.stream()
                 .filter(c -> !alreadyBreached.contains(c))
                 .toList();
         List<String> cumulative = new ArrayList<>(alreadyBreached);
         cumulative.addAll(newlyBreached);
 
-        verdictRepo.markKillCriteriaBreached(v.id(), cumulative);
+        verdictRepo.markKillCriteriaBreached(p.verdictId(), cumulative);
 
         if (!newlyBreached.isEmpty()) {
             events.publishEvent(new VerdictKillCriteriaBreachedEvent(
-                    v.userId(), v.id(), v.symbol(), newlyBreached));
+                    owner, p.verdictId(), p.symbol(), newlyBreached));
         }
     }
 
-    private static String heldKey(String owner, String symbol) {
-        return owner + "|" + symbol;
-    }
-
-    private boolean isHeld(WatchlistItem item) {
-        return "HELD".equals(item.tag())
-                && item.entryPrice() != null
-                && item.shareCount() != null;
+    /** {@code position_context.kill_criteria} as a flat string list; empty for null/non-array
+     *  JSON (defensive -- the column is written as a JSON array by {@code PositionReconciler}). */
+    private static List<String> toStringList(JsonNode node) {
+        List<String> out = new ArrayList<>();
+        if (node != null && node.isArray()) {
+            for (JsonNode n : node) out.add(n.asText(""));
+        }
+        return out;
     }
 }
