@@ -478,8 +478,12 @@ On each run:
      (peak-drawdown) guard (`INITIAL_STOP` / `GIVEBACK` rules)
 3. Indicator bundle → reasoning-tier LLM judgment. The LLM returns `ExitSignal` per position:
    `verdict` (SELL / TRIM / HOLD), `thesis_status` (INTACT / WEAKENING / INVALIDATED / NONE —
-   `NONE` means the position has no original thesis, e.g. a manually-added position, so gropar
-   judges it on technical indicators alone), `rationale` (German), and `confidence`. When
+   `NONE` means the position has neither a thesis nor `killCriteria`, e.g. a manually-added
+   position, so gropar judges it on technical indicators alone), `rationale` (German), and
+   `confidence`. A position opened from an executor/Prey signal with no narrative thesis carries
+   a **kill-only** thesis block (`killCriteria` present, `summary`/entry signals absent); the
+   prompt treats those criteria as authoritative falsifiable exits even without a summary, so
+   `thesis_status` = `NONE` is reserved for positions with neither. When
    `thesis_status` = `INVALIDATED`, the LLM must also name which condition failed via the
    optional `violated_kill_criteria` array (verbatim entries from the fetched `thesis.killCriteria`);
    the completion handler appends them to the persisted rationale as

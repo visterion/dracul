@@ -25,7 +25,7 @@ class GroparDefaults {
         JsonNode input = AgentResources.parseJson(mapper,
                 "{\"type\":\"object\",\"properties\":{}}");
         var entry = new ToolCatalogEntry(FETCH,
-                "Returns all currently held watchlist positions enriched with deterministic exit indicators, fired rules, and the original thesis.",
+                "Returns all currently held depot positions (depot ⨝ context) enriched with deterministic exit indicators, fired rules, and the original thesis.",
                 input, "/api/gropar/tools/fetch-held-positions", 30);
         return new AgentDefaultProvider() {
             @Override
