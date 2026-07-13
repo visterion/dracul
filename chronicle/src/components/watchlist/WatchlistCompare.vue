@@ -15,7 +15,7 @@
         <span class="wcmp-ticker mono">{{ row.ticker }}</span>
         <span v-if="displayName(row.ticker, row.companyName)" class="wcmp-name">{{ displayName(row.ticker, row.companyName) }}</span>
         <span class="wcmp-px mono"><MoneyDisplay :amount="row.currentPrice" :currency="row.mine.currency" :native-amount="row.mine.nativeCurrentPrice" :native-currency="row.mine.nativeCurrency" /></span>
-        <span class="wcmp-chg mono" :class="row.dayChangePercent >= 0 ? 'pos' : 'neg'">
+        <span class="wcmp-chg mono" :class="pctClass(row.dayChangePercent)">
           {{ formatPercent(row.dayChangePercent) }}
         </span>
       </div>
@@ -72,7 +72,7 @@ import SectionHeader from '../common/SectionHeader.vue'
 import MoneyDisplay from '../common/MoneyDisplay.vue'
 import { buildComparison } from '../../lib/watchlistComparison'
 import type { WatchlistItem, WatchlistStatus } from '../../api/types'
-import { formatPercent } from '../../utils/format'
+import { formatPercent, pctClass } from '../../utils/format'
 import { displayName } from '../../utils/instrument'
 
 const props = defineProps<{
