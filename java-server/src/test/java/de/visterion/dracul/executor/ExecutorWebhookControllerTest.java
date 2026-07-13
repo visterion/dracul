@@ -546,6 +546,50 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_sellStopClampedIntoWindow() {
+        // happyContext(): price=100, atr=2, no swingLow -> SELL stop window [105, 106.5]
+        // (stopMin=anchor=100+5=105, stopMax=floor=100+6+0.5=106.5), i.e. above price, mirroring
+        // the BUY window used by the clamp tests above.
+        ExecutorSignal sellSignal = new ExecutorSignal("sig-1", "hunter", "v1", "ACME", "SELL",
+                0.9, "mechanism", List.of("X"), "3m", new BigDecimal("100"), "PENDING",
+                "2026-07-01T00:00:00Z");
+        when(signalRepo.findById("sig-1")).thenReturn(sellSignal);
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        // Model stop (115) is further above price than stopMax (106.5) allows -> clamp down to 106.5.
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"SELL","stop_price":115}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-sell-1", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(decisionRepo, never()).insert(argThat(d -> "NO_STOP".equals(d.rejectReason())));
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().side()).isEqualTo("SELL");
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("106.5");
+        // qty is server-side sizer output (tranche 1000 / price 100), sized from the clamped stop.
+        assertThat(reqCaptor.getValue().qty()).isEqualByComparingTo("10");
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().initialStop()).isEqualByComparingTo("106.5");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("stop_price").asDouble()).isEqualTo(106.5);
+        assertThat(order.path("stop_clamped").asBoolean()).isTrue();
+        assertThat(order.path("proposed_stop").asDouble()).isEqualTo(115.0);
+        assertThat(order.path("stop_min").asDouble()).isEqualTo(105.0);
+        assertThat(order.path("stop_max").asDouble()).isEqualTo(106.5);
+    }
+
+    @Test
     void placeEntry_nullStop_clampedToStopMin_noNpe() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
@@ -1367,20 +1411,28 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void fetchPending_enrichesWithStopWindowWhenLevelsAvailable() {
-        ExecutorSignal sig = signal("sig-1", 0.8, new BigDecimal("100"));
+        // direction is "BUY" (never "LONG" in prod) so the sizer's stopWindow takes the correct
+        // below-price BUY branch instead of tautologically re-deriving the same (possibly wrong)
+        // branch the controller used.
+        ExecutorSignal sig = new ExecutorSignal("sig-1", "hunter", "v1", "ACME", "BUY",
+                0.8, "mechanism", List.of("X"), "3m", new BigDecimal("100"), "PENDING",
+                "2026-07-01T00:00:00Z");
         when(signalRepo.findPending(50)).thenReturn(List.of(sig));
         when(executorIndicators.levels("ACME", 22, 20)).thenReturn(
                 new ExecutorIndicators.Levels(true, new BigDecimal("2.5"), new BigDecimal("92"), new BigDecimal("100")));
-
-        StopWindow expected = sizer.stopWindow(
-                sig.direction(), new BigDecimal("100"), new BigDecimal("2.5"), new BigDecimal("92"));
 
         ResponseEntity<?> resp = controller.fetchPendingSignals(BEARER, null);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> first = (Map<String, Object>) ((List<?>) outputOf(resp).get("signals")).get(0);
-        assertThat(first.get("stop_min")).isEqualTo(expected.stopMin());
-        assertThat(first.get("stop_max")).isEqualTo(expected.stopMax());
+        // price=100, atr=2.5, swingLow=92 -> BUY anchor=min(100-6.25,92)=92, floor=min(100-7.5,92)-0.625=91.375.
+        BigDecimal stopMin = (BigDecimal) first.get("stop_min");
+        BigDecimal stopMax = (BigDecimal) first.get("stop_max");
+        assertThat(stopMin).isEqualByComparingTo("91.375");
+        assertThat(stopMax).isEqualByComparingTo("92");
+        assertThat(stopMin.compareTo(stopMax)).isLessThanOrEqualTo(0);
+        assertThat(stopMin).isLessThan(new BigDecimal("100"));
+        assertThat(stopMax).isLessThan(new BigDecimal("100"));
     }
 
     @Test
