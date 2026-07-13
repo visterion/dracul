@@ -319,9 +319,19 @@ positions of the current user).
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/morning-report` | Returns the current user's morning report: a projection over the persisted per-position risk snapshot (written by gropar's last `fetch_held_positions` run) combined with the latest exit signal per HELD position |
+| GET | `/api/morning-report` | Returns the current user's morning report: a projection over the live **depot-1** positions (⨝ `position_context`, via `HeldPositionService.openPositions`) combined with the latest exit signal per symbol |
 
-Read-only; no market-data calls are made at request time. Scoped to the current user.
+Read-only; no market-data calls are made at request time (the depot ⨝ context join is the only data source). Scoped to the current user.
+
+> **Repointed 2026-07-13 to the depot-as-SSOT model.** The report no longer reads HELD
+> watchlist items or the V15 watchlist risk-snapshot columns (`active_stop` / `next_target_2r` /
+> `current_close`) — it reads live depot-1 positions instead, joined by symbol to their
+> (nullable) `position_context` row for `activeStop`. `currentClose` is derived from the
+> depot's `marketValue / quantity`; there is no source yet for `nextTarget2r`, so it is
+> always `null` (unchanged shape, just no value to fill). Exit signals are matched by
+> **symbol**, not `watchlistItemId` — gropar's depot-sourced signals always write
+> `watchlistItemId = null`, so keying by symbol is what makes gropar's exit actions actually
+> appear here (see `exit_signals` in `architecture.md`).
 
 ### `GET /api/morning-report` response
 
@@ -366,19 +376,19 @@ Top-level fields:
 | `sellCount` | integer | Number of positions with action = SELL |
 | `trimCount` | integer | Number of positions with action = TRIM |
 | `holdCount` | integer | Number of positions with action = HOLD |
-| `positions` | array | One entry per HELD position that has a persisted snapshot |
+| `positions` | array | One entry per open depot-1 position |
 
 Per-position fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `symbol` | string | Ticker |
-| `companyName` | string | Company name |
-| `shareCount` | number | Operator share count |
-| `entryPrice` | number | Operator entry price |
-| `currentClose` | `number \| null` | Last close written by gropar's fetch; null if gropar has not run yet |
-| `activeStop` | `number \| null` | Chandelier-Exit stop level; null until gropar has run |
-| `nextTarget2r` | `number \| null` | 2R price target (`entryPrice + 2 × initialRisk`); null until initial stop is frozen |
+| `symbol` | string | Ticker (also used as `companyName` -- the depot carries no company name) |
+| `companyName` | string | Same value as `symbol` (depot positions carry no company name) |
+| `shareCount` | number | Live depot quantity |
+| `entryPrice` | number | Live depot average entry price |
+| `currentClose` | `number \| null` | Derived from the depot's `marketValue / quantity`; null if either is missing or quantity is zero |
+| `activeStop` | `number \| null` | From `position_context.active_stop`; null when the position has no open context row |
+| `nextTarget2r` | `number \| null` | Always `null` for now -- no source for a 2R price target exists in `position_context` yet |
 | `distanceToStopPct` | `number \| null` | `(currentClose − activeStop) / currentClose × 100`; negative means price is below stop |
 | `action` | string | Latest gropar verdict: SELL / TRIM / HOLD |
 | `thesisStatus` | string | INTACT / WEAKENING / INVALIDATED / NONE |

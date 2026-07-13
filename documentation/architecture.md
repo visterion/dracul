@@ -224,8 +224,9 @@ cache entry was populated is only reflected in `active_patterns` once that entry
 TTL expires. See `strigoi.md` ("Learning loop") for the full write-up.
 
 **Exit signals table (V11):**
-- `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default'). Partial unique index `uq_exit_signals_run_item` (V21) on `(vistierie_run_id, watchlist_item_id)` (where both are non-null) enforces at most one exit signal per run per position.
+- `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default'). Partial unique index `uq_exit_signals_run_item` (V21) on `(vistierie_run_id, watchlist_item_id)` (where both are non-null) enforces at most one exit signal per run per position; a second partial unique index `(vistierie_run_id, symbol)` (V29, where `vistierie_run_id IS NOT NULL`) is the one that actually fires for gropar's depot-sourced signals since A5 -- they never carry a `watchlist_item_id` (always written `null`), so V21's index never matches them.
 - index on `(user_id, symbol, created_at DESC)`
+- `MorningReportService.build` (A8, 2026-07-13) reads the latest signal **per symbol**, not per `watchlist_item_id`, for the same reason: gropar's depot-sourced signals key by symbol only.
 - Gropar data flow (repointed 2026-07-13 to the depot-as-SSOT model): open **depot-1** positions joined by symbol to `position_context` (`HeldPositionService.openPositions`) → daily OHLC history (Agora `get_ohlc`, via `AgoraMarketData.dailyOhlcHistory`) for the current close, plus exit TA (ATR/Chandelier stop, MA cross, 52-week proximity) from Agora `get_indicators` via `AgoraResearch` → `GroparExitIndicators` assembles the bundle (adds gain/loss thresholds; `RiskMetricsService` retained, fed Agora ATR + the position's stored context `initialStop` for the R-framework) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts. (The local `ExitIndicatorService` was removed once Agora's `get_indicators` became the TA source.) A position with no open `position_context` row degrades to TA-only (thesis/kill-criteria absent) rather than being dropped.
 - Gropar position guard: `GroparPauseReconciler` (present only when `dracul.gropar.enabled=true`, `@Order(30)` so it runs after `GenericAgentRegistrar`) listens to `WatchlistChangedEvent` and to `ApplicationReadyEvent`, checks whether the live depot (`HeldPositionService.openPositions("depot-1")`) has any open positions, and calls `VistierieClient.patchAgent("gropar", positions.isEmpty())`. An in-memory last-applied state suppresses redundant Vistierie calls; a failed patch is logged and retried on the next event. gropar's pause is thus system-managed (operator uses the `enabled` flag, not the manual pause toggle).
 
@@ -238,14 +239,12 @@ TTL expires. See `strigoi.md` ("Learning loop") for the full write-up.
 
 **Watchlist risk-snapshot columns (V15):**
 
-Four nullable columns added to `watchlist_items` to persist the per-position risk snapshot written by gropar's `fetch_held_positions` tool call (overwritten on every gropar run) and read by the morning report:
+Four nullable columns added to `watchlist_items`, originally written by gropar's `fetch_held_positions` tool call and read by the morning report. **Both the writer and this reader are gone as of 2026-07-13**: gropar was repointed to the depot-1 ⨝ `position_context` model (A5) and no longer writes these columns, and `GET /api/morning-report` was repointed the same way (A8) and no longer reads them — it now reads `HeldPositionService.openPositions("depot-1")` (`activeStop` from `position_context`; `currentClose` derived from `marketValue / quantity`; no source yet for a 2R target). The columns themselves are left in place (still read by `StopProximityWatcher` / `DaywalkerEventEngine` pending their own depot repoint):
 
 - `active_stop` (NUMERIC(12,4), nullable) — active trailing stop = `max(initial_stop, chandelier)`
 - `next_target_2r` (NUMERIC(12,4), nullable) — 2R price target (`entryPrice + 2 × initialRisk`)
 - `current_close` (NUMERIC(12,4), nullable) — last close price at the time of the gropar run
 - `risk_snapshot_at` (TIMESTAMPTZ, nullable) — timestamp of the most recent gropar snapshot write
-
-These columns are `null` until gropar has run at least once after V15 is applied. `GET /api/morning-report` reads them to build the report projection without issuing any market-data calls.
 
 **Watchlist ATR column (V16):**
 

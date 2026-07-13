@@ -2,9 +2,9 @@ package de.visterion.dracul.report;
 
 import de.visterion.dracul.gropar.ExitSignal;
 import de.visterion.dracul.gropar.ExitSignalRepository;
-import de.visterion.dracul.watchlist.PositionRisk;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -16,31 +16,35 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Pure projection: held positions + persisted risk snapshot + latest exit
- *  signal -> the day's morning report. No market-data, no LLM -- total and
- *  side-effect free, so the scheduler and the REST endpoint share one source. */
+/** Pure projection: live depot positions (⨝ research context) + latest exit
+ *  signal -> the day's morning report. No market-data fetch of its own, no LLM
+ *  -- total and side-effect free, so the scheduler and the REST endpoint share
+ *  one source. */
 @Service
 public class MorningReportService {
 
     private static final Map<String, Integer> ACTION_RANK =
             Map.of("SELL", 0, "TRIM", 1, "HOLD", 2);
 
-    private final WatchlistRepository watchlist;
+    private final HeldPositionService heldPositionService;
     private final ExitSignalRepository exitSignals;
+    private final String connection;
 
-    public MorningReportService(WatchlistRepository watchlist, ExitSignalRepository exitSignals) {
-        this.watchlist = watchlist;
+    public MorningReportService(HeldPositionService heldPositionService, ExitSignalRepository exitSignals,
+            @Value("${dracul.position.connection:depot-1}") String connection) {
+        this.heldPositionService = heldPositionService;
         this.exitSignals = exitSignals;
+        this.connection = connection;
     }
 
     public MorningReport build(String owner) {
-        Map<String, PositionRisk> riskById = watchlist.positionRiskByItemId();
-        Map<String, ExitSignal> latestByItem = latestSignalByItem(owner);
+        Map<String, ExitSignal> latestBySymbol = latestSignalBySymbol(owner);
 
         List<MorningReportLine> lines = new ArrayList<>();
-        for (WatchlistItem item : watchlist.findAllByUser(owner)) {
-            if (!isHeld(item)) continue;
-            lines.add(toLine(item, riskById.get(item.id()), latestByItem.get(item.id())));
+        // openPositions is fail-soft (empty list when the depot is unreachable), so a depot-down
+        // read yields an empty portfolio section here rather than throwing.
+        for (HeldPosition position : heldPositionService.openPositions(connection)) {
+            lines.add(toLine(position, latestBySymbol.get(position.symbol())));
         }
         lines.sort(Comparator
                 .comparingInt((MorningReportLine l) -> ACTION_RANK.getOrDefault(l.action(), 2))
@@ -53,20 +57,27 @@ public class MorningReportService {
         return new MorningReport(Instant.now().toString(), sell, trim, hold, lines);
     }
 
-    private Map<String, ExitSignal> latestSignalByItem(String owner) {
+    /** Keyed by symbol, not watchlist_item_id: gropar's exit signals are depot-sourced and
+     *  never carry a watchlist item id (it is written NULL) -- symbol is the only identity
+     *  that survives from the fetch to the signal. Rekeying here is what makes gropar's exit
+     *  actions actually show up in the morning report; keying by the (now-always-null) item id
+     *  would silently match nothing. */
+    private Map<String, ExitSignal> latestSignalBySymbol(String owner) {
         Map<String, ExitSignal> latest = new HashMap<>();
-        // findLatestByUser returns newest-first; first seen per item wins.
+        // findLatestByUser returns newest-first; first seen per symbol wins.
         for (ExitSignal s : exitSignals.findLatestByUser(owner, 100)) {
-            if (s.watchlistItemId() != null) latest.putIfAbsent(s.watchlistItemId(), s);
+            if (s.symbol() != null) latest.putIfAbsent(s.symbol(), s);
         }
         return latest;
     }
 
-    private MorningReportLine toLine(WatchlistItem item, PositionRisk pr, ExitSignal sig) {
+    private MorningReportLine toLine(HeldPosition position, ExitSignal sig) {
         String action = sig == null ? "HOLD" : sig.action();
-        BigDecimal activeStop  = pr == null ? null : pr.activeStop();
-        BigDecimal target      = pr == null ? null : pr.nextTarget2r();
-        BigDecimal close       = pr == null ? null : pr.currentClose();
+        BigDecimal activeStop = position.activeStop();
+        // No profit-target snapshot is carried by position_context yet -- null until a source
+        // for it exists, same "absent snapshot" degrade the old watchlist-driven path had.
+        BigDecimal target     = null;
+        BigDecimal close      = currentClose(position);
 
         Double distancePct = null;
         if (close != null && close.signum() != 0 && activeStop != null) {
@@ -90,20 +101,20 @@ public class MorningReportService {
             rationale = "Kurs unter aktivem Stop (deterministische Regel)";
         }
 
-        double shares = item.shareCount();
+        double shares = position.quantity().doubleValue();
         double ticketShares = switch (action) {
             case "SELL" -> shares;
             case "TRIM" -> trimShares(shares);
             default -> 0.0;
         };
-        OrderTicket ticket = new OrderTicket(action, item.ticker(), ticketShares,
+        OrderTicket ticket = new OrderTicket(action, position.symbol(), ticketShares,
                 close, activeStop, target);
 
         boolean targetReached = target != null && activeStop != null
                 && target.compareTo(activeStop) <= 0;
 
         return new MorningReportLine(
-                item.ticker(), item.companyName(), shares, item.entryPrice(),
+                position.symbol(), position.symbol(), shares, position.avgPrice().doubleValue(),
                 close, activeStop, target, distancePct,
                 action,
                 thesisStatus,
@@ -112,10 +123,14 @@ public class MorningReportService {
                 ticket, targetReached);
     }
 
-    private boolean isHeld(WatchlistItem item) {
-        return "HELD".equals(item.tag())
-                && item.entryPrice() != null
-                && item.shareCount() != null;
+    /** Derived from the depot's live market value / quantity -- the depot carries no explicit
+     *  "current close" field, but marketValue is quantity * current price. Null when either is
+     *  missing or the position has zero quantity (division-by-zero guard). */
+    private static BigDecimal currentClose(HeldPosition position) {
+        BigDecimal marketValue = position.marketValue();
+        BigDecimal quantity = position.quantity();
+        if (marketValue == null || quantity == null || quantity.signum() == 0) return null;
+        return marketValue.divide(quantity, 4, RoundingMode.HALF_UP);
     }
 
     /** One third of the position for a TRIM ticket. Whole-share positions keep
