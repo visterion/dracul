@@ -3,7 +3,12 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.prey.Prey;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -20,9 +25,11 @@ import java.util.UUID;
 public class PreySignalMapper {
 
     private final AgentVersionResolver versions;
+    private final ObjectMapper mapper;
 
-    public PreySignalMapper(AgentVersionResolver versions) {
+    public PreySignalMapper(AgentVersionResolver versions, ObjectMapper mapper) {
         this.versions = versions;
+        this.mapper = mapper;
     }
 
     public ExecutorSignal map(Prey p) {
@@ -41,6 +48,20 @@ public class PreySignalMapper {
                 p.horizon(),
                 null,                          // referencePrice — resolved at execution time
                 "PENDING",                     // matches the inject seam's literal status
-                null);                         // createdAt — DB defaults to now(), like inject
+                null,                          // createdAt — DB defaults to now(), like inject
+                thesisSnapshot(p));
+    }
+
+    /** Prey → the same snapshot shape the reconciler builds from a verdict
+     *  (PositionReconciler.thesisSnapshot). Null (no husk) when the Prey has no thesis. */
+    private JsonNode thesisSnapshot(Prey p) {
+        if (p.thesis() == null) return null;
+        Map<String, Object> t = new LinkedHashMap<>();
+        t.put("summary", p.thesis());
+        t.put("signals", p.signals());
+        t.put("risks", p.risks());
+        t.put("anomalyTypes", Collections.singletonList(p.anomalyType())); // null-safe (List.of NPEs on null)
+        t.put("horizon", p.horizon());
+        return mapper.valueToTree(t);
     }
 }

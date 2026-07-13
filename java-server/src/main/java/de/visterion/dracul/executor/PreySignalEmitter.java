@@ -85,7 +85,7 @@ public class PreySignalEmitter {
             BigDecimal ref = lv.available() ? lv.referencePrice() : null;
             signalRepo.insert(new ExecutorSignal(s.signalId(), s.source(), s.agentVersion(),
                     s.symbol(), s.direction(), s.confidence(), s.mechanism(), s.killCriteria(),
-                    s.horizon(), ref, s.status(), s.createdAt()));
+                    s.horizon(), ref, s.status(), s.createdAt(), s.thesis()));
             pendingSymbols.add(symbol); // guard against duplicate symbols within this batch
             emitted++;
         }

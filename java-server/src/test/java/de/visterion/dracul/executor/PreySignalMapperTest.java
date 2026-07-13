@@ -2,6 +2,8 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.prey.Prey;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -12,7 +14,8 @@ import static org.mockito.Mockito.when;
 class PreySignalMapperTest {
 
     private final AgentVersionResolver versions = mock(AgentVersionResolver.class);
-    private final PreySignalMapper mapper = new PreySignalMapper(versions);
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final PreySignalMapper mapper = new PreySignalMapper(versions, objectMapper);
 
     private Prey samplePrey() {
         return new Prey(
@@ -21,6 +24,14 @@ class PreySignalMapperTest {
                 List.of("Dropped from parent's index"), List.of("Thin float"),
                 List.of("Close below 90.00"),
                 "6m", "strigoi-spin", "2026-07-08T10:00:00Z");
+    }
+
+    private Prey preyWith(String symbol, String anomalyType, String thesis, List<String> signals,
+            List<String> risks, String horizon, List<String> killCriteria, double confidence) {
+        return new Prey(
+                "prey-" + symbol, symbol, symbol + " Corp", anomalyType,
+                confidence, thesis, signals, risks, killCriteria,
+                horizon, "strigoi-spin", "2026-07-08T10:00:00Z");
     }
 
     @Test
@@ -62,5 +73,23 @@ class PreySignalMapperTest {
         assertThat(a.signalId()).isNotBlank();
         assertThat(b.signalId()).isNotBlank();
         assertThat(a.signalId()).isNotEqualTo(b.signalId()); // freshly generated each call
+    }
+
+    @Test
+    void map_buildsThesisSnapshotFromPrey() {
+        Prey p = preyWith("HELE", "PEAD", "big beat", List.of("sig1"), List.of("risk1"),
+                "1M", List.of("drift reverses"), 0.7);
+        ExecutorSignal s = mapper.map(p);
+        JsonNode thesis = s.thesis();
+        assertThat(thesis).isNotNull();
+        assertThat(thesis.get("summary").asString()).isEqualTo("big beat");
+        assertThat(thesis.get("anomalyTypes").get(0).asString()).isEqualTo("PEAD");
+        assertThat(thesis.get("horizon").asString()).isEqualTo("1M");
+    }
+
+    @Test
+    void map_nullThesis_yieldsNullThesisColumn() {
+        Prey p = preyWith("HELE", "PEAD", null, List.of(), List.of(), "1M", List.of(), 0.7);
+        assertThat(mapper.map(p).thesis()).isNull();   // no {summary:null,...} husk
     }
 }
