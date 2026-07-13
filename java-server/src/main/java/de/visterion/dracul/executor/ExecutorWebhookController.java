@@ -504,8 +504,24 @@ public class ExecutorWebhookController {
         // (which has no null guards) with absent inputs.
         BigDecimal orderPrice;
         Sizing sizing;
+        StopWindow window = null;
+        BigDecimal proposedStop = stopPrice;
+        boolean stopClamped = false;
         if (ctx.missing() == null || ctx.missing().isEmpty()) {
+            // Risk layer is authoritative over the stop. Compute the sizer's stop window (pure fn
+            // of side/price/ATR/swing-low, independent of the proposed stop), clamp the LLM's
+            // proposed stop into it, then size from the clamped stop. NO_STOP can no longer fire
+            // on LLM input; it remains only as OrderGuard's defensive guard against a broken
+            // (null) server window.
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
+            window = sizer.stopWindow(side, orderPrice, ctx.atr(), ctx.swingLow());
+            if (window.stopMin() != null && window.stopMax() != null) {
+                BigDecimal clamped = stopPrice;
+                if (clamped == null || clamped.compareTo(window.stopMin()) < 0) clamped = window.stopMin();
+                else if (clamped.compareTo(window.stopMax()) > 0) clamped = window.stopMax();
+                stopClamped = (stopPrice == null) || clamped.compareTo(stopPrice) != 0;
+                stopPrice = clamped;               // authoritative stop used by guard, booking, take-profit
+            }
             sizing = sizer.size(side, orderPrice, ctx.atr(), ctx.swingLow(), stopPrice,
                     ctx.trancheAmount(), ctx.fxToAccount());
         } else {
@@ -669,6 +685,10 @@ public class ExecutorWebhookController {
                 orderJson.put("r_per_share", sizing.rPerShare());
                 orderJson.put("position_risk", sizing.newRiskAccountCcy());
                 orderJson.put("gtd_days", entryGtdDays);
+                orderJson.put("stop_clamped", stopClamped);
+                orderJson.put("proposed_stop", proposedStop);
+                orderJson.put("stop_min", window != null ? window.stopMin() : null);
+                orderJson.put("stop_max", window != null ? window.stopMax() : null);
                 logEntryDecision(runId, signal, ctx, orderPrice, veto, "ENTER", null, orderJson,
                         confidence, clock.instant());
             } catch (RuntimeException e) {

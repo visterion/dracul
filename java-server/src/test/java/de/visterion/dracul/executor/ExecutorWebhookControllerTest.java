@@ -211,6 +211,20 @@ class ExecutorWebhookControllerTest {
         return mapper.readTree(s);
     }
 
+    /** Builds a controller identical to {@link #controller} but wired with a caller-supplied
+     *  {@link PositionSizer} — used to force a defensive null stop window (real
+     *  {@link PositionSizer} never returns one; only a mock can simulate a broken server window). */
+    private ExecutorWebhookController controllerWithSizer(PositionSizer customSizer) {
+        return new ExecutorWebhookController(
+                signalRepo, positionRepo, decisionRepo,
+                new VetoService(), new OrderGuard(), gateway, executorIndicators,
+                pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
+                assembler, customSizer, ranker, tranche2Detector, telegram, positionContextRepo,
+                "tkn", "depot-1", 0.6, 3, 22, 20, 10,
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
+                2, 3, fixedClock);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> outputOf(ResponseEntity<?> resp) {
         return (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
@@ -374,14 +388,23 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
-    void placeEntry_orderGuardWrongStop_noBrokerCall() {
+    void placeEntry_serverWindowNull_defensiveNoStop() {
+        // Real PositionSizer never returns a null window; only a mocked one simulates a broken
+        // server window, exercising OrderGuard's defensive NO_STOP path (the only way NO_STOP can
+        // still fire post-clamp).
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        PositionSizer brokenSizer = mock(PositionSizer.class);
+        when(brokenSizer.stopWindow(any(), any(), any(), any()))
+                .thenReturn(new StopWindow(null, null, "broken"));
+        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new Sizing(new BigDecimal("10"), new BigDecimal("5"),
+                        new BigDecimal("50"), null, null, true, "broken"));
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":105}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY"}
                 """);
 
-        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+        ResponseEntity<?> resp = controllerWithSizer(brokenSizer).placeEntry(BEARER, null, body);
 
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("placed")).isEqualTo(false);
@@ -398,14 +421,20 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
-    void placeEntry_orderGuardReject_writesRichDecisionLog() {
+    void placeEntry_serverWindowNull_writesRichDecisionLog() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        PositionSizer brokenSizer = mock(PositionSizer.class);
+        when(brokenSizer.stopWindow(any(), any(), any(), any()))
+                .thenReturn(new StopWindow(null, null, "broken"));
+        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new Sizing(new BigDecimal("10"), new BigDecimal("5"),
+                        new BigDecimal("50"), null, null, true, "broken"));
 
         JsonNode body = json("""
-                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":105}
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY"}
                 """);
 
-        controller.placeEntry(BEARER, "run-8", body);
+        controllerWithSizer(brokenSizer).placeEntry(BEARER, "run-8", body);
 
         ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(captor.capture());
@@ -416,6 +445,134 @@ class ExecutorWebhookControllerTest {
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
         assertThat(log.vetoResults().size()).isEqualTo(14);
+    }
+
+    // -------------------------------------------------------------------
+    // place-entry: stop clamp — risk layer is authoritative over the LLM's proposed stop
+    // -------------------------------------------------------------------
+    //
+    // happyContext(): price=100, atr=2, no swingLow -> BUY stop window [93.5, 95]
+    // (stopMin=floor=100-6-0.5=93.5, stopMax=anchor=100-5=95).
+
+    @Test
+    void placeEntry_stopInWindow_usedUnchanged() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":94}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-1", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("94");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("stop_clamped").asBoolean()).isFalse();
+        assertThat(order.path("proposed_stop").asDouble()).isEqualTo(94.0);
+        assertThat(order.path("stop_min").asDouble()).isEqualTo(93.5);
+        assertThat(order.path("stop_max").asDouble()).isEqualTo(95.0);
+    }
+
+    @Test
+    void placeEntry_stopTooTight_clampedToStopMax() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        // Model stop (98) is closer to price (100) than stopMax (95) allows -> clamp down to 95.
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":98}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-2", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(decisionRepo, never()).insert(argThat(d -> "NO_STOP".equals(d.rejectReason())));
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("95");
+        // qty is re-sized from the clamped stop (r_per_share=100-95=5 -> risk 1000*0.06... still
+        // floored by tranche 1000/100=10 shares, unaffected here, but stop leg reflects the clamp).
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("stop_price").asDouble()).isEqualTo(95.0);
+        assertThat(order.path("stop_clamped").asBoolean()).isTrue();
+        assertThat(order.path("proposed_stop").asDouble()).isEqualTo(98.0);
+        assertThat(order.path("stop_min").asDouble()).isEqualTo(93.5);
+        assertThat(order.path("stop_max").asDouble()).isEqualTo(95.0);
+    }
+
+    @Test
+    void placeEntry_stopTooWide_clampedToStopMin() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        // Model stop (90) is further from price than stopMin (93.5) allows -> clamp up to 93.5.
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":90}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-3", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("93.5");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("stop_price").asDouble()).isEqualTo(93.5);
+        assertThat(order.path("stop_clamped").asBoolean()).isTrue();
+        assertThat(order.path("proposed_stop").asDouble()).isEqualTo(90.0);
+        assertThat(order.path("stop_min").asDouble()).isEqualTo(93.5);
+        assertThat(order.path("stop_max").asDouble()).isEqualTo(95.0);
+    }
+
+    @Test
+    void placeEntry_nullStop_clampedToStopMin_noNpe() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        // stop_price entirely omitted -> null proposed stop, clamps to stopMin (93.5), no NPE.
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY"}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-4", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("93.5");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("stop_price").asDouble()).isEqualTo(93.5);
+        assertThat(order.path("stop_clamped").asBoolean()).isTrue();
+        assertThat(order.path("proposed_stop").isNull()).isTrue();
+        assertThat(order.path("stop_min").asDouble()).isEqualTo(93.5);
+        assertThat(order.path("stop_max").asDouble()).isEqualTo(95.0);
     }
 
     @Test
