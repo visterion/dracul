@@ -2,9 +2,11 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
+import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
@@ -22,6 +24,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -894,6 +897,61 @@ class ExecutorWebhookControllerTest {
 
         verify(signalRepo).markStatus("sig-1", "ACCEPTED");
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    // -------------------------------------------------------------------
+    // place-entry: idempotent retry after a prior BROKER_ERROR — adopt the existing
+    // broker order via clientRef instead of placing a second one.
+    // -------------------------------------------------------------------
+
+    @Test
+    void placeEntry_retryWithExistingBrokerOrder_adoptsNotReplaces() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                        new BigDecimal("10"), BigDecimal.ZERO, null, null)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-existing");
+
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().brokerOrderId()).isEqualTo("brk-existing");
+
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+    }
+
+    @Test
+    void placeEntry_firstAttempt_doesNotCallOrderByRef() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(0);
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-1");
+
+        verify(gateway, never()).orderByRef(any(), any());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
     }
 
     // -------------------------------------------------------------------
