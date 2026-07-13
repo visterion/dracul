@@ -155,7 +155,7 @@ class AgoraExecutionGatewayTest {
         JsonNode args = gw.capturedArgs;
         assertThat(args.path("connection").asString()).isEqualTo("depot-1");
         assertThat(args.path("symbol").asString()).isEqualTo("ACME");
-        assertThat(args.path("side").asString()).isEqualTo("BUY");
+        assertThat(args.path("side").asString()).isEqualTo("buy");
         assertThat(args.has("qty")).isTrue();
         // Agora requires camelCase arg names on the wire.
         assertThat(args.has("stopLossStop")).isTrue();
@@ -172,6 +172,26 @@ class AgoraExecutionGatewayTest {
         assertThat(result.stopLegId()).isEqualTo("stop-1");
         assertThat(result.takeProfitLegId()).isEqualTo("tp-1");
         assertThat(result.status()).isEqualTo(OrderStatus.WORKING);
+    }
+
+    @Test void placeBracketLowercasesSideForAgora() {
+        // Root cause: Agora's PlaceBracketTool validates `side` case-sensitively against
+        // lowercase "buy"/"sell", but Dracul's domain uses uppercase BUY/SELL end-to-end.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orderId":"brk-1","stopLegId":"stop-1","takeProfitLegId":"tp-1",
+                    "clientRef":"sig-1","status":"working"}}
+                """);
+
+        BracketRequest buyReq = new BracketRequest("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("110"), "sig-1", "DAY");
+        gw.placeBracket("depot-1", buyReq);
+        assertThat(gw.capturedArgs.path("side").asString()).isEqualTo("buy");
+
+        BracketRequest sellReq = new BracketRequest("ACME", "SELL", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("110"), "sig-1", "DAY");
+        gw.placeBracket("depot-1", sellReq);
+        assertThat(gw.capturedArgs.path("side").asString()).isEqualTo("sell");
     }
 
     @Test void placeBracketOmitsOptionalArgs() {
