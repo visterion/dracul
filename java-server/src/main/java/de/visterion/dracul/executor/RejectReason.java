@@ -2,8 +2,10 @@ package de.visterion.dracul.executor;
 
 /**
  * Code-enforced rejection reasons. Slice 1 wired SCHEMA_INVALID, LOW_CONFIDENCE, MAX_POSITIONS.
- * The full 14-veto catalog (Task 5) adds the entry-completeness vetos plus the DATA_UNAVAILABLE
- * pre-veto that short-circuits evaluation when {@code EntryContext.missing()} is non-empty.
+ * The full 15-veto catalog (Task 5) adds the entry-completeness vetos plus the DATA_UNAVAILABLE
+ * pre-veto that short-circuits evaluation when {@code EntryContext.missing()} is non-empty, and
+ * the BELOW_ANCHOR anchor guard that rejects entries on the invalidating side of the reference
+ * price anchor.
  */
 public enum RejectReason {
     DATA_UNAVAILABLE,
