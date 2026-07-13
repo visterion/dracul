@@ -44,7 +44,7 @@ test.describe('Backtest View (/backtest)', () => {
 
   test('overview tab is active by default and shows the equity chart', async ({ page }) => {
     await expect(page.locator('[data-testid="restab-overview"]')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.chart-card .svg-chart')).toBeVisible()
+    await expect(page.locator('.chart-card .price-chart')).toBeVisible()
   })
 
   test('clicking trades tab shows trades table', async ({ page }) => {
@@ -54,16 +54,16 @@ test.describe('Backtest View (/backtest)', () => {
     await expect(page.locator('table.dt tbody tr').first()).toBeVisible()
   })
 
-  test('clicking equity tab shows SVG chart', async ({ page }) => {
+  test('clicking equity tab shows equity chart', async ({ page }) => {
     await page.click('[data-testid="restab-equity"]')
     await expect(page.locator('[data-testid="restab-equity"]')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.chart-card .svg-chart')).toBeVisible()
+    await expect(page.locator('.chart-card .price-chart')).toBeVisible()
   })
 
   test('clicking compare tab shows the chart card', async ({ page }) => {
     await page.click('[data-testid="restab-compare"]')
     await expect(page.locator('[data-testid="restab-compare"]')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.locator('.chart-card .svg-chart')).toBeVisible()
+    await expect(page.locator('.chart-card .price-chart')).toBeVisible()
   })
 
   test('switching from chart to trades changes content', async ({ page }) => {

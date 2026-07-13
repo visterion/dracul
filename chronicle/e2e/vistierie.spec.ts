@@ -24,8 +24,8 @@ test.describe('Vistierie (Schatzkammer) embedded in Settings', () => {
     await expect(page.locator('.as-name').first()).toContainText('strigoi-spin')
   })
 
-  test('renders the SVG daily-spend chart (no ApexCharts)', async ({ page }) => {
-    await expect(page.locator('.chart-card svg.svg-chart').first()).toBeVisible()
+  test('renders the daily-spend chart (no ApexCharts)', async ({ page }) => {
+    await expect(page.locator('.chart-card .price-chart').first()).toBeVisible()
     await expect(page.locator('.apexcharts-canvas')).toHaveCount(0)
   })
 
