@@ -1,7 +1,7 @@
 {
   "daywalker": { "version": "1.0.0", "body_hash": "p-64bef970682b" },
   "daywalker-deep": { "version": "1.0.0", "body_hash": "p-0df7da2f19a0" },
-  "executor": { "version": "1.0.0", "body_hash": "p-766853df4624" },
+  "executor": { "version": "1.0.0", "body_hash": "p-b1bf1adc3707" },
   "gropar": { "version": "1.0.0", "body_hash": "p-625d2484ce49" },
   "strigoi-echo": { "version": "1.2.0", "body_hash": "p-2e391863f596" },
   "strigoi-index": { "version": "2.0.0", "body_hash": "p-f86e097e4f5a" },
