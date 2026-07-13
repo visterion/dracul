@@ -302,7 +302,7 @@ const chartLabels = computed(() => {
 .dp-order-side.tone-ash { color: var(--ash-gray-light); }
 .dp-order-arrow { font-size: var(--text-micro); }
 
-@media (max-width: 420px) {
+@media (max-width: 600px) {
   .dp-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
   .dp-stats :deep(.st-value) { font-size: var(--text-body-lg); }
   .dp-headline-value { font-size: 22px; }
