@@ -2,9 +2,8 @@ package de.visterion.dracul.stopguard;
 
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
-import de.visterion.dracul.watchlist.PositionRisk;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -17,86 +16,99 @@ import static org.mockito.Mockito.*;
 
 class StopProximityWatcherTest {
 
-    private final WatchlistRepository watchlist = mock(WatchlistRepository.class);
+    private static final String CONNECTION = "depot-1";
+
+    private final HeldPositionService heldPositions = mock(HeldPositionService.class);
     private final AgoraMarketData marketData = mock(AgoraMarketData.class);
     private final StopAlertEmitter emitter = mock(StopAlertEmitter.class);
     private final StopProximityWatcher watcher =
-            new StopProximityWatcher(watchlist, marketData, emitter, 0.5);
+            new StopProximityWatcher(heldPositions, marketData, emitter, 0.5, CONNECTION, "");
 
-    /** Back-compat 16-arg WatchlistItem constructor. Only id, ticker, tag="HELD",
-     *  entryPrice=100.0, shareCount=10.0, owner matter to the watcher. */
-    private static WatchlistItem held(String id, String ticker, String owner) {
-        return new WatchlistItem(
-                id,          // id
-                ticker,      // ticker
-                "Test Co",   // companyName
-                105.0,       // currentPrice
-                0.0,         // dayChangePercent
-                "calm",      // status
-                "2026-01-01",// addedAt
-                "HELD",      // tag
-                null,        // verdictId
-                List.of(),   // alerts
-                List.of(),   // priceHistory30d
-                100.0,       // entryPrice
-                10.0,        // shareCount
-                owner,       // owner
-                "USD",       // currency
-                "USD"        // entryCurrency
-        );
+    /** A held depot position with full research context (verdict, kill criteria, stops). */
+    private static HeldPosition withContext(String symbol, String verdictId, BigDecimal activeStop) {
+        return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1000"), new BigDecimal("0"), verdictId, null, "6m", null,
+                new BigDecimal("90"), activeStop, "reconcile", "2026-01-01T00:00:00Z");
+    }
+
+    /** A held depot position with no context row at all -- TA-only, everything context-shaped
+     *  is null (mirrors {@code HeldPositionService.join}'s no-context branch). */
+    private static HeldPosition noContext(String symbol) {
+        return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1000"), new BigDecimal("0"), null, null, null, null, null, null,
+                null, null);
     }
 
     @Test
-    void evaluatesEachHeldPositionAndEmitsProximity() {
-        var item = held("11111111-1111-1111-1111-111111111111", "AAA", "alice");
-        when(watchlist.findAll()).thenReturn(List.of(item));
-        when(watchlist.positionRiskByItemId()).thenReturn(Map.of(item.id(),
-                new PositionRisk(item.id(), "2026-01-01", new BigDecimal("90"),
-                        new BigDecimal("100"), new BigDecimal("130"),
-                        new BigDecimal("105"), new BigDecimal("10"))));
-        // price 103, stop 100, atr 10, mult 0.5 -> band 105 -> PROXIMITY
+    void positionWithContextStopAndPriceAtStopEmitsBreach() {
+        var position = withContext("AAA", "11111111-1111-1111-1111-111111111111", new BigDecimal("100"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+        // price 100 == stop 100 -> BREACHED regardless of the (unavailable) ATR band.
         when(marketData.quotes(anyCollection()))
-                .thenReturn(Map.of("AAA", new Quote(new BigDecimal("103"), BigDecimal.ZERO)));
+                .thenReturn(Map.of("AAA", new Quote(new BigDecimal("100"), BigDecimal.ZERO)));
 
         watcher.poll();
 
         verify(marketData, times(1)).quotes(anyCollection());
-        verify(emitter).emit(eq("alice"), eq(item.id()), eq("AAA"),
-                eq(StopZone.PROXIMITY), eq(new BigDecimal("103")),
+        verify(emitter).emit(eq("default"), eq("11111111-1111-1111-1111-111111111111"), eq("AAA"),
+                eq(StopZone.BREACHED), eq(new BigDecimal("100")),
                 eq(new BigDecimal("100")), any(Instant.class));
     }
 
     @Test
-    void skipsPositionsWithoutSnapshot() {
-        var item = held("11111111-1111-1111-1111-111111111111", "AAA", "alice");
-        when(watchlist.findAll()).thenReturn(List.of(item));
-        when(watchlist.positionRiskByItemId()).thenReturn(Map.of());   // no snapshot
-        watcher.poll();
+    void nullContextPositionSkipsWithoutError() {
+        var position = noContext("AAA");
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+
+        watcher.poll();   // must not throw
+
         verifyNoInteractions(marketData);
         verifyNoInteractions(emitter);
     }
 
     @Test
     void priceFetchFailureSkipsTickWithoutThrowing() {
-        var item = held("11111111-1111-1111-1111-111111111111", "AAA", "alice");
-        when(watchlist.findAll()).thenReturn(List.of(item));
-        when(watchlist.positionRiskByItemId()).thenReturn(Map.of(item.id(),
-                new PositionRisk(item.id(), "2026-01-01", null,
-                        new BigDecimal("100"), null, null, new BigDecimal("10"))));
+        var position = withContext("AAA", "11111111-1111-1111-1111-111111111111", new BigDecimal("100"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
         when(marketData.quotes(anyCollection())).thenThrow(new RuntimeException("429"));
+
         watcher.poll();   // must not throw
+
         verifyNoInteractions(emitter);
     }
 
     @Test
-    void missingQuoteForTickerSkipsThatPosition() {
-        var item = held("11111111-1111-1111-1111-111111111111", "AAA", "alice");
-        when(watchlist.findAll()).thenReturn(List.of(item));
-        when(watchlist.positionRiskByItemId()).thenReturn(Map.of(item.id(),
-                new PositionRisk(item.id(), "2026-01-01", null,
-                        new BigDecimal("100"), null, null, new BigDecimal("10"))));
+    void missingQuoteForSymbolSkipsThatPosition() {
+        var position = withContext("AAA", "11111111-1111-1111-1111-111111111111", new BigDecimal("100"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
         when(marketData.quotes(anyCollection())).thenReturn(Map.of());   // no AAA quote
+
         watcher.poll();
+
+        verifyNoInteractions(emitter);
+    }
+
+    @Test
+    void depotUnavailableYieldsEmptyPositionsAndNoOp() {
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of());
+
+        watcher.poll();
+
+        verifyNoInteractions(marketData);
+        verifyNoInteractions(emitter);
+    }
+
+    @Test
+    void contextStopWithoutLinkedVerdictSkipsWithoutError() {
+        // A context row can exist with a frozen stop but no linked verdict (TA-only backfill,
+        // PositionReconciler's "source: none" path) -- there is nowhere to persist the alert.
+        var position = withContext("AAA", null, new BigDecimal("100"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+        when(marketData.quotes(anyCollection()))
+                .thenReturn(Map.of("AAA", new Quote(new BigDecimal("100"), BigDecimal.ZERO)));
+
+        watcher.poll();   // must not throw
+
         verifyNoInteractions(emitter);
     }
 }

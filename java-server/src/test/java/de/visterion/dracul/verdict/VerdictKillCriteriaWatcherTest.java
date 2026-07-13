@@ -4,16 +4,16 @@ import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.events.VerdictKillCriteriaBreachedEvent;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
-import de.visterion.dracul.prey.Prey;
-import de.visterion.dracul.prey.PreyRepository;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.context.ApplicationEventPublisher;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -25,9 +25,11 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class VerdictKillCriteriaWatcherTest {
 
+    private static final String CONNECTION = "depot-1";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    @Mock HeldPositionService heldPositions;
     @Mock VerdictRepository verdictRepo;
-    @Mock WatchlistRepository watchlistRepo;
-    @Mock PreyRepository preyRepo;
     @Mock AgoraMarketData marketData;
     @Mock ApplicationEventPublisher events;
 
@@ -36,21 +38,25 @@ class VerdictKillCriteriaWatcherTest {
     @BeforeEach
     void setUp() {
         watcher = new VerdictKillCriteriaWatcher(
-                verdictRepo, watchlistRepo, preyRepo, marketData,
-                new KillCriteriaEvaluator(), events);
+                heldPositions, verdictRepo, marketData, new KillCriteriaEvaluator(), events,
+                CONNECTION, "");
     }
 
-    private Prey preyWithKillCriteria(String id, List<String> killCriteria) {
-        return new Prey(id, "ABC", "ABC Corp", "SPINOFF", 0.7, "thesis",
-                List.of(), List.of(), killCriteria, "6m", "strigoi-spin", "2026-01-01T00:00:00Z");
+    private static JsonNode criteria(String... criteria) {
+        return MAPPER.valueToTree(List.of(criteria));
+    }
+
+    private static HeldPosition held(String symbol, String verdictId, JsonNode killCriteria) {
+        return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1000"), new BigDecimal("0"), verdictId, killCriteria, "6m", null,
+                null, null, "reconcile", "2026-01-01T00:00:00Z");
     }
 
     @Test
-    void breachOnWatchedVerdict_persistsAndPublishes() {
-        when(verdictRepo.findOpenForKillCheck()).thenReturn(List.of(
-                new VerdictRepository.OpenVerdictForCheck("v1", "u1", "ABC", List.of("p1"), List.of())));
-        when(watchlistRepo.findAll()).thenReturn(List.of()); // nothing held
-        when(preyRepo.findByIds(List.of("p1"))).thenReturn(List.of(preyWithKillCriteria("p1", List.of("Close below 90"))));
+    void breachOnHeldPositionPersistsAndPublishes() {
+        var position = held("ABC", "v1", criteria("Close below 90"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+        when(verdictRepo.killCriteriaBreachedFor("v1")).thenReturn(List.of());
         when(marketData.quotes(anyCollection())).thenReturn(Map.of("ABC", new Quote(new BigDecimal("85"), null)));
 
         watcher.poll();
@@ -61,15 +67,11 @@ class VerdictKillCriteriaWatcherTest {
     }
 
     @Test
-    void heldSymbolsAreSkipped() {
-        when(verdictRepo.findOpenForKillCheck()).thenReturn(List.of(
-                new VerdictRepository.OpenVerdictForCheck("v1", "u1", "ABC", List.of("p1"), List.of())));
-        WatchlistItem held = new WatchlistItem(
-                "w1", "ABC", "ABC Corp", 85.0, 0.0, "calm", "2026-01-01", "HELD",
-                null, List.of(), List.of(), 100.0, 10.0, "u1", "USD", "USD");
-        when(watchlistRepo.findAll()).thenReturn(List.of(held));
+    void nullKillCriteriaSkipsPositionWithoutError() {
+        var position = held("ABC", "v1", null);
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
 
-        watcher.poll();
+        watcher.poll();   // must not throw
 
         verify(marketData, never()).quotes(anyCollection());
         verify(verdictRepo, never()).markKillCriteriaBreached(anyString(), any());
@@ -77,35 +79,32 @@ class VerdictKillCriteriaWatcherTest {
     }
 
     @Test
-    void heldSkipIsScopedToTheVerdictOwner() {
-        // User A holds ABC; user B has an open verdict on ABC.
-        // A's own verdict on ABC is skipped; B's verdict IS evaluated.
-        when(verdictRepo.findOpenForKillCheck()).thenReturn(List.of(
-                new VerdictRepository.OpenVerdictForCheck("vA", "userA", "ABC", List.of("p1"), List.of()),
-                new VerdictRepository.OpenVerdictForCheck("vB", "userB", "ABC", List.of("p1"), List.of())));
-        WatchlistItem heldByA = new WatchlistItem(
-                "w1", "ABC", "ABC Corp", 85.0, 0.0, "calm", "2026-01-01", "HELD",
-                null, List.of(), List.of(), 100.0, 10.0, "userA", "USD", "USD");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldByA));
-        when(preyRepo.findByIds(List.of("p1"))).thenReturn(List.of(preyWithKillCriteria("p1", List.of("Close below 90"))));
-        when(marketData.quotes(anyCollection())).thenReturn(Map.of("ABC", new Quote(new BigDecimal("85"), null)));
+    void positionWithoutLinkedVerdictSkipsWithoutError() {
+        var position = held("ABC", null, criteria("Close below 90"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+
+        watcher.poll();   // must not throw
+
+        verify(marketData, never()).quotes(anyCollection());
+        verify(verdictRepo, never()).markKillCriteriaBreached(anyString(), any());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    void depotUnavailableYieldsEmptyPositionsAndNoOp() {
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of());
 
         watcher.poll();
 
-        verify(verdictRepo).markKillCriteriaBreached("vB", List.of("Close below 90"));
-        verify(verdictRepo, never()).markKillCriteriaBreached(eq("vA"), any());
-        verify(events).publishEvent(argThat((Object e) -> e instanceof VerdictKillCriteriaBreachedEvent b
-                && b.verdictId().equals("vB") && b.owner().equals("userB")));
-        verify(events, never()).publishEvent(argThat((Object e) -> e instanceof VerdictKillCriteriaBreachedEvent b
-                && b.verdictId().equals("vA")));
+        verify(marketData, never()).quotes(anyCollection());
+        verify(events, never()).publishEvent(any());
     }
 
     @Test
     void alreadyBreachedCriteriaDoNotRepublish() {
-        when(verdictRepo.findOpenForKillCheck()).thenReturn(List.of(
-                new VerdictRepository.OpenVerdictForCheck("v1", "u1", "ABC", List.of("p1"), List.of("Close below 90"))));
-        when(watchlistRepo.findAll()).thenReturn(List.of());
-        when(preyRepo.findByIds(List.of("p1"))).thenReturn(List.of(preyWithKillCriteria("p1", List.of("Close below 90"))));
+        var position = held("ABC", "v1", criteria("Close below 90"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+        when(verdictRepo.killCriteriaBreachedFor("v1")).thenReturn(List.of("Close below 90"));
         when(marketData.quotes(anyCollection())).thenReturn(Map.of("ABC", new Quote(new BigDecimal("85"), null)));
 
         watcher.poll();
@@ -118,10 +117,9 @@ class VerdictKillCriteriaWatcherTest {
     void breachesAreCumulative_priceRecoveryDoesNotUnbreach() {
         // Already breached "Close below 90"; price has recovered to 95 (fresh evaluation empty)
         // => the persisted breach stays (badge persists), and nothing is republished.
-        when(verdictRepo.findOpenForKillCheck()).thenReturn(List.of(
-                new VerdictRepository.OpenVerdictForCheck("v1", "u1", "ABC", List.of("p1"), List.of("Close below 90"))));
-        when(watchlistRepo.findAll()).thenReturn(List.of());
-        when(preyRepo.findByIds(List.of("p1"))).thenReturn(List.of(preyWithKillCriteria("p1", List.of("Close below 90"))));
+        var position = held("ABC", "v1", criteria("Close below 90"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+        when(verdictRepo.killCriteriaBreachedFor("v1")).thenReturn(List.of("Close below 90"));
         when(marketData.quotes(anyCollection())).thenReturn(Map.of("ABC", new Quote(new BigDecimal("95"), null)));
 
         watcher.poll();
@@ -135,12 +133,9 @@ class VerdictKillCriteriaWatcherTest {
         // Already breached "Close below 100"; the fresh evaluation additionally breaches
         // "Close below 90" => persisted union is ["Close below 100","Close below 90"],
         // and only the new criterion is published.
-        when(verdictRepo.findOpenForKillCheck()).thenReturn(List.of(
-                new VerdictRepository.OpenVerdictForCheck("v1", "u1", "ABC", List.of("p1"),
-                        List.of("Close below 100"))));
-        when(watchlistRepo.findAll()).thenReturn(List.of());
-        when(preyRepo.findByIds(List.of("p1"))).thenReturn(List.of(
-                preyWithKillCriteria("p1", List.of("Close below 100", "Close below 90"))));
+        var position = held("ABC", "v1", criteria("Close below 100", "Close below 90"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
+        when(verdictRepo.killCriteriaBreachedFor("v1")).thenReturn(List.of("Close below 100"));
         when(marketData.quotes(anyCollection())).thenReturn(Map.of("ABC", new Quote(new BigDecimal("85"), null)));
 
         watcher.poll();
