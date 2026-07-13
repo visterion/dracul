@@ -517,7 +517,7 @@ export default {
     positions: { empty: 'Keine Positionen in diesem Depot.' },
     orders: {
       title: 'Orders',
-      col: { symbol: 'Symbol', side: 'Richtung', qty: 'Stück', type: 'Typ', status: 'Status' },
+      col: { symbol: 'Symbol', side: 'Richtung', qty: 'Stück', type: 'Typ', status: 'Status', role: 'Rolle' },
       side: { buy: 'Kauf', sell: 'Verkauf' },
       type: { market: 'Market', limit: 'Limit', stop: 'Stop', stopLimit: 'Stop-Limit' },
       status: {

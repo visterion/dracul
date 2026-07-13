@@ -106,13 +106,23 @@
       <!-- ── Open orders ────────────────────────────────────── -->
       <div v-if="orders.length" class="dp-orders" data-testid="pd-orders">
         <div class="section-head">{{ t('depots.detail.orders') }}</div>
-        <div v-for="o in orders" :key="o.brokerOrderId" class="dp-order-row">
-          <span class="mono">{{ o.symbol }}</span>
-          <span class="dp-order-side">{{ o.side }}</span>
-          <span class="mono">{{ formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4) }}</span>
-          <span class="dp-order-type">{{ o.type }}</span>
-          <span class="dp-order-status">{{ o.status }}</span>
-          <span v-if="o.role" class="dp-order-role">{{ orderRoleLabel(o.role) }}</span>
+        <div class="pd-order-row pd-order-head">
+          <span>{{ t('depots.orders.col.side') }}</span>
+          <span>{{ t('depots.orders.col.qty') }}</span>
+          <span>{{ t('depots.orders.col.type') }}</span>
+          <span>{{ t('depots.orders.col.status') }}</span>
+          <span>{{ t('depots.orders.col.role') }}</span>
+        </div>
+        <div v-for="row in orderRows" :key="row.key" class="pd-order-row">
+          <span class="dp-order-side" :class="`tone-${row.side.tone}`">
+            <span v-if="row.side.arrow" class="dp-order-arrow" aria-hidden="true">{{ row.side.arrow }}</span>{{ row.side.label }}
+          </span>
+          <span class="mono">{{ row.qty }}</span>
+          <span class="dp-order-type">{{ row.type.label }}</span>
+          <span class="dp-order-status">
+            <TagPill :tone="row.status.tone">{{ row.status.label }}</TagPill>
+          </span>
+          <span class="dp-order-role">{{ row.role }}</span>
         </div>
       </div>
 
@@ -163,6 +173,7 @@ import BackLink from '../components/common/BackLink.vue'
 import StatTile from '../components/common/StatTile.vue'
 import PriceChart from '../components/common/PriceChart.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
+import TagPill from '../components/common/TagPill.vue'
 import InfoCardRow from '../components/depot/InfoCardRow.vue'
 import { useApi } from '../api'
 import type {
@@ -171,6 +182,7 @@ import type {
 import { useDisplayMode } from '../composables/useDisplayMode'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import { fmtPl, isStale, formatAbsoluteTime } from '../lib/depotDisplay'
+import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../lib/orderDisplay'
 import { formatMoney, formatNumber, formatPercent, pctClass } from '../utils/format'
 import { displayName } from '../utils/instrument'
 
@@ -255,6 +267,17 @@ function orderRoleLabel(role: string | null): string {
   if (key) return t(`depots.orders.role.${key}`)
   return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()
 }
+
+const orderRows = computed(() =>
+  orders.value.map(o => ({
+    key: o.brokerOrderId,
+    qty: formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4),
+    side: orderSideLabel(o.side, t),
+    type: orderTypeLabel(o.type, t),
+    status: orderStatusLabel(o.status, t),
+    role: orderRoleLabel(o.role),
+  })),
+)
 
 // ── Timeframe chart ─────────────────────────────────────────────
 
@@ -485,13 +508,34 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .pd-asof { font-size: var(--text-micro); color: var(--ash-gray); }
 .pd-asof.stale { color: var(--cathedral-gold); }
 
+.dp-orders { display: flex; flex-direction: column; gap: var(--space-2); }
+.pd-order-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-body-sm); color: var(--bone-ivory-dim); padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--rule);
+}
+.pd-order-head {
+  font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ash-gray); border-bottom: 1px solid var(--rule);
+}
+.dp-order-side { display: inline-flex; align-items: center; gap: 4px; }
+.dp-order-side.tone-green { color: var(--signal-positive-bright); }
+.dp-order-side.tone-crimson { color: var(--blood-crimson-bright); }
+.dp-order-side.tone-ash { color: var(--ash-gray-light); }
+.dp-order-arrow { font-size: var(--text-micro); }
 .dp-order-role { color: var(--cathedral-gold); font-size: var(--text-body-sm); }
 
 .icr-card {
   background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;
-  padding: var(--space-3) var(--space-4); min-width: 200px; display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-3) var(--space-4); min-width: 220px; max-width: min(78vw, 300px);
+  display: flex; flex-direction: column; gap: var(--space-1);
 }
-.icr-card-title { color: var(--bone-ivory); font-size: var(--text-body-sm); }
+.icr-card-title {
+  color: var(--bone-ivory); font-size: var(--text-body-sm);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; white-space: normal; line-height: 1.35;
+}
 .icr-card-sub { color: var(--ash-gray); font-size: var(--text-micro); }
 .icr-card-value { color: var(--cathedral-gold); font-size: var(--text-body); }
 .icr-card-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
