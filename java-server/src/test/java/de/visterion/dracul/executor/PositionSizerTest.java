@@ -97,4 +97,26 @@ class PositionSizerTest {
         Sizing s = sizer.size("BUY", bd("1200"), bd("10"), null, bd("1150"), bd("1000"), BigDecimal.ONE);
         assertThat(s.stopBasis()).isNull();
     }
+
+    // ---- stopWindow(...): must match the window size(...) produces ----
+
+    @Test
+    void stopWindowMatchesSizeBoundsBuy() {
+        var price = bd("100"); var atr = bd("2"); var swing = bd("95");
+        StopWindow w = sizer.stopWindow("BUY", price, atr, swing);
+        Sizing s = sizer.size("BUY", price, atr, swing, bd("96"), bd("1000"), BigDecimal.ONE);
+        assertThat(w.stopMin()).isEqualByComparingTo(s.stopMin());
+        assertThat(w.stopMax()).isEqualByComparingTo(s.stopMax());
+        assertThat(w.stopMin()).isLessThanOrEqualTo(w.stopMax());
+    }
+
+    @Test
+    void stopWindowMatchesSizeBoundsSell() {
+        var price = bd("100"); var atr = bd("2"); var swing = bd("105");
+        StopWindow w = sizer.stopWindow("SELL", price, atr, swing);
+        Sizing s = sizer.size("SELL", price, atr, swing, bd("104"), bd("1000"), BigDecimal.ONE);
+        assertThat(w.stopMin()).isEqualByComparingTo(s.stopMin());
+        assertThat(w.stopMax()).isEqualByComparingTo(s.stopMax());
+        assertThat(w.stopMin()).isLessThanOrEqualTo(w.stopMax());
+    }
 }

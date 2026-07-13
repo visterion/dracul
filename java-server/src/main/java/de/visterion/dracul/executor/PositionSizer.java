@@ -48,9 +48,40 @@ public class PositionSizer {
         }
 
         // Compute stop window based on side
-        BigDecimal stopMin, stopMax;
+        StopWindow w = stopWindow(side, price, atr, swingLow);
+        BigDecimal stopMin = w.stopMin();
+        BigDecimal stopMax = w.stopMax();
+        String stopBasis = w.stopBasis();
         BigDecimal rPerShare;
         boolean stopInWindow;
+
+        if ("BUY".equalsIgnoreCase(side)) {
+            rPerShare = price.subtract(stopPrice);
+            stopInWindow = stopPrice.compareTo(stopMin) >= 0 && stopPrice.compareTo(stopMax) <= 0;
+        } else {
+            rPerShare = stopPrice.subtract(price);
+            stopInWindow = stopPrice.compareTo(stopMin) >= 0 && stopPrice.compareTo(stopMax) <= 0;
+        }
+
+        // Risk calculation: qty × rPerShare × fxToAccount, scaled to 4 decimals with HALF_UP rounding
+        BigDecimal newRiskAccountCcy = qty.multiply(rPerShare).multiply(fxToAccount)
+                .setScale(4, RoundingMode.HALF_UP);
+
+        return new Sizing(qty, rPerShare, newRiskAccountCcy, stopMin, stopMax, stopInWindow, stopBasis);
+    }
+
+    /**
+     * Computes the protective-stop window (min/max/basis) for a side. Extracted from {@link #size}
+     * so the executor's risk layer can evaluate the window independently of a full sizing call.
+     *
+     * @param side "BUY" or "SELL"
+     * @param price entry price (instrument currency)
+     * @param atr average true range (instrument currency)
+     * @param swingLow recent swing low, nullable (instrument currency); null → use ATR-only baseline
+     * @return the stop window; {@code stopMin <= stopMax}
+     */
+    public StopWindow stopWindow(String side, BigDecimal price, BigDecimal atr, BigDecimal swingLow) {
+        BigDecimal stopMin, stopMax;
         String stopBasis;
 
         if ("BUY".equalsIgnoreCase(side)) {
@@ -71,8 +102,6 @@ public class PositionSizer {
 
             stopMax = anchor;
             stopMin = floor;
-            rPerShare = price.subtract(stopPrice);
-            stopInWindow = stopPrice.compareTo(floor) >= 0 && stopPrice.compareTo(anchor) <= 0;
 
         } else {
             // SELL: anchor = max(price + 2.5×atr, swingLow), floor uses max and +
@@ -92,15 +121,9 @@ public class PositionSizer {
 
             stopMin = anchor;  // For SELL, we swap min/max in the output
             stopMax = floor;
-            rPerShare = stopPrice.subtract(price);
-            stopInWindow = stopPrice.compareTo(anchor) >= 0 && stopPrice.compareTo(floor) <= 0;
         }
 
-        // Risk calculation: qty × rPerShare × fxToAccount, scaled to 4 decimals with HALF_UP rounding
-        BigDecimal newRiskAccountCcy = qty.multiply(rPerShare).multiply(fxToAccount)
-                .setScale(4, RoundingMode.HALF_UP);
-
-        return new Sizing(qty, rPerShare, newRiskAccountCcy, stopMin, stopMax, stopInWindow, stopBasis);
+        return new StopWindow(stopMin, stopMax, stopBasis);
     }
 
     /**
