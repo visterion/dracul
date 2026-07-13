@@ -131,6 +131,18 @@ Agora-side deploy step (`AGORA_TRADING_LIVE_TOKENS_READONLY` +
 `saxo-sim`→`depot-1` connection-key rename) that must land alongside these
 Dracul env vars.
 
+**Connection invariant.** `dracul.executor.connection` and
+`dracul.position.connection` must resolve to the **same** connection (both
+default `depot-1`). `PositionReconciler` only backfills/closes
+`position_context` rows for `dracul.position.connection`; the executor only
+opens/fills positions on `dracul.executor.connection`. If the two diverge,
+every executor-opened position's context write (`thesis_snapshot`,
+`kill_criteria`, `active_stop`) is silently invisible to gropar, stopguard,
+and the reconciler's verdict-link pass — they all read `position_context`
+keyed on `dracul.position.connection`, which would then never match the
+executor's actual connection. There is no runtime check for this; keep both
+properties in sync when overriding either one.
+
 ## Yahoo Finance (FX adapter)
 
 Yahoo is no longer a price/OHLC provider (Agora hosts those), and as of
