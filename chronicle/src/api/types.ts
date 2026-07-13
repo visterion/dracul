@@ -545,7 +545,7 @@ export interface DepotAccountView {
 export interface DepotOrderView {
   brokerOrderId: string
   symbol: string
-  side: string
+  side: string | null
   qty: number
   type: string
   status: string
