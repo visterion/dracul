@@ -516,7 +516,16 @@ export default {
     chart: { loading: 'Lade Kurve …', error: 'Kurve konnte nicht geladen werden.' },
     metric: { label: 'Kennzahl', sinceBuy: 'Seit Kauf', today: 'Heute' },
     positions: { empty: 'Keine Positionen in diesem Depot.' },
-    orders: { title: 'Orders' },
+    orders: {
+      title: 'Orders',
+      col: { symbol: 'Symbol', side: 'Richtung', qty: 'Stück', type: 'Typ', status: 'Status' },
+      side: { buy: 'Kauf', sell: 'Verkauf' },
+      type: { market: 'Market', limit: 'Limit', stop: 'Stop', stopLimit: 'Stop-Limit' },
+      status: {
+        active: 'aktiv', open: 'offen', filled: 'ausgeführt', partiallyFilled: 'teilausgeführt',
+        inactive: 'inaktiv', canceled: 'storniert', expired: 'verfallen', rejected: 'abgelehnt',
+      },
+    },
     table: {
       symbol: 'Symbol', qty: 'Stück', avgEntry: 'Ø Einstieg', price: 'Kurs',
       marketValue: 'Marktwert', pnl: 'G&V', dayChange: 'Heute', weight: 'Gewicht %',

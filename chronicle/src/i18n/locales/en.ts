@@ -516,7 +516,16 @@ export default {
     chart: { loading: 'Loading chart …', error: 'Could not load the chart.' },
     metric: { label: 'Metric', sinceBuy: 'Since buy', today: 'Today' },
     positions: { empty: 'No positions in this depot.' },
-    orders: { title: 'Orders' },
+    orders: {
+      title: 'Orders',
+      col: { symbol: 'Symbol', side: 'Side', qty: 'Qty', type: 'Type', status: 'Status' },
+      side: { buy: 'Buy', sell: 'Sell' },
+      type: { market: 'Market', limit: 'Limit', stop: 'Stop', stopLimit: 'Stop-Limit' },
+      status: {
+        active: 'active', open: 'open', filled: 'filled', partiallyFilled: 'partially filled',
+        inactive: 'inactive', canceled: 'canceled', expired: 'expired', rejected: 'rejected',
+      },
+    },
     table: {
       symbol: 'Symbol', qty: 'Qty', avgEntry: 'Avg entry', price: 'Price',
       marketValue: 'Market value', pnl: 'P&L', dayChange: 'Today', weight: 'Weight %',
