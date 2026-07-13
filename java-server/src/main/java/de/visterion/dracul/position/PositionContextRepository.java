@@ -163,6 +163,19 @@ public class PositionContextRepository {
                 .update();
     }
 
+    /** Mirrors the executor's live (ratcheted) stop into the OPEN context row so stopguard has a
+     *  level to compare price against. Case-insensitive (lower(symbol)); no-op if no OPEN row. */
+    public void updateActiveStopBySymbol(String connection, String symbol, BigDecimal activeStop) {
+        jdbc.sql("""
+                UPDATE position_context SET active_stop = :activeStop
+                 WHERE connection = :connection AND lower(symbol) = lower(:symbol) AND closed_at IS NULL
+                """)
+                .param("activeStop", activeStop)
+                .param("connection", connection)
+                .param("symbol", symbol)
+                .update();
+    }
+
     /** Closes the position context, stamping {@code closed_at = now()}. */
     public void markClosed(String id) {
         jdbc.sql("UPDATE position_context SET closed_at = now() WHERE id = :id")
