@@ -258,10 +258,16 @@ public class ExecutorWebhookController {
                 node.put("atr", levels.atr());
                 node.put("swing_low", levels.swingLow());
                 node.put("reference_price", levels.referencePrice());
+
+                StopWindow w = sizer.stopWindow(s.direction(), levels.referencePrice(), levels.atr(), levels.swingLow());
+                node.put("stop_min", w.stopMin());
+                node.put("stop_max", w.stopMax());
             } else {
                 node.put("atr", null);
                 node.put("swing_low", null);
                 node.put("reference_price", s.referencePrice());
+                node.put("stop_min", null);
+                node.put("stop_max", null);
             }
             signals.add(node);
         }
