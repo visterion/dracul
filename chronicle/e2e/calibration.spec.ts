@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('Executor Calibration card (/portfolio)', () => {
+test.describe('Executor Calibration card (/depots)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/portfolio')
+    await page.goto('/depots')
     await page.waitForLoadState('networkidle')
     await expect(page.getByTestId('calibration-card')).toBeVisible()
   })

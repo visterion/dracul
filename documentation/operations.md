@@ -201,7 +201,7 @@ live connection, not before.
 
 The `/depots` view (`GET /api/depots` + instrument bundle) reads live broker
 data through a dedicated read-only Agora client
-(`documentation/configuration.md#depots-portfoliopositions-view`). Bringing it
+(`documentation/configuration.md#depots-positions-view`). Bringing it
 up requires **two coordinated deploys, in this order** — Agora first, then
 Dracul:
 

@@ -17,7 +17,6 @@ export interface ApiClient {
   getStrigoiDetail(name: string): Promise<StrigoiDetail | null>
   triggerStrigoiRun(name: string): Promise<{ runId: string }>
   getWatchlistItems(): Promise<WatchlistItem[]>
-  getPortfolio(): Promise<WatchlistItem[]>
   getPatterns(): Promise<Pattern[]>
   getPatternCases(id: string): Promise<PatternCase[]>
   getProviders(): Promise<LlmProvider[]>

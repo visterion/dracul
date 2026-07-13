@@ -32,6 +32,11 @@
 
       <DepotSection v-if="selectedDepot" :key="selectedDepot.id" :depot="selectedDepot" />
     </template>
+
+    <div class="depots-calibration">
+      <SectionHeader :label="t('calibration.sectionLabel')" />
+      <CalibrationCard />
+    </div>
   </div>
 </template>
 
@@ -39,7 +44,9 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PageHead from '../components/common/PageHead.vue'
+import SectionHeader from '../components/common/SectionHeader.vue'
 import DepotSection from '../components/depot/DepotSection.vue'
+import CalibrationCard from '../components/CalibrationCard.vue'
 import { useApi } from '../api'
 import type { Depot } from '../api/types'
 
@@ -109,4 +116,5 @@ onMounted(load)
   border-radius: 4px; padding: var(--space-2) var(--space-4); font-size: var(--text-body);
   min-width: 240px;
 }
+.depots-calibration { margin-top: var(--space-8); }
 </style>

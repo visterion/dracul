@@ -16,7 +16,6 @@
         <TagPill :tone="badgeTone" class="ed-action">{{ signal.action }}</TagPill>
         <div class="ed-id">
           <h1 class="ed-sym mono">{{ signal.symbol }}</h1>
-          <div v-if="position && displayName(signal.symbol, position.companyName)" class="ed-name">{{ displayName(signal.symbol, position.companyName) }}</div>
         </div>
         <span class="ed-runat mono">{{ signal.runAt }}</span>
       </div>
@@ -46,15 +45,11 @@
       <template v-if="position">
         <SectionHeader :label="t('exitSignal.position')" />
         <div class="ed-pos mono">
-          <span>{{ t('exitSignal.posEntry') }} <MoneyDisplay :amount="position.entryPrice" :currency="position.currency" :native-amount="position.nativeEntryPrice" :native-currency="position.entryCurrency" /></span>
-          <span>{{ t('exitSignal.posSize') }} {{ fmt(position.shareCount) }}</span>
-          <span>{{ t('exitSignal.posCurrent') }} <MoneyDisplay :amount="position.currentPrice" :currency="position.currency" :native-amount="position.nativeCurrentPrice" :native-currency="position.nativeCurrency" /></span>
+          <span>{{ t('exitSignal.posEntry') }} {{ formatMoney(position.avgEntryPrice, position.currency) }}</span>
+          <span>{{ t('exitSignal.posSize') }} {{ fmt(position.qty) }}</span>
+          <span>{{ t('exitSignal.posCurrent') }} {{ formatMoney(position.price ?? position.avgEntryPrice, position.currency) }}</span>
           <span class="ed-pnl" :class="pnlPct >= 0 ? 'pos' : 'neg'">{{ formatPercent(pnlPct) }}</span>
         </div>
-        <router-link
-          v-if="position.verdictId" class="ed-verdict"
-          :to="{ name: 'verdict-detail', params: { id: position.verdictId } }"
-        >{{ t('exitSignal.verdictLink') }}</router-link>
       </template>
     </template>
   </div>
@@ -68,11 +63,9 @@ import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import ConfidenceBar from '../components/common/ConfidenceBar.vue'
 import TagPill from '../components/common/TagPill.vue'
-import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
-import type { WatchlistItem, ExitSignal } from '../api/types'
-import { formatNumber, formatPercent } from '../utils/format'
-import { displayName } from '../utils/instrument'
+import type { ExitSignal, DepotPositionView } from '../api/types'
+import { formatMoney, formatNumber, formatPercent } from '../utils/format'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -81,7 +74,7 @@ const api = useApi()
 
 const loading = ref(true)
 const signal = ref<ExitSignal | null>(null)
-const position = ref<WatchlistItem | null>(null)
+const position = ref<DepotPositionView | null>(null)
 
 const badgeTone = computed<'gold' | 'crimson' | 'green' | 'ash'>(() => {
   switch (signal.value?.action) {
@@ -92,8 +85,8 @@ const badgeTone = computed<'gold' | 'crimson' | 'green' | 'ash'>(() => {
 })
 const pnlPct = computed(() => {
   const p = position.value
-  if (!p || !p.entryPrice) return 0
-  return ((p.currentPrice - p.entryPrice) / p.entryPrice) * 100
+  if (!p || p.unrealizedPlPct == null) return 0
+  return p.unrealizedPlPct
 })
 
 function ruleText(r: string): string {
@@ -102,9 +95,20 @@ function ruleText(r: string): string {
   return txt === key ? r : txt
 }
 function fmt(n: number | null): string { return n == null ? '—' : formatNumber(n, 0) }
-function goBack() { router.push({ name: 'portfolio' }) }
+function goBack() { router.push({ name: 'depots' }) }
 
 let requestId = 0
+
+/** gropar exit signals are depot-sourced and keyed by symbol (not a watchlist-item
+ *  id) — resolve the position by scanning every depot connection's positions for
+ *  the signal's symbol. */
+function findPositionBySymbol(depots: DepotPositionView[][], symbol: string): DepotPositionView | null {
+  for (const positions of depots) {
+    const found = positions.find(p => p.symbol === symbol)
+    if (found) return found
+  }
+  return null
+}
 
 watch(() => route.params.id, async (raw) => {
   const current = ++requestId
@@ -113,12 +117,12 @@ watch(() => route.params.id, async (raw) => {
   position.value = null
   try {
     const id = String(raw)
-    const [sigs, items] = await Promise.all([api.getExitSignals(), api.getWatchlistItems()])
+    const [sigs, depotsRes] = await Promise.all([api.getExitSignals(), api.getDepots()])
     if (current !== requestId) return
     const s = sigs.find(x => x.id === id) ?? null
     signal.value = s
     if (s) {
-      position.value = items.find(i => i.id === s.watchlistItemId) ?? items.find(i => i.ticker === s.symbol) ?? null
+      position.value = findPositionBySymbol(depotsRes.depots.map(d => d.positions), s.symbol)
     }
   } finally {
     if (current === requestId) loading.value = false
@@ -130,7 +134,6 @@ watch(() => route.params.id, async (raw) => {
 .ed-head { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
 .ed-id { flex: 1 1 auto; }
 .ed-sym { color: var(--bone-ivory); font-size: 1.5rem; margin: 0; }
-.ed-name { color: var(--ash-gray); font-size: var(--text-body-sm); }
 .ed-runat { color: var(--ash-gray); font-size: var(--text-micro); }
 .ed-rationale { color: var(--bone-ivory); line-height: 1.6; }
 .ed-rules { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2); }
@@ -143,7 +146,6 @@ watch(() => route.params.id, async (raw) => {
 .ed-pos { display: flex; gap: var(--space-4); color: var(--ash-gray); flex-wrap: wrap; }
 .ed-pnl.pos { color: var(--cathedral-gold); }
 .ed-pnl.neg { color: var(--blood-crimson); }
-.ed-verdict { display: inline-block; margin-top: var(--space-3); color: var(--cathedral-gold); }
 
 /* Mobile: header and rule rows wrap instead of clipping. */
 @media (max-width: 959.98px) {
