@@ -84,7 +84,7 @@ class DepotChartServiceTest {
         AgoraClient agora = mock(AgoraClient.class);
         DepotChartService service = new DepotChartService(agora);
         List<DepotPosition> positions = List.of(
-                new DepotPosition("ACME", BigDecimal.TEN, null, null, null, null));
+                new DepotPosition("ACME", null, BigDecimal.TEN, null, null, null, null, null, null));
 
         assertThatThrownBy(() -> service.depotCurve("bogus", positions, BigDecimal.ZERO))
                 .isInstanceOf(ResponseStatusException.class)
@@ -109,8 +109,8 @@ class DepotChartServiceTest {
 
         DepotChartService service = new DepotChartService(agora);
         List<DepotPosition> positions = List.of(
-                new DepotPosition("ACME", BigDecimal.TEN, null, null, null, null),
-                new DepotPosition("OTHR", BigDecimal.valueOf(5), null, null, null, null));
+                new DepotPosition("ACME", null, BigDecimal.TEN, null, null, null, null, null, null),
+                new DepotPosition("OTHR", null, BigDecimal.valueOf(5), null, null, null, null, null, null));
 
         var curve = service.depotCurve("1w", positions, BigDecimal.valueOf(1000));
 
@@ -138,8 +138,8 @@ class DepotChartServiceTest {
 
         DepotChartService service = new DepotChartService(agora);
         List<DepotPosition> positions = List.of(
-                new DepotPosition("ACME", BigDecimal.TEN, null, null, null, null),
-                new DepotPosition("BROKEN", BigDecimal.valueOf(5), null, null, null, null));
+                new DepotPosition("ACME", null, BigDecimal.TEN, null, null, null, null, null, null),
+                new DepotPosition("BROKEN", null, BigDecimal.valueOf(5), null, null, null, null, null, null));
 
         var curve = service.depotCurve("1w", positions, BigDecimal.valueOf(1000));
 
@@ -166,8 +166,8 @@ class DepotChartServiceTest {
 
         DepotChartService service = new DepotChartService(agora);
         List<DepotPosition> positions = List.of(
-                new DepotPosition("ACME", BigDecimal.TEN, null, null, null, null),
-                new DepotPosition("EMPTY", BigDecimal.valueOf(5), null, null, null, null));
+                new DepotPosition("ACME", null, BigDecimal.TEN, null, null, null, null, null, null),
+                new DepotPosition("EMPTY", null, BigDecimal.valueOf(5), null, null, null, null, null, null));
 
         var curve = service.depotCurve("1w", positions, BigDecimal.valueOf(1000));
 
@@ -196,8 +196,8 @@ class DepotChartServiceTest {
 
         DepotChartService service = new DepotChartService(agora);
         List<DepotPosition> positions = List.of(
-                new DepotPosition("ACME", BigDecimal.ONE, null, null, null, null),
-                new DepotPosition("OTHR", BigDecimal.ONE, null, null, null, null));
+                new DepotPosition("ACME", null, BigDecimal.ONE, null, null, null, null, null, null),
+                new DepotPosition("OTHR", null, BigDecimal.ONE, null, null, null, null, null, null));
 
         var curve = service.depotCurve("1w", positions, BigDecimal.ZERO);
 

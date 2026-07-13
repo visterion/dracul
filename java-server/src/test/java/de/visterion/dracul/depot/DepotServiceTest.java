@@ -51,10 +51,10 @@ class DepotServiceTest {
                 "USD", "ACTIVE", "2026-07-11T10:00:00Z");
         when(depotClient.account("depot-1")).thenReturn(account);
 
-        DepotPosition posA = new DepotPosition("AAPL", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1200"), new BigDecimal("200"), "USD");
-        DepotPosition posB = new DepotPosition("MSFT", new BigDecimal("5"), new BigDecimal("300"),
-                new BigDecimal("1600"), new BigDecimal("100"), "USD");
+        DepotPosition posA = new DepotPosition("AAPL", null, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1200"), new BigDecimal("200"), "USD", null, null);
+        DepotPosition posB = new DepotPosition("MSFT", null, new BigDecimal("5"), new BigDecimal("300"),
+                new BigDecimal("1600"), new BigDecimal("100"), "USD", null, null);
         PositionsSnapshot snapshot = new PositionsSnapshot(List.of(posA, posB), "2026-07-11T10:05:00Z");
         when(depotClient.positions("depot-1")).thenReturn(snapshot);
 
@@ -180,8 +180,8 @@ class DepotServiceTest {
         when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
                 new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
 
-        DepotPosition posA = new DepotPosition("AAPL", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1200"), new BigDecimal("200"), "USD");
+        DepotPosition posA = new DepotPosition("AAPL", null, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1200"), new BigDecimal("200"), "USD", null, null);
         when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z"));
         when(depotClient.orders("depot-1")).thenReturn(List.of());
 
@@ -216,10 +216,10 @@ class DepotServiceTest {
                 new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z");
         when(depotClient.account("depot-1")).thenReturn(account);
 
-        DepotPosition posA = new DepotPosition("AAPL", new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1200"), new BigDecimal("200"), "USD");
-        DepotPosition posB = new DepotPosition("MSFT", new BigDecimal("5"), new BigDecimal("300"),
-                new BigDecimal("1600"), new BigDecimal("100"), "USD");
+        DepotPosition posA = new DepotPosition("AAPL", null, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1200"), new BigDecimal("200"), "USD", null, null);
+        DepotPosition posB = new DepotPosition("MSFT", null, new BigDecimal("5"), new BigDecimal("300"),
+                new BigDecimal("1600"), new BigDecimal("100"), "USD", null, null);
         when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA, posB), "2026-07-11T10:05:00Z"));
         when(depotClient.orders("depot-1")).thenReturn(List.of());
 
@@ -277,8 +277,8 @@ class DepotServiceTest {
                 "EUR", "ACTIVE", "2026-07-11T10:00:00Z");
         when(depotClient.account("depot-1")).thenReturn(account);
 
-        DepotPosition posA = new DepotPosition("AAPL", new BigDecimal("5"), new BigDecimal("220"),
-                new BigDecimal("1096"), new BigDecimal("-8"), "USD");
+        DepotPosition posA = new DepotPosition("AAPL", null, new BigDecimal("5"), new BigDecimal("220"),
+                new BigDecimal("1096"), new BigDecimal("-8"), "USD", null, null);
         PositionsSnapshot snapshot = new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z");
         when(depotClient.positions("depot-1")).thenReturn(snapshot);
 
@@ -300,5 +300,86 @@ class DepotServiceTest {
         DepotPositionDto posDto = dto.positions().getFirst();
         assertThat(posDto.marketValue()).isEqualByComparingTo("962.29");
         assertThat(posDto.currency()).isEqualTo("EUR");
+    }
+
+    @Test void nameAssetTypeAndValueDatePassThroughUnconverted() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "saxo", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
+                new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
+
+        DepotPosition posA = new DepotPosition("PSMT", "PricesSmart Inc.", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("1200"), new BigDecimal("200"), "USD",
+                "Stock", "2026-06-01");
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        List<DepotDto> result = service.depots("viktor@ufelmann.de");
+
+        DepotPositionDto posDto = result.getFirst().positions().getFirst();
+        assertThat(posDto.name()).isEqualTo("PricesSmart Inc.");
+        assertThat(posDto.assetType()).isEqualTo("Stock");
+        assertThat(posDto.valueDate()).isEqualTo("2026-06-01");
+    }
+
+    @Test void nativePriceAndCurrencyCapturedWhenPositionCurrencyDiffersFromAccount() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "saxo", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
+                new BigDecimal("5000"), new BigDecimal("2000"), "EUR", "ACTIVE", "2026-07-11T10:00:00Z"));
+
+        DepotPosition posA = new DepotPosition("AAPL", null, new BigDecimal("5"), new BigDecimal("220"),
+                new BigDecimal("1096"), new BigDecimal("-8"), "USD", null, null);
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("""
+                {"quotes":[{"symbol":"AAPL","price":191.13,"dayChangePercent":1.0,"currency":"USD"}]}
+                """));
+
+        FxService fx = usdToEurFx("0.878");
+        DepotService service = new DepotService(depotClient, agora, fx, LIVE_EMAILS);
+        List<DepotDto> result = service.depots("viktor@ufelmann.de");
+
+        DepotPositionDto posDto = result.getFirst().positions().getFirst();
+        // native (pre-conversion) quote price, unconverted
+        assertThat(posDto.nativePrice()).isEqualByComparingTo("191.13");
+        assertThat(posDto.nativeCurrency()).isEqualTo("USD");
+        // account-currency price is still FX-converted as before: 191.13 * 0.878 = 167.81214 -> 167.81 (scale 2 HALF_UP)
+        assertThat(posDto.price()).isEqualByComparingTo("167.81");
+        assertThat(posDto.currency()).isEqualTo("EUR");
+    }
+
+    @Test void nativePriceAndCurrencyNullWhenPositionCurrencyEqualsAccountCurrency() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
+                new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
+
+        DepotPosition posA = new DepotPosition("AAPL", null, new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("1200"), new BigDecimal("200"), "USD", null, null);
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("""
+                {"quotes":[{"symbol":"AAPL","price":120.0,"dayChangePercent":2.0,"currency":"USD"}]}
+                """));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        List<DepotDto> result = service.depots("viktor@ufelmann.de");
+
+        DepotPositionDto posDto = result.getFirst().positions().getFirst();
+        assertThat(posDto.nativePrice()).isNull();
+        assertThat(posDto.nativeCurrency()).isNull();
+        assertThat(posDto.price()).isEqualByComparingTo("120.00");
     }
 }

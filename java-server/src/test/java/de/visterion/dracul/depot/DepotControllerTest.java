@@ -225,7 +225,8 @@ class DepotControllerTest {
     private DepotDto depotWithPosition(String connId, String symbol) {
         DepotPositionDto position = new DepotPositionDto(symbol, BigDecimal.TEN, BigDecimal.ONE,
                 BigDecimal.TEN, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO,
-                BigDecimal.valueOf(100), "USD");
+                BigDecimal.valueOf(100), "USD",
+                null, null, null, null, null);
         List<DepotOrder> orders = List.of(
                 new DepotOrder("o1", symbol, "buy", BigDecimal.ONE, "market", "filled", "entry"),
                 new DepotOrder("o2", "OTHER", "sell", BigDecimal.ONE, "market", "filled", "exit"));

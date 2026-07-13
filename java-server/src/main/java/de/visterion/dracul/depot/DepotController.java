@@ -72,7 +72,7 @@ public class DepotController {
         DepotDto depot = resolveDepot(connection);
 
         List<DepotPosition> positions = depot.positions().stream()
-                .map(p -> new DepotPosition(p.symbol(), p.qty(), null, null, null, null))
+                .map(p -> new DepotPosition(p.symbol(), null, p.qty(), null, null, null, null, null, null))
                 .toList();
         BigDecimal cash = depot.account() != null ? depot.account().cash() : null;
 

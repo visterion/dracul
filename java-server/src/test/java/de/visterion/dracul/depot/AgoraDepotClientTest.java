@@ -59,6 +59,35 @@ class AgoraDepotClientTest {
     }
 
     @Test
+    void positionsParseDescriptionAssetTypeAndValueDate() {
+        CapturingClient client = new CapturingClient(mapper);
+        client.canned = json("""
+            {"output":{"asOf":"2026-07-11T06:00:00Z","positions":[
+              {"symbol":"PSMT","description":"PricesSmart Inc.","qty":10,"avgEntryPrice":100.5,
+               "marketValue":1848.0,"unrealizedPl":843.0,"currency":"USD","assetType":"Stock",
+               "valueDate":"2026-06-01"}]}}""");
+        var snap = client.positions("depot-1");
+        var p = snap.positions().getFirst();
+        assertThat(p.description()).isEqualTo("PricesSmart Inc.");
+        assertThat(p.assetType()).isEqualTo("Stock");
+        assertThat(p.valueDate()).isEqualTo("2026-06-01");
+    }
+
+    @Test
+    void positionsHandleNullDescriptionAssetTypeAndValueDate() {
+        CapturingClient client = new CapturingClient(mapper);
+        client.canned = json("""
+            {"output":{"positions":[
+              {"symbol":"AAPL","qty":1,"avgEntryPrice":100.0,"marketValue":100.0,
+               "unrealizedPl":0.0,"currency":"USD"}]}}""");
+        var snap = client.positions("depot-1");
+        var p = snap.positions().getFirst();
+        assertThat(p.description()).isNull();
+        assertThat(p.assetType()).isNull();
+        assertThat(p.valueDate()).isNull();
+    }
+
+    @Test
     void unavailableEnvelopeThrows() {
         CapturingClient client = new CapturingClient(mapper);
         client.canned = json("{\"output\":{\"available\":false,\"error\":\"broker down\"}}");
