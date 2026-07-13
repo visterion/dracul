@@ -10,10 +10,6 @@
         <span class="dp-status">{{ depot.status }}</span>
       </div>
       <div class="dp-head-right">
-        <div v-if="depot.account" class="dp-head-cash">
-          <span class="dp-cash-k">{{ t('depots.summary.cash') }}</span>
-          <span class="dp-cash-v mono" data-testid="depots-total-cash">{{ formatMoney(depot.account.cash, depot.account.currency) }}</span>
-        </div>
         <div v-if="depot.asOf" class="dp-asof" :class="{ stale: stale }" data-testid="depot-asof">
           {{ t('depots.asOf', { time: formatAbsoluteTime(depot.asOf) }) }}
         </div>
@@ -43,7 +39,7 @@
       </div>
 
       <div class="stat-grid dp-stats">
-        <StatTile :label="t('depots.stat.cash')" :value="formatMoney(depot.account.cash, depot.account.currency)" />
+        <StatTile :label="t('depots.stat.cash')" test-id="depots-total-cash" :value="formatMoney(depot.account.cash, depot.account.currency)" />
         <StatTile :label="t('depots.stat.invested')" :value="depot.aggregates ? formatMoney(depot.aggregates.investedValue, depot.account.currency) : '—'" />
         <StatTile :label="t('depots.stat.buyingPower')" :value="formatMoney(depot.account.buyingPower, depot.account.currency)" />
       </div>
@@ -249,9 +245,6 @@ const chartLabels = computed(() => {
 .dp-id { color: var(--bone-ivory); font-size: var(--text-body); }
 .dp-status { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ash-gray-light); }
 .dp-head-right { display: flex; align-items: center; gap: var(--space-4); }
-.dp-head-cash { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.dp-cash-k { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ash-gray); }
-.dp-cash-v { font-size: var(--text-body-lg); color: var(--bone-ivory); }
 .dp-asof { font-size: var(--text-micro); color: var(--ash-gray); }
 .dp-asof.stale { color: var(--cathedral-gold); }
 
@@ -308,4 +301,10 @@ const chartLabels = computed(() => {
 .dp-order-side.tone-crimson { color: var(--blood-crimson-bright); }
 .dp-order-side.tone-ash { color: var(--ash-gray-light); }
 .dp-order-arrow { font-size: var(--text-micro); }
+
+@media (max-width: 420px) {
+  .dp-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  .dp-stats :deep(.st-value) { font-size: var(--text-body-lg); }
+  .dp-headline-value { font-size: 22px; }
+}
 </style>
