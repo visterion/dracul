@@ -1075,8 +1075,10 @@ when `DRACUL_DAYWALKER_ENABLED=true`.
 ### `POST /api/daywalker/events`
 
 Event-source webhook — polled by Vistierie on a cadence within the session
-window. Runs deterministic detection over the active watchlist (no LLM) and
-returns trigger events. Each event becomes the payload of one child run.
+window. Runs deterministic detection over the live **depot-1** positions
+(`HeldPositionService.openPositions`, no LLM — repointed 2026-07-13, A6) and
+returns trigger events, each carrying a `position_id` (the symbol). Each event
+becomes the payload of one child run.
 
 Request body (Vistierie → Dracul):
 ```json
@@ -1110,9 +1112,13 @@ Request body:
               "severity": "WARNING", "thesis": "...", "confidence": 0.6 } }
 ```
 
-Returns 204. If `status != "succeeded"`, the symbol/trigger_type is missing, or
-the symbol is not on the watchlist, the endpoint acknowledges (204) without
-persisting and logs the run-id.
+Returns 204. If `status != "succeeded"` or the symbol/trigger_type is missing,
+the endpoint acknowledges (204) without persisting and logs the run-id. Since
+`/api/daywalker/events` is now depot-sourced, every completed run carries a
+`position_id` (the symbol) and is routed straight to the single
+`dracul.primary-user-email` owner; the legacy "symbol not on watchlist" skip
+path only still applies to a completion with no `position_id` at all, which
+the depot-sourced event source never produces.
 
 ## Strigoi-Spin Webhooks
 

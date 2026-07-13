@@ -613,9 +613,15 @@ session at market open and polls Dracul's event-source webhook every 5 minutes.
    market-wide signals, so a single market-data fetch per symbol suffices.
 2. Vistierie spawns one reasoning-tier (Sonnet) child run per triggered symbol; the
    run judges severity and returns `{severity, thesis, confidence}`.
-3. `POST /api/daywalker/complete` fans out the assessment to **every owner** of that
-   symbol — one `dracul.daywalker_alerts` row is written per owner whose
-   `(owner, symbol, trigger_type)` cooldown has not yet elapsed.
+3. `POST /api/daywalker/complete` persists the assessment. Since step 1 is depot-sourced
+   (2026-07-13, A6), every trigger carries a `position_id` (the symbol, echoed back by the
+   LLM), so `DaywalkerCompletionService` routes straight to the single configured
+   `dracul.primary-user-email` owner (same convention as gropar) rather than resolving
+   owners via a watchlist lookup — one `dracul.daywalker_alerts` row is written for that
+   owner if its `(owner, symbol, trigger_type)` cooldown has not yet elapsed. The
+   watchlist-owner fan-out path (`findOwnersBySymbol`, "every owner of that symbol") only
+   still fires for triggers with no `position_id` at all, which the depot-sourced engine
+   never produces.
 
 Every depot position is a real holding, so every trigger is fanned out per position and
 judged against its stored context (`position_context.active_stop`, falling back to

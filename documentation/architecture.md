@@ -245,7 +245,7 @@ TTL expires. See `strigoi.md` ("Learning loop") for the full write-up.
 
 **Watchlist risk-snapshot columns (V15):**
 
-Four nullable columns added to `watchlist_items`, originally written by gropar's `fetch_held_positions` tool call and read by the morning report. **Both the writer and this reader are gone as of 2026-07-13**: gropar was repointed to the depot-1 ⨝ `position_context` model (A5) and no longer writes these columns, and `GET /api/morning-report` was repointed the same way (A8) and no longer reads them — it now reads `HeldPositionService.openPositions("depot-1")` (`activeStop` from `position_context`; `currentClose` derived from `marketValue / quantity`; no source yet for a 2R target). The columns themselves are left in place (still read by `StopProximityWatcher` / `DaywalkerEventEngine` pending their own depot repoint):
+Four nullable columns added to `watchlist_items`, originally written by gropar's `fetch_held_positions` tool call and read by the morning report. **The writer and all readers are gone as of 2026-07-13**: gropar was repointed to the depot-1 ⨝ `position_context` model (A5) and no longer writes these columns; `GET /api/morning-report` (A8), `StopProximityWatcher` (A7), and `DaywalkerEventEngine` (A6) were each repointed the same way and no longer read them — all three now read live depot positions via `HeldPositionService.openPositions("depot-1")` joined to `position_context` for stop data. The columns themselves are left in place as **orphaned/legacy** (no writer, no reader) rather than dropped, since removing them is a separate migration decision:
 
 - `active_stop` (NUMERIC(12,4), nullable) — active trailing stop = `max(initial_stop, chandelier)`
 - `next_target_2r` (NUMERIC(12,4), nullable) — 2R price target (`entryPrice + 2 × initialRisk`)
@@ -254,19 +254,19 @@ Four nullable columns added to `watchlist_items`, originally written by gropar's
 
 **Watchlist ATR column (V16):**
 
-- `atr` (NUMERIC(12,4), nullable) — Average True Range (ATR22) of the position at the time of the most recent gropar run. Written by gropar's `fetch_held_positions` tool call alongside the V15 snapshot columns. Used by `StopProximityWatcher` to derive the stop-proximity zone width (`active_stop + atr-multiple × ATR`). `null` until gropar has run at least once after V16 is applied.
+- `atr` (NUMERIC(12,4), nullable) — Average True Range (ATR22) of the position at the time of the most recent gropar run. Formerly written by gropar's `fetch_held_positions` tool call alongside the V15 snapshot columns and read by `StopProximityWatcher` to derive the stop-proximity zone width. **Orphaned as of 2026-07-13 (A7):** gropar no longer writes it (repointed to `position_context`, A5) and `StopProximityWatcher` no longer reads it — `position_context` carries no ATR, so the watcher passes `BigDecimal.ZERO` in its place (see below). The column is left in place, unwritten and unread.
 
 **Stop-proximity watcher (`StopProximityWatcher`):**
 
-A deterministic, intraday `@Scheduled` cron (no LLM, no Vistierie agent) in package `de.visterion.dracul.stopguard`. Disabled by default (`dracul.stopguard.enabled=false`). When enabled it fires every ~15 minutes during the US session (`0 */15 9-16 * * 1-5`, zone America/New_York), loads all held positions with their persisted V15/V16 snapshot, batch-fetches live prices from Agora (`get_quote` via `AgoraMarketData`), and classifies each position via `StopZoneEvaluator`:
+A deterministic, intraday `@Scheduled` cron (no LLM, no Vistierie agent) in package `de.visterion.dracul.stopguard`. Disabled by default (`dracul.stopguard.enabled=false`). When enabled it fires every ~15 minutes during the US session (`0 */15 9-16 * * 1-5`, zone America/New_York). **Repointed to the depot (A7, 2026-07-13):** it no longer reads the V15/V16 `watchlist_items` snapshot; it loads live depot-1 positions via `HeldPositionService.openPositions("depot-1")` joined to `position_context`, keeps only positions with a non-null `active_stop`, batch-fetches live prices from Agora (`get_quote` via `AgoraMarketData`), and classifies each position via `StopZoneEvaluator`. Since `position_context` carries no ATR, the watcher passes `BigDecimal.ZERO` as the ATR: a zero-width band still classifies `price ≤ active_stop` as `STOP_BREACHED`, but the `STOP_PROXIMITY` warning band collapses to nothing until ATR is added to the context model:
 
 | Condition | Zone | Severity |
 |---|---|---|
 | `price ≤ active_stop` | `STOP_BREACHED` | CRITICAL |
-| `active_stop < price ≤ active_stop + atr-multiple × ATR` | `STOP_PROXIMITY` | WARNING |
-| above proximity band, or stop/ATR null | no alert | — |
+| `active_stop < price ≤ active_stop + atr-multiple × ATR` (ATR = 0 ⇒ band is empty) | `STOP_PROXIMITY` | WARNING |
+| above proximity band, or stop null | no alert | — |
 
-`StopAlertEmitter` persists qualifying alerts to the existing `daywalker_alerts` store, broadcasts `alert.new` over SSE to the live panel, and sends a German-language Telegram push. Re-alert cooldown is per `(owner, symbol, zone)` (default ≈ 23 h); `STOP_PROXIMITY` and `STOP_BREACHED` have independent cooldowns so a price breach triggers an immediate escalation alert even if a proximity alert was already sent today.
+`StopAlertEmitter` persists qualifying alerts to the `daywalker_alerts` store keyed by `(owner, symbol, trigger_type)` — depot-sourced alerts carry no `watchlist_item_id` (nullable since V30) — broadcasts `alert.new` over SSE to the live panel, and sends a German-language Telegram push. Re-alert cooldown is per `(owner, symbol, zone)` (default ≈ 23 h); `STOP_PROXIMITY` and `STOP_BREACHED` have independent cooldowns so a price breach triggers an immediate escalation alert even if a proximity alert was already sent today.
 
 **Agent definition tables (V10):**
 
