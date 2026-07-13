@@ -218,6 +218,45 @@ class GroparWebhookControllerTest {
     }
 
     // =========================================================================
+    // Test 3b: buildThesis surfaces kill-criteria even without a (parseable)
+    // thesis — the executor-opened-position gap this task closes.
+    // =========================================================================
+
+    @Test
+    void buildThesis_nullSnapshotButKillCriteria_returnsKillOnlyBlock() {
+        JsonNode kill = mapper.valueToTree(List.of("drift reverses"));
+        HeldPosition hp = withContext("HELE", "100", "10", "v1", kill, "3-6m",
+                null, new BigDecimal("70"));
+
+        Map<String, Object> thesis = controller.buildThesis(hp);
+
+        assertThat(thesis).isNotNull();
+        @SuppressWarnings("unchecked")
+        var killCriteria = (List<String>) thesis.get("killCriteria");
+        assertThat(killCriteria).containsExactly("drift reverses");
+    }
+
+    @Test
+    void buildThesis_malformedSnapshotButKillCriteria_stillReturnsKillOnly() {
+        JsonNode malformed = mapper.valueToTree("not-an-object");
+        JsonNode kill = mapper.valueToTree(List.of("k"));
+        HeldPosition hp = withContext("HELE", "100", "10", "v1", kill, "3-6m",
+                malformed, new BigDecimal("70"));
+
+        Map<String, Object> thesis = controller.buildThesis(hp);
+
+        assertThat(thesis).isNotNull();
+        assertThat(thesis).containsKey("killCriteria"); // m1: parse-failure must not swallow kill
+    }
+
+    @Test
+    void buildThesis_noThesisNoKill_returnsNull() {
+        HeldPosition hp = taOnly("HELE", "100", "10");
+
+        assertThat(controller.buildThesis(hp)).isNull();
+    }
+
+    // =========================================================================
     // Test 4: fetchHeldPositions swallows per-position market-data failures —
     // the feed still returns 200 and other positions remain enriched.
     // =========================================================================
