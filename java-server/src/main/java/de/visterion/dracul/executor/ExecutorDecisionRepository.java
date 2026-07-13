@@ -49,6 +49,17 @@ public class ExecutorDecisionRepository {
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
 
+    public int countByReason(String signalId, String rejectReason) {
+        return jdbc.sql("""
+                SELECT count(*) FROM executor_decision
+                WHERE signal_id = :signalId AND reject_reason = :reason
+                """)
+                .param("signalId", signalId)
+                .param("reason", rejectReason)
+                .query(Integer.class)
+                .single();
+    }
+
     public List<ExecutorDecision> findRecent(int limit) {
         return jdbc.sql("""
                 SELECT * FROM executor_decision
