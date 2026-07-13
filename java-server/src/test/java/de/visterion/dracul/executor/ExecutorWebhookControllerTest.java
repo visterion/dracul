@@ -1718,6 +1718,40 @@ class ExecutorWebhookControllerTest {
         assertThat((List<?>) output.get("positions")).hasSize(1);
     }
 
+    @Test
+    void fetchOpenPositions_writesSignalThesisToContext() {
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "HELE", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
+                false, false, 1, false, null, "sig1", 0, 0.33, true);
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
+
+        ExecutorPosition position = openPosition(1L, "HELE", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        when(positionRepo.findById(1L)).thenReturn(position);
+
+        JsonNode thesis = json("""
+                {"summary":"beat"}
+                """);
+        ExecutorSignal signal = new ExecutorSignal("sig1", "spin-hunter", "v1", "HELE", "BUY",
+                0.8, "SPINOFF", List.of("X"), "6-12mo", new BigDecimal("100"), "ACCEPTED", null,
+                thesis);
+        when(signalRepo.findById("sig1")).thenReturn(signal);
+
+        controller.fetchOpenPositions(BEARER, "run-1");
+
+        ArgumentCaptor<JsonNode> thesisCaptor = ArgumentCaptor.forClass(JsonNode.class);
+        verify(positionContextRepo).upsertOnOpen(eq("depot-1"), eq("HELE"), isNull(),
+                any(), eq("6-12mo"), thesisCaptor.capture(), eq(new BigDecimal("95")),
+                eq("executor"));
+        assertThat(thesisCaptor.getValue()).isNotNull();
+        assertThat(thesisCaptor.getValue().get("summary").asString()).isEqualTo("beat");
+
+        verify(positionContextRepo).updateContextIfNull(eq("depot-1"), eq("HELE"),
+                thesisCaptor.capture(), any(), eq("6-12mo"), eq(new BigDecimal("95")));
+    }
+
     // -------------------------------------------------------------------
     // exit-position
     // -------------------------------------------------------------------

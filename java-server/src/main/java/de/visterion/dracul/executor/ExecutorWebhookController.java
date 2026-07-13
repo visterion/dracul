@@ -834,9 +834,9 @@ public class ExecutorWebhookController {
      * <p>{@code ExecutorSignal}/{@code ExecutorPosition} carry no {@code verdictId} — the
      * executor's own signal pipeline (Prey -> {@code PreySignalMapper} -> {@code ExecutorSignal})
      * has no link back to a {@code Verdict} row, unlike gropar's {@code WatchlistItem.verdictId()}.
-     * So {@code verdictId} and {@code thesisSnapshot} are always {@code null} here (never
-     * fabricated); {@code killCriteria}/{@code horizon} are still populated because they are the
-     * executor's own real, already-persisted signal/position data, not derived from a verdict.
+     * So {@code verdictId} is always {@code null} here (never fabricated); {@code killCriteria},
+     * {@code horizon}, and {@code thesisSnapshot} are the executor's own real, already-persisted
+     * signal/position data, not derived from a verdict.
      *
      * <p>Fail-soft: any failure here is logged at WARN and swallowed — a context-write failure
      * must never fail {@code fetch-open-positions} or the maintenance pipeline it reports on.
@@ -857,10 +857,15 @@ public class ExecutorWebhookController {
             JsonNode killCriteria = (p.killCriteria() == null || p.killCriteria().isEmpty())
                     ? null : mapper.valueToTree(p.killCriteria());
             String horizon = resolveHorizon(p.sourceSignalId());
+            JsonNode thesis = resolveThesis(p.sourceSignalId());
             ExecutorPosition position = positionRepo.findById(p.id());
             BigDecimal initialStop = position != null ? position.initialStop() : p.activeStop();
             positionContextRepo.upsertOnOpen(connection, p.symbol(), null, killCriteria, horizon,
-                    null, initialStop, "executor");
+                    thesis, initialStop, "executor");
+            // Heal a row a reconciler "none" shadow (or an earlier thesis-less write) left behind —
+            // the ON CONFLICT DO NOTHING upsert above can't update an existing row. COALESCE-if-null.
+            positionContextRepo.updateContextIfNull(connection, p.symbol(), thesis, killCriteria,
+                    horizon, initialStop);
         } catch (RuntimeException e) {
             log.warn("position_context write failed for filled position {} ({}): {}",
                     p.id(), p.symbol(), e.getMessage(), e);
@@ -872,6 +877,13 @@ public class ExecutorWebhookController {
         if (sourceSignalId == null) return null;
         ExecutorSignal source = signalRepo.findById(sourceSignalId);
         return source == null ? null : source.horizon();
+    }
+
+    /** Same null-safe signal lookup idiom as {@link #resolveHorizon}. */
+    private JsonNode resolveThesis(String sourceSignalId) {
+        if (sourceSignalId == null) return null;
+        ExecutorSignal source = signalRepo.findById(sourceSignalId);
+        return source == null ? null : source.thesis();
     }
 
     // -------------------------------------------------------------------

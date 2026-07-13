@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
@@ -94,5 +95,33 @@ class PositionContextRepositoryTest {
         PositionContextRow row = repo.findOpenBySymbol("depot-1", "STOP").orElseThrow();
         assertThat(row.initialStop()).isEqualByComparingTo("9.50");
         assertThat(row.activeStop()).isEqualByComparingTo("11.25");
+    }
+
+    @Test
+    void updateContextIfNull_healsShadowRowThenNoOps() {
+        // reconciler-style "none" shadow row: all research fields null
+        repo.upsertOnOpen("depot-1", "HELE", null, null, null, null, null, "none");
+
+        JsonNode thesis = JSON.readTree("{\"summary\":\"beat\"}");
+        JsonNode kill = JSON.readTree("[\"drift reverses\"]");
+        repo.updateContextIfNull("depot-1", "HELE", thesis, kill, "1M", new BigDecimal("178.19"));
+
+        var row = repo.findOpenBySymbol("depot-1", "HELE").orElseThrow();
+        assertThat(row.thesisSnapshot().get("summary").asString()).isEqualTo("beat");
+        assertThat(row.horizon()).isEqualTo("1M");
+        assertThat(row.initialStop()).isEqualByComparingTo("178.19");
+
+        // COALESCE never clobbers: a second call with different values changes nothing
+        repo.updateContextIfNull("depot-1", "HELE",
+                JSON.readTree("{\"summary\":\"other\"}"), null, "6M", new BigDecimal("1"));
+        assertThat(repo.findOpenBySymbol("depot-1", "HELE").orElseThrow()
+                .thesisSnapshot().get("summary").asString()).isEqualTo("beat");
+    }
+
+    @Test
+    void updateContextIfNull_caseInsensitiveSymbol() {
+        repo.upsertOnOpen("depot-1", "HELE", null, null, null, null, null, "none");
+        repo.updateContextIfNull("depot-1", "hele", JSON.readTree("{\"summary\":\"x\"}"), null, null, null);
+        assertThat(repo.findOpenBySymbol("depot-1", "HELE").orElseThrow().thesisSnapshot()).isNotNull();
     }
 }

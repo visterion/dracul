@@ -101,6 +101,31 @@ public class PositionContextRepository {
                 .list();
     }
 
+    /** Heals a partially-null OPEN row (e.g. a reconciler "none" shadow, or an early executor
+     *  write) with real values, COALESCE-keeping anything already set. The trailing NULL-guard
+     *  makes it a true no-op once all four fields are populated (no per-pass WAL churn). */
+    public void updateContextIfNull(String connection, String symbol, JsonNode thesisSnapshot,
+                                    JsonNode killCriteria, String horizon, BigDecimal initialStop) {
+        jdbc.sql("""
+                UPDATE position_context
+                   SET thesis_snapshot = COALESCE(thesis_snapshot, CAST(:thesisSnapshot AS jsonb)),
+                       kill_criteria   = COALESCE(kill_criteria,   CAST(:killCriteria AS jsonb)),
+                       horizon         = COALESCE(horizon, :horizon),
+                       initial_stop    = COALESCE(initial_stop, :initialStop)
+                 WHERE connection = :connection AND lower(symbol) = lower(:symbol)
+                   AND closed_at IS NULL
+                   AND (thesis_snapshot IS NULL OR kill_criteria IS NULL
+                        OR horizon IS NULL OR initial_stop IS NULL)
+                """)
+                .param("thesisSnapshot", writeJson(thesisSnapshot))
+                .param("killCriteria", writeJson(killCriteria))
+                .param("horizon", horizon)
+                .param("initialStop", initialStop)
+                .param("connection", connection)
+                .param("symbol", symbol)
+                .update();
+    }
+
     /** Overwrites both stops on the row (the trailing stop moves -- not freeze-once). */
     public void updateStops(String id, BigDecimal initialStop, BigDecimal activeStop) {
         jdbc.sql("""
