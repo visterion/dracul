@@ -95,11 +95,14 @@ public class AgoraDepotClient {
             for (JsonNode p : array) {
                 result.add(new DepotPosition(
                         textOrNull(p, "symbol"),
+                        textOrNull(p, "description"),
                         decimalOrNull(p, "qty"),
                         decimalOrNull(p, "avgEntryPrice"),
                         decimalOrNull(p, "marketValue"),
                         decimalOrNull(p, "unrealizedPl"),
-                        textOrNull(p, "currency")));
+                        textOrNull(p, "currency"),
+                        textOrNull(p, "assetType"),
+                        textOrNull(p, "valueDate")));
             }
         }
         return new PositionsSnapshot(result, textOrNull(out, "asOf"));

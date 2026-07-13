@@ -20,7 +20,7 @@ class DepotInstrumentServiceTest {
 
     private AgoraClient allSucceedingAgora() {
         AgoraClient agora = mock(AgoraClient.class);
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"name\":\"Acme Corp\"}"));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"profile\":{\"name\":\"Acme Corp\"}}"));
         when(agora.callTool(eq("get_company_news"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"news\":[]}"));
         when(agora.callTool(eq("get_earnings_window"), any())).thenReturn(json("{\"earnings\":[]}"));
         when(agora.callTool(eq("get_analyst_estimates"), any())).thenReturn(json("{\"symbol\":\"ACME\",\"recommendations\":[]}"));
@@ -49,6 +49,32 @@ class DepotInstrumentServiceTest {
         assertThat(bundle.insiderActivity()).isNotNull();
 
         assertThat(bundle.profile().path("name").asString()).isEqualTo("Acme Corp");
+    }
+
+    @Test
+    void companyProfileIsUnwrappedFromTheNestedEnvelope() {
+        AgoraClient agora = allSucceedingAgora();
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        // Agora's get_company_profile returns {symbol, profile:{name,...}}; bundle() must
+        // unwrap to the inner profile node so profile.name is directly present (not
+        // profile.profile.name).
+        assertThat(bundle.profile().path("name").asString()).isEqualTo("Acme Corp");
+        assertThat(bundle.profile().has("profile")).isFalse();
+    }
+
+    @Test
+    void companyProfileFallsBackToEnvelopeWhenNoNestedProfileField() {
+        AgoraClient agora = allSucceedingAgora();
+        when(agora.callTool(eq("get_company_profile"), any()))
+                .thenReturn(json("{\"symbol\":\"ACME\",\"name\":\"Flat Shape Corp\"}"));
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        assertThat(bundle.profile().path("name").asString()).isEqualTo("Flat Shape Corp");
     }
 
     @Test

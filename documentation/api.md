@@ -454,6 +454,16 @@ input unchanged when no rate is cached yet, so a freshly started
 instance briefly serves unconverted values until the background
 refresher warms the pair.
 
+`name`, `assetType`, `valueDate` are Saxo-native fields passed straight
+through from Agora's `get_positions` (`description`/`assetType`/
+`valueDate`) — plain strings, never FX-converted; `null` for
+Alpaca-backed connections (and for `valueDate`/`description` on
+brokers that don't report them). `nativePrice`/`nativeCurrency` carry
+the position's pre-conversion quote price and its native currency, so
+the GUI can render e.g. `167,81 € (191,13 $)`; both are `null` when the
+position currency equals the account currency (nothing to show in
+parens).
+
 ### `GET /api/depots` response
 
 ```json
@@ -479,7 +489,12 @@ refresher warms the pair.
           "price": 14.50,
           "dayChangePercent": 0.85,
           "weightPct": 42.30,
-          "currency": "USD"
+          "currency": "USD",
+          "name": "Acme Corp",
+          "assetType": "Stock",
+          "valueDate": "2026-06-01",
+          "nativePrice": null,
+          "nativeCurrency": null
         }
       ],
       "orders": [ { "...": "..." } ],
@@ -510,7 +525,12 @@ status stays 200; per-connection failures instead surface as a non-null
     "price": 14.50,
     "dayChangePercent": 0.85,
     "weightPct": 42.30,
-    "currency": "USD"
+    "currency": "USD",
+    "name": "Acme Corp",
+    "assetType": "Stock",
+    "valueDate": "2026-06-01",
+    "nativePrice": null,
+    "nativeCurrency": null
   },
   "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry" } ],
   "asOf": "2026-07-11T08:00:00Z"

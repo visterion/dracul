@@ -36,8 +36,8 @@ class HeldPositionServiceTest {
     }
 
     private static DepotPosition depotPosition(String symbol) {
-        return new DepotPosition(symbol, BigDecimal.TEN, BigDecimal.valueOf(100),
-                BigDecimal.valueOf(1000), BigDecimal.valueOf(50), "USD");
+        return new DepotPosition(symbol, null, BigDecimal.TEN, BigDecimal.valueOf(100),
+                BigDecimal.valueOf(1000), BigDecimal.valueOf(50), "USD", null, null);
     }
 
     private static PositionContextRow contextRow(String symbol) {

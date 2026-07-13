@@ -191,6 +191,14 @@ public class DepotService {
             BigDecimal price = q == null ? null : q.price();
             BigDecimal dayChangePercent = q == null ? null : q.dayChangePercent();
 
+            // Native (pre-conversion) price + currency, for the "€ (191,13 $)" display. Null when
+            // the position is already in the account currency, so MoneyDisplay shows no parens.
+            boolean nativeDiffersFromAccount = p.currency() != null && acctCcy != null
+                    && !p.currency().equalsIgnoreCase(acctCcy);
+            BigDecimal nativePrice = nativeDiffersFromAccount && price != null
+                    ? price.setScale(SCALE, RoundingMode.HALF_UP) : null;
+            String nativeCurrency = nativeDiffersFromAccount ? p.currency() : null;
+
             BigDecimal mv = fx.convert(p.marketValue(), p.currency(), acctCcy);
             BigDecimal upl = fx.convert(p.unrealizedPl(), p.currency(), acctCcy);
             BigDecimal convertedPrice = fx.convert(price, p.currency(), acctCcy);
@@ -208,7 +216,9 @@ public class DepotService {
 
             positionDtos.add(new DepotPositionDto(p.symbol(), p.qty(), avgEntryPriceScaled,
                     mvScaled, uplScaled, unrealizedPlPct, priceScaled, dayChangePercent,
-                    weightPct, acctCcy));
+                    weightPct, acctCcy,
+                    p.description(), p.assetType(), p.valueDate(),
+                    nativePrice, nativeCurrency));
         }
 
         String asOf = positions.asOf() != null ? positions.asOf()

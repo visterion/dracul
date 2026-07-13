@@ -54,7 +54,7 @@ public class DepotInstrumentService {
     }
 
     public InstrumentBundle bundle(String symbol) {
-        JsonNode profile = section("get_company_profile", symbolArgs(symbol));
+        JsonNode profile = unwrapProfile(section("get_company_profile", symbolArgs(symbol)));
         JsonNode news = section("get_company_news", newsArgs(symbol));
         JsonNode earnings = filterRowsBySymbol(
                 section("get_earnings_window", mapper.createObjectNode()), "earnings", "symbol", symbol);
@@ -67,6 +67,19 @@ public class DepotInstrumentService {
 
         return new InstrumentBundle(symbol, profile, news, earnings, analystEstimates,
                 earningsEstimates, fundamentalScore, fundamentals, insiderActivity);
+    }
+
+    /**
+     * Agora's {@code get_company_profile} wraps the Finnhub body as {@code {symbol, profile:{name,
+     * ...}}}; unwrap to the inner {@code profile} node so {@code profile.name} is directly present
+     * for consumers (was double-nested: {@code profile.profile.name}). Falls back to the envelope
+     * itself if it has no nested {@code profile} field, to stay tolerant of a differently-shaped
+     * response rather than silently losing data.
+     */
+    private JsonNode unwrapProfile(JsonNode envelope) {
+        if (envelope == null) return null;
+        JsonNode inner = envelope.path("profile");
+        return inner.isMissingNode() || inner.isNull() ? envelope : inner;
     }
 
     private ObjectNode symbolArgs(String symbol) {
