@@ -1207,14 +1207,17 @@ skipped. Returns 204; non-success / empty prey acknowledged without persisting.
 
 ## Gropar Webhooks
 
-Called by Vistierie during a `gropar` agent run (exit timing for HELD positions).
-Both require `Authorization: Bearer <DRACUL_GROPAR_WEBHOOK_TOKEN>`. They are only
-registered when `DRACUL_GROPAR_ENABLED=true`.
+Called by Vistierie during a `gropar` agent run (exit timing for open depot-1
+positions). Both require `Authorization: Bearer <DRACUL_GROPAR_WEBHOOK_TOKEN>`.
+They are only registered when `DRACUL_GROPAR_ENABLED=true`.
 
 ### `POST /api/gropar/tools/fetch-held-positions`
 
 Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher. Returns
-all HELD watchlist items with their entry price, share count, and current price.
+every open position on the live depot (`depot-1`), joined by symbol to its
+`position_context` row (`HeldPositionService`), with entry price, share count, and
+current price. `positionId`/`symbol`/`companyName` are all the depot symbol — a
+depot position carries no separate company name or watchlist-item id.
 
 Request: `{ "run_id": "...", "tool_name": "fetch_held_positions", "input": {} }`
 
@@ -1239,10 +1242,14 @@ Response:
 ] } }
 ```
 
-`thesis` is only present when the position's originating verdict is
-resolvable; `thesis.killCriteria` is the deduped union of `kill_criteria`
-across the verdict's contributing prey, omitted entirely (no empty array)
-when none of them declared any.
+`thesis` is only present when the position has an open `position_context` row with a
+stored thesis snapshot (captured once, at the point the position was opened/backfilled);
+a position with no context row (e.g. opened by the executor before a verdict link
+existed) degrades to TA-only — `indicators`/`risk` are still populated, `thesis` is
+`null`, and the position is never dropped from the response. `thesis.killCriteria` is
+the deduped union of `kill_criteria` across the verdict's contributing prey (resolved at
+context-write time, not live), omitted entirely (no empty array) when none of them
+declared any.
 
 ### `POST /api/gropar/complete`
 
@@ -1262,8 +1269,13 @@ Request body:
   ] } }
 ```
 
-`violated_kill_criteria` is prompt-enforced (`prompts/gropar.md`): the LLM
-must name at least one violated entry whenever `thesis_status` =
+`position_id` is the depot symbol echoed back from `fetch-held-positions`; a
+signal whose `position_id` no longer matches an open depot-1 position (closed
+since the tool call, or hallucinated) is skipped rather than persisted. Since
+depot positions carry no watchlist-item id, `exit_signals.watchlist_item_id`
+is always `null` for gropar-sourced signals now — `symbol` is the position's
+identity. `violated_kill_criteria` is prompt-enforced (`prompts/gropar.md`):
+the LLM must name at least one violated entry whenever `thesis_status` =
 `INVALIDATED`, verbatim from the position's `thesis.killCriteria`; omitted
 for `INTACT`/`WEAKENING`/`NONE`. When present it is appended to the persisted
 `rationale` (`"[Verletzt: ...]"`). Returns 204. If `status != "succeeded"` or

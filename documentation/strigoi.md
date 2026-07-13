@@ -442,21 +442,25 @@ the toast rather than a bespoke per-code UI.
 
 ## Groparul (exit-timing agent)
 
-**Implemented 2026-06-14.** Dracul's exit-timing agent. Groparul ("the gravedigger")
-monitors HELD watchlist positions daily and advises when to exit — SELL, TRIM, or HOLD.
-It is advisory only: it never executes trades.
+**Implemented 2026-06-14; repointed to the live depot 2026-07-13.** Dracul's exit-timing
+agent. Groparul ("the gravedigger") monitors open **depot-1** positions daily and advises
+when to exit — SELL, TRIM, or HOLD. It is advisory only: it never executes trades.
 
 Groparul runs once per day after the US close (default cron: `0 0 22 * * 1-5`, UTC).
 On each run:
 
-1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls all HELD watchlist items
-   **across all users** with their entry price and share count. Each position carries an opaque
-   `positionId` (the watchlist-item id) the LLM echoes back so signals can be routed to their owner.
-   When the position has an originating verdict, its `thesis` block also carries `killCriteria` —
-   the deduplicated union of `killCriteria` across the verdict's contributing prey (via
-   `VerdictRepository.contributingPreyIdsById` + `PreyRepository.findByIds`), so the LLM can judge
-   whether a hold's original invalidation conditions have since been met. The key is omitted when
-   there are none, or fail-soft (logged, omitted) if the lookup fails.
+1. `POST /api/gropar/tools/fetch-held-positions` — tool webhook pulls every open position
+   from the live depot (`depot-1`) joined by symbol to its `position_context` row
+   (`HeldPositionService.openPositions`, `de.visterion.dracul.position`) — the depot, not the
+   watchlist, is the single source of truth for what's held. Each position carries an opaque
+   `positionId` (the symbol) the LLM echoes back so signals can be matched to a still-open
+   position at `/complete` time. When the position has an open context row, its `thesis`
+   block is built directly from that row's stored `thesisSnapshot`/`killCriteria` (captured
+   once, at the point the position was opened/backfilled — see `PositionReconciler` /
+   the executor's entry-fill write) rather than re-resolved from the verdict live. A
+   position with **no** open context row (e.g. opened by the executor before a matching
+   verdict was linked) degrades to **TA-only**: indicators are still computed, but `thesis`
+   is `null` — it is never dropped from the feed.
 2. `GroparExitIndicators` assembles the exit-indicator bundle for each position. The technical
    indicators are sourced from Agora's bundled `get_indicators` MCP tool (one call per position)
    via the `AgoraResearch` facade — Dracul no longer computes them locally:
@@ -465,7 +469,10 @@ On each run:
    - **52-week proximity** — distance to 52-week low/high
    - **Gain/loss thresholds** — unrealised gain ≥ 40% or unrealised loss ≥ 15% (derived in Dracul
      from the position's entry price and Agora's current close)
-   - **Time stop** — based on position age (derived in Dracul from the verdict horizon)
+   - **Time stop** — based on position age vs. the verdict horizon; the horizon itself still
+     rides along in the depot-sourced context, but the verdict's creation date needed to
+     evaluate "has the horizon elapsed" is not currently carried by `HeldPosition`, so
+     `TIME_STOP` does not fire post-repointing (known gap, see `HeldPosition`/`position_context`)
    - **R-framework** — `RiskMetricsService` (retained, position-domain) is fed Agora's ATR to derive
      the frozen ATR initial stop, risk unit R, gain in R, MFE since entry, and a giveback
      (peak-drawdown) guard (`INITIAL_STOP` / `GIVEBACK` rules)
