@@ -1,40 +1,42 @@
 <template>
   <div class="table-wrap">
-    <table class="dt" data-testid="depot-positions-table">
-      <thead>
-        <tr>
-          <th @click="sortBy('symbol')">{{ t('depots.table.symbol') }}</th>
-          <th class="num" @click="sortBy('qty')">{{ t('depots.table.qty') }}</th>
-          <th class="num" @click="sortBy('avgEntryPrice')">{{ t('depots.table.avgEntry') }}</th>
-          <th class="num" @click="sortBy('price')">{{ t('depots.table.price') }}</th>
-          <th class="num" @click="sortBy('marketValue')">{{ t('depots.table.marketValue') }}</th>
-          <th class="num" @click="sortBy('change')">{{ metric === 'sinceBuy' ? t('depots.table.pnl') : t('depots.table.dayChange') }}</th>
-          <th class="num" @click="sortBy('weightPct')">{{ t('depots.table.weight') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="p in sorted"
-          :key="p.symbol"
-          class="depot-position-row"
-          data-testid="depot-position-row"
-          @click="$emit('select', p.symbol)"
-        >
-          <td class="tkr">{{ p.symbol }}</td>
-          <td class="num">{{ formatNumber(p.qty, Number.isInteger(p.qty) ? 0 : 4) }}</td>
-          <td class="num">{{ formatMoney(p.avgEntryPrice, p.currency) }}</td>
-          <td class="num">{{ p.price == null ? '—' : formatMoney(p.price, p.currency) }}</td>
-          <td class="num">{{ formatMoney(p.marketValue, p.currency) }}</td>
-          <td
-            class="num pnl-cell"
-            data-testid="change-cell"
-            :class="pnlClass(changeSortValue(p))"
-            @click.stop="toggle()"
-          >{{ fmtPl(changeAbs(p), changePct(p), mode, p.currency) }}</td>
-          <td class="num">{{ p.weightPct == null ? '—' : formatPercent(p.weightPct) }}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="dpt-scroll">
+      <table class="dt" data-testid="depot-positions-table">
+        <thead>
+          <tr>
+            <th @click="sortBy('symbol')">{{ t('depots.table.symbol') }}</th>
+            <th class="num" @click="sortBy('qty')">{{ t('depots.table.qty') }}</th>
+            <th class="num" @click="sortBy('avgEntryPrice')">{{ t('depots.table.avgEntry') }}</th>
+            <th class="num" @click="sortBy('price')">{{ t('depots.table.price') }}</th>
+            <th class="num" @click="sortBy('marketValue')">{{ t('depots.table.marketValue') }}</th>
+            <th class="num" @click="sortBy('change')">{{ metric === 'sinceBuy' ? t('depots.table.pnl') : t('depots.table.dayChange') }}</th>
+            <th class="num" @click="sortBy('weightPct')">{{ t('depots.table.weight') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="p in sorted"
+            :key="p.symbol"
+            class="depot-position-row"
+            data-testid="depot-position-row"
+            @click="$emit('select', p.symbol)"
+          >
+            <td class="tkr">{{ p.symbol }}</td>
+            <td class="num">{{ formatNumber(p.qty, Number.isInteger(p.qty) ? 0 : 4) }}</td>
+            <td class="num">{{ formatMoney(p.avgEntryPrice, p.currency) }}</td>
+            <td class="num">{{ p.price == null ? '—' : formatMoney(p.price, p.currency) }}</td>
+            <td class="num">{{ formatMoney(p.marketValue, p.currency) }}</td>
+            <td
+              class="num pnl-cell"
+              data-testid="change-cell"
+              :class="pnlClass(changeSortValue(p))"
+              @click.stop="toggle()"
+            >{{ fmtPl(changeAbs(p), changePct(p), mode, p.currency) }}</td>
+            <td class="num">{{ p.weightPct == null ? '—' : formatPercent(p.weightPct) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
@@ -105,6 +107,15 @@ function pnlClass(v: number | null): string {
 </script>
 
 <style scoped>
+.dpt-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dt {
+  min-width: 100%;
+}
+
 .pnl-cell { cursor: pointer; }
 .pnl-cell.pos { color: var(--signal-positive-bright); }
 .pnl-cell.neg { color: var(--blood-crimson-bright); }
