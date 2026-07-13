@@ -7,6 +7,7 @@ import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.position.PositionContextRepository;
@@ -337,6 +338,17 @@ public class ExecutorWebhookController {
         return (body != null && body.path("input").isObject()) ? body.path("input") : body;
     }
 
+    /**
+     * Whether an existing broker order (found via orderByRef on a retry) represents a live order
+     * that should be adopted instead of re-placed. A terminal order (CANCELLED/REJECTED) means no
+     * real order exists under this clientRef, so it must fall through to normal placement instead
+     * of being booked as a phantom position.
+     */
+    private static boolean isLiveOrder(OrderStatus status) {
+        return status == OrderStatus.WORKING || status == OrderStatus.PARTIALLY_FILLED
+                || status == OrderStatus.FILLED;
+    }
+
     // -------------------------------------------------------------------
     // rich decision_log construction — inputs snapshot, measured vetos, latency.
     // Mirrors HardTriggerService's decision-log idiom; every place-entry outcome (accept or
@@ -590,8 +602,16 @@ public class ExecutorWebhookController {
             Optional<BrokerOrder> existing = priorBrokerErrors > 0
                     ? gateway.orderByRef(connection, signalId)
                     : Optional.empty();
-            if (existing.isPresent()) {
+            boolean adoptable = existing.isPresent() && isLiveOrder(existing.get().status());
+            if (adoptable) {
                 BrokerOrder eo = existing.get();
+                // Book the live order's actual qty, not the freshly re-computed sizer qty — a
+                // later-run retry can produce a different qty from the sizer, which would diverge
+                // the DB position from the real broker order. Price cannot be reliably
+                // reconstructed from a working order, so the price recompute is left as-is.
+                if (eo.qty() != null) {
+                    qty = eo.qty();
+                }
                 // Saxo/live brackets expose no leg ids — null is expected and matches a fresh
                 // placement.
                 placed = new PlacedBracket(eo.orderId(), null, null, eo.clientRef(), eo.status());

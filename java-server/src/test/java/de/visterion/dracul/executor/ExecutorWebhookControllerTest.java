@@ -910,7 +910,7 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
                 new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
-                        new BigDecimal("10"), BigDecimal.ZERO, null, null)));
+                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
         JsonNode body = json("""
@@ -928,6 +928,37 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
         verify(positionRepo).insert(posCaptor.capture());
         assertThat(posCaptor.getValue().brokerOrderId()).isEqualTo("brk-existing");
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo(new BigDecimal("7"));
+
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+    }
+
+    @Test
+    void placeEntry_retryWithTerminalBrokerOrder_replaces() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-cancelled", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.CANCELLED,
+                        new BigDecimal("10"), BigDecimal.ZERO, null, null)));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-fresh", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(78L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-fresh");
+
+        verify(gateway).placeBracket(eq("depot-1"), any(BracketRequest.class));
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().brokerOrderId()).isEqualTo("brk-fresh");
 
         verify(signalRepo).markStatus("sig-1", "ACCEPTED");
     }
