@@ -606,22 +606,26 @@ persisting. See `documentation/api.md` for the full request/response contract.
 sub-project 2 of 4). Not a scheduled agent — Vistierie opens a window-bounded
 session at market open and polls Dracul's event-source webhook every 5 minutes.
 
-1. `POST /api/daywalker/events` runs deterministic detection across **all users'**
-   watchlists (no LLM) and returns trigger events. Each trigger type is evaluated
-   **once per distinct ticker** — price/volume spikes, negative news, insider sells,
-   and analyst downgrades are market-wide signals, so a single market-data fetch per
-   ticker serves every user who watches it.
+1. `POST /api/daywalker/events` runs deterministic detection over the depot's live
+   positions (`HeldPositionService.openPositions("depot-1")`, no LLM) and returns
+   trigger events. Each trigger type is evaluated **once per distinct symbol** —
+   price/volume spikes, negative news, insider sells, and analyst downgrades are
+   market-wide signals, so a single market-data fetch per symbol suffices.
 2. Vistierie spawns one reasoning-tier (Sonnet) child run per triggered symbol; the
    run judges severity and returns `{severity, thesis, confidence}`.
 3. `POST /api/daywalker/complete` fans out the assessment to **every owner** of that
    symbol — one `dracul.daywalker_alerts` row is written per owner whose
    `(owner, symbol, trigger_type)` cooldown has not yet elapsed.
 
-For HELD positions the Daywalker now judges each event against gropar's pre-set exit
-levels rather than abstract percentages: every trigger is fanned out per HELD position
-and carries `active_stop`, `next_target`, and `atr` plus a deterministic `breached_level`
-(STOP/TARGET). A level breach defaults to CRITICAL severity; the LLM may downgrade only
-with a stated reason. Watch-only tickers remain generic, purely technical assessments.
+Every depot position is a real holding, so every trigger is fanned out per position and
+judged against its stored context (`position_context.active_stop`, falling back to
+`initial_stop`) rather than abstract percentages, carrying a deterministic
+`breached_level` (STOP/TARGET — TARGET does not currently fire, see below). A level
+breach defaults to CRITICAL severity; the LLM may downgrade only with a stated reason.
+A position with no open `position_context` row still gets its event (never dropped),
+just without a stop to breach. **Known gap:** `HeldPosition` does not yet carry
+`next_target`/`atr`, so `next_target`/`atr`/`dist_to_stop_in_atr` are always null in
+the event payload and only a STOP breach can be detected today.
 
 CRITICAL alerts also fire a best-effort Telegram push (configurable via
 `DRACUL_DAYWALKER_NOTIFY_LEVEL`); the push fires **once per symbol event** on the

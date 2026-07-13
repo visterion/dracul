@@ -196,6 +196,12 @@ directly without triggering any market-data call.
 **Daywalker-alert columns (V5):**
 - `notification_sent` (BOOLEAN, default false) — true when a Telegram push was delivered for this alert
 
+**Daywalker-alert columns (V30):**
+- `watchlist_item_id` is now nullable (FK kept, enforced only for non-null values) — depot-sourced
+  alerts (`DaywalkerEventEngine` fans triggers over `HeldPositionService` positions, A6) carry no
+  watchlist row at all; `DaywalkerCompletionService` persists these keyed by `symbol` alone, routed
+  to the single `dracul.primary-user-email` owner (same convention as gropar's `exit_signals`).
+
 **Verdict columns (V6):**
 - `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
 
