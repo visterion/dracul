@@ -5,28 +5,21 @@ import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.notify.TelegramNotifier;
-import de.visterion.dracul.prey.Prey;
-import de.visterion.dracul.prey.PreyRepository;
-import de.visterion.dracul.verdict.VerdictDetail;
-import de.visterion.dracul.verdict.VerdictRepository;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.ResponseEntity;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
-import de.visterion.dracul.watchlist.PositionRisk;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -35,24 +28,23 @@ import static org.mockito.Mockito.*;
 class GroparWebhookControllerTest {
 
     private static final String BEARER = "Bearer tok";
+    private static final String CONNECTION = "depot-1";
 
-    private WatchlistRepository watchlistRepo;
-    private VerdictRepository verdictRepo;
-    private PreyRepository preyRepo;
+    private HeldPositionService heldPositionService;
     private AgoraMarketData marketData;
     private ExitSignalRepository exitSignalRepo;
     private TelegramNotifier telegram;
+    private ObjectMapper mapper;
 
     private GroparWebhookController controller;
 
     @BeforeEach
     void setUp() {
-        watchlistRepo    = mock(WatchlistRepository.class);
-        verdictRepo      = mock(VerdictRepository.class);
-        preyRepo         = mock(PreyRepository.class);
-        marketData       = mock(AgoraMarketData.class);
-        exitSignalRepo   = mock(ExitSignalRepository.class);
-        telegram         = mock(TelegramNotifier.class);
+        heldPositionService = mock(HeldPositionService.class);
+        marketData          = mock(AgoraMarketData.class);
+        exitSignalRepo      = mock(ExitSignalRepository.class);
+        telegram            = mock(TelegramNotifier.class);
+        mapper              = JsonMapper.builder().build();
 
         AgoraResearch research = mock(AgoraResearch.class);
         when(research.exitTa(any(), anyInt(), any(), anyInt(), anyInt(), anyInt()))
@@ -67,44 +59,19 @@ class GroparWebhookControllerTest {
 
         var cache = new ToolFetchCache(new AgentToolCatalog(java.util.List.of()), 0);
 
-        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
         when(exitSignalRepo.insert(any(ExitSignal.class), any())).thenReturn(true);
 
         controller = new GroparWebhookController(
                 "tok",
-                watchlistRepo, verdictRepo, preyRepo, marketData, exitSignalRepo, telegram,
-                indicatorService, riskService, cache,
+                heldPositionService, marketData, exitSignalRepo, telegram,
+                indicatorService, riskService, cache, mapper,
+                CONNECTION,
+                "alice@x",   // dracul.primary-user-email
                 260,  // historyDays
                 40.0, // profitTargetPct
                 15.0, // stopLossPct
                 0L    // fetchThrottleMs (no sleep in tests)
         );
-    }
-
-    // -------------------------------------------------------------------------
-    // Helper: minimal VerdictDetail (only fields the thesis block reads matter)
-    // -------------------------------------------------------------------------
-
-    private VerdictDetail detail() {
-        return new VerdictDetail(
-                "v1", "ACME", "ACME Corp",
-                List.of(), 0.8,
-                "summary text", "2025-01-01T00:00:00Z",
-                List.of("SPINOFF"), 100.0,
-                0.8, "3-6m",
-                List.of("signal1"), List.of("risk1"),
-                List.of(),
-                null, null, "USD");
-    }
-
-    // -------------------------------------------------------------------------
-    // Helper: minimal Prey with given kill criteria
-    // -------------------------------------------------------------------------
-
-    private Prey preyWithKillCriteria(String id, List<String> criteria) {
-        return new Prey(id, "ACME", "ACME Corp", "SPINOFF",
-                0.8, "thesis text", List.of(), List.of(),
-                criteria, "3-6m", "strigoi-spin", "2025-01-01T00:00:00Z");
     }
 
     // -------------------------------------------------------------------------
@@ -116,74 +83,56 @@ class GroparWebhookControllerTest {
         return List.of(new OhlcBar(LocalDate.of(2025, 6, 1), c, c, c, c, 1_000));
     }
 
-    // -------------------------------------------------------------------------
-    // Helper: build a WatchlistItem
-    // -------------------------------------------------------------------------
-
-    private WatchlistItem item(String id, String ticker, String tag,
-                                Double entryPrice, Double shareCount, String owner) {
-        return new WatchlistItem(id, ticker, ticker + " Corp",
-                110.0, 1.0, "calm", "2025-01-01", tag,
-                null, List.of(), List.of(),
-                entryPrice, shareCount, owner, null, null);
+    /** 23 bars (22 TR values) — enough for ATR to be available with atrPeriod=22. */
+    private List<OhlcBar> multiBars() {
+        var bars = new ArrayList<OhlcBar>();
+        for (int i = 0; i < 23; i++) {
+            var c = new BigDecimal("100");
+            var h = new BigDecimal("105");
+            var l = new BigDecimal("95");
+            bars.add(new OhlcBar(LocalDate.of(2025, 1, 1).plusDays(i), h, h, l, c, 1_000));
+        }
+        return bars;
     }
 
-    private WatchlistItem itemWithVerdict(String id, String ticker, String tag,
-                                           Double entryPrice, Double shareCount, String owner,
-                                           String verdictId) {
-        return new WatchlistItem(id, ticker, ticker + " Corp",
-                110.0, 1.0, "calm", "2025-01-01", tag,
-                verdictId, List.of(), List.of(),
-                entryPrice, shareCount, owner, null, null);
+    // -------------------------------------------------------------------------
+    // Helper: build a HeldPosition (TA-only: no context)
+    // -------------------------------------------------------------------------
+
+    private HeldPosition taOnly(String symbol, String entryPrice, String qty) {
+        return new HeldPosition(symbol, new BigDecimal(qty), new BigDecimal(entryPrice),
+                new BigDecimal("1000"), new BigDecimal("0"),
+                null, null, null, null, null, null, null);
+    }
+
+    private HeldPosition withContext(String symbol, String entryPrice, String qty,
+                                      String verdictId, JsonNode killCriteria, String horizon,
+                                      JsonNode thesisSnapshot, BigDecimal initialStop) {
+        return new HeldPosition(symbol, new BigDecimal(qty), new BigDecimal(entryPrice),
+                new BigDecimal("1000"), new BigDecimal("0"),
+                verdictId, killCriteria, horizon, thesisSnapshot, initialStop, null, "reconcile");
+    }
+
+    private JsonNode thesisSnapshot(String summary, String horizon) {
+        Map<String, Object> thesis = Map.of(
+                "summary", summary,
+                "signals", List.of("signal1"),
+                "risks", List.of("risk1"),
+                "anomalyTypes", List.of("SPINOFF"),
+                "horizon", horizon);
+        return mapper.valueToTree(thesis);
     }
 
     // =========================================================================
-    // Test 1: fetchHeldPositions filters to only held + entry+shares present
+    // Test 1: fetchHeldPositions sources positions from HeldPositionService and
+    // enriches them into the same HeldPositionView shape.
     // =========================================================================
 
     @Test
-    void fetchHeldPositions_returnsOnlyFullyHeldItems() throws Exception {
-        var heldFull     = item("id-1", "ACME", "HELD",     100.0, 10.0, "alice@x");
-        var trackingItem = item("id-2", "FOO",  "TRACKING", 50.0,  5.0,  "alice@x");
-        var heldNoEntry  = item("id-3", "BAR",  "HELD",     null,  null, "bob@x");
-
-        when(watchlistRepo.findAll())
-                .thenReturn(List.of(heldFull, trackingItem, heldNoEntry));
-        when(marketData.dailyOhlcHistory(eq("ACME"), anyInt()))
-                .thenReturn(oneBar());
-
-        var resp = controller.fetchHeldPositions(BEARER, null);
-
-        assertThat(resp.getStatusCode().value()).isEqualTo(200);
-
-        @SuppressWarnings("unchecked")
-        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
-        @SuppressWarnings("unchecked")
-        var positions = (List<?>) output.get("positions");
-
-        assertThat(positions).hasSize(1);
-        assertThat(((HeldPositionView) positions.get(0)).positionId()).isEqualTo("id-1");
-        verify(marketData, times(1)).dailyOhlcHistory(eq("ACME"), anyInt());
-        verify(marketData, never()).dailyOhlcHistory(eq("FOO"),  anyInt());
-        verify(marketData, never()).dailyOhlcHistory(eq("BAR"),  anyInt());
-    }
-
-    // =========================================================================
-    // Test 1b: fetchHeldPositions thesis block includes deduplicated union of
-    // kill criteria across contributing prey
-    // =========================================================================
-
-    @Test
-    void fetchHeldPositions_includesKillCriteriaFromContributingPrey() throws Exception {
-        var heldItem = itemWithVerdict("id-kc", "ACME", "HELD", 100.0, 10.0, "alice@x", "v1");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+    void fetchHeldPositions_sourcesFromHeldPositionServiceAndEnriches() throws Exception {
+        var pos = taOnly("ACME", "100", "10");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(pos));
         when(marketData.dailyOhlcHistory(eq("ACME"), anyInt())).thenReturn(oneBar());
-
-        when(verdictRepo.findDetailById("v1")).thenReturn(Optional.of(detail()));
-        when(verdictRepo.contributingPreyIdsById("v1")).thenReturn(List.of("p1", "p2"));
-        when(preyRepo.findByIds(List.of("p1", "p2"))).thenReturn(List.of(
-                preyWithKillCriteria("p1", List.of("Close below 90")),
-                preyWithKillCriteria("p2", List.of("Close below 90", "Merger terminated"))));
 
         var resp = controller.fetchHeldPositions(BEARER, null);
 
@@ -196,59 +145,134 @@ class GroparWebhookControllerTest {
 
         assertThat(positions).hasSize(1);
         var view = (HeldPositionView) positions.get(0);
+        assertThat(view.positionId()).isEqualTo("ACME");
+        assertThat(view.symbol()).isEqualTo("ACME");
+        assertThat(view.entryPrice()).isEqualTo(100.0);
+        assertThat(view.shareCount()).isEqualTo(10.0);
+        assertThat(view.indicators()).isNotNull();
+        verify(marketData, times(1)).dailyOhlcHistory(eq("ACME"), anyInt());
+    }
+
+    // =========================================================================
+    // Test 2: a null-context position (executor-opened, TA-only) is enriched
+    // with indicators but no thesis — never dropped.
+    // =========================================================================
+
+    @Test
+    void fetchHeldPositions_nullContext_degradesToTaOnlyWithoutDropping() throws Exception {
+        var pos = taOnly("EXEC", "50", "5"); // verdictId + all context fields null
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(pos));
+        when(marketData.dailyOhlcHistory(eq("EXEC"), anyInt())).thenReturn(oneBar());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) output.get("positions");
+
+        assertThat(positions).hasSize(1); // never dropped
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.indicators()).isNotNull();     // TA present
+        assertThat(view.risk()).isNotNull();
+        assertThat(view.thesis()).isNull();             // thesis/kill absent
+    }
+
+    // =========================================================================
+    // Test 3: a position with context includes the thesis block (summary/
+    // signals/risks/anomalyTypes/horizon) plus killCriteria when present.
+    // =========================================================================
+
+    @Test
+    void fetchHeldPositions_withContext_includesThesisAndKillCriteria() throws Exception {
+        JsonNode kill = mapper.valueToTree(List.of("Close below 90", "Merger terminated"));
+        JsonNode snapshot = thesisSnapshot("summary text", "3-6m");
+        var pos = withContext("ACME", "100", "10", "v1", kill, "3-6m", snapshot, new BigDecimal("70"));
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(pos));
+        when(marketData.dailyOhlcHistory(eq("ACME"), anyInt())).thenReturn(oneBar());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) output.get("positions");
+
+        assertThat(positions).hasSize(1);
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.thesis()).isNotNull();
+        assertThat(view.thesis().get("summary")).isEqualTo("summary text");
         @SuppressWarnings("unchecked")
         var killCriteria = (List<String>) view.thesis().get("killCriteria");
         assertThat(killCriteria).containsExactly("Close below 90", "Merger terminated");
     }
 
     // =========================================================================
-    // Test 1c: fetchHeldPositions thesis block omits killCriteria key when a
-    // repo failure occurs while resolving it — the feed must not break.
+    // Test 4: fetchHeldPositions swallows per-position market-data failures —
+    // the feed still returns 200 and other positions remain enriched.
     // =========================================================================
 
     @Test
-    void fetchHeldPositions_killCriteriaLookupFailure_omitsKeyButDoesNotBreakFeed() throws Exception {
-        var heldItem = itemWithVerdict("id-kc2", "ACME", "HELD", 100.0, 10.0, "alice@x", "v1");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
-        when(marketData.dailyOhlcHistory(eq("ACME"), anyInt())).thenReturn(oneBar());
-
-        when(verdictRepo.findDetailById("v1")).thenReturn(Optional.of(detail()));
-        when(verdictRepo.contributingPreyIdsById("v1")).thenThrow(new RuntimeException("db down"));
+    void fetchHeldPositions_marketDataFailure_skipsThatPositionOnly() throws Exception {
+        var good = taOnly("GOOD", "100", "10");
+        var bad  = taOnly("BAD", "50", "5");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(good, bad));
+        when(marketData.dailyOhlcHistory(eq("GOOD"), anyInt())).thenReturn(oneBar());
+        when(marketData.dailyOhlcHistory(eq("BAD"), anyInt()))
+                .thenThrow(new de.visterion.dracul.marketdata.MarketDataException(
+                        de.visterion.dracul.marketdata.MarketDataException.Kind.UNAVAILABLE, "down"));
 
         var resp = controller.fetchHeldPositions(BEARER, null);
 
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
-
         @SuppressWarnings("unchecked")
-        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
-        @SuppressWarnings("unchecked")
-        var positions = (List<?>) output.get("positions");
-
+        var positions = (List<?>) ((Map<String, Object>)
+                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
         assertThat(positions).hasSize(1);
-        var view = (HeldPositionView) positions.get(0);
-        assertThat(view.thesis()).doesNotContainKey("killCriteria");
+        assertThat(((HeldPositionView) positions.get(0)).symbol()).isEqualTo("GOOD");
     }
 
     // =========================================================================
-    // Test 2: complete routes each signal to its owner, even for the same symbol
+    // Test 5: risk metrics are computed from the position's context stop
+    // (hp.initialStop()), not a watchlist risk snapshot (that path is gone).
     // =========================================================================
 
     @Test
-    void complete_routesEachSignalToItsOwner_evenSameSymbol() throws Exception {
-        // Two users both hold AAPL — routing must be by position_id, not symbol.
-        var aliceAapl = item("pos-alice", "AAPL", "HELD", 100.0, 10.0, "alice@x");
-        var bobAapl   = item("pos-bob",   "AAPL", "HELD", 200.0,  5.0, "bob@x");
-        when(watchlistRepo.findAll()).thenReturn(List.of(aliceAapl, bobAapl));
+    void fetchHeldPositions_usesContextInitialStopForRiskMetrics() throws Exception {
+        var pos = withContext("SNAP", "100", "10", null, null, null, null, new BigDecimal("70"));
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(pos));
+        when(marketData.dailyOhlcHistory(eq("SNAP"), anyInt())).thenReturn(multiBars());
+
+        var resp = controller.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) ((Map<String, Object>)
+                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.risk().initialStop()).isEqualByComparingTo("70");
+        assertThat(view.risk().r()).isEqualByComparingTo("30"); // entry(100) - stop(70)
+    }
+
+    // =========================================================================
+    // Test 6: complete persists signals for a held (depot-sourced) position
+    // and fires Telegram for non-HOLD actions.
+    // =========================================================================
+
+    @Test
+    void complete_persistsSignalAndNotifiesTelegramForNonHold() throws Exception {
+        when(heldPositionService.openPositions(CONNECTION))
+                .thenReturn(List.of(taOnly("ACME", "100", "10")));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      { "position_id": "pos-alice", "symbol": "AAPL", "action": "SELL",
-                        "rationale": "alice exit", "confidence": 0.8, "fired_rules": ["DEATH_CROSS"] },
-                      { "position_id": "pos-bob", "symbol": "AAPL", "action": "HOLD",
-                        "rationale": "bob holds", "confidence": 0.6 }
+                      { "position_id": "ACME", "symbol": "ACME", "action": "SELL",
+                        "rationale": "exit", "confidence": 0.8, "fired_rules": ["DEATH_CROSS"] }
                     ]
                   }
                 }
@@ -259,26 +283,24 @@ class GroparWebhookControllerTest {
 
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
         verify(exitSignalRepo).insert(any(ExitSignal.class), eq("alice@x"));
-        verify(exitSignalRepo).insert(any(ExitSignal.class), eq("bob@x"));
-        verify(telegram).notifyAlert(eq("AAPL"), eq("EXIT"), eq("SELL"), contains("alice@x"));
-        verify(telegram, never()).notifyAlert(any(), any(), eq("HOLD"), any());
+        verify(telegram).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"), contains("alice@x"));
     }
 
     // =========================================================================
-    // Test 3: complete with HOLD → persists but does NOT fire Telegram
+    // Test 7: complete with HOLD → persists but does NOT fire Telegram
     // =========================================================================
 
     @Test
     void complete_holdSignal_persistsButNoTelegram() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(heldPositionService.openPositions(CONNECTION))
+                .thenReturn(List.of(taOnly("ACME", "100", "10")));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      { "position_id": "id-1", "symbol": "ACME", "action": "HOLD",
+                      { "position_id": "ACME", "symbol": "ACME", "action": "HOLD",
                         "rationale": "all good", "thesis_status": "INTACT" }
                     ]
                   }
@@ -294,20 +316,21 @@ class GroparWebhookControllerTest {
     }
 
     // =========================================================================
-    // Test 4: complete with unknown position_id → skip persist
+    // Test 8: complete with unknown/non-held position_id (hallucinated by the
+    // LLM, or the position has since been closed) → skip persist
     // =========================================================================
 
     @Test
     void complete_unknownPositionId_skipsPersist() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(heldPositionService.openPositions(CONNECTION))
+                .thenReturn(List.of(taOnly("ACME", "100", "10")));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      { "position_id": "ghost", "symbol": "ACME", "action": "SELL",
+                      { "position_id": "GHOST", "symbol": "GHOST", "action": "SELL",
                         "rationale": "hallucinated", "confidence": 0.9 }
                     ]
                   }
@@ -323,20 +346,20 @@ class GroparWebhookControllerTest {
     }
 
     // =========================================================================
-    // Test 5: complete with null rationale → no "null" literal in Telegram text
+    // Test 9: complete with null rationale → no "null" literal in Telegram text
     // =========================================================================
 
     @Test
     void complete_sellSignalWithNullRationale_noNullLiteralInTelegram() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(heldPositionService.openPositions(CONNECTION))
+                .thenReturn(List.of(taOnly("ACME", "100", "10")));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL", "confidence": 0.7 }
+                      { "position_id": "ACME", "symbol": "ACME", "action": "SELL", "confidence": 0.7 }
                     ]
                   }
                 }
@@ -350,21 +373,20 @@ class GroparWebhookControllerTest {
     }
 
     // =========================================================================
-    // Test 5b: complete with violated_kill_criteria appends "[Verletzt: ...]"
-    // to the persisted rationale.
+    // Test 10: violated_kill_criteria appends "[Verletzt: ...]" to rationale
     // =========================================================================
 
     @Test
     void complete_invalidatedSignal_appendsViolatedKillCriteriaToRationale() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(heldPositionService.openPositions(CONNECTION))
+                .thenReturn(List.of(taOnly("ACME", "100", "10")));
 
         String json = """
                 {
                   "status": "done",
                   "output": {
                     "signals": [
-                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL",
+                      { "position_id": "ACME", "symbol": "ACME", "action": "SELL",
                         "rationale": "These loosen", "confidence": 0.9,
                         "thesis_status": "INVALIDATED",
                         "violated_kill_criteria": ["Close below 90"] }
@@ -382,10 +404,11 @@ class GroparWebhookControllerTest {
         verify(exitSignalRepo).insert(captor.capture(), eq("alice@x"));
         assertThat(captor.getValue().rationale())
                 .isEqualTo("These loosen [Verletzt: Close below 90]");
+        assertThat(captor.getValue().watchlistItemId()).isNull();
     }
 
     // =========================================================================
-    // Test 6: complete with non-done status → no persist (was Test 5)
+    // Test 11: complete with non-done status → no persist
     // =========================================================================
 
     @Test
@@ -405,17 +428,18 @@ class GroparWebhookControllerTest {
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
         verify(exitSignalRepo, never()).insert(any(), any());
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+        verifyNoInteractions(heldPositionService);
     }
 
     // =========================================================================
-    // Test 6b: duplicate /complete delivery for the same run/position → Telegram
+    // Test 12: duplicate /complete delivery for the same run/position → Telegram
     // fires only once, since the second insert reports no fresh row.
     // =========================================================================
 
     @Test
     void complete_duplicateDelivery_notifiesTelegramOnlyOnce() throws Exception {
-        var heldItem = item("id-1", "ACME", "HELD", 100.0, 10.0, "alice@x");
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
+        when(heldPositionService.openPositions(CONNECTION))
+                .thenReturn(List.of(taOnly("ACME", "100", "10")));
         when(exitSignalRepo.insert(any(ExitSignal.class), eq("alice@x")))
                 .thenReturn(true)   // first delivery: fresh row
                 .thenReturn(false); // retried delivery: conflict, no new row
@@ -425,7 +449,7 @@ class GroparWebhookControllerTest {
                   "status": "done",
                   "output": {
                     "signals": [
-                      { "position_id": "id-1", "symbol": "ACME", "action": "SELL",
+                      { "position_id": "ACME", "symbol": "ACME", "action": "SELL",
                         "rationale": "exit", "confidence": 0.7 }
                     ]
                   }
@@ -438,118 +462,5 @@ class GroparWebhookControllerTest {
 
         verify(exitSignalRepo, times(2)).insert(any(ExitSignal.class), eq("alice@x"));
         verify(telegram, times(1)).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"), any());
-    }
-
-    // =========================================================================
-    // Test 7: feed includes risk metrics and lazily freezes initial stop
-    // =========================================================================
-
-    /** 23 bars (22 TR values) — enough for ATR to be available with atrPeriod=22. */
-    private List<OhlcBar> multiBars() {
-        var bars = new ArrayList<OhlcBar>();
-        for (int i = 0; i < 23; i++) {
-            var c = new BigDecimal("100");
-            var h = new BigDecimal("105");
-            var l = new BigDecimal("95");
-            bars.add(new OhlcBar(LocalDate.of(2025, 1, 1).plusDays(i), h, h, l, c, 1_000));
-        }
-        return bars;
-    }
-
-    @Test
-    void feedIncludesRiskMetricsAndFreezesStop() throws Exception {
-        var heldItem = item("id-r", "RSK", "HELD", 100.0, 10.0, "alice@x");
-
-        // No stored stop yet → riskService will derive one from ATR (derivedNow = true)
-        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
-        when(marketData.dailyOhlcHistory(eq("RSK"), anyInt())).thenReturn(multiBars());
-
-        var resp = controller.fetchHeldPositions(BEARER, null);
-
-        assertThat(resp.getStatusCode().value()).isEqualTo(200);
-
-        @SuppressWarnings("unchecked")
-        var output = (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
-        @SuppressWarnings("unchecked")
-        var positions = (List<?>) output.get("positions");
-
-        assertThat(positions).hasSize(1);
-        var view = (HeldPositionView) positions.get(0);
-        assertThat(view.risk()).isNotNull();
-        assertThat(view.risk().initialStop()).isNotNull();
-
-        verify(watchlistRepo).updateInitialStop(eq("id-r"), any());
-    }
-
-    // =========================================================================
-    // Test 8: fetchHeldPositions persists risk snapshot (active-stop/+2R/close)
-    // =========================================================================
-
-    /** 23 bars with high=105/low=95/close=100 + frozen initial stop at 70
-     *  → R = entry(100) - stop(70) = 30 → next_target_2r = 100 + 2*30 = 160.
-     *  Chandelier will be computed from ATR; active_stop = max(70, chandelier). */
-    @Test
-    void fetchPersistsRiskSnapshot() throws Exception {
-        var heldItem = item("id-snap", "SNAP", "HELD", 100.0, 10.0, "alice@x");
-
-        // Provide a frozen stop of 70 so R is available
-        var pr = new PositionRisk("id-snap", "2025-01-01", new BigDecimal("70"),
-                null, null, null, null);
-        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of("id-snap", pr));
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
-        when(marketData.dailyOhlcHistory(eq("SNAP"), anyInt())).thenReturn(multiBars());
-
-        var resp = controller.fetchHeldPositions(BEARER, null);
-
-        assertThat(resp.getStatusCode().value()).isEqualTo(200);
-
-        @SuppressWarnings("unchecked")
-        var positions = (List<?>) ((Map<String, Object>)
-                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
-        assertThat(positions).hasSize(1);
-
-        // Capture the updateRiskSnapshot call
-        ArgumentCaptor<BigDecimal> stopCaptor   = ArgumentCaptor.forClass(BigDecimal.class);
-        ArgumentCaptor<BigDecimal> tgtCaptor    = ArgumentCaptor.forClass(BigDecimal.class);
-        ArgumentCaptor<BigDecimal> closeCaptor  = ArgumentCaptor.forClass(BigDecimal.class);
-        ArgumentCaptor<BigDecimal> atrCaptor    = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(watchlistRepo).updateRiskSnapshot(
-                eq("id-snap"), stopCaptor.capture(), tgtCaptor.capture(),
-                closeCaptor.capture(), atrCaptor.capture(), any(Instant.class));
-
-        // next_target_2r = 100 + 2*30 = 160
-        assertThat(tgtCaptor.getValue()).isEqualByComparingTo("160");
-        // active_stop >= initial stop of 70 (may be higher if chandelier > 70)
-        assertThat(stopCaptor.getValue().compareTo(new BigDecimal("70"))).isGreaterThanOrEqualTo(0);
-        // close must be present (bars all close at 100)
-        assertThat(closeCaptor.getValue()).isEqualByComparingTo("100");
-        // ATR now sourced from Agora (get_indicators) via the mocked AgoraResearch stub → 2
-        assertThat(atrCaptor.getValue()).isEqualByComparingTo("2");
-    }
-
-    // =========================================================================
-    // Test 9: snapshot write failure is swallowed — fetch still returns 200
-    // =========================================================================
-
-    @Test
-    void fetchSwallowsSnapshotWriteFailure() throws Exception {
-        var heldItem = item("id-fail", "FAIL", "HELD", 100.0, 10.0, "alice@x");
-
-        when(watchlistRepo.positionRiskByItemId()).thenReturn(Map.of());
-        when(watchlistRepo.findAll()).thenReturn(List.of(heldItem));
-        when(marketData.dailyOhlcHistory(eq("FAIL"), anyInt())).thenReturn(multiBars());
-
-        doThrow(new RuntimeException("db down"))
-                .when(watchlistRepo).updateRiskSnapshot(any(), any(), any(), any(), any(), any());
-
-        var resp = controller.fetchHeldPositions(BEARER, null);
-
-        assertThat(resp.getStatusCode().value()).isEqualTo(200);
-
-        @SuppressWarnings("unchecked")
-        var positions = (List<?>) ((Map<String, Object>)
-                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
-        assertThat(positions).hasSize(1);
     }
 }

@@ -1,10 +1,11 @@
 package de.visterion.dracul.gropar;
 
+import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.vistierie.VistierieClient;
 import de.visterion.dracul.watchlist.WatchlistChangedEvent;
-import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -17,6 +18,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * Keeps the gropar exit agent paused while no held positions exist and unpauses it
  * when at least one exists. gropar only does useful work over held positions, so
  * pausing it (Vistierie skips a paused agent's cron) avoids burning empty runs.
+ *
+ * <p>"Held" is now the live depot ⨝ context read model (see {@link HeldPositionService}),
+ * not the watchlist -- depot-1 is the single source of truth for what's held.
  *
  * <p>gropar's pause is system-managed by this reconciler: the operator turns gropar
  * on/off via its {@code dracul.gropar.enabled} flag, not the manual pause toggle.
@@ -31,15 +35,18 @@ public class GroparPauseReconciler {
     private static final Logger log = LoggerFactory.getLogger(GroparPauseReconciler.class);
     private static final String AGENT = "gropar";
 
-    private final WatchlistRepository watchlistRepo;
+    private final HeldPositionService heldPositionService;
     private final VistierieClient vistierie;
+    private final String connection;
 
     /** Last pause state we successfully applied; null until the first apply. */
     private final AtomicReference<Boolean> lastApplied = new AtomicReference<>(null);
 
-    public GroparPauseReconciler(WatchlistRepository watchlistRepo, VistierieClient vistierie) {
-        this.watchlistRepo = watchlistRepo;
+    public GroparPauseReconciler(HeldPositionService heldPositionService, VistierieClient vistierie,
+            @Value("${dracul.position.connection:depot-1}") String connection) {
+        this.heldPositionService = heldPositionService;
         this.vistierie = vistierie;
+        this.connection = connection;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -52,9 +59,9 @@ public class GroparPauseReconciler {
         reconcile();
     }
 
-    /** Recompute desired pause state from held count and apply it if it changed. */
+    /** Recompute desired pause state from open depot positions and apply it if it changed. */
     public void reconcile() {
-        boolean desiredPaused = watchlistRepo.countHeldAll() == 0;
+        boolean desiredPaused = heldPositionService.openPositions(connection).isEmpty();
         if (Boolean.valueOf(desiredPaused).equals(lastApplied.get())) {
             return; // no change — avoid a redundant Vistierie call
         }

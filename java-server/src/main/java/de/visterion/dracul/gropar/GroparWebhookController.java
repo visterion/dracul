@@ -4,10 +4,8 @@ import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.notify.TelegramNotifier;
-import de.visterion.dracul.prey.PreyRepository;
-import de.visterion.dracul.verdict.VerdictRepository;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,18 +14,19 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.JsonNode;
-
-import de.visterion.dracul.watchlist.PositionRisk;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @ConditionalOnProperty(value = "dracul.gropar.enabled", havingValue = "true")
@@ -38,16 +37,17 @@ public class GroparWebhookController {
     private static final String HOLD = "HOLD";
 
     private final BearerTokenVerifier verifier;
-    private final WatchlistRepository watchlistRepo;
-    private final VerdictRepository verdictRepo;
-    private final PreyRepository preyRepo;
+    private final HeldPositionService heldPositionService;
     private final AgoraMarketData marketData;
     private final ExitSignalRepository exitSignalRepo;
     private final TelegramNotifier telegram;
     private final GroparExitIndicators indicatorService;
     private final RiskMetricsService riskService;
     private final ToolFetchCache cache;
+    private final ObjectMapper mapper;
 
+    private final String connection;
+    private final String owner;
     private final int historyDays;
     private final double profitTargetPct;
     private final double stopLossPct;
@@ -55,37 +55,39 @@ public class GroparWebhookController {
 
     public GroparWebhookController(
             @Value("${dracul.gropar.webhook-token}") String token,
-            WatchlistRepository watchlistRepo,
-            VerdictRepository verdictRepo,
-            PreyRepository preyRepo,
+            HeldPositionService heldPositionService,
             AgoraMarketData marketData,
             ExitSignalRepository exitSignalRepo,
             TelegramNotifier telegram,
             GroparExitIndicators indicatorService,
             RiskMetricsService riskService,
             ToolFetchCache cache,
+            ObjectMapper mapper,
+            @Value("${dracul.position.connection:depot-1}") String connection,
+            @Value("${dracul.primary-user-email:}") String primaryUser,
             @Value("${dracul.gropar.history-days:260}") int historyDays,
             @Value("${dracul.gropar.profit-target-pct:40}") double profitTargetPct,
             @Value("${dracul.gropar.stop-loss-pct:15}") double stopLossPct,
             @Value("${dracul.gropar.fetch-throttle-ms:250}") long fetchThrottleMs) {
 
         this.verifier = new BearerTokenVerifier(token);
-        this.watchlistRepo = watchlistRepo;
-        this.verdictRepo = verdictRepo;
-        this.preyRepo = preyRepo;
+        this.heldPositionService = heldPositionService;
         this.marketData = marketData;
         this.exitSignalRepo = exitSignalRepo;
         this.telegram = telegram;
         this.indicatorService = indicatorService;
         this.riskService = riskService;
         this.cache = cache;
+        this.mapper = mapper;
+        this.connection = connection;
+        this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
         this.historyDays = historyDays;
         this.profitTargetPct = profitTargetPct;
         this.stopLossPct = stopLossPct;
         this.fetchThrottleMs = fetchThrottleMs;
     }
 
-    /** Tool callback: returns all held positions enriched with exit indicators. */
+    /** Tool callback: returns all held depot positions (depot ⨝ context) enriched with exit indicators. */
     @PostMapping("/tools/fetch-held-positions")
     public ResponseEntity<Map<String, Object>> fetchHeldPositions(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
@@ -94,110 +96,30 @@ public class GroparWebhookController {
         if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
 
         Map<String, Object> out = cache.get("fetch_held_positions", "all", () -> {
-            var held = watchlistRepo.findAll().stream()
-                    .filter(this::isHeld)
-                    .toList();
-
-            var riskByItem = watchlistRepo.positionRiskByItemId();
+            var positions = heldPositionService.openPositions(connection);
 
             var views = new ArrayList<HeldPositionView>();
-            for (WatchlistItem item : held) {
+            for (HeldPosition hp : positions) {
                 try {
                     if (fetchThrottleMs > 0 && !views.isEmpty()) {
                         try { Thread.sleep(fetchThrottleMs); }
                         catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                     }
-                    var bars = marketData.dailyOhlcHistory(item.ticker(), historyDays);
+                    var bars = marketData.dailyOhlcHistory(hp.symbol(), historyDays);
 
-                    // Resolve verdict data for horizon / thesis
-                    String verdictCreatedAt = null;
-                    String horizon = null;
-                    Map<String, Object> thesis = null;
+                    // TA-only degrade: a null context (executor-opened positions, or a depot
+                    // position with no matching verdict) simply yields thesis=null below --
+                    // never dropped, never erroring.
+                    Map<String, Object> thesis = buildThesis(hp);
 
-                    if (item.verdictId() != null) {
-                        var detail = verdictRepo.findDetailById(item.verdictId());
-                        if (detail.isPresent()) {
-                            var vd = detail.get();
-                            verdictCreatedAt = vd.createdAt();
-                            horizon = vd.horizon();
-                            thesis = new HashMap<>();
-                            thesis.put("summary", vd.summary());
-                            thesis.put("signals", vd.signals());
-                            thesis.put("risks", vd.risks());
-                            thesis.put("anomalyTypes", vd.anomalyTypes());
-                            thesis.put("horizon", vd.horizon());
+                    // No verdict-created-at is carried by HeldPosition's context snapshot, so
+                    // TIME_STOP horizon-elapsed detection is unavailable from this source (see
+                    // report). horizon itself is still passed through for the LLM's own judgment.
+                    var ind = indicatorService.compute(hp.symbol(), bars, hp.avgPrice(), null, hp.horizon());
 
-                            try {
-                                List<String> preyIds = verdictRepo.contributingPreyIdsById(item.verdictId());
-                                if (!preyIds.isEmpty()) {
-                                    List<String> kill = preyRepo.findByIds(preyIds).stream()
-                                            .flatMap(p -> p.killCriteria().stream())
-                                            .distinct()
-                                            .toList();
-                                    if (!kill.isEmpty()) thesis.put("killCriteria", kill);
-                                }
-                            } catch (RuntimeException e) {
-                                log.warn("gropar: failed to resolve kill criteria for verdict {} ({}) — omitting: {}",
-                                        item.verdictId(), item.ticker(), e.getMessage());
-                            }
-                        }
-                    }
-
-                    var ind = indicatorService.compute(item.ticker(), bars,
-                            BigDecimal.valueOf(item.entryPrice()),
-                            verdictCreatedAt, horizon);
-
-                    PositionRisk pr = riskByItem.get(item.id());
-                    BigDecimal storedStop = pr == null ? null : pr.initialStop();
-                    LocalDate entryDate = null;
-                    if (pr != null && pr.entryDate() != null) {
-                        try {
-                            entryDate = LocalDate.parse(pr.entryDate());
-                        } catch (java.time.format.DateTimeParseException e) {
-                            log.warn("gropar: unparseable entry_date '{}' for {} — ignoring",
-                                    pr.entryDate(), item.ticker());
-                        }
-                    }
-                    var risk = riskService.compute(bars,
-                            BigDecimal.valueOf(item.entryPrice()), entryDate, storedStop,
+                    var risk = riskService.compute(bars, hp.avgPrice(), null, hp.initialStop(),
                             ind.atr(), ind.atrAvailable());
-                    if (risk.derivedNow() && risk.initialStop() != null) {
-                        try {
-                            watchlistRepo.updateInitialStop(item.id(), risk.initialStop());
-                        } catch (Exception e) {
-                            log.warn("gropar: failed to freeze initial stop for {}: {}",
-                                    item.ticker(), e.getMessage());
-                        }
-                    }
 
-                    // Slice 2a: persist the per-position risk snapshot for the
-                    // morning report. active_stop = max(initial, chandelier); the
-                    // morning report reads this (0 market-data calls at report time).
-                    BigDecimal activeStop = null;
-                    if (risk.initialStopAvailable() && risk.initialStop() != null
-                            && ind.chandelierStop() != null) {
-                        activeStop = risk.initialStop().max(ind.chandelierStop());
-                    } else if (risk.initialStopAvailable() && risk.initialStop() != null) {
-                        activeStop = risk.initialStop();
-                    } else if (ind.chandelierStop() != null) {
-                        activeStop = ind.chandelierStop();
-                    }
-                    BigDecimal nextTarget2r = null;
-                    if (risk.rAvailable() && risk.r() != null) {
-                        nextTarget2r = BigDecimal.valueOf(item.entryPrice())
-                                .add(risk.r().multiply(BigDecimal.valueOf(2)));
-                    }
-                    BigDecimal currentClose = ind.currentClose();
-                    BigDecimal atr = ind.atrAvailable() ? ind.atr() : null;
-                    try {
-                        watchlistRepo.updateRiskSnapshot(item.id(), activeStop,
-                                nextTarget2r, currentClose, atr, Instant.now());
-                    } catch (Exception e) {
-                        log.warn("gropar: failed to persist risk snapshot for {}: {}",
-                                item.ticker(), e.getMessage());
-                    }
-
-                    // Build fired rules: copy from indicator, then add controller-side rules
                     var firedRules = new ArrayList<>(ind.firedRules());
                     if (ind.gainLossPct() != null
                             && ind.gainLossPct().doubleValue() >= profitTargetPct) {
@@ -211,16 +133,17 @@ public class GroparWebhookController {
                     if (risk.givebackBreached())    firedRules.add(ExitRules.GIVEBACK);
 
                     var profitTargets = ScaleOutLadder.profitTargets(
-                            BigDecimal.valueOf(item.entryPrice()),
-                            risk.rAvailable() ? risk.r() : null);
+                            hp.avgPrice(), risk.rAvailable() ? risk.r() : null);
+
+                    BigDecimal currentPrice = ind.currentClose() != null ? ind.currentClose() : hp.avgPrice();
 
                     views.add(new HeldPositionView(
-                            item.id(),
-                            item.ticker(),
-                            item.companyName(),
-                            item.entryPrice(),
-                            item.shareCount(),
-                            item.currentPrice(),
+                            hp.symbol(),
+                            hp.symbol(),
+                            hp.symbol(), // depot positions carry no company name -- symbol is the best available label
+                            hp.avgPrice().doubleValue(),
+                            hp.quantity().doubleValue(),
+                            currentPrice == null ? 0.0 : currentPrice.doubleValue(),
                             ind,
                             risk,
                             firedRules,
@@ -230,12 +153,37 @@ public class GroparWebhookController {
 
                 } catch (MarketDataException e) {
                     log.warn("gropar: market data unavailable for {} — skipping: {}",
-                            item.ticker(), e.getMessage());
+                            hp.symbol(), e.getMessage());
                 }
             }
             return Map.of("output", Map.of("positions", views));
         });
         return ResponseEntity.ok(out);
+    }
+
+    /** Builds the thesis block from the position's stored context snapshot; null (TA-only)
+     *  when the position has no open context row (null verdictId / null snapshot). */
+    private Map<String, Object> buildThesis(HeldPosition hp) {
+        if (hp.thesisSnapshot() == null) return null;
+        Map<String, Object> thesis;
+        try {
+            thesis = new LinkedHashMap<>(
+                    mapper.convertValue(hp.thesisSnapshot(), new TypeReference<Map<String, Object>>() {}));
+        } catch (RuntimeException e) {
+            log.warn("gropar: failed to parse thesis snapshot for {} — degrading to TA-only: {}",
+                    hp.symbol(), e.getMessage());
+            return null;
+        }
+        if (hp.killCriteria() != null) {
+            try {
+                List<String> kill = mapper.convertValue(hp.killCriteria(), new TypeReference<List<String>>() {});
+                if (kill != null && !kill.isEmpty()) thesis.put("killCriteria", kill);
+            } catch (RuntimeException e) {
+                log.warn("gropar: failed to parse kill criteria for {} — omitting: {}",
+                        hp.symbol(), e.getMessage());
+            }
+        }
+        return thesis;
     }
 
     /** Completion webhook: persists LLM exit signals and fires Telegram for non-HOLD actions. */
@@ -260,13 +208,11 @@ public class GroparWebhookController {
             return ResponseEntity.noContent().build();
         }
 
-        // Build positionId → owner map for held items across all users
-        Map<String, String> ownerByPosition = new HashMap<>();
-        for (WatchlistItem item : watchlistRepo.findAll()) {
-            if (isHeld(item)) {
-                ownerByPosition.put(item.id(), item.owner());
-            }
-        }
+        // Depot positions are keyed by symbol (no watchlist item id survives this source), so
+        // "held" validation is a fresh symbol lookup rather than an owner map.
+        Set<String> heldSymbols = heldPositionService.openPositions(connection).stream()
+                .map(HeldPosition::symbol)
+                .collect(Collectors.toSet());
 
         for (JsonNode node : signals) {
             String positionId   = node.path("position_id").asText("");
@@ -287,8 +233,7 @@ public class GroparWebhookController {
                 rationale = rationale + " [Verletzt: " + String.join("; ", violatedKillCriteria) + "]";
             }
 
-            String owner = ownerByPosition.get(positionId);
-            if (owner == null) {
+            if (!heldSymbols.contains(positionId)) {
                 log.warn("gropar: signal for unknown/non-held position_id {} (symbol {}) — skipping",
                         positionId, symbol);
                 continue;
@@ -302,7 +247,7 @@ public class GroparWebhookController {
 
             var signal = new ExitSignal(
                     UUID.randomUUID().toString(),
-                    positionId,
+                    null, // no watchlist item survives the depot-sourced position; symbol carries identity
                     symbol,
                     action,
                     firedRules,
@@ -316,8 +261,8 @@ public class GroparWebhookController {
             boolean fresh = exitSignalRepo.insert(signal, owner);
 
             if (fresh && !HOLD.equals(action)) {
-                // "EXIT" is the triggerType label; owner is prefixed so the single
-                // operator channel stays attributable across users.
+                // "EXIT" is the triggerType label; owner is prefixed so downstream consumers of
+                // the alert text keep the same "[owner] rationale" shape as before.
                 telegram.notifyAlert(symbol, "EXIT", action,
                         "[" + owner + "] " + (rationale == null ? "" : rationale));
             }
@@ -329,11 +274,5 @@ public class GroparWebhookController {
     private static Double nullableDouble(JsonNode node, String field) {
         JsonNode v = node.path(field);
         return (v.isMissingNode() || v.isNull()) ? null : v.asDouble();
-    }
-
-    private boolean isHeld(WatchlistItem item) {
-        return "HELD".equals(item.tag())
-                && item.entryPrice() != null
-                && item.shareCount() != null;
     }
 }
