@@ -33,15 +33,21 @@ Both documents are required reading before implementing any view.
 | 2 | Verdict Detail | `/verdict/:id` | Deep-read of one consolidated finding | Low (prose) | ✅ Etappe 10 |
 | 3 | Strigoi Detail | `/strigoi/:name` | One agent's runs, stats, configuration | High | ✅ Etappe 10 |
 | 4 | Prey Detail | `/prey/:id` | Single prey card — signals, risks, kill criteria, thesis, outcome | Medium | ✅ Chronicle redesign |
-| 5 | Watchlist | `/watchlist` | Tracking-only monitoring of watched candidates (positions live in Portfolio) | Medium | ✅ Etappe 11 |
+| 5 | Watchlist | `/watchlist` | Tracking-only monitoring of watched candidates (held positions live in Depots now) | Medium | ✅ Etappe 11 |
 | 6 | Pattern Library | `/patterns` | Approve Voievod lessons, view active patterns | Low | ✅ Etappe 11 |
 | 7 | Backtest | `/backtest` | Historical validation of Strigoi strategies | High | ✅ Etappe 13 |
 | 8 | Settings | `/settings` | Providers, budgets, agent config, notifications; embedded Schatzkammer (admin-only) | Variable | ✅ Etappe 11 |
-| 9 | Portfolio | `/portfolio` | Held positions with P&L and Groparul's latest exit-signal badge | Medium | ✅ |
-| 10 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context | Low (prose) | ✅ |
-| 11 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
-| 12 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders) | High | ✅ Task C2 |
-| 13 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
+| 9 | Exit Signal Detail | `/exit-signal/:id` | Full rationale, fired rules, thesis status, position context (resolved by symbol against depot-1) | Low (prose) | ✅ |
+| 10 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
+| 11 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders), plus the operator-analytics Calibration card | High | ✅ Task C2 / A9 |
+| 12 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
+
+> **Portfolio retired (Task A9, depot-as-SSOT).** The manual, watchlist-HELD-based
+> "Portfolio" view (`/portfolio`, backed by `GET /api/portfolio`) has been removed.
+> `/portfolio` now redirects to `/depots`, which is the operator's single source of
+> truth for held positions — reading live positions from `GET /api/depots` instead
+> of watchlist rows with a manually entered `entryPrice`/`shareCount`. The nav item
+> is gone; `/depots` covers both destinations.
 
 > **Vistierie (Schatzkammer):** Vistierie no longer has a standalone route. It is an
 > embeddable component (`VistierieView` with an `embedded` prop) hosted admin-only
@@ -130,7 +136,7 @@ as dead, so a later price recovery does not remove the badge.
 Present on every view:
 
 - **Top bar (64px)**: wordmark "DRACUL" left, navigation tabs center
-  (7 destinations: Chronicle, Watchlist, Portfolio, Report, Pattern Library, Backtest, Settings),
+  (7 destinations: Chronicle, Watchlist, Depots, Report, Pattern Library, Backtest, Settings),
   moon-icon + avatar placeholder right.
 - **Bottom status bar (32px)**: operational summary from `useStatusStore` —
   `☾ 6 strigoi · 2 hunting · daywalker active · $0.43 today`
@@ -216,7 +222,7 @@ The Chronicle GUI is multilingual: German (default) and English, powered by
 
 ## Display currency
 
-All portfolio and watchlist market values (entry price, current price, P&L
+All depot and watchlist market values (entry price, current price, P&L
 amounts) are shown in the operator's configured display currency.
 
 - **Startup**: the app calls `GET /api/settings/currency` to load the active
@@ -227,7 +233,7 @@ amounts) are shown in the operator's configured display currency.
 - **Default**: EUR.
 - **FX conversion**: the backend converts stored USD prices to the target
   currency at the current FX rate (Yahoo Finance `/v8/finance/chart/{from}{to}=X`,
-  result cached per session) and stamps each watchlist/portfolio item with its
+  result cached per session) and stamps each watchlist/depot item with its
   effective `currency` code. The frontend renders the value using
   `Intl.NumberFormat` with that code — it never applies a client-side conversion.
 - **Native original price**: when a price was stored in a currency that differs
@@ -235,7 +241,7 @@ amounts) are shown in the operator's configured display currency.
   parentheses after the converted amount — e.g. `1.147,70 € (urspr. $1,247.50)`.
   The parenthetical is hidden when the native currency equals the display currency
   (no conversion needed). This applies to all converted-price surfaces: watchlist
-  current price, portfolio entry/current price, and verdict current price.
+  current price and verdict current price.
 - **LLM costs**: agent run costs are always shown in USD regardless of the
   display-currency setting (Vistierie's cost ledger is USD-denominated).
 
@@ -285,8 +291,8 @@ row, info/other plain rows.
 ## Implementation status (Etappe 11)
 
 **View 4 — Watchlist** (`/watchlist`): **Tracking-only** — it shows watched candidates
-(items with `entryPrice == null`); held positions live in the **Portfolio** view, not
-here. Wired to the real API (`POST`, `PATCH`, `DELETE /api/watchlist/{id}`).
+(items with `entryPrice == null`); held positions live in the **Depots** view now
+(the manual Portfolio view was retired in Task A9), not here. Wired to the real API (`POST`, `PATCH`, `DELETE /api/watchlist/{id}`).
 Master/detail layout (`.watch-grid`, 420px list pane / fluid detail pane). The view
 scopes its data to `trackingItems = items.filter(i => i.entryPrice == null)`. Left pane:
 search input (filters ticker/company; when the filter is empty and the query is a ticker
@@ -304,8 +310,8 @@ Daywalker alert feed (the `AlertRow` atom, level elevated→warning / info→inf
 neutral→neutral), and the linked-verdict card (when `verdictId` is set). Selected state is
 a local `ref<string | null>` initialized to the first tracking item on load (auto-selection
 suppressed on mobile so the list is the entry point; see the mobile drill-in under
-"Responsive layout"). Position management (entry/size/P&L) lives entirely in the Portfolio
-view.
+"Responsive layout"). Held-position P&L lives entirely in the Depots view now
+(see "Depots and exit signals" below) — the Watchlist is tracking-only.
 
 ##### Compare mode
 
@@ -324,34 +330,29 @@ The comparison is computed entirely in the browser from `GET /api/watchlist`
 dedicated compare endpoint. The toggle is disabled when no other user keeps a
 watchlist.
 
-##### Portfolio and exit signals
+##### Depots and exit signals (Portfolio retired, Task A9)
 
-**Portfolio** (`/portfolio`): lists **your own** held positions — the watchlist
-items that carry an `entryPrice` and a `shareCount` — as `PositionRow` cards. The
-portfolio is user-scoped: it shows only positions belonging to the logged-in user,
-backed by `GET /api/portfolio` (not `GET /api/watchlist`). In contrast, the
-Watchlist remains the shared, collaborative board across all users.
+The manual "Portfolio" view is gone; `/portfolio` redirects to `/depots`. Held
+positions are read live from `GET /api/depots` (depot-1) — see the "Depots" view
+row above and `documentation/api.md` § Depots. The Watchlist remains the shared,
+collaborative tracking board across all users, unaffected by this change (a
+watchlist row's `entryPrice`/`shareCount` are legacy fields; new held positions
+are not created through the watchlist anymore).
 
-Each row shows the ticker, company, entry/size/current numbers, a live P&L readout
-(`(currentPrice − entryPrice) / entryPrice × 100`, colored pos/neg), the thesis
-status, and **Groparul's latest exit-signal badge** (`SELL` / `TRIM` / `HOLD`, or
-"kein Signal" when none has fired). Exit signals are likewise scoped to the current
-user. You add a position by symbol via the `PositionDialog` (the new item is
-created with the `HELD` tag, then its entry/size are PATCHed in), edit a
-position's entry/size, or clear it (the clear control confirms, then PATCHes the
-position fields back to `null`). Rows that have a signal are clickable and route
-to the exit detail.
-
-Positions live in exactly one place: the Portfolio holds them (`entryPrice != null`),
-the Watchlist holds tracked candidates (`entryPrice == null`). The two surfaces are
-fully separated.
+**Exit Signal Detail** (`/exit-signal/:id`): shows the fired signal's rationale,
+rules, thesis status, and confidence, plus a **Position** section resolved by
+**symbol** against every connected depot's positions (`ExitSignalDetailView.vue`
+scans `GET /api/depots`'s `depots[].positions[]` for a `symbol` match) — not by
+the legacy `watchlistItemId`, which gropar's depot-sourced signals never
+populate. The back link returns to `/depots`.
 
 **Calibration card** (`CalibrationCard.vue`, `data-testid="calibration-card"`):
-sits below the position list on the Portfolio view. Self-fetching (loads its own
-data on mount, independent of the position list's load lifecycle) from the
-read-only operator-analytics endpoints added in the executor-sim-completion
-backend work: `GET /api/executor/calibration` and `GET /api/executor/behavior`.
-Three blocks, tables and stat chips only — no charts:
+sits below the depot section on the Depots view (moved here from the retired
+Portfolio view in Task A9). Self-fetching (loads its own data on mount,
+independent of the depot list's load lifecycle) from the read-only
+operator-analytics endpoints added in the executor-sim-completion backend work:
+`GET /api/executor/calibration` and `GET /api/executor/behavior`. Three blocks,
+tables and stat chips only — no charts:
 
 - **Brier score**: the executor's overall Brier score plus a per-hunter table
   (agent / n / Brier). A unit whose sample size is `insufficient` (`n < 30`)
@@ -384,10 +385,11 @@ the backend serializes Java primitives (an empty sample yields zeros plus
 renders the `action` badge, the full `rationale` prose, the `firedRules[]` as a
 list with plain-text explanations (`exitSignal.rules.<rule>` i18n keys, falling
 back to the raw rule key), the `thesisStatus` (INTACT / WEAKENING / INVALIDATED),
-the `confidence` as a `ConfidenceBar`, the position context (entry / size /
-current / P&L), and — when the underlying position carries a `verdictId` — a link
-through to the verdict detail. A back control (`exit-back`) returns to
-`/portfolio`.
+the `confidence` as a `ConfidenceBar`, and the position context (entry / size /
+current / P&L) resolved by **symbol** against `GET /api/depots` (Task A9 — the
+legacy `watchlistItemId`-keyed lookup and the verdict-link-through are gone,
+since depot positions carry no `verdictId`). A back control (`exit-back`)
+returns to `/depots`.
 
 **View 11 — Morning Report** (`/report`): Fully implemented and wired to `GET /api/morning-report`.
 A read-only daily digest fed by Groparul's projection of all held positions.
@@ -435,7 +437,7 @@ pointer-events: none) with a Phase 2 badge.
 
 ## Navigation structure
 
-The seven top-level nav destinations (Chronicle, Watchlist, Portfolio, Report,
+The seven top-level nav destinations (Chronicle, Watchlist, Depots, Report,
 Pattern Library, Backtest, Settings) are available from both the desktop top-bar
 and the mobile bottom tab bar. Deep-linked views (Verdict Detail, Strigoi Detail,
 Prey Detail) are not in the nav but are reachable via in-app links.
@@ -563,7 +565,7 @@ the full interface. `getDashboardData()` in HttpVistierieClient now calls the re
 
 ## E2E Test Suite (Etappe 15)
 
-**Playwright E2E tests** (`chronicle/e2e/`): 23 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and six `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, portfolio/exit-signal/settings mobile layout, backtest breakpoint, detail-title gap). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills) and `calibration.spec.ts` (8 tests for the Portfolio view's Calibration card: container visibility, executor/hunter Brier scores, the reliability bucket table, the insufficient-data chip, veto-precision rows, the caveats footnote list, and behavior stat tiles). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
+**Playwright E2E tests** (`chronicle/e2e/`): 22 spec files covering all views, navigation smoke tests, plus `responsive.spec.ts` (mobile shell + Watchlist drill-in, run at a 390×844 viewport via a file-level `test.use`) and five `responsive-*.spec.ts` regression specs (top-bar controls at narrow desktop, exit-signal/settings mobile layout, backtest breakpoint, detail-title gap — the Portfolio-specific mobile-layout spec was removed with the view in Task A9). Includes `report.spec.ts` (8 tests for the Morning Report view: container visibility, all three mock positions, order tickets, German read-only note, and per-position action pills) and `calibration.spec.ts` (8 tests for the Depots view's Calibration card, moved here from the retired Portfolio view in Task A9: container visibility, executor/hunter Brier scores, the reliability bucket table, the insufficient-data chip, veto-precision rows, the caveats footnote list, and behavior stat tiles). Tests run against `VITE_MOCK=true` (no backend required). Chromium only.
 
 Run locally: `cd chronicle && npm run test:e2e`
 
@@ -602,8 +604,9 @@ to a follow-up etappe.
 
 ## Depots view (Task C2)
 
-`DepotsView.vue` (`/depots`) is the live-broker counterpart to Portfolio's
-manual watchlist positions: one `DepotSection` per connected broker
+`DepotsView.vue` (`/depots`) is the operator's live-broker view of held
+positions (the manual Portfolio view was retired in Task A9, and `/portfolio`
+redirects here): one `DepotSection` per connected broker
 (`useApi().getDepots()`), Trade-Republic-dense.
 
 - **Summary bar** (always shown, even with a single depot): left side shows
@@ -639,9 +642,10 @@ manual watchlist positions: one `DepotSection` per connected broker
   fixtures currently in play (one USD paper depot, one EUR live depot), but
   worth revisiting if/when true multi-currency consolidation is needed.
 
-Nav: `useNavItems.ts` gained a `depots` entry (`ph-vault` icon,
-`matchPrefixes: ['/depots']`); Portfolio's icon moved to `ph-chart-pie` to
-free up `ph-vault` for the new broker-facing Depots destination.
+Nav: `useNavItems.ts` gained a `depots` entry (`ph-vault` icon). The `portfolio`
+nav destination was removed in Task A9; `matchPrefixes` for `depots` now
+includes `/portfolio` too, so the (redirected) legacy path still highlights the
+Depots tab.
 
 ## Depot position detail view (Task C3)
 

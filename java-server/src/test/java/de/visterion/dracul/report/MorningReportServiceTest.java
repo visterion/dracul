@@ -90,7 +90,7 @@ class MorningReportServiceTest {
         var trim = List.of(new ExitSignal("x", null, "TSM", "TRIM", List.of(), 5.0,
                 "WEAKENING", "teilverkauf", 0.6, "run", "2026-06-22T22:00:00Z"));
         var line = svc(List.of(s), trim).build("u@x.com").positions().get(0);
-        assertThat(line.shareCount()).isEqualTo(0.73);        // same source as /api/portfolio
+        assertThat(line.shareCount()).isEqualTo(0.73);        // same source as HELD watchlist items
         assertThat(line.ticket().shares()).isEqualTo(0.2433); // third of 0.73, 4 dp — not floored to 0
 
         var sell = List.of(new ExitSignal("y", null, "TSM", "SELL", List.of(), 5.0,

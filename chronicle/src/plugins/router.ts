@@ -28,7 +28,9 @@ const router = createRouter({
       name: 'watchlist',
       component: () => import('../views/WatchlistView.vue'),
     },
-    { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
+    // The manual watchlist-based "Portfolio" is retired; depot-1 is the single
+    // source of truth for held positions, so old links redirect to /depots.
+    { path: '/portfolio', redirect: '/depots' },
     { path: '/depots', name: 'depots', component: () => import('../views/DepotsView.vue') },
     {
       path: '/depots/:connection/:symbol',

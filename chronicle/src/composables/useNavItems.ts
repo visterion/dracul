@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 
 /** Must be kept in sync with the route `name`s defined in the router. */
 export type NavName =
-  | 'chronicle' | 'watchlist' | 'portfolio' | 'depots' | 'morning-report' | 'pattern-library'
+  | 'chronicle' | 'watchlist' | 'depots' | 'morning-report' | 'pattern-library'
   | 'backtest' | 'settings'
 
 export interface NavItem {
@@ -29,8 +29,7 @@ export function useNavItems() {
   return computed<NavItem[]>(() => [
     { name: 'chronicle',       label: t('app.nav.chronicle'),      icon: 'ph-scroll',        matchPrefixes: ['/', '/prey', '/verdict', '/strigoi', '/exit-signal'] },
     { name: 'watchlist',       label: t('app.nav.watchlist'),      icon: 'ph-eye',           matchPrefixes: ['/watchlist'] },
-    { name: 'portfolio',       label: t('app.nav.portfolio'),      icon: 'ph-chart-pie',     matchPrefixes: ['/portfolio'] },
-    { name: 'depots',          label: t('app.nav.depots'),         icon: 'ph-vault',         matchPrefixes: ['/depots'] },
+    { name: 'depots',          label: t('app.nav.depots'),         icon: 'ph-vault',         matchPrefixes: ['/depots', '/portfolio'] },
     { name: 'morning-report',  label: t('app.nav.report'),         icon: 'ph-sun-horizon',   matchPrefixes: ['/report'] },
     { name: 'pattern-library', label: t('app.nav.patternLibrary'), icon: 'ph-book-open',     matchPrefixes: ['/patterns'] },
     { name: 'backtest',        label: t('app.nav.backtest'),       icon: 'ph-chart-line-up', matchPrefixes: ['/backtest'] },

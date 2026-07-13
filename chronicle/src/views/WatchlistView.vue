@@ -265,8 +265,10 @@ const activeFilter = ref<'all' | 'alerts'>('all')
 const mode = ref<'list' | 'compare'>('list')
 const compareWith = ref<string | null>(null)
 
-// Tracking-only watchlist: items with no captured entry price. Positions
-// (entryPrice != null) live in the separate /portfolio view.
+// Tracking-only watchlist: items with no captured entry price. The manual
+// entry/shareCount position path is retired (depot-1 is the source of truth
+// for held positions now); this filter just excludes any legacy rows that
+// still carry one.
 const trackingItems = computed(() => items.value.filter(i => i.entryPrice == null))
 
 // Distinct owners other than me — drives the compare picker.

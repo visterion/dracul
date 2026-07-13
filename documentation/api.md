@@ -291,24 +291,23 @@ native code equals the display `currency`):
 
 These fields are purely additive — existing consumers that ignore them are unaffected.
 
-### `GET /api/portfolio`
-
-Returns the current user's **held positions** — watchlist items that have both an
-`entryPrice` and a `shareCount` set — with all prices currency-converted to the
-operator's configured display currency. This endpoint is user-scoped: it returns
-only the calling user's positions, not those of other users.
-
-This is distinct from `GET /api/watchlist`, which returns the collaborative
-all-users board (tracking candidates, all owners).
-
-Response: `WatchlistItem[]` (same shape as `/api/watchlist`, filtered to held
-positions of the current user).
+> **Removed 2026-07-13 (depot-as-SSOT).** `GET /api/portfolio` (the manual,
+> watchlist-HELD-based "portfolio") has been removed. Chronicle's Portfolio nav
+> destination now redirects to `/depots`, which reads live positions from
+> `GET /api/depots` (depot-1) — see "Depots" below. `GET /api/watchlist` and its
+> `PATCH .../position` sub-resource are unchanged and still owned by Project B
+> (the collaborative tracking board).
 
 ## Exit Signals
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/exit-signals` | Returns the latest exit signal per HELD watchlist position for the **current user**; each entry includes `id`, `watchlistItemId`, `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED / NONE), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
+| GET | `/api/exit-signals` | Returns the latest exit signal per depot position for the **current user**; each entry includes `id`, `watchlistItemId` (legacy, always `null` for depot-sourced signals), `symbol`, `action` (SELL / TRIM / HOLD), `firedRules[]`, `gainLossPct`, `thesisStatus` (INTACT / WEAKENING / INVALIDATED / NONE), `rationale`, `confidence`, `vistierieRunId`, and `runAt` |
+
+> Chronicle's exit-signal detail view resolves the underlying position by
+> **symbol** against `GET /api/depots` (scanning every connected depot's
+> positions), not by `watchlistItemId` — gropar's depot-sourced signals never
+> populate that field (see `exit_signals` in `architecture.md`).
 
 > **Note:** `GET /api/exit-signals` is scoped to the current user
 > (`CurrentUserHolder.get()`). It was previously hardcoded to the user

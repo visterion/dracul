@@ -94,7 +94,7 @@ first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
 same degradation contract as the old adapter chain, so scheduled refreshes never
 crash.
 
-## Depots (portfolio/positions view)
+## Depots (positions view)
 
 Chronicle's `/depots` view and `/api/depots` read Agora's broker-connection
 snapshot (account, positions, orders) via a **dedicated, read-only** Agora
@@ -144,7 +144,7 @@ The `yahooRestClient` bean and the keys below remain in use for FX only
 | `DRACUL_MARKETDATA_YAHOO_BASE_URL` (`dracul.marketdata.yahoo.base-url`) | `https://query1.finance.yahoo.com` | Base URL for FX requests. Override for tests. |
 | `DRACUL_MARKETDATA_YAHOO_USER_AGENT` (`dracul.marketdata.yahoo.user-agent`) | `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36` | User-Agent sent on FX requests. Yahoo returns HTTP 429 to a **Linux**-Chrome UA (`X11; Linux x86_64`) even though it is browser-like, so the default is a **Windows**-Chrome UA; both return 200. Override via env only if Yahoo changes its heuristics. |
 | `DRACUL_MARKETDATA_YAHOO_TIMEOUT_MS` (`dracul.marketdata.yahoo.timeout-ms`) | `5000` | Connect + read timeout (ms) on the Yahoo client so a slow Yahoo can't stall a request. |
-| `DRACUL_MARKETDATA_FX_REFRESH_ENABLED` (`dracul.marketdata.fx-refresh.enabled`) | `true` | Background FX-rate warm-up. Watchlist/portfolio currency conversion is served from this warmed cache and never does a live fetch in the request path. |
+| `DRACUL_MARKETDATA_FX_REFRESH_ENABLED` (`dracul.marketdata.fx-refresh.enabled`) | `true` | Background FX-rate warm-up. Watchlist/depot currency conversion is served from this warmed cache and never does a live fetch in the request path. |
 | `DRACUL_MARKETDATA_FX_REFRESH_INITIAL_DELAY_MS` (`dracul.marketdata.fx-refresh.initial-delay-ms`) | `0` | Delay (ms) before the first FX warm-up run after startup. |
 | `DRACUL_MARKETDATA_FX_REFRESH_FIXED_DELAY_MS` (`dracul.marketdata.fx-refresh.fixed-delay-ms`) | `1800000` | Interval (ms) between FX warm-up runs (30 min). |
 
