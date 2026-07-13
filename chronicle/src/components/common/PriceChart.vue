@@ -10,7 +10,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { use } from 'echarts/core'
-import { LineChart } from 'echarts/charts'
+import { LineChart as EChartsLineSeries } from 'echarts/charts'
 import { GridComponent, TooltipComponent, MarkLineComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
@@ -18,7 +18,7 @@ import type { ComposeOption } from 'echarts/core'
 import type { LineSeriesOption } from 'echarts/charts'
 import type { GridComponentOption, TooltipComponentOption, MarkLineComponentOption } from 'echarts/components'
 
-use([LineChart, GridComponent, TooltipComponent, MarkLineComponent, CanvasRenderer])
+use([EChartsLineSeries, GridComponent, TooltipComponent, MarkLineComponent, CanvasRenderer])
 
 type EChartsOption = ComposeOption<
   LineSeriesOption | GridComponentOption | TooltipComponentOption | MarkLineComponentOption

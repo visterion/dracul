@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DepotsView from './DepotsView.vue'
-import LineChart from '../components/common/LineChart.vue'
+import PriceChart from '../components/common/PriceChart.vue'
 import de from '../i18n/locales/de'
 import type { Depot, DepotsResponse, DepotChart, ChartRange } from '../api/types'
 import { mockDepotChart } from '../mocks/depots'
@@ -268,7 +268,7 @@ describe('DepotsView', () => {
     resolvers['1w']?.(chartFixture(111))
     await flushPromises()
 
-    const chart = w.findComponent(LineChart)
+    const chart = w.findComponent(PriceChart)
     expect(chart.props('series')[0].data).toEqual([999, 999])
   })
 

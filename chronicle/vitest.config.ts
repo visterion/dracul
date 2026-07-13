@@ -26,5 +26,6 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     include: ['src/**/*.{spec,test}.ts'], // Block C+D nutzt .test.ts-Namen
+    setupFiles: ['src/test/vitest.setup.ts'],
   },
 })

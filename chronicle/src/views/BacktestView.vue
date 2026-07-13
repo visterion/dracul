@@ -149,7 +149,7 @@
           <span class="lg"><span class="swatch swatch--gold" /> {{ t('backtest.chart.legendBenchmark') }}</span>
         </div>
       </div>
-      <LineChart :height="260" area-fill :series="equitySeries" :aria-label="t('backtest.chart.ariaLabel')" />
+      <PriceChart :height="260" area-fill :series="equitySeries" :aria-label="t('backtest.chart.ariaLabel')" />
       <div class="vist-foot">
         <div>
           <div class="vf-k">{{ t('backtest.chart.footStrigoi') }}</div>
@@ -174,7 +174,7 @@ import { useI18n } from 'vue-i18n'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
-import LineChart from '../components/common/LineChart.vue'
+import PriceChart from '../components/common/PriceChart.vue'
 import { formatNumber, formatPercent } from '../utils/format'
 
 const { t } = useI18n()

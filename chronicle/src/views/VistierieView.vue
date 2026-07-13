@@ -105,7 +105,7 @@
         <div>
           <SectionHeader :label="t('vistierie.sections.dailySpend')" />
           <div class="chart-card">
-            <LineChart
+            <PriceChart
               :height="200"
               :labels="chartLabels"
               :series="chartSeries"
@@ -139,7 +139,7 @@ import BatGlyph from '../components/common/BatGlyph.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import StatTile from '../components/common/StatTile.vue'
 import SpendBar from '../components/common/SpendBar.vue'
-import LineChart from '../components/common/LineChart.vue'
+import PriceChart from '../components/common/PriceChart.vue'
 import { formatMoney, formatNumber } from '../utils/format'
 import { budgetLevel } from '../utils/budget'
 
