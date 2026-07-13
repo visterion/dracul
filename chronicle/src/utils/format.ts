@@ -56,3 +56,10 @@ export function microsToUsdInput(micros: number | null, digits = 2): string {
   if (micros === null) return '∞'
   return (micros / 1_000_000).toFixed(digits)
 }
+
+/** Colour class for a percentage: neutral when it rounds to 0.0 % (1-decimal
+ *  display), else pos/neg. Mirrors the depot P&L neutral-at-zero rule. */
+export function pctClass(value: number | null): '' | 'pos' | 'neg' {
+  if (value == null || Math.abs(value) < 0.05) return ''
+  return value > 0 ? 'pos' : 'neg'
+}

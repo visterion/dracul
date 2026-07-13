@@ -147,7 +147,7 @@
               </div>
               <div class="wr-price">
                 <span class="wr-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
-                <span class="wr-chg mono" :class="item.dayChangePercent >= 0 ? 'pos' : 'neg'">
+                <span class="wr-chg mono" :class="pctClass(item.dayChangePercent)">
                   {{ formatPercent(item.dayChangePercent) }}
                 </span>
               </div>
@@ -190,7 +190,7 @@
             </div>
             <div class="wd-quote">
               <span class="wd-px mono"><MoneyDisplay :amount="selectedItem.currentPrice" :currency="selectedItem.currency" :native-amount="selectedItem.nativeCurrentPrice" :native-currency="selectedItem.nativeCurrency" /></span>
-              <span class="wd-chg mono" :class="selectedItem.dayChangePercent >= 0 ? 'pos' : 'neg'">
+              <span class="wd-chg mono" :class="pctClass(selectedItem.dayChangePercent)">
                 {{ formatPercent(selectedItem.dayChangePercent) }} {{ t('watchlist.detail.today') }}
               </span>
             </div>
@@ -244,7 +244,7 @@ import { useMe } from '../composables/useMe'
 import { useToast } from '../composables/useToast'
 import { ApiError } from '../api/errors'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
-import { formatPercent } from '../utils/format'
+import { formatPercent, pctClass } from '../utils/format'
 import { displayName } from '../utils/instrument'
 import { showsVerdictBadge, groupByOwner } from '../lib/watchlistDisplay'
 
