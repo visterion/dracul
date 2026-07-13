@@ -1,56 +1,57 @@
 package de.visterion.dracul.report;
 
 import de.visterion.dracul.notify.TelegramNotifier;
-import de.visterion.dracul.watchlist.WatchlistItem;
-import de.visterion.dracul.watchlist.WatchlistRepository;
+import de.visterion.dracul.position.HeldPositionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.util.LinkedHashSet;
-import java.util.Set;
 
-/** Daily forcing-function: build each owner's morning report and push it as a
+/** Daily forcing-function: build the primary owner's morning report and push it as a
  *  Telegram digest. Gated off by default; never throws out of the scheduled
- *  method (a failure must not kill the scheduler thread). */
+ *  method (a failure must not kill the scheduler thread).
+ *
+ *  <p>The depot has no per-owner concept (a single connection's positions), so there is
+ *  exactly one owner to report for -- {@code dracul.primary-user-email} -- mirroring the
+ *  same config the gropar webhook uses to scope its exit signals. */
 @Component
 @ConditionalOnProperty(value = "dracul.report.morning.enabled", havingValue = "true")
 public class MorningReportScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(MorningReportScheduler.class);
 
-    private final WatchlistRepository watchlist;
+    private final HeldPositionService heldPositionService;
     private final MorningReportService service;
     private final TelegramNotifier telegram;
+    private final String owner;
+    private final String connection;
 
-    public MorningReportScheduler(WatchlistRepository watchlist,
-            MorningReportService service, TelegramNotifier telegram) {
-        this.watchlist = watchlist;
+    public MorningReportScheduler(HeldPositionService heldPositionService,
+            MorningReportService service, TelegramNotifier telegram,
+            @Value("${dracul.primary-user-email:}") String primaryUser,
+            @Value("${dracul.position.connection:depot-1}") String connection) {
+        this.heldPositionService = heldPositionService;
         this.service = service;
         this.telegram = telegram;
+        this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
+        this.connection = connection;
     }
 
     @Scheduled(cron = "${dracul.report.morning.cron:0 0 7 * * 1-5}", zone = "Europe/Berlin")
     public void run() {
         try {
-            Set<String> owners = new LinkedHashSet<>();
-            for (WatchlistItem item : watchlist.findAll()) {
-                if ("HELD".equals(item.tag())
-                        && item.entryPrice() != null && item.shareCount() != null) {
-                    owners.add(item.owner());
-                }
-            }
-            if (owners.isEmpty()) return;  // no held positions → no push
-            for (String owner : owners) {
-                MorningReport report = service.build(owner);
-                // Stay silent on a nothing-to-do day: only push when there is at
-                // least one actionable position (SELL or TRIM).
-                if (report.sellCount() + report.trimCount() == 0) continue;
-                telegram.notifyDigest(render(owner, report));
-            }
+            // openPositions is fail-soft (empty on depot-down) -- no held positions (or an
+            // unreachable depot) means nothing to push, not an error.
+            if (heldPositionService.openPositions(connection).isEmpty()) return;
+            MorningReport report = service.build(owner);
+            // Stay silent on a nothing-to-do day: only push when there is at
+            // least one actionable position (SELL or TRIM).
+            if (report.sellCount() + report.trimCount() == 0) return;
+            telegram.notifyDigest(render(owner, report));
         } catch (RuntimeException e) {
             log.warn("morning report failed", e);
         }

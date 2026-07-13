@@ -2,6 +2,8 @@ package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
@@ -13,7 +15,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @ConditionalOnProperty(value = "dracul.strigoi.lazarus.enabled", havingValue = "true")
@@ -26,6 +31,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private final AgoraCompanyData companyData;
     private final LazarusScreener screener;
     private final LazarusEnrichmentService enrichment;
+    private final HeldPositionService heldPositionService;
+    private final String connection;
     private final double maxAboveLow;
     private final double maxDebtEquity;
     private final double maxPriceToBook;
@@ -39,6 +46,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
             LazarusEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
+            HeldPositionService heldPositionService,
+            @Value("${dracul.position.connection:depot-1}") String connection,
             @Value("${dracul.strigoi.lazarus.max-above-low:0.10}") double maxAboveLow,
             @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity,
             @Value("${dracul.strigoi.lazarus.max-price-to-book:2.0}") double maxPriceToBook,
@@ -48,6 +57,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
         this.companyData = companyData;
         this.screener = screener;
         this.enrichment = enrichment;
+        this.heldPositionService = heldPositionService;
+        this.connection = connection;
         this.maxAboveLow = maxAboveLow;
         this.maxDebtEquity = maxDebtEquity;
         this.maxPriceToBook = maxPriceToBook;
@@ -62,7 +73,16 @@ public class StrigoiLazarusWebhookController extends HuntController {
 
     @Override
     protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
-        var items = watchlist.findAllByUser(USER);
+        // Dedup against the live depot: a watchlist name already held is not a "new" quality-at-low
+        // candidate — surfacing it again would just recommend buying what's already owned. Symbols
+        // are the join key (the depot has no watchlist_item_id concept); a depot-down fetch yields an
+        // empty set (HeldPositionService is fail-soft), so dedup excludes nothing rather than erroring.
+        Set<String> heldSymbols = heldPositionService.openPositions(connection).stream()
+                .map(HeldPosition::symbol)
+                .collect(Collectors.toSet());
+        List<WatchlistItem> items = watchlist.findAllByUser(USER).stream()
+                .filter(item -> !heldSymbols.contains(item.ticker()))
+                .toList();
 
         // Single upfront reachability check (mirrors the old configured()-key guard: one check per
         // hunt, not per symbol). fundamentals() alone can't tell "Agora is down" apart from "no data
