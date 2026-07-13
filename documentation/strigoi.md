@@ -760,6 +760,13 @@ call is made:
   `place_entry` request: it requires a valid protective stop on the correct
   side of the reference price, a strictly positive quantity, and that the
   order targets the configured connection.
+- The risk layer is authoritative over the stop: `place_entry` clamps the
+  LLM's proposed stop into the `PositionSizer`'s risk window (`stopMin`..
+  `stopMax`, derived from side/price/ATR/swing-low) before sizing and
+  placement — an out-of-window stop is adjusted, not rejected; the clamp is
+  audited in the `ENTER` decision's `order_json` (`stop_clamped`,
+  `proposed_stop`, `stop_min`, `stop_max`). `NO_STOP` remains only as
+  `OrderGuard`'s defensive guard against a broken (null) server window.
 - **`place-entry` runs signal → veto → guard → broker in code.** The LLM
   cannot place an order directly — it can only call the `place_entry` tool,
   which either forwards to the broker after every check passes or returns a
