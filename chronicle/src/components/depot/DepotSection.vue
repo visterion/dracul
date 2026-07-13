@@ -57,7 +57,7 @@
         </div>
         <div v-if="chartLoading" class="dp-chart-loading">{{ t('depots.chart.loading') }}</div>
         <div v-else-if="chartError" class="dp-chart-error">{{ chartError }}</div>
-        <LineChart
+        <PriceChart
           v-else-if="chartSeries.length"
           :series="chartSeries"
           :labels="chartLabels"
@@ -131,7 +131,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import TagPill from '../common/TagPill.vue'
 import StatTile from '../common/StatTile.vue'
-import LineChart from '../common/LineChart.vue'
+import PriceChart from '../common/PriceChart.vue'
 import DepotPositionsTable from './DepotPositionsTable.vue'
 import { useApi } from '../../api'
 import type { Depot, DepotChart, ChartRange } from '../../api/types'

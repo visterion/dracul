@@ -341,12 +341,6 @@ table.dt tbody tr:hover { background: rgba(184,148,92,0.05); }
   .stat-grid { grid-template-columns: 1fr; }
 }
 
-/* ── SVG Charts (LineChart.vue) ──────────────────────── */
-.svg-chart { width: 100%; height: auto; display: block; }
-.svg-chart .grid-line { stroke: rgba(245, 241, 232, 0.04); stroke-width: 1; }
-.svg-chart .axis-label { fill: var(--ash-gray); font-family: var(--font-mono); font-size: 10px; }
-.svg-chart .baseline { stroke: var(--ash-gray-light); stroke-width: 1; stroke-dasharray: 3 3; }
-
 /* Horizontal-scroll fade edges (bottom nav, settings chips). The wrapper
    gets .hscroll-fade; state classes come from useEdgeFades(). */
 .hscroll-fade { position: relative; --fade-bg: var(--crypt-black); }

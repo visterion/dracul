@@ -68,7 +68,7 @@
         </div>
         <div v-if="chartLoading" class="dp-chart-loading">{{ t('depots.chart.loading') }}</div>
         <div v-else-if="chartError" class="dp-chart-error">{{ chartError }}</div>
-        <LineChart
+        <PriceChart
           v-else-if="chartSeries.length"
           :series="chartSeries"
           :baseline="chartSeries[0]?.data[0] ?? null"
@@ -161,7 +161,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import BackLink from '../components/common/BackLink.vue'
 import StatTile from '../components/common/StatTile.vue'
-import LineChart from '../components/common/LineChart.vue'
+import PriceChart from '../components/common/PriceChart.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import InfoCardRow from '../components/depot/InfoCardRow.vue'
 import { useApi } from '../api'
