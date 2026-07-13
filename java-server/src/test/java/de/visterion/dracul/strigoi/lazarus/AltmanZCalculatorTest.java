@@ -107,7 +107,7 @@ class AltmanZCalculatorTest {
         // the request carries every balance-sheet, derivation, flow and revenue-fallback tag
         assertThat(tags.getValue()).contains(
                 "Assets", "AssetsCurrent", "LiabilitiesCurrent", "Liabilities",
-                "LiabilitiesAndStockholdersEquity", "StockholdersEquity",
+                "LiabilitiesNoncurrent", "StockholdersEquity",
                 "RetainedEarningsAccumulatedDeficit", "OperatingIncomeLoss",
                 "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
     }
@@ -257,18 +257,17 @@ class AltmanZCalculatorTest {
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // computed off the 1000M balance sheet
     }
 
-    // ---- Task B: Liabilities derivation --------------------------------------------------
+    // ---- Task B / C1: Liabilities derivation -----------------------------------------------
 
-    /** Filer omits the standalone {@code Liabilities} tag but reports
-     *  {@code LiabilitiesAndStockholdersEquity} (== total assets, 1000M) and
-     *  {@code StockholdersEquity} (400M): liabilities are derived as 1000M - 400M = 600M at the
-     *  same anchor date, reproducing the healthy 600M and hence the pinned Z = 3.40. */
+    /** Filer omits the standalone {@code Liabilities} tag but reports {@code Assets} (1000M,
+     *  already fetched as the anchor) and {@code StockholdersEquity} (400M): liabilities are
+     *  derived as 1000M - 400M = 600M at the same anchor date, reproducing the healthy 600M and
+     *  hence the pinned Z = 3.40. */
     @Test
     void derivesLiabilitiesFromIdentityWhenStandaloneTagAbsent() {
         stubHealthyConcepts();
-        stubbed.remove("Liabilities");                                   // standalone tag absent
-        stubInstant("LiabilitiesAndStockholdersEquity", 1_000_000_000L); // == total assets
-        stubInstant("StockholdersEquity", 400_000_000L);
+        stubbed.remove("Liabilities");                       // standalone tag absent
+        stubInstant("StockholdersEquity", 400_000_000L);      // Assets (1000M) - 400M = 600M
 
         AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
 
@@ -276,15 +275,42 @@ class AltmanZCalculatorTest {
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // derived liabilities 600M
     }
 
-    /** Derivation that yields a non-positive result (equity exceeds
-     *  LiabilitiesAndStockholdersEquity) is discarded -> Z unavailable, never a bogus negative
+    /** Derivation that yields a non-positive result (equity exceeds Assets) is discarded, and no
+     *  current/noncurrent fallback is on file either -> Z unavailable, never a bogus negative
      *  denominator. */
     @Test
     void nonPositiveDerivedLiabilitiesYieldUnavailable() {
         stubHealthyConcepts();
         stubbed.remove("Liabilities");
-        stubInstant("LiabilitiesAndStockholdersEquity", 400_000_000L);
-        stubInstant("StockholdersEquity", 500_000_000L);   // derived = -100M -> discarded
+        stubInstant("StockholdersEquity", 1_100_000_000L);   // Assets (1000M) - 1100M = -100M -> discarded
+
+        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+    }
+
+    /** Neither the standalone {@code Liabilities} tag nor {@code StockholdersEquity} is on file,
+     *  but {@code LiabilitiesCurrent} (250M, already required for X1) and
+     *  {@code LiabilitiesNoncurrent} (350M) sum to the healthy 600M -> Z pinned at 3.40 via the
+     *  second-tier fallback. */
+    @Test
+    void derivesLiabilitiesFromCurrentPlusNoncurrentWhenIdentityUnavailable() {
+        stubHealthyConcepts();
+        stubbed.remove("Liabilities");                        // standalone tag absent
+        // no StockholdersEquity stubbed -> identity fallback unavailable
+        stubInstant("LiabilitiesNoncurrent", 350_000_000L);    // 250M (current) + 350M = 600M
+
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+
+        assertThat(z.available()).isTrue();
+        assertThat(z.zScore()).isEqualByComparingTo("3.40"); // derived liabilities 600M
+    }
+
+    /** Neither derivation path is possible: no standalone {@code Liabilities}, no
+     *  {@code StockholdersEquity}, no {@code LiabilitiesNoncurrent} -> Z stays unavailable
+     *  (unchanged behaviour, no partial/fallback Z). */
+    @Test
+    void liabilitiesUnavailableWhenNeitherDerivationPossible() {
+        stubHealthyConcepts();
+        stubbed.remove("Liabilities");   // no identity operand, no current+noncurrent operand
 
         assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
     }
