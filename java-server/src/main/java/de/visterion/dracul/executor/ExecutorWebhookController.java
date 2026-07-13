@@ -761,14 +761,27 @@ public class ExecutorWebhookController {
      *
      * <p>Fail-soft: any failure here is logged at WARN and swallowed — a context-write failure
      * must never fail {@code fetch-open-positions} or the maintenance pipeline it reports on.
+     *
+     * <p>{@code initial_stop} must be the position's placement-time, immutable stop — never
+     * {@link EnrichedPosition#activeStop()}, which can already reflect this SAME maintenance
+     * pass's ratchet (a position that transitions unfilled -> filled is ratchet-eligible in the
+     * very pass that builds {@code p}; {@code ReconcileService} -> hard-trigger -> ratchet all
+     * run over {@code filledSurvivors} before {@code EnrichedPosition} is built). Because
+     * {@link PositionContextRepository#upsertOnOpen} is {@code ON CONFLICT DO NOTHING}, a wrong
+     * value here would freeze permanently. {@link ExecutorPosition#initialStop()} is the true
+     * immutable field (set once on insert, never updated by
+     * {@link ExecutorPositionRepository#updateMaintenance}), so it is re-fetched by id here
+     * rather than trusting the enriched view.
      */
     private void recordPositionContext(EnrichedPosition p) {
         try {
             JsonNode killCriteria = (p.killCriteria() == null || p.killCriteria().isEmpty())
                     ? null : mapper.valueToTree(p.killCriteria());
             String horizon = resolveHorizon(p.sourceSignalId());
+            ExecutorPosition position = positionRepo.findById(p.id());
+            BigDecimal initialStop = position != null ? position.initialStop() : p.activeStop();
             positionContextRepo.upsertOnOpen(connection, p.symbol(), null, killCriteria, horizon,
-                    null, p.activeStop(), "executor");
+                    null, initialStop, "executor");
         } catch (RuntimeException e) {
             log.warn("position_context write failed for filled position {} ({}): {}",
                     p.id(), p.symbol(), e.getMessage(), e);

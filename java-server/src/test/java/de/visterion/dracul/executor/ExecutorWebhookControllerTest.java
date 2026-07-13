@@ -1271,6 +1271,10 @@ class ExecutorWebhookControllerTest {
                 false, false, 1, false, null, "sig-42", 0, 0.33, true);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
+        ExecutorPosition position = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        when(positionRepo.findById(1L)).thenReturn(position);
+
         ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
                 0.8, "SPINOFF", List.of("X", "Y"), "6-12mo", new BigDecimal("100"), "ACCEPTED", null);
         when(signalRepo.findById("sig-42")).thenReturn(signal);
@@ -1282,6 +1286,51 @@ class ExecutorWebhookControllerTest {
                 killCriteriaCaptor.capture(), eq("6-12mo"), isNull(), eq(new BigDecimal("95")),
                 eq("executor"));
         assertThat(killCriteriaCaptor.getValue().toString()).contains("X").contains("Y");
+    }
+
+    /**
+     * Regression for the ratchet-race finding: a position that transitions unfilled -> filled is
+     * ratchet-eligible in the SAME {@code MaintenancePipeline} pass that builds the
+     * {@link EnrichedPosition} handed to {@code recordPositionContext} — so
+     * {@code EnrichedPosition.activeStop()} can already be the post-ratchet stop by the time it
+     * gets here, not the placement-time initial stop. Because
+     * {@link PositionContextRepository#upsertOnOpen} is {@code ON CONFLICT DO NOTHING}, using the
+     * wrong value would freeze it permanently into {@code position_context.initial_stop}. Here
+     * {@code ep.activeStop()} (99, already ratcheted up from 95) deliberately differs from the
+     * position's true immutable {@code initialStop()} (95) to prove the write uses the latter.
+     */
+    @Test
+    void fetchOpenPositions_entryFilled_writesImmutableInitialStopNotRatchetedActiveStop() {
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("99"),
+                new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X", "Y"), List.of(),
+                false, false, 1, false, null, "sig-42", 0, 0.33, true);
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
+
+        // True immutable initial stop (95) differs from the already-ratcheted active stop (99).
+        ExecutorPosition position = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        ExecutorPosition ratcheted = new ExecutorPosition(position.id(), position.connection(),
+                position.symbol(), position.side(), position.qty(), position.entryPrice(),
+                position.initialStop(), new BigDecimal("99"), position.tranche(), position.rValue(),
+                position.killCriteria(), position.sourceSignalId(), position.sourceAgent(),
+                position.entryDate(), position.mfe(), position.status(), position.brokerOrderId(),
+                position.highestPrice(), position.mfeR(), position.softConfirmCount(),
+                position.exitPrice(), position.realizedR(), position.exitReason(),
+                position.closedAt(), position.stopOrderId(), position.sector(),
+                position.entryDayHigh(), position.tranche2OrderId(), position.tranche2StopOrderId(),
+                position.trimCount(), position.lowestPrice(), position.entryExpiresAt());
+        when(positionRepo.findById(1L)).thenReturn(ratcheted);
+
+        ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
+                0.8, "SPINOFF", List.of("X", "Y"), "6-12mo", new BigDecimal("100"), "ACCEPTED", null);
+        when(signalRepo.findById("sig-42")).thenReturn(signal);
+
+        controller.fetchOpenPositions(BEARER, "run-1");
+
+        verify(positionContextRepo).upsertOnOpen(eq("depot-1"), eq("ACME"), isNull(),
+                any(), eq("6-12mo"), isNull(), eq(new BigDecimal("95")), eq("executor"));
     }
 
     @Test
