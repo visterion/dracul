@@ -81,4 +81,20 @@ class PreySignalEmitterIT {
         // already-pending symbol -> still exactly one pending signal (no duplicate)
         assertThat(pendingNow).filteredOn(s -> s.symbol().equals(pending)).hasSize(1);
     }
+
+    @Test
+    void emit_persistsPreyThesisOnSignal() {
+        String symbol = "HELE" + System.nanoTime();
+        Prey p = new Prey(
+                "prey-" + symbol, symbol, symbol + " Corp", "PEAD",
+                0.7, "big beat", List.of("s"), List.of("r"),
+                List.of("k"), "1M", "strigoi-spin", "2026-07-08T10:00:00Z");
+
+        emitter.emit(List.of(p));
+
+        ExecutorSignal saved = signalRepo.findPending(Integer.MAX_VALUE).stream()
+                .filter(s -> symbol.equals(s.symbol())).findFirst().orElseThrow();
+        assertThat(saved.thesis()).isNotNull();                       // fails if the emitter drops s.thesis()
+        assertThat(saved.thesis().get("summary").asString()).isEqualTo("big beat");
+    }
 }

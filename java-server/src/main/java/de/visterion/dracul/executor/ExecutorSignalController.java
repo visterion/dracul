@@ -54,7 +54,7 @@ public class ExecutorSignalController {
         String horizon = nullableString(body, "horizon");
 
         var signal = new ExecutorSignal(signalId, source, agentVersion, symbol, direction,
-                confidence, mechanism, killCriteria, horizon, referencePrice, "PENDING", null);
+                confidence, mechanism, killCriteria, horizon, referencePrice, "PENDING", null, null);
         repo.insert(signal);
 
         return ResponseEntity.ok(Map.of("signal_id", signalId, "status", "PENDING"));
