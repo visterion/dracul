@@ -64,12 +64,16 @@ public class DaywalkerAlertRepository {
         // ('elevated' | 'info' | 'neutral'); the exact severity is preserved in the
         // `severity` column for downstream (Telegram / SSE) consumers.
         String level = levelFor(severity);
-        UUID wid;
-        try {
-            wid = UUID.fromString(watchlistItemId);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(
-                    "DaywalkerAlertRepository.insert: invalid watchlistItemId '" + watchlistItemId + "'", e);
+        // Depot-sourced alerts (A6) carry no watchlist row at all -- watchlistItemId is null
+        // in that case (V30 made the column nullable) and the row is keyed by symbol instead.
+        UUID wid = null;
+        if (watchlistItemId != null) {
+            try {
+                wid = UUID.fromString(watchlistItemId);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "DaywalkerAlertRepository.insert: invalid watchlistItemId '" + watchlistItemId + "'", e);
+            }
         }
         String nowIso = Instant.now().toString();
         jdbc.sql("""

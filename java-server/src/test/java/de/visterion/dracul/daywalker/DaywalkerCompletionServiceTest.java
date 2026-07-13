@@ -21,6 +21,9 @@ import static org.mockito.Mockito.*;
 class DaywalkerCompletionServiceTest {
 
     private static final BigDecimal DEFAULT_THRESHOLD = new BigDecimal("0.6");
+    /** The single-account depot owner (dracul.primary-user-email), established convention
+     *  from A5/gropar — every depot-sourced (positionId != null) assessment routes here. */
+    private static final String PRIMARY_USER = "primary@x.com";
 
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
 
@@ -40,7 +43,8 @@ class DaywalkerCompletionServiceTest {
             VistierieClient vistierieClient, boolean escalationEnabled, boolean daywalkerDeepEnabled,
             BigDecimal escalationThreshold) {
         return new DaywalkerCompletionService(alerts, notifier, events, "CRITICAL", 3600,
-                providerOf(vistierieClient), escalationEnabled, daywalkerDeepEnabled, escalationThreshold);
+                providerOf(vistierieClient), escalationEnabled, daywalkerDeepEnabled, escalationThreshold,
+                PRIMARY_USER);
     }
 
     /** Minimal ObjectProvider stub — only {@code getObject()} is abstract; the default
@@ -79,6 +83,31 @@ class DaywalkerCompletionServiceTest {
                 new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
         verify(events).publishEvent(
                 new DaywalkerAlertCreatedEvent("u2@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
+    }
+
+    @Test
+    void depotSourcedCriticalAssessmentPersistsAlertAndFiresTelegramAndSse() {
+        // The exact break this task fixes: DaywalkerEventEngine (A6) sources triggers from
+        // depot positions, so positionId round-trips as the depot SYMBOL, not a
+        // watchlist_items UUID. Before the fix, filtering owners by
+        // `positionId.equals(o.watchlistItemId())` meant a UUID never equalled a ticker,
+        // `owners` was always empty, and NOTHING persisted/notified/published for any
+        // depot-sourced assessment. This test drives that exact path end-to-end.
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+        when(notifier.notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis")).thenReturn(true);
+
+        service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
+                "thesis", new BigDecimal("0.9"), "run-30", "AAPL");
+
+        verify(alerts, never()).findOwnersBySymbol(anyString());
+        verify(notifier, times(1)).notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis");
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("AAPL"), eq("PRICE_SPIKE"),
+                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-30"), eq(true));
+        verify(events, times(1)).publishEvent(
+                new DaywalkerAlertCreatedEvent(PRIMARY_USER, "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
     }
 
     @Test
@@ -152,20 +181,20 @@ class DaywalkerCompletionServiceTest {
     }
 
     @Test
-    void positionIdRoutesToThatOwnerPositionOnly() {
+    void depotPositionIdRoutesToPrimaryOwnerOnlyNotWatchlistLookup() {
+        // Depot-sourced assessment (A6): positionId round-trips as the depot SYMBOL, never a
+        // watchlist_items UUID. Must route straight to the configured primary-user owner and
+        // must NOT consult findOwnersBySymbol (the depot ticker may not even be on the watchlist).
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
-        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(
-                new OwnerItem("u1@x.com", "wid-1", true),
-                new OwnerItem("u2@x.com", "wid-2", true)));
         when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
-                "thesis", new BigDecimal("0.9"), "run-1", "wid-2");
+                "thesis", new BigDecimal("0.9"), "run-1", "AAPL");
 
-        verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), eq("AAPL"), eq("PRICE_SPIKE"),
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("AAPL"), eq("PRICE_SPIKE"),
                 eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), anyBoolean());
-        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(alerts, never()).findOwnersBySymbol(anyString());
     }
 
     @Test
@@ -265,24 +294,26 @@ class DaywalkerCompletionServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void positionScopedEscalationCarriesPositionIdInTriggerInput() {
+    void depotPositionScopedEscalationCarriesPositionIdInTriggerInput() {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         var vistierie = mock(VistierieClient.class);
-        // Position-scoped: one HELD owner matching the positionId.
-        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", true)));
+        // Depot-scoped: positionId is the depot SYMBOL, routed to the primary owner (no
+        // watchlist lookup), but still round-trips into the escalation's trigger input.
         when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
         when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
 
         service(alerts, notifier, vistierie, true, DEFAULT_THRESHOLD)
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
-                        "thesis text", new BigDecimal("0.4"), "run-27", "wid-1");
+                        "thesis text", new BigDecimal("0.4"), "run-27", "AAPL");
 
         var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
         verify(vistierie).triggerRun(eq("daywalker-deep"), captor.capture());
         assertThat(captor.getValue()).containsExactlyInAnyOrderEntriesOf(Map.of(
                 "symbol", "AAPL", "trigger_type", "PRICE_SPIKE",
-                "thesis", "thesis text", "position_id", "wid-1"));
+                "thesis", "thesis text", "position_id", "AAPL"));
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("AAPL"), eq("PRICE_SPIKE"),
+                eq("CRITICAL"), eq("thesis text"), eq(new BigDecimal("0.4")), eq("run-27"), anyBoolean());
     }
 
     @Test

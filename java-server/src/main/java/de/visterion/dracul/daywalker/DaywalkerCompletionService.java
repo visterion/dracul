@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,6 +37,7 @@ public class DaywalkerCompletionService {
     private final boolean escalationEnabled;
     private final boolean daywalkerDeepEnabled;
     private final BigDecimal escalationThreshold;
+    private final String depotOwner;
 
     public DaywalkerCompletionService(
             DaywalkerAlertRepository alerts,
@@ -46,7 +48,8 @@ public class DaywalkerCompletionService {
             ObjectProvider<VistierieClient> vistierie,
             @Value("${dracul.daywalker.escalation-enabled:true}") boolean escalationEnabled,
             @Value("${dracul.daywalker-deep.enabled:false}") boolean daywalkerDeepEnabled,
-            @Value("${dracul.daywalker.escalation-confidence:0.6}") BigDecimal escalationThreshold) {
+            @Value("${dracul.daywalker.escalation-confidence:0.6}") BigDecimal escalationThreshold,
+            @Value("${dracul.primary-user-email:}") String primaryUser) {
         this.alerts = alerts;
         this.notifier = notifier;
         this.events = events;
@@ -56,6 +59,7 @@ public class DaywalkerCompletionService {
         this.escalationEnabled = escalationEnabled;
         this.daywalkerDeepEnabled = daywalkerDeepEnabled;
         this.escalationThreshold = escalationThreshold;
+        this.depotOwner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
@@ -77,14 +81,22 @@ public class DaywalkerCompletionService {
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId,
                                   String positionId, boolean fromEscalation) {
-        var all = alerts.findOwnersBySymbol(symbol);
-        if (all.isEmpty()) {
-            log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
-            return;
+        List<DaywalkerAlertRepository.OwnerItem> owners;
+        if (positionId != null) {
+            // Depot-sourced assessment (A6): DaywalkerEventEngine now only fans triggers over
+            // depot positions, and positionId round-trips as the depot SYMBOL — never a
+            // watchlist_items UUID (that table may not even contain this ticker). Route
+            // straight to the single configured primary-user owner, established convention
+            // from A5/gropar for depot's single-account model; no watchlist lookup at all.
+            owners = List.of(new DaywalkerAlertRepository.OwnerItem(depotOwner, null, true));
+        } else {
+            var all = alerts.findOwnersBySymbol(symbol);
+            if (all.isEmpty()) {
+                log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
+                return;
+            }
+            owners = all.stream().filter(o -> !o.held()).toList();
         }
-        var owners = positionId != null
-                ? all.stream().filter(o -> positionId.equals(o.watchlistItemId())).toList()
-                : all.stream().filter(o -> !o.held()).toList();
         Instant now = Instant.now();
         var eligible = owners.stream()
                 .filter(o -> !inCooldown(o.userId(), symbol, triggerType, now))
