@@ -99,6 +99,7 @@ public class ExecutorWebhookController {
     private final int cooldownDays;
     private final int maxTranche;
     private final int entryGtdDays;
+    private final int maxBrokerAttempts;
 
     @Autowired
     public ExecutorWebhookController(
@@ -137,13 +138,14 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
             @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek,
             @Value("${dracul.executor.max-tranche:2}") int maxTranche,
-            @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays) {
+            @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays,
+            @Value("${dracul.executor.max-broker-attempts:3}") int maxBrokerAttempts) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, positionContextRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
-                entryGtdDays, Clock.systemUTC());
+                entryGtdDays, maxBrokerAttempts, Clock.systemUTC());
     }
 
     /** Package-private overload with an injectable {@link Clock}, so tests can assert
@@ -185,6 +187,7 @@ public class ExecutorWebhookController {
             int pacePerWeek,
             int maxTranche,
             int entryGtdDays,
+            int maxBrokerAttempts,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -208,6 +211,7 @@ public class ExecutorWebhookController {
         this.cooldownDays = cooldownDays;
         this.maxTranche = maxTranche;
         this.entryGtdDays = entryGtdDays;
+        this.maxBrokerAttempts = maxBrokerAttempts;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
@@ -573,14 +577,18 @@ public class ExecutorWebhookController {
 
         PlacedBracket placed;
         try {
-            BracketRequest req = new BracketRequest(signal.symbol(), side, qty, limitPrice,
+            BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPrice,
                     stopPrice, takeProfit, signalId, null);
             placed = gateway.placeBracket(connection, req);
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
                     null, runId, null));
-            signalRepo.markStatus(signalId, "REJECTED");
+            int brokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
+            if (brokerErrors >= maxBrokerAttempts) {
+                signalRepo.markStatus(signalId, "REJECTED");
+            }
+            // else: leave PENDING so a corrected retry (this run or a later run) can succeed
             logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", "BROKER_ERROR", null,
                     confidence, clock.instant());
             return ResponseEntity.ok(Map.of("output",
@@ -609,7 +617,7 @@ public class ExecutorWebhookController {
                 ObjectNode orderJson = mapper.createObjectNode();
                 orderJson.put("type", "limit_bracket");
                 orderJson.put("qty", qty);
-                orderJson.put("limit_price", limitPrice);
+                orderJson.put("limit_price", orderPrice);
                 orderJson.put("stop_price", stopPrice);
                 orderJson.put("take_profit", takeProfit);
                 orderJson.put("stop_basis", sizing.stopBasis());

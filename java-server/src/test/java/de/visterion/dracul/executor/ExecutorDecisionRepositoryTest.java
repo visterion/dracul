@@ -51,4 +51,25 @@ class ExecutorDecisionRepositoryTest {
         assertThat(foundRejected.rejectReason()).isEqualTo("LOW_CONFIDENCE");
         assertThat(foundRejected.vetoTrace()).containsExactlyInAnyOrder("SCHEMA_INVALID", "LOW_CONFIDENCE");
     }
+
+    @Test
+    void countByReason() {
+        String signalId = "sig-broker-" + UUID.randomUUID();
+        String otherSignalId = "sig-broker-other-" + UUID.randomUUID();
+
+        var brokerError1 = new ExecutorDecision(null, signalId, "ACME", false,
+                "BROKER_ERROR", List.of(), "broker call failed", null, "run-1", null);
+        var brokerError2 = new ExecutorDecision(null, signalId, "ACME", false,
+                "BROKER_ERROR", List.of(), "broker call failed", null, "run-1", null);
+        var vetoReject = new ExecutorDecision(null, signalId, "ACME", false,
+                "LOW_CONFIDENCE", List.of("LOW_CONFIDENCE"), null, null, "run-1", null);
+
+        repo.insert(brokerError1);
+        repo.insert(brokerError2);
+        repo.insert(vetoReject);
+
+        assertThat(repo.countByReason(signalId, "BROKER_ERROR")).isEqualTo(2);
+        assertThat(repo.countByReason(signalId, "LOW_CONFIDENCE")).isEqualTo(1);
+        assertThat(repo.countByReason(otherSignalId, "BROKER_ERROR")).isEqualTo(0);
+    }
 }

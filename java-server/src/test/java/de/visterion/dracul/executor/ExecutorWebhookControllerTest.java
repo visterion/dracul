@@ -87,7 +87,7 @@ class ExecutorWebhookControllerTest {
                 assembler, sizer, ranker, tranche2Detector, telegram, positionContextRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, fixedClock);
+                2, 3, fixedClock);
     }
 
     // -------------------------------------------------------------------
@@ -613,7 +613,7 @@ class ExecutorWebhookControllerTest {
         // qty is server-side sizer output (tranche 1000 / price 100), not caller-supplied.
         assertThat(req.qty()).isEqualByComparingTo("10");
         assertThat(req.stopLossStop()).isEqualByComparingTo("95");
-        assertThat(req.limitPrice()).isNull();
+        assertThat(req.limitPrice()).isEqualByComparingTo("100");
         // take-profit is now guaranteed: reference=100, stop=95 → R=5 → 100 + 3*5 = 115
         assertThat(req.takeProfitLimit()).isEqualByComparingTo("115");
         assertThat(req.clientRef()).isEqualTo("sig-1");
@@ -691,7 +691,9 @@ class ExecutorWebhookControllerTest {
         assertThat(order).isNotNull();
         assertThat(order.path("type").asString()).isEqualTo("limit_bracket");
         assertThat(order.path("qty").asDouble()).isEqualTo(10.0);
-        assertThat(order.path("limit_price").isNull()).isTrue();
+        // limit_price is booked at the resolved orderPrice (ctx.price()=100 fallback here), not
+        // the raw (absent) LLM limit_price -- this is the same fix as the BracketRequest below.
+        assertThat(order.path("limit_price").asDouble()).isEqualTo(100.0);
         assertThat(order.path("stop_price").asDouble()).isEqualTo(95.0);
         assertThat(order.path("take_profit").asDouble()).isEqualTo(115.0);
         assertThat(order.path("stop_basis").asString()).contains("ATR");
@@ -793,6 +795,51 @@ class ExecutorWebhookControllerTest {
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
         assertThat(log.vetoResults().size()).isEqualTo(14);
+    }
+
+    @Test
+    void placeEntry_brokerError_underCap_leavesPending() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenThrow(new BrokerUnavailableException("agora order rejected: market closed"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("BROKER_ERROR");
+    }
+
+    @Test
+    void placeEntry_brokerError_atCap_marksRejected() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenThrow(new BrokerUnavailableException("agora order rejected: market closed"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
     }
 
     @Test
