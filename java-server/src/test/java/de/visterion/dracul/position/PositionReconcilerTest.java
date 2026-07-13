@@ -96,6 +96,35 @@ class PositionReconcilerTest {
     }
 
     @Test
+    void reconcile_upgradesExistingVerdictLessRowWhenVerdictAppears() {
+        when(depotClient.positions(CONNECTION)).thenReturn(
+                new PositionsSnapshot(List.of(depotPosition("HELE")), "2026-07-13T00:00:00Z"));
+        var unlinkedRow = new PositionContextRow("ctx-HELE", CONNECTION, "HELE", null, null,
+                null, null, null, null, "2026-07-01T00:00:00Z", null, "none");
+        when(contextRepo.findOpenBySymbol(CONNECTION, "HELE")).thenReturn(Optional.of(unlinkedRow));
+        when(contextRepo.findAllOpen(CONNECTION)).thenReturn(List.of(unlinkedRow));
+
+        var latest = new VerdictRepository.LatestVerdictForSymbol(
+                "v1", "1M", "beat summary",
+                List.of("signal-1"), List.of("risk-1"), List.of("pead"));
+        when(verdictRepo.findLatestBySymbol("HELE")).thenReturn(Optional.of(latest));
+        when(verdictRepo.contributingPreyIdsById("v1")).thenReturn(List.of("prey-1"));
+        when(preyRepo.findByIds(List.of("prey-1"))).thenReturn(List.of(
+                new Prey("prey-1", "HELE", "Heliogen Corp", "pead", 0.8, "thesis text",
+                        List.of("signal-1"), List.of("risk-1"),
+                        List.of("close below 50dma"), "1M", "strigoi-pead", "2026-07-01T00:00:00Z")));
+
+        reconciler.reconcile();
+
+        verify(contextRepo).updateVerdictLink(
+                eq(CONNECTION), eq("HELE"), eq("v1"),
+                argThat(json -> json != null && json.toString().contains("beat summary")),
+                argThat(json -> json != null && json.toString().contains("close below 50dma")),
+                eq("1M"));
+        verify(contextRepo, never()).upsertOnOpen(eq(CONNECTION), eq("HELE"), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void closesContextRowForSymbolThatLeftTheDepot() {
         when(depotClient.positions(CONNECTION)).thenReturn(
                 new PositionsSnapshot(List.of(), "2026-07-13T00:00:00Z"));

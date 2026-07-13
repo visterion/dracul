@@ -19,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -77,11 +78,24 @@ public class PositionReconciler {
         close(depotSymbols);
     }
 
-    /** Opens a context row for every depot symbol that doesn't already have one. */
+    /** Opens a context row for every depot symbol that doesn't already have one, and upgrades
+     *  an existing OPEN but still-unlinked (verdict_id IS NULL) row -- e.g. an executor-written
+     *  row -- once a matching verdict later shows up. */
     private void backfill(Set<String> depotSymbols) {
         for (String symbol : depotSymbols) {
             try {
-                if (contextRepo.findOpenBySymbol(connection, symbol).isPresent()) continue;
+                Optional<PositionContextRow> existing = contextRepo.findOpenBySymbol(connection, symbol);
+                if (existing.isPresent()) {
+                    if (existing.get().verdictId() == null) {
+                        var verdict = verdictRepo.findLatestBySymbol(symbol);
+                        if (verdict.isPresent()) {
+                            var v = verdict.get();
+                            contextRepo.updateVerdictLink(connection, symbol, v.id(),
+                                    thesisSnapshot(v), resolveKillCriteria(v.id()), v.horizon());
+                        }
+                    }
+                    continue;
+                }
 
                 var verdict = verdictRepo.findLatestBySymbol(symbol);
                 if (verdict.isEmpty()) {

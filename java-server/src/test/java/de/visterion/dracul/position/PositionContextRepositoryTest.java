@@ -124,4 +124,18 @@ class PositionContextRepositoryTest {
         repo.updateContextIfNull("depot-1", "hele", JSON.readTree("{\"summary\":\"x\"}"), null, null, null);
         assertThat(repo.findOpenBySymbol("depot-1", "HELE").orElseThrow().thesisSnapshot()).isNotNull();
     }
+
+    @Test
+    void updateVerdictLink_linksAndHealsOnlyUnlinkedOpenRow() {
+        repo.upsertOnOpen("depot-1", "HELE", null, null, null, null, null, "none");
+        repo.updateVerdictLink("depot-1", "HELE", "v1",
+                JSON.readTree("{\"summary\":\"v\"}"), JSON.readTree("[\"k\"]"), "1M");
+        var row = repo.findOpenBySymbol("depot-1", "HELE").orElseThrow();
+        assertThat(row.verdictId()).isEqualTo("v1");
+        assertThat(row.horizon()).isEqualTo("1M");
+
+        // already linked → never overwritten
+        repo.updateVerdictLink("depot-1", "HELE", "v2", null, null, null);
+        assertThat(repo.findOpenBySymbol("depot-1", "HELE").orElseThrow().verdictId()).isEqualTo("v1");
+    }
 }
