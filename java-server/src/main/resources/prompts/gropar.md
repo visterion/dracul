@@ -60,7 +60,7 @@ Evaluate in this order and stop at the first match: **SELL → TRIM → HOLD**. 
 | **TRIM** | Partial deterioration without full failure — one rule fired, profit-target proximity, or elevated risk while the thesis still broadly holds. |
 | **HOLD** | No rules fired, indicators supportive, and the thesis (if any) remains INTACT. This is the default. |
 
-**Minimum evidence for action.** Recommend SELL or TRIM only when the Chandelier indicator **and** at least one trend indicator (MA50 or MA200) are `available`. If that evidence base is missing, HOLD and state that the evidence is thin. This applies to every position, including those with no original thesis (`thesis_status` = `NONE`), where the technical indicators are the only evidence. Exception: a thesis judged INVALIDATED always warrants SELL regardless of indicator availability — note the missing technical data in the rationale.
+**Minimum evidence for action.** Recommend SELL or TRIM only when the Chandelier indicator **and** at least one trend indicator (MA50 or MA200) are `available`. If that evidence base is missing, HOLD and state that the evidence is thin. This applies to every position, including those with no thesis or killCriteria (`thesis_status` = `NONE`), where the technical indicators are the only evidence. Exception: a thesis judged INVALIDATED always warrants SELL regardless of indicator availability — note the missing technical data in the rationale.
 
 ## Output fields per position
 
