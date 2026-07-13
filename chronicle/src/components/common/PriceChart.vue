@@ -1,6 +1,8 @@
 <template>
   <v-chart
     class="price-chart"
+    role="img"
+    :aria-label="ariaLabel"
     :style="{ height: `${H}px` }"
     :option="option"
     :autoresize="true"
