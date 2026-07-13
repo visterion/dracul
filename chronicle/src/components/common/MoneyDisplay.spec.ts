@@ -30,13 +30,13 @@ describe('MoneyDisplay originalPrimary', () => {
     expect(w.text().trim()).toBe('100,00 €')
   })
 
-  it('keeps display-primary + "urspr." native line when originalPrimary is not set', () => {
+  it('keeps display-primary + native line in bare parens when originalPrimary is not set', () => {
     const w = make({
       amount: 1147.70, currency: 'EUR',
       nativeAmount: 1247.50, nativeCurrency: 'USD',
     })
     expect(w.text()).toContain('1.147,70 €')
-    expect(w.text()).toContain('urspr.')
+    expect(w.text()).not.toContain('urspr.')
     expect(w.text()).toContain('1.247,50')
   })
 })

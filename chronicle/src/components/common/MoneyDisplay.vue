@@ -4,7 +4,7 @@
     <template v-else>
       <span class="money-primary">{{ formatMoney(amount, currency, locale) }}</span>
       <span v-if="showNative" class="money-native">
-        ({{ t('common.origPrice') }} {{ formatMoney(nativeAmount as number, nativeCurrency as string, locale) }})
+        ({{ formatMoney(nativeAmount as number, nativeCurrency as string, locale) }})
       </span>
     </template>
   </span>
@@ -24,7 +24,7 @@ const props = defineProps<{
   originalPrimary?: boolean
 }>()
 
-const { t, locale } = useI18n()
+const { locale } = useI18n()
 
 const showNative = computed(() =>
   props.nativeCurrency != null

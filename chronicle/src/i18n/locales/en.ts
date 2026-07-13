@@ -1,7 +1,6 @@
 export default {
   common: {
     language: 'Language',
-    origPrice: 'orig.',
   },
   time: {
     justNow: 'just now',
