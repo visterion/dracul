@@ -139,6 +139,8 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.adv-multiple:200}") int advMultiple,
             @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays,
             @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
+            @Value("${dracul.executor.drift-anchor-atr-mult:0.0}") double driftAnchorAtrMult,
+            @Value("${dracul.executor.value-anchor-atr-mult:3.0}") double valueAnchorAtrMult,
             @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek,
             @Value("${dracul.executor.max-tranche:2}") int maxTranche,
             @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays,
@@ -148,7 +150,7 @@ public class ExecutorWebhookController {
                 tranche2Detector, telegram, positionContextRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
-                entryGtdDays, maxBrokerAttempts, Clock.systemUTC());
+                entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, Clock.systemUTC());
     }
 
     /** Package-private overload with an injectable {@link Clock}, so tests can assert
@@ -191,6 +193,8 @@ public class ExecutorWebhookController {
             int maxTranche,
             int entryGtdDays,
             int maxBrokerAttempts,
+            double driftAnchorAtrMult,
+            double valueAnchorAtrMult,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -224,7 +228,7 @@ public class ExecutorWebhookController {
         this.positionContextRepo = positionContextRepo;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
-                trancheCount);
+                trancheCount, driftAnchorAtrMult, valueAnchorAtrMult);
     }
 
     // -------------------------------------------------------------------
