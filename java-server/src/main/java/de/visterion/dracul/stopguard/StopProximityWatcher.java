@@ -88,14 +88,12 @@ public class StopProximityWatcher {
                 StopZone zone = StopZoneEvaluator.evaluate(
                         q.price(), p.activeStop(), BigDecimal.ZERO, atrMultiple);
                 if (zone == StopZone.NONE) continue;
-                if (p.verdictId() == null) {
-                    // No linked verdict -> no id to persist the alert against; skip rather
-                    // than emit with a dangling reference.
-                    log.debug("stopguard: {} breached/near stop with no linked verdict — skipping alert", p.symbol());
-                    continue;
-                }
+                // Depot-sourced alerts carry no watchlist row -- identity and dedup are
+                // keyed by (owner, symbol, trigger_type), not by the linked verdict, so a
+                // missing verdictId is no longer a reason to skip (a verdict UUID is never
+                // a valid watchlist_items(id) anyway; see StopAlertEmitter).
                 BigDecimal stop = p.activeStop();
-                emitter.emit(owner, p.verdictId(), p.symbol(), zone, q.price(), stop, now);
+                emitter.emit(owner, p.symbol(), zone, q.price(), stop, now);
             }
         } catch (RuntimeException e) {
             log.warn("stopguard poll failed", e);

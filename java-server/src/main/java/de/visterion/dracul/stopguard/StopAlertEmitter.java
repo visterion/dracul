@@ -39,8 +39,12 @@ public class StopAlertEmitter {
     }
 
     /** Emit one stop alert if the owner is outside cooldown for this (symbol, zone).
-     *  Returns true if an alert row was written. NONE is a no-op. */
-    public boolean emit(String owner, String itemId, String symbol, StopZone zone,
+     *  Returns true if an alert row was written. NONE is a no-op.
+     *
+     * <p>Depot-sourced alerts carry no {@code watchlist_items} row -- dedup and identity
+     * are keyed by {@code (owner, symbol, trigger_type)}, so no item id is passed through
+     * to the repository; the insert always writes a null {@code watchlist_item_id}. */
+    public boolean emit(String owner, String symbol, StopZone zone,
                         BigDecimal price, BigDecimal activeStop, Instant now) {
         if (zone == StopZone.NONE) return false;
         TriggerType type = zone == StopZone.BREACHED
@@ -55,7 +59,7 @@ public class StopAlertEmitter {
         boolean sent = rank(severity) >= notifyRank
                 && notifier.notifyAlert(symbol, type.name(), severity, thesis);
         String runId = "stopguard-" + now.toEpochMilli();
-        alerts.insert(owner, itemId, symbol, type.name(), severity, thesis, null, runId, sent);
+        alerts.insert(owner, null, symbol, type.name(), severity, thesis, null, runId, sent);
         events.publishEvent(new DaywalkerAlertCreatedEvent(owner, symbol, type.name(), severity, thesis));
         log.info("stopguard {} alert for {} (owner={}), notified={}", zone, symbol, owner, sent);
         return true;
