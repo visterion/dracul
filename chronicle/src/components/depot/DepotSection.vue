@@ -106,12 +106,23 @@
 
       <div v-if="depot.orders.length" class="dp-orders" data-testid="depot-orders">
         <div class="section-head">{{ t('depots.orders.title') }}</div>
-        <div v-for="o in depot.orders" :key="o.brokerOrderId" class="dp-order-row">
-          <span class="mono">{{ o.symbol }}</span>
-          <span class="dp-order-side">{{ o.side }}</span>
-          <span class="mono">{{ formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4) }}</span>
-          <span class="dp-order-type">{{ o.type }}</span>
-          <span class="dp-order-status">{{ o.status }}</span>
+        <div class="dp-order-row dp-order-head">
+          <span>{{ t('depots.orders.col.symbol') }}</span>
+          <span>{{ t('depots.orders.col.side') }}</span>
+          <span>{{ t('depots.orders.col.qty') }}</span>
+          <span>{{ t('depots.orders.col.type') }}</span>
+          <span>{{ t('depots.orders.col.status') }}</span>
+        </div>
+        <div v-for="row in orderRows" :key="row.key" class="dp-order-row">
+          <span class="mono">{{ row.symbol }}</span>
+          <span class="dp-order-side" :class="`tone-${row.side.tone}`">
+            <span v-if="row.side.arrow" class="dp-order-arrow" aria-hidden="true">{{ row.side.arrow }}</span>{{ row.side.label }}
+          </span>
+          <span class="mono">{{ row.qty }}</span>
+          <span class="dp-order-type">{{ row.type.label }}</span>
+          <span class="dp-order-status">
+            <TagPill :tone="row.status.tone">{{ row.status.label }}</TagPill>
+          </span>
         </div>
       </div>
     </template>
@@ -130,6 +141,7 @@ import { useApi } from '../../api'
 import type { Depot, DepotChart, ChartRange } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
 import { fmtPl, allocationSegments, isStale, formatAbsoluteTime } from '../../lib/depotDisplay'
+import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../../lib/orderDisplay'
 import { formatMoney, formatNumber } from '../../utils/format'
 
 const props = defineProps<{ depot: Depot }>()
@@ -149,6 +161,17 @@ function pnlClass(v: number | null): string {
 const metric = ref<'sinceBuy' | 'today'>('sinceBuy')
 
 const allocation = computed(() => allocationSegments(props.depot.positions))
+
+const orderRows = computed(() =>
+  props.depot.orders.map(o => ({
+    key: o.brokerOrderId,
+    symbol: o.symbol,
+    qty: formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4),
+    side: orderSideLabel(o.side, t),
+    type: orderTypeLabel(o.type, t),
+    status: orderStatusLabel(o.status, t),
+  })),
+)
 
 function onSelectPosition(symbol: string) {
   router.push({ name: 'depot-position-detail', params: { connection: props.depot.id, symbol } })
@@ -272,7 +295,17 @@ const chartLabels = computed(() => {
 .dp-orders { display: flex; flex-direction: column; gap: var(--space-2); }
 .dp-order-row {
   display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: var(--space-2);
+  align-items: center;
   font-size: var(--text-body-sm); color: var(--bone-ivory-dim); padding: var(--space-2) 0;
   border-bottom: 1px solid var(--rule);
 }
+.dp-order-head {
+  font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ash-gray); border-bottom: 1px solid var(--rule);
+}
+.dp-order-side { display: inline-flex; align-items: center; gap: 4px; }
+.dp-order-side.tone-green { color: var(--signal-positive-bright); }
+.dp-order-side.tone-crimson { color: var(--blood-crimson-bright); }
+.dp-order-side.tone-ash { color: var(--ash-gray-light); }
+.dp-order-arrow { font-size: var(--text-micro); }
 </style>

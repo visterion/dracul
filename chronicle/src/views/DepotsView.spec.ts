@@ -294,6 +294,45 @@ describe('DepotsView', () => {
     expect(requestedConnections).toContain('saxo-live-1')
   })
 
+  it('renders order rows with readable labels, a header row, and a status pill', async () => {
+    depotsResponse = {
+      depots: [
+        depot({
+          id: 'depot-1',
+          orders: [
+            { brokerOrderId: 'o1', symbol: 'PSMT', side: 'buy', qty: 5, type: 'limit', status: 'working', role: null },
+            { brokerOrderId: 'o2', symbol: 'PSMT', side: null, qty: 5, type: 'stopiftraded', status: 'notworking', role: null },
+          ],
+        }),
+      ],
+      error: null,
+    }
+    const w = mountView()
+    await flushPromises()
+
+    const orders = w.find('[data-testid="depot-orders"]')
+    expect(orders.exists()).toBe(true)
+    const text = orders.text()
+
+    // Column header row is present.
+    expect(text).toContain('Richtung')
+    expect(text).toContain('Stück')
+
+    // Readable labels, not raw broker enums.
+    expect(text).toContain('Kauf')
+    expect(text).toContain('aktiv')
+    expect(text).toContain('inaktiv')
+    expect(text).toContain('Stop')
+    expect(text).not.toContain('working') // neither 'working' nor 'notworking'
+    expect(text).not.toContain('stopiftraded')
+
+    // Missing side renders as a dash.
+    expect(text).toContain('—')
+
+    // Status is rendered as a TagPill.
+    expect(orders.findAll('.tag-pill').length).toBe(2)
+  })
+
   it('appends " · LIVE" to the depot dropdown option text for live environments', async () => {
     depotsResponse = { depots: [depot({ id: 'depot-1', environment: 'paper' }), depot({ id: 'saxo-live-1', environment: 'live' })], error: null }
     const w = mountView()
