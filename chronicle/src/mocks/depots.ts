@@ -49,16 +49,22 @@ const depot1Positions = withWeights([
     symbol: 'NVDA', qty: 10, avgEntryPrice: 120.00, marketValue: 1350.00,
     unrealizedPl: 150.00, unrealizedPlPct: 12.50, price: 135.00,
     dayChangePercent: 1.20, currency: 'USD',
+    name: 'NVIDIA Corporation', assetType: 'Stock', valueDate: '2026-01-15',
+    nativePrice: null, nativeCurrency: null,
   },
   {
     symbol: 'ABB', qty: 20, avgEntryPrice: 35.00, marketValue: 770.00,
     unrealizedPl: 70.00, unrealizedPlPct: 10.00, price: 38.50,
     dayChangePercent: -0.40, currency: 'USD',
+    name: 'ABB Ltd', assetType: 'Stock', valueDate: '2026-02-03',
+    nativePrice: null, nativeCurrency: null,
   },
   {
     symbol: 'TSM', qty: 15, avgEntryPrice: 150.00, marketValue: 2175.00,
     unrealizedPl: -75.00, unrealizedPlPct: -3.33, price: 145.00,
     dayChangePercent: 0.80, currency: 'USD',
+    name: 'Taiwan Semiconductor Manufacturing', assetType: 'Stock', valueDate: '2025-11-20',
+    nativePrice: null, nativeCurrency: null,
   },
 ])
 
@@ -97,6 +103,8 @@ const liveDepotPositions = withWeights([
     symbol: 'ASML', qty: 5, avgEntryPrice: 650.00, marketValue: 3400.00,
     unrealizedPl: 150.00, unrealizedPlPct: 4.62, price: 680.00,
     dayChangePercent: 0.50, currency: 'EUR',
+    name: 'ASML Holding N.V.', assetType: 'Stock', valueDate: '2026-03-10',
+    nativePrice: 720.50, nativeCurrency: 'CHF',
   },
 ])
 

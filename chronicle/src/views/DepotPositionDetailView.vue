@@ -24,9 +24,27 @@
         <div class="pd-head-id">
           <h1 class="pd-symbol mono" data-testid="pd-symbol">{{ position.symbol }}</h1>
           <div v-if="companyName" class="pd-name">{{ companyName }}</div>
+          <div v-if="position.assetType || position.valueDate" class="pd-meta">
+            <span
+              v-if="position.assetType"
+              class="pd-pill"
+              data-testid="pd-assettype"
+              :title="t('depots.detail.assetClass')"
+            >{{ position.assetType }}</span>
+            <span v-if="position.valueDate" class="pd-heldsince" data-testid="pd-heldsince">
+              {{ t('depots.detail.heldSince', { date: formatValueDate(position.valueDate) }) }}
+            </span>
+          </div>
         </div>
         <div class="pd-head-price">
-          <span class="pd-price mono" data-testid="pd-price">{{ formatMoney(position.price ?? position.avgEntryPrice, position.currency) }}</span>
+          <span class="pd-price mono" data-testid="pd-price">
+            <MoneyDisplay
+              :amount="position.price ?? position.avgEntryPrice"
+              :currency="position.currency"
+              :native-amount="position.nativePrice"
+              :native-currency="position.nativeCurrency"
+            />
+          </span>
           <span
             class="pd-header-change pnl-cell"
             data-testid="pd-header-change"
@@ -69,6 +87,17 @@
         />
         <StatTile data-testid="pd-stat-qty" :label="t('depots.detail.stat.qty')" :value="formatNumber(position.qty, Number.isInteger(position.qty) ? 0 : 4)" />
         <StatTile data-testid="pd-stat-entry" :label="t('depots.detail.stat.entry')" :value="formatMoney(position.avgEntryPrice, position.currency)" />
+        <StatTile
+          data-testid="pd-stat-weight"
+          :label="t('depots.detail.stat.weight')"
+          :value="position.weightPct != null ? formatPercent(position.weightPct) : '—'"
+        />
+        <StatTile
+          data-testid="pd-stat-today"
+          :label="t('depots.detail.stat.today')"
+          :value="position.dayChangePercent != null ? formatPercent(position.dayChangePercent) : '—'"
+          :value-class="pctClass(position.dayChangePercent)"
+        />
       </div>
       <div v-if="asOf" class="pd-asof" :class="{ stale: stale }" data-testid="pd-asof">
         {{ t('depots.asOf', { time: formatAbsoluteTime(asOf) }) }}
@@ -83,16 +112,8 @@
           <span class="mono">{{ formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4) }}</span>
           <span class="dp-order-type">{{ o.type }}</span>
           <span class="dp-order-status">{{ o.status }}</span>
+          <span v-if="o.role" class="dp-order-role">{{ orderRoleLabel(o.role) }}</span>
         </div>
-      </div>
-
-      <!-- ── Informationen ──────────────────────────────────── -->
-      <div v-if="profileDescription" class="pd-info" data-testid="pd-info">
-        <div class="section-head">{{ t('depots.detail.info.title') }}</div>
-        <p class="pd-info-text">{{ infoExpanded ? profileDescription : truncatedDescription }}</p>
-        <button v-if="descriptionIsLong" class="pd-info-toggle" data-testid="pd-info-toggle" @click="infoExpanded = !infoExpanded">
-          {{ infoExpanded ? t('depots.detail.info.less') : t('depots.detail.info.more') }}
-        </button>
       </div>
 
       <!-- ── News ───────────────────────────────────────────── -->
@@ -141,6 +162,7 @@ import { useRoute, useRouter } from 'vue-router'
 import BackLink from '../components/common/BackLink.vue'
 import StatTile from '../components/common/StatTile.vue'
 import LineChart from '../components/common/LineChart.vue'
+import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import InfoCardRow from '../components/depot/InfoCardRow.vue'
 import { useApi } from '../api'
 import type {
@@ -149,10 +171,10 @@ import type {
 import { useDisplayMode } from '../composables/useDisplayMode'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import { fmtPl, isStale, formatAbsoluteTime } from '../lib/depotDisplay'
-import { formatMoney, formatNumber, formatPercent } from '../utils/format'
+import { formatMoney, formatNumber, formatPercent, pctClass } from '../utils/format'
 import { displayName } from '../utils/instrument'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const api = useApi()
@@ -210,10 +232,29 @@ async function loadPosition() {
 
 const companyName = computed(() => {
   const p = position.value
+  if (!p) return ''
+  if (p.name) return p.name
   const profile = profileRecord.value
   const name = typeof profile?.name === 'string' ? profile.name : ''
-  return p ? displayName(p.symbol, name) : ''
+  return displayName(p.symbol, name)
 })
+
+/** "Gehalten seit" date, day/month/year only — no time-of-day (unlike
+ *  formatAbsoluteTime, which is for the probe timestamp, not this). */
+function formatValueDate(isoDate: string): string {
+  return new Date(isoDate).toLocaleDateString(locale.value, { day: 'numeric', month: 'numeric', year: 'numeric' })
+}
+
+const ORDER_ROLE_KEYS: Record<string, string> = { entry: 'entry', stop: 'stop', target: 'target', other: 'other' }
+
+/** Known roles map to an i18n label; unknown roles are prettified
+ *  (Title-cased) rather than shown raw or hidden. */
+function orderRoleLabel(role: string | null): string {
+  if (!role) return ''
+  const key = ORDER_ROLE_KEYS[role.toLowerCase()]
+  if (key) return t(`depots.orders.role.${key}`)
+  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()
+}
 
 // ── Timeframe chart ─────────────────────────────────────────────
 
@@ -301,15 +342,10 @@ function asString(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
-// Informationen (profile description)
+// Profile record — used only as the companyName fallback (position.name,
+// Saxo-native, is preferred; see `companyName` above). Finnhub's profile2
+// carries no usable description, so no "Informationen" section exists here.
 const profileRecord = computed(() => asRecord(info.value?.profile))
-const profileDescription = computed(() => asString(profileRecord.value?.description))
-const infoExpanded = ref(false)
-const DESCRIPTION_LIMIT = 240
-const descriptionIsLong = computed(() => profileDescription.value.length > DESCRIPTION_LIMIT)
-const truncatedDescription = computed(() =>
-  descriptionIsLong.value ? `${profileDescription.value.slice(0, DESCRIPTION_LIMIT)}…` : profileDescription.value,
-)
 
 // News
 interface NewsRow { headline: string; source: string; publishedAt?: string }
@@ -418,7 +454,6 @@ const financeRows = computed<FinanceRow[]>(() => {
 // ── Route param changes must re-trigger every load ──────────────
 
 watch(() => [route.params.connection, route.params.symbol], () => {
-  infoExpanded.value = false
   loadPosition()
   loadChart()
   loadInfo()
@@ -431,6 +466,12 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .pd-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
 .pd-symbol { color: var(--bone-ivory); font-size: 1.75rem; margin: 0; }
 .pd-name { color: var(--ash-gray); font-size: var(--text-body-sm); }
+.pd-meta { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-1); }
+.pd-pill {
+  background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 999px;
+  padding: 2px var(--space-2); color: var(--ash-gray-light); font-size: var(--text-micro);
+}
+.pd-heldsince { color: var(--ash-gray); font-size: var(--text-micro); }
 .pd-head-price { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
 .pd-price { color: var(--bone-ivory); font-size: var(--text-h3); }
 .pd-header-change { cursor: pointer; font-size: var(--text-body); }
@@ -444,11 +485,7 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .pd-asof { font-size: var(--text-micro); color: var(--ash-gray); }
 .pd-asof.stale { color: var(--cathedral-gold); }
 
-.pd-info-text { color: var(--bone-ivory-dim); line-height: 1.6; }
-.pd-info-toggle {
-  background: transparent; border: none; color: var(--cathedral-gold);
-  cursor: pointer; font-size: var(--text-body-sm); padding: 0; margin-top: var(--space-2);
-}
+.dp-order-role { color: var(--cathedral-gold); font-size: var(--text-body-sm); }
 
 .icr-card {
   background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;
@@ -464,4 +501,11 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .icr-finance-row:last-child { border-bottom: none; }
 .icr-finance-k { color: var(--ash-gray); font-size: var(--text-body-sm); }
 .icr-finance-v { color: var(--bone-ivory); font-size: var(--text-body-sm); }
+
+@media (max-width: 600px) {
+  .pd-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+  .pd-stats :deep(.st-value) { font-size: var(--text-body-lg); }
+  .pd-symbol { font-size: 1.35rem; }
+  .pd-price { font-size: 22px; }
+}
 </style>

@@ -523,6 +523,11 @@ export interface DepotPositionView {
   dayChangePercent: number | null
   weightPct: number | null
   currency: string
+  name: string | null
+  assetType: string | null
+  valueDate: string | null
+  nativePrice: number | null
+  nativeCurrency: string | null
 }
 
 export interface DepotAggregates {

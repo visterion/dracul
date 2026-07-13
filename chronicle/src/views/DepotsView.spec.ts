@@ -37,11 +37,13 @@ function depot(overrides: Partial<Depot> = {}): Depot {
         symbol: 'NVDA', qty: 10, avgEntryPrice: 120, marketValue: 1350,
         unrealizedPl: 150, unrealizedPlPct: 12.5, price: 135,
         dayChangePercent: 1.2, weightPct: 60, currency: 'USD',
+        name: null, assetType: null, valueDate: null, nativePrice: null, nativeCurrency: null,
       },
       {
         symbol: 'ABB', qty: 20, avgEntryPrice: 35, marketValue: 770,
         unrealizedPl: -5, unrealizedPlPct: -0.5, price: 38.5,
         dayChangePercent: null, weightPct: 40, currency: 'USD',
+        name: null, assetType: null, valueDate: null, nativePrice: null, nativeCurrency: null,
       },
     ],
     orders: [],

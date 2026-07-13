@@ -524,6 +524,7 @@ export default {
         active: 'aktiv', open: 'offen', filled: 'ausgeführt', partiallyFilled: 'teilausgeführt',
         inactive: 'inaktiv', canceled: 'storniert', expired: 'verfallen', rejected: 'abgelehnt',
       },
+      role: { entry: 'Einstieg', stop: 'Stop', target: 'Ziel', other: 'Sonstige' },
     },
     table: {
       symbol: 'Symbol', qty: 'Stück', avgEntry: 'Ø Einstieg', price: 'Kurs',
@@ -539,13 +540,12 @@ export default {
         performance: 'Performance seit Kauf',
         qty: 'Stückzahl',
         entry: 'Einstand',
+        weight: 'Gewicht',
+        today: 'Heute',
       },
       orders: 'Offene Orders',
-      info: {
-        title: 'Informationen',
-        more: 'Mehr anzeigen',
-        less: 'Weniger anzeigen',
-      },
+      assetClass: 'Anlageklasse',
+      heldSince: 'Gehalten seit {date}',
       news: { title: 'News' },
       events: {
         title: 'Ereignisse',
