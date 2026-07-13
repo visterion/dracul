@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatMoney, formatMoneyPair, formatNumber, formatPercent, formatHorizon, microsToUsdInput } from './format'
+import { formatMoney, formatMoneyPair, formatNumber, formatPercent, formatHorizon, microsToUsdInput, pctClass } from './format'
 
 const n = (s: string) => s.replace(/[\u00a0\u202f]/g, ' ')
 
@@ -49,4 +49,15 @@ describe('formatHorizon', () => {
 describe('microsToUsdInput', () => {
   it('renders dot-decimal for inputs', () => expect(microsToUsdInput(1_500_000)).toBe('1.50'))
   it('renders infinity for null', () => expect(microsToUsdInput(null)).toBe('∞'))
+})
+
+describe('pctClass', () => {
+  it('positive → pos', () => expect(pctClass(3.4)).toBe('pos'))
+  it('negative → neg', () => expect(pctClass(-6)).toBe('neg'))
+  it('rounds to 0.0 % → neutral', () => {
+    expect(pctClass(-0.02)).toBe('')
+    expect(pctClass(0.04)).toBe('')
+    expect(pctClass(0)).toBe('')
+  })
+  it('null → neutral', () => expect(pctClass(null)).toBe(''))
 })
