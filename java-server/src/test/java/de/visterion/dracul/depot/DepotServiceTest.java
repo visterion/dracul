@@ -2,6 +2,7 @@ package de.visterion.dracul.depot;
 
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import de.visterion.dracul.marketdata.FxService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import tools.jackson.databind.JsonNode;
@@ -22,6 +23,21 @@ class DepotServiceTest {
     private JsonNode json(String s) { return mapper.readTree(s); }
 
     private static final String LIVE_EMAILS = "viktor@ufelmann.de";
+
+    /** A real FxService whose cache is never warmed (no AgoraClient calls), so convert() is a
+     *  no-op identity for every pair — matches all pre-existing same-currency test fixtures. */
+    private FxService noopFx() {
+        return new FxService(Mockito.mock(AgoraClient.class));
+    }
+
+    /** A real FxService pre-warmed with a USD->EUR rate via a stubbed AgoraClient.get_fx_rate. */
+    private FxService usdToEurFx(String rate) {
+        AgoraClient fxAgora = Mockito.mock(AgoraClient.class);
+        when(fxAgora.callTool(eq("get_fx_rate"), any())).thenReturn(json("{\"rate\":\"" + rate + "\"}"));
+        FxService fx = new FxService(fxAgora);
+        fx.warm("USD", "EUR");
+        return fx;
+    }
 
     @Test void happyPathComputesAggregatesAndEnrichesQuotes() {
         AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
@@ -51,7 +67,7 @@ class DepotServiceTest {
                 ]}
                 """));
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
 
         List<DepotDto> result = service.depots("viktor@ufelmann.de");
 
@@ -101,7 +117,7 @@ class DepotServiceTest {
         when(depotClient.positions(any())).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
         when(depotClient.orders(any())).thenReturn(List.of());
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
 
         List<DepotDto> allowed = service.depots("viktor@ufelmann.de");
         assertThat(allowed).extracting(DepotDto::id).containsExactlyInAnyOrder("depot-paper", "depot-live");
@@ -121,7 +137,7 @@ class DepotServiceTest {
         when(depotClient.positions(any())).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
         when(depotClient.orders(any())).thenReturn(List.of());
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
 
         assertThat(service.depots("other@x.com")).isEmpty();
         assertThat(service.depots("viktor@ufelmann.de")).hasSize(1);
@@ -142,7 +158,7 @@ class DepotServiceTest {
         when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
         when(depotClient.orders("depot-1")).thenReturn(List.of());
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
         List<DepotDto> result = service.depots("viktor@ufelmann.de");
 
         assertThat(result).hasSize(2);
@@ -171,7 +187,7 @@ class DepotServiceTest {
 
         when(agora.callTool(eq("get_quote"), any())).thenThrow(new AgoraUnavailableException("agora quote down"));
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
         List<DepotDto> result = service.depots("viktor@ufelmann.de");
 
         assertThat(result).hasSize(1);
@@ -215,7 +231,7 @@ class DepotServiceTest {
                 ]}
                 """));
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
         List<DepotDto> result = service.depots("viktor@ufelmann.de");
 
         assertThat(result).hasSize(1);
@@ -242,10 +258,47 @@ class DepotServiceTest {
         AgoraClient agora = Mockito.mock(AgoraClient.class);
         when(depotClient.listConnections()).thenThrow(new DepotUnavailableException("agora completely down"));
 
-        DepotService service = new DepotService(depotClient, agora, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
 
         assertThatThrownBy(() -> service.depots("viktor@ufelmann.de"))
                 .isInstanceOf(DepotUnavailableException.class)
                 .hasMessage("agora completely down");
+    }
+
+    @Test void usdPositionInEurAccountIsConvertedToAccountCurrency() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+
+        DepotAccount account = new DepotAccount(
+                new BigDecimal("1000"), new BigDecimal("5000"), new BigDecimal("2000"),
+                "EUR", "ACTIVE", "2026-07-11T10:00:00Z");
+        when(depotClient.account("depot-1")).thenReturn(account);
+
+        DepotPosition posA = new DepotPosition("AAPL", new BigDecimal("5"), new BigDecimal("220"),
+                new BigDecimal("1096"), new BigDecimal("-8"), "USD");
+        PositionsSnapshot snapshot = new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z");
+        when(depotClient.positions("depot-1")).thenReturn(snapshot);
+
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
+
+        FxService fx = usdToEurFx("0.878");
+        DepotService service = new DepotService(depotClient, agora, fx, LIVE_EMAILS);
+
+        List<DepotDto> result = service.depots("viktor@ufelmann.de");
+
+        assertThat(result).hasSize(1);
+        DepotDto dto = result.getFirst();
+        assertThat(dto.error()).isNull();
+
+        // 1096 * 0.878 = 962.288 -> scale 2 HALF_UP = 962.29
+        assertThat(dto.aggregates().investedValue()).isEqualByComparingTo("962.29");
+
+        DepotPositionDto posDto = dto.positions().getFirst();
+        assertThat(posDto.marketValue()).isEqualByComparingTo("962.29");
+        assertThat(posDto.currency()).isEqualTo("EUR");
     }
 }

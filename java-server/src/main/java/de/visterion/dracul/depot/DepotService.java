@@ -2,6 +2,7 @@ package de.visterion.dracul.depot;
 
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import de.visterion.dracul.marketdata.FxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,13 +39,15 @@ public class DepotService {
 
     private final AgoraDepotClient depotClient;
     private final AgoraClient agora;
+    private final FxService fx;
     private final Set<String> liveVisibleEmails;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public DepotService(AgoraDepotClient depotClient, AgoraClient agora,
+    public DepotService(AgoraDepotClient depotClient, AgoraClient agora, FxService fx,
             @Value("${dracul.depots.live-visible-emails:viktor@ufelmann.de}") String liveEmailsCsv) {
         this.depotClient = depotClient;
         this.agora = agora;
+        this.fx = fx;
         this.liveVisibleEmails = new HashSet<>();
         if (liveEmailsCsv != null) {
             for (String email : liveEmailsCsv.split(",")) {
@@ -149,20 +152,25 @@ public class DepotService {
     private DepotDto assemble(DepotConnection c, DepotAccount account, PositionsSnapshot positions,
             List<DepotOrder> orders, Map<String, QuoteData> quotes) {
 
+        String acctCcy = account != null ? account.currency() : null;
+
         BigDecimal investedValue = BigDecimal.ZERO;
         BigDecimal totalUnrealizedPl = BigDecimal.ZERO;
         BigDecimal dayChangeAbs = BigDecimal.ZERO;
         boolean anyQuote = false;
 
         for (DepotPosition p : positions.positions()) {
-            if (p.marketValue() != null) investedValue = investedValue.add(p.marketValue());
-            if (p.unrealizedPl() != null) totalUnrealizedPl = totalUnrealizedPl.add(p.unrealizedPl());
+            BigDecimal mv = fx.convert(p.marketValue(), p.currency(), acctCcy);
+            BigDecimal upl = fx.convert(p.unrealizedPl(), p.currency(), acctCcy);
+
+            if (mv != null) investedValue = investedValue.add(mv);
+            if (upl != null) totalUnrealizedPl = totalUnrealizedPl.add(upl);
 
             QuoteData q = quotes.get(p.symbol());
-            if (q != null && q.dayChangePercent() != null && p.marketValue() != null) {
+            if (q != null && q.dayChangePercent() != null && mv != null) {
                 anyQuote = true;
                 dayChangeAbs = dayChangeAbs.add(
-                        p.marketValue().multiply(q.dayChangePercent()).divide(HUNDRED, 10, RoundingMode.HALF_UP));
+                        mv.multiply(q.dayChangePercent()).divide(HUNDRED, 10, RoundingMode.HALF_UP));
             }
         }
 
@@ -183,14 +191,24 @@ public class DepotService {
             BigDecimal price = q == null ? null : q.price();
             BigDecimal dayChangePercent = q == null ? null : q.dayChangePercent();
 
-            BigDecimal costBasis = (p.qty() != null && p.avgEntryPrice() != null)
-                    ? p.qty().multiply(p.avgEntryPrice()) : null;
-            BigDecimal unrealizedPlPct = percentOf(p.unrealizedPl(), costBasis);
-            BigDecimal weightPct = percentOf(p.marketValue(), investedValue);
+            BigDecimal mv = fx.convert(p.marketValue(), p.currency(), acctCcy);
+            BigDecimal upl = fx.convert(p.unrealizedPl(), p.currency(), acctCcy);
+            BigDecimal convertedPrice = fx.convert(price, p.currency(), acctCcy);
+            BigDecimal avgEntryPrice = fx.convert(p.avgEntryPrice(), p.currency(), acctCcy);
 
-            positionDtos.add(new DepotPositionDto(p.symbol(), p.qty(), p.avgEntryPrice(),
-                    p.marketValue(), p.unrealizedPl(), unrealizedPlPct, price, dayChangePercent,
-                    weightPct, p.currency()));
+            BigDecimal mvScaled = mv != null ? mv.setScale(SCALE, RoundingMode.HALF_UP) : null;
+            BigDecimal uplScaled = upl != null ? upl.setScale(SCALE, RoundingMode.HALF_UP) : null;
+            BigDecimal priceScaled = convertedPrice != null ? convertedPrice.setScale(SCALE, RoundingMode.HALF_UP) : null;
+            BigDecimal avgEntryPriceScaled = avgEntryPrice != null ? avgEntryPrice.setScale(SCALE, RoundingMode.HALF_UP) : null;
+
+            BigDecimal costBasis = (p.qty() != null && avgEntryPrice != null)
+                    ? p.qty().multiply(avgEntryPrice) : null;
+            BigDecimal unrealizedPlPct = percentOf(upl, costBasis);
+            BigDecimal weightPct = percentOf(mv, investedValue);
+
+            positionDtos.add(new DepotPositionDto(p.symbol(), p.qty(), avgEntryPriceScaled,
+                    mvScaled, uplScaled, unrealizedPlPct, priceScaled, dayChangePercent,
+                    weightPct, acctCcy));
         }
 
         String asOf = positions.asOf() != null ? positions.asOf()

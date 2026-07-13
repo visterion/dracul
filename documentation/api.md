@@ -443,6 +443,17 @@ error-status matrix).
 is the instant Agora's broker fetch (`get_account`/`get_positions`) was
 taken — not a request/response timestamp.
 
+Positions may carry a different currency than the depot account
+(`account.currency()`). `DepotService.assemble` converts each
+position's `marketValue`, `unrealizedPl`, `price`, and `avgEntryPrice`
+into the account currency via `FxService.convert` before aggregating
+and before building the position DTO (whose `currency` field is set to
+the account currency, not the position's own); `weightPct` is a ratio
+and unaffected. `FxService.convert` is cache-only and returns the
+input unchanged when no rate is cached yet, so a freshly started
+instance briefly serves unconverted values until the background
+refresher warms the pair.
+
 ### `GET /api/depots` response
 
 ```json
