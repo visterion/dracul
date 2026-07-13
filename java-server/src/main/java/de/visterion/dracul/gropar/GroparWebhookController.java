@@ -165,29 +165,40 @@ public class GroparWebhookController {
         return ResponseEntity.ok(out);
     }
 
-    /** Builds the thesis block from the position's stored context snapshot; null (TA-only)
-     *  when the position has no open context row (null verdictId / null snapshot). */
-    private Map<String, Object> buildThesis(HeldPosition hp) {
-        if (hp.thesisSnapshot() == null) return null;
-        Map<String, Object> thesis;
+    /** Thesis block for gropar: the parsed thesis snapshot (verdict- or Prey-sourced) with
+     *  kill-criteria appended, OR a kill-only block when there is no parseable thesis but kill
+     *  criteria exist, OR null (pure TA-only) when there is neither. A malformed snapshot degrades
+     *  to kill-only, never swallowing the kill criteria.
+     *  Package-private // visible for testing. */
+    Map<String, Object> buildThesis(HeldPosition hp) {
+        Map<String, Object> thesis = null;
+        if (hp.thesisSnapshot() != null) {
+            try {
+                thesis = new LinkedHashMap<>(mapper.convertValue(
+                        hp.thesisSnapshot(), new TypeReference<Map<String, Object>>() {}));
+            } catch (RuntimeException e) {
+                log.warn("gropar: failed to parse thesis snapshot for {} — degrading to kill-only: {}",
+                        hp.symbol(), e.getMessage());
+                thesis = null;
+            }
+        }
+        List<String> kill = parseKillCriteria(hp);
+        if (kill != null && !kill.isEmpty()) {
+            if (thesis == null) thesis = new LinkedHashMap<>();
+            thesis.put("killCriteria", kill);
+        }
+        return thesis;
+    }
+
+    private List<String> parseKillCriteria(HeldPosition hp) {
+        if (hp.killCriteria() == null) return null;
         try {
-            thesis = new LinkedHashMap<>(
-                    mapper.convertValue(hp.thesisSnapshot(), new TypeReference<Map<String, Object>>() {}));
+            return mapper.convertValue(hp.killCriteria(), new TypeReference<List<String>>() {});
         } catch (RuntimeException e) {
-            log.warn("gropar: failed to parse thesis snapshot for {} — degrading to TA-only: {}",
+            log.warn("gropar: failed to parse kill criteria for {} — omitting: {}",
                     hp.symbol(), e.getMessage());
             return null;
         }
-        if (hp.killCriteria() != null) {
-            try {
-                List<String> kill = mapper.convertValue(hp.killCriteria(), new TypeReference<List<String>>() {});
-                if (kill != null && !kill.isEmpty()) thesis.put("killCriteria", kill);
-            } catch (RuntimeException e) {
-                log.warn("gropar: failed to parse kill criteria for {} — omitting: {}",
-                        hp.symbol(), e.getMessage());
-            }
-        }
-        return thesis;
     }
 
     /** Completion webhook: persists LLM exit signals and fires Telegram for non-HOLD actions. */
