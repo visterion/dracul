@@ -786,6 +786,7 @@ public class ExecutorWebhookController {
         for (EnrichedPosition p : positions) {
             if (p.entryFilled()) {
                 recordPositionContext(p);
+                mirrorActiveStop(p);
             }
 
             Map<String, Object> node = new LinkedHashMap<>();
@@ -869,6 +870,20 @@ public class ExecutorWebhookController {
         } catch (RuntimeException e) {
             log.warn("position_context write failed for filled position {} ({}): {}",
                     p.id(), p.symbol(), e.getMessage(), e);
+        }
+    }
+
+    /** Mirror the live ratcheted stop into position_context for stopguard. Long-only: the
+     *  stopguard/RiskMetrics stack is side-blind and treats price ≤ stop as BREACHED, so a SELL's
+     *  above-price stop would fire false alerts (M3). Skip a null stop so we never blank a prior
+     *  non-null stop (m5). Fail-soft. */
+    private void mirrorActiveStop(EnrichedPosition p) {
+        if (!"BUY".equals(p.side())) return;
+        if (p.activeStop() == null) return;
+        try {
+            positionContextRepo.updateActiveStopBySymbol(connection, p.symbol(), p.activeStop());
+        } catch (RuntimeException e) {
+            log.warn("active_stop mirror failed for {} ({}): {}", p.id(), p.symbol(), e.getMessage());
         }
     }
 

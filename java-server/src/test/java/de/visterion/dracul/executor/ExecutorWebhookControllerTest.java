@@ -1752,6 +1752,36 @@ class ExecutorWebhookControllerTest {
                 thesisCaptor.capture(), any(), eq("6-12mo"), eq(new BigDecimal("95")));
     }
 
+    @Test
+    void fetchOpenPositions_mirrorsActiveStopForBuyOnly() {
+        EnrichedPosition buyWithStop = new EnrichedPosition(1L, "depot-1", "HELE", "BUY",
+                new BigDecimal("10"), new BigDecimal("200"), new BigDecimal("180.50"),
+                new BigDecimal("210"), new BigDecimal("2.0"), new BigDecimal("204"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
+                false, false, 1, false, null, "sig-1", 0, 0.33, true);
+        EnrichedPosition sellWithStop = new EnrichedPosition(2L, "depot-1", "SHRT", "SELL",
+                new BigDecimal("10"), new BigDecimal("40"), new BigDecimal("50"),
+                new BigDecimal("38"), new BigDecimal("2.0"), new BigDecimal("42"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
+                false, false, 1, false, null, "sig-2", 0, 0.33, true);
+        EnrichedPosition buyWithNullStop = new EnrichedPosition(3L, "depot-1", "NOPX", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), null,
+                new BigDecimal("105"), new BigDecimal("2.0"), new BigDecimal("101"),
+                new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
+                false, false, 1, false, null, "sig-3", 0, 0.33, true);
+        when(pipeline.run(eq("depot-1"), any()))
+                .thenReturn(List.of(buyWithStop, sellWithStop, buyWithNullStop));
+
+        controller.fetchOpenPositions(BEARER, "run-1");
+
+        verify(positionContextRepo).updateActiveStopBySymbol(
+                "depot-1", "HELE", new BigDecimal("180.50"));
+        verify(positionContextRepo, never()).updateActiveStopBySymbol(
+                eq("depot-1"), eq("SHRT"), any());
+        verify(positionContextRepo, never()).updateActiveStopBySymbol(
+                eq("depot-1"), eq("NOPX"), any());
+    }
+
     // -------------------------------------------------------------------
     // exit-position
     // -------------------------------------------------------------------

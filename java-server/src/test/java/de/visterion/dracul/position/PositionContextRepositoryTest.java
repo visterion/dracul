@@ -126,6 +126,14 @@ class PositionContextRepositoryTest {
     }
 
     @Test
+    void updateActiveStopBySymbol_setsStopCaseInsensitively() {
+        repo.upsertOnOpen("depot-1", "HELE", null, null, null, null, null, "executor");
+        repo.updateActiveStopBySymbol("depot-1", "hele", new BigDecimal("180.50"));
+        assertThat(repo.findOpenBySymbol("depot-1", "HELE").orElseThrow().activeStop())
+                .isEqualByComparingTo("180.50");
+    }
+
+    @Test
     void updateVerdictLink_linksAndHealsOnlyUnlinkedOpenRow() {
         repo.upsertOnOpen("depot-1", "HELE", null, null, null, null, null, "none");
         repo.updateVerdictLink("depot-1", "HELE", "v1",
