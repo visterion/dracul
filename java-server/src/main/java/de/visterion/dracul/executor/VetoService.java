@@ -14,7 +14,7 @@ import java.util.Set;
  * Code-enforced pre-trade vetos ("Garantien in Code"). Pure and deterministic — no I/O, no clock.
  * The LLM's judgment never overrides these.
  *
- * <p>{@link #evaluate} runs the full 14-veto catalog against an assembled {@link EntryContext},
+ * <p>{@link #evaluate} runs the full 15-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
  * mandatory upstream data was missing at assembly time.
  */

@@ -1627,7 +1627,7 @@ when the LLM supplies one, otherwise the freshly assembled current close
 `reference_price`.
 
 Pipeline: signal lookup → `EntryContextAssembler` (single I/O layer: Agora
-indicators/company-profile, FX, account, repos) → `VetoService` (14-veto
+indicators/company-profile, FX, account, repos) → `VetoService` (15-veto
 catalog, preceded by the `DATA_UNAVAILABLE` pre-veto) → `PositionSizer` →
 `OrderGuard` → `AgoraTrading` (only on pass). Every step short-circuits
 before the broker call. On success:
@@ -1659,6 +1659,7 @@ and for order-guard rejections it is the veto trace plus an
 | `LIQUIDITY` | `VetoService` | Price below `dracul.executor.min-price` (USD-equivalent), or ADV20 notional below `dracul.executor.adv-multiple` × the tranche amount |
 | `SIGNAL_EXPIRED` | `VetoService` | Signal age (trading days since `createdAt`) exceeds `dracul.executor.max-signal-age-days` |
 | `CHASED_AWAY` | `VetoService` | Current price has moved more than `dracul.executor.chase-atr-mult` × ATR beyond the signal's reference price |
+| `BELOW_ANCHOR` | `VetoService` | The effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use `dracul.executor.drift-anchor-atr-mult` (default `0.0`×ATR, i.e. no adverse move tolerated), value mechanisms use `dracul.executor.value-anchor-atr-mult` (default `3.0`×ATR) |
 | `PACE_LIMIT` | `VetoService` | New positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week` |
 | `TRANCHE_TOO_SMALL` | `ExecutorWebhookController` | `PositionSizer` computed a zero quantity (tranche amount doesn't buy even one share at the order price) |
 | `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |

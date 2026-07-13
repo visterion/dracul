@@ -400,13 +400,13 @@ pre-veto below: some fields (`swing_low`, `day_high`) are optional and may
 be `null` without being flagged; every other datum that's absent because an
 upstream call failed is both null/default *and* named in `missing`.
 
-**The 14-veto catalog (`VetoService`, code-enforced, pure/deterministic —
+**The 15-veto catalog (`VetoService`, code-enforced, pure/deterministic —
 the LLM's judgment never overrides these), preceded by a `DATA_UNAVAILABLE`
 pre-veto:**
 
 | # | Veto | Short form |
 |---|---|---|
-| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 14, audited, never trade blind |
+| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 15, audited, never trade blind |
 | 1 | `SCHEMA_INVALID` | Signal missing symbol/direction/confidence/kill-criteria/mechanism/agent-version |
 | 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.65) |
 | 3 | `COOLDOWN` | Active cooldown on the symbol — hard block in v1, no fresh-setup exception (origin mechanism not stored) |
@@ -420,15 +420,16 @@ pre-veto:**
 | 11 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
 | 12 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
 | 13 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
-| 14 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
+| 14 | `BELOW_ANCHOR` | Effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use a tight `drift-anchor-atr-mult` (default `0.0`×ATR) band, value mechanisms use a wide `value-anchor-atr-mult` (default `3.0`×ATR) band |
+| 15 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
 
-`VetoService.evaluate` always runs and traces all 14 checks (`veto_trace`
+`VetoService.evaluate` always runs and traces all 15 checks (`veto_trace`
 in the `place-entry` response), even after the first failure, except
 where a check is itself gated on schema validity — see the source comments
 in `VetoService` for the exact PASS/FAIL trace semantics of a
 schema-invalid signal. `TRANCHE_TOO_SMALL` (sizer produced zero
 shares) is a code-enforced rejection but sits outside this catalog — it is
-checked by `ExecutorWebhookController` only after all 14 vetos pass,
+checked by `ExecutorWebhookController` only after all 15 vetos pass,
 since sizing depends on the order price the LLM/context supplies. `MAX_TRANCHE`
 (tranche count already at `dracul.executor.max-tranche` for the symbol) is
 likewise a code-enforced rejection checked separately, inside `add_tranche`
@@ -438,7 +439,7 @@ rather than `place-entry`'s veto pipeline.
 in doubt, fail" — a missing account snapshot, price, ATR, ADV20 notional,
 sector, or (for `place-entry` only) signal reference/age never falls back
 to a stale or default value. Any one of them missing at assembly time
-short-circuits straight to `DATA_UNAVAILABLE`, before any of the 14 vetos
+short-circuits straight to `DATA_UNAVAILABLE`, before any of the 15 vetos
 even run, and is recorded as an audited rejection (`executor_decision` row,
 `missing` fields joined into the reject detail) rather than a silent
 skip or a guessed trade.
