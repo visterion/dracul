@@ -182,7 +182,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
         args.put("symbol", req.symbol());
-        args.put("side", req.side());
+        args.put("side", req.side() == null ? null : req.side().toLowerCase(java.util.Locale.ROOT));
         args.put("qty", req.qty());
         if (req.limitPrice() != null) args.put("limitPrice", req.limitPrice());
         args.put("stopLossStop", req.stopLossStop());
