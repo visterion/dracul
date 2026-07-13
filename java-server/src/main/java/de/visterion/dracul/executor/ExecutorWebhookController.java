@@ -2,6 +2,7 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
+import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
@@ -40,6 +41,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The 7 tool webhooks + completion callback for the Dracul executor agent.
@@ -575,11 +577,34 @@ public class ExecutorWebhookController {
             }
         }
 
+        // Idempotency guard: only relevant on a retry after a prior broker error. If the previous
+        // attempt actually reached the broker (committed but reported unavailable), an order
+        // already exists for this clientRef (=signalId). Adopt it instead of placing a second
+        // order. Agora does not dedupe on clientRef, so this check is the only double-order
+        // protection on the PENDING-retry path. The whole guard + placement is wrapped in one try
+        // so an orderByRef outage (broker down) degrades to the same retriable BROKER_ERROR path
+        // as a placement failure, rather than crashing the handler.
         PlacedBracket placed;
         try {
-            BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPrice,
-                    stopPrice, takeProfit, signalId, null);
-            placed = gateway.placeBracket(connection, req);
+            int priorBrokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
+            Optional<BrokerOrder> existing = priorBrokerErrors > 0
+                    ? gateway.orderByRef(connection, signalId)
+                    : Optional.empty();
+            if (existing.isPresent()) {
+                BrokerOrder eo = existing.get();
+                // Saxo/live brackets expose no leg ids — null is expected and matches a fresh
+                // placement.
+                placed = new PlacedBracket(eo.orderId(), null, null, eo.clientRef(), eo.status());
+                decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                        "DUPLICATE", vetoTrace,
+                        "idempotent retry: existing broker order " + eo.orderId()
+                                + " for clientRef " + signalId + " adopted, not re-placed",
+                        eo.orderId(), runId, null));
+            } else {
+                BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPrice,
+                        stopPrice, takeProfit, signalId, null);
+                placed = gateway.placeBracket(connection, req);
+            }
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
