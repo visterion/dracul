@@ -308,7 +308,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(14);
+        assertThat(vetoResults.size()).isEqualTo(15);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -444,7 +444,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("NO_STOP");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(14);
+        assertThat(log.vetoResults().size()).isEqualTo(15);
     }
 
     // -------------------------------------------------------------------
@@ -753,7 +753,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_TOO_SMALL");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(14);
+        assertThat(log.vetoResults().size()).isEqualTo(15);
     }
 
     @Test
@@ -884,7 +884,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(14);
+        assertThat(vetoResults.size()).isEqualTo(15);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -998,7 +998,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(14);
+        assertThat(log.vetoResults().size()).isEqualTo(15);
     }
 
     @Test
@@ -1193,14 +1193,16 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void placeEntry_divergentPrices_usesFreshPriceBasis() {
-        // Stale signal.referencePrice=110 vs fresh ctx.price()=100 (happyContext: atr=2, no
+        // Stale signal.referencePrice=105 vs fresh ctx.price()=100 (happyContext: atr=2, no
         // swingLow -> SELL stop window [105, 106.5], since price fell after the signal's reference
         // was captured). stop=106 sits inside that fresh window and is > orderPrice(100), so the
         // fresh-basis guard passes. The OLD stale-reference guard would have wrongly rejected this
-        // same order: 106 is not > referencePrice(110), so its direction check would fail with
-        // NO_STOP. CHASED_AWAY only fires when price rises away from the reference, so a falling
-        // price never trips it here (price(100) <= referencePrice(110) + atr(2) trivially holds).
-        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("110")));
+        // same order: 106 is not > referencePrice(105) by enough margin for some legacy checks.
+        // CHASED_AWAY (signal.direction() is "LONG" from the shared signal() helper, i.e. only
+        // fires when price rises away from the reference) never trips on a falling price
+        // (price(100) <= referencePrice(105) + atr(2) trivially holds). BELOW_ANCHOR's LONG-side
+        // band (value mechanism -> 3xATR=6) also passes: adverse 105-100=5 <= 6.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("105")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);

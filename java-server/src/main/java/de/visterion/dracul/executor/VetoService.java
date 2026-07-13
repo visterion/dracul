@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -25,6 +26,10 @@ public class VetoService {
     private static final Set<String> MERGER_ARB_CONTRADICTIONS = Set.of(
             "PEAD", "SPINOFF", "INSIDER_CLUSTER", "INDEX_INCLUSION", "QUALITY_52W_LOW");
 
+    /** Drift-continuation mechanisms: below the anchor the thesis is dead → tight BELOW_ANCHOR
+     *  (drift-anchor-atr-mult, default 0). Every other mechanism is value/dip (wide). */
+    private static final Set<String> DRIFT_ANCHOR_MECHANISMS = Set.of("PEAD", "INDEX_INCLUSION");
+
     /** Result of evaluating the full veto catalog against one signal. */
     public record Outcome(boolean passed, RejectReason firstFailure, List<VetoResult> results,
                            String contradictingSignalId, Snapshot snapshot) {}
@@ -38,7 +43,14 @@ public class VetoService {
     public record Snapshot(double heatBeforePct, double heatAfterPct, BigDecimal budgetFree,
                             int newPositionsThisWeek, int sectorCountSame, String cooldownStatus) {}
 
+    /** Back-compat overload: defense-in-depth / direct callers with no explicit order price
+     *  evaluate against the current market price. */
     public Outcome evaluate(ExecutorSignal signal, EntryContext ctx, Sizing sizing, VetoConfig cfg) {
+        return evaluate(signal, ctx, sizing, cfg, ctx == null ? null : ctx.price());
+    }
+
+    public Outcome evaluate(ExecutorSignal signal, EntryContext ctx, Sizing sizing, VetoConfig cfg,
+                            BigDecimal orderPrice) {
         if (ctx.missing() != null && !ctx.missing().isEmpty()) {
             String joined = String.join(",", ctx.missing());
             return new Outcome(false, RejectReason.DATA_UNAVAILABLE,
@@ -276,7 +288,41 @@ public class VetoService {
         results.add(new VetoResult("CHASED_AWAY", chasedOk, chasedMeasured));
         if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
 
-        // 14 PACE_LIMIT
+        // 14 BELOW_ANCHOR — adverse-side mirror of CHASED_AWAY. Not gated by schemaOk for the same
+        // NPE-safety reason. C1: NO signal.* read before the guard (DRIFT_ANCHOR_MECHANISMS.contains(null)
+        // and signal.mechanism() would NPE on the legal null-signal path). Compares the EFFECTIVE entry
+        // price (min(orderPrice, market) long) against reference ± band; band = τ×ATR, τ drift=0 / value=3.
+        boolean anchorOk;
+        String anchorMeasured;
+        if (!schemaOk) {
+            anchorOk = true;  anchorMeasured = "not evaluated (schema invalid)";
+        } else if (signal.referencePrice() == null) {
+            anchorOk = false; anchorMeasured = "reference price unavailable";
+        } else {
+            String mechUpper = signal.mechanism().toUpperCase(Locale.ROOT); // schemaOk ⇒ non-blank
+            double anchorAtrMult = DRIFT_ANCHOR_MECHANISMS.contains(mechUpper)
+                    ? cfg.driftAnchorAtrMult() : cfg.valueAnchorAtrMult();
+            BigDecimal market = ctx.price();
+            BigDecimal effEntry = (orderPrice == null) ? market : orderPrice;
+            BigDecimal band = ctx.atr().multiply(BigDecimal.valueOf(anchorAtrMult));
+            if ("SELL".equals(signal.direction())) {
+                BigDecimal eff = effEntry.max(market);
+                BigDecimal threshold = signal.referencePrice().add(band);
+                anchorOk = eff.compareTo(threshold) <= 0;
+                BigDecimal drift = eff.subtract(signal.referencePrice());
+                anchorMeasured = "adverse " + fmt2(drift) + (anchorOk ? " <= " : " > ") + fmtMult(anchorAtrMult) + "xATR " + fmt2(band);
+            } else {
+                BigDecimal eff = effEntry.min(market);
+                BigDecimal threshold = signal.referencePrice().subtract(band);
+                anchorOk = eff.compareTo(threshold) >= 0;
+                BigDecimal drift = signal.referencePrice().subtract(eff);
+                anchorMeasured = "adverse " + fmt2(drift) + (anchorOk ? " <= " : " > ") + fmtMult(anchorAtrMult) + "xATR " + fmt2(band);
+            }
+        }
+        results.add(new VetoResult("BELOW_ANCHOR", anchorOk, anchorMeasured));
+        if (!anchorOk && firstFailure == null) firstFailure = RejectReason.BELOW_ANCHOR;
+
+        // 15 PACE_LIMIT
         boolean paceOk = ctx.entriesThisWeek() < cfg.pacePerWeek();
         String paceMeasured = ctx.entriesThisWeek() + (paceOk ? " < " : " >= ") + cfg.pacePerWeek() + " this week";
         results.add(new VetoResult("PACE_LIMIT", paceOk, paceMeasured));
