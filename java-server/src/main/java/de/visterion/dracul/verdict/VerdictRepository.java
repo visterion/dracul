@@ -246,6 +246,27 @@ public class VerdictRepository {
                 .update();
     }
 
+    /** Kill criteria already persisted as breached for a verdict, read from
+     *  {@code kill_criteria_breached} JSONB. Empty when the id is malformed/unknown or the
+     *  column is null -- mirrors {@link #contributingPreyIdsById}'s fail-soft shape. */
+    public List<String> killCriteriaBreachedFor(String verdictId) {
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(verdictId);
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                SELECT kill_criteria_breached
+                FROM verdicts
+                WHERE id = :id
+                """)
+                .param("id", uuid)
+                .query((rs, rowNum) -> readList(rs.getString("kill_criteria_breached")))
+                .optional()
+                .orElse(List.of());
+    }
+
     /** An open verdict (not yet DISMISSed) as seen by the kill-criteria watcher: enough to
      *  fetch quotes/prey and to distinguish newly-breached criteria from ones already persisted. */
     public record OpenVerdictForCheck(String id, String userId, String symbol,
