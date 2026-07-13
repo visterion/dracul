@@ -102,15 +102,23 @@ class GroparWebhookControllerTest {
     private HeldPosition taOnly(String symbol, String entryPrice, String qty) {
         return new HeldPosition(symbol, new BigDecimal(qty), new BigDecimal(entryPrice),
                 new BigDecimal("1000"), new BigDecimal("0"),
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 
     private HeldPosition withContext(String symbol, String entryPrice, String qty,
                                       String verdictId, JsonNode killCriteria, String horizon,
                                       JsonNode thesisSnapshot, BigDecimal initialStop) {
+        return withContext(symbol, entryPrice, qty, verdictId, killCriteria, horizon,
+                thesisSnapshot, initialStop, null);
+    }
+
+    private HeldPosition withContext(String symbol, String entryPrice, String qty,
+                                      String verdictId, JsonNode killCriteria, String horizon,
+                                      JsonNode thesisSnapshot, BigDecimal initialStop, String openedAt) {
         return new HeldPosition(symbol, new BigDecimal(qty), new BigDecimal(entryPrice),
                 new BigDecimal("1000"), new BigDecimal("0"),
-                verdictId, killCriteria, horizon, thesisSnapshot, initialStop, null, "reconcile");
+                verdictId, killCriteria, horizon, thesisSnapshot, initialStop, null, "reconcile",
+                openedAt);
     }
 
     private JsonNode thesisSnapshot(String summary, String horizon) {
@@ -433,16 +441,22 @@ class GroparWebhookControllerTest {
 
     // =========================================================================
     // Test 12: duplicate /complete delivery for the same run/position → Telegram
-    // fires only once, since the second insert reports no fresh row.
+    // fires only once. The fake below dedups on (vistierieRunId, symbol) -- the exact
+    // key the V29 partial unique index (uq_exit_signals_run_symbol) enforces in the
+    // real DB (see ExitSignalRepositoryTest for the real-constraint coverage) -- rather
+    // than a canned true/false sequence that would pass regardless of what key the
+    // repository actually dedups on.
     // =========================================================================
 
     @Test
     void complete_duplicateDelivery_notifiesTelegramOnlyOnce() throws Exception {
         when(heldPositionService.openPositions(CONNECTION))
                 .thenReturn(List.of(taOnly("ACME", "100", "10")));
-        when(exitSignalRepo.insert(any(ExitSignal.class), eq("alice@x")))
-                .thenReturn(true)   // first delivery: fresh row
-                .thenReturn(false); // retried delivery: conflict, no new row
+        var seenRunSymbol = java.util.concurrent.ConcurrentHashMap.<String>newKeySet();
+        when(exitSignalRepo.insert(any(ExitSignal.class), eq("alice@x"))).thenAnswer(inv -> {
+            ExitSignal s = inv.getArgument(0);
+            return seenRunSymbol.add(s.vistierieRunId() + "|" + s.symbol());
+        });
 
         String json = """
                 {

@@ -20,6 +20,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -112,13 +114,15 @@ public class GroparWebhookController {
                     // never dropped, never erroring.
                     Map<String, Object> thesis = buildThesis(hp);
 
-                    // No verdict-created-at is carried by HeldPosition's context snapshot, so
-                    // TIME_STOP horizon-elapsed detection is unavailable from this source (see
-                    // report). horizon itself is still passed through for the LLM's own judgment.
-                    var ind = indicatorService.compute(hp.symbol(), bars, hp.avgPrice(), null, hp.horizon());
+                    // position_context.opened_at is the best-effort anchor for both TIME_STOP
+                    // horizon-elapsed detection and the MFE/giveback peak-search window --
+                    // DepotPosition carries no true fill date, so this is the same anchor the
+                    // old verdict-createdAt path used. Null for context-less (TA-only) positions,
+                    // same fallback behaviour as before (horizon check disabled, MFE scans all bars).
+                    var ind = indicatorService.compute(hp.symbol(), bars, hp.avgPrice(), hp.openedAt(), hp.horizon());
 
-                    var risk = riskService.compute(bars, hp.avgPrice(), null, hp.initialStop(),
-                            ind.atr(), ind.atrAvailable());
+                    var risk = riskService.compute(bars, hp.avgPrice(), parseEntryDate(hp.openedAt()),
+                            hp.initialStop(), ind.atr(), ind.atrAvailable());
 
                     var firedRules = new ArrayList<>(ind.firedRules());
                     if (ind.gainLossPct() != null
@@ -274,5 +278,20 @@ public class GroparWebhookController {
     private static Double nullableDouble(JsonNode node, String field) {
         JsonNode v = node.path(field);
         return (v.isMissingNode() || v.isNull()) ? null : v.asDouble();
+    }
+
+    /** Best-effort entry-date anchor for RiskMetricsService's MFE peak search, parsed from
+     *  {@code position_context.opened_at} (an ISO instant/date string). Null if absent or
+     *  unparseable -- RiskMetricsService already falls back to scanning all bars in that case. */
+    private static LocalDate parseEntryDate(String openedAt) {
+        if (openedAt == null || openedAt.isBlank()) return null;
+        try {
+            String dateStr = openedAt.length() >= 10 ? openedAt.substring(0, 10) : openedAt;
+            return LocalDate.parse(dateStr);
+        } catch (DateTimeParseException e) {
+            log.warn("gropar: unparseable position_context.opened_at {} — MFE window unscoped: {}",
+                    openedAt, e.getMessage());
+            return null;
+        }
     }
 }

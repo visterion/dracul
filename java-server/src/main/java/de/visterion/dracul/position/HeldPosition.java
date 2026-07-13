@@ -23,5 +23,6 @@ public record HeldPosition(
         JsonNode thesisSnapshot,
         BigDecimal initialStop,
         BigDecimal activeStop,
-        String contextSource) {
+        String contextSource,
+        String openedAt) {
 }

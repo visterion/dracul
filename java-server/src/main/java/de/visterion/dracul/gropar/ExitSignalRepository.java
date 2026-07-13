@@ -23,7 +23,11 @@ public class ExitSignalRepository {
         this.mapper = mapper;
     }
 
-    /** @return true if a new row was inserted, false if it was a duplicate (run, item) and skipped. */
+    /** @return true if a new row was inserted, false if it was a duplicate (run, symbol) and skipped.
+     *  The (run, symbol) arbiter (V29) is what actually fires for gropar's depot-sourced
+     *  signals -- they never carry a watchlist_item_id, so the older (run, item) index
+     *  (V21) never matches them. Both indexes stay in place: this insert simply targets
+     *  the one that's guaranteed to cover every source. */
     public boolean insert(ExitSignal s, String userId) {
         UUID id = UUID.fromString(s.id());
         UUID itemId = s.watchlistItemId() != null ? UUID.fromString(s.watchlistItemId()) : null;
@@ -33,8 +37,8 @@ public class ExitSignalRepository {
                    thesis_status, rationale, confidence, vistierie_run_id, run_at, user_id)
                 VALUES (:id, :item, :symbol, :action,
                         CAST(:rules AS jsonb), :gl, :thesis, :rationale, :conf, :run, :runAt, :user)
-                ON CONFLICT (vistierie_run_id, watchlist_item_id)
-                  WHERE vistierie_run_id IS NOT NULL AND watchlist_item_id IS NOT NULL
+                ON CONFLICT (vistierie_run_id, symbol)
+                  WHERE vistierie_run_id IS NOT NULL
                   DO NOTHING
                 """)
                 .param("id", id)

@@ -55,10 +55,11 @@ public class HeldPositionService {
     private HeldPosition join(DepotPosition p, PositionContextRow ctx) {
         if (ctx == null) {
             return new HeldPosition(p.symbol(), p.qty(), p.avgEntryPrice(), p.marketValue(),
-                    p.unrealizedPl(), null, null, null, null, null, null, null);
+                    p.unrealizedPl(), null, null, null, null, null, null, null, null);
         }
         return new HeldPosition(p.symbol(), p.qty(), p.avgEntryPrice(), p.marketValue(),
                 p.unrealizedPl(), ctx.verdictId(), ctx.killCriteria(), ctx.horizon(),
-                ctx.thesisSnapshot(), ctx.initialStop(), ctx.activeStop(), ctx.source());
+                ctx.thesisSnapshot(), ctx.initialStop(), ctx.activeStop(), ctx.source(),
+                ctx.openedAt());
     }
 }

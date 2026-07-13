@@ -64,6 +64,7 @@ class HeldPositionServiceTest {
         assertThat(aaa.initialStop()).isEqualByComparingTo("90");
         assertThat(aaa.activeStop()).isEqualByComparingTo("95");
         assertThat(aaa.contextSource()).isEqualTo("strigoi");
+        assertThat(aaa.openedAt()).isEqualTo("2026-07-01T00:00:00Z");
         assertThat(aaa.quantity()).isEqualByComparingTo(BigDecimal.TEN);
         assertThat(aaa.marketValue()).isEqualByComparingTo("1000");
 
@@ -75,6 +76,7 @@ class HeldPositionServiceTest {
         assertThat(bbb.initialStop()).isNull();
         assertThat(bbb.activeStop()).isNull();
         assertThat(bbb.contextSource()).isNull();
+        assertThat(bbb.openedAt()).isNull();
         assertThat(bbb.quantity()).isEqualByComparingTo(BigDecimal.TEN);
     }
 
