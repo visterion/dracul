@@ -19,6 +19,7 @@ public enum RejectReason {
     LIQUIDITY,
     SIGNAL_EXPIRED,
     CHASED_AWAY,
+    BELOW_ANCHOR,
     PACE_LIMIT,
     NO_STOP,
     MAX_TRANCHE,

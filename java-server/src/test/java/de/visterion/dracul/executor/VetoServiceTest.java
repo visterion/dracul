@@ -10,7 +10,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Full 14-veto catalog + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
+ * Full 15-veto catalog + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
  * {@link #cfg()} return pass-everything defaults; each test perturbs exactly what it needs to
  * exercise one veto boundary.
  */
@@ -31,6 +31,37 @@ class VetoServiceTest {
         return new EntryContextBuilder();
     }
 
+    private SignalBuilder signalBuilder() {
+        return new SignalBuilder();
+    }
+
+    /** Fluent builder producing a schema-valid {@link ExecutorSignal} with pass-everything
+     *  defaults (mirrors {@link #signal()}), for tests that need to vary mechanism/direction/
+     *  referencePrice independently. */
+    private static class SignalBuilder {
+        String signalId = "sig-1";
+        String source = "strigoi-test";
+        String agentVersion = "v1";
+        String symbol = "ACME";
+        String direction = "LONG";
+        Double confidence = 0.8;
+        String mechanism = "PEAD";
+        List<String> killCriteria = List.of("Close below 90.00");
+        String horizon = "20d";
+        BigDecimal referencePrice = BigDecimal.valueOf(50);
+        String status = "PENDING";
+        String createdAt = "2026-07-08T00:00:00Z";
+
+        SignalBuilder mechanism(String v) { mechanism = v; return this; }
+        SignalBuilder direction(String v) { direction = v; return this; }
+        SignalBuilder referencePrice(BigDecimal v) { referencePrice = v; return this; }
+
+        ExecutorSignal build() {
+            return new ExecutorSignal(signalId, source, agentVersion, symbol, direction, confidence,
+                    mechanism, killCriteria, horizon, referencePrice, status, createdAt);
+        }
+    }
+
     private Sizing sizing() {
         return new Sizing(BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(100),
                 BigDecimal.ZERO, BigDecimal.ZERO, true, "entry - 2.5 x ATR22");
@@ -44,6 +75,17 @@ class VetoServiceTest {
     private VetoConfig cfg(int trancheCount) {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
                 BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0);
+    }
+
+    private VetoResult named(VetoService.Outcome out, String check) {
+        return out.results().stream().filter(v -> v.check().equals(check)).findFirst().orElseThrow();
+    }
+
+    /** True if BELOW_ANCHOR passes for this signal at the given market/order price + ATR. */
+    private boolean belowAnchorPasses(ExecutorSignal s, double market, double orderPrice, double atr) {
+        var out = vetoService.evaluate(s, ctx().price(BigDecimal.valueOf(market)).atr(BigDecimal.valueOf(atr)).build(),
+                sizing(), cfg(), BigDecimal.valueOf(orderPrice));
+        return named(out, "BELOW_ANCHOR").passed();
     }
 
     @Test
@@ -123,7 +165,7 @@ class VetoServiceTest {
 
         assertThat(outcome.passed()).isTrue();
         assertThat(outcome.firstFailure()).isNull();
-        assertThat(outcome.results()).hasSize(14);
+        assertThat(outcome.results()).hasSize(15);
         assertThat(outcome.results()).allMatch(VetoResult::passed);
         assertThat(outcome.contradictingSignalId()).isNull();
     }
@@ -668,7 +710,121 @@ class VetoServiceTest {
         assertThat(result(outcome, "CHASED_AWAY").passed()).isTrue();
     }
 
-    // ---- 14 PACE_LIMIT ----
+    // ---- 14 BELOW_ANCHOR ----
+
+    @Test
+    void belowAnchor_pead_effectivePriceBelowReference_fails() {
+        // PEAD (drift) long: reference 196.71, entry (market & order) 193.88, ATR any → adverse 2.83 > 0×ATR
+        var signal = signalBuilder().mechanism("PEAD").direction("BUY")
+                .referencePrice(BigDecimal.valueOf(196.71)).build();
+        var ctx = ctx().price(BigDecimal.valueOf(193.88)).atr(BigDecimal.valueOf(4.59)).build();
+        var out = vetoService.evaluate(signal, ctx, sizing(), cfg(), BigDecimal.valueOf(193.88));
+        VetoResult r = out.results().stream().filter(v -> v.check().equals("BELOW_ANCHOR")).findFirst().orElseThrow();
+        assertThat(r.passed()).isFalse();
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.BELOW_ANCHOR);
+        assertThat(r.measured()).isEqualTo("adverse 2.83 > 0xATR 0.00");
+    }
+
+    @Test
+    void belowAnchor_pead_atOrAboveReference_passes() {
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(196.71)).build();
+        // == reference (band 0, compare >=) and above both pass
+        assertThat(belowAnchorPasses(s, 196.71, 196.71, 4.59)).isTrue();
+        assertThat(belowAnchorPasses(s, 197.50, 197.50, 4.59)).isTrue();
+    }
+
+    @Test
+    void belowAnchor_index_belowReference_fails() {
+        var s = signalBuilder().mechanism("INDEX_INCLUSION").direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+        assertThat(belowAnchorPasses(s, 99.00, 99.00, 2.0)).isFalse();
+    }
+
+    @Test
+    void belowAnchor_effectiveOrderPriceBelowAnchor_fails() {
+        // market ABOVE anchor but resting limit BELOW → min picks the limit → fail (M1)
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(196.71)).build();
+        assertThat(belowAnchorPasses(s, /*market*/196.80, /*orderPrice*/193.50, 4.59)).isFalse();
+    }
+
+    @Test
+    void belowAnchor_minSelectsMarket_whenLimitAboveButMarketBelow_fails() {
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(196.71)).build();
+        assertThat(belowAnchorPasses(s, /*market*/193.00, /*orderPrice*/198.00, 4.59)).isFalse();
+    }
+
+    @Test
+    void belowAnchor_value_ordinaryDipPasses_fallingKnifeFails() {
+        var s = signalBuilder().mechanism("SPINOFF").direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+        assertThat(belowAnchorPasses(s, 98.0, 98.0, 1.0)).isTrue();     // −1×ATR within 3×ATR
+        assertThat(belowAnchorPasses(s, 97.0, 97.0, 1.0)).isTrue();     // −3×ATR exactly (>= boundary)
+        assertThat(belowAnchorPasses(s, 96.99, 96.99, 1.0)).isFalse();  // beyond 3×ATR
+    }
+
+    @Test
+    void belowAnchor_valueLimitCase_appliesEffectivePrice() {
+        var s = signalBuilder().mechanism("SPINOFF").direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+        assertThat(belowAnchorPasses(s, /*market*/101.0, /*orderPrice*/96.99, 1.0)).isFalse();
+    }
+
+    @Test
+    void belowAnchor_insiderAndQualityBelowWithinBand_pass() {
+        for (String m : new String[]{"INSIDER_CLUSTER", "QUALITY_52W_LOW", "MERGER_ARB", "WHATEVER"}) {
+            var s = signalBuilder().mechanism(m).direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+            assertThat(belowAnchorPasses(s, 98.0, 98.0, 1.0)).as(m).isTrue(); // unknown → value band (fail-open)
+        }
+    }
+
+    @Test
+    void belowAnchor_lowercaseMechanism_treatedAsDrift() {
+        var s = signalBuilder().mechanism("pead").direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+        assertThat(belowAnchorPasses(s, 97.1, 97.1, 1.0)).isFalse(); // 2.9×ATR below → drift(0) fails, not value(3)
+    }
+
+    @Test
+    void belowAnchor_shortMirror() {
+        var drift = signalBuilder().mechanism("PEAD").direction("SELL").referencePrice(BigDecimal.valueOf(100)).build();
+        assertThat(belowAnchorPasses(drift, 100.5, 100.5, 1.0)).isFalse(); // above anchor → drift short fails
+        assertThat(belowAnchorPasses(drift, 100.0, 100.0, 1.0)).isTrue();  // == anchor passes
+        var value = signalBuilder().mechanism("SPINOFF").direction("SELL").referencePrice(BigDecimal.valueOf(100)).build();
+        assertThat(belowAnchorPasses(value, 103.0, 103.0, 1.0)).isTrue();  // +3×ATR boundary
+        assertThat(belowAnchorPasses(value, 103.01, 103.01, 1.0)).isFalse();
+    }
+
+    @Test
+    void belowAnchor_nullReference_bothFail_firstFailureIsChasedAway() {
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(null).build();
+        var out = vetoService.evaluate(s, ctx().price(BigDecimal.valueOf(50)).atr(BigDecimal.valueOf(2)).build(),
+                sizing(), cfg(), BigDecimal.valueOf(50));
+        assertThat(named(out, "CHASED_AWAY").passed()).isFalse();
+        assertThat(named(out, "BELOW_ANCHOR").passed()).isFalse();
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.CHASED_AWAY);
+    }
+
+    @Test
+    void belowAnchor_nullSignal_noNpe_passesNotEvaluated() {
+        var out = vetoService.evaluate(null, ctx().price(BigDecimal.valueOf(50)).atr(BigDecimal.valueOf(2)).build(),
+                sizing(), cfg(), BigDecimal.valueOf(50));
+        assertThat(named(out, "BELOW_ANCHOR").passed()).isTrue();
+        assertThat(named(out, "BELOW_ANCHOR").measured()).isEqualTo("not evaluated (schema invalid)");
+    }
+
+    @Test
+    void belowAnchor_passSideRendersNegativeAdverse() {
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+        var out = vetoService.evaluate(s, ctx().price(BigDecimal.valueOf(103)).atr(BigDecimal.valueOf(1)).build(),
+                sizing(), cfg(), BigDecimal.valueOf(103));
+        assertThat(named(out, "BELOW_ANCHOR").measured()).isEqualTo("adverse -3.00 <= 0xATR 0.00");
+    }
+
+    @Test
+    void belowAnchor_dataUnavailable_absentFromResults() {
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(100)).build();
+        var out = vetoService.evaluate(s, ctx().missing(List.of("atr")).build(), sizing(), cfg(), null);
+        assertThat(out.results().stream().anyMatch(v -> v.check().equals("BELOW_ANCHOR"))).isFalse();
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.DATA_UNAVAILABLE);
+    }
+
+    // ---- 15 PACE_LIMIT ----
 
     @Test
     void paceLimit_atLimit_fails() {
@@ -694,8 +850,8 @@ class VetoServiceTest {
         EntryContext ctx = ctx().entriesThisWeek(3).build(); // fails PACE_LIMIT (last veto)
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(outcome.results()).hasSize(14);
-        assertThat(outcome.results().get(13).check()).isEqualTo("PACE_LIMIT");
+        assertThat(outcome.results()).hasSize(15);
+        assertThat(outcome.results().get(14).check()).isEqualTo("PACE_LIMIT");
     }
 
     @Test
@@ -717,7 +873,7 @@ class VetoServiceTest {
         List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "COOLDOWN",
                 "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
                 "CONTRADICTION", "REDUNDANCY", "LIQUIDITY", "SIGNAL_EXPIRED", "CHASED_AWAY",
-                "PACE_LIMIT");
+                "BELOW_ANCHOR", "PACE_LIMIT");
         List<String> actualOrder = outcome.results().stream().map(VetoResult::check).toList();
 
         assertThat(actualOrder).isEqualTo(expectedOrder);
