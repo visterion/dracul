@@ -88,7 +88,7 @@ const option = computed<EChartsOption>(() => ({
     axisLine: { show: false },
     axisTick: { show: false },
     axisLabel: {
-      color: 'var(--bone-ivory-dim, #C9C5BC)',
+      color: '#C9C5BC', // --bone-ivory-dim (literal: canvas can't resolve CSS var())
       fontSize: 10,
       show: !!(props.labels && props.labels.length > 0),
     },
@@ -102,7 +102,7 @@ const option = computed<EChartsOption>(() => ({
     axisLabel: { show: false },
     splitLine: {
       show: true,
-      lineStyle: { color: 'var(--rule, rgba(245,241,232,0.05))', type: 'solid' },
+      lineStyle: { color: 'rgba(245,241,232,0.05)', type: 'solid' }, // --rule (literal for canvas)
     },
   },
   tooltip: {
@@ -145,7 +145,7 @@ const option = computed<EChartsOption>(() => ({
                 symbol: 'none',
                 silent: true,
                 animation: false,
-                lineStyle: { type: 'dashed', color: 'var(--bone-ivory-dim, #C9C5BC)', width: 1 },
+                lineStyle: { type: 'dashed', color: '#C9C5BC', width: 1 }, // --bone-ivory-dim (literal for canvas)
                 label: { show: false },
                 data: [{ yAxis: props.baseline }],
               },
