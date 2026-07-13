@@ -126,6 +126,30 @@ public class PositionContextRepository {
                 .update();
     }
 
+    /** Upgrades an OPEN, still-unlinked (verdict_id IS NULL) row with a verdict link, COALESCE-
+     *  filling thesis/kill/horizon so a "none" shadow later linked to a verdict gets the same
+     *  fields the direct verdict-backfill would have set. Never overwrites an existing link or a
+     *  Prey thesis already present. */
+    public void updateVerdictLink(String connection, String symbol, String verdictId,
+                                  JsonNode thesisSnapshot, JsonNode killCriteria, String horizon) {
+        jdbc.sql("""
+                UPDATE position_context
+                   SET verdict_id      = :verdictId,
+                       thesis_snapshot = COALESCE(thesis_snapshot, CAST(:thesisSnapshot AS jsonb)),
+                       kill_criteria   = COALESCE(kill_criteria,   CAST(:killCriteria AS jsonb)),
+                       horizon         = COALESCE(horizon, :horizon)
+                 WHERE connection = :connection AND lower(symbol) = lower(:symbol)
+                   AND closed_at IS NULL AND verdict_id IS NULL
+                """)
+                .param("verdictId", verdictId)
+                .param("thesisSnapshot", writeJson(thesisSnapshot))
+                .param("killCriteria", writeJson(killCriteria))
+                .param("horizon", horizon)
+                .param("connection", connection)
+                .param("symbol", symbol)
+                .update();
+    }
+
     /** Overwrites both stops on the row (the trailing stop moves -- not freeze-once). */
     public void updateStops(String id, BigDecimal initialStop, BigDecimal activeStop) {
         jdbc.sql("""
