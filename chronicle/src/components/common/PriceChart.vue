@@ -122,8 +122,15 @@ const option = computed<EChartsOption>(() => ({
         smooth: false,
         lineStyle: { width: 2, color },
         emphasis: {
-          focus: 'series',
+          focus: 'none',
           itemStyle: { color, borderColor: color },
+        },
+        // Keep the line/area fully opaque even if ECharts enters a blur state on
+        // axis-tooltip hover — with a single series, focus:'series' faded the whole
+        // line out on tap (the line "disappeared" when you clicked into the chart).
+        blur: {
+          lineStyle: { opacity: 1 },
+          areaStyle: { opacity: 1 },
         },
         areaStyle: props.areaFill
           ? {
