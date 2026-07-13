@@ -4,7 +4,7 @@
       <i v-if="icon" :class="['ph', icon]" />
       {{ label }}
     </div>
-    <div :class="['st-value', 'mono', valueClass]">
+    <div :class="['st-value', 'mono', valueClass]" :data-testid="testId">
       {{ value }}<span v-if="unit" class="st-unit"> {{ unit }}</span>
     </div>
     <div v-if="foot" class="st-foot">
@@ -22,6 +22,7 @@ defineProps<{
   foot?: string
   footClass?: string
   valueClass?: string
+  testId?: string
 }>()
 </script>
 
