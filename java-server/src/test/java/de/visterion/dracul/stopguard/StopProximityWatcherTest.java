@@ -50,7 +50,7 @@ class StopProximityWatcherTest {
         watcher.poll();
 
         verify(marketData, times(1)).quotes(anyCollection());
-        verify(emitter).emit(eq("default"), eq("11111111-1111-1111-1111-111111111111"), eq("AAA"),
+        verify(emitter).emit(eq("default"), eq("AAA"),
                 eq(StopZone.BREACHED), eq(new BigDecimal("100")),
                 eq(new BigDecimal("100")), any(Instant.class));
     }
@@ -99,9 +99,11 @@ class StopProximityWatcherTest {
     }
 
     @Test
-    void contextStopWithoutLinkedVerdictSkipsWithoutError() {
+    void contextStopWithoutLinkedVerdictStillEmits() {
         // A context row can exist with a frozen stop but no linked verdict (TA-only backfill,
-        // PositionReconciler's "source: none" path) -- there is nowhere to persist the alert.
+        // PositionReconciler's "source: none" path). Identity is keyed by symbol now, not by
+        // the verdict, so the alert is still emitted -- and, critically, never carries the
+        // verdict UUID as a watchlist_item_id (see StopAlertEmitter/DaywalkerAlertRepository).
         var position = withContext("AAA", null, new BigDecimal("100"));
         when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(position));
         when(marketData.quotes(anyCollection()))
@@ -109,6 +111,7 @@ class StopProximityWatcherTest {
 
         watcher.poll();   // must not throw
 
-        verifyNoInteractions(emitter);
+        verify(emitter).emit(eq("default"), eq("AAA"), eq(StopZone.BREACHED),
+                eq(new BigDecimal("100")), eq(new BigDecimal("100")), any(Instant.class));
     }
 }

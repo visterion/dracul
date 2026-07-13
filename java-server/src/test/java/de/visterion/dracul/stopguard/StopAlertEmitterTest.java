@@ -30,11 +30,14 @@ class StopAlertEmitterTest {
         when(alerts.lastAlertAt(any(), any(), any())).thenReturn(Optional.empty());
         when(notifier.notifyAlert(any(), any(), any(), any())).thenReturn(true);
 
-        boolean emitted = emitter.emit("alice", "item-1", "AAA", StopZone.BREACHED,
+        boolean emitted = emitter.emit("alice", "AAA", StopZone.BREACHED,
                 new BigDecimal("96.00"), new BigDecimal("100.00"), NOW);
 
         assertThat(emitted).isTrue();
-        verify(alerts).insert(eq("alice"), eq("item-1"), eq("AAA"),
+        // Regression guard: the second argument (watchlist_item_id) must be a literal null,
+        // never a verdict UUID -- a verdict id is not a watchlist_items(id) and would violate
+        // the FK (V30 kept it, only dropped NOT NULL).
+        verify(alerts).insert(eq("alice"), isNull(), eq("AAA"),
                 eq("STOP_BREACHED"), eq("CRITICAL"), contains("Stop gerissen"),
                 isNull(), startsWith("stopguard-"), eq(true));
         verify(notifier).notifyAlert(eq("AAA"), eq("STOP_BREACHED"), eq("CRITICAL"), anyString());
@@ -46,11 +49,11 @@ class StopAlertEmitterTest {
         when(alerts.lastAlertAt(any(), any(), any())).thenReturn(Optional.empty());
         when(notifier.notifyAlert(any(), any(), any(), any())).thenReturn(true);
 
-        boolean emitted = emitter.emit("alice", "item-1", "AAA", StopZone.PROXIMITY,
+        boolean emitted = emitter.emit("alice", "AAA", StopZone.PROXIMITY,
                 new BigDecimal("103.00"), new BigDecimal("100.00"), NOW);
 
         assertThat(emitted).isTrue();
-        verify(alerts).insert(eq("alice"), eq("item-1"), eq("AAA"),
+        verify(alerts).insert(eq("alice"), isNull(), eq("AAA"),
                 eq("STOP_PROXIMITY"), eq("WARNING"), anyString(),
                 isNull(), anyString(), eq(true));
     }
@@ -60,7 +63,7 @@ class StopAlertEmitterTest {
         when(alerts.lastAlertAt("alice", "AAA", "STOP_PROXIMITY"))
                 .thenReturn(Optional.of(NOW.minusSeconds(3600)));   // 1h ago < 23h cooldown
 
-        boolean emitted = emitter.emit("alice", "item-1", "AAA", StopZone.PROXIMITY,
+        boolean emitted = emitter.emit("alice", "AAA", StopZone.PROXIMITY,
                 new BigDecimal("103.00"), new BigDecimal("100.00"), NOW);
 
         assertThat(emitted).isFalse();
@@ -77,7 +80,7 @@ class StopAlertEmitterTest {
                 .thenReturn(Optional.empty());
         when(notifier.notifyAlert(any(), any(), any(), any())).thenReturn(true);
 
-        boolean emitted = emitter.emit("alice", "item-1", "AAA", StopZone.BREACHED,
+        boolean emitted = emitter.emit("alice", "AAA", StopZone.BREACHED,
                 new BigDecimal("96.00"), new BigDecimal("100.00"), NOW);
 
         assertThat(emitted).isTrue();
