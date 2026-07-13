@@ -17,5 +17,7 @@ public record VetoConfig(
         int maxSignalAgeDays,
         double chaseAtrMult,
         int pacePerWeek,
-        int trancheCount) {
+        int trancheCount,
+        double driftAnchorAtrMult,   // BELOW_ANCHOR: drift-set band (default 0.0)
+        double valueAnchorAtrMult) { // BELOW_ANCHOR: value/dip band (default 3.0)
 }
