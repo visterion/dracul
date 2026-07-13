@@ -13,6 +13,8 @@ function position(overrides: Partial<DepotPositionView> = {}): DepotPositionView
     symbol: 'NVDA', qty: 10, avgEntryPrice: 120, marketValue: 1350,
     unrealizedPl: 150, unrealizedPlPct: 12.5, price: 135,
     dayChangePercent: 1.2, weightPct: 60, currency: 'USD',
+    name: null, assetType: null, valueDate: null,
+    nativePrice: null, nativeCurrency: null,
     ...overrides,
   }
 }
@@ -130,8 +132,44 @@ describe('DepotPositionDetailView', () => {
     expect(w.find('[data-testid="pd-section-events"]').exists()).toBe(true)
     expect(w.find('[data-testid="pd-section-insights"]').exists()).toBe(true)
     expect(w.find('[data-testid="pd-section-finance"]').exists()).toBe(true)
-    expect(w.find('[data-testid="pd-info"]').exists()).toBe(true)
-    expect(w.find('[data-testid="pd-info"]').text()).toContain('Designs GPUs.')
+    // The "Informationen" section is dead code (Finnhub never returns a
+    // description) and was removed — it must never render, even with a full profile.
+    expect(w.find('[data-testid="pd-info"]').exists()).toBe(false)
+  })
+
+  it('renders enriched position details: name, native price, weight/today tiles, asset class, held-since, order role', async () => {
+    getDepotPositionImpl = async () => ({
+      position: position({
+        name: 'NVIDIA Corporation',
+        assetType: 'Stock',
+        valueDate: '2026-03-14',
+        nativePrice: 145.5,
+        nativeCurrency: 'CHF',
+        currency: 'EUR',
+      }),
+      orders: [order({ role: 'stop' })],
+      asOf: '2026-07-11T08:00:00Z',
+    })
+    const w = mountView()
+    await flushPromises()
+
+    expect(w.find('[data-testid="pd-symbol"]').text()).toContain('NVDA')
+    expect(w.text()).toContain('NVIDIA Corporation')
+
+    const priceEl = w.find('[data-testid="pd-price"]')
+    expect(priceEl.text()).toContain('CHF')
+
+    expect(w.find('[data-testid="pd-stat-weight"]').exists()).toBe(true)
+    expect(w.find('[data-testid="pd-stat-weight"]').text()).toContain('60')
+    expect(w.find('[data-testid="pd-stat-today"]').exists()).toBe(true)
+    expect(w.find('[data-testid="pd-stat-today"]').text()).toContain('1,2')
+
+    expect(w.text()).toContain('Stock')
+    expect(w.text()).toContain('14.3.2026')
+
+    expect(w.find('[data-testid="pd-orders"]').text()).toContain('Stop')
+
+    expect(w.find('[data-testid="pd-info"]').exists()).toBe(false)
   })
 
   it('re-fetches when the route params change', async () => {

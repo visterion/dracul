@@ -524,6 +524,7 @@ export default {
         active: 'active', open: 'open', filled: 'filled', partiallyFilled: 'partially filled',
         inactive: 'inactive', canceled: 'canceled', expired: 'expired', rejected: 'rejected',
       },
+      role: { entry: 'Entry', stop: 'Stop', target: 'Target', other: 'Other' },
     },
     table: {
       symbol: 'Symbol', qty: 'Qty', avgEntry: 'Avg entry', price: 'Price',
@@ -539,13 +540,12 @@ export default {
         performance: 'Performance since buy',
         qty: 'Shares',
         entry: 'Avg entry',
+        weight: 'Weight',
+        today: 'Today',
       },
       orders: 'Open orders',
-      info: {
-        title: 'Information',
-        more: 'Show more',
-        less: 'Show less',
-      },
+      assetClass: 'Asset class',
+      heldSince: 'Held since {date}',
       news: { title: 'News' },
       events: {
         title: 'Events',
