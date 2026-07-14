@@ -405,7 +405,9 @@ const newsItems = computed<NewsRow[]>(() => {
       source: asString(row.source),
       // Agora's get_company_news emits `datetime` (ISO instant), not `publishedAt`.
       publishedAt: typeof row.datetime === 'string' ? row.datetime : undefined,
-      url: typeof row.url === 'string' && row.url ? asString(row.url) : undefined,
+      // Only accept http(s) URLs — a javascript:/data: scheme in an href would be an
+      // XSS vector, and news urls come from an external source (Finnhub).
+      url: typeof row.url === 'string' && /^https?:\/\//i.test(row.url) ? asString(row.url) : undefined,
       summary: typeof row.summary === 'string' && row.summary ? asString(row.summary) : undefined,
     }))
 })
