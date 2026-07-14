@@ -561,6 +561,15 @@ export default {
         insiderActivity: 'Insider activity',
         buys: '{n} buys',
         sells: '{n} sells',
+        rating: {
+          strongBuy: 'Strong Buy',
+          buy: 'Buy',
+          hold: 'Hold',
+          sell: 'Sell',
+          strongSell: 'Strong Sell',
+        },
+        analystBreakdown: '{total} analysts · {buy} buy · {hold} hold · {sell} sell',
+        analystSource: 'Source: Finnhub · View ratings ↗',
       },
       finance: {
         title: 'Financials',
