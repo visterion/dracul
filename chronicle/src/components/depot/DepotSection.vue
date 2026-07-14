@@ -61,6 +61,8 @@
           v-else-if="chartSeries.length"
           :series="chartSeries"
           :labels="chartLabels"
+          :times="chartTimes"
+          :value-formatter="formatChartValue"
           :area-fill="true"
           :height="160"
         />
@@ -142,7 +144,7 @@ import { formatMoney, formatNumber } from '../../utils/format'
 
 const props = defineProps<{ depot: Depot }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const api = useApi()
 const { mode, toggle } = useDisplayMode()
@@ -228,6 +230,18 @@ const chartLabels = computed(() => {
   const idxs = points.length > 1 ? [0, points.length - 1] : [0]
   return idxs.map(i => ({ i, t: points[i].t.slice(5) }))
 })
+
+/** Full per-point date array — supersedes chartLabels for the axis-tooltip
+ *  header (the sparse labels above still drive the visible axis ticks). */
+const chartTimes = computed(() =>
+  (chart.value?.points ?? []).map(p => new Date(p.t).toLocaleDateString(locale.value, { day: '2-digit', month: 'short' })),
+)
+
+function formatChartValue(v: number): string {
+  return mode.value === 'pct' && props.depot
+    ? `${formatNumber(v, 2)}%`
+    : formatMoney(v, props.depot.account?.currency ?? 'USD')
+}
 </script>
 
 <style scoped>

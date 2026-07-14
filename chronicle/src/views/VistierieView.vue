@@ -108,6 +108,8 @@
             <PriceChart
               :height="200"
               :labels="chartLabels"
+              :times="chartTimes"
+              :value-formatter="formatChartValue"
               :series="chartSeries"
               area-fill
               :aria-label="t('vistierie.sections.dailySpend')"
@@ -203,6 +205,14 @@ const chartLabels = computed(() => {
 function formatLabel(iso: string): string {
   const dt = new Date(iso)
   return dt.toLocaleDateString(locale.value, { day: 'numeric', month: 'short' })
+}
+
+// Full per-point date array for the axis-tooltip header — the sparse
+// chartLabels above still drive the visible axis ticks.
+const chartTimes = computed(() => (data.value?.dailySpend30d ?? []).map(e => formatLabel(e.date)))
+
+function formatChartValue(v: number): string {
+  return formatMoney(v, 'USD')
 }
 </script>
 
