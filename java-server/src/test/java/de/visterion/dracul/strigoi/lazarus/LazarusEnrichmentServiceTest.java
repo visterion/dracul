@@ -334,15 +334,16 @@ class LazarusEnrichmentServiceTest {
     }
 
     @Test
-    void zNotAttemptedWhenFundamentalScoreUnavailable() {
+    void zAttemptedEvenWhenFundamentalScoreUnavailable() {
         when(filings.fundamentalScoreStrict("NODATA")).thenReturn(FundamentalScore.unavailable());
+        // setUp default: altmanZ -> unavailable (post-A2 ok-empty concepts never throw)
 
         EnrichedLazarusCandidate e = service.enrich(List.of(candidate("NODATA"))).get(0);
 
-        // an unavailable F-score means the symbol may not resolve in EDGAR at all — attempting
-        // the concept fetches would burn dead remote calls and could false-trip the down guard
-        verify(altmanZ, never()).zScore(anyString(), any(), any());
-        assertThat(e.zScore()).isNull();
+        // Task B3: Z is decoupled from the F-score — a sparse/absent F-score (common for non-US
+        // names whose concept balance sheets are still present) must NOT suppress the Z attempt
+        verify(altmanZ, times(1)).zScore(eq("NODATA"), any(), any());
+        assertThat(e.zScore()).isNull();          // this mock returns unavailable, so still unknown
         assertThat(e.zScoreAvailable()).isFalse();
     }
 
@@ -411,7 +412,9 @@ class LazarusEnrichmentServiceTest {
             assertThat(e.fScoreCriteriaAvailable()).isZero();
             assertThat(e.zScoreAvailable()).isFalse();
         });
-        verify(altmanZ, never()).zScore(anyString(), any(), any()); // no Z without a resolved F-score
+        // Task B3: Z is decoupled from the F-score, so it is still attempted per candidate even
+        // when the F-score source is down (the concept fetch has its own independent down-latch)
+        verify(altmanZ, times(2)).zScore(anyString(), any(), any());
 
         // the down-flag lives per enrich() call: the next batch probes the source again
         service.enrich(List.of(candidate("CCC")));
