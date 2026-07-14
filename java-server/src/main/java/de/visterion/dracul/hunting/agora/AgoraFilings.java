@@ -181,6 +181,37 @@ public class AgoraFilings {
         return out;
     }
 
+    /** Non-US concept fetch: MANY {@link FundamentalConcept}s for a symbol in ONE Agora call
+     *  ({@code get_fundamental_concepts}), each concept's {@code datapoints} in the exact same
+     *  point shape ({@code periodStart}/{@code periodEnd}/{@code value}/{@code filed}) as
+     *  {@link #companyFactsStrict}, plus the reporting {@code unit} (ISO-4217 currency) the
+     *  concept's values are expressed in.
+     *
+     *  <p>Instant concepts (balance-sheet: assets, liabilities, retained earnings) carry a null
+     *  {@code periodStart}; flow concepts (EBIT, revenue) carry both dates (~annual span). A
+     *  requested concept the company never filed comes back as an EMPTY series with a null unit
+     *  (present in the map, NOT missing) — exactly like {@code companyFactsStrict}'s absent-tag
+     *  contract; only a genuine unavailable envelope throws.
+     *
+     *  <p>STRICT: {@link AgoraUnavailableException} is deliberately NOT caught here — it
+     *  propagates for the same batch-guard reason as {@link #conceptStrict(String, String)},
+     *  letting the lazarus enrichment tell "Agora is down" apart from "concept not filed" (empty
+     *  series) and short-circuit a down source for the rest of the batch. */
+    public ConceptSeries.MultiConcept conceptsStrict(String symbol, FundamentalConcept... concepts) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode conceptsNode = agora.callTool("get_fundamental_concepts", args).path("concepts");
+        java.util.Map<FundamentalConcept, ConceptSeries> series = new java.util.LinkedHashMap<>();
+        java.util.Map<FundamentalConcept, String> units = new java.util.LinkedHashMap<>();
+        for (FundamentalConcept c : concepts) {
+            JsonNode node = conceptsNode.path(c.name());
+            series.put(c, series(c.name(), node.path("datapoints")));
+            JsonNode unit = node.path("unit");
+            units.put(c, (unit.isMissingNode() || unit.isNull()) ? null : unit.asString());
+        }
+        return new ConceptSeries.MultiConcept(series, units);
+    }
+
     /** Reported EPS datapoints for a symbol; empty series on any failure. */
     public ConceptSeries epsHistory(String symbol) {
         JsonNode res;
