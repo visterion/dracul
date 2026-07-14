@@ -44,12 +44,13 @@ import java.util.List;
  *  budget).
  *
  *  <p>Surviving candidates finally get a classic Altman Z-Score ({@link AltmanZCalculator})
- *  as a distress screen, fail-soft to {@code zScoreAvailable=false}. Z is only attempted
- *  when the candidate's fundamental score was itself available: both come from the same
- *  EDGAR companyfacts on the Agora side, so a successful F-score lookup proves the symbol
- *  resolves — which in turn means an {@link AgoraUnavailableException} during the Z concept
- *  fetches is a genuine availability failure and (mirroring the OHLC guard) marks the
- *  concept source down for the remaining candidates of the batch.
+ *  as a distress screen, fail-soft to {@code zScoreAvailable=false}. Z is attempted for every
+ *  surviving candidate whenever the concept source is still up — decoupled from the Piotroski
+ *  F-score, since non-US names often carry a sparse/absent F-score while their concept balance
+ *  sheet is fully present, and gating Z on the F-score would starve the distress screen abroad.
+ *  Post-A2 a data-less symbol comes back as ok-empty concepts (an unavailable Z that does NOT
+ *  throw), so only a genuine {@link AgoraUnavailableException} during the Z concept fetches marks
+ *  the concept source down for the remaining candidates of the batch (mirroring the OHLC guard).
  *
  *  <p>Finally each surviving candidate gets the echo SP3 forward-revisions read from ONE
  *  additional recommendation-trend call ({@link AgoraCompanyData#recommendationsStrict} —
@@ -141,10 +142,14 @@ public class LazarusEnrichmentService {
                 }
             }
             AltmanZCalculator.AltmanZ z = AltmanZCalculator.AltmanZ.unavailable();
-            // Only attempt Z when the F-score resolved: same EDGAR companyfacts behind both,
-            // so a failed F-score would make every concept call a dead ~16s remote round trip
-            // (and, for an EDGAR-unknown symbol, would wrongly trip the source-down guard).
-            if (!conceptsDown && s.available()) {
+            // Z is decoupled from the F-score (Task B3): attempt it whenever the concept source is
+            // up, independent of s.available(). Non-US names frequently have a sparse/absent
+            // Piotroski F-score while their concept balance sheet is fully present, so gating Z on
+            // the F-score would needlessly starve the distress screen abroad. Post-A2 a data-less
+            // symbol returns ok-empty concepts (an unavailable Z that does NOT throw), so an
+            // absent-data candidate can no longer false-trip the source-down guard the way an
+            // exception would.
+            if (!conceptsDown) {
                 try {
                     z = altmanZ.zScore(c.symbol(), c.marketCap(), c.reportingCurrency());
                 } catch (AgoraUnavailableException e) {
