@@ -31,5 +31,10 @@ public enum RejectReason {
     NO_POSITION,
     NOT_ELIGIBLE,
     CORRELATED,
-    UNKNOWN_VERSION
+    UNKNOWN_VERSION,
+    /** Instrument trades in a currency other than the configured single account/instrument
+     *  currency (or the quote carried no currency). The executor is single-currency in this
+     *  slice — a bracket order sized in the wrong currency would be silently mis-sized — so a
+     *  non-account-currency find is surfaced + watchlisted + given a Verdict, but never entered. */
+    CURRENCY_MISMATCH
 }

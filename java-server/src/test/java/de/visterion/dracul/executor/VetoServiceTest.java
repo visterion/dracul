@@ -69,12 +69,12 @@ class VetoServiceTest {
 
     private VetoConfig cfg() {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0);
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD");
     }
 
     private VetoConfig cfg(int trancheCount) {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0);
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0, "USD");
     }
 
     private VetoResult named(VetoService.Outcome out, String check) {
@@ -91,7 +91,7 @@ class VetoServiceTest {
     @Test
     void vetoConfig_anchorMultipliers_bindInDeclaredOrder() {
         VetoConfig c = new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, /*drift*/ 0.7, /*value*/ 3.3);
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, /*drift*/ 0.7, /*value*/ 3.3, "USD");
         assertThat(c.driftAnchorAtrMult()).isEqualTo(0.7);
         assertThat(c.valueAnchorAtrMult()).isEqualTo(3.3);
     }
@@ -118,6 +118,7 @@ class VetoServiceTest {
         Map<String, String> openMechanisms = Map.of();
         BigDecimal fxToAccount = BigDecimal.ONE;
         List<String> missing = List.of();
+        String quoteCurrency = "USD";
 
         EntryContextBuilder account(AccountSnapshot v) { account = v; return this; }
         EntryContextBuilder price(BigDecimal v) { price = v; return this; }
@@ -134,12 +135,13 @@ class VetoServiceTest {
         EntryContextBuilder openHeat(BigDecimal v) { openHeat = v; return this; }
         EntryContextBuilder openMechanisms(Map<String, String> v) { openMechanisms = v; return this; }
         EntryContextBuilder missing(List<String> v) { missing = v; return this; }
+        EntryContextBuilder quoteCurrency(String v) { quoteCurrency = v; return this; }
 
         EntryContext build() {
             return new EntryContext(account, price, atr, swingLow, adv20Notional, dayHigh,
                     candidateSector, openPositions, activeCooldowns, pendingSignals,
                     entriesThisWeek, signalAgeTradingDays, trancheAmount, totalBudget,
-                    openExposure, openHeat, openMechanisms, fxToAccount, missing);
+                    openExposure, openHeat, openMechanisms, fxToAccount, missing, quoteCurrency);
         }
     }
 
@@ -165,7 +167,7 @@ class VetoServiceTest {
 
         assertThat(outcome.passed()).isTrue();
         assertThat(outcome.firstFailure()).isNull();
-        assertThat(outcome.results()).hasSize(15);
+        assertThat(outcome.results()).hasSize(16);
         assertThat(outcome.results()).allMatch(VetoResult::passed);
         assertThat(outcome.contradictingSignalId()).isNull();
     }
@@ -847,11 +849,12 @@ class VetoServiceTest {
 
     @Test
     void allFourteenVetosAlwaysEvaluated_evenAfterFirstFailure() {
-        EntryContext ctx = ctx().entriesThisWeek(3).build(); // fails PACE_LIMIT (last veto)
+        EntryContext ctx = ctx().entriesThisWeek(3).build(); // fails PACE_LIMIT
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(outcome.results()).hasSize(15);
+        assertThat(outcome.results()).hasSize(16);
         assertThat(outcome.results().get(14).check()).isEqualTo("PACE_LIMIT");
+        assertThat(outcome.results().get(15).check()).isEqualTo("CURRENCY_MISMATCH");
     }
 
     @Test
@@ -873,7 +876,7 @@ class VetoServiceTest {
         List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "COOLDOWN",
                 "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
                 "CONTRADICTION", "REDUNDANCY", "LIQUIDITY", "SIGNAL_EXPIRED", "CHASED_AWAY",
-                "BELOW_ANCHOR", "PACE_LIMIT");
+                "BELOW_ANCHOR", "PACE_LIMIT", "CURRENCY_MISMATCH");
         List<String> actualOrder = outcome.results().stream().map(VetoResult::check).toList();
 
         assertThat(actualOrder).isEqualTo(expectedOrder);

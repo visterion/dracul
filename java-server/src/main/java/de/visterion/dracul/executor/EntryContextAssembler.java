@@ -104,6 +104,7 @@ public class EntryContextAssembler {
 
         Indicators ind = fetchIndicators(symbol, missing);
         String sector = fetchSector(symbol, missing);
+        String quoteCurrency = fetchCurrency(symbol);
 
         List<ExecutorPosition> openPositions = positionRepo.findOpen();
         List<Cooldown> activeCooldowns = cooldownRepo.active(clock.instant());
@@ -172,7 +173,34 @@ public class EntryContextAssembler {
                 openHeat,
                 openMechanisms,
                 fxToAccount,
-                missing);
+                missing,
+                quoteCurrency);
+    }
+
+    /**
+     * Instrument currency from Agora {@code get_quote}, <b>null-preserving</b>: a missing/blank
+     * currency field stays {@code null} — deliberately NOT coerced to "USD" the way
+     * {@code AgoraMarketData.resolve()} does — so the CURRENCY_MISMATCH veto can reject an
+     * unknown-currency instrument instead of it silently passing as USD. An Agora outage also
+     * yields null here; in that case the parallel get_indicators call already populates
+     * {@code missing} (price/atr), so the DATA_UNAVAILABLE pre-veto fires first.
+     */
+    private String fetchCurrency(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.putArray("symbols").add(symbol);
+        JsonNode r;
+        try {
+            r = agora.callTool("get_quote", args);
+        } catch (AgoraUnavailableException e) {
+            return null;
+        }
+        if (r == null) return null;
+        JsonNode quotes = r.path("quotes");
+        if (!quotes.isArray() || quotes.isEmpty()) return null;
+        JsonNode cur = quotes.get(0).path("currency");
+        if (cur.isMissingNode() || cur.isNull()) return null;
+        String s = cur.asString("");
+        return s.isBlank() ? null : s;
     }
 
     private AccountSnapshot fetchAccount(List<String> missing) {

@@ -280,6 +280,62 @@ class EntryContextAssemblerTest {
         assertThat(ctx.missing()).isEmpty();
     }
 
+    private JsonNode quoteResponse(String currency) {
+        ObjectNode root = mapper.createObjectNode();
+        ArrayNode quotes = root.putArray("quotes");
+        ObjectNode q = quotes.addObject();
+        q.put("symbol", "ACME");
+        q.put("price", "100.00");
+        if (currency != null) q.put("currency", currency);
+        return root;
+    }
+
+    @Test
+    void quoteCurrencyThreadedFromGetQuote() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(quoteResponse("EUR"));
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        assertThat(ctx.quoteCurrency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void missingQuoteCurrencyStaysNull_notCoercedToUsd() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(quoteResponse(null)); // no currency field
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        // Null-preserving: a missing currency must NOT become "USD" (unlike AgoraMarketData.resolve).
+        assertThat(ctx.quoteCurrency()).isNull();
+    }
+
+    @Test
+    void agoraQuoteUnavailable_quoteCurrencyNull() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(agora.callTool(eq("get_quote"), any())).thenThrow(new AgoraUnavailableException("down"));
+
+        ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
+
+        EntryContext ctx = assembler.assemble(sig);
+
+        assertThat(ctx.quoteCurrency()).isNull();
+    }
+
     @Test
     void accountWithNullCashIsMarkedMissing() {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(

@@ -32,5 +32,6 @@ public record EntryContext(
         BigDecimal openHeat,                  // sum qty*(entryPrice-activeStop) converted to account ccy
         Map<String, String> openMechanisms,   // open-position symbol -> mechanism, via signalRepo.findById(p.sourceSignalId()); entries with unknown source signal omitted
         BigDecimal fxToAccount,               // multiplier instrument ccy -> account ccy; BigDecimal.ONE on cache miss (FxService identity fallback)
-        List<String> missing) {               // names of absent MANDATORY data
+        List<String> missing,                 // names of absent MANDATORY data
+        String quoteCurrency) {               // actual instrument currency from get_quote, NULL-preserving (a missing currency stays null, NOT coerced to USD); consumed by the CURRENCY_MISMATCH veto
 }
