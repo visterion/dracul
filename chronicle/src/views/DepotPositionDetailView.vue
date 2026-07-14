@@ -130,10 +130,19 @@
 
       <!-- ── News ───────────────────────────────────────────── -->
       <InfoCardRow v-if="newsItems.length" :title="t('depots.detail.news.title')" testid="pd-section-news">
-        <div v-for="(n, i) in newsItems" :key="i" class="icr-card">
+        <component
+          :is="n.url ? 'a' : 'div'"
+          v-for="(n, i) in newsItems"
+          :key="i"
+          class="icr-card icr-news"
+          :href="n.url"
+          :target="n.url ? '_blank' : undefined"
+          :rel="n.url ? 'noopener noreferrer' : undefined"
+        >
           <div class="icr-card-title">{{ n.headline }}</div>
-          <div class="icr-card-sub">{{ n.source }}<span v-if="n.publishedAt"> · {{ relativeTime(n.publishedAt) }}</span></div>
-        </div>
+          <div v-if="n.summary" class="icr-card-summary">{{ n.summary }}</div>
+          <div class="icr-card-sub">{{ n.source }}<span v-if="n.publishedAt"> · {{ relativeTime(n.publishedAt) }}</span><span v-if="n.url" class="icr-news-arrow"> ↗</span></div>
+        </component>
       </InfoCardRow>
 
       <!-- ── Ereignisse ─────────────────────────────────────── -->
@@ -385,13 +394,20 @@ function asString(v: unknown): string {
 const profileRecord = computed(() => asRecord(info.value?.profile))
 
 // News
-interface NewsRow { headline: string; source: string; publishedAt?: string }
+interface NewsRow { headline: string; source: string; publishedAt?: string; url?: string; summary?: string }
 const newsItems = computed<NewsRow[]>(() => {
   const rec = asRecord(info.value?.news)
   return asArray(rec?.news)
     .map(row => asRecord(row))
     .filter((row): row is Record<string, unknown> => row !== null && typeof row.headline === 'string')
-    .map(row => ({ headline: asString(row.headline), source: asString(row.source), publishedAt: typeof row.publishedAt === 'string' ? row.publishedAt : undefined }))
+    .map(row => ({
+      headline: asString(row.headline),
+      source: asString(row.source),
+      // Agora's get_company_news emits `datetime` (ISO instant), not `publishedAt`.
+      publishedAt: typeof row.datetime === 'string' ? row.datetime : undefined,
+      url: typeof row.url === 'string' && row.url ? asString(row.url) : undefined,
+      summary: typeof row.summary === 'string' && row.summary ? asString(row.summary) : undefined,
+    }))
 })
 
 // Ereignisse (earnings rows, already server-filtered to this symbol)
@@ -550,7 +566,15 @@ watch(() => [route.params.connection, route.params.symbol], () => {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden; white-space: normal; line-height: 1.35;
 }
-.icr-card-sub { color: var(--ash-gray); font-size: var(--text-micro); }
+.icr-card-sub { color: var(--ash-gray); font-size: var(--text-micro); margin-top: auto; }
+.icr-news { min-height: 138px; text-decoration: none; color: inherit; }
+.icr-news:hover { border-color: var(--cathedral-gold); }
+.icr-news:focus-visible { outline: 2px solid var(--cathedral-gold); outline-offset: 2px; }
+.icr-card-summary {
+  color: var(--bone-ivory-dim); font-size: var(--text-micro); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.icr-news-arrow { color: var(--cathedral-gold); }
 .icr-card-value { color: var(--cathedral-gold); font-size: var(--text-body); }
 .icr-card-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
 
