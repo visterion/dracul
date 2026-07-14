@@ -47,7 +47,9 @@ class AltmanZCalculatorTest {
             for (String tag : tags) out.put(tag, stubbed.getOrDefault(tag, ConceptSeries.empty(tag)));
             return out;
         });
-        calculator = new AltmanZCalculator(filings);
+        // "ACME" has no venue suffix -> the classifier routes it to the US get_company_facts path,
+        // so every case in this (US golden) suite exercises the byte-identical original code.
+        calculator = new AltmanZCalculator(filings, new InstrumentClassifier(List.of("DE", "T", "HK")));
     }
 
     private void stubInstant(String tag, long usd) { stubInstant(tag, BS_DATE, usd); }

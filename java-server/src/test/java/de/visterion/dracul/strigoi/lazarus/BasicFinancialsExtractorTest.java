@@ -43,6 +43,16 @@ class BasicFinancialsExtractorTest {
         assertThat(f.marketCap()).isNull();
     }
 
+    @Test void extractsReportingCurrencyForNonUsAndNullWhenAbsent() {
+        JsonNode nonUs = mapper.readTree(
+                "{\"52WeekLow\":10.0,\"marketCapitalization\":900.0,\"reportingCurrency\":\"EUR\"}");
+        assertThat(BasicFinancialsExtractor.extract(nonUs).reportingCurrency()).isEqualTo("EUR");
+
+        // US Finnhub blob omits the field -> null (the convenience/US path)
+        JsonNode us = mapper.readTree("{\"52WeekLow\":10.0,\"marketCapitalization\":900.0}");
+        assertThat(BasicFinancialsExtractor.extract(us).reportingCurrency()).isNull();
+    }
+
     @Test void nullOrNonObjectInputYieldsNull() {
         assertThat(BasicFinancialsExtractor.extract(null)).isNull();
         assertThat(BasicFinancialsExtractor.extract(mapper.readTree("[1,2]"))).isNull();

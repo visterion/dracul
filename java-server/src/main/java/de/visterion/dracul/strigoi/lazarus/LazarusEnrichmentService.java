@@ -146,7 +146,7 @@ public class LazarusEnrichmentService {
             // (and, for an EDGAR-unknown symbol, would wrongly trip the source-down guard).
             if (!conceptsDown && s.available()) {
                 try {
-                    z = altmanZ.zScore(c.symbol(), c.marketCap());
+                    z = altmanZ.zScore(c.symbol(), c.marketCap(), c.reportingCurrency());
                 } catch (AgoraUnavailableException e) {
                     conceptsDown = true;
                     log.warn("lazarus enrichment: concept source down ({}), skipping altman-z "
