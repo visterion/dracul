@@ -46,9 +46,11 @@ public class DepotService {
     private final ObjectMapper mapper = new ObjectMapper();
     private final int cacheTtlSeconds;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    // Per-connection single-flight monitors. Never evicted, but the key space is the
+    // set of configured broker connections (small, stable, not user-scoped) — bounded.
     private final ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
     /** Overridable in tests to simulate TTL expiry without real sleeps. */
-    LongSupplier nowMillis = System::currentTimeMillis;
+    volatile LongSupplier nowMillis = System::currentTimeMillis;
 
     private record CacheEntry(DepotDto dto, long expiresAtMillis) {}
 
