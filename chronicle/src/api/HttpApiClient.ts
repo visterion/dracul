@@ -303,8 +303,8 @@ export class HttpApiClient implements ApiClient {
     return res.json() as Promise<ExecutorBehavior>
   }
 
-  async getDepots(): Promise<DepotsResponse> {
-    const res = await fetch(`${this.baseUrl}/api/depots`)
+  async getDepots(refresh = false): Promise<DepotsResponse> {
+    const res = await fetch(`${this.baseUrl}/api/depots?refresh=${refresh}`)
     if (!res.ok) throw new Error(`getDepots failed: HTTP ${res.status}`)
     return res.json() as Promise<DepotsResponse>
   }

@@ -386,7 +386,7 @@ export class MockApiClient implements ApiClient {
     ]
   }
 
-  async getDepots(): Promise<DepotsResponse> {
+  async getDepots(_refresh = false): Promise<DepotsResponse> {
     await delay(50)
     return structuredClone(mockDepotsResponse)
   }
