@@ -48,7 +48,7 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B; the spin-co's registrant CIK is parsed from the filing URL via `CikExtractor.fromFilingUrl` and preserved on `SpinoffFiling.cik`) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet capture) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date / best-effort parent ticker). **Lifecycle enrichment (2026-07-12):** `AgoraMarketData.quotes` (batched distribution-detection price probe) + `AgoraFilings.conceptStrict` (`get_company_concept` **by CIK** — pre-distribution balance sheet + settlement `Assets`/`filed` probe + settled-stage valuation, a ticker not yet existing at 10-12B time) + `EquityMetricsExtractor` (Finnhub market caps for spin-co and parent → `sizeRatio`) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, post-spin open-market insider buying) + `AgoraCompanyData.fundamentals`/`profile` (settled-stage P/B, FCF yield, industry) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`, cluster screen) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, routine/opportunistic classification — one call per cluster) + `EquityMetricsExtractor` / `AgoraMarketData.dailyOhlcHistory` / `AgoraCompanyData.recommendationsStrict` / `AgoraEarnings` (context enrichment) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
-| strigoi-lazarus | watchlist + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, Altman-Z XBRL inputs) + Agora daily OHLC (timing signals) |
+| strigoi-lazarus | watchlist (US + non-US: XETRA `.DE`, Tokyo `.T`, Hong Kong `.HK`) + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, US Altman-Z XBRL inputs) + `get_fundamental_concepts` (**non-US** Altman-Z inputs, Yahoo-backed) + Agora daily OHLC (timing signals) |
 | strigoi-index | `AgoraReference.indexChanges` (`get_index_constituent_changes` — announced S&P/Russell adds/removes with announcement + effective dates; called once per index) + `AgoraMarketData.dailyOhlcHistory` (`get_ohlc`, ADV/volume + idiosyncratic-vol residual + run-up/reversal enrichment) + `EquityMetricsExtractor` (market cap + beta + share-count enrichment) + `MarketSignalService.residualReturns` (idiosyncratic vol) + `ConfounderScreen` (overlapping-event screen). **The old `AgoraReference.constituents` / `get_index_constituents` route was removed** in the 2026-07-12 announcement-anchored lifecycle rebuild |
 | strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `DealTermsParser` (regex-based offer price / consideration / exchange ratio / break-fee extraction) + `AgoraMarketData.quotes` (spread computation) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
@@ -132,6 +132,11 @@ consumed through five neutral domain facades in
   enrichment step, degrading to "unavailable" on any Agora failure;
   `fundamentalScoreStrict` propagates `AgoraUnavailableException` like
   `conceptStrict`, letting the lazarus batch short-circuit a down source),
+  `fundamentalConcepts`
+  (`get_fundamental_concepts` — Yahoo-backed fundamentals concepts for **non-US**
+  issuers (XETRA/Tokyo/Hong Kong) that do not file SEC XBRL company-facts; supplies
+  the Altman-Z balance-sheet/flow inputs for the lazarus non-US path in place of
+  `get_company_concept`),
   `filingText`
   (`get_filing_text` — fetches a filing's primary document as cleaned
   summary-term-sheet text; consumed via `AgoraFilings.filingText(url)` →

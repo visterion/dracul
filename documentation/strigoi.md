@@ -388,6 +388,19 @@ expiry). Lazarus was bumped in the same round to document
 `cfoExceedsNetIncomeAvailable` and to stop reading a wire-level
 `cfoExceedsNetIncome=false` as a quality warning.
 
+**Lazarus global (EU/Asia) hunting (2026-07-14, additive).** Lazarus now screens
+non-US watchlist names — XETRA (`.DE`), Tokyo (`.T`) and Hong Kong (`.HK`) blue-chips
+seeded in `V32__seed_global_watchlist.sql` — alongside the existing US universe; the
+US path is unchanged. For non-US symbols the Altman-Z solvency inputs are sourced from
+Agora's `get_fundamental_concepts` (Yahoo-backed fundamentals) instead of SEC XBRL
+`get_company_concept`, since foreign issuers do not file XBRL company-facts with the SEC;
+the prompt vocabulary is region-neutral (no "SEC"/"XBRL"/provider names). The executor
+applies a **currency veto**: a signal whose watchlist-row currency does not match its
+venue's expected trading currency is dropped, guarding against acting on a mis-converted
+non-US candidate. Config: `dracul.strigoi.lazarus.probe-symbol` (health probe, default
+`AAPL`) and `dracul.fundamentals.non-us-suffixes` (the non-US venue whitelist) — see
+`documentation/configuration.md`.
+
 **Cache-expiry caveat:** `handleFetch` responses are served through
 `ToolFetchCache` (per-tool TTL). A pattern approved or rejected after a tool's
 cache entry was populated only becomes visible in `active_patterns` once that
