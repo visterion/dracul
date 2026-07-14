@@ -71,6 +71,8 @@
         <PriceChart
           v-else-if="chartSeries.length"
           :series="chartSeries"
+          :times="chartTimes"
+          :value-formatter="formatChartValue"
           :baseline="chartSeries[0]?.data[0] ?? null"
           :height="180"
         />
@@ -319,6 +321,18 @@ const chartSeries = computed(() => {
   if (!chart.value || chart.value.points.length === 0) return []
   return [{ data: chart.value.points.map(p => p.value), color: 'var(--cathedral-gold)' }]
 })
+
+/** Short localized date per point (e.g. "14. Mai") for the axis-tooltip header —
+ *  replaces the raw point index the chart falls back to without this prop. */
+const chartTimes = computed(() =>
+  (chart.value?.points ?? []).map(p => new Date(p.t).toLocaleDateString(locale.value, { day: '2-digit', month: 'short' })),
+)
+
+/** The instrument chart carries no currency (it's the raw instrument price
+ *  series, not a depot value) — a plain 2-decimal number, no invented symbol. */
+function formatChartValue(v: number): string {
+  return formatNumber(v, 2)
+}
 
 const headerChange = computed<{ abs: number | null; pct: number | null }>(() => {
   const pts = chart.value?.points ?? []

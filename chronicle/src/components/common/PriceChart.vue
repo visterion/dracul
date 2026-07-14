@@ -37,6 +37,13 @@ const props = defineProps<{
   height?: number
   areaFill?: boolean
   labels?: { i: number; t: string }[]
+  /** One display date/time string per data point (same length/order as
+   *  `series[0].data`). When set, used as the x-axis category data so the
+   *  axis-tooltip header shows the actual date instead of the point index. */
+  times?: string[]
+  /** Formats the value shown in the tooltip. Defaults to a locale number
+   *  with at most 2 decimals. */
+  valueFormatter?: (v: number) => string
   ariaLabel?: string
   /** When set, draws a dotted horizontal reference line at this value
    *  (e.g. the range's first value) so a "since start of timeframe" move
@@ -46,7 +53,11 @@ const props = defineProps<{
 
 const H = computed(() => props.height ?? 220)
 
-const DEFAULT_COLOR = '#B8945C' // var(--cathedral-gold)
+const AREA_BASE_COLOR = '#B8945C' // var(--cathedral-gold) — base gradient color
+const LINE_COLOR = '#D4AF7A' // brighter gold — line reads too faint against the near-black background at the base tone
+
+const DEFAULT_VALUE_FORMATTER = (v: number) =>
+  new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v)
 
 const reduceMotion = computed(
   () =>
@@ -56,7 +67,12 @@ const reduceMotion = computed(
 
 const n = computed(() => Math.max(0, ...props.series.map(s => s.data.length)))
 
+const hasAxisLabels = computed(
+  () => (props.times && props.times.length > 0) || (props.labels && props.labels.length > 0)
+)
+
 const xAxisData = computed<string[]>(() => {
+  if (props.times && props.times.length > 0) return props.times
   if (props.labels && props.labels.length > 0) {
     const byIndex = new Map(props.labels.map(lb => [lb.i, lb.t]))
     return Array.from({ length: n.value }, (_, i) => byIndex.get(i) ?? '')
@@ -80,7 +96,7 @@ const option = computed<EChartsOption>(() => ({
     left: 8,
     right: 8,
     top: 14,
-    bottom: props.labels && props.labels.length > 0 ? 30 : 22,
+    bottom: hasAxisLabels.value ? 30 : 22,
     containLabel: false,
   },
   xAxis: {
@@ -92,7 +108,10 @@ const option = computed<EChartsOption>(() => ({
     axisLabel: {
       color: '#C9C5BC', // --bone-ivory-dim (literal: canvas can't resolve CSS var())
       fontSize: 10,
-      show: !!(props.labels && props.labels.length > 0),
+      show: hasAxisLabels.value,
+      // 'auto' (the category-axis default) thins overlapping labels itself —
+      // explicit here so a narrow phone viewport never crowds the full `times` array.
+      interval: 'auto',
     },
     splitLine: { show: false },
   },
@@ -110,17 +129,40 @@ const option = computed<EChartsOption>(() => ({
   tooltip: {
     trigger: 'axis',
     axisPointer: { type: 'line' },
+    formatter: (params: unknown) => {
+      const arr = Array.isArray(params) ? params : [params]
+      if (arr.length === 0) return ''
+      const fmt = props.valueFormatter ?? DEFAULT_VALUE_FORMATTER
+      type AxisTooltipParam = { axisValueLabel?: string; axisValue?: string; color?: string; value?: unknown }
+      const first = arr[0] as AxisTooltipParam
+      const date = first.axisValueLabel ?? first.axisValue ?? ''
+      const rows = (arr as AxisTooltipParam[])
+        .map(p => {
+          const raw = Array.isArray(p.value) ? p.value[p.value.length - 1] : p.value
+          const val = typeof raw === 'number' ? fmt(raw) : String(raw ?? '')
+          return `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;">`
+            + `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color ?? LINE_COLOR};"></span>`
+            + `<span>${val}</span>`
+            + `</div>`
+        })
+        .join('')
+      return `<div style="font-size:12px;line-height:1.4;">`
+        + `<div style="color:#F5F1E8;font-weight:600;">${date}</div>`
+        + rows
+        + `</div>`
+    },
   },
   series: [
     ...props.series.map((s): LineSeriesOption => {
-      const color = s.color ?? DEFAULT_COLOR
+      const color = s.color ?? LINE_COLOR
+      const areaColor = s.fill ?? s.color ?? AREA_BASE_COLOR
       return {
         type: 'line',
         data: s.data,
         color,
         showSymbol: false,
         smooth: false,
-        lineStyle: { width: 2, color },
+        lineStyle: { width: 2.5, color },
         emphasis: {
           focus: 'none',
           itemStyle: { color, borderColor: color },
@@ -141,8 +183,8 @@ const option = computed<EChartsOption>(() => ({
                 x2: 0,
                 y2: 1,
                 colorStops: [
-                  { offset: 0, color: hexToRgba(s.fill ?? color, 0.28) },
-                  { offset: 1, color: hexToRgba(s.fill ?? color, 0) },
+                  { offset: 0, color: hexToRgba(areaColor, 0.28) },
+                  { offset: 1, color: hexToRgba(areaColor, 0) },
                 ],
               },
             }
