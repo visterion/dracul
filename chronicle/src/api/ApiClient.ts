@@ -48,7 +48,7 @@ export interface ApiClient {
   getMorningReport(): Promise<MorningReport>
   getExecutorCalibration(): Promise<ExecutorCalibration>
   getExecutorBehavior(): Promise<ExecutorBehavior>
-  getDepots(): Promise<DepotsResponse>
+  getDepots(refresh?: boolean): Promise<DepotsResponse>
   getDepotChart(connection: string, range: ChartRange): Promise<DepotChart>
   getInstrumentChart(symbol: string, range: ChartRange): Promise<DepotChart>
   getInstrumentInfo(symbol: string): Promise<InstrumentInfo>

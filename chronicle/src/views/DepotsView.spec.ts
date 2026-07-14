@@ -55,10 +55,11 @@ function depot(overrides: Partial<Depot> = {}): Depot {
 let depotsResponse: DepotsResponse
 let getDepotChartImpl: (connection: string, range: ChartRange) => Promise<DepotChart> =
   async () => mockDepotChart
+const mockGetDepots = vi.fn(async () => depotsResponse)
 
 vi.mock('../api', () => ({
   useApi: () => ({
-    getDepots: vi.fn(async () => depotsResponse),
+    getDepots: mockGetDepots,
     getDepotChart: vi.fn((connection: string, range: ChartRange) => getDepotChartImpl(connection, range)),
   }),
 }))
@@ -80,6 +81,7 @@ beforeEach(() => {
   localStorage.clear()
   router.push('/depots')
   getDepotChartImpl = async () => mockDepotChart
+  mockGetDepots.mockClear()
 })
 
 describe('DepotsView', () => {
@@ -333,6 +335,21 @@ describe('DepotsView', () => {
 
     // Status is rendered as a TagPill.
     expect(orders.findAll('.tag-pill').length).toBe(2)
+  })
+
+  it('loads with the display cache on mount, and bypasses it via the refresh button', async () => {
+    depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
+    const w = mountView()
+    await flushPromises()
+
+    expect(mockGetDepots).toHaveBeenCalledTimes(1)
+    expect(mockGetDepots).toHaveBeenNthCalledWith(1, false)
+
+    await w.find('[data-testid="depots-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect(mockGetDepots).toHaveBeenCalledTimes(2)
+    expect(mockGetDepots).toHaveBeenNthCalledWith(2, true)
   })
 
   it('appends " · LIVE" to the depot dropdown option text for live environments', async () => {

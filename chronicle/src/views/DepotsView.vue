@@ -2,7 +2,7 @@
   <div class="content-inner depots-view">
     <PageHead :title="t('depots.title')" :sub="t('depots.subtitle')">
       <template #right>
-        <button class="btn btn-secondary" data-testid="depots-refresh" @click="load">
+        <button class="btn btn-secondary" data-testid="depots-refresh" @click="load(true)">
           <i class="ph ph-arrow-clockwise" aria-hidden="true" /> {{ t('depots.refresh') }}
         </button>
       </template>
@@ -86,11 +86,11 @@ watch(selectedId, id => {
   }
 })
 
-async function load() {
+async function load(refresh = false) {
   loading.value = true
   error.value = null
   try {
-    const res = await api.getDepots()
+    const res = await api.getDepots(refresh)
     depots.value = res.depots
     selectedId.value = resolveSelection(res.depots)
     if (res.error) error.value = res.error
