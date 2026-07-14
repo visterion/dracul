@@ -10,8 +10,6 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.LongSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -69,7 +67,7 @@ class DepotServiceTest {
                 ]}
                 """));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         List<DepotDto> result = service.depots("owner@example.com");
 
@@ -119,7 +117,7 @@ class DepotServiceTest {
         when(depotClient.positions(any())).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
         when(depotClient.orders(any())).thenReturn(List.of());
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         List<DepotDto> allowed = service.depots("owner@example.com");
         assertThat(allowed).extracting(DepotDto::id).containsExactlyInAnyOrder("depot-paper", "depot-live");
@@ -139,7 +137,7 @@ class DepotServiceTest {
         when(depotClient.positions(any())).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
         when(depotClient.orders(any())).thenReturn(List.of());
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         assertThat(service.depots("other@x.com")).isEmpty();
         assertThat(service.depots("owner@example.com")).hasSize(1);
@@ -160,7 +158,7 @@ class DepotServiceTest {
         when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
         when(depotClient.orders("depot-1")).thenReturn(List.of());
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         List<DepotDto> result = service.depots("owner@example.com");
 
         assertThat(result).hasSize(2);
@@ -189,7 +187,7 @@ class DepotServiceTest {
 
         when(agora.callTool(eq("get_quote"), any())).thenThrow(new AgoraUnavailableException("agora quote down"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         List<DepotDto> result = service.depots("owner@example.com");
 
         assertThat(result).hasSize(1);
@@ -233,7 +231,7 @@ class DepotServiceTest {
                 ]}
                 """));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         List<DepotDto> result = service.depots("owner@example.com");
 
         assertThat(result).hasSize(1);
@@ -260,7 +258,7 @@ class DepotServiceTest {
         AgoraClient agora = Mockito.mock(AgoraClient.class);
         when(depotClient.listConnections()).thenThrow(new DepotUnavailableException("agora completely down"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         assertThatThrownBy(() -> service.depots("owner@example.com"))
                 .isInstanceOf(DepotUnavailableException.class)
@@ -288,7 +286,7 @@ class DepotServiceTest {
         when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
 
         FxService fx = usdToEurFx("0.878");
-        DepotService service = new DepotService(depotClient, agora, fx, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, fx, LIVE_EMAILS, 60);
 
         List<DepotDto> result = service.depots("owner@example.com");
 
@@ -320,7 +318,7 @@ class DepotServiceTest {
         when(depotClient.orders("depot-1")).thenReturn(List.of());
         when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         List<DepotDto> result = service.depots("owner@example.com");
 
         DepotPositionDto posDto = result.getFirst().positions().getFirst();
@@ -347,7 +345,7 @@ class DepotServiceTest {
                 """));
 
         FxService fx = usdToEurFx("0.878");
-        DepotService service = new DepotService(depotClient, agora, fx, LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, fx, LIVE_EMAILS, 60);
         List<DepotDto> result = service.depots("owner@example.com");
 
         DepotPositionDto posDto = result.getFirst().positions().getFirst();
@@ -376,7 +374,7 @@ class DepotServiceTest {
                 {"quotes":[{"symbol":"AAPL","price":120.0,"dayChangePercent":2.0,"currency":"USD"}]}
                 """));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         List<DepotDto> result = service.depots("owner@example.com");
 
         DepotPositionDto posDto = result.getFirst().positions().getFirst();
@@ -397,7 +395,7 @@ class DepotServiceTest {
         when(depotClient.orders("depot-1")).thenReturn(List.of());
         when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         service.depots("owner@example.com");
         service.depots("owner@example.com");
@@ -419,7 +417,7 @@ class DepotServiceTest {
         when(depotClient.orders("depot-1")).thenReturn(List.of());
         when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         service.depots("owner@example.com", false);
         service.depots("owner@example.com", true);
@@ -439,7 +437,7 @@ class DepotServiceTest {
         when(depotClient.orders("depot-1")).thenReturn(List.of());
         when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         long[] clock = {1_000_000L};
         service.nowMillis = () -> clock[0];
 
@@ -458,7 +456,7 @@ class DepotServiceTest {
         when(depotClient.listConnections()).thenReturn(List.of(conn));
         when(depotClient.account("depot-1")).thenThrow(new DepotUnavailableException("saxo down"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
 
         List<DepotDto> first = service.depots("owner@example.com");
         List<DepotDto> second = service.depots("owner@example.com");
@@ -482,7 +480,7 @@ class DepotServiceTest {
         when(depotClient.orders("depot-1")).thenReturn(List.of());
         when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         DepotDto dto = service.depot("depot-1", "owner@example.com", false);
 
         assertThat(dto).isNotNull();
@@ -498,7 +496,7 @@ class DepotServiceTest {
         DepotConnection conn1 = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
         when(depotClient.listConnections()).thenReturn(List.of(conn1));
 
-        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS, 60);
         assertThat(service.depot("depot-nope", "owner@example.com", false)).isNull();
     }
 }

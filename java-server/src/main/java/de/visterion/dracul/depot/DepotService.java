@@ -68,11 +68,6 @@ public class DepotService {
         }
     }
 
-    /** Backward-compatible overload for callers/tests that predate the cache TTL parameter. */
-    public DepotService(AgoraDepotClient depotClient, AgoraClient agora, FxService fx, String liveEmailsCsv) {
-        this(depotClient, agora, fx, liveEmailsCsv, 60);
-    }
-
     public List<DepotDto> depots(String userEmail) {
         return depots(userEmail, false);
     }
