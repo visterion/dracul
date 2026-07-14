@@ -56,6 +56,13 @@ const H = computed(() => props.height ?? 220)
 const AREA_BASE_COLOR = '#B8945C' // var(--cathedral-gold) — base gradient color
 const LINE_COLOR = '#D4AF7A' // brighter gold — line reads too faint against the near-black background at the base tone
 
+// Canvas can't resolve CSS var() strings. A view passing color:'var(--cathedral-gold)'
+// would make ECharts fall back to its default palette (whose 4th colour is a red) — the
+// "line is always red" symptom. Coerce any non-literal colour to the gold fallback.
+function resolveColor(c: string | undefined, fallback: string): string {
+  return c && !c.startsWith('var(') ? c : fallback
+}
+
 const DEFAULT_VALUE_FORMATTER = (v: number) =>
   new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(v)
 
@@ -128,7 +135,12 @@ const option = computed<EChartsOption>(() => ({
   },
   tooltip: {
     trigger: 'axis',
-    axisPointer: { type: 'line' },
+    axisPointer: { type: 'line', lineStyle: { color: 'rgba(184,148,92,0.5)', width: 1 } },
+    backgroundColor: '#16161D', // --surface-2 (dark, on-theme; ECharts default is white)
+    borderColor: 'rgba(184,148,92,0.35)',
+    borderWidth: 1,
+    padding: [8, 10],
+    textStyle: { color: '#F5F1E8', fontSize: 12 },
     formatter: (params: unknown) => {
       const arr = Array.isArray(params) ? params : [params]
       if (arr.length === 0) return ''
@@ -154,8 +166,8 @@ const option = computed<EChartsOption>(() => ({
   },
   series: [
     ...props.series.map((s): LineSeriesOption => {
-      const color = s.color ?? LINE_COLOR
-      const areaColor = s.fill ?? s.color ?? AREA_BASE_COLOR
+      const color = resolveColor(s.color, LINE_COLOR)
+      const areaColor = resolveColor(s.fill ?? s.color, AREA_BASE_COLOR)
       return {
         type: 'line',
         data: s.data,
