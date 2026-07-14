@@ -45,6 +45,16 @@ class StrigoiPromptContractTest {
     }
 
     @Test
+    void lazarusPromptIsRegionNeutral() {
+        String prompt = AgentResources.classpath("prompts/strigoi-lazarus.md");
+        assertThat(prompt)
+                .as("lazarus prompt must be region/provider-neutral: no US-specific vocabulary")
+                .doesNotContain("SEC")
+                .doesNotContain("Finnhub")
+                .doesNotContain("XBRL");
+    }
+
+    @Test
     void mergerPromptDocumentsServerExtractedDealTerms() {
         String prompt = AgentResources.classpath("prompts/strigoi-merger.md");
         assertThat(prompt).as("merger prompt must document the server-extracted deal terms")

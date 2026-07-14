@@ -6,7 +6,7 @@
   "strigoi-echo": { "version": "1.2.0", "body_hash": "p-2e391863f596" },
   "strigoi-index": { "version": "2.0.0", "body_hash": "p-f86e097e4f5a" },
   "strigoi-insider": { "version": "1.3.0", "body_hash": "p-b286794163c6" },
-  "strigoi-lazarus": { "version": "1.2.0", "body_hash": "p-a4a0079008b6" },
+  "strigoi-lazarus": { "version": "1.3.0", "body_hash": "p-e6f0c025cbd5" },
   "strigoi-merger": { "version": "1.2.0", "body_hash": "p-bfedecec0a4a" },
   "strigoi-spin": { "version": "1.3.0", "body_hash": "p-d97494e41565" },
   "voievod": { "version": "1.1.0", "body_hash": "p-ad44dfcc3cfd" },
