@@ -315,6 +315,13 @@ SETTLED/ABANDONED lifecycle across hunts (see `documentation/strigoi.md` and
 | `LAZARUS_MAX_DEBT_EQUITY` | `3.0` | Leverage cap for the solvency gate; candidates above this ratio are excluded. |
 | `dracul.strigoi.lazarus.max-price-to-book` | `2.0` | Max price-to-book ratio for the cheapness (valuation) gate; a candidate must be cheap by P/B or P/FCF to pass. |
 | `dracul.strigoi.lazarus.max-p-fcf` | `20` | Max price / free-cash-flow-per-share ratio for the cheapness (valuation) gate. |
+| `dracul.strigoi.lazarus.probe-symbol` | `AAPL` | Symbol used once per batch to probe fundamentals-source health before the run (a liquid US name that is always resolvable); a probe failure marks the fundamentals source down for the batch. |
+| `dracul.fundamentals.non-us-suffixes` | XETRA/Tokyo/Hong Kong venue suffixes (mirrors Agora's venue whitelist) | Ticker suffixes (e.g. `.DE`, `.T`, `.HK`) treated as non-US: for these, Altman-Z / fundamentals inputs are sourced from Agora's `get_fundamental_concepts` (Yahoo-backed) instead of SEC XBRL `get_company_concept`. Keep in step with Agora's whitelist. |
+
+The **executor currency veto**: the executor drops any lazarus (or other Strigoi)
+signal whose watchlist row currency does not match the expected trading currency for
+its venue — a guard against acting on a mis-priced / mis-converted candidate. See
+`documentation/strigoi.md` (executor) for the veto's placement in the signal pipeline.
 
 Lazarus reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
 Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
@@ -323,6 +330,11 @@ skipped by the screener. Lazarus computes a real Piotroski F-score via Agora's
 `get_fundamental_score` tool (strict scoring + coverage count), gated by the
 price-proximity/solvency/cheapness checks above plus a hard accruals drop, and
 ranks candidates by `fScore`, dampened when `fScoreCriteriaAvailable` is thin.
+
+**Global (EU/Asia) hunting (2026-07-14):** lazarus additively screens non-US
+watchlist names (XETRA `.DE`, Tokyo `.T`, Hong Kong `.HK`) alongside US names;
+US behaviour is unchanged. For non-US symbols the Altman-Z / fundamentals inputs
+come from Agora's `get_fundamental_concepts` (Yahoo-backed) rather than SEC XBRL.
 
 ## Strigoi Merger
 
