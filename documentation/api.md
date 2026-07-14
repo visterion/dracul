@@ -415,15 +415,21 @@ Order ticket fields (`ticket`):
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/depots` | List depot connections and their positions/orders for the current user |
-| GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders) |
+| GET | `/api/depots` | List depot connections and their positions/orders for the current user. Served from a per-connection display cache (TTL `dracul.depots.cache-ttl-seconds`, default 60s); `?refresh=true` bypasses it and re-fetches from the broker. |
+| GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders). Fetches only the requested connection (cached), not all connections. |
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
 | GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
 
 Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
-/api/depots` calls `DepotService.depots(userEmail)`, which lists Agora's
-configured broker connections and gates any **live**-environment
+/api/depots` calls `DepotService.depots(userEmail, refresh)` (default
+`refresh=false`, served from the per-connection display cache — see
+`dracul.depots.cache-ttl-seconds` in configuration.md; `?refresh=true`
+forces a fresh broker fetch). The position-slice and chart endpoints use
+`DepotService.depot(connection, userEmail, false)` so they fetch (and
+cache) only the requested connection rather than all of them. The method
+lists Agora's configured broker connections and gates any
+**live**-environment
 connection behind an allow-listed set of user emails
 (`dracul.depots.live-visible-emails`, default `viktor@ufelmann.de`);
 **paper**-environment connections are visible to everyone. A connection
