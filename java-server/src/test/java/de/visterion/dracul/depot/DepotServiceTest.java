@@ -10,6 +10,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -381,5 +383,122 @@ class DepotServiceTest {
         assertThat(posDto.nativePrice()).isNull();
         assertThat(posDto.nativeCurrency()).isNull();
         assertThat(posDto.price()).isEqualByComparingTo("120.00");
+    }
+
+    @Test void cacheHitWithinTtlMakesNoSecondAgoraCall() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
+                new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+
+        service.depots("viktor@ufelmann.de");
+        service.depots("viktor@ufelmann.de");
+
+        Mockito.verify(depotClient, Mockito.times(1)).account("depot-1");
+        Mockito.verify(depotClient, Mockito.times(1)).positions("depot-1");
+        Mockito.verify(depotClient, Mockito.times(1)).orders("depot-1");
+    }
+
+    @Test void forceRefreshBypassesCache() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
+                new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+
+        service.depots("viktor@ufelmann.de", false);
+        service.depots("viktor@ufelmann.de", true);
+
+        Mockito.verify(depotClient, Mockito.times(2)).account("depot-1");
+    }
+
+    @Test void cacheExpiresAfterTtl() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
+                new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        long[] clock = {1_000_000L};
+        service.nowMillis = () -> clock[0];
+
+        service.depots("viktor@ufelmann.de");
+        clock[0] += 61_000L; // past the default 60s TTL
+        service.depots("viktor@ufelmann.de");
+
+        Mockito.verify(depotClient, Mockito.times(2)).account("depot-1");
+    }
+
+    @Test void errorOutcomeIsNotCached() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn));
+        when(depotClient.account("depot-1")).thenThrow(new DepotUnavailableException("saxo down"));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+
+        List<DepotDto> first = service.depots("viktor@ufelmann.de");
+        List<DepotDto> second = service.depots("viktor@ufelmann.de");
+
+        assertThat(first.getFirst().error()).isEqualTo("saxo down");
+        assertThat(second.getFirst().error()).isEqualTo("saxo down");
+        Mockito.verify(depotClient, Mockito.times(2)).account("depot-1");
+    }
+
+    @Test void singleConnectionDepotFetchesOnlyThatConnection() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+
+        DepotConnection conn1 = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        DepotConnection conn2 = new DepotConnection("depot-2", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn1, conn2));
+        DepotAccount account = new DepotAccount(new BigDecimal("1000"), new BigDecimal("1000"),
+                new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z");
+        when(depotClient.account("depot-1")).thenReturn(account);
+        when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(), "2026-07-11T10:00:00Z"));
+        when(depotClient.orders("depot-1")).thenReturn(List.of());
+        when(agora.callTool(eq("get_quote"), any())).thenReturn(json("{\"quotes\":[]}"));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        DepotDto dto = service.depot("depot-1", "viktor@ufelmann.de", false);
+
+        assertThat(dto).isNotNull();
+        assertThat(dto.id()).isEqualTo("depot-1");
+        Mockito.verify(depotClient, Mockito.never()).account("depot-2");
+        Mockito.verify(depotClient, Mockito.never()).positions("depot-2");
+        Mockito.verify(depotClient, Mockito.never()).orders("depot-2");
+    }
+
+    @Test void singleConnectionDepotReturnsNullWhenConnectionUnknown() {
+        AgoraDepotClient depotClient = Mockito.mock(AgoraDepotClient.class);
+        AgoraClient agora = Mockito.mock(AgoraClient.class);
+        DepotConnection conn1 = new DepotConnection("depot-1", "alpaca", "paper", "connected", "2026-07-11T10:00:00Z");
+        when(depotClient.listConnections()).thenReturn(List.of(conn1));
+
+        DepotService service = new DepotService(depotClient, agora, noopFx(), LIVE_EMAILS);
+        assertThat(service.depot("depot-nope", "viktor@ufelmann.de", false)).isNull();
     }
 }

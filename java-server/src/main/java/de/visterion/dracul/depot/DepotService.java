@@ -19,6 +19,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 
 /**
  * Assembles the GUI's depot read path: lists Agora's configured broker connections, gates
@@ -42,12 +44,21 @@ public class DepotService {
     private final FxService fx;
     private final Set<String> liveVisibleEmails;
     private final ObjectMapper mapper = new ObjectMapper();
+    private final int cacheTtlSeconds;
+    private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
+    /** Overridable in tests to simulate TTL expiry without real sleeps. */
+    LongSupplier nowMillis = System::currentTimeMillis;
+
+    private record CacheEntry(DepotDto dto, long expiresAtMillis) {}
 
     public DepotService(AgoraDepotClient depotClient, AgoraClient agora, FxService fx,
-            @Value("${dracul.depots.live-visible-emails:viktor@ufelmann.de}") String liveEmailsCsv) {
+            @Value("${dracul.depots.live-visible-emails:viktor@ufelmann.de}") String liveEmailsCsv,
+            @Value("${dracul.depots.cache-ttl-seconds:60}") int cacheTtlSeconds) {
         this.depotClient = depotClient;
         this.agora = agora;
         this.fx = fx;
+        this.cacheTtlSeconds = cacheTtlSeconds;
         this.liveVisibleEmails = new HashSet<>();
         if (liveEmailsCsv != null) {
             for (String email : liveEmailsCsv.split(",")) {
@@ -57,7 +68,34 @@ public class DepotService {
         }
     }
 
+    /** Backward-compatible overload for callers/tests that predate the cache TTL parameter. */
+    public DepotService(AgoraDepotClient depotClient, AgoraClient agora, FxService fx, String liveEmailsCsv) {
+        this(depotClient, agora, fx, liveEmailsCsv, 60);
+    }
+
     public List<DepotDto> depots(String userEmail) {
+        return depots(userEmail, false);
+    }
+
+    public List<DepotDto> depots(String userEmail, boolean forceRefresh) {
+        List<DepotConnection> visible = visibleConnections(userEmail);
+        if (visible.isEmpty()) return List.of();
+
+        List<DepotDto> result = new ArrayList<>();
+        for (DepotConnection c : visible) {
+            result.add(cachedOrFresh(c, forceRefresh));
+        }
+        return result;
+    }
+
+    public DepotDto depot(String connection, String userEmail, boolean forceRefresh) {
+        List<DepotConnection> visible = visibleConnections(userEmail);
+        DepotConnection match = visible.stream().filter(c -> connection.equals(c.id())).findFirst().orElse(null);
+        if (match == null) return null;
+        return cachedOrFresh(match, forceRefresh);
+    }
+
+    private List<DepotConnection> visibleConnections(String userEmail) {
         List<DepotConnection> connections;
         try {
             connections = depotClient.listConnections();
@@ -73,41 +111,57 @@ public class DepotService {
         for (DepotConnection c : connections) {
             if (isLiveVisible(c, userEmail)) visible.add(c);
         }
-        if (visible.isEmpty()) return List.of();
+        return visible;
+    }
 
-        // First pass: fetch account/positions/orders per connection, isolating failures.
-        record Raw(DepotConnection conn, DepotAccount account, PositionsSnapshot positions,
-                List<DepotOrder> orders, String error) {}
-
-        List<Raw> raws = new ArrayList<>();
-        Set<String> symbols = new HashSet<>();
-        for (DepotConnection c : visible) {
-            try {
-                DepotAccount account = depotClient.account(c.id());
-                PositionsSnapshot positions = depotClient.positions(c.id());
-                List<DepotOrder> orders = depotClient.orders(c.id());
-                for (DepotPosition p : positions.positions()) {
-                    if (p.symbol() != null) symbols.add(p.symbol());
-                }
-                raws.add(new Raw(c, account, positions, orders, null));
-            } catch (RuntimeException e) {
-                raws.add(new Raw(c, null, null, null, e.getMessage()));
-            }
+    /** Cache read-through with per-connection single-flight: concurrent misses for the same
+     *  connection do not both hit Saxo. Error DTOs are never stored (always retried). */
+    private DepotDto cachedOrFresh(DepotConnection c, boolean forceRefresh) {
+        long now = nowMillis.getAsLong();
+        if (!forceRefresh) {
+            CacheEntry entry = cache.get(c.id());
+            if (entry != null && entry.expiresAtMillis() > now) return entry.dto();
         }
 
+        Object lock = locks.computeIfAbsent(c.id(), k -> new Object());
+        synchronized (lock) {
+            long recheckNow = nowMillis.getAsLong();
+            if (!forceRefresh) {
+                CacheEntry entry = cache.get(c.id());
+                if (entry != null && entry.expiresAtMillis() > recheckNow) return entry.dto();
+            }
+            DepotDto dto = assembleOne(c);
+            if (dto.error() == null) {
+                cache.put(c.id(), new CacheEntry(dto, recheckNow + cacheTtlSeconds * 1000L));
+            } else {
+                cache.remove(c.id());
+            }
+            return dto;
+        }
+    }
+
+    /** Fetches account/positions/orders for one connection, isolating failure into an error DTO
+     *  (matching the historical per-connection isolation behavior of {@code depots}). */
+    private DepotDto assembleOne(DepotConnection c) {
+        DepotAccount account;
+        PositionsSnapshot positions;
+        List<DepotOrder> orders;
+        try {
+            account = depotClient.account(c.id());
+            positions = depotClient.positions(c.id());
+            orders = depotClient.orders(c.id());
+        } catch (RuntimeException e) {
+            return new DepotDto(c.id(), c.provider(), c.environment(), c.status(), c.probedAt(),
+                    e.getMessage(), null, null, null, null, null);
+        }
+
+        Set<String> symbols = new HashSet<>();
+        for (DepotPosition p : positions.positions()) {
+            if (p.symbol() != null) symbols.add(p.symbol());
+        }
         Map<String, QuoteData> quotes = fetchQuotes(symbols);
 
-        List<DepotDto> result = new ArrayList<>();
-        for (Raw raw : raws) {
-            if (raw.error() != null) {
-                result.add(new DepotDto(raw.conn().id(), raw.conn().provider(), raw.conn().environment(),
-                        raw.conn().status(), raw.conn().probedAt(), raw.error(),
-                        null, null, null, null, null));
-                continue;
-            }
-            result.add(assemble(raw.conn(), raw.account(), raw.positions(), raw.orders(), quotes));
-        }
-        return result;
+        return assemble(c, account, positions, orders, quotes);
     }
 
     private boolean isLiveVisible(DepotConnection c, String userEmail) {
