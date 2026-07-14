@@ -49,6 +49,14 @@ const fullInfo: InstrumentInfo = {
   insiderActivity: { transactions: [{ ticker: 'NVDA', insider: 'Jensen Huang', transactionDate: '2026-06-15', type: 'sell', shares: 50000, price: 132.10 }] },
 }
 
+const analystDetailInfo: InstrumentInfo = {
+  ...fullInfo,
+  analystEstimates: {
+    symbol: 'NVDA',
+    recommendations: [{ period: '2026-07', strongBuy: 8, buy: 4, hold: 3, sell: 1, strongSell: 0 }],
+  },
+}
+
 let getDepotPositionImpl: (connection: string, symbol: string) => Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }> =
   async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z' })
 let getInstrumentChartImpl: (symbol: string, range: ChartRange) => Promise<DepotChart> =
@@ -141,6 +149,30 @@ describe('DepotPositionDetailView', () => {
     // The "Informationen" section is dead code (Finnhub never returns a
     // description) and was removed — it must never render, even with a full profile.
     expect(w.find('[data-testid="pd-info"]').exists()).toBe(false)
+  })
+
+  it('shows the 5-level analyst rating, breakdown counts, and a Finnhub source link', async () => {
+    getInstrumentInfoImpl = async () => analystDetailInfo
+    const w = mountView()
+    await flushPromises()
+
+    const insights = w.find('[data-testid="pd-section-insights"]')
+    expect(insights.exists()).toBe(true)
+
+    // strongBuy:8, buy:4, hold:3, sell:1, strongSell:0 → total 16
+    // score = (8*5 + 4*4 + 3*3 + 1*2 + 0*1) / 16 = (40+16+9+2+0)/16 = 4.1875 → "Kaufen" (Buy bucket, de locale)
+    expect(insights.text()).toContain('Kaufen')
+
+    // breakdown: total=16, buy(strongBuy+buy)=12, hold=3, sell(sell+strongSell)=1
+    expect(insights.text()).toContain('16 Analysten')
+    expect(insights.text()).toContain('12 Kauf')
+    expect(insights.text()).toContain('3 Halten')
+    expect(insights.text()).toContain('1 Verkauf')
+
+    const sourceLink = insights.find('a[href="https://finance.yahoo.com/quote/NVDA/analysis"]')
+    expect(sourceLink.exists()).toBe(true)
+    expect(sourceLink.attributes('target')).toBe('_blank')
+    expect(sourceLink.attributes('rel')).toBe('noopener noreferrer')
   })
 
   it('renders enriched position details: name, native price, weight/today tiles, asset class, held-since, order role', async () => {

@@ -158,8 +158,16 @@
       <InfoCardRow v-if="insightCards.length" :title="t('depots.detail.insights.title')" testid="pd-section-insights">
         <div v-for="c in insightCards" :key="c.key" class="icr-card">
           <div class="icr-card-title">{{ c.title }}</div>
-          <div class="icr-card-value mono">{{ c.value }}</div>
+          <div class="icr-card-value mono" :class="c.valueTone">{{ c.value }}</div>
           <div v-if="c.sub" class="icr-card-sub">{{ c.sub }}</div>
+          <div v-if="c.breakdown" class="icr-card-sub">{{ c.breakdown }}</div>
+          <a
+            v-if="c.sourceUrl"
+            class="icr-card-source"
+            :href="c.sourceUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ c.sourceLabel }}</a>
         </div>
       </InfoCardRow>
 
@@ -432,7 +440,10 @@ function eventDaysLabel(reportDate: string): string {
 // Insights (analyst consensus + price target, EPS estimate, fundamental
 // score, insider activity) — each is its own card and only appears when its
 // source section has usable data.
-interface InsightCard { key: string; title: string; value: string; sub?: string }
+interface InsightCard {
+  key: string; title: string; value: string; sub?: string
+  valueTone?: string; breakdown?: string; sourceLabel?: string; sourceUrl?: string
+}
 const insightCards = computed<InsightCard[]>(() => {
   const cards: InsightCard[] = []
 
@@ -440,18 +451,41 @@ const insightCards = computed<InsightCard[]>(() => {
   const recommendations = asArray(analyst?.recommendations).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
   const latestRec = recommendations[recommendations.length - 1]
   if (latestRec) {
-    const buy = (asNumber(latestRec.buy) ?? 0) + (asNumber(latestRec.strongBuy) ?? 0)
+    const strongBuy = asNumber(latestRec.strongBuy) ?? 0
+    const buyN = asNumber(latestRec.buy) ?? 0
     const hold = asNumber(latestRec.hold) ?? 0
-    const sell = (asNumber(latestRec.sell) ?? 0) + (asNumber(latestRec.strongSell) ?? 0)
-    const total = buy + hold + sell
-    const consensus = total > 0 && buy >= hold && buy >= sell
-      ? 'Buy' : total > 0 && sell >= buy && sell >= hold ? 'Sell' : total > 0 ? 'Hold' : '—'
+    const sellN = asNumber(latestRec.sell) ?? 0
+    const strongSell = asNumber(latestRec.strongSell) ?? 0
+    const total = strongBuy + buyN + hold + sellN + strongSell
+    const buyCount = strongBuy + buyN
+    const sellCount = sellN + strongSell
+
+    let rating = '—'
+    let valueTone = ''
+    if (total > 0) {
+      const score = (strongBuy * 5 + buyN * 4 + hold * 3 + sellN * 2 + strongSell * 1) / total
+      if (score >= 4.5) { rating = t('depots.detail.insights.rating.strongBuy'); valueTone = 'pos' }
+      else if (score >= 3.5) { rating = t('depots.detail.insights.rating.buy'); valueTone = 'pos' }
+      else if (score >= 2.5) { rating = t('depots.detail.insights.rating.hold'); valueTone = '' }
+      else if (score >= 1.5) { rating = t('depots.detail.insights.rating.sell'); valueTone = 'neg' }
+      else { rating = t('depots.detail.insights.rating.strongSell'); valueTone = 'neg' }
+    }
+
     const priceTarget = asNumber(analyst?.priceTarget) ?? asNumber(analyst?.averagePriceTarget)
+    const symbol = position.value?.symbol ?? ''
+    const symbolIsSafe = /^[A-Za-z.\-]{1,12}$/.test(symbol)
+
     cards.push({
       key: 'analyst',
       title: t('depots.detail.insights.analystConsensus'),
-      value: consensus,
+      value: rating,
+      valueTone,
       sub: priceTarget != null ? `${t('depots.detail.insights.priceTarget')}: ${formatMoney(priceTarget, position.value?.currency ?? 'USD')}` : undefined,
+      breakdown: total > 0
+        ? t('depots.detail.insights.analystBreakdown', { total, buy: buyCount, hold, sell: sellCount })
+        : undefined,
+      sourceLabel: symbolIsSafe ? t('depots.detail.insights.analystSource') : undefined,
+      sourceUrl: symbolIsSafe ? `https://finance.yahoo.com/quote/${symbol}/analysis` : undefined,
     })
   }
 
@@ -578,6 +612,14 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 }
 .icr-news-arrow { color: var(--cathedral-gold); }
 .icr-card-value { color: var(--cathedral-gold); font-size: var(--text-body); }
+.icr-card-value.pos { color: var(--signal-positive-bright); }
+.icr-card-value.neg { color: var(--blood-crimson-bright); }
+.icr-card-source {
+  color: var(--cathedral-gold); font-size: var(--text-micro); text-decoration: none;
+  margin-top: auto;
+}
+.icr-card-source:hover { text-decoration: underline; }
+.icr-card-source:focus-visible { outline: 2px solid var(--cathedral-gold); outline-offset: 2px; }
 .icr-card-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
 
 .icr-finance-table { min-width: 240px; }

@@ -561,6 +561,15 @@ export default {
         insiderActivity: 'Insider-Aktivität',
         buys: '{n} Käufe',
         sells: '{n} Verkäufe',
+        rating: {
+          strongBuy: 'Strong Buy',
+          buy: 'Kaufen',
+          hold: 'Halten',
+          sell: 'Verkaufen',
+          strongSell: 'Strong Sell',
+        },
+        analystBreakdown: '{total} Analysten · {buy} Kauf · {hold} Halten · {sell} Verkauf',
+        analystSource: 'Quelle: Finnhub · Ratings ansehen ↗',
       },
       finance: {
         title: 'Finanzen',
