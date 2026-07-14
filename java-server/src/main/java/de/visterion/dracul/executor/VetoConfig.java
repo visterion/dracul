@@ -19,5 +19,6 @@ public record VetoConfig(
         int pacePerWeek,
         int trancheCount,
         double driftAnchorAtrMult,   // BELOW_ANCHOR: drift-set band (default 0.0)
-        double valueAnchorAtrMult) { // BELOW_ANCHOR: value/dip band (default 3.0)
+        double valueAnchorAtrMult,   // BELOW_ANCHOR: value/dip band (default 3.0)
+        String instrumentCurrency) { // CURRENCY_MISMATCH: the single account/instrument currency the executor trades (config dracul.executor.instrument-currency, default USD)
 }

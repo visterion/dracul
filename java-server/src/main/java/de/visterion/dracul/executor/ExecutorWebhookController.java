@@ -144,13 +144,15 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.pace-per-week:2}") int pacePerWeek,
             @Value("${dracul.executor.max-tranche:2}") int maxTranche,
             @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays,
-            @Value("${dracul.executor.max-broker-attempts:3}") int maxBrokerAttempts) {
+            @Value("${dracul.executor.max-broker-attempts:3}") int maxBrokerAttempts,
+            @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, positionContextRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
-                entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, Clock.systemUTC());
+                entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
+                Clock.systemUTC());
     }
 
     /** Package-private overload with an injectable {@link Clock}, so tests can assert
@@ -195,6 +197,7 @@ public class ExecutorWebhookController {
             int maxBrokerAttempts,
             double driftAnchorAtrMult,
             double valueAnchorAtrMult,
+            String instrumentCurrency,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -228,7 +231,7 @@ public class ExecutorWebhookController {
         this.positionContextRepo = positionContextRepo;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
-                trancheCount, driftAnchorAtrMult, valueAnchorAtrMult);
+                trancheCount, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency);
     }
 
     // -------------------------------------------------------------------

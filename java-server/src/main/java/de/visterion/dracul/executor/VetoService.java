@@ -14,7 +14,7 @@ import java.util.Set;
  * Code-enforced pre-trade vetos ("Garantien in Code"). Pure and deterministic — no I/O, no clock.
  * The LLM's judgment never overrides these.
  *
- * <p>{@link #evaluate} runs the full 15-veto catalog against an assembled {@link EntryContext},
+ * <p>{@link #evaluate} runs the full 16-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
  * mandatory upstream data was missing at assembly time.
  */
@@ -327,6 +327,20 @@ public class VetoService {
         String paceMeasured = ctx.entriesThisWeek() + (paceOk ? " < " : " >= ") + cfg.pacePerWeek() + " this week";
         results.add(new VetoResult("PACE_LIMIT", paceOk, paceMeasured));
         if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;
+
+        // 16 CURRENCY_MISMATCH — the executor is single-currency in this slice: it can only size a
+        // bracket in the configured account/instrument currency (cfg.instrumentCurrency()). A find
+        // whose instrument trades in another currency (EUR/JPY/HKD), or whose quote carried NO
+        // currency at all (null — NOT silently coerced to USD upstream), must never be entered, or
+        // the order would be mis-sized against the wrong currency. Such a find is still surfaced,
+        // watchlisted and given a Verdict — only the bracket order is withheld. A full
+        // multi-currency executor is a later project.
+        String quoteCcy = ctx.quoteCurrency();
+        boolean currencyOk = quoteCcy != null && quoteCcy.equalsIgnoreCase(cfg.instrumentCurrency());
+        String currencyMeasured = (quoteCcy == null ? "unknown" : quoteCcy)
+                + (currencyOk ? " == " : " != ") + cfg.instrumentCurrency();
+        results.add(new VetoResult("CURRENCY_MISMATCH", currencyOk, currencyMeasured));
+        if (!currencyOk && firstFailure == null) firstFailure = RejectReason.CURRENCY_MISMATCH;
 
         boolean passed = firstFailure == null;
         Snapshot snapshot = new Snapshot(heatBeforePct, usedPct, budgetFree, ctx.entriesThisWeek(),

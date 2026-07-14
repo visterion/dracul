@@ -90,7 +90,7 @@ class ExecutorWebhookControllerTest {
                 assembler, sizer, ranker, tranche2Detector, telegram, positionContextRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 0.0, 3.0, fixedClock);
+                2, 3, 0.0, 3.0, "USD", fixedClock);
     }
 
     // -------------------------------------------------------------------
@@ -123,7 +123,8 @@ class ExecutorWebhookControllerTest {
                 BigDecimal.ZERO,
                 Map.of(),
                 BigDecimal.ONE,
-                List.of());
+                List.of(),
+                "USD");
     }
 
     private static EntryContext withMissing(EntryContext c, List<String> missing) {
@@ -131,7 +132,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                missing);
+                missing, c.quoteCurrency());
     }
 
     private static EntryContext withOpenPositions(EntryContext c, List<ExecutorPosition> positions) {
@@ -139,7 +140,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), positions, c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing());
+                c.missing(), c.quoteCurrency());
     }
 
     private static EntryContext withPendingSignals(EntryContext c, List<ExecutorSignal> pending) {
@@ -147,7 +148,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 pending, c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing());
+                c.missing(), c.quoteCurrency());
     }
 
     private static EntryContext withPrice(EntryContext c, BigDecimal price) {
@@ -155,7 +156,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing());
+                c.missing(), c.quoteCurrency());
     }
 
     private static EntryContext withOpenHeat(EntryContext c, BigDecimal openHeat) {
@@ -163,13 +164,13 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), openHeat, c.openMechanisms(), c.fxToAccount(),
-                c.missing());
+                c.missing(), c.quoteCurrency());
     }
 
     private static EntryContext unavailableContext() {
         return new EntryContext(null, null, null, null, null, null, null,
                 List.of(), List.of(), List.of(), 0, -1L, null, null, null, null,
-                Map.of(), BigDecimal.ONE, List.of("price", "atr"));
+                Map.of(), BigDecimal.ONE, List.of("price", "atr"), "USD");
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side,
@@ -222,7 +223,7 @@ class ExecutorWebhookControllerTest {
                 assembler, customSizer, ranker, tranche2Detector, telegram, positionContextRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 0.0, 3.0, fixedClock);
+                2, 3, 0.0, 3.0, "USD", fixedClock);
     }
 
     @SuppressWarnings("unchecked")
@@ -308,7 +309,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(15);
+        assertThat(vetoResults.size()).isEqualTo(16);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -444,7 +445,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("NO_STOP");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(15);
+        assertThat(log.vetoResults().size()).isEqualTo(16);
     }
 
     // -------------------------------------------------------------------
@@ -753,7 +754,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_TOO_SMALL");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(15);
+        assertThat(log.vetoResults().size()).isEqualTo(16);
     }
 
     @Test
@@ -884,7 +885,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(15);
+        assertThat(vetoResults.size()).isEqualTo(16);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -998,7 +999,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(15);
+        assertThat(log.vetoResults().size()).isEqualTo(16);
     }
 
     @Test
@@ -2164,7 +2165,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("102"), new BigDecimal("2"), null, new BigDecimal("500000"),
                 new BigDecimal("103"), "TECH", List.of(), List.of(), List.of(), 0, 0L,
                 new BigDecimal("750"), new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
-                Map.of(), BigDecimal.ONE, List.of());
+                Map.of(), BigDecimal.ONE, List.of(), "USD");
         when(assembler.assembleForSymbol(any())).thenReturn(ctx);
 
         JsonNode body = json("""
