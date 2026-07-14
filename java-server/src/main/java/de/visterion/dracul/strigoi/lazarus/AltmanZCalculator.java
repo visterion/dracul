@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.ConceptSeries;
+import de.visterion.dracul.hunting.agora.FundamentalConcept;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -78,9 +79,22 @@ public class AltmanZCalculator {
             "RetainedEarningsAccumulatedDeficit", "OperatingIncomeLoss",
             "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet");
 
-    private final AgoraFilings filings;
+    /** Non-US concept path: the same seven inputs as {@link #BULK_TAGS}, but as neutral
+     *  {@link FundamentalConcept}s fetched from {@code get_fundamental_concepts}. There is no
+     *  Liabilities derivation nor a revenue fallback chain here — the concept path exposes
+     *  {@code TOTAL_LIABILITIES} and {@code REVENUE} directly. */
+    private static final FundamentalConcept[] CONCEPTS = {
+            FundamentalConcept.TOTAL_ASSETS, FundamentalConcept.CURRENT_ASSETS,
+            FundamentalConcept.CURRENT_LIABILITIES, FundamentalConcept.TOTAL_LIABILITIES,
+            FundamentalConcept.RETAINED_EARNINGS, FundamentalConcept.EBIT, FundamentalConcept.REVENUE};
 
-    public AltmanZCalculator(AgoraFilings filings) { this.filings = filings; }
+    private final AgoraFilings filings;
+    private final InstrumentClassifier classifier;
+
+    public AltmanZCalculator(AgoraFilings filings, InstrumentClassifier classifier) {
+        this.filings = filings;
+        this.classifier = classifier;
+    }
 
     /** Z-score of one symbol; {@code zScore} is scale-2 and null unless {@code available}. */
     public record AltmanZ(BigDecimal zScore, boolean available) {
@@ -90,12 +104,42 @@ public class AltmanZCalculator {
     private record Dated(LocalDate end, BigDecimal value) {}
 
     /**
+     * US-symbol convenience overload (no reporting currency — US filings are USD/USD, so the
+     * non-US currency guard never applies). Delegates to {@link #zScore(String, Double, String)}.
+     *
      * @param marketCapMillions Finnhub market cap in USD MILLIONS (converted to USD here);
      *                          null or non-positive → unavailable without any remote call.
      */
     public AltmanZ zScore(String symbol, Double marketCapMillions) {
-        if (marketCapMillions == null || marketCapMillions <= 0) return AltmanZ.unavailable();
+        return zScore(symbol, marketCapMillions, null);
+    }
 
+    /**
+     * Z-score of one symbol on the path chosen by {@link InstrumentClassifier}:
+     * <ul>
+     *   <li>US → the byte-identical us-gaap {@code get_company_facts} route (unchanged; the
+     *       {@code reportingCurrency} argument is ignored — US filings are USD).</li>
+     *   <li>non-US → the currency-aware {@code get_fundamental_concepts} route, where the market
+     *       cap arrives in {@code reportingCurrency} MILLIONS and the concept liabilities in their
+     *       own reporting {@code unit}; the two must agree (the X4 currency guard) or the score is
+     *       unavailable.</li>
+     * </ul>
+     *
+     * @param marketCapMillions market cap in MILLIONS of the symbol's reporting currency (USD for
+     *                          US); null or non-positive → unavailable without any remote call.
+     * @param reportingCurrency ISO-4217 code the (non-US) market cap and concept values are
+     *                          expected to share; ignored on the US path, null-safe.
+     */
+    public AltmanZ zScore(String symbol, Double marketCapMillions, String reportingCurrency) {
+        if (marketCapMillions == null || marketCapMillions <= 0) return AltmanZ.unavailable();
+        return classifier.isNonUs(symbol)
+                ? zScoreNonUs(symbol, marketCapMillions, reportingCurrency)
+                : zScoreUs(symbol, marketCapMillions);
+    }
+
+    /** US path: the original us-gaap {@code get_company_facts} computation — unchanged, and the
+     *  merge gate keeps its output byte-identical. */
+    private AltmanZ zScoreUs(String symbol, Double marketCapMillions) {
         Map<String, ConceptSeries> facts = filings.companyFactsStrict(symbol, BULK_TAGS);
 
         Dated assets = latestInstant(series(facts, "Assets"));
@@ -116,12 +160,60 @@ public class AltmanZCalculator {
         BigDecimal revenue = firstAnnualRevenueAt(facts, ebit.end());
         if (revenue == null) return AltmanZ.unavailable();
 
-        BigDecimal totalAssets = assets.value();
         BigDecimal marketValueEquity = BigDecimal.valueOf(marketCapMillions).multiply(USD_PER_MILLION);
+        return computeZ(assets.value(), currentAssets, currentLiabilities, liabilities,
+                retainedEarnings, ebit.value(), revenue, marketValueEquity);
+    }
 
+    /** Non-US path: the same five ratios, but built from {@code get_fundamental_concepts}.
+     *  {@code TOTAL_LIABILITIES} is used directly (no us-gaap identity/current+noncurrent
+     *  derivation — the concept path exposes it, and its absence means unavailable), and the
+     *  market cap and liabilities must share {@code reportingCurrency} (the X4 currency guard). */
+    private AltmanZ zScoreNonUs(String symbol, Double marketCapMillions, String reportingCurrency) {
+        ConceptSeries.MultiConcept mc = filings.conceptsStrict(symbol, CONCEPTS);
+
+        Dated assets = latestInstant(mc.series(FundamentalConcept.TOTAL_ASSETS));
+        if (assets == null || assets.value().signum() <= 0) return AltmanZ.unavailable();
+        LocalDate anchor = assets.end();
+
+        BigDecimal currentAssets = instantAt(anchor, mc.series(FundamentalConcept.CURRENT_ASSETS));
+        if (currentAssets == null) return AltmanZ.unavailable();
+        BigDecimal currentLiabilities = instantAt(anchor, mc.series(FundamentalConcept.CURRENT_LIABILITIES));
+        if (currentLiabilities == null) return AltmanZ.unavailable();
+        BigDecimal liabilities = instantAt(anchor, mc.series(FundamentalConcept.TOTAL_LIABILITIES));
+        if (liabilities == null || liabilities.signum() <= 0) return AltmanZ.unavailable();
+
+        // X4 currency guard: the market cap (reportingCurrency millions) and the concept
+        // liabilities must be quoted in the SAME currency, else X4 mixes units. SHARES_OUTSTANDING's
+        // unit is deliberately NOT consulted (bogusly the quote currency on the Yahoo path).
+        String liabilitiesUnit = mc.unit(FundamentalConcept.TOTAL_LIABILITIES);
+        if (reportingCurrency == null || liabilitiesUnit == null
+                || !liabilitiesUnit.equals(reportingCurrency)) {
+            return AltmanZ.unavailable();
+        }
+
+        BigDecimal retainedEarnings = instantAt(anchor, mc.series(FundamentalConcept.RETAINED_EARNINGS));
+        if (retainedEarnings == null) return AltmanZ.unavailable();
+
+        Dated ebit = latestAnnualDuration(mc.series(FundamentalConcept.EBIT));
+        if (ebit == null) return AltmanZ.unavailable();
+        BigDecimal revenue = annualDurationAt(ebit.end(), mc.series(FundamentalConcept.REVENUE));
+        if (revenue == null) return AltmanZ.unavailable();
+
+        BigDecimal marketValueEquity = BigDecimal.valueOf(marketCapMillions).multiply(USD_PER_MILLION);
+        return computeZ(assets.value(), currentAssets, currentLiabilities, liabilities,
+                retainedEarnings, ebit.value(), revenue, marketValueEquity);
+    }
+
+    /** The classic 1968 weighting, shared by both paths so the arithmetic (and the US golden Z)
+     *  is identical regardless of where the inputs were sourced. All inputs are raw reporting
+     *  currency; {@code marketValueEquity} is already converted from millions. */
+    private static AltmanZ computeZ(BigDecimal totalAssets, BigDecimal currentAssets,
+            BigDecimal currentLiabilities, BigDecimal liabilities, BigDecimal retainedEarnings,
+            BigDecimal ebit, BigDecimal revenue, BigDecimal marketValueEquity) {
         BigDecimal x1 = currentAssets.subtract(currentLiabilities).divide(totalAssets, MC);
         BigDecimal x2 = retainedEarnings.divide(totalAssets, MC);
-        BigDecimal x3 = ebit.value().divide(totalAssets, MC);
+        BigDecimal x3 = ebit.divide(totalAssets, MC);
         BigDecimal x4 = marketValueEquity.divide(liabilities, MC);
         BigDecimal x5 = revenue.divide(totalAssets, MC);
 

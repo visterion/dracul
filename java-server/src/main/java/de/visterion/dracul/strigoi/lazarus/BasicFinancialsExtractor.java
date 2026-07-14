@@ -27,11 +27,18 @@ public final class BasicFinancialsExtractor {
                 dbl(metrics, "pbAnnual"),
                 dbl(metrics, "peTTM"),
                 dbl(metrics, "freeCashFlowPerShareTTM"),
-                dbl(metrics, "marketCapitalization"));
+                dbl(metrics, "marketCapitalization"),
+                str(metrics, "reportingCurrency"));
     }
 
     private static Double dbl(JsonNode metric, String field) {
         JsonNode n = metric.path(field);
         return n.isNumber() ? n.asDouble() : null;
+    }
+
+    /** Reporting-currency code (non-US path only); null when absent or non-textual. */
+    private static String str(JsonNode metric, String field) {
+        JsonNode n = metric.path(field);
+        return n.isTextual() ? n.asString() : null;
     }
 }

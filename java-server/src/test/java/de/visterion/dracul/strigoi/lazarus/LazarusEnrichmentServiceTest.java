@@ -45,7 +45,7 @@ class LazarusEnrichmentServiceTest {
         marketData = mock(AgoraMarketData.class); // unstubbed -> empty bar list (no timing)
         altmanZ = mock(AltmanZCalculator.class);
         companyData = mock(AgoraCompanyData.class); // unstubbed -> empty trend (no revisions)
-        when(altmanZ.zScore(anyString(), any())).thenReturn(AltmanZCalculator.AltmanZ.unavailable());
+        when(altmanZ.zScore(anyString(), any(), any())).thenReturn(AltmanZCalculator.AltmanZ.unavailable());
         service = new LazarusEnrichmentService(filings, marketData, altmanZ, companyData,
                 new RevisionsProxy());
     }
@@ -121,7 +121,7 @@ class LazarusEnrichmentServiceTest {
         assertThat(out).isEmpty();
         // a hard-dropped candidate costs no further remote calls: no OHLC, no recommendations
         verifyNoInteractions(marketData, companyData);
-        verify(altmanZ, never()).zScore(anyString(), any()); // stubbed in setUp, so verify never()
+        verify(altmanZ, never()).zScore(anyString(), any(), any()); // stubbed in setUp, so verify never()
     }
 
     @Test
@@ -323,14 +323,14 @@ class LazarusEnrichmentServiceTest {
     @Test
     void mapsZScoreOntoCandidateAndPassesMarketCapThrough() {
         when(filings.fundamentalScoreStrict("ACME")).thenReturn(GOOD_SCORE);
-        when(altmanZ.zScore("ACME", 900.0))
+        when(altmanZ.zScore(eq("ACME"), eq(900.0), any()))
                 .thenReturn(new AltmanZCalculator.AltmanZ(new BigDecimal("3.40"), true));
 
         EnrichedLazarusCandidate e = service.enrich(List.of(candidate("ACME"))).get(0);
 
         assertThat(e.zScore()).isEqualByComparingTo("3.40");
         assertThat(e.zScoreAvailable()).isTrue();
-        verify(altmanZ).zScore("ACME", 900.0); // the candidate's Finnhub marketCap (USD millions)
+        verify(altmanZ).zScore(eq("ACME"), eq(900.0), any()); // the candidate's Finnhub marketCap (USD millions)
     }
 
     @Test
@@ -341,7 +341,7 @@ class LazarusEnrichmentServiceTest {
 
         // an unavailable F-score means the symbol may not resolve in EDGAR at all — attempting
         // the concept fetches would burn dead remote calls and could false-trip the down guard
-        verify(altmanZ, never()).zScore(anyString(), any());
+        verify(altmanZ, never()).zScore(anyString(), any(), any());
         assertThat(e.zScore()).isNull();
         assertThat(e.zScoreAvailable()).isFalse();
     }
@@ -361,13 +361,13 @@ class LazarusEnrichmentServiceTest {
     @Test
     void agoraOutageDuringZDisablesZForRemainingCandidates() {
         when(filings.fundamentalScoreStrict(anyString())).thenReturn(GOOD_SCORE);
-        when(altmanZ.zScore(anyString(), any())).thenThrow(new AgoraUnavailableException("down"));
+        when(altmanZ.zScore(anyString(), any(), any())).thenThrow(new AgoraUnavailableException("down"));
 
         List<EnrichedLazarusCandidate> out =
                 service.enrich(List.of(candidate("AAA"), candidate("BBB")));
 
         // the down source is probed exactly once, then skipped for the rest of the batch
-        verify(altmanZ, times(1)).zScore(anyString(), any());
+        verify(altmanZ, times(1)).zScore(anyString(), any(), any());
         assertThat(out).hasSize(2);
         assertThat(out).allSatisfy(e -> {
             assertThat(e.zScore()).isNull();
@@ -377,14 +377,14 @@ class LazarusEnrichmentServiceTest {
 
         // the down-flag lives per enrich() call: the next batch probes the source again
         service.enrich(List.of(candidate("CCC")));
-        verify(altmanZ, times(2)).zScore(anyString(), any());
+        verify(altmanZ, times(2)).zScore(anyString(), any(), any());
     }
 
     @Test
     void nonAvailabilityZFailureStaysPerCandidate() {
         when(filings.fundamentalScoreStrict(anyString())).thenReturn(GOOD_SCORE);
-        when(altmanZ.zScore(eq("BOOM"), any())).thenThrow(new IllegalStateException("weird payload"));
-        when(altmanZ.zScore(eq("FINE"), any()))
+        when(altmanZ.zScore(eq("BOOM"), any(), any())).thenThrow(new IllegalStateException("weird payload"));
+        when(altmanZ.zScore(eq("FINE"), any(), any()))
                 .thenReturn(new AltmanZCalculator.AltmanZ(new BigDecimal("2.10"), true));
 
         List<EnrichedLazarusCandidate> out =
@@ -411,7 +411,7 @@ class LazarusEnrichmentServiceTest {
             assertThat(e.fScoreCriteriaAvailable()).isZero();
             assertThat(e.zScoreAvailable()).isFalse();
         });
-        verify(altmanZ, never()).zScore(anyString(), any()); // no Z without a resolved F-score
+        verify(altmanZ, never()).zScore(anyString(), any(), any()); // no Z without a resolved F-score
 
         // the down-flag lives per enrich() call: the next batch probes the source again
         service.enrich(List.of(candidate("CCC")));
