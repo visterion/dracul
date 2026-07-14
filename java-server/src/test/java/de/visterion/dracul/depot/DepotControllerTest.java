@@ -10,6 +10,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class DepotControllerTest {
@@ -23,32 +25,83 @@ class DepotControllerTest {
     void passesCurrentUserToService() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
-        when(service.depots("alice@x.com")).thenReturn(List.of());
+        when(service.depots("alice@x.com", false)).thenReturn(List.of());
 
-        var out = newController(service).depots();
+        var out = newController(service).depots(false);
 
         assertThat(out.depots()).isEmpty();
         assertThat(out.error()).isNull();
-        verify(service).depots("alice@x.com");
+        verify(service).depots("alice@x.com", false);
     }
 
     @Test
     void agoraDownYieldsEmptyListWithError() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
-        when(service.depots("alice@x.com")).thenThrow(new DepotUnavailableException("agora down"));
+        when(service.depots("alice@x.com", false)).thenThrow(new DepotUnavailableException("agora down"));
 
-        var out = newController(service).depots();
+        var out = newController(service).depots(false);
 
         assertThat(out.depots()).isEmpty();
         assertThat(out.error()).isEqualTo("agora down");
     }
 
     @Test
+    void depotsEndpointForwardsRefreshFalseByDefault() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        when(service.depots(any(), eq(false))).thenReturn(List.of());
+
+        newController(service).depots(false);
+
+        verify(service).depots(any(), eq(false));
+    }
+
+    @Test
+    void depotsEndpointForwardsRefreshTrueWhenRequested() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        when(service.depots(any(), eq(true))).thenReturn(List.of());
+
+        newController(service).depots(true);
+
+        verify(service).depots(any(), eq(true));
+    }
+
+    @Test
+    void resolveDepotUsesSingleConnectionServiceMethodNotAllConnections() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        when(service.depot(eq("conn-1"), any(), eq(false))).thenReturn(null);
+
+        var controller = newController(service);
+
+        assertThatThrownBy(() -> controller.positionDetail("conn-1", "ACME"))
+                .isInstanceOf(ResponseStatusException.class);
+
+        verify(service).depot(eq("conn-1"), any(), eq(false));
+        verify(service, never()).depots(any());
+        verify(service, never()).depots(any(), anyBoolean());
+    }
+
+    @Test
+    void resolveDepotThrows404WhenConnectionUnknown() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        when(service.depot(eq("depot-x"), any(), eq(false))).thenReturn(null);
+
+        var controller = newController(service);
+
+        assertThatThrownBy(() -> controller.positionDetail("depot-x", "AAPL"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasFieldOrPropertyWithValue("statusCode", org.springframework.http.HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void unknownConnectionIs404() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
-        when(service.depots("alice@x.com")).thenReturn(List.of());
+        when(service.depot("missing-conn", "alice@x.com", false)).thenReturn(null);
 
         var controller = newController(service);
 
@@ -62,7 +115,7 @@ class DepotControllerTest {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
         DepotDto depot = depotWithPosition("conn-1", "ACME");
-        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
         var controller = newController(service);
 
@@ -77,7 +130,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
                 "agora down", null, null, null, null, null);
-        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
         var controller = newController(service);
 
@@ -92,7 +145,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
                 null, null, null, null, null, null);
-        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
         var controller = newController(service);
 
@@ -105,7 +158,7 @@ class DepotControllerTest {
     void serviceUnavailableExceptionIs503ForPositionDetail() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
-        when(service.depots("alice@x.com")).thenThrow(new DepotUnavailableException("agora down"));
+        when(service.depot("conn-1", "alice@x.com", false)).thenThrow(new DepotUnavailableException("agora down"));
 
         var controller = newController(service);
 
@@ -119,7 +172,7 @@ class DepotControllerTest {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
         DepotDto depot = depotWithPosition("conn-1", "ACME");
-        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
         var out = newController(service).positionDetail("conn-1", "ACME");
 
@@ -151,7 +204,7 @@ class DepotControllerTest {
     void depotChartUnknownConnectionIs404() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
-        when(service.depots("alice@x.com")).thenReturn(List.of());
+        when(service.depot("missing-conn", "alice@x.com", false)).thenReturn(null);
         var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class));
 
         assertThatThrownBy(() -> controller.depotChart("missing-conn", "1y"))
@@ -165,7 +218,7 @@ class DepotControllerTest {
         var service = mock(DepotService.class);
         DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
                 "agora down", null, null, null, null, null);
-        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
         var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class));
 
         assertThatThrownBy(() -> controller.depotChart("conn-1", "1y"))
@@ -178,7 +231,7 @@ class DepotControllerTest {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
         DepotDto depot = depotWithPosition("conn-1", "ACME");
-        when(service.depots("alice@x.com")).thenReturn(List.of(depot));
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
         var chartService = mock(DepotChartService.class);
         var curve = new DepotChartService.DepotCurve(

@@ -35,9 +35,9 @@ public class DepotController {
     }
 
     @GetMapping
-    public DepotsResponse depots() {
+    public DepotsResponse depots(@RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
         try {
-            return new DepotsResponse(service.depots(CurrentUserHolder.get()), null);
+            return new DepotsResponse(service.depots(CurrentUserHolder.get(), refresh), null);
         } catch (DepotUnavailableException e) {
             return new DepotsResponse(List.of(), e.getMessage());
         }
@@ -100,18 +100,16 @@ public class DepotController {
      * {@link #positionDetail} and {@link #depotChart} which both need a live, error-free depot.
      */
     private DepotDto resolveDepot(String connection) {
-        List<DepotDto> depots;
+        DepotDto depot;
         try {
-            depots = service.depots(CurrentUserHolder.get());
+            depot = service.depot(connection, CurrentUserHolder.get(), false);
         } catch (DepotUnavailableException e) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
         }
 
-        DepotDto depot = depots.stream()
-                .filter(d -> connection.equals(d.id()))
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown depot connection"));
-
+        if (depot == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown depot connection");
+        }
         if (depot.error() != null || depot.positions() == null) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, depot.error());
         }
