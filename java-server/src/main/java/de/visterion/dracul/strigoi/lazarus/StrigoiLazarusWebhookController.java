@@ -37,6 +37,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private final double maxDebtEquity;
     private final double maxPriceToBook;
     private final double maxPFcf;
+    private final String probeSymbol;
 
     public StrigoiLazarusWebhookController(
             @Value("${dracul.strigoi.lazarus.webhook-token}") String token,
@@ -51,7 +52,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
             @Value("${dracul.strigoi.lazarus.max-above-low:0.10}") double maxAboveLow,
             @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity,
             @Value("${dracul.strigoi.lazarus.max-price-to-book:2.0}") double maxPriceToBook,
-            @Value("${dracul.strigoi.lazarus.max-p-fcf:20}") double maxPFcf) {
+            @Value("${dracul.strigoi.lazarus.max-p-fcf:20}") double maxPFcf,
+            @Value("${dracul.strigoi.lazarus.probe-symbol:AAPL}") String probeSymbol) {
         super(token, preyRepo, cache);
         this.watchlist = watchlist;
         this.companyData = companyData;
@@ -63,6 +65,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
         this.maxDebtEquity = maxDebtEquity;
         this.maxPriceToBook = maxPriceToBook;
         this.maxPFcf = maxPFcf;
+        this.probeSymbol = probeSymbol;
     }
 
     @Override protected String agentName() { return "strigoi-lazarus"; }
@@ -88,8 +91,16 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // hunt, not per symbol). fundamentals() alone can't tell "Agora is down" apart from "no data
         // for this symbol" — it collapses both to null — so a total outage would otherwise report
         // healthy with all-null financials.
+        //
+        // Probe a FIXED US canary (dracul.strigoi.lazarus.probe-symbol, default AAPL), NOT
+        // items.get(0): the watchlist is ordered added_at DESC, so a freshly-seeded non-US row can
+        // be items.get(0), and with the global-metrics flag OFF its get_fundamentals is unavailable
+        // — probing it would wrongly declare the whole hunt unavailable and kill the healthy US
+        // flow. Per-symbol no-data for real watchlist items is handled downstream (fundamentals()
+        // null → screener drops the row). The empty-watchlist short-circuit stays: no probe when
+        // there is nothing to hunt.
         if (!items.isEmpty()) {
-            var probe = companyData.fundamentalsResult(items.get(0).ticker());
+            var probe = companyData.fundamentalsResult(probeSymbol);
             if (!probe.health().isHealthy()) {
                 return de.visterion.dracul.hunting.DataSourceResult.unavailable(
                         "agora", probe.health().detail());

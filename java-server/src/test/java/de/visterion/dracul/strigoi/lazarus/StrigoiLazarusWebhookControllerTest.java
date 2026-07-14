@@ -51,7 +51,7 @@ class StrigoiLazarusWebhookControllerTest {
         controller = new StrigoiLazarusWebhookController(
                 "tok", watchlist, companyData, screener, enrichment, preyRepo, cache,
                 heldPositionService, CONNECTION,
-                0.10, 3.0, 2.0, 20);
+                0.10, 3.0, 2.0, 20, "AAPL");
     }
 
     /** Real record, not a mock -- WatchlistItem's accessors are final (record), so mocking them
