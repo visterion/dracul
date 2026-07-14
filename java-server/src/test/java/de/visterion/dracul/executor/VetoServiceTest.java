@@ -10,7 +10,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Full 15-veto catalog + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
+ * Full 16-veto catalog (incl. CURRENCY_MISMATCH) + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
  * {@link #cfg()} return pass-everything defaults; each test perturbs exactly what it needs to
  * exercise one veto boundary.
  */

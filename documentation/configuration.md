@@ -316,7 +316,7 @@ SETTLED/ABANDONED lifecycle across hunts (see `documentation/strigoi.md` and
 | `dracul.strigoi.lazarus.max-price-to-book` | `2.0` | Max price-to-book ratio for the cheapness (valuation) gate; a candidate must be cheap by P/B or P/FCF to pass. |
 | `dracul.strigoi.lazarus.max-p-fcf` | `20` | Max price / free-cash-flow-per-share ratio for the cheapness (valuation) gate. |
 | `dracul.strigoi.lazarus.probe-symbol` | `AAPL` | Symbol used once per batch to probe fundamentals-source health before the run (a liquid US name that is always resolvable); a probe failure marks the fundamentals source down for the batch. |
-| `dracul.fundamentals.non-us-suffixes` | XETRA/Tokyo/Hong Kong venue suffixes (mirrors Agora's venue whitelist) | Ticker suffixes (e.g. `.DE`, `.T`, `.HK`) treated as non-US: for these, Altman-Z / fundamentals inputs are sourced from Agora's `get_fundamental_concepts` (Yahoo-backed) instead of SEC XBRL `get_company_concept`. Keep in step with Agora's whitelist. |
+| `dracul.fundamentals.non-us-suffixes` | `DE,MI,TO,L,T,HK,PA,AS,SW,AX,ST,CO,OL,HE,MC,BR,LS,VI,IR,NZ` (mirrors Agora's venue whitelist) | Ticker suffixes (e.g. `.DE`, `.T`, `.HK`, `.PA`, …) treated as non-US: for these, Altman-Z / fundamentals inputs are sourced from Agora's `get_fundamental_concepts` (Yahoo-backed) instead of SEC XBRL `get_company_facts`. Must stay equal to Agora's `agora.fundamentals.non-us-suffixes` whitelist — a suffix present here but not on Agora's side (or vice-versa) misroutes the symbol. |
 
 The **executor currency veto**: the executor drops any lazarus (or other Strigoi)
 signal whose watchlist row currency does not match the expected trading currency for
