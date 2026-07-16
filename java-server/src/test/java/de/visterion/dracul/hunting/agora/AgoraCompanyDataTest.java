@@ -55,6 +55,22 @@ class AgoraCompanyDataTest {
                 .isEmpty();
     }
 
+    @Test void newsDefaultsSourceTypeToNewsWhenFieldMissing() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Old Agora item without sourceType\",\"summary\":\"s\",\"source\":\"WSJ\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}," +
+                "{\"headline\":\"New Agora item with sourceType\",\"summary\":\"s\",\"source\":\"yahoo-rss\"," +
+                "\"sourceType\":\"news\",\"datetime\":\"2026-07-15T11:00:00Z\",\"url\":\"http://n/2\"}]}"));
+        AgoraCompanyData data = new AgoraCompanyData(client);
+
+        List<NewsHeadline> out = data.news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+        assertThat(out).hasSize(2);
+        assertThat(out.get(0).sourceType()).isEqualTo("news"); // missing field defaults to "news"
+        assertThat(out.get(1).sourceType()).isEqualTo("news"); // explicit field passed through
+    }
+
     @Test void recommendationsMapsCounts() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_analyst_estimates"), any())).thenReturn(json(

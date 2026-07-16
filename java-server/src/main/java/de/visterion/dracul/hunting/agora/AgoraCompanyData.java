@@ -49,6 +49,7 @@ public class AgoraCompanyData {
                         headline,
                         n.path("summary").asString(""),
                         n.path("source").asString(""),
+                        n.path("sourceType").asString("news"),
                         Instant.parse(n.path("datetime").asString()),
                         n.path("url").asString("")));
             } catch (RuntimeException ignored) { /* skip malformed row */ }
