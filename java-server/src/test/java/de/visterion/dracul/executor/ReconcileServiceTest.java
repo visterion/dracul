@@ -119,7 +119,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
-                new BigDecimal("100"), new BigDecimal("108")));
+                new BigDecimal("100"), new BigDecimal("108"), null));
 
         ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
         List<ExecutorPosition> survivors = result.survivors();
@@ -155,7 +155,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
-                new BigDecimal("100"), new BigDecimal("108")));
+                new BigDecimal("100"), new BigDecimal("108"), null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
@@ -174,7 +174,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("SHORT1", "SELL", BigDecimal.TEN,
-                new BigDecimal("100"), new BigDecimal("94")));
+                new BigDecimal("100"), new BigDecimal("94"), null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
@@ -198,7 +198,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("SHORT2", "SELL", BigDecimal.TEN,
-                new BigDecimal("100"), new BigDecimal("103")));
+                new BigDecimal("100"), new BigDecimal("103"), null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
@@ -332,7 +332,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("FILLPOS", "BUY", BigDecimal.TEN,
-                new BigDecimal("100"), new BigDecimal("104")));
+                new BigDecimal("100"), new BigDecimal("104"), null));
 
         ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
 
@@ -347,7 +347,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of());
 
         gateway.seedPosition(new BrokerPosition("GHOST", "BUY", BigDecimal.TEN,
-                new BigDecimal("50"), new BigDecimal("55")));
+                new BigDecimal("50"), new BigDecimal("55"), null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
 
@@ -372,7 +372,7 @@ class ReconcileServiceTest {
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
-                new BigDecimal("100"), new BigDecimal("108")));
+                new BigDecimal("100"), new BigDecimal("108"), null));
 
         service.reconcile("c", "run-1");
 
