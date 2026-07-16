@@ -679,7 +679,7 @@ public class ExecutorWebhookController {
                     "OPEN", brokerOrderId,
                     orderPrice, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    null, null, null, null));
+                    orderPrice, null, null, null));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 
@@ -1211,6 +1211,10 @@ public class ExecutorWebhookController {
 
         try {
             BigDecimal newQty = position.qty().add(sizing.qty());
+            // Weighted recompute from submitted (limit) prices — intentionally not broker-basis
+            // yet. ReconcileService.updateMaintenance() converges entry_price to the broker's
+            // real post-add average open price on the next reconcile run, so any tranche-2
+            // slippage self-corrects without special-casing it here.
             BigDecimal newEntry = position.qty().multiply(position.entryPrice())
                     .add(sizing.qty().multiply(orderPrice))
                     .divide(newQty, 6, RoundingMode.HALF_UP);

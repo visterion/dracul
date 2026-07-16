@@ -143,6 +143,59 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void maintenanceSyncsEntryPriceFromBrokerBasis() {
+        // Verified prod bug (PSMT): booked entry_price 193.88 (the submitted limit) never
+        // corrected to the broker's real fill 193.87 -> slippage always computed as 0.
+        ExecutorPosition p = new ExecutorPosition(20L, "c", "PSMT", "BUY", BigDecimal.TEN,
+                new BigDecimal("193.88"), new BigDecimal("190"), new BigDecimal("190"), 1, null,
+                List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-20", null,
+                BigDecimal.ZERO, 0, null, null, null, null, "stop-20",
+                null, null, null, null, 0, null, null,
+                new BigDecimal("193.88"), null, null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("PSMT", "BUY", BigDecimal.TEN,
+                new BigDecimal("193.87"), new BigDecimal("195"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("193.87"));
+
+        assertThat(survivors).hasSize(1);
+        ExecutorPosition survivor = survivors.get(0);
+        assertThat(survivor.entryPrice()).isEqualByComparingTo("193.87");
+        assertThat(survivor.submittedLimitPrice()).isEqualByComparingTo("193.88");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
+        assertThat(log.action()).isEqualTo("SYNC");
+        assertThat(log.reasonCode()).isEqualTo("ENTRY_PRICE_SYNC");
+        assertThat(log.symbol()).isEqualTo("PSMT");
+        assertThat(log.inputsSnapshot().get("old_entry_price").decimalValue())
+                .isEqualByComparingTo("193.88");
+        assertThat(log.inputsSnapshot().get("new_entry_price").decimalValue())
+                .isEqualByComparingTo("193.87");
+        assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(20L);
+    }
+
+    @Test
+    void maintenanceDoesNotLogSyncWhenBasisUnchanged() {
+        ExecutorPosition p = openPosition(21L, "STAB", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-21", "stop-21", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("STAB", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
+        verify(decisionRepo, never()).insert(any());
+    }
+
+    @Test
     void stillOpen_pinsSectorEntryDayHighAndTranche2FieldsThroughReconcile() {
         // Task-1 review carry-over: ReconcileService's still-open position-copy must not drop
         // sector/entryDayHigh/tranche2OrderId/tranche2StopOrderId — pin the pass-through here.

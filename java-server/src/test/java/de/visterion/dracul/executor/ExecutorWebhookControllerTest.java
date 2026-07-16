@@ -845,6 +845,28 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void entryInsertPersistsSubmittedLimitPrice() {
+        // Book = broker: entry_price is later corrected to the broker's real fill basis by
+        // ReconcileService, but submitted_limit_price must keep the original order price
+        // forever, so slippage (entry_price - submitted_limit_price) stays computable.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, null, body);
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("100");
+        assertThat(posCaptor.getValue().submittedLimitPrice()).isEqualByComparingTo("100");
+    }
+
+    @Test
     void placeEntry_happyPath_writesRichDecisionLog() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))

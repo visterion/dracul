@@ -163,7 +163,7 @@ public class ReconcileService {
             } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, runId);
             } else {
-                survivors.add(updateMaintenance(p, bp));
+                survivors.add(updateMaintenance(p, bp, runId));
             }
         }
         return new ReconcileResult(survivors, unfilledIds);
@@ -267,13 +267,38 @@ public class ReconcileService {
                 action, exitReason, orderJson, null, null, null, null));
     }
 
-    private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp) {
+    private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp, String runId) {
         // The broker actually holds this position -> the entry is confirmed filled. Clear the
         // GTD expiry marker: from here on `entry_expires_at IS NULL` doubles as the persisted
         // "entry filled" flag (set at placement, cleared here on fill or by EntryExpiryService
         // on cancel), which ExecutorWebhookController.exitPosition uses to gate LLM exits.
         if (p.entryExpiresAt() != null) {
             positionRepo.clearEntryExpiry(p.id());
+        }
+
+        // Book = broker: the broker's average open price is the entry-price truth. The submitted
+        // limit stays in submitted_limit_price (slippage = entry_price - submitted_limit_price).
+        // Idempotent: converges after tranche-2 fills too; logs only on an actual change.
+        BigDecimal brokerBasis = bp.avgEntryPrice();
+        if (brokerBasis != null && brokerBasis.signum() > 0
+                && p.entryPrice().compareTo(brokerBasis) != 0) {
+            positionRepo.syncEntryPrice(p.id(), brokerBasis);
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("old_entry_price", p.entryPrice());
+            inputs.put("new_entry_price", brokerBasis);
+            ObjectNode orderJson = mapper.createObjectNode();
+            orderJson.put("position_id", p.id());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                    "SYNC", "ENTRY_PRICE_SYNC", orderJson, null, null, null, null));
+            p = new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                    brokerBasis, p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                    p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                    p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                    p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                    p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                    p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                    p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
         }
 
         BigDecimal currentClose = bp.marketPrice();
