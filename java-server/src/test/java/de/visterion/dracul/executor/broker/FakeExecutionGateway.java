@@ -103,7 +103,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
             remainingQty = position.qty().subtract(closedQty);
             positionsBySymbol.put(symbol, new BrokerPosition(
                     position.symbol(), position.side(), remainingQty,
-                    position.avgEntryPrice(), position.marketPrice()));
+                    position.avgEntryPrice(), position.marketPrice(), position.openOrdersCount()));
         }
 
         return new CloseResult(closedQty, remainingQty, position.marketPrice(), "close-" + n);

@@ -10,6 +10,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,15 +73,25 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         List<BrokerPosition> result = new ArrayList<>();
         if (array.isArray()) {
             for (JsonNode p : array) {
+                BigDecimal qty = decimalField(p, "qty", "qty");
+                BigDecimal marketPrice = decimalField(p, "marketPrice", "market_price");
+                if (marketPrice == null) {
+                    // Transitional fallback for pre-A4.1 Agora: derive per-unit from the total.
+                    // Consuming raw marketValue as a per-unit price corrupted R/MFE (PSMT 2026-07-13).
+                    BigDecimal marketValue = decimalField(p, "marketValue", "market_value");
+                    if (marketValue != null && qty != null && qty.signum() != 0) {
+                        marketPrice = marketValue.divide(qty, 12, RoundingMode.HALF_UP).stripTrailingZeros();
+                    }
+                }
+                JsonNode ooc = p.path("openOrdersCount");
                 result.add(new BrokerPosition(
                         textOrNull(p, "symbol"),
                         // Live Saxo returns no "side" field — leave it null rather than invent one.
                         textOrNull(p, "side"),
-                        decimalField(p, "qty", "qty"),
+                        qty,
                         decimalField(p, "avgEntryPrice", "avg_entry_price"),
-                        // Live Saxo carries the market price in "marketValue"; keep the documented
-                        // marketPrice/market_price names as fallbacks.
-                        decimalField(p, "marketValue", "market_value", "marketPrice", "market_price")));
+                        marketPrice,
+                        ooc.isIntegralNumber() ? ooc.asInt() : null));
             }
         }
         return result;
