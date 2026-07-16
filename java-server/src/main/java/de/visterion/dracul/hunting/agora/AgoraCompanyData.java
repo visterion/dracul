@@ -3,6 +3,9 @@ package de.visterion.dracul.hunting.agora;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -10,6 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,35 +29,81 @@ import java.util.List;
 @Component
 public class AgoraCompanyData {
 
+    private static final Logger log = LoggerFactory.getLogger(AgoraCompanyData.class);
     private final AgoraClient agora;
+    private final boolean includeSocial;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public AgoraCompanyData(AgoraClient agora) { this.agora = agora; }
+    public AgoraCompanyData(AgoraClient agora,
+                            @Value("${dracul.news.include-social:false}") boolean includeSocial) {
+        this.agora = agora;
+        this.includeSocial = includeSocial;
+    }
 
-    /** Company news in [from, to]; empty list on any failure. */
+    /**
+     * Company news in [from, to]; empty list on any failure. Rows are parsed defensively
+     * (no exception-based skipping); items without a parseable datetime are DROPPED here —
+     * dateless items pass every Agora date window, and one such item would otherwise be a
+     * perpetual NEGATIVE_NEWS trigger via NewsDetector after every cooldown expiry. When
+     * dracul.news.include-social=false (default), the call asks Agora for sourceTypes
+     * ["news"] (server-side, before Agora's item cap) AND drops sourceType=social items
+     * client-side (defense against an old Agora that ignores the param); when true, the
+     * param is omitted and nothing is filtered. Dateless/social items stay visible through
+     * the raw tool and the depot passthrough (DepotInstrumentService).
+     */
     public List<NewsHeadline> news(String symbol, LocalDate from, LocalDate to) {
         JsonNode res;
         try {
             ObjectNode args = mapper.createObjectNode();
             args.put("symbol", symbol).put("from", from.toString()).put("to", to.toString());
+            if (!includeSocial) {
+                args.putArray("sourceTypes").add("news");
+            }
             res = agora.callTool("get_company_news", args);
         } catch (AgoraUnavailableException e) {
             return List.of();
         }
         List<NewsHeadline> out = new ArrayList<>();
+        int droppedDateless = 0;
+        int filteredSocial = 0;
         for (JsonNode n : res.path("news")) {
-            try {
-                String headline = n.path("headline").asString("");
-                if (headline.isBlank()) continue;
-                out.add(new NewsHeadline(
-                        headline,
-                        n.path("summary").asString(""),
-                        n.path("source").asString(""),
-                        Instant.parse(n.path("datetime").asString()),
-                        n.path("url").asString("")));
-            } catch (RuntimeException ignored) { /* skip malformed row */ }
+            String headline = n.path("headline").asString("");
+            if (headline.isBlank()) continue;
+            String sourceType = n.path("sourceType").asString("news");
+            if (!includeSocial && "social".equalsIgnoreCase(sourceType)) {
+                filteredSocial++;
+                continue;
+            }
+            Instant datetime = parseDatetime(n.path("datetime").asString(""));
+            if (datetime == null) {
+                droppedDateless++;
+                continue;
+            }
+            out.add(new NewsHeadline(
+                    headline,
+                    n.path("summary").asString(""),
+                    n.path("source").asString(""),
+                    sourceType,
+                    datetime,
+                    n.path("url").asString("")));
+        }
+        if (filteredSocial > 0) {
+            log.debug("news: filtered {} social items for {}", filteredSocial, symbol);
+        }
+        if (droppedDateless > 0) {
+            log.debug("news: dropped {} dateless items for {}", droppedDateless, symbol);
         }
         return out;
+    }
+
+    /** Defensive ISO-8601 parse; null for missing/blank/unparseable values (caller drops those items). */
+    private static Instant parseDatetime(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return Instant.parse(raw);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** Analyst recommendation trend, newest-first as delivered; empty list on any failure
