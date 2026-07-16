@@ -161,6 +161,22 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    /** Returns the {@code exit_submitted_at} timestamp stamped by {@link #markPendingExit} for a
+     *  pending-exit row, or {@code null} if never stamped (or the row has no such column value).
+     *  Not an {@link ExecutorPosition} record component — {@code ReconcileService} needs this only
+     *  to age-gate the {@code PENDING_EXIT_STALE} escalation, so a dedicated lookup is simpler
+     *  than widening the record for one consumer. */
+    public Instant exitSubmittedAt(long id) {
+        return jdbc.sql("SELECT exit_submitted_at FROM executor_position WHERE id = :id")
+                .param("id", id)
+                .query((rs, n) -> {
+                    java.sql.Timestamp ts = rs.getTimestamp("exit_submitted_at");
+                    return ts == null ? null : ts.toInstant();
+                })
+                .optional()
+                .orElse(null);
+    }
+
     public void updateTranche2(long id, BigDecimal newQty, BigDecimal newEntryPrice,
                                String tranche2OrderId, String tranche2StopOrderId) {
         jdbc.sql("""

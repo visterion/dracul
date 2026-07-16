@@ -129,6 +129,7 @@ dracul:
     giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}
     soft-confirm-min: ${DRACUL_EXECUTOR_SOFT_CONFIRM_MIN:2}
     cooldown-days: ${DRACUL_EXECUTOR_COOLDOWN_DAYS:10}
+    pending-exit-stale-hours: ${DRACUL_EXECUTOR_PENDING_EXIT_STALE_HOURS:24}
     total-budget: ${DRACUL_EXECUTOR_TOTAL_BUDGET:10000}
     tranche-count: ${DRACUL_EXECUTOR_TRANCHE_COUNT:10}
     instrument-currency: ${DRACUL_EXECUTOR_INSTRUMENT_CURRENCY:USD}
