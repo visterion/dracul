@@ -36,5 +36,9 @@ public record ExecutorPosition(
         String tranche2StopOrderId,
         int trimCount,
         BigDecimal lowestPrice,
-        String entryExpiresAt) {
+        String entryExpiresAt,
+        BigDecimal submittedLimitPrice,
+        String pendingExitReason,
+        String exitOrderId,
+        BigDecimal pendingExitFillPrice) {
 }

@@ -45,6 +45,14 @@ import java.util.Set;
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class ReconcileService {
 
+    /** {@code reasonCode}s that {@link HardTriggerService} produces — kept in sync with its
+     *  {@code Trigger} reason codes. Drives the LOG_HARD_EXIT-vs-RECONCILE_CLOSE action choice
+     *  when finalizing a pending-exit row ({@link #finalizePendingExitOrKeep}): a hard-trigger
+     *  origin keeps the same action as its submit-time decision row, anything else (e.g. a
+     *  webhook soft/LLM exit reason) is a RECONCILE_CLOSE. */
+    private static final Set<String> HARD_REASONS =
+            Set.of("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH");
+
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
     private final DecisionLogRepository decisionRepo;
@@ -53,6 +61,7 @@ public class ReconcileService {
     private final ObjectMapper mapper;
     private final TelegramNotifier telegram;
     private final int cooldownDays;
+    private final int pendingExitStaleHours;
     private final Clock clock;
 
     @Autowired
@@ -64,9 +73,10 @@ public class ReconcileService {
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
             TelegramNotifier telegram,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
+            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
+            @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
-                cooldownDays, Clock.systemUTC());
+                cooldownDays, pendingExitStaleHours, Clock.systemUTC());
     }
 
     ReconcileService(
@@ -78,6 +88,7 @@ public class ReconcileService {
             ObjectMapper mapper,
             TelegramNotifier telegram,
             int cooldownDays,
+            int pendingExitStaleHours,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -87,6 +98,7 @@ public class ReconcileService {
         this.mapper = mapper;
         this.telegram = telegram;
         this.cooldownDays = cooldownDays;
+        this.pendingExitStaleHours = pendingExitStaleHours;
         this.clock = clock;
     }
 
@@ -147,6 +159,15 @@ public class ReconcileService {
                     .filter(x -> x.symbol().equals(p.symbol()))
                     .findFirst().orElse(null);
 
+            // A hard-trigger flatten or fill-less webhook FULL exit already submitted an order
+            // for this position but has not yet been confirmed — branch here FIRST, before any
+            // other reconcile logic (tranche2 desync, entry-pending, normal fill detection) can
+            // touch it. Never close on our own say-so; only the broker's confirmed state may.
+            if (p.pendingExitReason() != null) {
+                finalizePendingExitOrKeep(p, bp, orders, runId, survivors);
+                continue;
+            }
+
             BrokerOrder filledLeg = findFilledExitLeg(p, orders);
 
             if (p.tranche2OrderId() != null && (bp == null || filledLeg != null)) {
@@ -163,7 +184,7 @@ public class ReconcileService {
             } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, runId);
             } else {
-                survivors.add(updateMaintenance(p, bp));
+                survivors.add(updateMaintenance(p, bp, runId));
             }
         }
         return new ReconcileResult(survivors, unfilledIds);
@@ -224,6 +245,119 @@ public class ReconcileService {
                         + " — TRANCHE2_DESYNC — operator attention required", null, null, null));
     }
 
+    /**
+     * Finalizes a pending-exit row (hard-trigger flatten or fill-less webhook FULL exit already
+     * submitted, see {@code pending_exit_reason}/{@code exit_order_id}) once the broker confirms
+     * it is really gone, or leaves it OPEN+pending untouched otherwise. This is the fix for the
+     * verified PSMT incident: closing here before the broker confirms can book a wrong exit
+     * price/R while the broker still holds shares and a working exit order.
+     *
+     * <p>Finalization gate: the broker no longer reports the position ({@code bp == null}) AND
+     * {@code exit_order_id} is not reported WORKING/PARTIALLY_FILLED. Exit price precedence:
+     * the matched filled exit leg's {@code avgFillPrice} (source FILL) → the fill price stamped
+     * at submit time, {@code pending_exit_fill_price} (source FILL) → the position's
+     * {@code active_stop} as a last resort (source MARK, no fill data available at all).
+     */
+    private void finalizePendingExitOrKeep(ExecutorPosition p, BrokerPosition bp,
+            List<BrokerOrder> orders, String runId, List<ExecutorPosition> survivors) {
+        boolean exitOrderStillWorking = p.exitOrderId() != null && orders.stream()
+                .filter(o -> p.exitOrderId().equals(o.orderId()))
+                .anyMatch(o -> o.status() == OrderStatus.WORKING || o.status() == OrderStatus.PARTIALLY_FILLED);
+
+        if (bp != null || exitOrderStillWorking) {
+            // Not confirmed gone yet -> leave the row exactly as-is. No re-evaluation of hard
+            // triggers/ratchets happens here (this branch is taken instead of all other reconcile
+            // logic), so this can never double-flatten an already-submitted exit.
+            escalateIfPendingExitStale(p, runId);
+            survivors.add(p);
+            return;
+        }
+
+        BrokerOrder filledExitLeg = p.exitOrderId() == null ? null : orders.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED)
+                .filter(o -> p.exitOrderId().equals(o.orderId()))
+                .findFirst().orElse(null);
+
+        BigDecimal exitPrice;
+        String exitPriceSource;
+        if (filledExitLeg != null && filledExitLeg.avgFillPrice() != null) {
+            exitPrice = filledExitLeg.avgFillPrice();
+            exitPriceSource = "FILL";
+        } else if (p.pendingExitFillPrice() != null) {
+            exitPrice = p.pendingExitFillPrice();
+            exitPriceSource = "FILL";
+        } else {
+            exitPrice = p.activeStop();
+            exitPriceSource = "MARK";
+        }
+
+        BigDecimal realizedR = computeR(p, exitPrice);
+        String exitReason = p.pendingExitReason();
+
+        positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource);
+        cooldownRepo.add(p.symbol(), exitReason,
+                clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
+
+        String action = HARD_REASONS.contains(exitReason) ? "LOG_HARD_EXIT" : "RECONCILE_CLOSE";
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("exit_price", exitPrice);
+        inputs.put("realized_r", realizedR);
+        inputs.put("entry_price", p.entryPrice());
+        inputs.put("initial_stop", p.initialStop());
+        inputs.put("exit_price_source", exitPriceSource);
+
+        // Exact position linkage for the outcome batch job (decision_log has no position_id
+        // column; order_json carries it). A pending-exit finalization is always a full flatten.
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("fraction", 1.0);
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                action, exitReason, orderJson,
+                "pending exit confirmed for " + p.symbol() + ": broker no longer holds the position "
+                        + "and the exit order is no longer working — booking the close",
+                null, null, null));
+    }
+
+    /**
+     * Spec §4.3 (a4-netpositions-first-design): a pending exit that never confirms escalates via
+     * the existing CRITICAL path (decision log + Telegram) — no auto-retry, no auto-close. Gated
+     * on {@code exit_submitted_at} age past {@code pendingExitStaleHours}; rate-limited to one
+     * alert per pending exit by checking whether a {@code PENDING_EXIT_STALE} row already exists
+     * for this symbol created since the CURRENT pending exit's {@code exit_submitted_at} (see
+     * {@link DecisionLogRepository#countBySymbolAndReasonCodeSince}) — an escalation from an
+     * earlier, already-resolved pending exit on the same symbol must not suppress this one.
+     */
+    private void escalateIfPendingExitStale(ExecutorPosition p, String runId) {
+        Instant submittedAt = positionRepo.exitSubmittedAt(p.id());
+        if (submittedAt == null) {
+            return;
+        }
+        Duration age = Duration.between(submittedAt, clock.instant());
+        if (age.compareTo(Duration.ofHours(pendingExitStaleHours)) <= 0) {
+            return;
+        }
+        if (decisionRepo.countBySymbolAndReasonCodeSince(p.symbol(), "PENDING_EXIT_STALE", submittedAt) > 0) {
+            return;
+        }
+
+        long ageHours = age.toHours();
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), null, null,
+                "ESCALATE", "PENDING_EXIT_STALE", orderJson,
+                "pending exit for " + p.symbol() + " (id " + p.id() + ") has not confirmed after "
+                        + ageHours + "h — PENDING_EXIT_STALE — operator attention required, no auto-close",
+                null, null, null));
+        telegram.notifyAlert(p.symbol(), "PENDING_EXIT_STALE", "CRITICAL",
+                "pending exit for " + p.symbol() + " has not confirmed after " + ageHours
+                        + "h — check broker order " + p.exitOrderId() + " manually");
+    }
+
     private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp, String runId) {
         String exitReason;
         BigDecimal exitPrice;
@@ -267,13 +401,38 @@ public class ReconcileService {
                 action, exitReason, orderJson, null, null, null, null));
     }
 
-    private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp) {
+    private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp, String runId) {
         // The broker actually holds this position -> the entry is confirmed filled. Clear the
         // GTD expiry marker: from here on `entry_expires_at IS NULL` doubles as the persisted
         // "entry filled" flag (set at placement, cleared here on fill or by EntryExpiryService
         // on cancel), which ExecutorWebhookController.exitPosition uses to gate LLM exits.
         if (p.entryExpiresAt() != null) {
             positionRepo.clearEntryExpiry(p.id());
+        }
+
+        // Book = broker: the broker's average open price is the entry-price truth. The submitted
+        // limit stays in submitted_limit_price (slippage = entry_price - submitted_limit_price).
+        // Idempotent: converges after tranche-2 fills too; logs only on an actual change.
+        BigDecimal brokerBasis = bp.avgEntryPrice();
+        if (brokerBasis != null && brokerBasis.signum() > 0
+                && p.entryPrice().compareTo(brokerBasis) != 0) {
+            positionRepo.syncEntryPrice(p.id(), brokerBasis);
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("old_entry_price", p.entryPrice());
+            inputs.put("new_entry_price", brokerBasis);
+            ObjectNode orderJson = mapper.createObjectNode();
+            orderJson.put("position_id", p.id());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                    "SYNC", "ENTRY_PRICE_SYNC", orderJson, null, null, null, null));
+            p = new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                    brokerBasis, p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                    p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                    p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                    p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                    p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                    p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                    p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
         }
 
         BigDecimal currentClose = bp.marketPrice();
@@ -296,7 +455,8 @@ public class ReconcileService {
                 p.status(), p.brokerOrderId(), newHighest, newMfeR, p.softConfirmCount(),
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
-                p.trimCount(), p.lowestPrice(), null);
+                p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {

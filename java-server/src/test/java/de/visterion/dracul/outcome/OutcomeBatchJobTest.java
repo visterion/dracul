@@ -61,7 +61,7 @@ class OutcomeBatchJobTest {
                 id, "depot-1", symbol, "BUY", qty, bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", "2026-06-01 10:00:00.0", null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, exitPrice, realizedR, "TAKE_PROFIT", "2026-06-10 10:00:00.0",
-                null, null, null, null, null, 0, lowestPrice, null);
+                null, null, null, null, null, 0, lowestPrice, null, null, null, null, null);
     }
 
     private DecisionLog decisionRow(String logId, String signalId, String symbol, String action,
@@ -218,7 +218,7 @@ class OutcomeBatchJobTest {
                 id, "depot-1", symbol, "BUY", bd("10"), bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", entryDate.toString(), null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, bd("105"), bd("1.0"), "TAKE_PROFIT", closedDate.toString(),
-                null, null, null, null, null, 0, null, null);
+                null, null, null, null, null, 0, null, null, null, null, null, null);
     }
 
     /** reentry_within_10d can only fire on runs AFTER the close — so a TRADE row must stay

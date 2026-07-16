@@ -24,7 +24,8 @@ class SignalRankerTest {
         return new ExecutorPosition(1L, "depot-1", symbol, "BUY", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), sourceSignalId, "hunter", "2026-06-01", null, "OPEN", "brk-1",
-                new BigDecimal("100"), null, 0, null, null, null, null, null, null, null, null, null, 0, null, null);
+                new BigDecimal("100"), null, 0, null, null, null, null, null, null, null, null, null, 0, null, null,
+                null, null, null, null);
     }
 
     @Test

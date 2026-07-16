@@ -17,7 +17,7 @@ class FakeExecutionGatewayTest {
     @Test
     void flattenFull() {
         gateway.seedPosition(new BrokerPosition("ACME", "LONG", new BigDecimal("10"),
-                new BigDecimal("100"), new BigDecimal("108")));
+                new BigDecimal("100"), new BigDecimal("108"), null));
 
         CloseResult result = gateway.flatten("c", "ACME", new BigDecimal("1.0"));
 
@@ -31,7 +31,7 @@ class FakeExecutionGatewayTest {
     @Test
     void flattenPartial() {
         gateway.seedPosition(new BrokerPosition("ACME", "LONG", new BigDecimal("10"),
-                new BigDecimal("100"), new BigDecimal("108")));
+                new BigDecimal("100"), new BigDecimal("108"), null));
 
         CloseResult result = gateway.flatten("c", "ACME", new BigDecimal("0.5"));
 

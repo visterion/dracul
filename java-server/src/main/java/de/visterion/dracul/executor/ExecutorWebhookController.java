@@ -678,7 +678,8 @@ public class ExecutorWebhookController {
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
                     orderPrice, null, 0, null, null, null, null, stopOrderId,
-                    ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null));
+                    ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
+                    orderPrice, null, null, null));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 
@@ -1029,9 +1030,33 @@ public class ExecutorWebhookController {
         }
 
         BigDecimal exitPrice = cr.avgFillPrice();
-        BigDecimal realizedR = exitPrice != null ? computeR(position, exitPrice) : null;
 
-        positionRepo.close(position.id(), exitPrice, realizedR, reason);
+        if (exitPrice == null) {
+            // The flatten was accepted but not yet confirmed filled -> stamp a pending-exit
+            // marker and let ReconcileService finalize once the broker confirms. Closing here on
+            // a guessed price would be the same class of bug as the verified PSMT incident:
+            // booking a wrong exit price/R while the broker may still hold shares + a working
+            // exit order.
+            positionRepo.markPendingExit(position.id(), reason, cr.orderRef(), null, clock.instant());
+
+            ObjectNode pendingInputs = mapper.createObjectNode();
+            pendingInputs.put("active_stop", position.activeStop());
+
+            ObjectNode pendingOrderJson = mapper.createObjectNode();
+            pendingOrderJson.put("fraction", fraction);
+            pendingOrderJson.put("position_id", position.id());
+
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, pendingInputs, null,
+                    "EXIT_FULL", reason, pendingOrderJson, reasoning, confidence, null, null));
+
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "pending", true)));
+        }
+
+        BigDecimal realizedR = computeR(position, exitPrice);
+
+        positionRepo.close(position.id(), exitPrice, realizedR, reason, "FILL");
         cooldownRepo.add(symbol, reason, clock.instant().plus(Duration.ofDays(cooldownDays)),
                 "fresh setup only");
 
@@ -1210,6 +1235,10 @@ public class ExecutorWebhookController {
 
         try {
             BigDecimal newQty = position.qty().add(sizing.qty());
+            // Weighted recompute from submitted (limit) prices — intentionally not broker-basis
+            // yet. ReconcileService.updateMaintenance() converges entry_price to the broker's
+            // real post-add average open price on the next reconcile run, so any tranche-2
+            // slippage self-corrects without special-casing it here.
             BigDecimal newEntry = position.qty().multiply(position.entryPrice())
                     .add(sizing.qty().multiply(orderPrice))
                     .divide(newQty, 6, RoundingMode.HALF_UP);

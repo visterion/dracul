@@ -136,6 +136,24 @@ public class DecisionLogRepository {
                 .list();
     }
 
+    /** Count of decision rows for a symbol with the given {@code reason_code} created after
+     *  {@code since}, regardless of action — used to rate-limit the {@code PENDING_EXIT_STALE}
+     *  escalation to once per pending exit. {@code since} is the current pending exit's
+     *  {@code exit_submitted_at}, so escalations from an earlier, already-resolved pending exit
+     *  on the same symbol (decision_log has no {@code position_id} column, only an opaque
+     *  {@code order_json} blob) never suppress the current one. */
+    public int countBySymbolAndReasonCodeSince(String symbol, String reasonCode, Instant since) {
+        return jdbc.sql("""
+                SELECT count(*) FROM decision_log
+                WHERE symbol = :symbol AND reason_code = :reasonCode AND created_at > :since
+                """)
+                .param("symbol", symbol)
+                .param("reasonCode", reasonCode)
+                .param("since", Timestamp.from(since))
+                .query(Integer.class)
+                .single();
+    }
+
     private DecisionLog mapRow(ResultSet rs, int n) throws SQLException {
         Object confidenceObj = rs.getObject("confidence_in_decision");
         Object createdAtObj = rs.getObject("created_at");

@@ -294,7 +294,7 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | Table | Purpose |
 |---|---|
 | `executor_signal` | Injected advice awaiting evaluation (PK `signal_id`, caller-supplied or generated UUID); `status` transitions `PENDING` → `ACCEPTED` / `REJECTED` / `SKIPPED` |
-| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids, so the stop ratchet moves *both* legs once a tranche 2 exists). V23 adds `trim_count` (scale-out ladder leg count) and `lowest_price` (adverse-excursion extreme for MAE tracking) |
+| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids, so the stop ratchet moves *both* legs once a tranche 2 exists). V23 adds `trim_count` (scale-out ladder leg count) and `lowest_price` (adverse-excursion extreme for MAE tracking). V33 adds the book-equals-broker audit trail: `submitted_limit_price` (the limit originally submitted, persisting across `entry_price` drift), `pending_exit_reason` / `exit_order_id` / `exit_submitted_at` / `exit_price_source` / `pending_exit_fill_price` (soft-exit or hard-exit order awaiting broker confirmation; `entry_price` syncs to the broker's `avgEntryPrice` on fill, and a partial unique index `uq_executor_position_open (connection, lower(symbol)) WHERE status='OPEN'` ensures at most one OPEN row per (connection, symbol)) |
 | `executor_decision` | Append-only audit trail (slice 1) — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK) |
 | `decision_log` | Append-only audit trail (V18, slice 2) — one row per *any* executor decision point (entry, hard exit, stop-ratchet, soft exit): `run_id`, `rule_version`, `trigger_type`, `symbol`, `inputs_snapshot`/`veto_results`/`order_json` (JSONB), `action`, `reason_code`, `reasoning`, `confidence_in_decision`. Richer and broader in scope than `executor_decision`, which only covers the entry path |
 | `rule_versions` | (V18) One row per tagged rule-version (`dracul.executor.rule-version`, e.g. `exec-v0.2`): `valid_from`, `changes`, `prompt_hash`, `params` — makes prompt/threshold changes traceable against `decision_log.rule_version` |
@@ -329,6 +329,34 @@ position lifecycle, not just entries:
 
 This exception does not weaken the doctrine for any other agent: the six
 Strigoi, Voievod, gropar, and Daywalker remain strictly read-only.
+
+**Exit lifecycle and book-equals-broker reconciliation (V33).** The executor
+guarantees book-equals-broker: once a position fills, `entry_price` is the
+source of truth from the broker's `avgEntryPrice` (average entry fill price
+across all tranches), and `submitted_limit_price` (added in V33) keeps the
+original limit for slippage accounting (`slippage = entry_price −
+submitted_limit_price`). When a hard-trigger flatten (stop-breach, kill
+criteria) or LLM soft exit calls the broker to close the position, the
+pending-exit columns (`pending_exit_reason`, `exit_order_id`,
+`exit_submitted_at`, `pending_exit_fill_price`) stamp the request and the
+position stays OPEN until the broker confirms. Finalization is gated on a
+two-condition check: the broker must report the position gone (no open
+holdings) *and* the submitted exit order must no longer be WORKING or
+PARTIALLY_FILLED. This strict gate prevents booking a wrong exit price while
+the broker still holds shares and the exit order is in-flight (the verified
+PSMT incident). Once both conditions are met, `ReconcileService.
+finalizePendingExitOrKeep()` closes the position with the exit price (in
+precedence order): the filled exit leg's `avgFillPrice` (source `FILL`) →
+the fill price stamped at exit submit (`pending_exit_fill_price`, source
+`FILL`) → the position's `activeStop` as a last resort (source `MARK`, no
+fill data available). A partial unique index `uq_executor_position_open
+(connection, lower(symbol)) WHERE status='OPEN'` enforces at most one OPEN
+position per (connection, symbol), guaranteeing no duplicate booking. If a
+pending exit never confirms after `dracul.executor.pending-exit-stale-hours`
+(config default 24, env `DRACUL_EXECUTOR_PENDING_EXIT_STALE_HOURS`), the
+position escalates once per symbol as `PENDING_EXIT_STALE` (decision log +
+Telegram CRITICAL alert) — no auto-retry, no auto-close (operator-in-the-loop
+spec requirement).
 
 **Hunters feed the executor (`PreySignalEmitter`).** When the executor is
 enabled, each hunter's `/complete` webhook — right after it persists prey —
