@@ -136,19 +136,20 @@ public class DecisionLogRepository {
                 .list();
     }
 
-    /** Count of decision rows for a symbol with the given {@code reason_code}, regardless of
-     *  action — used to rate-limit the {@code PENDING_EXIT_STALE} escalation to once per
-     *  threshold crossing. Scoped by symbol+reason (decision_log has no {@code position_id}
-     *  column, only an opaque {@code order_json} blob), so a same-symbol reentry whose new
-     *  position also goes stale would be suppressed by an older row's escalation; acceptable
-     *  for now given the rarity of this path (see task-4 fix report). */
-    public int countBySymbolAndReasonCode(String symbol, String reasonCode) {
+    /** Count of decision rows for a symbol with the given {@code reason_code} created after
+     *  {@code since}, regardless of action — used to rate-limit the {@code PENDING_EXIT_STALE}
+     *  escalation to once per pending exit. {@code since} is the current pending exit's
+     *  {@code exit_submitted_at}, so escalations from an earlier, already-resolved pending exit
+     *  on the same symbol (decision_log has no {@code position_id} column, only an opaque
+     *  {@code order_json} blob) never suppress the current one. */
+    public int countBySymbolAndReasonCodeSince(String symbol, String reasonCode, Instant since) {
         return jdbc.sql("""
                 SELECT count(*) FROM decision_log
-                WHERE symbol = :symbol AND reason_code = :reasonCode
+                WHERE symbol = :symbol AND reason_code = :reasonCode AND created_at > :since
                 """)
                 .param("symbol", symbol)
                 .param("reasonCode", reasonCode)
+                .param("since", Timestamp.from(since))
                 .query(Integer.class)
                 .single();
     }

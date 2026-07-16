@@ -189,6 +189,8 @@ public class HardTriggerService {
                 "LOG_HARD_EXIT", trigger.reasonCode(), orderJson, null, null, latency, null));
     }
 
+    // Reason codes produced below ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH") are
+    // duplicated in ReconcileService#HARD_REASONS — keep both in sync.
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
         boolean breached = sell
                 ? close.compareTo(p.activeStop()) > 0

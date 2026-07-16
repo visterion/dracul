@@ -315,16 +315,20 @@ public class ReconcileService {
 
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
-                action, exitReason, orderJson, null, null, null, null));
+                action, exitReason, orderJson,
+                "pending exit confirmed for " + p.symbol() + ": broker no longer holds the position "
+                        + "and the exit order is no longer working — booking the close",
+                null, null, null));
     }
 
     /**
      * Spec §4.3 (a4-netpositions-first-design): a pending exit that never confirms escalates via
      * the existing CRITICAL path (decision log + Telegram) — no auto-retry, no auto-close. Gated
-     * on {@code exit_submitted_at} age past {@code pendingExitStaleHours}; rate-limited to once
-     * per threshold crossing by checking whether a {@code PENDING_EXIT_STALE} row already exists
-     * for this symbol (see {@link DecisionLogRepository#countBySymbolAndReasonCode} javadoc for
-     * the same-symbol-reentry caveat of that scoping).
+     * on {@code exit_submitted_at} age past {@code pendingExitStaleHours}; rate-limited to one
+     * alert per pending exit by checking whether a {@code PENDING_EXIT_STALE} row already exists
+     * for this symbol created since the CURRENT pending exit's {@code exit_submitted_at} (see
+     * {@link DecisionLogRepository#countBySymbolAndReasonCodeSince}) — an escalation from an
+     * earlier, already-resolved pending exit on the same symbol must not suppress this one.
      */
     private void escalateIfPendingExitStale(ExecutorPosition p, String runId) {
         Instant submittedAt = positionRepo.exitSubmittedAt(p.id());
@@ -335,7 +339,7 @@ public class ReconcileService {
         if (age.compareTo(Duration.ofHours(pendingExitStaleHours)) <= 0) {
             return;
         }
-        if (decisionRepo.countBySymbolAndReasonCode(p.symbol(), "PENDING_EXIT_STALE") > 0) {
+        if (decisionRepo.countBySymbolAndReasonCodeSince(p.symbol(), "PENDING_EXIT_STALE", submittedAt) > 0) {
             return;
         }
 
