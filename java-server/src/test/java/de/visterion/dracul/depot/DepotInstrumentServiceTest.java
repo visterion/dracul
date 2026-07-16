@@ -134,6 +134,28 @@ class DepotInstrumentServiceTest {
     }
 
     @Test
+    void newsSectionIsRawUnfilteredPassthroughWithoutSourceTypesArg() {
+        AgoraClient agora = allSucceedingAgora();
+        when(agora.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"ACME\",\"news\":[" +
+                "{\"headline\":\"Real news\",\"sourceType\":\"news\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}," +
+                "{\"headline\":\"Forum chatter\",\"sourceType\":\"social\"," +
+                "\"datetime\":null,\"url\":\"http://n/2\"}]," +
+                "\"warnings\":[\"finnhub: rate limited\"]}"));
+        DepotInstrumentService service = new DepotInstrumentService(agora);
+
+        var bundle = service.bundle("ACME");
+
+        // Deliberately unfiltered display path (spec R2-F5): social AND dateless items plus
+        // top-level warnings must all survive, and the call must NOT restrict sourceTypes.
+        assertThat(bundle.news().path("news")).hasSize(2);
+        assertThat(bundle.news().path("warnings")).hasSize(1);
+        verify(agora).callTool(eq("get_company_news"),
+                org.mockito.ArgumentMatchers.argThat(args -> args.path("sourceTypes").isMissingNode()));
+    }
+
+    @Test
     void earningsWindowAndInsiderActivityHaveNoSymbolArg() {
         AgoraClient agora = allSucceedingAgora();
         DepotInstrumentService service = new DepotInstrumentService(agora);

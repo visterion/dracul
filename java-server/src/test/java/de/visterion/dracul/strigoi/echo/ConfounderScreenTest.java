@@ -17,7 +17,8 @@ import static org.mockito.Mockito.when;
 class ConfounderScreenTest {
 
     private static NewsHeadline news(String headline, String summary) {
-        return new NewsHeadline(headline, summary, "src", Instant.parse("2026-06-30T12:00:00Z"), "http://n");
+        return new NewsHeadline(headline, summary, "src", "news",
+                Instant.parse("2026-06-30T12:00:00Z"), "http://n");
     }
 
     private static AgoraCompanyData companyData(List<NewsHeadline> headlines) {

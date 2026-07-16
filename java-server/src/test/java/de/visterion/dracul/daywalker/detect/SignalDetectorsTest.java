@@ -44,7 +44,7 @@ class SignalDetectorsTest {
     void newsFiresWhenHeadlinePresent() {
         var d = new NewsDetector();
         var ev = d.detect(item(), List.of(new NewsHeadline(
-                "Acme cuts guidance", "Q2 miss", "Reuters", Instant.now(), "http://n/1")));
+                "Acme cuts guidance", "Q2 miss", "Reuters", "news", Instant.now(), "http://n/1")));
         assertThat(ev).isPresent();
         assertThat(ev.get().triggerType()).isEqualTo(TriggerType.NEGATIVE_NEWS);
     }

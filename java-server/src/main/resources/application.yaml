@@ -22,6 +22,12 @@ dracul:
     base-url: ${DRACUL_AGORA_BASE_URL:http://agora:8080}
     token: ${DRACUL_AGORA_TOKEN:}
     timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:8000}
+  news:
+    # Trigger-path social filter (T1.1b): when false (default), get_company_news is called
+    # with sourceTypes ["news"] and sourceType=social items are additionally filtered
+    # client-side at the AgoraCompanyData chokepoint (covers NewsDetector + ConfounderScreen).
+    # The depot instrument bundle (DepotInstrumentService) deliberately bypasses this filter.
+    include-social: ${DRACUL_NEWS_INCLUDE_SOCIAL:false}
   strigoi:
     insider:
       enabled: ${STRIGOI_INSIDER_ENABLED:false}
