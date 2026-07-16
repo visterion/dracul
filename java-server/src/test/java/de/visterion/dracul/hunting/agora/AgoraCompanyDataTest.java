@@ -5,6 +5,10 @@ import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -69,6 +73,39 @@ class AgoraCompanyDataTest {
         assertThat(out).hasSize(2);
         assertThat(out.get(0).sourceType()).isEqualTo("news"); // missing field defaults to "news"
         assertThat(out.get(1).sourceType()).isEqualTo("news"); // explicit field passed through
+    }
+
+    @Test void newsDropsDatelessItemsWithDebugCount() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Good item\",\"summary\":\"s\",\"source\":\"WSJ\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}," +
+                "{\"headline\":\"No datetime field\",\"summary\":\"s\",\"source\":\"yahoo-rss\"," +
+                "\"url\":\"http://n/2\"}," +
+                "{\"headline\":\"Unparseable datetime\",\"summary\":\"s\",\"source\":\"yahoo-rss\"," +
+                "\"datetime\":\"Tue, 15 Jul 2026 10:00:00 EST\",\"url\":\"http://n/3\"}]}"));
+        AgoraCompanyData data = new AgoraCompanyData(client);
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AgoraCompanyData.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        Level before = logger.getLevel();
+        logger.setLevel(Level.DEBUG);
+        logger.addAppender(appender);
+        try {
+            List<NewsHeadline> out =
+                    data.news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+            assertThat(out).hasSize(1);
+            assertThat(out.get(0).headline()).isEqualTo("Good item");
+            assertThat(appender.list)
+                    .anySatisfy(e -> assertThat(e.getFormattedMessage())
+                            .isEqualTo("news: dropped 2 dateless items for AAPL"));
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(before);
+        }
     }
 
     @Test void recommendationsMapsCounts() {

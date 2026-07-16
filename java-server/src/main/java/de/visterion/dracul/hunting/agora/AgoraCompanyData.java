@@ -3,6 +3,8 @@ package de.visterion.dracul.hunting.agora;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -10,6 +12,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,12 +28,19 @@ import java.util.List;
 @Component
 public class AgoraCompanyData {
 
+    private static final Logger log = LoggerFactory.getLogger(AgoraCompanyData.class);
     private final AgoraClient agora;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public AgoraCompanyData(AgoraClient agora) { this.agora = agora; }
 
-    /** Company news in [from, to]; empty list on any failure. */
+    /**
+     * Company news in [from, to]; empty list on any failure. Rows are parsed defensively
+     * (no exception-based skipping); items without a parseable datetime are DROPPED here —
+     * dateless items pass every Agora date window, and one such item would otherwise be a
+     * perpetual NEGATIVE_NEWS trigger via NewsDetector after every cooldown expiry. They
+     * stay visible through the raw tool and the depot passthrough (DepotInstrumentService).
+     */
     public List<NewsHeadline> news(String symbol, LocalDate from, LocalDate to) {
         JsonNode res;
         try {
@@ -41,20 +51,37 @@ public class AgoraCompanyData {
             return List.of();
         }
         List<NewsHeadline> out = new ArrayList<>();
+        int droppedDateless = 0;
         for (JsonNode n : res.path("news")) {
-            try {
-                String headline = n.path("headline").asString("");
-                if (headline.isBlank()) continue;
-                out.add(new NewsHeadline(
-                        headline,
-                        n.path("summary").asString(""),
-                        n.path("source").asString(""),
-                        n.path("sourceType").asString("news"),
-                        Instant.parse(n.path("datetime").asString()),
-                        n.path("url").asString("")));
-            } catch (RuntimeException ignored) { /* skip malformed row */ }
+            String headline = n.path("headline").asString("");
+            if (headline.isBlank()) continue;
+            Instant datetime = parseDatetime(n.path("datetime").asString(""));
+            if (datetime == null) {
+                droppedDateless++;
+                continue;
+            }
+            out.add(new NewsHeadline(
+                    headline,
+                    n.path("summary").asString(""),
+                    n.path("source").asString(""),
+                    n.path("sourceType").asString("news"),
+                    datetime,
+                    n.path("url").asString("")));
+        }
+        if (droppedDateless > 0) {
+            log.debug("news: dropped {} dateless items for {}", droppedDateless, symbol);
         }
         return out;
+    }
+
+    /** Defensive ISO-8601 parse; null for missing/blank/unparseable values (caller drops those items). */
+    private static Instant parseDatetime(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return Instant.parse(raw);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** Analyst recommendation trend, newest-first as delivered; empty list on any failure
