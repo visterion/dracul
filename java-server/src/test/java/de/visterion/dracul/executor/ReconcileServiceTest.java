@@ -45,7 +45,7 @@ class ReconcileServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, telegram, 10, clock);
+                ruleVersions, mapper, telegram, 10, 24, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -130,6 +130,76 @@ class ReconcileServiceTest {
         assertThat(survivor.id()).isEqualTo(30L);
         assertThat(survivor.status()).isEqualTo("OPEN");
         assertThat(survivor.pendingExitReason()).isEqualTo("HARD_STOP");
+    }
+
+    @Test
+    void pendingExitStale_beyondThreshold_escalatesOnceAndSurvives() {
+        // Spec §4.3 (a4-netpositions-first-design): a pending exit that never confirms
+        // escalates via the existing CRITICAL path (decision log + Telegram); no auto-retry,
+        // no auto-close. Threshold is 24h (test default); this row was submitted 25h ago.
+        ExecutorPosition p = pendingExitPosition(40L, "STALE1", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-40", "HARD_STOP", "close-40", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(positionRepo.exitSubmittedAt(40L)).thenReturn(NOW.minus(java.time.Duration.ofHours(25)));
+        when(decisionRepo.countBySymbolAndReasonCode("STALE1", "PENDING_EXIT_STALE")).thenReturn(0);
+
+        gateway.seedPosition(new BrokerPosition("STALE1", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).status()).isEqualTo("OPEN");
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("PENDING_EXIT_STALE");
+        assertThat(log.symbol()).isEqualTo("STALE1");
+        assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(40L);
+        assertThat(log.reasoning()).contains("STALE1").contains("25");
+
+        verify(telegram).notifyAlert(eq("STALE1"), eq("PENDING_EXIT_STALE"), eq("CRITICAL"), any());
+    }
+
+    @Test
+    void pendingExitStale_alreadyEscalated_doesNotEscalateAgain() {
+        ExecutorPosition p = pendingExitPosition(41L, "STALE2", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-41", "HARD_STOP", "close-41", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(positionRepo.exitSubmittedAt(41L)).thenReturn(NOW.minus(java.time.Duration.ofHours(48)));
+        when(decisionRepo.countBySymbolAndReasonCode("STALE2", "PENDING_EXIT_STALE")).thenReturn(1);
+
+        gateway.seedPosition(new BrokerPosition("STALE2", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        assertThat(survivors).hasSize(1);
+        verify(decisionRepo, never()).insert(any());
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+    }
+
+    @Test
+    void pendingExitStale_belowThreshold_doesNotEscalate() {
+        ExecutorPosition p = pendingExitPosition(42L, "FRESH1", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-42", "HARD_STOP", "close-42", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(positionRepo.exitSubmittedAt(42L)).thenReturn(NOW.minus(java.time.Duration.ofHours(1)));
+
+        gateway.seedPosition(new BrokerPosition("FRESH1", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        assertThat(survivors).hasSize(1);
+        verify(decisionRepo, never()).insert(any());
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+        verify(decisionRepo, never()).countBySymbolAndReasonCode(any(), any());
     }
 
     @Test

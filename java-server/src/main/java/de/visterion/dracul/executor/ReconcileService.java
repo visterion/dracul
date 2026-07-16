@@ -61,6 +61,7 @@ public class ReconcileService {
     private final ObjectMapper mapper;
     private final TelegramNotifier telegram;
     private final int cooldownDays;
+    private final int pendingExitStaleHours;
     private final Clock clock;
 
     @Autowired
@@ -72,9 +73,10 @@ public class ReconcileService {
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
             TelegramNotifier telegram,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
+            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
+            @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
-                cooldownDays, Clock.systemUTC());
+                cooldownDays, pendingExitStaleHours, Clock.systemUTC());
     }
 
     ReconcileService(
@@ -86,6 +88,7 @@ public class ReconcileService {
             ObjectMapper mapper,
             TelegramNotifier telegram,
             int cooldownDays,
+            int pendingExitStaleHours,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -95,6 +98,7 @@ public class ReconcileService {
         this.mapper = mapper;
         this.telegram = telegram;
         this.cooldownDays = cooldownDays;
+        this.pendingExitStaleHours = pendingExitStaleHours;
         this.clock = clock;
     }
 
@@ -264,6 +268,7 @@ public class ReconcileService {
             // Not confirmed gone yet -> leave the row exactly as-is. No re-evaluation of hard
             // triggers/ratchets happens here (this branch is taken instead of all other reconcile
             // logic), so this can never double-flatten an already-submitted exit.
+            escalateIfPendingExitStale(p, runId);
             survivors.add(p);
             return;
         }
@@ -311,6 +316,42 @@ public class ReconcileService {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
                 action, exitReason, orderJson, null, null, null, null));
+    }
+
+    /**
+     * Spec §4.3 (a4-netpositions-first-design): a pending exit that never confirms escalates via
+     * the existing CRITICAL path (decision log + Telegram) — no auto-retry, no auto-close. Gated
+     * on {@code exit_submitted_at} age past {@code pendingExitStaleHours}; rate-limited to once
+     * per threshold crossing by checking whether a {@code PENDING_EXIT_STALE} row already exists
+     * for this symbol (see {@link DecisionLogRepository#countBySymbolAndReasonCode} javadoc for
+     * the same-symbol-reentry caveat of that scoping).
+     */
+    private void escalateIfPendingExitStale(ExecutorPosition p, String runId) {
+        Instant submittedAt = positionRepo.exitSubmittedAt(p.id());
+        if (submittedAt == null) {
+            return;
+        }
+        Duration age = Duration.between(submittedAt, clock.instant());
+        if (age.compareTo(Duration.ofHours(pendingExitStaleHours)) <= 0) {
+            return;
+        }
+        if (decisionRepo.countBySymbolAndReasonCode(p.symbol(), "PENDING_EXIT_STALE") > 0) {
+            return;
+        }
+
+        long ageHours = age.toHours();
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), null, null,
+                "ESCALATE", "PENDING_EXIT_STALE", orderJson,
+                "pending exit for " + p.symbol() + " (id " + p.id() + ") has not confirmed after "
+                        + ageHours + "h — PENDING_EXIT_STALE — operator attention required, no auto-close",
+                null, null, null));
+        telegram.notifyAlert(p.symbol(), "PENDING_EXIT_STALE", "CRITICAL",
+                "pending exit for " + p.symbol() + " has not confirmed after " + ageHours
+                        + "h — check broker order " + p.exitOrderId() + " manually");
     }
 
     private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp, String runId) {
