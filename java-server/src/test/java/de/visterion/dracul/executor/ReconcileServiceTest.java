@@ -92,6 +92,121 @@ class ReconcileServiceTest {
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
     }
 
+    private ExecutorPosition pendingExitPosition(long id, String symbol, BigDecimal entry,
+            BigDecimal initialStop, String stopOrderId, String pendingExitReason,
+            String exitOrderId, BigDecimal pendingExitFillPrice) {
+        return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, entry, initialStop,
+                initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
+                "brk-" + id, null, null, 0, null, null, null, null, stopOrderId,
+                null, null, null, null, 0, null, null, null,
+                pendingExitReason, exitOrderId, pendingExitFillPrice);
+    }
+
+    @Test
+    void reconcileDoesNotCloseWhileBrokerStillHoldsPosition() {
+        // Verified prod incident (PSMT 2026-07-13): a hard trigger already flattened and stamped
+        // a pending exit, but the broker still reports the position held (5 shares) with a
+        // working SELL exit order. Closing here would be the exact incident: wrong exit
+        // price/R and a mismatched book vs. broker state. Must survive untouched instead.
+        ExecutorPosition p = pendingExitPosition(30L, "PSMT", new BigDecimal("193.87"),
+                new BigDecimal("190"), "stop-30", "HARD_STOP", "close-30", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("PSMT", "BUY", new BigDecimal("5"),
+                new BigDecimal("193.87"), new BigDecimal("180"), null));
+        gateway.seedOrder(new BrokerOrder("close-30", "ref-30", "PSMT", OrderRole.OTHER,
+                OrderStatus.WORKING, new BigDecimal("5"), BigDecimal.ZERO, null, null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
+
+        assertThat(survivors).hasSize(1);
+        ExecutorPosition survivor = survivors.get(0);
+        assertThat(survivor.id()).isEqualTo(30L);
+        assertThat(survivor.status()).isEqualTo("OPEN");
+        assertThat(survivor.pendingExitReason()).isEqualTo("HARD_STOP");
+    }
+
+    @Test
+    void reconcileFinalizesPendingExitWhenBrokerEmpty() {
+        ExecutorPosition p = pendingExitPosition(31L, "PSMT", new BigDecimal("193.87"),
+                new BigDecimal("190"), "stop-31", "HARD_STOP", "close-31", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Broker no longer holds the position (not seeded), and the exit order now reports
+        // FILLED (not WORKING/PARTIALLY_FILLED) -> finalization gate is satisfied.
+        gateway.seedOrder(new BrokerOrder("close-31", "ref-31", "PSMT", OrderRole.OTHER,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("188.50"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<String> sourceCaptor = ArgumentCaptor.forClass(String.class);
+        verify(positionRepo).close(eq(31L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
+                eq("HARD_STOP"), sourceCaptor.capture());
+        assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("188.50");
+        assertThat(sourceCaptor.getValue()).isEqualTo("FILL");
+        assertThat(realizedRCaptor.getValue()).isNotNull();
+
+        ArgumentCaptor<Instant> expiryCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(cooldownRepo).add(eq("PSMT"), eq("HARD_STOP"), expiryCaptor.capture(), any());
+        assertThat(expiryCaptor.getValue()).isEqualTo(NOW.plus(java.time.Duration.ofDays(10)));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
+        assertThat(log.action()).isEqualTo("LOG_HARD_EXIT");
+        assertThat(log.reasonCode()).isEqualTo("HARD_STOP");
+        assertThat(log.symbol()).isEqualTo("PSMT");
+
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void reconcileFinalizesPendingExitUsingStampedFillPriceWhenNoLegMatched() {
+        // No broker order carries the exit_order_id at all (e.g. the fake/adapter dropped it
+        // once fully filled) -> falls back to the fill price stamped by markPendingExit at
+        // submit time, still tagged source FILL (not a MARK guess).
+        ExecutorPosition p = pendingExitPosition(32L, "SOFT1", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-32", "SOFT_CHANDELIER", "close-32",
+                new BigDecimal("102.5"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).close(eq(32L), eq(new BigDecimal("102.5")), any(),
+                eq("SOFT_CHANDELIER"), eq("FILL"));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("RECONCILE_CLOSE");
+
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void reconcileFinalizesPendingExitFallsBackToActiveStopWhenNoFillDataAtAll() {
+        // Neither a matched filled leg nor a stamped pending_exit_fill_price -> last resort is
+        // active_stop, tagged source MARK (explicitly NOT a fill price).
+        ExecutorPosition p = pendingExitPosition(33L, "NOPRICE", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-33", "HARD_STOP", "close-33", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).close(eq(33L), eq(new BigDecimal("95")), any(),
+                eq("HARD_STOP"), eq("MARK"));
+
+        assertThat(survivors).isEmpty();
+    }
+
     @Test
     void takeProfitLegFilled_closesTakeProfit() {
         ExecutorPosition p = openPosition(2L, "ACME", "BUY", new BigDecimal("100"),
