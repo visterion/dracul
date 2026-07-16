@@ -178,7 +178,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
     }
 
     /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
@@ -188,7 +188,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "depot-1", symbol, side, qty,
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null, trimCount, null, null);
+                null, null, null, null, trimCount, null, null, null, null, null, null);
     }
 
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
@@ -1688,7 +1688,9 @@ class ExecutorWebhookControllerTest {
                 position.exitPrice(), position.realizedR(), position.exitReason(),
                 position.closedAt(), position.stopOrderId(), position.sector(),
                 position.entryDayHigh(), position.tranche2OrderId(), position.tranche2StopOrderId(),
-                position.trimCount(), position.lowestPrice(), position.entryExpiresAt());
+                position.trimCount(), position.lowestPrice(), position.entryExpiresAt(),
+                position.submittedLimitPrice(), position.pendingExitReason(), position.exitOrderId(),
+                position.pendingExitFillPrice());
         when(positionRepo.findById(1L)).thenReturn(ratcheted);
 
         ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
@@ -1799,7 +1801,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0, null, null,
                 null, null, "stop-1", null, null, null, null, 0, null,
-                "2026-07-03T00:00:42Z");
+                "2026-07-03T00:00:42Z", null, null, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
 
         JsonNode body = json("""
@@ -2297,7 +2299,8 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
-                null, null, null, null, null, null, null, null, null, 0, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null,
+                null, null, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
@@ -2321,7 +2324,8 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
-                null, null, null, null, null, null, null, null, null, 0, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null,
+                null, null, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
 
         JsonNode body = json("""

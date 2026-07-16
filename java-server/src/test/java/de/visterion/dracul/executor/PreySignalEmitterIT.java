@@ -47,7 +47,7 @@ class PreySignalEmitterIT {
                 new BigDecimal("95"), 1, new BigDecimal("5"),
                 List.of(), "sig-" + symbol, "strigoi-spin", null,
                 null, "OPEN", null, null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
     }
 
     @Test

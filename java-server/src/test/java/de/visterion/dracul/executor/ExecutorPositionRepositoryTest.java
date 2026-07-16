@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
@@ -15,6 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(ContainerConfig.class)
@@ -23,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ExecutorPositionRepositoryTest {
 
     @Autowired ExecutorPositionRepository repo;
+    @Autowired JdbcClient jdbc;
 
     @Test
     void insertReturnsIdAndFindsOpen() {
@@ -35,14 +39,14 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
         var posB = new ExecutorPosition(null, "depot-1", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
 
         long idA = repo.insert(posA);
         long idB = repo.insert(posB);
@@ -70,7 +74,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
         long id = repo.insert(pos);
 
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 1,
@@ -93,7 +97,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
         long id = repo.insert(pos);
 
         repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP");
@@ -184,6 +188,66 @@ class ExecutorPositionRepositoryTest {
         assertThat(expired).extracting(ExecutorPosition::id).doesNotContain(futureId, noExpiryId);
     }
 
+    @Test
+    void syncEntryPriceUpdatesOnlyEntryPrice() {
+        String symbol = "PSMT-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "193.88");
+
+        repo.syncEntryPrice(id, new BigDecimal("193.87"));
+
+        ExecutorPosition p = repo.findById(id);
+        assertThat(p.entryPrice()).isEqualByComparingTo("193.87");
+        assertThat(p.status()).isEqualTo("OPEN");
+    }
+
+    @Test
+    void markPendingExitStampsWithoutClosing() {
+        String symbol = "PSMT-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "193.88");
+
+        repo.markPendingExit(id, "STOP_BREACH", "ord-9", null, Instant.parse("2026-07-16T15:00:00Z"));
+
+        ExecutorPosition p = repo.findById(id);
+        assertThat(p.status()).isEqualTo("OPEN");
+        assertThat(p.pendingExitReason()).isEqualTo("STOP_BREACH");
+        assertThat(p.exitOrderId()).isEqualTo("ord-9");
+    }
+
+    @Test
+    void secondOpenRowForSameConnectionSymbolFails() {
+        String symbol = "PSMT-" + UUID.randomUUID();
+        insertOpenPosition(symbol, "193.88");
+
+        assertThatThrownBy(() -> insertOpenPosition(symbol.toLowerCase(), "193.90"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void closeWithSourcePersistsExitPriceSource() {
+        String symbol = "PSMT-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "193.88");
+
+        repo.close(id, new BigDecimal("191.20"), new BigDecimal("-0.5"), "HARD_STOP", "FILL");
+
+        ExecutorPosition p = repo.findById(id);
+        assertThat(p.status()).isEqualTo("CLOSED");
+        String exitPriceSource = jdbc.sql("SELECT exit_price_source FROM executor_position WHERE id = :id")
+                .param("id", id)
+                .query(String.class)
+                .single();
+        assertThat(exitPriceSource).isEqualTo("FILL");
+    }
+
+    private long insertOpenPosition(String symbol, String entryPrice) {
+        return repo.insert(new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal(entryPrice), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, new BigDecimal("1.5"),
+                List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null));
+    }
+
     private ExecutorPosition openPosition(String symbol) {
         return new ExecutorPosition(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
@@ -191,6 +255,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                "Technology", new BigDecimal("105.5"), null, null, 0, null, null);
+                "Technology", new BigDecimal("105.5"), null, null, 0, null, null,
+                null, null, null, null);
     }
 }
