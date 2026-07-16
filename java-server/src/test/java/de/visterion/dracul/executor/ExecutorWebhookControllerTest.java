@@ -1870,7 +1870,8 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(7L), exitPriceCaptor.capture(), realizedRCaptor.capture(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo).close(eq(7L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
+                eq("SOFT_CHANDELIER"), eq("FILL"));
         assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("112");
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("2.4");
 
@@ -1882,6 +1883,33 @@ class ExecutorWebhookControllerTest {
         assertThat(log.triggerType()).isEqualTo("SOFT_TRIGGER");
         assertThat(log.action()).isEqualTo("EXIT_FULL");
         assertThat(log.confidenceInDecision()).isEqualTo(0.7);
+    }
+
+    @Test
+    void exitPosition_fullExitWithoutFillPrice_stampsPendingExitInsteadOfClosing() {
+        // Verified prod incident (PSMT): a flatten that is merely accepted (no avgFillPrice yet)
+        // must not be booked as closed here — that books a wrong exit price/R and can mismatch
+        // the broker's still-working exit order. Stamp pending and let ReconcileService finalize.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, null, "close-9"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("pending")).isEqualTo(true);
+
+        verify(positionRepo).markPendingExit(eq(7L), eq("SOFT_CHANDELIER"), eq("close-9"),
+                isNull(), eq(FIXED_NOW));
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
     }
 
     @Test
@@ -1903,7 +1931,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exit_reason")).isEqualTo("SOFT_CHANDELIER");
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
@@ -2125,7 +2153,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(true);
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
 
@@ -2160,7 +2188,7 @@ class ExecutorWebhookControllerTest {
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(gateway, never()).flatten(any(), any(), eq(BigDecimal.valueOf(0.5)));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"), eq("FILL"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(cooldownRepo).add(eq("ACME"), eq("SCALE_OUT"), any(), any());
 

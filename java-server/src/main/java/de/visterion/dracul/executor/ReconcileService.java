@@ -45,6 +45,14 @@ import java.util.Set;
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class ReconcileService {
 
+    /** {@code reasonCode}s that {@link HardTriggerService} produces — kept in sync with its
+     *  {@code Trigger} reason codes. Drives the LOG_HARD_EXIT-vs-RECONCILE_CLOSE action choice
+     *  when finalizing a pending-exit row ({@link #finalizePendingExitOrKeep}): a hard-trigger
+     *  origin keeps the same action as its submit-time decision row, anything else (e.g. a
+     *  webhook soft/LLM exit reason) is a RECONCILE_CLOSE. */
+    private static final Set<String> HARD_REASONS =
+            Set.of("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH");
+
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
     private final DecisionLogRepository decisionRepo;
@@ -147,6 +155,15 @@ public class ReconcileService {
                     .filter(x -> x.symbol().equals(p.symbol()))
                     .findFirst().orElse(null);
 
+            // A hard-trigger flatten or fill-less webhook FULL exit already submitted an order
+            // for this position but has not yet been confirmed — branch here FIRST, before any
+            // other reconcile logic (tranche2 desync, entry-pending, normal fill detection) can
+            // touch it. Never close on our own say-so; only the broker's confirmed state may.
+            if (p.pendingExitReason() != null) {
+                finalizePendingExitOrKeep(p, bp, orders, runId, survivors);
+                continue;
+            }
+
             BrokerOrder filledLeg = findFilledExitLeg(p, orders);
 
             if (p.tranche2OrderId() != null && (bp == null || filledLeg != null)) {
@@ -222,6 +239,78 @@ public class ReconcileService {
                 "ESCALATE", "TRANCHE2_DESYNC", null,
                 "position " + p.symbol() + " (id " + p.id() + "): " + legDescription
                         + " — TRANCHE2_DESYNC — operator attention required", null, null, null));
+    }
+
+    /**
+     * Finalizes a pending-exit row (hard-trigger flatten or fill-less webhook FULL exit already
+     * submitted, see {@code pending_exit_reason}/{@code exit_order_id}) once the broker confirms
+     * it is really gone, or leaves it OPEN+pending untouched otherwise. This is the fix for the
+     * verified PSMT incident: closing here before the broker confirms can book a wrong exit
+     * price/R while the broker still holds shares and a working exit order.
+     *
+     * <p>Finalization gate: the broker no longer reports the position ({@code bp == null}) AND
+     * {@code exit_order_id} is not reported WORKING/PARTIALLY_FILLED. Exit price precedence:
+     * the matched filled exit leg's {@code avgFillPrice} (source FILL) → the fill price stamped
+     * at submit time, {@code pending_exit_fill_price} (source FILL) → the position's
+     * {@code active_stop} as a last resort (source MARK, no fill data available at all).
+     */
+    private void finalizePendingExitOrKeep(ExecutorPosition p, BrokerPosition bp,
+            List<BrokerOrder> orders, String runId, List<ExecutorPosition> survivors) {
+        boolean exitOrderStillWorking = p.exitOrderId() != null && orders.stream()
+                .filter(o -> p.exitOrderId().equals(o.orderId()))
+                .anyMatch(o -> o.status() == OrderStatus.WORKING || o.status() == OrderStatus.PARTIALLY_FILLED);
+
+        if (bp != null || exitOrderStillWorking) {
+            // Not confirmed gone yet -> leave the row exactly as-is. No re-evaluation of hard
+            // triggers/ratchets happens here (this branch is taken instead of all other reconcile
+            // logic), so this can never double-flatten an already-submitted exit.
+            survivors.add(p);
+            return;
+        }
+
+        BrokerOrder filledExitLeg = p.exitOrderId() == null ? null : orders.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED)
+                .filter(o -> p.exitOrderId().equals(o.orderId()))
+                .findFirst().orElse(null);
+
+        BigDecimal exitPrice;
+        String exitPriceSource;
+        if (filledExitLeg != null && filledExitLeg.avgFillPrice() != null) {
+            exitPrice = filledExitLeg.avgFillPrice();
+            exitPriceSource = "FILL";
+        } else if (p.pendingExitFillPrice() != null) {
+            exitPrice = p.pendingExitFillPrice();
+            exitPriceSource = "FILL";
+        } else {
+            exitPrice = p.activeStop();
+            exitPriceSource = "MARK";
+        }
+
+        BigDecimal realizedR = computeR(p, exitPrice);
+        String exitReason = p.pendingExitReason();
+
+        positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource);
+        cooldownRepo.add(p.symbol(), exitReason,
+                clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
+
+        String action = HARD_REASONS.contains(exitReason) ? "LOG_HARD_EXIT" : "RECONCILE_CLOSE";
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("exit_price", exitPrice);
+        inputs.put("realized_r", realizedR);
+        inputs.put("entry_price", p.entryPrice());
+        inputs.put("initial_stop", p.initialStop());
+        inputs.put("exit_price_source", exitPriceSource);
+
+        // Exact position linkage for the outcome batch job (decision_log has no position_id
+        // column; order_json carries it). A pending-exit finalization is always a full flatten.
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("fraction", 1.0);
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                action, exitReason, orderJson, null, null, null, null));
     }
 
     private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp, String runId) {
