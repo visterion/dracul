@@ -2,6 +2,7 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
+import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -122,36 +123,43 @@ public class HardTriggerService {
             // recordHardExit) would measure ~0 always and make the metric useless.
             Instant detectedAt = clock.instant();
 
-            if (!flattenOrEscalate(p, trigger, runId)) {
+            CloseResult cr = flattenOrEscalate(p, trigger, runId);
+            if (cr == null) {
                 survivors.add(p);
                 continue;
             }
 
-            recordHardExit(p, close, currentR, trigger, runId, detectedAt);
+            recordHardExit(p, close, currentR, trigger, runId, detectedAt, cr);
         }
         return survivors;
     }
 
-    /** Attempts to flatten the position; on broker outage, escalates and returns false. */
-    private boolean flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
+    /** Attempts to flatten the position; on broker outage, escalates and returns null. */
+    private CloseResult flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
         try {
-            gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE);
-            return true;
+            return gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE);
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "HARD_TRIGGER", null, null, null, p.symbol(), null, null,
                     "ESCALATE", "BROKER_UNAVAILABLE", null,
                     "broker unavailable during hard-trigger flatten: " + e.getMessage(),
                     null, null, null));
-            return false;
+            return null;
         }
     }
 
+    /**
+     * The flatten was accepted by the broker, but not yet confirmed filled — stamp a
+     * pending-exit marker instead of closing the book. {@link ReconcileService} finalizes
+     * (books the CLOSED row + cooldown) once the broker no longer holds the position and the
+     * exit order is no longer working. Closing here on the stale {@code close} price is exactly
+     * the PSMT incident: the broker can still hold shares + a working exit order after a
+     * flatten is merely accepted, not filled.
+     */
     private void recordHardExit(ExecutorPosition p, BigDecimal close, BigDecimal currentR,
-            Trigger trigger, String runId, Instant detectedAt) {
-        positionRepo.close(p.id(), close, currentR, trigger.reasonCode());
-        cooldownRepo.add(p.symbol(), trigger.reasonCode(),
-                clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
+            Trigger trigger, String runId, Instant detectedAt, CloseResult cr) {
+        positionRepo.markPendingExit(p.id(), trigger.reasonCode(), cr.orderRef(),
+                cr.avgFillPrice(), clock.instant());
 
         ObjectNode inputs = mapper.createObjectNode();
         inputs.put("close", close);
@@ -181,6 +189,8 @@ public class HardTriggerService {
                 "LOG_HARD_EXIT", trigger.reasonCode(), orderJson, null, null, latency, null));
     }
 
+    // Reason codes produced below ("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH") are
+    // duplicated in ReconcileService#HARD_REASONS — keep both in sync.
     private Trigger detectStopBreach(ExecutorPosition p, BigDecimal close, boolean sell) {
         boolean breached = sell
                 ? close.compareTo(p.activeStop()) > 0

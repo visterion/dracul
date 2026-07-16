@@ -347,7 +347,8 @@ class AgoraExecutionGatewayTest {
                 .hasMessageContaining("unknown order");
     }
 
-    @Test void positionsReadsMarketValueAsMarketPrice() {
+    @Test void positionsDerivesPerUnitMarketPriceFromMarketValueWhenNoMarketPriceField() {
+        // Pre-A4.1 Agora shape: no per-unit marketPrice field, only the total marketValue.
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
                 {"output":{"positions":[
@@ -363,9 +364,55 @@ class AgoraExecutionGatewayTest {
         assertThat(p.symbol()).isEqualTo("AAPL");
         assertThat(p.qty()).isEqualByComparingTo("3.0");
         assertThat(p.avgEntryPrice()).isEqualByComparingTo("307.59");
-        assertThat(p.marketPrice()).isEqualByComparingTo("312.0");
+        // marketValue / qty = 312.0 / 3.0 = 104.0, NEVER the raw 312.0 total.
+        assertThat(p.marketPrice()).isEqualByComparingTo("104.0");
         // Live Saxo has no side field.
         assertThat(p.side()).isNull();
+    }
+
+    @Test void marketPriceReadFromPerUnitField() {
+        // Agora A4.1 payload: marketPrice per-unit present alongside the total marketValue.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"positions":[
+                    {"symbol":"PSMT","qty":5,"avgEntryPrice":193.87,"marketPrice":192.56,
+                     "marketValue":962.80,"openOrdersCount":1}
+                ]}}
+                """);
+
+        BrokerPosition p = gw.positions("depot-1").get(0);
+
+        assertThat(p.marketPrice()).isEqualByComparingTo("192.56"); // NEVER 962.80
+        assertThat(p.openOrdersCount()).isEqualTo(1);
+    }
+
+    @Test void fallbackDividesMarketValueByQty() {
+        // pre-A4.1 Agora: no marketPrice field at all.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"positions":[
+                    {"symbol":"PSMT","qty":5,"marketValue":962.80}
+                ]}}
+                """);
+
+        BrokerPosition p = gw.positions("depot-1").get(0);
+
+        assertThat(p.marketPrice()).isEqualByComparingTo("192.56");
+        assertThat(p.openOrdersCount()).isNull();
+    }
+
+    @Test void zeroQtyFallbackYieldsNullMarketPrice() {
+        // qty 0, no marketPrice field -> dividing by zero is skipped, marketPrice stays null.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"positions":[
+                    {"symbol":"PSMT","qty":0,"marketValue":0}
+                ]}}
+                """);
+
+        BrokerPosition p = gw.positions("depot-1").get(0);
+
+        assertThat(p.marketPrice()).isNull();
     }
 
     @Test void ordersDerivesStopLossRoleFromType() {

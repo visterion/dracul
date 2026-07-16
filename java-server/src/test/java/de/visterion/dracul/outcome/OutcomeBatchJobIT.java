@@ -49,7 +49,7 @@ class OutcomeBatchJobIT {
         return new ExecutorPosition(
                 null, "depot-1", symbol, "BUY", qty, bd("100"), bd("95"), bd("95"), 1, bd("5"),
                 List.of(), signalId, "strigoi-spin", null, null, "OPEN", null, bd("100"), null, 0,
-                null, null, null, null, null, null, null, null, null, 0, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null);
     }
 
     /** One bar per calendar day starting {@code start}, close/high/low derived from a simple offset. */

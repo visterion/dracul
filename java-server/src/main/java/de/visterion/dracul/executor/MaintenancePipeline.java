@@ -114,8 +114,19 @@ public class MaintenancePipeline {
         // NOT flatten or close anything (EntryExpiryService owns that lifecycle). Unfilled
         // positions are excluded here but kept for the final enrichment, so the book stays
         // visible to the agent.
-        List<ExecutorPosition> filledSurvivors = unfilledIds.isEmpty() ? survivors
-                : survivors.stream().filter(p -> !unfilledIds.contains(p.id())).toList();
+        //
+        // A row already carrying pendingExitReason (a prior hard-trigger flatten or fill-less
+        // webhook FULL exit, not yet confirmed by the broker) must likewise be excluded: it has
+        // already submitted its one flatten/close order for this exit, so evaluating hard
+        // triggers or ratcheting its stop again this same run would risk a double-flatten.
+        // ReconcileService's own survivor loop is the only thing allowed to touch it further
+        // (finalize-or-keep), which already ran above this line. Filtering directly on the field
+        // (rather than threading a new id set through ReconcileResult) needs no extra plumbing —
+        // pendingExitReason is already carried on every ExecutorPosition.
+        List<ExecutorPosition> filledSurvivors = survivors.stream()
+                .filter(p -> !unfilledIds.contains(p.id()))
+                .filter(p -> p.pendingExitReason() == null)
+                .toList();
 
         List<ExecutorPosition> afterHard = hardTrigger.apply(filledSurvivors, closeBySymbol, runId);
         ratchet.ratchet(afterHard, atrBySymbol, runId);
@@ -123,7 +134,7 @@ public class MaintenancePipeline {
         Set<Long> keepIds = new HashSet<>();
         for (ExecutorPosition p : afterHard) keepIds.add(p.id());
         for (ExecutorPosition p : survivors) {
-            if (unfilledIds.contains(p.id())) keepIds.add(p.id());
+            if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null) keepIds.add(p.id());
         }
 
         List<ExecutorPosition> finalOpen = positionRepo.findOpen().stream()

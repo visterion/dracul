@@ -58,7 +58,8 @@ class MaintenancePipelineTest {
         return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("95"), activeStop, 1, null, killCriteria, "sig-1", "agent",
                 "2026-06-01", null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null,
-                null, null, null, "stop-1", null, null, null, null, 0, null, null);
+                null, null, null, "stop-1", null, null, null, null, 0, null, null,
+                null, null, null, null);
     }
 
     @Test
@@ -364,7 +365,8 @@ class MaintenancePipelineTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
-                null, null, null, null, 0, new BigDecimal("39"), null);
+                null, null, null, null, 0, new BigDecimal("39"), null,
+                null, null, null, null);
         List<ExecutorPosition> survivors = List.of(bbb);
 
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
@@ -386,7 +388,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("100"), new BigDecimal("105"), new BigDecimal("105"), 1, null,
                 List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("90"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
         List<ExecutorPosition> survivors = List.of(aaa);
 
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));

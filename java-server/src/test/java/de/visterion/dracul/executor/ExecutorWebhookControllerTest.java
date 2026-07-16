@@ -178,7 +178,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
     }
 
     /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
@@ -188,7 +188,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "depot-1", symbol, side, qty,
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null, trimCount, null, null);
+                null, null, null, null, trimCount, null, null, null, null, null, null);
     }
 
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
@@ -842,6 +842,28 @@ class ExecutorWebhookControllerTest {
         // entryGtdDays=2, FIXED_NOW="2026-07-01T00:00:42Z" is a Wednesday -> +2 days lands on
         // Friday 2026-07-03 (no weekend roll needed).
         verify(positionRepo).setEntryExpiresAt(77L, Instant.parse("2026-07-03T00:00:42Z"));
+    }
+
+    @Test
+    void entryInsertPersistsSubmittedLimitPrice() {
+        // Book = broker: entry_price is later corrected to the broker's real fill basis by
+        // ReconcileService, but submitted_limit_price must keep the original order price
+        // forever, so slippage (entry_price - submitted_limit_price) stays computable.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, null, body);
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("100");
+        assertThat(posCaptor.getValue().submittedLimitPrice()).isEqualByComparingTo("100");
     }
 
     @Test
@@ -1688,7 +1710,9 @@ class ExecutorWebhookControllerTest {
                 position.exitPrice(), position.realizedR(), position.exitReason(),
                 position.closedAt(), position.stopOrderId(), position.sector(),
                 position.entryDayHigh(), position.tranche2OrderId(), position.tranche2StopOrderId(),
-                position.trimCount(), position.lowestPrice(), position.entryExpiresAt());
+                position.trimCount(), position.lowestPrice(), position.entryExpiresAt(),
+                position.submittedLimitPrice(), position.pendingExitReason(), position.exitOrderId(),
+                position.pendingExitFillPrice());
         when(positionRepo.findById(1L)).thenReturn(ratcheted);
 
         ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
@@ -1799,7 +1823,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0, null, null,
                 null, null, "stop-1", null, null, null, null, 0, null,
-                "2026-07-03T00:00:42Z");
+                "2026-07-03T00:00:42Z", null, null, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
 
         JsonNode body = json("""
@@ -1846,7 +1870,8 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(7L), exitPriceCaptor.capture(), realizedRCaptor.capture(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo).close(eq(7L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
+                eq("SOFT_CHANDELIER"), eq("FILL"));
         assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("112");
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("2.4");
 
@@ -1858,6 +1883,33 @@ class ExecutorWebhookControllerTest {
         assertThat(log.triggerType()).isEqualTo("SOFT_TRIGGER");
         assertThat(log.action()).isEqualTo("EXIT_FULL");
         assertThat(log.confidenceInDecision()).isEqualTo(0.7);
+    }
+
+    @Test
+    void exitPosition_fullExitWithoutFillPrice_stampsPendingExitInsteadOfClosing() {
+        // Verified prod incident (PSMT): a flatten that is merely accepted (no avgFillPrice yet)
+        // must not be booked as closed here — that books a wrong exit price/R and can mismatch
+        // the broker's still-working exit order. Stamp pending and let ReconcileService finalize.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, null, "close-9"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("pending")).isEqualTo(true);
+
+        verify(positionRepo).markPendingExit(eq(7L), eq("SOFT_CHANDELIER"), eq("close-9"),
+                isNull(), eq(FIXED_NOW));
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
     }
 
     @Test
@@ -1879,7 +1931,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exit_reason")).isEqualTo("SOFT_CHANDELIER");
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
@@ -2101,7 +2153,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(true);
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
 
@@ -2136,7 +2188,7 @@ class ExecutorWebhookControllerTest {
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(gateway, never()).flatten(any(), any(), eq(BigDecimal.valueOf(0.5)));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"), eq("FILL"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(cooldownRepo).add(eq("ACME"), eq("SCALE_OUT"), any(), any());
 
@@ -2297,7 +2349,8 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
-                null, null, null, null, null, null, null, null, null, 0, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null,
+                null, null, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
@@ -2321,7 +2374,8 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
-                null, null, null, null, null, null, null, null, null, 0, null, null);
+                null, null, null, null, null, null, null, null, null, 0, null, null,
+                null, null, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
 
         JsonNode body = json("""

@@ -53,11 +53,15 @@ class HardTriggerServiceTest {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 activeStop, 1, null, killCriteria, "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "brk-1", null, mfeR, 0, null, null, null, null, "stop-1",
-                null, null, null, null, 0, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null);
     }
 
     @Test
-    void stopBreach_flattensAndClosesHardStop() {
+    void hardTriggerLeavesPositionOpenPendingExit() {
+        // Verified prod incident (PSMT): closing the book right after a flatten is merely
+        // *accepted* — not confirmed filled — can book a wrong exit price/R while the broker
+        // still holds shares + a working exit order. A hard trigger must stamp a pending-exit
+        // marker and leave the row OPEN; only ReconcileService may close it, once confirmed.
         ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), null);
 
@@ -67,14 +71,11 @@ class HardTriggerServiceTest {
         assertThat(gateway.flattenedSymbols).containsExactly("ACME");
         assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
 
-        ArgumentCaptor<BigDecimal> currentRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(org.mockito.ArgumentMatchers.eq(1L),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("94")),
-                currentRCaptor.capture(), org.mockito.ArgumentMatchers.eq("HARD_STOP"));
-        assertThat(currentRCaptor.getValue()).isEqualByComparingTo("-1.2");
-
-        verify(cooldownRepo).add(org.mockito.ArgumentMatchers.eq("ACME"),
-                org.mockito.ArgumentMatchers.eq("HARD_STOP"), any(), any());
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("HARD_STOP"),
+                org.mockito.ArgumentMatchers.eq("close-1"), any(), org.mockito.ArgumentMatchers.eq(NOW));
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -101,11 +102,11 @@ class HardTriggerServiceTest {
 
         assertThat(gateway.flattenedSymbols).containsExactly("ACME");
 
-        ArgumentCaptor<BigDecimal> currentRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(org.mockito.ArgumentMatchers.eq(2L),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("106")),
-                currentRCaptor.capture(), org.mockito.ArgumentMatchers.eq("GIVEBACK_BREACH"));
-        assertThat(currentRCaptor.getValue()).isEqualByComparingTo("1.2");
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(2L),
+                org.mockito.ArgumentMatchers.eq("GIVEBACK_BREACH"),
+                org.mockito.ArgumentMatchers.eq("close-1"), any(), org.mockito.ArgumentMatchers.eq(NOW));
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(cooldownRepo, never()).add(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -153,9 +154,10 @@ class HardTriggerServiceTest {
         assertThat(gateway.flattenedSymbols).containsExactly("ACME");
         assertThat(gateway.flattenFractions).containsExactly(BigDecimal.ONE);
 
-        verify(positionRepo).close(org.mockito.ArgumentMatchers.eq(6L),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("39.50")),
-                any(), org.mockito.ArgumentMatchers.eq("HARD_KILL_CRITERIA"));
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(6L),
+                org.mockito.ArgumentMatchers.eq("HARD_KILL_CRITERIA"),
+                org.mockito.ArgumentMatchers.eq("close-1"), any(), org.mockito.ArgumentMatchers.eq(NOW));
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
