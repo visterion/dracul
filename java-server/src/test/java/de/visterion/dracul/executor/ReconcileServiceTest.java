@@ -140,8 +140,10 @@ class ReconcileServiceTest {
         ExecutorPosition p = pendingExitPosition(40L, "STALE1", new BigDecimal("100"),
                 new BigDecimal("95"), "stop-40", "HARD_STOP", "close-40", null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        when(positionRepo.exitSubmittedAt(40L)).thenReturn(NOW.minus(java.time.Duration.ofHours(25)));
-        when(decisionRepo.countBySymbolAndReasonCode("STALE1", "PENDING_EXIT_STALE")).thenReturn(0);
+        Instant submittedAt40 = NOW.minus(java.time.Duration.ofHours(25));
+        when(positionRepo.exitSubmittedAt(40L)).thenReturn(submittedAt40);
+        when(decisionRepo.countBySymbolAndReasonCodeSince("STALE1", "PENDING_EXIT_STALE", submittedAt40))
+                .thenReturn(0);
 
         gateway.seedPosition(new BrokerPosition("STALE1", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), null));
@@ -171,8 +173,10 @@ class ReconcileServiceTest {
         ExecutorPosition p = pendingExitPosition(41L, "STALE2", new BigDecimal("100"),
                 new BigDecimal("95"), "stop-41", "HARD_STOP", "close-41", null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        when(positionRepo.exitSubmittedAt(41L)).thenReturn(NOW.minus(java.time.Duration.ofHours(48)));
-        when(decisionRepo.countBySymbolAndReasonCode("STALE2", "PENDING_EXIT_STALE")).thenReturn(1);
+        Instant submittedAt41 = NOW.minus(java.time.Duration.ofHours(48));
+        when(positionRepo.exitSubmittedAt(41L)).thenReturn(submittedAt41);
+        when(decisionRepo.countBySymbolAndReasonCodeSince("STALE2", "PENDING_EXIT_STALE", submittedAt41))
+                .thenReturn(1);
 
         gateway.seedPosition(new BrokerPosition("STALE2", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), null));
@@ -199,7 +203,35 @@ class ReconcileServiceTest {
         assertThat(survivors).hasSize(1);
         verify(decisionRepo, never()).insert(any());
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
-        verify(decisionRepo, never()).countBySymbolAndReasonCode(any(), any());
+        verify(decisionRepo, never()).countBySymbolAndReasonCodeSince(any(), any(), any());
+    }
+
+    @Test
+    void pendingExitStale_oldEscalationFromPreviousPendingExit_stillEscalatesForCurrentOne() {
+        // Reviewer finding (task-4 fix): decision_log rows are never deleted, so a stale
+        // escalation for a PREVIOUS pending exit on this symbol (created BEFORE the current
+        // exit_submitted_at) must not suppress the escalation for the CURRENT stale pending
+        // exit. Suppression is bounded to "since the current exit was submitted".
+        ExecutorPosition p = pendingExitPosition(43L, "STALE3", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-43", "HARD_STOP", "close-43", null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        Instant submittedAt43 = NOW.minus(java.time.Duration.ofHours(25));
+        when(positionRepo.exitSubmittedAt(43L)).thenReturn(submittedAt43);
+        // An OLD PENDING_EXIT_STALE row exists for this symbol, but it predates the current
+        // pending exit's submit time -> the "since" scoped count must not see it.
+        when(decisionRepo.countBySymbolAndReasonCodeSince("STALE3", "PENDING_EXIT_STALE", submittedAt43))
+                .thenReturn(0);
+
+        gateway.seedPosition(new BrokerPosition("STALE3", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        assertThat(survivors).hasSize(1);
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("PENDING_EXIT_STALE");
+        verify(telegram).notifyAlert(eq("STALE3"), eq("PENDING_EXIT_STALE"), eq("CRITICAL"), any());
     }
 
     @Test
