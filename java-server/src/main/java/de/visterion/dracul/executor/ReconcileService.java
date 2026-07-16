@@ -296,7 +296,8 @@ public class ReconcileService {
                 p.status(), p.brokerOrderId(), newHighest, newMfeR, p.softConfirmCount(),
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
-                p.trimCount(), p.lowestPrice(), null);
+                p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {

@@ -40,13 +40,15 @@ public class ExecutorPositionRepository {
                    broker_order_id, highest_price, mfe_r, soft_confirm_count, exit_price,
                    realized_r, exit_reason, stop_order_id, sector, entry_day_high,
                    tranche2_order_id, tranche2_stop_order_id, trim_count, lowest_price,
-                   entry_expires_at)
+                   entry_expires_at, submitted_limit_price, pending_exit_reason, exit_order_id,
+                   pending_exit_fill_price)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
                         :exitPrice, :realizedR, :exitReason, :stopOrderId, :sector, :entryDayHigh,
                         :tranche2OrderId, :tranche2StopOrderId, :trimCount, :lowestPrice,
-                        CAST(:entryExpiresAt AS timestamptz))
+                        CAST(:entryExpiresAt AS timestamptz), :submittedLimitPrice, :pendingExitReason,
+                        :exitOrderId, :pendingExitFillPrice)
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -77,6 +79,10 @@ public class ExecutorPositionRepository {
                 .param("trimCount", p.trimCount())
                 .param("lowestPrice", p.lowestPrice())
                 .param("entryExpiresAt", p.entryExpiresAt())
+                .param("submittedLimitPrice", p.submittedLimitPrice())
+                .param("pendingExitReason", p.pendingExitReason())
+                .param("exitOrderId", p.exitOrderId())
+                .param("pendingExitFillPrice", p.pendingExitFillPrice())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -102,18 +108,55 @@ public class ExecutorPositionRepository {
     }
 
     public void close(long id, BigDecimal exitPrice, BigDecimal realizedR, String exitReason) {
+        close(id, exitPrice, realizedR, exitReason, null);
+    }
+
+    public void close(long id, BigDecimal exitPrice, BigDecimal realizedR, String exitReason,
+            String exitPriceSource) {
         jdbc.sql("""
                 UPDATE executor_position
                 SET status = 'CLOSED',
                     exit_price = :exitPrice,
                     realized_r = :realizedR,
                     exit_reason = :exitReason,
+                    exit_price_source = :exitPriceSource,
                     closed_at = now()
                 WHERE id = :id
                 """)
                 .param("exitPrice", exitPrice)
                 .param("realizedR", realizedR)
                 .param("exitReason", exitReason)
+                .param("exitPriceSource", exitPriceSource)
+                .param("id", id)
+                .update();
+    }
+
+    /** Overwrites {@code entry_price} with the broker's actual average fill price, leaving all
+     *  other fields (stops, R-value, status) untouched — used to reconcile the book against the
+     *  broker's fill report without disturbing derived risk figures. */
+    public void syncEntryPrice(long id, BigDecimal brokerAvgEntryPrice) {
+        jdbc.sql("UPDATE executor_position SET entry_price = :entryPrice WHERE id = :id")
+                .param("entryPrice", brokerAvgEntryPrice)
+                .param("id", id)
+                .update();
+    }
+
+    /** Stamps a submitted-but-not-yet-confirmed exit onto an OPEN position (status stays OPEN
+     *  until the fill is confirmed and {@link #close} is called). */
+    public void markPendingExit(long id, String reason, String exitOrderId, BigDecimal fillPrice,
+            Instant submittedAt) {
+        jdbc.sql("""
+                UPDATE executor_position
+                SET pending_exit_reason = :reason,
+                    exit_order_id = :exitOrderId,
+                    pending_exit_fill_price = :fillPrice,
+                    exit_submitted_at = :submittedAt
+                WHERE id = :id
+                """)
+                .param("reason", reason)
+                .param("exitOrderId", exitOrderId)
+                .param("fillPrice", fillPrice)
+                .param("submittedAt", java.sql.Timestamp.from(submittedAt))
                 .param("id", id)
                 .update();
     }
@@ -254,7 +297,11 @@ public class ExecutorPositionRepository {
                 rs.getString("tranche2_stop_order_id"),
                 rs.getInt("trim_count"),
                 rs.getBigDecimal("lowest_price"),
-                entryExpiresAtOrNull(rs));
+                entryExpiresAtOrNull(rs),
+                rs.getBigDecimal("submitted_limit_price"),
+                rs.getString("pending_exit_reason"),
+                rs.getString("exit_order_id"),
+                rs.getBigDecimal("pending_exit_fill_price"));
     }
 
     private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {

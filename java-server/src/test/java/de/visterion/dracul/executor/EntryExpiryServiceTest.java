@@ -51,7 +51,8 @@ class EntryExpiryServiceTest {
         return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), 1, null, List.of(), sourceSignalId,
                 "agent", "2026-07-01", null, "OPEN", "brk-1", null, null, 0, null, null, null,
-                null, "stop-1", null, null, null, null, 0, null, "2026-07-06T00:00:00Z");
+                null, "stop-1", null, null, null, null, 0, null, "2026-07-06T00:00:00Z",
+                null, null, null, null);
     }
 
     @Test
@@ -171,7 +172,8 @@ class EntryExpiryServiceTest {
         ExecutorPosition other = new ExecutorPosition(7L, "other-conn", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", null, null, 0, null, null,
-                null, null, "stop-1", null, null, null, null, 0, null, "2026-07-06T00:00:00Z");
+                null, null, "stop-1", null, null, null, null, 0, null, "2026-07-06T00:00:00Z",
+                null, null, null, null);
         when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(other));
 
         service.expire("c", "run1");
