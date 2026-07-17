@@ -8,6 +8,7 @@ import de.visterion.dracul.hunting.agora.Form4Filing;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.watchlist.WatchlistItem;
+import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,6 +39,7 @@ public class DaywalkerEventEngine {
     private static final Logger log = LoggerFactory.getLogger(DaywalkerEventEngine.class);
 
     private final HeldPositionService heldPositions;
+    private final WatchlistRepository watchlist;
     private final AgoraIntraday intraday;
     private final AgoraCompanyData companyData;
     private final AgoraFilings filings;
@@ -54,7 +56,8 @@ public class DaywalkerEventEngine {
     private final DowngradeDetector downgrade = new DowngradeDetector();
 
     public DaywalkerEventEngine(
-            HeldPositionService heldPositions, AgoraIntraday intraday,
+            HeldPositionService heldPositions, WatchlistRepository watchlist,
+            AgoraIntraday intraday,
             AgoraCompanyData companyData, AgoraFilings filings,
             DaywalkerAlertRepository alerts,
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
@@ -63,6 +66,7 @@ public class DaywalkerEventEngine {
             @Value("${dracul.position.connection:depot-1}") String connection,
             @Value("${dracul.primary-user-email:}") String primaryUser) {
         this.heldPositions = heldPositions;
+        this.watchlist = watchlist;
         this.intraday = intraday;
         this.companyData = companyData;
         this.filings = filings;
@@ -76,12 +80,22 @@ public class DaywalkerEventEngine {
 
     public List<TriggerEvent> detect(Instant since, Instant now) {
         var positions = heldPositions.openPositions(connection);
-        if (positions.isEmpty()) return List.of();
-
         Map<String, HeldPosition> repBySymbol = new LinkedHashMap<>();
         for (HeldPosition p : positions) {
             repBySymbol.putIfAbsent(p.symbol(), p);
         }
+
+        // Universe = depot ∪ watchlist, deduped per symbol; the depot representative wins
+        // (it carries positionId → position context in the LLM prompt). D2: no hunt-prey
+        // expansion. An empty depot with a non-empty watchlist still sweeps.
+        Map<String, WatchlistItem> universe = new LinkedHashMap<>();
+        for (HeldPosition rep : repBySymbol.values()) {
+            universe.put(rep.symbol(), asDetectorItem(rep));
+        }
+        for (WatchlistRepository.SweepRow row : watchlist.distinctSweepRows()) {
+            universe.putIfAbsent(row.ticker(), asDetectorItem(row));
+        }
+        if (universe.isEmpty()) return List.of();
 
         Instant effectiveSince = since != null ? since : now.minusSeconds(3600);
         LocalDate fromDate = effectiveSince.atZone(ZoneOffset.UTC).toLocalDate();
@@ -96,19 +110,19 @@ public class DaywalkerEventEngine {
         }
 
         var out = new ArrayList<TriggerEvent>();
-        for (HeldPosition rep : repBySymbol.values()) {
-            WatchlistItem detectorItem = asDetectorItem(rep);
+        for (WatchlistItem item : universe.values()) {
             var candidates = new ArrayList<TriggerEvent>();
-            candidates.addAll(priceVolume.detect(detectorItem,
-                    intraday.candles(rep.symbol()), priceThreshold, volumeMultiplier));
-            insiderSell.detect(detectorItem, form4).ifPresent(candidates::add);
-            news.detect(detectorItem, companyData.news(rep.symbol(), fromDate, toDate)).ifPresent(candidates::add);
-            downgrade.detect(detectorItem, companyData.recommendations(rep.symbol())).ifPresent(candidates::add);
+            candidates.addAll(priceVolume.detect(item,
+                    intraday.candles(item.ticker()), priceThreshold, volumeMultiplier));
+            insiderSell.detect(item, form4).ifPresent(candidates::add);
+            news.detect(item, companyData.news(item.ticker(), fromDate, toDate)).ifPresent(candidates::add);
+            downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
             if (candidates.isEmpty()) continue;
 
+            HeldPosition rep = repBySymbol.get(item.ticker());
             for (TriggerEvent base : candidates) {
-                if (!inCooldown(owner, rep.symbol(), base.triggerType(), now)) {
-                    out.add(enrich(base, rep));
+                if (!inCooldown(owner, item.ticker(), base.triggerType(), now)) {
+                    out.add(rep != null ? enrich(base, rep) : base);
                 }
             }
         }
@@ -121,6 +135,12 @@ public class DaywalkerEventEngine {
     private static WatchlistItem asDetectorItem(HeldPosition p) {
         double price = p.avgPrice() != null ? p.avgPrice().doubleValue() : 0.0;
         return new WatchlistItem(p.symbol(), p.symbol(), p.symbol(), price, 0.0,
+                null, null, null, null, List.of(), List.of(), null, null, null, null, null);
+    }
+
+    /** Watchlist-only sweep representative: real refreshed current_price, no position context. */
+    private static WatchlistItem asDetectorItem(WatchlistRepository.SweepRow r) {
+        return new WatchlistItem(r.ticker(), r.ticker(), r.companyName(), r.currentPrice(), 0.0,
                 null, null, null, null, List.of(), List.of(), null, null, null, null, null);
     }
 
