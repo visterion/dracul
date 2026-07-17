@@ -900,7 +900,7 @@ All endpoints are read-only (GET). No authentication in Stufe 3.
 
 | Endpoint | Response | Description |
 |---|---|---|
-| `GET /api/chronicle` | `ChronicleData` | Morning feed: prey[], verdicts[], pendingPatterns[], alerts[] |
+| `GET /api/chronicle` | `ChronicleData` | Morning feed: prey[], verdicts[], pendingPatterns[], alerts[]. Query params: `includeDismissed` (default false, verdicts), `includeArchived` (default false, prey — hides prey whose horizon has expired unless set true) |
 | `GET /api/status` | `SystemStatus` | Strigoi states, last verdict timestamp, daily cost |
 | `GET /api/verdict/{id}` | `VerdictDetail` | Full verdict detail; 404 if not found |
 | `GET /api/strigoi/{name}` | `StrigoiDetail` | Strigoi detail from Vistierie + recent prey from DB; 404 if unknown |
