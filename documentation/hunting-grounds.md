@@ -143,7 +143,14 @@ consumed through five neutral domain facades in
   `FilingText(text, available)` by strigoi-merger and strigoi-spin, fail-soft
   to `available = false` on any Agora failure).
 - **`AgoraCompanyData`** — `news`, `recommendations`, `fundamentals`,
-  `profile`.
+  `profile`. `recommendations(symbol)` (the swallowing entry point used by
+  daywalker and `EchoEnrichmentService.safeRecommendations`) caches a
+  successful analyst-estimates fetch for 60 min per symbol (positive-only —
+  an Agora outage is never cached, so the next call retries immediately).
+  `recommendationsStrict(symbol)` — the health-aware variant
+  `InsiderEnrichmentService`/`LazarusEnrichmentService` rely on to detect an
+  Agora outage and abort their batch — stays uncached and always hits Agora,
+  so the outage guard keeps seeing every failure.
 - **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates),
   `nextEarningsDate`.
 - **`AgoraReference`** — `indexChanges` (`get_index_constituent_changes` —
