@@ -20,4 +20,12 @@ class DaywalkerPromptContractTest {
         assertThat(p).as("breach = CRITICAL by default rule").contains("by default");
         assertThat(p).as("downgrade caveat").contains("downgrade to WARNING");
     }
+
+    @Test void mentionsEventTypeContract() throws Exception {
+        String p = prompt();
+        assertThat(p).as("rule-tag hint field").contains("event_tags");
+        assertThat(p).as("event_type output field").contains("`event_type`");
+        assertThat(p).as("'other' semantics").contains("`other`");
+        assertThat(p).as("'none' semantics").contains("`none`");
+    }
 }
