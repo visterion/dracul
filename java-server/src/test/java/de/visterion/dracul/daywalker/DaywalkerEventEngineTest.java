@@ -7,6 +7,7 @@ import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.IntradayCandles;
+import de.visterion.dracul.hunting.agora.SectorResolver;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.position.PortfolioWeights;
@@ -46,6 +47,7 @@ class DaywalkerEventEngineTest {
     }
 
     private final PortfolioWeights portfolioWeights = mock(PortfolioWeights.class);
+    private final SectorResolver sectors = mock(SectorResolver.class);
 
     private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
@@ -56,7 +58,7 @@ class DaywalkerEventEngineTest {
     private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al, long budgetMs) {
-        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights,
+        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights, sectors,
                 0.03, 3.0, 3600, budgetMs, "depot-1");
     }
 
@@ -487,5 +489,56 @@ class DaywalkerEventEngineTest {
         assertThat(events).hasSize(1);
         assertThat(events.get(0).position().weightPct()).isEqualByComparingTo("100.0");
         verify(portfolioWeights).weightsBySymbol(full);
+    }
+
+    @Test
+    void heldEventCarriesSectorInsideThePositionBlockOnly() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+        when(sectors.sector("ACME")).thenReturn("Semiconductors");
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).position().sector()).isEqualTo("Semiconductors");
+        assertThat(events.get(0).detail()).doesNotContainKey("sector"); // not duplicated (round 2, m-3)
+    }
+
+    @Test
+    void watchlistOnlyEventCarriesSectorInTheDetailMap() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of());
+        when(wl.distinctSweepRows()).thenReturn(List.of(
+                new de.visterion.dracul.watchlist.WatchlistRepository.SweepRow("WTCH", "Watch Co", 50.0)));
+        when(in.candles("WTCH")).thenReturn(new IntradayCandles(closes(50, 55), List.of()));
+        when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("WTCH")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+        when(sectors.sector("WTCH")).thenReturn("Utilities");
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).position()).isNull();
+        assertThat(events.get(0).detail()).containsEntry("sector", "Utilities");
     }
 }
