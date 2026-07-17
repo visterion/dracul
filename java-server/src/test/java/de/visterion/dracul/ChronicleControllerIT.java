@@ -77,8 +77,11 @@ class ChronicleControllerIT {
 
     @Test
     void chronicleReturns200WithExpectedCounts() {
+        // includeArchived=true so the seed prey (some of which may have aged past their
+        // horizon by the time this runs) aren't dropped by the active-prey filter -- this
+        // test asserts the raw seed counts, unaffected by wall-clock horizon expiry.
         var response = rest.get()
-                .uri("/api/chronicle?includeDismissed=true")
+                .uri("/api/chronicle?includeDismissed=true&includeArchived=true")
                 .retrieve()
                 .toEntity(JsonNode.class);
 
@@ -89,6 +92,46 @@ class ChronicleControllerIT {
         assertThat(body.get("verdicts")).hasSize(1);
         assertThat(body.get("alerts")).isEmpty();
         assertThat(body.get("pendingPatterns")).hasSize(3);
+    }
+
+    @Test
+    void chronicleHidesExpiredPreyByDefaultButIncludesWithArchivedFlag() {
+        // Insert a prey whose horizon expired long ago, alongside one that's still open.
+        String expiredId = "d0000000-0000-0000-0000-000000000001";
+        String openId = "d0000000-0000-0000-0000-000000000002";
+        try {
+            jdbc.sql("""
+                    INSERT INTO prey (id, symbol, company_name, anomaly_type, confidence,
+                                       thesis, signals, risks, horizon, discovered_by,
+                                       discovered_at, user_id)
+                    VALUES (:id::uuid, 'EXPD', 'Expired Corp', 'SPIN', 0.7, 'thesis', '[]', '[]',
+                            '30d', 'strigoi-spin', '2020-01-01T00:00:00Z', 'default')
+                    """).param("id", expiredId).update();
+            jdbc.sql("""
+                    INSERT INTO prey (id, symbol, company_name, anomaly_type, confidence,
+                                       thesis, signals, risks, horizon, discovered_by,
+                                       discovered_at, user_id)
+                    VALUES (:id::uuid, 'OPND', 'Open Corp', 'SPIN', 0.7, 'thesis', '[]', '[]',
+                            '90d', 'strigoi-spin', now(), 'default')
+                    """).param("id", openId).update();
+
+            JsonNode defaultView = rest.get().uri("/api/chronicle").retrieve().body(JsonNode.class);
+            assertThat(idsOf(defaultView.get("prey"))).contains(openId).doesNotContain(expiredId);
+
+            JsonNode archivedView = rest.get().uri("/api/chronicle?includeArchived=true")
+                    .retrieve().body(JsonNode.class);
+            assertThat(idsOf(archivedView.get("prey"))).contains(openId, expiredId);
+        } finally {
+            jdbc.sql("DELETE FROM prey WHERE id::text IN (:ids)")
+                    .param("ids", java.util.List.of(expiredId, openId))
+                    .update();
+        }
+    }
+
+    private static java.util.List<String> idsOf(JsonNode preyArray) {
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        preyArray.forEach(n -> ids.add(n.get("id").asText()));
+        return ids;
     }
 
     @Test

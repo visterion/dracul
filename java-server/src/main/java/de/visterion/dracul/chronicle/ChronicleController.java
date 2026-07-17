@@ -1,12 +1,16 @@
 package de.visterion.dracul.chronicle;
 
 import de.visterion.dracul.pattern.PatternRepository;
+import de.visterion.dracul.prey.Prey;
+import de.visterion.dracul.prey.PreyLifecycle;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.verdict.VerdictRepository;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 
 @RestController
@@ -26,9 +30,12 @@ public class ChronicleController {
 
     @GetMapping("/api/chronicle")
     public ChronicleData chronicle(
-            @RequestParam(name = "includeDismissed", defaultValue = "false") boolean includeDismissed) {
+            @RequestParam(name = "includeDismissed", defaultValue = "false") boolean includeDismissed,
+            @RequestParam(name = "includeArchived", defaultValue = "false") boolean includeArchived) {
+        List<Prey> prey = preyRepo.findAllByUser("default");
+        if (!includeArchived) prey = PreyLifecycle.activeOnly(prey, LocalDate.now(ZoneOffset.UTC));
         return new ChronicleData(
-                preyRepo.findAllByUser("default"),
+                prey,
                 verdictRepo.findAllByUser("default", includeDismissed),
                 List.of(),
                 patternRepo.findPendingByUser("default")
