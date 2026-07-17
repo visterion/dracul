@@ -25,7 +25,7 @@ class WatchlistRiskSnapshotIT {
     @Test
     void snapshotRoundTripsThroughPositionRisk() {
         WatchlistItem item = repo.insert("snap@x.com", "SNAP", "Snap Inc",
-                100.0, List.of(), "WATCHED", "manual", null, "USD");
+                100.0, List.of(), "TRACKING", "manual", null, "USD");
         repo.updateTag(item.id(), "HELD");
 
         boolean updated = repo.updateRiskSnapshot(item.id(),
@@ -42,7 +42,7 @@ class WatchlistRiskSnapshotIT {
     @Test
     void secondUpdateOverwritesPriorSnapshot() {
         WatchlistItem item = repo.insert("overwrite@x.com", "OVW", "Overwrite Corp",
-                50.0, List.of(), "WATCHED", "manual", null, "USD");
+                50.0, List.of(), "TRACKING", "manual", null, "USD");
         repo.updateTag(item.id(), "HELD");
 
         repo.updateRiskSnapshot(item.id(),
@@ -69,7 +69,7 @@ class WatchlistRiskSnapshotIT {
     @Test
     void snapshotPersistsAndReadsAtr() {
         WatchlistItem item = repo.insert("atr@x.com", "ATR", "Atr Inc",
-                100.0, List.of(), "WATCHED", "manual", null, "USD");
+                100.0, List.of(), "TRACKING", "manual", null, "USD");
         repo.updateTag(item.id(), "HELD");
 
         repo.updateRiskSnapshot(item.id(), new BigDecimal("100.0000"),
