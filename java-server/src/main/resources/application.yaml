@@ -182,6 +182,7 @@ dracul:
     enabled: ${DRACUL_RENFIELD_ENABLED:false}
     cron: ${DRACUL_RENFIELD_CRON:0 0 12 * * MON-FRI}
     webhook-token: ${DRACUL_RENFIELD_TOKEN:dev-token-change-me}
+    max-symbols: ${DRACUL_RENFIELD_MAX_SYMBOLS:30}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}

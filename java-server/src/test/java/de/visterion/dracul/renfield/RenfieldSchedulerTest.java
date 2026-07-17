@@ -16,6 +16,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,14 +36,27 @@ class RenfieldSchedulerTest {
     private final VistierieClient vistierie = mock(VistierieClient.class);
 
     private RenfieldScheduler scheduler() {
+        return scheduler(30);
+    }
+
+    private RenfieldScheduler scheduler(int maxSymbols) {
         return new RenfieldScheduler(watchlist, marketData, companyData, alerts, verdicts,
-                heldPositions, vistierie, "http://localhost:8080", "ren-tkn", "depot-1", "primary@x.com");
+                heldPositions, vistierie, "http://localhost:8080", "ren-tkn", "depot-1", "primary@x.com",
+                maxSymbols);
     }
 
     private static WatchlistItem item(String ticker, String verdictId) {
         return new WatchlistItem("id-" + ticker, ticker, ticker + " Corp", 41.0, -1.2,
                 "calm", "2026-07-01", "TRACKING", verdictId, List.of(), List.of(),
                 null, null, "primary@x.com", "USD", null);
+    }
+
+    /** Full-control constructor for priority/cap tests: explicit tag, source, addedAt. */
+    private static WatchlistItem item(String ticker, String tag, String verdictId, String source, String addedAt) {
+        return new WatchlistItem("id-" + ticker, ticker, ticker + " Corp", 41.0, -1.2,
+                "calm", addedAt, tag, verdictId, List.of(), List.of(),
+                null, null, "primary@x.com", "USD", null,
+                41.0, "USD", null, source);
     }
 
     private static HeldPosition held(String symbol) {
@@ -113,6 +127,150 @@ class RenfieldSchedulerTest {
                 .thenThrow(new RuntimeException("vistierie down"));
 
         assertThatCode(() -> scheduler().run()).doesNotThrowAnyException();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void capsAndPrioritizesWhenOverLimit() {
+        WatchlistItem held = item("HELD1", "HELD", null, "manual", "2026-01-01");
+        WatchlistItem verdict = item("VERD1", null, "v-1", "manual", "2026-01-01");
+        WatchlistItem agent = item("AGT1", null, null, "agent:pead", "2026-01-01");
+        WatchlistItem manual = item("MAN1", null, null, "manual", "2026-01-01");
+        WatchlistItem seed = item("SEED1", null, null, "seed", "2026-01-01");
+
+        List<WatchlistItem> items = new ArrayList<>(List.of(held, verdict, agent, manual, seed));
+        // 26 "else" items (no tag/verdict/known source) with distinct addedAt for tie-break.
+        // Newest survives, oldest ("2026-06-01" = ELSE00) is the one dropped by the cap.
+        List<String> elseTickers = new ArrayList<>();
+        for (int i = 0; i < 26; i++) {
+            String ticker = "ELSE" + String.format("%02d", i);
+            elseTickers.add(ticker);
+            items.add(item(ticker, null, null, "unknown", String.format("2026-06-%02d", i + 1)));
+        }
+        assertThat(items).hasSize(31);
+
+        when(watchlist.findAllByUser("primary@x.com")).thenReturn(items);
+        when(marketData.quotes(anyCollection())).thenReturn(Map.of());
+        when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
+        when(alerts.recentAlerts(anyString(), any())).thenReturn(List.of());
+        when(verdicts.findLatestBySymbol(anyString())).thenReturn(Optional.empty());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(RenfieldScheduler.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            scheduler(30).run();
+
+            ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+            verify(vistierie).triggerRun(eq("renfield"), captor.capture(), any(), any());
+            var symbols = (List<Map<String, Object>>) captor.getValue().get("symbols");
+            assertThat(symbols).hasSize(30);
+            var order = symbols.stream().map(m -> (String) m.get("symbol")).toList();
+
+            assertThat(order.get(0)).isEqualTo("HELD1");
+            assertThat(order.get(1)).isEqualTo("VERD1");
+            assertThat(order.get(2)).isEqualTo("AGT1");
+            assertThat(order.get(3)).isEqualTo("MAN1");
+            assertThat(order.get(4)).isEqualTo("SEED1");
+            // else-stage items follow, newest addedAt first (ELSE25 .. ELSE01); ELSE00 dropped.
+            List<String> expectedElseOrder = new ArrayList<>(elseTickers.subList(1, 26));
+            java.util.Collections.reverse(expectedElseOrder);
+            assertThat(order.subList(5, 30)).isEqualTo(expectedElseOrder);
+            assertThat(order).doesNotContain("ELSE00");
+
+            assertThat(appender.list).anySatisfy(ev -> {
+                assertThat(ev.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(ev.getFormattedMessage())
+                        .contains("capped watchlist review to 30 of 31 symbols (dropped 1)");
+            });
+            assertThat(appender.list).anySatisfy(ev ->
+                    assertThat(ev.getFormattedMessage())
+                            .contains("renfield review triggered for 30 watchlist symbols"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void manualSourceWithVerdictIdRanksAsVerdictStage() {
+        // source=manual but verdictId!=null must NOT be treated as the manual stage (rank 3);
+        // it counts as the verdict stage (rank 1) -- verdict merges onto manual rows.
+        WatchlistItem manualVerdict = item("MV1", null, "v-9", "manual", "2026-01-01");
+        WatchlistItem plainAgent = item("AG1", null, null, "agent:pead", "2026-06-01");
+
+        List<WatchlistItem> items = new ArrayList<>(List.of(plainAgent, manualVerdict));
+        for (int i = 0; i < 29; i++) {
+            items.add(item("FILL" + i, null, null, "unknown", "2026-05-01"));
+        }
+        assertThat(items).hasSize(31);
+
+        when(watchlist.findAllByUser("primary@x.com")).thenReturn(items);
+        when(marketData.quotes(anyCollection())).thenReturn(Map.of());
+        when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
+        when(alerts.recentAlerts(anyString(), any())).thenReturn(List.of());
+        when(verdicts.findLatestBySymbol(anyString())).thenReturn(Optional.empty());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+
+        scheduler(30).run();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(vistierie).triggerRun(eq("renfield"), captor.capture(), any(), any());
+        @SuppressWarnings("unchecked")
+        var symbols = (List<Map<String, Object>>) captor.getValue().get("symbols");
+        var order = symbols.stream().map(m -> (String) m.get("symbol")).toList();
+
+        // manual+verdictId (MV1, rank 1) must be reviewed before the agent item (AG1, rank 2),
+        // even though AG1 has a much newer addedAt -- rank wins over tie-break.
+        assertThat(order.indexOf("MV1")).isLessThan(order.indexOf("AG1"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void atOrBelowCapLeavesOrderUntouchedAndDoesNotLog() {
+        List<WatchlistItem> items = new ArrayList<>();
+        // Deliberately mixed priority/addedAt order that a sort WOULD reshuffle, to prove
+        // the no-cap path leaves findAllByUser's order (added_at DESC) untouched.
+        items.add(item("SEEDX", null, null, "seed", "2026-01-01"));
+        items.add(item("HELDX", "HELD", null, "manual", "2026-01-02"));
+        for (int i = 0; i < 28; i++) {
+            items.add(item("ITEM" + i, null, null, "unknown", "2026-01-03"));
+        }
+        assertThat(items).hasSize(30);
+        List<String> expectedOrder = items.stream().map(WatchlistItem::ticker).toList();
+
+        when(watchlist.findAllByUser("primary@x.com")).thenReturn(items);
+        when(marketData.quotes(anyCollection())).thenReturn(Map.of());
+        when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
+        when(alerts.recentAlerts(anyString(), any())).thenReturn(List.of());
+        when(verdicts.findLatestBySymbol(anyString())).thenReturn(Optional.empty());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(RenfieldScheduler.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            scheduler(30).run();
+
+            ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+            verify(vistierie).triggerRun(eq("renfield"), captor.capture(), any(), any());
+            var symbols = (List<Map<String, Object>>) captor.getValue().get("symbols");
+            assertThat(symbols).hasSize(30);
+            var order = symbols.stream().map(m -> (String) m.get("symbol")).toList();
+            assertThat(order).isEqualTo(expectedOrder);
+
+            assertThat(appender.list).noneMatch(ev -> ev.getFormattedMessage().contains("capped"));
+            assertThat(appender.list).anySatisfy(ev ->
+                    assertThat(ev.getFormattedMessage())
+                            .contains("renfield review triggered for 30 watchlist symbols"));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     @Test

@@ -25,6 +25,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +56,7 @@ public class RenfieldScheduler {
     private final String webhookToken;
     private final String connection;
     private final String owner;
+    private final int maxSymbols;
     private final NewsEventTagger tagger = new NewsEventTagger();
 
     public RenfieldScheduler(WatchlistRepository watchlist, AgoraMarketData marketData,
@@ -64,7 +66,8 @@ public class RenfieldScheduler {
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.renfield.webhook-token:dev-token-change-me}") String webhookToken,
             @Value("${dracul.position.connection:depot-1}") String connection,
-            @Value("${dracul.primary-user-email:}") String primaryUser) {
+            @Value("${dracul.primary-user-email:}") String primaryUser,
+            @Value("${dracul.renfield.max-symbols:30}") int maxSymbols) {
         this.watchlist = watchlist;
         this.marketData = marketData;
         this.companyData = companyData;
@@ -76,6 +79,7 @@ public class RenfieldScheduler {
         this.webhookToken = webhookToken;
         this.connection = connection;
         this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
+        this.maxSymbols = maxSymbols;
     }
 
     // zone is mandatory here — codebase precedent is split and the spec pins UTC.
@@ -87,10 +91,20 @@ public class RenfieldScheduler {
                 log.info("renfield: watchlist empty — skipping today's review (no run, no message)");
                 return;
             }
-            var input = assembleInput(items, Instant.now());
+            List<WatchlistItem> selected = items;
+            if (items.size() > maxSymbols) {
+                selected = items.stream()
+                        .sorted(Comparator.comparingInt(RenfieldScheduler::priorityRank)
+                                .thenComparing(WatchlistItem::addedAt, Comparator.reverseOrder()))
+                        .limit(maxSymbols)
+                        .toList();
+                log.info("renfield: capped watchlist review to {} of {} symbols (dropped {})",
+                        maxSymbols, items.size(), items.size() - maxSymbols);
+            }
+            var input = assembleInput(selected, Instant.now());
             vistierie.triggerRun("renfield", input,
                     publicUrl + "/api/renfield/complete", webhookToken);
-            log.info("renfield review triggered for {} watchlist symbols", items.size());
+            log.info("renfield review triggered for {} watchlist symbols", selected.size());
         } catch (RuntimeException e) {
             log.warn("renfield trigger failed: {}", e.getMessage());
         }
@@ -149,6 +163,22 @@ public class RenfieldScheduler {
             out.add(n);
         }
         return out;
+    }
+
+    /**
+     * Priority stage for the cap: lower rank = reviewed first when the watchlist exceeds
+     * {@code dracul.renfield.max-symbols}. First matching stage wins; verdict is
+     * {@code verdictId != null}, NOT {@code source == "verdict"} -- the two diverge once a
+     * verdict is merged onto a manual watchlist row.
+     */
+    private static int priorityRank(WatchlistItem i) {
+        if ("HELD".equals(i.tag())) return 0;
+        if (i.verdictId() != null) return 1;
+        String s = i.source();
+        if (s != null && s.startsWith("agent:")) return 2;
+        if ("manual".equals(s)) return 3;
+        if ("seed".equals(s)) return 4;
+        return 5; // total fallback: lowest priority
     }
 
     private List<Map<String, Object>> alertsFor(String symbol, Instant since) {
