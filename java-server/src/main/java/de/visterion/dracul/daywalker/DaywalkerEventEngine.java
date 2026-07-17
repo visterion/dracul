@@ -94,6 +94,8 @@ public class DaywalkerEventEngine {
                              Map<String, BigDecimal> weights,
                              List<Form4Filing> form4, LocalDate fromDate, LocalDate toDate) {}
 
+    private record SymbolScan(List<TriggerEvent> events, List<MacroHeadline> macroHeadlines) {}
+
     public List<TriggerEvent> detect(Instant since, Instant now) {
         // The budget wraps the WHOLE pass — including openPositions, the watchlist query and
         // the shared Form-4 fetch — because the events poll runs synchronously inside
@@ -113,15 +115,18 @@ public class DaywalkerEventEngine {
             }
             if (plan.universe().isEmpty()) return List.of();
 
-            List<Future<List<TriggerEvent>>> futures = new ArrayList<>();
+            List<Future<SymbolScan>> futures = new ArrayList<>();
             for (WatchlistItem item : plan.universe().values()) {
                 futures.add(exec.submit(() -> detectSymbol(item, plan, now)));
             }
             var out = new ArrayList<TriggerEvent>();
+            var macro = new ArrayList<MacroHeadline>();
             int skipped = 0;
-            for (Future<List<TriggerEvent>> f : futures) {
+            for (Future<SymbolScan> f : futures) {
                 try {
-                    out.addAll(f.get(remaining(deadlineNanos), TimeUnit.NANOSECONDS));
+                    SymbolScan scan = f.get(remaining(deadlineNanos), TimeUnit.NANOSECONDS);
+                    out.addAll(scan.events());
+                    macro.addAll(scan.macroHeadlines());
                 } catch (TimeoutException e) {
                     f.cancel(true);
                     skipped++;
@@ -189,13 +194,14 @@ public class DaywalkerEventEngine {
     /** Per-symbol detector pass — runs on a virtual thread. The shared detector fields
      *  (priceVolume, insiderSell, news, downgrade — incl. their NewsEventTagger) are
      *  stateless; pinned by NewsEventTaggerConcurrencyTest. */
-    private List<TriggerEvent> detectSymbol(WatchlistItem item, SweepPlan plan, Instant now) {
+    private SymbolScan detectSymbol(WatchlistItem item, SweepPlan plan, Instant now) {
         var candidates = new ArrayList<TriggerEvent>();
         candidates.addAll(priceVolume.detect(item,
                 intraday.candles(item.ticker()), priceThreshold, volumeMultiplier));
         insiderSell.detect(item, plan.form4()).ifPresent(candidates::add);
-        news.detect(item, companyData.news(item.ticker(), plan.fromDate(), plan.toDate()))
-                .ifPresent(candidates::add);
+        NewsScanResult newsScan = news.detect(item,
+                companyData.news(item.ticker(), plan.fromDate(), plan.toDate()));
+        newsScan.trigger().ifPresent(candidates::add);
         downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
 
         // T2.2 Part B (round 1, m5): resolve INSIDE the symbol's own virtual thread, for EVERY
@@ -203,7 +209,7 @@ public class DaywalkerEventEngine {
         // snapshot (cache-only read) finds sectors even for symbols without a trigger this poll.
         String sector = sectors.sector(item.ticker());
 
-        if (candidates.isEmpty()) return List.of();
+        if (candidates.isEmpty()) return new SymbolScan(List.of(), newsScan.macroOnly());
 
         HeldPosition rep = plan.repBySymbol().get(item.ticker());
         var out = new ArrayList<TriggerEvent>();
@@ -216,7 +222,7 @@ public class DaywalkerEventEngine {
                 }
             }
         }
-        return out;
+        return new SymbolScan(out, newsScan.macroOnly());
     }
 
     /** Build the minimal legacy-shaped item the shared (unmodified) detectors expect --
