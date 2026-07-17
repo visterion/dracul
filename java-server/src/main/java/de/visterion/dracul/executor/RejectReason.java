@@ -9,6 +9,13 @@ import java.util.Set;
  * pre-veto that short-circuits evaluation when {@code EntryContext.missing()} is non-empty, and
  * the BELOW_ANCHOR anchor guard that rejects entries on the invalidating side of the reference
  * price anchor.
+ *
+ * <p>NB: the constant declaration order below is historical and does NOT define veto precedence.
+ * The veto-catalog order (which check runs first, and thus which becomes {@code firstFailure}) is
+ * defined solely by the sequence of checks in {@code VetoService.evaluate}. Since the 2026-07-17
+ * reorder, SIGNAL_EXPIRED runs at catalog #3 (ahead of the transient caps) even though it is still
+ * declared 12th here. {@link #isTransient()} is an order-independent set membership, so neither the
+ * enum ordinal nor this declaration order affects behavior.
  */
 public enum RejectReason {
     DATA_UNAVAILABLE,
