@@ -9,6 +9,7 @@ import java.util.Optional;
 public interface ExecutionGateway {
     AccountSnapshot account(String connection);
     List<BrokerPosition> positions(String connection);
+    List<BrokerClosedPosition> closedPositions(String connection);
     List<BrokerOrder> orders(String connection);
     Optional<BrokerOrder> orderByRef(String connection, String ref);
     PlacedBracket placeBracket(String connection, BracketRequest req);

@@ -67,6 +67,27 @@ class AgoraExecutionGatewayTest {
         assertThat(result.get(0).marketPrice()).isEqualByComparingTo("108");
     }
 
+    @Test void closedPositionsMapsArray() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"closedPositions":[
+                    {"symbol":"ISRG","openPrice":364.35,"closePrice":364.10,"profitLoss":-0.25,"clientRef":"sig-1"}
+                ]}}
+                """);
+
+        List<BrokerClosedPosition> result = gw.closedPositions("depot-1");
+
+        assertThat(gw.capturedTool).isEqualTo("get_closed_positions");
+        assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
+        assertThat(result).hasSize(1);
+        BrokerClosedPosition p = result.get(0);
+        assertThat(p.symbol()).isEqualTo("ISRG");
+        assertThat(p.openPrice()).isEqualByComparingTo("364.35");
+        assertThat(p.closePrice()).isEqualByComparingTo("364.10");
+        assertThat(p.profitLoss()).isEqualByComparingTo("-0.25");
+        assertThat(p.clientRef()).isEqualTo("sig-1");
+    }
+
     @Test void ordersMapsRoleAndStatusAndFillInfo() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""

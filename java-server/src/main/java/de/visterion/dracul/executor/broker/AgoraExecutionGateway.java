@@ -98,6 +98,27 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     }
 
     @Override
+    public List<BrokerClosedPosition> closedPositions(String connection) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("connection", connection);
+        JsonNode out = unwrap(call("get_closed_positions", args));
+        JsonNode array = out.path("closedPositions");
+        if (!array.isArray()) array = out;
+        List<BrokerClosedPosition> result = new ArrayList<>();
+        if (array.isArray()) {
+            for (JsonNode c : array) {
+                result.add(new BrokerClosedPosition(
+                        textOrNull(c, "symbol"),
+                        decimalField(c, "openPrice", "open_price"),
+                        decimalField(c, "closePrice", "close_price"),
+                        decimalField(c, "profitLoss", "profit_loss"),
+                        textOrNull(c, "clientRef", "client_ref")));
+            }
+        }
+        return result;
+    }
+
+    @Override
     public List<BrokerOrder> orders(String connection) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);

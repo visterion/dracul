@@ -61,6 +61,12 @@ public class FakeExecutionGateway implements ExecutionGateway {
     }
 
     @Override
+    public List<BrokerClosedPosition> closedPositions(String connection) {
+        checkAvailable();
+        return new ArrayList<>();
+    }
+
+    @Override
     public List<BrokerOrder> orders(String connection) {
         checkAvailable();
         return new ArrayList<>(orders);
