@@ -17,6 +17,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
 
     private final Map<String, BrokerPosition> positionsBySymbol = new LinkedHashMap<>();
     private final List<BrokerOrder> orders = new ArrayList<>();
+    private final List<BrokerClosedPosition> closedPositions = new ArrayList<>();
     private AccountSnapshot account = new AccountSnapshot(
             new BigDecimal("100000"), new BigDecimal("100000"), "USD");
 
@@ -36,6 +37,10 @@ public class FakeExecutionGateway implements ExecutionGateway {
 
     public void seedOrder(BrokerOrder order) {
         orders.add(order);
+    }
+
+    public void seedClosedPosition(BrokerClosedPosition closedPosition) {
+        closedPositions.add(closedPosition);
     }
 
     public void setAccount(AccountSnapshot account) {
@@ -63,7 +68,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
     @Override
     public List<BrokerClosedPosition> closedPositions(String connection) {
         checkAvailable();
-        return new ArrayList<>();
+        return new ArrayList<>(closedPositions);
     }
 
     @Override

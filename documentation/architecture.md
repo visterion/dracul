@@ -396,6 +396,26 @@ position escalates once per symbol as `PENDING_EXIT_STALE` (decision log +
 Telegram CRITICAL alert) — no auto-retry, no auto-close (operator-in-the-loop
 spec requirement).
 
+**RECONCILE_GONE books real broker fills (A-2b).** When a position vanishes
+from the broker between two reconcile cycles with no filled exit leg observed
+in this pass (e.g. a bracket fills and stops out entirely between cycles — the
+verified ISRG incident, 2026-07-17), `ReconcileService.closePosition()` calls
+`ExecutionGateway.closedPositions(connection)` (Agora's `get_closed_positions`)
+to look up the real fill before falling back to an estimate. On a match
+(preferring `clientRef` equal to the position's source signal id, else same
+`symbol`) with both `openPrice` and `closePrice` present and strictly
+positive, it syncs `entry_price` to the real open fill
+(`positionRepo.syncEntryPrice`), books `exit_price` as the real close fill,
+and persists with `exit_price_source = 'FILL'` — `realizedR` is computed from
+the real entry and exit. If the gateway call fails, returns no match, or
+returns a malformed match (non-positive/null price — e.g. an upstream
+field-mapping bug), the position instead closes with the pre-existing
+`activeStop` estimate and `exit_price_source = 'RECONCILE_GONE'`, clearly
+labeling it as an estimate rather than a real fill (never `NULL`, never
+`FILL`) so the outcome/calibration loop can distinguish real bookings from
+placeholders. `exit_price_source` values are therefore `FILL`, `MARK`, or
+`RECONCILE_GONE`.
+
 **Hunters feed the executor (`PreySignalEmitter`).** When the executor is
 enabled, each hunter's `/complete` webhook — right after it persists prey —
 maps those findings to pending `executor_signal` rows via the deterministic
