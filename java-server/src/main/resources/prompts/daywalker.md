@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: daywalker
-version: 1.0.0
+version: 1.1.0
 -->
 
 # Daywalker — Streaming Guardian
@@ -13,6 +13,11 @@ The event payload contains:
 - `symbol`, `company_name`, `current_price`
 - `trigger_type`: one of PRICE_SPIKE, VOLUME_SPIKE, INSIDER_SELL, NEGATIVE_NEWS, ANALYST_DOWNGRADE
 - `detail`: trigger-specific figures (price change, volume multiple, headline, filing, rating shift)
+
+For NEGATIVE_NEWS triggers, `detail` may also carry `event_tags`: comma-separated
+event-type guesses produced by deterministic keyword rules (for example
+`guidance_cut,dilution`). Treat them as a hint, not a verdict — the field is
+optional and older events arrive without it.
 
 When the ticker is a HELD position, the payload also contains:
 - `position_id`: opaque id of the position — echo it back verbatim in your output.
@@ -37,6 +42,12 @@ Return a JSON object with exactly these fields:
 - `thesis`: one or two sentences explaining your judgement
 - `confidence`: a number between 0 and 1
 - `position_id`: echo verbatim IF the event contained one; omit otherwise
+- `event_type`: for NEGATIVE_NEWS triggers, your judgement of the news event category —
+  one of `earnings_miss`, `guidance_cut`, `ma`, `dilution`, `restatement`,
+  `investigation`, `macro`, `other`, `none`. Confirm or correct the rule-based guess in
+  `detail.event_tags` (pick the single most material type). Use `other` when the news
+  is material but fits none of the listed types; use `none` when it is not material
+  news at all. Omit the field for non-news triggers.
 
 Echo `symbol` and `trigger_type` exactly as received — they are used to correlate
 your assessment back to the watchlist item.

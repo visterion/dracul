@@ -45,4 +45,23 @@ class ConfounderScreenTest {
         var screen = new ConfounderScreen(companyData(List.of()));
         assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5))).isEmpty();
     }
+
+    @Test void earningsMissAndMacroHeadlinesProduceNoFlag() {
+        // Daywalker-only types (spec §3): EARNINGS_MISS/MACRO must NOT block Echo.
+        var screen = new ConfounderScreen(companyData(List.of(
+                news("Acme misses estimates", "profit warning issued"),
+                news("Fed raises rates", "tariffs and recession fears weigh"))));
+        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5))).isEmpty();
+    }
+
+    @Test void flagsAreInHeadlineEncounterOrderNotEnumOrder() {
+        // DILUTION is declared AFTER MA in the enum, but appears in the EARLIER headline —
+        // encounter order (headline order) must win (spec §4.1/§4.4, R2-M2). This ordered
+        // list is persisted via the Index path, so this test pins persisted behavior.
+        var screen = new ConfounderScreen(companyData(List.of(
+                news("Acme announces secondary offering", ""),
+                news("Acme agrees to merger with MegaCorp", ""))));
+        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5)))
+                .containsExactly("dilution", "m&a");
+    }
 }

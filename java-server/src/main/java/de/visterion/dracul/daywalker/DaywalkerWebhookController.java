@@ -1,6 +1,7 @@
 package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.daywalker.detect.TriggerEvent;
+import de.visterion.dracul.hunting.news.NewsEventType;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,8 +82,23 @@ public class DaywalkerWebhookController {
                 ? o.path("position_id").asText() : null;
         completionService.persistAssessment(symbol, triggerType,
                 o.path("severity").asText("INFO"), o.path("thesis").asText(""),
-                confidence, runId, positionId);
+                confidence, runId, positionId, mapEventType(o));
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Wire mapping for the OPTIONAL LLM {@code event_type} (T1.3, spec §4.3):
+     * missing/blank/unknown -> null; "none" -> null (not material); "other" -> literal
+     * "other"; taxonomy wire values -> persisted verbatim. Mapping deliberately lives in
+     * the controller (R1-m4) so persistAssessment stays a plain pass-through.
+     */
+    private static String mapEventType(JsonNode output) {
+        JsonNode n = output.path("event_type");
+        if (!n.isTextual()) return null;
+        String raw = n.asText();
+        if (raw.isBlank() || "none".equals(raw)) return null;
+        if ("other".equals(raw)) return "other";
+        return NewsEventType.fromWire(raw).map(NewsEventType::wireValue).orElse(null);
     }
 
     private static Instant parseInstant(Object v, Instant fallback) {
