@@ -34,7 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
     "dracul.daywalker.enabled=true", "dracul.voievod.enabled=true",
     "dracul.strigoi.echo.enabled=true", "dracul.strigoi.lazarus.enabled=true",
     "dracul.strigoi.merger.enabled=true", "dracul.strigoi.index.enabled=true",
-    "dracul.strigoi.insider.enabled=true", "dracul.strigoi.spin.enabled=true"
+    "dracul.strigoi.insider.enabled=true", "dracul.strigoi.spin.enabled=true",
+    "dracul.renfield.enabled=true"
 })
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")

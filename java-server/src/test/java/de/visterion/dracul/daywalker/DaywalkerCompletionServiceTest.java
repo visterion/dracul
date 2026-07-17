@@ -27,6 +27,9 @@ class DaywalkerCompletionServiceTest {
 
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
 
+    private final de.visterion.dracul.position.HeldPositionService heldPositions =
+            mock(de.visterion.dracul.position.HeldPositionService.class);
+
     private DaywalkerCompletionService service(DaywalkerAlertRepository alerts, TelegramNotifier notifier) {
         return service(alerts, notifier, null, false, DEFAULT_THRESHOLD);
     }
@@ -44,7 +47,12 @@ class DaywalkerCompletionServiceTest {
             BigDecimal escalationThreshold) {
         return new DaywalkerCompletionService(alerts, notifier, events, "CRITICAL", 3600,
                 providerOf(vistierieClient), escalationEnabled, daywalkerDeepEnabled, escalationThreshold,
-                PRIMARY_USER);
+                PRIMARY_USER, "http://localhost:8080", "deep-tkn", heldPositions, "depot-1");
+    }
+
+    private static de.visterion.dracul.position.HeldPosition held(String symbol) {
+        return new de.visterion.dracul.position.HeldPosition(symbol, BigDecimal.ONE, BigDecimal.TEN,
+                BigDecimal.TEN, BigDecimal.ZERO, null, null, null, null, null, null, null, null);
     }
 
     /** Minimal ObjectProvider stub — only {@code getObject()} is abstract; the default
@@ -170,6 +178,10 @@ class DaywalkerCompletionServiceTest {
         var alerts = mock(DaywalkerAlertRepository.class);
         var notifier = mock(TelegramNotifier.class);
         when(alerts.findOwnersBySymbol("GHOST")).thenReturn(List.of());
+        // R1: the skip is now conditional on a REACHABLE depot that does not hold the
+        // symbol (an empty depot reads as degrade → primary-owner fallback). Stub a
+        // non-empty depot without GHOST so the hallucination guard still applies.
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of(held("OTHER")));
 
         service(alerts, notifier).persistAssessment("GHOST", "PRICE_SPIKE", "CRITICAL",
                 "thesis", null, "run-5");
@@ -178,6 +190,91 @@ class DaywalkerCompletionServiceTest {
         verify(alerts, never()).insert(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), any(), anyString(), anyBoolean(), any());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    void heldOnlyOwnerSetFallsBackToPrimaryOwner() {
+        // R1 case 1: findOwnersBySymbol non-empty but ALL rows tagged HELD (stale tag,
+        // external holding, depot degrade). Without the fix the !held filter empties the
+        // list, nothing persists, the engine cooldown never engages → LLM run every poll.
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("HELDCO")).thenReturn(List.of(
+                new OwnerItem("watcher@x.com", "wid-9", true)));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("HELDCO", "NEGATIVE_NEWS", "WARNING",
+                "thesis", new BigDecimal("0.8"), "run-h1");
+
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("HELDCO"), eq("NEGATIVE_NEWS"),
+                eq("WARNING"), eq("thesis"), eq(new BigDecimal("0.8")), eq("run-h1"), anyBoolean(), isNull());
+    }
+
+    @Test
+    void emptyOwnersWithDepotHeldSymbolRoutesToPrimaryOwner() {
+        // R1 case 2: no watchlist row AND no position_id (legal — not in the schema's
+        // required list), but the symbol IS in the open depot → primary owner, not skip.
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("DEPOTCO")).thenReturn(List.of());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of(held("DEPOTCO")));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("DEPOTCO", "PRICE_SPIKE", "WARNING",
+                "thesis", new BigDecimal("0.8"), "run-h2");
+
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("DEPOTCO"), eq("PRICE_SPIKE"),
+                eq("WARNING"), eq("thesis"), eq(new BigDecimal("0.8")), eq("run-h2"), anyBoolean(), isNull());
+    }
+
+    @Test
+    void emptyOwnersWithUnknownNonHeldSymbolStillSkipsWithWarn() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("GHOST")).thenReturn(List.of());
+        // Depot reachable and non-empty, symbol genuinely absent → hallucination guard holds.
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of(held("OTHER")));
+
+        service(alerts, notifier).persistAssessment("GHOST", "PRICE_SPIKE", "WARNING",
+                "thesis", new BigDecimal("0.8"), "run-h3");
+
+        verify(alerts, never()).insert(anyString(), any(), anyString(), anyString(),
+                anyString(), anyString(), any(), anyString(), anyBoolean(), any());
+    }
+
+    @Test
+    void emptyOwnersWithDepotUnavailableFallsBackToPrimaryOwnerNotSkip() {
+        // Degrade rule: openPositions returns EMPTY on depot outage — that must NOT read
+        // as "not held". Misrouting to primary is harmless single-user; skipping re-opens
+        // the runaway (no row → no cooldown → LLM run every poll).
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("DOWNCO")).thenReturn(List.of());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("DOWNCO", "PRICE_SPIKE", "WARNING",
+                "thesis", new BigDecimal("0.8"), "run-h4");
+
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("DOWNCO"), eq("PRICE_SPIKE"),
+                eq("WARNING"), eq("thesis"), eq(new BigDecimal("0.8")), eq("run-h4"), anyBoolean(), isNull());
+    }
+
+    @Test
+    void noDepotLookupWhenPositionIdIsPresent() {
+        // Pin: the synchronous depot lookup exists ONLY on the empty-owner path.
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("ACME", "PRICE_SPIKE", "WARNING",
+                "thesis", new BigDecimal("0.8"), "run-h5", "ACME");
+
+        verifyNoInteractions(heldPositions);
     }
 
     @Test
@@ -321,7 +418,8 @@ class DaywalkerCompletionServiceTest {
                         "thesis text", new BigDecimal("0.4"), "run-20");
 
         verify(vistierie).triggerRun("daywalker-deep", Map.of(
-                "symbol", "AAPL", "trigger_type", "PRICE_SPIKE", "thesis", "thesis text"));
+                "symbol", "AAPL", "trigger_type", "PRICE_SPIKE", "thesis", "thesis text"),
+                "http://localhost:8080/api/daywalker-deep/complete", "deep-tkn");
     }
 
     @Test
@@ -340,7 +438,8 @@ class DaywalkerCompletionServiceTest {
                         "thesis text", new BigDecimal("0.4"), "run-27", "AAPL");
 
         var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
-        verify(vistierie).triggerRun(eq("daywalker-deep"), captor.capture());
+        verify(vistierie).triggerRun(eq("daywalker-deep"), captor.capture(),
+                eq("http://localhost:8080/api/daywalker-deep/complete"), eq("deep-tkn"));
         assertThat(captor.getValue()).containsExactlyInAnyOrderEntriesOf(Map.of(
                 "symbol", "AAPL", "trigger_type", "PRICE_SPIKE",
                 "thesis", "thesis text", "position_id", "AAPL"));
@@ -359,7 +458,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.9"), "run-21");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -373,7 +472,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "WARNING",
                         "thesis text", new BigDecimal("0.4"), "run-22");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -387,7 +486,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-23", null, true);
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -401,7 +500,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-24");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -417,7 +516,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-28");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -427,7 +526,8 @@ class DaywalkerCompletionServiceTest {
         var vistierie = mock(VistierieClient.class);
         stubEligibleSingleOwner(alerts, "AAPL", "PRICE_SPIKE");
         when(notifier.notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis text")).thenReturn(true);
-        when(vistierie.triggerRun(anyString(), any())).thenThrow(new RuntimeException("vistierie down"));
+        when(vistierie.triggerRun(anyString(), any(), any(), any()))
+                .thenThrow(new RuntimeException("vistierie down"));
 
         service(alerts, notifier, vistierie, true, DEFAULT_THRESHOLD)
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",

@@ -179,12 +179,13 @@ outcome is recorded in `daywalker_alerts.notification_sent`.
 |---|---|---|
 | `DRACUL_DAYWALKER_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
 | `DRACUL_DAYWALKER_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the event-source + completion webhooks. **Change in production.** |
-| `DRACUL_DAYWALKER_SESSION_CRON` | `0 30 13 * * 1-5` | StreamingBee session-open cron (sec min hour dom mon dow), UTC. Default ≈ US market open (EDT). |
-| `DRACUL_DAYWALKER_SESSION_DURATION` | `23400` | Session window length in seconds (6.5 h) |
+| `DRACUL_DAYWALKER_SESSION_CRON` | `0 0 8 * * 1-5` | StreamingBee session-open cron (sec min hour dom mon dow), UTC. Default = 08:00 UTC weekdays (summer 04:00–20:00 ET, winter 03:00–19:00 ET). |
+| `DRACUL_DAYWALKER_SESSION_DURATION` | `57600` | Session window length in seconds (16 hours). |
 | `DRACUL_DAYWALKER_POLL_INTERVAL` | `300` | Event-source poll cadence in seconds (5 min) |
+| `DRACUL_DAYWALKER_POLL_BUDGET_MS` | `60000` | Timeout budget (milliseconds) for a single poll sweep across all watched symbols. Unfinished symbols are skipped with a WARN if budget exhausted. |
 | `DRACUL_DAYWALKER_PRICE_SPIKE` | `0.03` | PRICE_SPIKE threshold (fraction) |
 | `DRACUL_DAYWALKER_VOLUME_MULT` | `3.0` | VOLUME_SPIKE multiple of rolling average |
-| `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min) |
+| `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min), owner-agnostic. |
 | `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). Escalation only actually fires when `DRACUL_DAYWALKER_DEEP_ENABLED` is **also** `true` — the gate checks both flags. |
 | `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE` | `0.6` | A CRITICAL assessment escalates only when its `confidence` is strictly below this threshold. |
 
@@ -210,6 +211,18 @@ its own toggle defaults to `true`; enable both to actually trigger `daywalker-de
 runs. Like every Vistierie agent it also needs a budget set once via the admin
 endpoint before it can run — see `documentation/operations.md`'s Agent budget guard
 section.
+
+## Renfield (daily watchlist-review agent)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `DRACUL_RENFIELD_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
+| `DRACUL_RENFIELD_CRON` | `0 0 12 * * MON-FRI` | Scheduled cron (sec min hour dom mon dow), UTC. Default = 12:00 UTC weekdays (≈ 08:00 ET summer / 07:00 ET winter). |
+| `DRACUL_RENFIELD_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the completion webhook. Also backs `dracul.renfield.webhook-token`, used for both the outbound trigger's completion-webhook token and inbound webhook verification. **Change in production.** |
+
+Renfield analyzes the primary user's watchlist daily (each symbol flagged `held` when it is also an open depot position — depot-only positions not on the watchlist are not reviewed) and emits concrete trade proposals as Telegram push + one bundled SSE `proposal.new` event per run. It is a scheduled, trigger-only agent (`schedule=null` is false — it has a cron) that produces no orders or trades. Proposals are bundled and idempotent (retried webhooks insert zero rows). Like every Vistierie agent it also needs a budget set once via the admin endpoint before it can run — see `documentation/operations.md`'s Agent budget guard section.
+
+Renfield reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (same Telegram bot as Daywalker).
 
 ## Watchlist price refresh
 

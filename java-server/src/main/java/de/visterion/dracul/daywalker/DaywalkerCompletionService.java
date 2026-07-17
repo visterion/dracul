@@ -1,6 +1,7 @@
 package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.vistierie.VistierieClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,10 @@ public class DaywalkerCompletionService {
     private final boolean daywalkerDeepEnabled;
     private final BigDecimal escalationThreshold;
     private final String depotOwner;
+    private final String publicUrl;
+    private final String deepWebhookToken;
+    private final HeldPositionService heldPositions;
+    private final String connection;
 
     public DaywalkerCompletionService(
             DaywalkerAlertRepository alerts,
@@ -49,7 +54,11 @@ public class DaywalkerCompletionService {
             @Value("${dracul.daywalker.escalation-enabled:true}") boolean escalationEnabled,
             @Value("${dracul.daywalker-deep.enabled:false}") boolean daywalkerDeepEnabled,
             @Value("${dracul.daywalker.escalation-confidence:0.6}") BigDecimal escalationThreshold,
-            @Value("${dracul.primary-user-email:}") String primaryUser) {
+            @Value("${dracul.primary-user-email:}") String primaryUser,
+            @Value("${dracul.public-url}") String publicUrl,
+            @Value("${dracul.daywalker-deep.webhook-token:dev-token-change-me}") String deepWebhookToken,
+            HeldPositionService heldPositions,
+            @Value("${dracul.position.connection:depot-1}") String connection) {
         this.alerts = alerts;
         this.notifier = notifier;
         this.events = events;
@@ -60,6 +69,10 @@ public class DaywalkerCompletionService {
         this.daywalkerDeepEnabled = daywalkerDeepEnabled;
         this.escalationThreshold = escalationThreshold;
         this.depotOwner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
+        this.publicUrl = publicUrl;
+        this.deepWebhookToken = deepWebhookToken;
+        this.heldPositions = heldPositions;
+        this.connection = connection;
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
@@ -109,10 +122,26 @@ public class DaywalkerCompletionService {
         } else {
             var all = alerts.findOwnersBySymbol(symbol);
             if (all.isEmpty()) {
-                log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
-                return;
+                // R1 case 2: position_id is legal to omit. Before skipping, check the open
+                // depot. openPositions() degrades to EMPTY on depot outage — an empty depot
+                // must NOT be read as "not held", so only a REACHABLE depot that does not
+                // hold the symbol keeps the WARN-and-skip (hallucinated-symbol guard).
+                var open = heldPositions.openPositions(connection);
+                boolean heldInDepot = open.stream().anyMatch(p -> symbol.equals(p.symbol()));
+                if (!open.isEmpty() && !heldInDepot) {
+                    log.warn("daywalker run {} unknown symbol {} — skipping", runId, symbol);
+                    return;
+                }
+                owners = List.of(new DaywalkerAlertRepository.OwnerItem(depotOwner, null, true));
+            } else {
+                owners = all.stream().filter(o -> !o.held()).toList();
+                if (owners.isEmpty()) {
+                    // R1 case 1: every watchlist row is tagged HELD (stale tag / external
+                    // holding / depot degrade) — fall back to the primary owner so a row IS
+                    // written and the engine cooldown engages.
+                    owners = List.of(new DaywalkerAlertRepository.OwnerItem(depotOwner, null, true));
+                }
             }
-            owners = all.stream().filter(o -> !o.held()).toList();
         }
         Instant now = Instant.now();
         var eligible = owners.stream()
@@ -189,7 +218,8 @@ public class DaywalkerCompletionService {
                 input.put("trigger_type", triggerType);
                 input.put("thesis", thesis);
                 if (positionId != null) input.put("position_id", positionId);
-                v.triggerRun("daywalker-deep", input);
+                v.triggerRun("daywalker-deep", input,
+                        publicUrl + "/api/daywalker-deep/complete", deepWebhookToken);
                 log.info("daywalker escalation triggered for {} ({})", symbol, triggerType);
             } catch (Exception e) {
                 log.warn("daywalker escalation failed for {}: {}", symbol, e.getMessage());

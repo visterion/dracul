@@ -18,7 +18,7 @@ class DaywalkerDefaults {
     AgentDefaultProvider daywalkerDefaultProvider(
             ObjectMapper mapper,
             @Value("${dracul.daywalker.session-cron}") String schedule,
-            @Value("${dracul.daywalker.session-duration:23400}") int sessionDuration,
+            @Value("${dracul.daywalker.session-duration:57600}") int sessionDuration,
             @Value("${dracul.daywalker.poll-interval:300}") int pollInterval) {
         JsonNode schema = AgentResources.readSchema(mapper, "schemas/daywalker-assessment.json");
         return new AgentDefaultProvider() {
