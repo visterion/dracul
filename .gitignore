@@ -24,3 +24,9 @@ java-server/src/main/resources/static/
 /*-preview.png
 # Added by code-review-graph
 .code-review-graph/
+
+# local env files + IDE metadata (never commit)
+chronicle/.env*.local
+.classpath
+.project
+.settings/
