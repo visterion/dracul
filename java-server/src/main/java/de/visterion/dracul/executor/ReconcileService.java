@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.broker.BrokerClosedPosition;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
@@ -182,7 +183,7 @@ public class ReconcileService {
                 survivors.add(p);
                 unfilledIds.add(p.id());
             } else if (bp == null || filledLeg != null) {
-                closePosition(p, filledLeg, bp, runId);
+                closePosition(p, filledLeg, bp, connection, runId);
             } else {
                 survivors.add(updateMaintenance(p, bp, runId));
             }
@@ -358,9 +359,14 @@ public class ReconcileService {
                         + "h — check broker order " + p.exitOrderId() + " manually");
     }
 
-    private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp, String runId) {
+    private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp,
+            String connection, String runId) {
         String exitReason;
         BigDecimal exitPrice;
+        String exitPriceSource = null;
+        // `effective` carries the real broker entry price once a RECONCILE_GONE match syncs it,
+        // so realizedR below is computed from real entry+exit rather than the stale placeholder.
+        ExecutorPosition effective = p;
         if (filledLeg != null && filledLeg.role() == OrderRole.STOP_LOSS) {
             exitReason = "HARD_STOP";
             exitPrice = filledLeg.avgFillPrice();
@@ -368,16 +374,62 @@ public class ReconcileService {
             exitReason = "TAKE_PROFIT";
             exitPrice = filledLeg.avgFillPrice();
         } else {
+            // Position vanished from the broker with no filled exit leg observed in this
+            // reconcile pass (e.g. it opened AND closed entirely between two reconcile cycles).
+            // Look up Agora's real closed-position fills before falling back to the activeStop
+            // estimate -- see the ISRG incident (2026-07-17): a gapped-down fill + immediate
+            // stop-out between cycles previously booked a fabricated entry/exit pair.
             exitReason = "RECONCILE_GONE";
             exitPrice = null;
+
+            BrokerClosedPosition match = null;
+            try {
+                List<BrokerClosedPosition> closed = gateway.closedPositions(connection);
+                match = closed.stream()
+                        .filter(cp -> p.sourceSignalId() != null && p.sourceSignalId().equals(cp.clientRef()))
+                        .findFirst()
+                        .or(() -> closed.stream().filter(cp -> p.symbol().equals(cp.symbol())).findFirst())
+                        .orElse(null);
+            } catch (Exception e) {
+                // Any gateway failure here must never abort reconcile -- fall through to the
+                // labeled activeStop estimate below, same as if no match had been found.
+                match = null;
+            }
+
+            // Guard against a malformed upstream fill (e.g. a Saxo field-mapping bug returning
+            // 0.00/null prices): booking entry=0/exit=0 would corrupt realizedR far worse than
+            // the labeled placeholder, so treat a non-positive/null price as "no usable match".
+            if (match != null && !hasUsablePrices(match)) {
+                match = null;
+            }
+
+            if (match != null) {
+                positionRepo.syncEntryPrice(p.id(), match.openPrice());
+                effective = new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                        match.openPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                        p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                        p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                        p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                        p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                        p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                        p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
+                exitPrice = match.closePrice();
+                exitPriceSource = "FILL";
+            } else {
+                exitPriceSource = "RECONCILE_GONE";
+            }
         }
         if (exitPrice == null) {
             exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
         }
 
-        BigDecimal realizedR = computeR(p, exitPrice);
+        BigDecimal realizedR = computeR(effective, exitPrice);
 
-        positionRepo.close(p.id(), exitPrice, realizedR, exitReason);
+        if (exitPriceSource != null) {
+            positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource);
+        } else {
+            positionRepo.close(p.id(), exitPrice, realizedR, exitReason);
+        }
         cooldownRepo.add(p.symbol(), exitReason,
                 clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
 
@@ -387,8 +439,11 @@ public class ReconcileService {
         ObjectNode inputs = mapper.createObjectNode();
         inputs.put("exit_price", exitPrice);
         inputs.put("realized_r", realizedR);
-        inputs.put("entry_price", p.entryPrice());
-        inputs.put("initial_stop", p.initialStop());
+        inputs.put("entry_price", effective.entryPrice());
+        inputs.put("initial_stop", effective.initialStop());
+        if (exitPriceSource != null) {
+            inputs.put("exit_price_source", exitPriceSource);
+        }
 
         // Exact position linkage for the outcome batch job (decision_log has no position_id
         // column; order_json carries it). A reconcile close is always a full flatten.
@@ -399,6 +454,13 @@ public class ReconcileService {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
                 action, exitReason, orderJson, null, null, null, null));
+    }
+
+    /** {@code true} only if both prices are present and strictly positive -- guards against a
+     *  malformed upstream fill (0.00/null) being booked as a real fill. */
+    private boolean hasUsablePrices(BrokerClosedPosition match) {
+        return match.openPrice() != null && match.openPrice().signum() > 0
+                && match.closePrice() != null && match.closePrice().signum() > 0;
     }
 
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp, String runId) {

@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.broker.BrokerClosedPosition;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
@@ -12,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -680,5 +682,79 @@ class ReconcileServiceTest {
 
     private static long anyLong() {
         return org.mockito.ArgumentMatchers.anyLong();
+    }
+
+    // --- A-2b: RECONCILE_GONE books real broker fills, labels the estimate fallback ---------
+
+    @Test
+    void reconcileGone_withClosedPositionMatch_booksRealFillsAndSourceFill() {
+        // Verified prod incident (ISRG 2026-07-17): a bracket filled at a gapped-down open and
+        // stopped out entirely between two reconcile cycles. The book never saw it OPEN, so the
+        // reconciler previously booked placeholders (submitted limit as entry, stop as exit,
+        // exit_price_source=null). Now a real closed-position match must book the real fill.
+        ExecutorPosition p = openPosition(20L, "ISRG", "BUY", new BigDecimal("402.57"),
+                new BigDecimal("370.54"), "brk-20", "stop-20", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedClosedPosition(new BrokerClosedPosition("ISRG", new BigDecimal("364.35"),
+                new BigDecimal("364.10"), new BigDecimal("-0.25"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("364.35"));
+
+        BigDecimal expectedR = new BigDecimal("364.10").subtract(new BigDecimal("364.35"))
+                .divide(new BigDecimal("364.35").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP);
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(20L), eq(new BigDecimal("364.10")), realizedRCaptor.capture(),
+                eq("RECONCILE_GONE"), eq("FILL"));
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void reconcileGone_noClosedPositionMatch_labelsSourceReconcileGone() {
+        ExecutorPosition p = openPosition(21L, "ISRG", "BUY", new BigDecimal("402.57"),
+                new BigDecimal("370.54"), "brk-21", "stop-21", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // No closedPositions seeded -> FakeExecutionGateway returns an empty list.
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
+
+        BigDecimal expectedR = new BigDecimal("370.54").subtract(new BigDecimal("402.57"))
+                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP);
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(21L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
+                eq("RECONCILE_GONE"), eq("RECONCILE_GONE"));
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
+    }
+
+    @Test
+    void reconcileGone_matchWithInvalidPrices_fallsBackToLabeledEstimate() {
+        // Guard against a malformed upstream fill (Saxo field-mapping bug): a matched closed
+        // position with a non-positive/null open price must be treated as unusable, not booked
+        // as a real fill (entry=0/exit=0 would corrupt realizedR far worse than the estimate).
+        ExecutorPosition p = openPosition(22L, "ISRG", "BUY", new BigDecimal("402.57"),
+                new BigDecimal("370.54"), "brk-22", "stop-22", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedClosedPosition(new BrokerClosedPosition("ISRG", BigDecimal.ZERO,
+                new BigDecimal("364.10"), new BigDecimal("-0.25"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
+
+        BigDecimal expectedR = new BigDecimal("370.54").subtract(new BigDecimal("402.57"))
+                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP);
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(22L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
+                eq("RECONCILE_GONE"), eq("RECONCILE_GONE"));
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
     }
 }
