@@ -6,7 +6,8 @@
     "severity": { "type": "string", "enum": ["INFO", "WARNING", "CRITICAL"] },
     "thesis": { "type": "string" },
     "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "position_id": { "type": "string" }
+    "position_id": { "type": "string" },
+    "event_type": { "type": "string", "enum": ["earnings_miss", "guidance_cut", "ma", "dilution", "restatement", "investigation", "macro", "other", "none"] }
   },
   "required": ["symbol", "trigger_type", "severity", "thesis", "confidence"]
 }
