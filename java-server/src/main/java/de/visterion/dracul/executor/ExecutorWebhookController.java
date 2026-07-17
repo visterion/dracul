@@ -559,12 +559,17 @@ public class ExecutorWebhookController {
             logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
                     clock.instant());
 
-            if (veto.firstFailure() == RejectReason.CONTRADICTION
-                    && veto.contradictingSignalId() != null) {
+            // A detected contradiction co-rejects the pending peer regardless of which veto is
+            // firstFailure — otherwise an expired signal (firstFailure SIGNAL_EXPIRED, catalog #3
+            // ahead of CONTRADICTION #10) would silently spare its fresh contradictor, letting it
+            // enter later. Peer row is labeled CONTRADICTION (its actual cause), not the entering
+            // signal's reason.
+            if (veto.contradictingSignalId() != null) {
                 String otherId = veto.contradictingSignalId();
                 signalRepo.markStatus(otherId, "REJECTED");
                 decisionRepo.insert(new ExecutorDecision(null, otherId, signal.symbol(), false,
-                        reason, vetoTrace, "contradiction pair with " + signalId, null, runId, null));
+                        RejectReason.CONTRADICTION.name(), vetoTrace,
+                        "contradiction pair with " + signalId, null, runId, null));
             }
 
             return ResponseEntity.ok(Map.of("output",
