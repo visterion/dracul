@@ -73,7 +73,7 @@ class ReconcileServiceTest {
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(1L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
-                eq("HARD_STOP"));
+                eq("HARD_STOP"), eq("FILL"));
         assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("95");
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("-1.0");
 
@@ -324,7 +324,7 @@ class ReconcileServiceTest {
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(2L), eq(new BigDecimal("112")), realizedRCaptor.capture(),
-                eq("TAKE_PROFIT"));
+                eq("TAKE_PROFIT"), eq("FILL"));
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("2.4");
 
         verify(cooldownRepo).add(eq("ACME"), eq("TAKE_PROFIT"), any(), any());
@@ -703,14 +703,41 @@ class ReconcileServiceTest {
 
         verify(positionRepo).syncEntryPrice(20L, new BigDecimal("364.35"));
 
+        // R must be measured against the ORIGINAL planned risk (planned entry vs initial stop),
+        // NOT the synced real entry vs stop -- a gapped-down fill lands below its stop, which
+        // would flip the entry-stop denominator negative and turn this ~0.25-loss into a
+        // positive R (see the ISRG incident this fix addresses).
         BigDecimal expectedR = new BigDecimal("364.10").subtract(new BigDecimal("364.35"))
-                .divide(new BigDecimal("364.35").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP);
+                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP); // ~ -0.007805
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(20L), eq(new BigDecimal("364.10")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("FILL"));
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
+        assertThat(realizedRCaptor.getValue().signum()).isLessThan(0);
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void reconcileGone_matchWithBigAdverseGap_booksNegativeRNotPositive() {
+        // Gapped-down fill 364.35 then closes far below at 350.00 -- a real ~0.45R LOSS. The OLD
+        // (buggy) entry-stop denominator would report +2.32R (a win). Pin it strictly negative.
+        ExecutorPosition p = openPosition(22L, "ISRG", "BUY", new BigDecimal("402.57"),
+                new BigDecimal("370.54"), "brk-22", "stop-22", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedClosedPosition(new BrokerClosedPosition("ISRG", new BigDecimal("364.35"),
+                new BigDecimal("350.00"), new BigDecimal("-14.35"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        BigDecimal expectedR = new BigDecimal("350.00").subtract(new BigDecimal("364.35"))
+                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP); // ~ -0.448
+
+        ArgumentCaptor<BigDecimal> cap = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(22L), eq(new BigDecimal("350.00")), cap.capture(),
+                eq("RECONCILE_GONE"), eq("FILL"));
+        assertThat(cap.getValue()).isEqualByComparingTo(expectedR);
+        assertThat(cap.getValue().signum()).isLessThan(0); // sharpest anti-sign-flip assertion
     }
 
     @Test
