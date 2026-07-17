@@ -460,8 +460,7 @@ doctrine.
 ```
 DRACUL_RENFIELD_ENABLED=true
 DRACUL_RENFIELD_CRON="0 0 12 * * MON-FRI"        # 12:00 UTC weekdays
-DRACUL_RENFIELD_TOKEN=<random-bearer-token>
-DRACUL_RENFIELD_WEBHOOK_TOKEN=<completion-webhook-token>
+DRACUL_RENFIELD_TOKEN=<random-bearer-token>     # backs both completion-webhook token and inbound webhook verification
 ```
 
 If the watchlist is empty, the run silently completes (INFO log) and sends
