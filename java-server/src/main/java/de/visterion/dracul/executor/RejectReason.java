@@ -36,5 +36,19 @@ public enum RejectReason {
      *  currency (or the quote carried no currency). The executor is single-currency in this
      *  slice — a bracket order sized in the wrong currency would be silently mis-sized — so a
      *  non-account-currency find is surfaced + watchlisted + given a Verdict, but never entered. */
-    CURRENCY_MISMATCH
+    CURRENCY_MISMATCH;
+
+    /**
+     * Transient = temporäre Raten-/Kapazitätsdeckel. Ein so abgelehntes Signal ist
+     * aufgeschoben, nicht disqualifiziert: es bleibt PENDING und wird im nächsten
+     * Executor-Lauf erneut geprüft, sobald wieder ein Slot frei ist. Alle übrigen
+     * Gründe sind terminal (das Signal ist strukturell nicht handelbar). Die natürliche
+     * Obergrenze eines aufgeschobenen Signals ist SIGNAL_EXPIRED (maxSignalAgeDays).
+     */
+    private static final java.util.Set<RejectReason> TRANSIENT = java.util.EnumSet.of(
+            PACE_LIMIT, MAX_POSITIONS, BUDGET, HEAT_LIMIT, COOLDOWN);
+
+    public boolean isTransient() {
+        return TRANSIENT.contains(this);
+    }
 }
