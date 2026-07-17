@@ -219,7 +219,7 @@ export interface WatchlistItem {
   nativeCurrentPrice: number        // original current price, before conversion
   nativeCurrency: string            // original currency of currentPrice
   nativeEntryPrice: number | null   // original entry price, before conversion
-  source: string                    // provenance: 'manual' | 'seed' | 'verdict'
+  source: string                    // provenance: 'manual' | 'seed' | 'verdict' | `agent:<name>`
 }
 
 export interface ExitSignal {

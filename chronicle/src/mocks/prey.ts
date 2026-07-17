@@ -156,6 +156,25 @@ const daysAgo = (days: number, i: number) =>
 
 const anomalyCycle: AnomalyType[] = ['SPIN', 'PEAD', 'INSIDER', 'LAZARUS', 'INDEX', 'MERGER']
 
+// Archived fixture: discoveredAt is far enough in the past that even the
+// longest horizon (180d) has expired, so this prey is unambiguously
+// archived. Used by MockApiClient.getChronicle to exercise the
+// includeArchived toggle under VITE_MOCK=true.
+export const archivedPrey: Prey = {
+  id: 'prey-archived-1',
+  symbol: 'ARCH',
+  companyName: 'Archived Holdings Inc',
+  anomalyType: 'MERGER',
+  confidence: 0.61,
+  thesis: 'Merger-arbitrage thesis whose horizon has long since expired; kept as a fixed fixture for the archive toggle.',
+  signals: ['Filler signal'],
+  risks: ['Filler risk'],
+  killCriteria: ['Filler kill criterion'],
+  horizon: '30d',
+  discoveredBy: 'strigoi-merger',
+  discoveredAt: daysAgo(200, 0),
+}
+
 const bulkPrey: Prey[] = ([[0, 16], [1, 16], [2, 8]] as const).flatMap(([days, n]) =>
   Array.from({ length: n }, (_, i): Prey => {
     const idx = days * 100 + i
