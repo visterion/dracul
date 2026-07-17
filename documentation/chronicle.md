@@ -83,6 +83,30 @@ day (newest day first) and sorts each day's items by confidence descending
   computed from `store.prey` as the desktop rail. Selecting a chip applies the
   filter and closes the sheet.
 
+## Prey archive toggle (Chronicle view)
+
+The Chronicle view (`/`) has an **archive toggle** (`data-testid="chronicle-archive-toggle"`,
+labelled "Archivierte Beute anzeigen" / "Show archived prey") above the feed. It is
+**off by default**, matching the backend default: `GET /api/chronicle` without
+`includeArchived` returns only *active* prey (horizon not yet expired). Flipping the
+toggle re-fetches via `useChronicleStore().load(true)`, which calls
+`getChronicle(includeArchived=true)` and shows prey whose horizon has expired as well
+(see `documentation/api.md`). The store's `includeArchived` ref is the single source of
+truth — the toggle and the fetched data can never disagree, since toggling always
+triggers a fresh load with the new flag rather than filtering client-side.
+
+## Watchlist provenance badge
+
+Every watchlist row shows a **provenance badge** (`WatchlistSourceBadge.vue`,
+`data-testid="wl-source-badge"`, a muted `TagPill`) next to the ticker, reflecting the
+item's `source` field from the backend (`watchlist_items.source`, see
+`documentation/architecture.md`): `seed` (bootstrap-seeded row), `manual` (operator
+`POST /api/watchlist`), `verdict` (added by reference to a verdict), or `agent:<name>`
+(added by an autonomous agent, e.g. renfield proposals) — rendered as "hinzugefügt von
+{name}" via an i18n placeholder rather than a fixed label per agent. Unknown values fall
+back to the raw string. Labels live under `watchlist.source.*` in
+`src/i18n/locales/{de,en}.ts`.
+
 ## Toast feedback
 
 `useToast()` (`src/composables/useToast.ts`) is a module-level singleton
