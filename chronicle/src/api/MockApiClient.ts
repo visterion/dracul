@@ -35,7 +35,7 @@ export class MockApiClient implements ApiClient {
   private watchlist: WatchlistItem[] = initialWatchlist.map(i => ({ ...i }))
   private _language = 'de'
   private _currency = 'EUR'
-  async getChronicle(): Promise<ChronicleData> {
+  async getChronicle(_includeArchived = false): Promise<ChronicleData> {
     await delay(50)
     return {
       prey: mockPrey,
@@ -217,6 +217,7 @@ export class MockApiClient implements ApiClient {
       nativeCurrentPrice: 0,
       nativeCurrency: this._currency,
       nativeEntryPrice: null,
+      source: req.sourceVerdictId ? 'verdict' : 'manual',
     }
     this.watchlist.unshift(item)
     return { ...item }

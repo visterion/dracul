@@ -35,6 +35,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 1247.50,
     nativeCurrency: 'USD',
     nativeEntryPrice: 1190.00,
+    source: 'verdict',
   },
   {
     id: 'wl-2',
@@ -59,6 +60,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 143.20,
     nativeCurrency: 'EUR',
     nativeEntryPrice: 146.00,
+    source: 'seed',
   },
   {
     id: 'wl-3',
@@ -80,6 +82,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 1892.40,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     id: 'wl-4',
@@ -101,6 +104,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 402.10,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     id: 'wl-5',
@@ -124,6 +128,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 167.45,
     nativeCurrency: 'EUR',
     nativeEntryPrice: 154.20,
+    source: 'seed',
   },
   {
     id: 'wl-6',
@@ -145,6 +150,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 528.70,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     id: 'wl-7',
@@ -168,6 +174,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 312.40,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     id: 'wl-8',
@@ -189,6 +196,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 274.80,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     id: 'wl-daniel-nvda',
@@ -210,6 +218,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 143.20,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     id: 'wl-daniel-meli',
@@ -231,6 +240,7 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 1892.40,
     nativeCurrency: 'EUR',
     nativeEntryPrice: null,
+    source: 'seed',
   },
   {
     // Foreign HELD position (daniel) — proves the portfolio's per-user owner filter.
@@ -255,5 +265,6 @@ export const mockWatchlistItems: WatchlistItem[] = [
     nativeCurrentPrice: 142.30,
     nativeCurrency: 'EUR',
     nativeEntryPrice: 130.00,
+    source: 'seed',
   },
 ]

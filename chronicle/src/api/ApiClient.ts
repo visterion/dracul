@@ -11,7 +11,7 @@ import type {
 } from './types'
 
 export interface ApiClient {
-  getChronicle(): Promise<ChronicleData>
+  getChronicle(includeArchived?: boolean): Promise<ChronicleData>
   getSystemStatus(): Promise<SystemStatus>
   getVerdictDetail(id: string): Promise<VerdictDetail | null>
   getStrigoiDetail(name: string): Promise<StrigoiDetail | null>

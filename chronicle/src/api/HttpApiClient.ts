@@ -14,8 +14,11 @@ import type {
 export class HttpApiClient implements ApiClient {
   constructor(private readonly baseUrl: string) {}
 
-  async getChronicle(): Promise<ChronicleData> {
-    const res = await fetch(`${this.baseUrl}/api/chronicle`)
+  async getChronicle(includeArchived = false): Promise<ChronicleData> {
+    const url = includeArchived
+      ? `${this.baseUrl}/api/chronicle?includeArchived=true`
+      : `${this.baseUrl}/api/chronicle`
+    const res = await fetch(url)
     if (!res.ok) throw new Error(`getChronicle failed: HTTP ${res.status}`)
     return res.json() as Promise<ChronicleData>
   }
