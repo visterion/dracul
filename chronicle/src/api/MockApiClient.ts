@@ -9,7 +9,7 @@ import type {
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
 } from './types'
-import { mockPrey } from '../mocks/prey'
+import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
 import { mockAlerts } from '../mocks/alerts'
 import { mockPatterns } from '../mocks/patterns'
@@ -35,10 +35,16 @@ export class MockApiClient implements ApiClient {
   private watchlist: WatchlistItem[] = initialWatchlist.map(i => ({ ...i }))
   private _language = 'de'
   private _currency = 'EUR'
-  async getChronicle(_includeArchived = false): Promise<ChronicleData> {
+  async getChronicle(includeArchived = false): Promise<ChronicleData> {
     await delay(50)
+    // Mirrors the real backend: by default only active prey (horizon not yet
+    // expired per PreyLifecycle/Horizons.isOpen) are returned; includeArchived=true
+    // returns everything. `mockPrey` is deliberately kept "active only" and
+    // `archivedPrey` is a single fixture appended only when the flag is set,
+    // so we don't need to reimplement the full horizon-expiry grammar here.
+    const prey = includeArchived ? [...mockPrey, archivedPrey] : mockPrey
     return {
-      prey: mockPrey,
+      prey,
       verdicts: mockVerdicts,
       alerts: mockAlerts,
       pendingPatterns: mockPatterns.filter(p => p.status === 'PENDING'),
