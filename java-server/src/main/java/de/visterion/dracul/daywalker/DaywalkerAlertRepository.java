@@ -185,6 +185,24 @@ public class DaywalkerAlertRepository {
                 .update();
     }
 
+    /** One recent alert for the Renfield input. The table has no open/closed lifecycle
+     *  column, so "recent" means created_at >= since (spec: now - 24h). */
+    public record RecentAlert(String triggerType, String severity, String thesis, Instant createdAt) {}
+
+    /** All alerts for a symbol (any owner) since {@code since}, newest first. */
+    public List<RecentAlert> recentAlerts(String symbol, Instant since) {
+        return jdbc.sql("""
+                SELECT trigger_type, severity, thesis, created_at FROM daywalker_alerts
+                WHERE symbol = :s AND created_at >= :since
+                ORDER BY created_at DESC
+                """)
+                .param("s", symbol).param("since", Timestamp.from(since))
+                .query((rs, n) -> new RecentAlert(
+                        rs.getString("trigger_type"), rs.getString("severity"),
+                        rs.getString("thesis"), rs.getTimestamp("created_at").toInstant()))
+                .list();
+    }
+
     /** Frontend WatchlistAlert level vocabulary for a precise severity. */
     private static String levelFor(String severity) {
         return switch (severity == null ? "" : severity.toUpperCase()) {
