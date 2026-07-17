@@ -175,9 +175,13 @@ dracul:
     notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
     escalation-enabled: ${DRACUL_DAYWALKER_ESCALATION_ENABLED:true}
     escalation-confidence: ${DRACUL_DAYWALKER_ESCALATION_CONFIDENCE:0.6}
+    macro-cooldown: ${DRACUL_DAYWALKER_MACRO_COOLDOWN:28800}
   daywalker-deep:
     enabled: ${DRACUL_DAYWALKER_DEEP_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_DEEP_TOKEN:dev-token-change-me}
+  sector:
+    ttl-seconds: ${DRACUL_SECTOR_TTL_SECONDS:86400}
+    negative-ttl-seconds: ${DRACUL_SECTOR_NEGATIVE_TTL_SECONDS:3600}
   renfield:
     enabled: ${DRACUL_RENFIELD_ENABLED:false}
     cron: ${DRACUL_RENFIELD_CRON:0 0 12 * * MON-FRI}

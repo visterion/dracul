@@ -3,12 +3,15 @@ package de.visterion.dracul.renfield;
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
+import de.visterion.dracul.hunting.agora.SectorResolver;
 import de.visterion.dracul.hunting.news.NewsEventTagger;
 import de.visterion.dracul.hunting.news.NewsEventType;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.Quote;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
+import de.visterion.dracul.position.PortfolioWeights;
+import de.visterion.dracul.position.PositionMath;
 import de.visterion.dracul.verdict.VerdictRepository;
 import de.visterion.dracul.vistierie.VistierieClient;
 import de.visterion.dracul.watchlist.WatchlistItem;
@@ -20,6 +23,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -51,6 +55,8 @@ public class RenfieldScheduler {
     private final DaywalkerAlertRepository alerts;
     private final VerdictRepository verdicts;
     private final HeldPositionService heldPositions;
+    private final PortfolioWeights portfolioWeights;
+    private final SectorResolver sectors;
     private final VistierieClient vistierie;
     private final String publicUrl;
     private final String webhookToken;
@@ -62,6 +68,7 @@ public class RenfieldScheduler {
     public RenfieldScheduler(WatchlistRepository watchlist, AgoraMarketData marketData,
             AgoraCompanyData companyData, DaywalkerAlertRepository alerts,
             VerdictRepository verdicts, HeldPositionService heldPositions,
+            PortfolioWeights portfolioWeights, SectorResolver sectors,
             VistierieClient vistierie,
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.renfield.webhook-token:dev-token-change-me}") String webhookToken,
@@ -74,6 +81,8 @@ public class RenfieldScheduler {
         this.alerts = alerts;
         this.verdicts = verdicts;
         this.heldPositions = heldPositions;
+        this.portfolioWeights = portfolioWeights;
+        this.sectors = sectors;
         this.vistierie = vistierie;
         this.publicUrl = publicUrl;
         this.webhookToken = webhookToken;
@@ -111,8 +120,12 @@ public class RenfieldScheduler {
     }
 
     Map<String, Object> assembleInput(List<WatchlistItem> items, Instant now) {
-        Set<String> heldSymbols = heldPositions.openPositions(connection).stream()
-                .map(HeldPosition::symbol).collect(Collectors.toSet());
+        List<HeldPosition> open = heldPositions.openPositions(connection);
+        Map<String, BigDecimal> weights = portfolioWeights.weightsBySymbol(open);
+        Map<String, HeldPosition> heldBySymbol = new LinkedHashMap<>();
+        for (HeldPosition p : PortfolioWeights.collapseBySymbol(open)) {
+            heldBySymbol.putIfAbsent(p.symbol(), p);
+        }
         Map<String, Quote> quotes = marketData.quotes(
                 items.stream().map(WatchlistItem::ticker).toList());
         Instant since = now.minus(24, ChronoUnit.HOURS);
@@ -127,7 +140,25 @@ public class RenfieldScheduler {
             Quote q = quotes.get(item.ticker());
             m.put("current_price", q != null ? q.price() : item.currentPrice());
             m.put("day_change_percent", q != null ? q.dayChangePercent() : item.dayChangePercent());
-            m.put("held", heldSymbols.contains(item.ticker()));
+            // T2.2 (D5): the bare `held` boolean is REPLACED by a real position block; absent
+            // block = not held. gain_loss_pct uses the C1 snapshot formula (|mv|/|qty| vs
+            // avgPrice) — renfield has no trigger close.
+            HeldPosition p = heldBySymbol.get(item.ticker());
+            if (p != null) {
+                String direction = PositionMath.direction(p.quantity());
+                var pos = new LinkedHashMap<String, Object>();
+                pos.put("direction", direction);
+                pos.put("entry", p.avgPrice());
+                pos.put("gain_loss_pct", PositionMath.gainLossPct(direction, p.avgPrice(),
+                        PositionMath.perUnitPrice(p.marketValue(), p.quantity())));
+                pos.put("weight_pct", weights.get(item.ticker()));
+                pos.put("active_stop", p.activeStop() != null ? p.activeStop() : p.initialStop());
+                pos.put("sector", sectors.sector(item.ticker()));
+                m.put("position", pos);
+            } else {
+                String sector = sectors.sector(item.ticker());
+                if (sector != null) m.put("sector", sector);
+            }
             m.put("news", newsFor(item.ticker(), from, to));
             m.put("alerts", alertsFor(item.ticker(), since));
             if (item.verdictId() != null) {

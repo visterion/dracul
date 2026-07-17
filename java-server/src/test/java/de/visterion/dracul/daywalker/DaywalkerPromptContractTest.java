@@ -28,4 +28,14 @@ class DaywalkerPromptContractTest {
         assertThat(p).as("'other' semantics").contains("`other`");
         assertThat(p).as("'none' semantics").contains("`none`");
     }
+
+    @Test void mentionsDirectionWeightSectorAndMacroPortfolio() throws Exception {
+        String p = prompt();
+        assertThat(p).as("direction rule").contains("RELATIVE to `direction`");
+        assertThat(p).as("weight scales materiality").contains("weight_pct");
+        assertThat(p).as("sector field").contains("`sector`");
+        assertThat(p).as("macro trigger section").contains("MACRO_PORTFOLIO");
+        assertThat(p).as("snapshot payload field").contains("portfolio_snapshot");
+        assertThat(p).as("portfolio pseudo-symbol echo").contains("`PORTFOLIO`");
+    }
 }
