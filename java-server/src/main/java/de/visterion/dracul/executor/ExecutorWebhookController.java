@@ -559,12 +559,21 @@ public class ExecutorWebhookController {
             logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
                     clock.instant());
 
-            if (veto.firstFailure() == RejectReason.CONTRADICTION
-                    && veto.contradictingSignalId() != null) {
+            // A detected contradiction co-rejects the pending peer — but only when the entering
+            // signal is itself terminally out (!isTransient). SIGNAL_EXPIRED (catalog #3) and
+            // CONTRADICTION (#10) are both non-transient, so both intended cases fire. If the
+            // entering signal is merely deferred by a transient cap (MAX_POSITIONS/BUDGET/
+            // HEAT_LIMIT/COOLDOWN, #4–#7 ahead of CONTRADICTION), killing the peer here would let
+            // the deferred signal enter on a later run once the cap clears — order-dependent, and
+            // the opposite of "two contradicting theses → trade neither". Leaving both PENDING
+            // makes them both terminal (CONTRADICTION) once the cap clears. Peer row is labeled
+            // CONTRADICTION (its actual cause), not the entering signal's reason.
+            if (veto.contradictingSignalId() != null && !firstFailure.isTransient()) {
                 String otherId = veto.contradictingSignalId();
                 signalRepo.markStatus(otherId, "REJECTED");
                 decisionRepo.insert(new ExecutorDecision(null, otherId, signal.symbol(), false,
-                        reason, vetoTrace, "contradiction pair with " + signalId, null, runId, null));
+                        RejectReason.CONTRADICTION.name(), vetoTrace,
+                        "contradiction pair with " + signalId, null, runId, null));
             }
 
             return ResponseEntity.ok(Map.of("output",
