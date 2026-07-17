@@ -119,7 +119,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     public Optional<BrokerOrder> orderByRef(String connection, String ref) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
-        args.put("ref", ref);
+        args.put("clientRef", ref);
         JsonNode out = unwrap(call("get_order_by_ref", args));
 
         JsonNode order = out.path("order");
