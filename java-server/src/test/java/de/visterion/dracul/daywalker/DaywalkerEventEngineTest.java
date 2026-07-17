@@ -9,6 +9,7 @@ import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.IntradayCandles;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
+import de.visterion.dracul.position.PortfolioWeights;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -44,6 +45,8 @@ class DaywalkerEventEngineTest {
         return java.util.Arrays.stream(v).mapToObj(BigDecimal::valueOf).toList();
     }
 
+    private final PortfolioWeights portfolioWeights = mock(PortfolioWeights.class);
+
     private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al) {
@@ -53,7 +56,8 @@ class DaywalkerEventEngineTest {
     private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al, long budgetMs) {
-        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, 0.03, 3.0, 3600, budgetMs, "depot-1");
+        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights,
+                0.03, 3.0, 3600, budgetMs, "depot-1");
     }
 
     @Test
@@ -454,5 +458,34 @@ class DaywalkerEventEngineTest {
         assertThat(events.get(0).position().direction()).isEqualTo("long");
         assertThat(events.get(0).position().gainLossPct()).isEqualByComparingTo("-5");
         assertThat(events.get(0).breachedLevel()).isEqualTo("STOP");
+    }
+
+    @Test
+    void weightMapIsComputedFromTheFullPositionsListAndReachesThePositionContext() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        // TWO lots of ACME: putIfAbsent-style rep selection would only see the first lot;
+        // the weight map must be computed from the FULL list (spec §9 Engine wiring).
+        List<HeldPosition> full = List.of(position("ACME", 100), position("ACME", 100));
+        when(hp.openPositions("depot-1")).thenReturn(full);
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+        when(portfolioWeights.weightsBySymbol(full))
+                .thenReturn(java.util.Map.of("ACME", new BigDecimal("100.0")));
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).position().weightPct()).isEqualByComparingTo("100.0");
+        verify(portfolioWeights).weightsBySymbol(full);
     }
 }
