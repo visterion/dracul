@@ -101,8 +101,7 @@ class GroparWebhookControllerTest {
 
     private HeldPosition taOnly(String symbol, String entryPrice, String qty) {
         return new HeldPosition(symbol, new BigDecimal(qty), new BigDecimal(entryPrice),
-                new BigDecimal("1000"), new BigDecimal("0"),
-                null, null, null, null, null, null, null, null);
+                new BigDecimal("1000"), new BigDecimal("0"), null, null, null, null, null, null, null, null, null);
     }
 
     private HeldPosition withContext(String symbol, String entryPrice, String qty,
@@ -116,8 +115,7 @@ class GroparWebhookControllerTest {
                                       String verdictId, JsonNode killCriteria, String horizon,
                                       JsonNode thesisSnapshot, BigDecimal initialStop, String openedAt) {
         return new HeldPosition(symbol, new BigDecimal(qty), new BigDecimal(entryPrice),
-                new BigDecimal("1000"), new BigDecimal("0"),
-                verdictId, killCriteria, horizon, thesisSnapshot, initialStop, null, "reconcile",
+                new BigDecimal("1000"), new BigDecimal("0"), null, verdictId, killCriteria, horizon, thesisSnapshot, initialStop, null, "reconcile",
                 openedAt);
     }
 

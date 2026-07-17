@@ -5,8 +5,11 @@ import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.Form4Filing;
+import de.visterion.dracul.hunting.agora.SectorResolver;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
+import de.visterion.dracul.position.PortfolioWeights;
+import de.visterion.dracul.position.PositionMath;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
@@ -15,7 +18,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.MathContext;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.*;
 
 /**
@@ -47,11 +50,15 @@ public class DaywalkerEventEngine {
     private final AgoraCompanyData companyData;
     private final AgoraFilings filings;
     private final DaywalkerAlertRepository alerts;
+    private final PortfolioWeights portfolioWeights;
+    private final SectorResolver sectors;
     private final String connection;
     private final double priceThreshold;
     private final double volumeMultiplier;
     private final long cooldownSeconds;
+    private final long macroCooldownSeconds;
     private final long pollBudgetMs;
+    private volatile Instant lastMacroEmittedAt;
 
     private final PriceVolumeDetector priceVolume = new PriceVolumeDetector();
     private final InsiderSellDetector insiderSell = new InsiderSellDetector();
@@ -63,9 +70,11 @@ public class DaywalkerEventEngine {
             AgoraIntraday intraday,
             AgoraCompanyData companyData, AgoraFilings filings,
             DaywalkerAlertRepository alerts,
+            PortfolioWeights portfolioWeights, SectorResolver sectors,
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
+            @Value("${dracul.daywalker.macro-cooldown:28800}") long macroCooldownSeconds,
             @Value("${dracul.daywalker.poll-budget-ms:60000}") long pollBudgetMs,
             @Value("${dracul.position.connection:depot-1}") String connection) {
         this.heldPositions = heldPositions;
@@ -74,16 +83,23 @@ public class DaywalkerEventEngine {
         this.companyData = companyData;
         this.filings = filings;
         this.alerts = alerts;
+        this.portfolioWeights = portfolioWeights;
+        this.sectors = sectors;
         this.priceThreshold = priceThreshold;
         this.volumeMultiplier = volumeMultiplier;
         this.cooldownSeconds = cooldownSeconds;
+        this.macroCooldownSeconds = macroCooldownSeconds;
         this.pollBudgetMs = pollBudgetMs;
         this.connection = connection;
     }
 
-    /** Immutable per-poll sweep inputs, prepared inside the budget. */
+    /** Immutable per-poll sweep inputs, prepared inside the budget. repBySymbol holds ONE
+     *  COLLAPSED entry per symbol (multi-lot rule A1); weights comes from the FULL lot list. */
     private record SweepPlan(Map<String, WatchlistItem> universe, Map<String, HeldPosition> repBySymbol,
+                             Map<String, BigDecimal> weights,
                              List<Form4Filing> form4, LocalDate fromDate, LocalDate toDate) {}
+
+    private record SymbolScan(List<TriggerEvent> events, List<MacroHeadline> macroHeadlines) {}
 
     public List<TriggerEvent> detect(Instant since, Instant now) {
         // The budget wraps the WHOLE pass — including openPositions, the watchlist query and
@@ -104,15 +120,18 @@ public class DaywalkerEventEngine {
             }
             if (plan.universe().isEmpty()) return List.of();
 
-            List<Future<List<TriggerEvent>>> futures = new ArrayList<>();
+            List<Future<SymbolScan>> futures = new ArrayList<>();
             for (WatchlistItem item : plan.universe().values()) {
                 futures.add(exec.submit(() -> detectSymbol(item, plan, now)));
             }
             var out = new ArrayList<TriggerEvent>();
+            var macro = new ArrayList<MacroHeadline>();
             int skipped = 0;
-            for (Future<List<TriggerEvent>> f : futures) {
+            for (Future<SymbolScan> f : futures) {
                 try {
-                    out.addAll(f.get(remaining(deadlineNanos), TimeUnit.NANOSECONDS));
+                    SymbolScan scan = f.get(remaining(deadlineNanos), TimeUnit.NANOSECONDS);
+                    out.addAll(scan.events());
+                    macro.addAll(scan.macroHeadlines());
                 } catch (TimeoutException e) {
                     f.cancel(true);
                     skipped++;
@@ -125,6 +144,7 @@ public class DaywalkerEventEngine {
                 log.warn("Daywalker poll budget of {} ms exhausted — skipped {} of {} symbols this poll",
                         pollBudgetMs, skipped, futures.size());
             }
+            maybeEmitMacroPortfolio(macro, plan, now).ifPresent(out::add);
             return out;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -143,8 +163,11 @@ public class DaywalkerEventEngine {
 
     private SweepPlan plan(Instant since, Instant now) {
         var positions = heldPositions.openPositions(connection);
+        // Weight map from the FULL lot list (spec §9 Engine wiring: putIfAbsent-style rep
+        // selection keeps only the first lot; the denominator must sum ALL lots).
+        Map<String, BigDecimal> weights = portfolioWeights.weightsBySymbol(positions);
         Map<String, HeldPosition> repBySymbol = new LinkedHashMap<>();
-        for (HeldPosition p : positions) {
+        for (HeldPosition p : PortfolioWeights.collapseBySymbol(positions)) {
             repBySymbol.putIfAbsent(p.symbol(), p);
         }
 
@@ -171,30 +194,41 @@ public class DaywalkerEventEngine {
                 log.warn("Form-4 fetch failed during Daywalker poll: {}", e.getMessage());
             }
         }
-        return new SweepPlan(universe, repBySymbol, form4, fromDate, toDate);
+        return new SweepPlan(universe, repBySymbol, weights, form4, fromDate, toDate);
     }
 
     /** Per-symbol detector pass — runs on a virtual thread. The shared detector fields
      *  (priceVolume, insiderSell, news, downgrade — incl. their NewsEventTagger) are
      *  stateless; pinned by NewsEventTaggerConcurrencyTest. */
-    private List<TriggerEvent> detectSymbol(WatchlistItem item, SweepPlan plan, Instant now) {
+    private SymbolScan detectSymbol(WatchlistItem item, SweepPlan plan, Instant now) {
         var candidates = new ArrayList<TriggerEvent>();
         candidates.addAll(priceVolume.detect(item,
                 intraday.candles(item.ticker()), priceThreshold, volumeMultiplier));
         insiderSell.detect(item, plan.form4()).ifPresent(candidates::add);
-        news.detect(item, companyData.news(item.ticker(), plan.fromDate(), plan.toDate()))
-                .ifPresent(candidates::add);
+        NewsScanResult newsScan = news.detect(item,
+                companyData.news(item.ticker(), plan.fromDate(), plan.toDate()));
+        newsScan.trigger().ifPresent(candidates::add);
         downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
-        if (candidates.isEmpty()) return List.of();
+
+        // T2.2 Part B (round 1, m5): resolve INSIDE the symbol's own virtual thread, for EVERY
+        // swept symbol — this warms the cache in parallel under the poll budget so the portfolio
+        // snapshot (cache-only read) finds sectors even for symbols without a trigger this poll.
+        String sector = sectors.sector(item.ticker());
+
+        if (candidates.isEmpty()) return new SymbolScan(List.of(), newsScan.macroOnly());
 
         HeldPosition rep = plan.repBySymbol().get(item.ticker());
         var out = new ArrayList<TriggerEvent>();
         for (TriggerEvent base : candidates) {
             if (!inCooldown(item.ticker(), base.triggerType(), now)) {
-                out.add(rep != null ? enrich(base, rep) : base);
+                if (rep != null) {
+                    out.add(enrich(base, rep, plan.weights().get(item.ticker()), sector));
+                } else {
+                    out.add(withDetailSector(base, sector));
+                }
             }
         }
-        return out;
+        return new SymbolScan(out, newsScan.macroOnly());
     }
 
     /** Build the minimal legacy-shaped item the shared (unmodified) detectors expect --
@@ -212,25 +246,116 @@ public class DaywalkerEventEngine {
                 null, null, null, null, List.of(), List.of(), null, null, null, null, null);
     }
 
-    /** Enrich a market-wide trigger with the position's stored stop/entry context. The context
-     *  block (active/initial stop) is nullable as a group -- a depot position with no open
-     *  {@code position_context} row still gets this event, just without a breach verdict. */
-    private TriggerEvent enrich(TriggerEvent base, HeldPosition position) {
+    /** Enrich a market-wide trigger with the position's stored stop/entry context, direction-aware
+     *  (T2.2). Zero/blank quantity → direction null, long math (status quo), one DEBUG line. */
+    private TriggerEvent enrich(TriggerEvent base, HeldPosition position,
+                                BigDecimal weightPct, String sector) {
         BigDecimal close = base.currentPrice();
         BigDecimal activeStop = position.activeStop() != null ? position.activeStop() : position.initialStop();
         BigDecimal entry = position.avgPrice();
-        BigDecimal gainLossPct = (close != null && entry != null && entry.signum() != 0)
-                ? close.subtract(entry).divide(entry, MathContext.DECIMAL64)
-                    .multiply(BigDecimal.valueOf(100)) : null;
-        var ctx = new PositionContext(entry, gainLossPct, activeStop, null, null, null);
-        String breached = BreachedLevel.evaluate(close, activeStop, null);
+        String direction = PositionMath.direction(position.quantity());
+        if (direction == null) {
+            log.debug("daywalker enrich: zero/blank quantity for {} — direction null, long math", position.symbol());
+        }
+        BigDecimal gainLossPct = PositionMath.gainLossPct(direction, entry, close);
+        var ctx = new PositionContext(entry, gainLossPct, activeStop, null, null, null,
+                direction, weightPct, sector);
+        String breached = BreachedLevel.evaluate(close, activeStop, null, "short".equals(direction));
         return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
-                base.currentPrice(), base.detail(), position.symbol(), ctx, breached);
+                base.currentPrice(), base.detail(), position.symbol(), ctx, breached, null);
+    }
+
+    /** Watchlist-only carrier (round 2, m-3): sector rides as a detail-map key — no new
+     *  TriggerEvent record component, no factory ripple. Detector detail maps may be
+     *  immutable, so copy before adding. Null sector → event unchanged. */
+    private static TriggerEvent withDetailSector(TriggerEvent base, String sector) {
+        if (sector == null) return base;
+        var detail = new LinkedHashMap<>(base.detail());
+        detail.put("sector", sector);
+        return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
+                base.currentPrice(), detail, base.positionId(), base.position(), base.breachedLevel(), null);
     }
 
     private boolean inCooldown(String symbol, TriggerType type, Instant now) {
         return alerts.lastAlertAtAnyOwner(symbol, type.name())
                 .map(last -> last.isAfter(now.minusSeconds(cooldownSeconds)))
                 .orElse(false);
+    }
+
+    /** C1: one MACRO_PORTFOLIO trigger per non-empty deduped bucket, gated by the DUAL cooldown
+     *  (round 1, M2): (a) DB row via lastAlertAtAnyOwner — the durable carrier, written only at
+     *  LLM completion — and (b) a volatile in-memory guard set at EMISSION time, because two
+     *  consecutive 5-min polls would otherwise both fire while the first run is in flight. The
+     *  guard resets on restart; the DB check then bounds the damage to one extra run. */
+    private Optional<TriggerEvent> maybeEmitMacroPortfolio(List<MacroHeadline> macro,
+                                                           SweepPlan plan, Instant now) {
+        if (macro.isEmpty()) return Optional.empty();
+        if (plan.repBySymbol().isEmpty()) {
+            log.debug("MACRO_PORTFOLIO: empty depot — dropping {} macro headline(s) this poll",
+                    macro.size());
+            return Optional.empty();
+        }
+        Instant inMemory = lastMacroEmittedAt;
+        if (inMemory != null && inMemory.isAfter(now.minusSeconds(macroCooldownSeconds))) {
+            return Optional.empty();
+        }
+        boolean dbCooldown = alerts
+                .lastAlertAtAnyOwner(TriggerEvent.PORTFOLIO_SYMBOL, TriggerType.MACRO_PORTFOLIO.name())
+                .map(last -> last.isAfter(now.minusSeconds(macroCooldownSeconds)))
+                .orElse(false);
+        if (dbCooldown) return Optional.empty();
+
+        // Dedup (round 1, m3; round 2, m-4): key = normalized text, first source symbol wins;
+        // sort datetime DESC with NULLs LAST (NewsHeadline.datetime is nullable), then text;
+        // cap 10 AFTER dedup+sort.
+        Map<String, MacroHeadline> deduped = new LinkedHashMap<>();
+        for (MacroHeadline h : macro) {
+            deduped.putIfAbsent(h.headline().toLowerCase(java.util.Locale.ROOT).trim(), h);
+        }
+        List<MacroHeadline> ordered = deduped.values().stream()
+                .sorted(java.util.Comparator
+                        .comparing(MacroHeadline::datetime,
+                                java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()))
+                        .thenComparing(MacroHeadline::headline))
+                .limit(10)
+                .toList();
+
+        var headlineMaps = new ArrayList<Map<String, Object>>();
+        for (MacroHeadline h : ordered) {
+            var m = new LinkedHashMap<String, Object>();
+            m.put("headline", h.headline());
+            m.put("source_symbol", h.sourceSymbol());
+            m.put("datetime", h.datetime() == null ? null : h.datetime().toString());
+            m.put("tags", h.tags());
+            headlineMaps.add(m);
+        }
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("headlines", headlineMaps);
+
+        lastMacroEmittedAt = now;
+        return Optional.of(new TriggerEvent(TriggerEvent.PORTFOLIO_SYMBOL, "Portfolio",
+                TriggerType.MACRO_PORTFOLIO, null, detail, null, null, null,
+                portfolioSnapshot(plan)));
+    }
+
+    /** One entry per HELD symbol (multi-lot collapsed per A1; no watchlist entries — the
+     *  snapshot is exposure, not interest). Sector is a CACHE-ONLY read (round 1, m5): never
+     *  extra tail-of-budget MCP calls. gain_loss_pct uses the C1 per-unit price source
+     *  |marketValue|/|quantity| against avgPrice, direction-aware. */
+    private List<Map<String, Object>> portfolioSnapshot(SweepPlan plan) {
+        var out = new ArrayList<Map<String, Object>>();
+        for (HeldPosition p : plan.repBySymbol().values()) {
+            String direction = PositionMath.direction(p.quantity());
+            BigDecimal perUnit = PositionMath.perUnitPrice(p.marketValue(), p.quantity());
+            var m = new LinkedHashMap<String, Object>();
+            m.put("symbol", p.symbol());
+            m.put("direction", direction);
+            m.put("weight_pct", plan.weights().get(p.symbol()));
+            m.put("gain_loss_pct", PositionMath.gainLossPct(direction, p.avgPrice(), perUnit));
+            m.put("sector", sectors.cachedSector(p.symbol()));
+            m.put("active_stop", p.activeStop() != null ? p.activeStop() : p.initialStop());
+            out.add(m);
+        }
+        return out;
     }
 }

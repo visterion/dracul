@@ -47,8 +47,9 @@ class SignalDetectorsTest {
     @Test
     void newsFiresWhenHeadlineTaggedAndCarriesEventTags() {
         var d = new NewsDetector();
-        var ev = d.detect(item(), List.of(new NewsHeadline(
+        var res = d.detect(item(), List.of(new NewsHeadline(
                 "Acme cuts guidance", "Q2 miss", "Reuters", "news", Instant.now(), "http://n/1")));
+        var ev = res.trigger();
         assertThat(ev).isPresent();
         assertThat(ev.get().triggerType()).isEqualTo(TriggerType.NEGATIVE_NEWS);
         assertThat(ev.get().detail())
@@ -60,17 +61,18 @@ class SignalDetectorsTest {
 
     @Test
     void newsEmptyWhenNoHeadlines() {
-        assertThat(new NewsDetector().detect(item(), List.of())).isEmpty();
+        assertThat(new NewsDetector().detect(item(), List.of()).trigger()).isEmpty();
     }
 
     @Test
     void newsFirstTaggedHeadlineWinsNotFirstOverall() {
         var d = new NewsDetector();
-        var ev = d.detect(item(), List.of(
+        var res = d.detect(item(), List.of(
                 new NewsHeadline("Acme wins award", "nice quarter", "Reuters", "news",
                         Instant.now(), "http://n/1"),
                 new NewsHeadline("Acme announces public offering amid takeover talk", "",
                         "Reuters", "news", Instant.now(), "http://n/2")));
+        var ev = res.trigger();
         assertThat(ev).isPresent();
         assertThat(ev.get().detail())
                 .containsEntry("headline", "Acme announces public offering amid takeover talk")
@@ -90,7 +92,7 @@ class SignalDetectorsTest {
                     new NewsHeadline("Acme wins award", "nice quarter", "Reuters", "news",
                             Instant.now(), "http://n/1"),
                     new NewsHeadline("Acme opens new factory", "", "Reuters", "news",
-                            Instant.now(), "http://n/2")))).isEmpty();
+                            Instant.now(), "http://n/2"))).trigger()).isEmpty();
             assertThat(appender.list).anySatisfy(e -> {
                 assertThat(e.getLevel()).isEqualTo(Level.INFO);
                 assertThat(e.getFormattedMessage())
@@ -104,8 +106,9 @@ class SignalDetectorsTest {
     @Test
     void newsDetailMapIsNullSafe() {
         var d = new NewsDetector();
-        var ev = d.detect(item(), List.of(new NewsHeadline(
+        var res = d.detect(item(), List.of(new NewsHeadline(
                 "Acme cuts guidance", null, null, "news", Instant.now(), null)));
+        var ev = res.trigger();
         assertThat(ev).isPresent();
         assertThat(ev.get().detail())
                 .containsEntry("headline", "Acme cuts guidance")
@@ -136,5 +139,60 @@ class SignalDetectorsTest {
     void downgradeEmptyWithInsufficientHistory() {
         assertThat(new DowngradeDetector().detect(item(),
                 List.of(new RecommendationTrend("2026-05", 1, 1, 1, 1, 1)))).isEmpty();
+    }
+
+    @Test
+    void macroOnlyHeadlineNeverFiresPerSymbolButIsCollected() {
+        var d = new NewsDetector();
+        var res = d.detect(item(), List.of(new NewsHeadline(
+                "Fed raises rates again", "", "Reuters", "news",
+                Instant.parse("2026-06-03T12:00:00Z"), "http://n/1")));
+        assertThat(res.trigger()).isEmpty();
+        assertThat(res.macroOnly()).hasSize(1);
+        var mh = res.macroOnly().get(0);
+        assertThat(mh.headline()).isEqualTo("Fed raises rates again");
+        assertThat(mh.sourceSymbol()).isEqualTo("ACME");
+        assertThat(mh.datetime()).isEqualTo(Instant.parse("2026-06-03T12:00:00Z"));
+        assertThat(mh.tags()).isEqualTo("macro");
+    }
+
+    @Test
+    void mixedTagHeadlineStaysOnThePerSymbolPathOnly() {
+        // MACRO + GUIDANCE_CUT: the specific tag dominates — per-symbol trigger, empty bucket.
+        var d = new NewsDetector();
+        // "tariffs" hits MACRO, "cuts guidance" hits GUIDANCE_CUT (plain contains matching)
+        var res = d.detect(item(), List.of(new NewsHeadline(
+                "Tariffs announced: Acme cuts guidance", "", "Reuters", "news",
+                Instant.now(), "http://n/1")));
+        assertThat(res.trigger()).isPresent();
+        assertThat((String) res.trigger().get().detail().get("event_tags")).contains("guidance_cut");
+        assertThat(res.macroOnly()).isEmpty();
+    }
+
+    @Test
+    void macroFirstBatchStillFiresTheLaterSpecificHeadlinePerSymbol() {
+        // Pins the m2 behavior change: pre-T2.2 the macro headline consumed the single slot.
+        var d = new NewsDetector();
+        var res = d.detect(item(), List.of(
+                new NewsHeadline("Fed raises rates again", "", "Reuters", "news",
+                        Instant.now(), "http://n/1"),
+                new NewsHeadline("Acme cuts guidance", "", "Reuters", "news",
+                        Instant.now(), "http://n/2")));
+        assertThat(res.trigger()).isPresent();
+        assertThat(res.trigger().get().detail()).containsEntry("headline", "Acme cuts guidance");
+        assertThat(res.macroOnly()).hasSize(1);
+    }
+
+    @Test
+    void macroAfterSpecificInTheSameBatchStillEntersTheBucket() {
+        var d = new NewsDetector();
+        var res = d.detect(item(), List.of(
+                new NewsHeadline("Acme cuts guidance", "", "Reuters", "news",
+                        Instant.now(), "http://n/1"),
+                new NewsHeadline("Recession fears grip markets", "", "Reuters", "news",
+                        Instant.now(), "http://n/2")));
+        assertThat(res.trigger()).isPresent();
+        assertThat(res.trigger().get().detail()).containsEntry("headline", "Acme cuts guidance");
+        assertThat(res.macroOnly()).hasSize(1);
     }
 }

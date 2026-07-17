@@ -104,6 +104,24 @@ line, just a quietly unpopulated column. Verify via `GET /agents/daywalker`
 on Vistierie (`:8090`, tenant token): `output_schema` should include the new
 `event_type` field and `version` should have bumped.
 
+### Post-deploy: agent definition reset (T2.2 portfolio-aware news implication)
+
+Deploying T2.2 (portfolio-aware news assessment + MACRO_PORTFOLIO trigger)
+updates **both** the `daywalker` and `renfield` agent prompts (direction,
+weight, sector context; position block replacing `held` flag) — same
+insert-if-absent caveat applies to both. After deploying this change set,
+reset both agents' definitions so Vistierie picks up the new prompts:
+
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/daywalker/definition/reset
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/renfield/definition/reset
+
+Verify each agent via `GET /agents/<name>` on Vistierie (`:8090`, tenant
+token): `system_prompt` should include portfolio context and `version` should
+have bumped. Daywalker's prompt will contain `MACRO_PORTFOLIO` and `direction`;
+renfield's will reference `position` instead of `held`.
+
 ### Prompt registry & archive
 
 `java-server/src/main/resources/prompts/prompt_registry.json` maps every
