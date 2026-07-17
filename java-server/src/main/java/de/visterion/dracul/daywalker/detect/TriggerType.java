@@ -7,5 +7,6 @@ public enum TriggerType {
     NEGATIVE_NEWS,
     ANALYST_DOWNGRADE,
     STOP_PROXIMITY,
-    STOP_BREACHED
+    STOP_BREACHED,
+    MACRO_PORTFOLIO // T2.2: macro fan-in on the whole portfolio (pseudo-symbol PORTFOLIO)
 }

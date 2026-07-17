@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.*;
 
 /**
@@ -55,7 +56,9 @@ public class DaywalkerEventEngine {
     private final double priceThreshold;
     private final double volumeMultiplier;
     private final long cooldownSeconds;
+    private final long macroCooldownSeconds;
     private final long pollBudgetMs;
+    private volatile Instant lastMacroEmittedAt;
 
     private final PriceVolumeDetector priceVolume = new PriceVolumeDetector();
     private final InsiderSellDetector insiderSell = new InsiderSellDetector();
@@ -71,6 +74,7 @@ public class DaywalkerEventEngine {
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
+            @Value("${dracul.daywalker.macro-cooldown:28800}") long macroCooldownSeconds,
             @Value("${dracul.daywalker.poll-budget-ms:60000}") long pollBudgetMs,
             @Value("${dracul.position.connection:depot-1}") String connection) {
         this.heldPositions = heldPositions;
@@ -84,6 +88,7 @@ public class DaywalkerEventEngine {
         this.priceThreshold = priceThreshold;
         this.volumeMultiplier = volumeMultiplier;
         this.cooldownSeconds = cooldownSeconds;
+        this.macroCooldownSeconds = macroCooldownSeconds;
         this.pollBudgetMs = pollBudgetMs;
         this.connection = connection;
     }
@@ -139,6 +144,7 @@ public class DaywalkerEventEngine {
                 log.warn("Daywalker poll budget of {} ms exhausted — skipped {} of {} symbols this poll",
                         pollBudgetMs, skipped, futures.size());
             }
+            maybeEmitMacroPortfolio(macro, plan, now).ifPresent(out::add);
             return out;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -256,7 +262,7 @@ public class DaywalkerEventEngine {
                 direction, weightPct, sector);
         String breached = BreachedLevel.evaluate(close, activeStop, null, "short".equals(direction));
         return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
-                base.currentPrice(), base.detail(), position.symbol(), ctx, breached);
+                base.currentPrice(), base.detail(), position.symbol(), ctx, breached, null);
     }
 
     /** Watchlist-only carrier (round 2, m-3): sector rides as a detail-map key — no new
@@ -267,12 +273,89 @@ public class DaywalkerEventEngine {
         var detail = new LinkedHashMap<>(base.detail());
         detail.put("sector", sector);
         return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
-                base.currentPrice(), detail, base.positionId(), base.position(), base.breachedLevel());
+                base.currentPrice(), detail, base.positionId(), base.position(), base.breachedLevel(), null);
     }
 
     private boolean inCooldown(String symbol, TriggerType type, Instant now) {
         return alerts.lastAlertAtAnyOwner(symbol, type.name())
                 .map(last -> last.isAfter(now.minusSeconds(cooldownSeconds)))
                 .orElse(false);
+    }
+
+    /** C1: one MACRO_PORTFOLIO trigger per non-empty deduped bucket, gated by the DUAL cooldown
+     *  (round 1, M2): (a) DB row via lastAlertAtAnyOwner — the durable carrier, written only at
+     *  LLM completion — and (b) a volatile in-memory guard set at EMISSION time, because two
+     *  consecutive 5-min polls would otherwise both fire while the first run is in flight. The
+     *  guard resets on restart; the DB check then bounds the damage to one extra run. */
+    private Optional<TriggerEvent> maybeEmitMacroPortfolio(List<MacroHeadline> macro,
+                                                           SweepPlan plan, Instant now) {
+        if (macro.isEmpty()) return Optional.empty();
+        if (plan.repBySymbol().isEmpty()) {
+            log.debug("MACRO_PORTFOLIO: empty depot — dropping {} macro headline(s) this poll",
+                    macro.size());
+            return Optional.empty();
+        }
+        Instant inMemory = lastMacroEmittedAt;
+        if (inMemory != null && inMemory.isAfter(now.minusSeconds(macroCooldownSeconds))) {
+            return Optional.empty();
+        }
+        boolean dbCooldown = alerts
+                .lastAlertAtAnyOwner(TriggerEvent.PORTFOLIO_SYMBOL, TriggerType.MACRO_PORTFOLIO.name())
+                .map(last -> last.isAfter(now.minusSeconds(macroCooldownSeconds)))
+                .orElse(false);
+        if (dbCooldown) return Optional.empty();
+
+        // Dedup (round 1, m3; round 2, m-4): key = normalized text, first source symbol wins;
+        // sort datetime DESC with NULLs LAST (NewsHeadline.datetime is nullable), then text;
+        // cap 10 AFTER dedup+sort.
+        Map<String, MacroHeadline> deduped = new LinkedHashMap<>();
+        for (MacroHeadline h : macro) {
+            deduped.putIfAbsent(h.headline().toLowerCase(java.util.Locale.ROOT).trim(), h);
+        }
+        List<MacroHeadline> ordered = deduped.values().stream()
+                .sorted(java.util.Comparator
+                        .comparing(MacroHeadline::datetime,
+                                java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()))
+                        .thenComparing(MacroHeadline::headline))
+                .limit(10)
+                .toList();
+
+        var headlineMaps = new ArrayList<Map<String, Object>>();
+        for (MacroHeadline h : ordered) {
+            var m = new LinkedHashMap<String, Object>();
+            m.put("headline", h.headline());
+            m.put("source_symbol", h.sourceSymbol());
+            m.put("datetime", h.datetime() == null ? null : h.datetime().toString());
+            m.put("tags", h.tags());
+            headlineMaps.add(m);
+        }
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("headlines", headlineMaps);
+
+        lastMacroEmittedAt = now;
+        return Optional.of(new TriggerEvent(TriggerEvent.PORTFOLIO_SYMBOL, "Portfolio",
+                TriggerType.MACRO_PORTFOLIO, null, detail, null, null, null,
+                portfolioSnapshot(plan)));
+    }
+
+    /** One entry per HELD symbol (multi-lot collapsed per A1; no watchlist entries — the
+     *  snapshot is exposure, not interest). Sector is a CACHE-ONLY read (round 1, m5): never
+     *  extra tail-of-budget MCP calls. gain_loss_pct uses the C1 per-unit price source
+     *  |marketValue|/|quantity| against avgPrice, direction-aware. */
+    private List<Map<String, Object>> portfolioSnapshot(SweepPlan plan) {
+        var out = new ArrayList<Map<String, Object>>();
+        for (HeldPosition p : plan.repBySymbol().values()) {
+            String direction = PositionMath.direction(p.quantity());
+            BigDecimal perUnit = PositionMath.perUnitPrice(p.marketValue(), p.quantity());
+            var m = new LinkedHashMap<String, Object>();
+            m.put("symbol", p.symbol());
+            m.put("direction", direction);
+            m.put("weight_pct", plan.weights().get(p.symbol()));
+            m.put("gain_loss_pct", PositionMath.gainLossPct(direction, p.avgPrice(), perUnit));
+            m.put("sector", sectors.cachedSector(p.symbol()));
+            m.put("active_stop", p.activeStop() != null ? p.activeStop() : p.initialStop());
+            out.add(m);
+        }
+        return out;
     }
 }
