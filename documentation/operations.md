@@ -449,11 +449,12 @@ Before deploying to production, configure:
 ## Renfield (daily watchlist-review agent)
 
 Renfield runs once per business day at 12:00 UTC (≈ 08:00 ET summer /
-07:00 ET winter), analyzes the watchlist + depot union for positions
-that warrant attention, and emits concrete trade proposals to Telegram
-and SSE stream. It is trigger-only (no recursion), produces proposals
-only (never places orders), and respects the operator's read-only
-doctrine.
+07:00 ET winter), analyzes the primary user's watchlist (each symbol
+flagged `held` when it is also an open depot position; depot-only
+positions not on the watchlist are not reviewed), and emits concrete
+trade proposals to Telegram and the SSE stream. It is trigger-only (no
+recursion), produces proposals only (never places orders), and respects
+the operator's read-only doctrine.
 
 **Enable + configure:**
 
@@ -463,11 +464,14 @@ DRACUL_RENFIELD_CRON="0 0 12 * * MON-FRI"        # 12:00 UTC weekdays
 DRACUL_RENFIELD_TOKEN=<random-bearer-token>     # backs both completion-webhook token and inbound webhook verification
 ```
 
-If the watchlist is empty, the run silently completes (INFO log) and sends
-nothing. Completions are idempotent: retried webhook deliveries insert
-zero rows and send no duplicate Telegram/SSE messages. Proposals are
-bundled into one Telegram push per run and published to the SSE stream as
-individual `proposal.new` events (one per proposal) for real-time UI updates.
+If the watchlist is empty, the scheduler skips the run entirely (INFO log,
+no Vistierie trigger, no Telegram). A completed run with an empty proposals
+list still sends a "keine Vorschläge heute" Telegram digest (no SSE event
+in that case). Completions are idempotent: retried webhook deliveries
+insert zero rows and send no duplicate Telegram/SSE messages. Proposals
+are bundled into one Telegram push per run and published to the SSE stream
+as a single bundled `proposal.new` event per completed run (`{count, run_id,
+ts}`), not one event per proposal.
 
 Renfield also requires a Vistierie budget (same procedure as daywalker —
 see Agent budget guard section below).

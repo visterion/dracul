@@ -26,13 +26,15 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 /**
- * Deterministic detection over the depot's live positions (via {@link HeldPositionService}).
- * Fetches the shared market-wide Form-4 window once per poll (via Agora), runs the four
- * detectors once per distinct depot symbol (triggers are market-wide), and emits a
- * per-position event whenever that (owner, symbol, trigger_type) is outside its cooldown.
- * All external fetches degrade to empty on failure -- the poll never crashes the Vistierie
- * scheduler tick, and a depot-down {@link HeldPositionService#openPositions} simply yields
- * no positions to fan over (not an error).
+ * Deterministic detection over the union of the depot's live positions (via
+ * {@link HeldPositionService}) and the watchlist — deduped per symbol, with the depot
+ * representative winning when a symbol appears in both. Fetches the shared market-wide
+ * Form-4 window once per poll (via Agora), runs the four detectors once per distinct
+ * symbol (triggers are market-wide), and emits an event whenever that
+ * (symbol, trigger_type) pair — owner-agnostic — is outside its cooldown. All external
+ * fetches degrade to empty on failure -- the poll never crashes the Vistierie scheduler
+ * tick, and a depot-down {@link HeldPositionService#openPositions} simply yields no
+ * depot positions to fan over (not an error); a non-empty watchlist still sweeps.
  */
 @Component
 public class DaywalkerEventEngine {
