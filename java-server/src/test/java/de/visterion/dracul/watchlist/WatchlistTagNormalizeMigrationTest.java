@@ -72,6 +72,15 @@ class WatchlistTagNormalizeMigrationTest {
             // 4a) V2 demo / V32 seed rows previously lowercase 'held'/'tracking' -> uppercase.
             assertThat(tagsInUse(conn)).allMatch(tag -> tag.equals("HELD") || tag.equals("TRACKING"));
 
+            // 4a-i) per-ticker mapping check: a V2 seed row with lowercase 'held' must become
+            // 'HELD' specifically (not just land somewhere in the valid set) -- catches a bug
+            // that flips casing to the wrong value instead of uppercasing correctly.
+            assertThat(tagOf(conn, "NVDA")).isEqualTo("HELD");
+
+            // 4a-ii) per-ticker mapping check: a V2 seed row with lowercase 'tracking' must
+            // become 'TRACKING' specifically.
+            assertThat(tagOf(conn, "AVGO")).isEqualTo("TRACKING");
+
             // 4b) empty tag '' -> defensively coerced to 'TRACKING'.
             assertThat(tagOf(conn, "EMPTYTAG")).isEqualTo("TRACKING");
 
