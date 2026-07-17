@@ -51,6 +51,24 @@ public class DaywalkerAlertRepository {
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
+    /** Most recent alert time for (symbol, trigger_type) across ALL owners — the ENGINE
+     *  cooldown key (R2). Watchlist alerts persist under each watcher's user_id; a
+     *  per-owner engine lookup would never trip for symbols watched only by a non-primary
+     *  user and the identical event would re-spawn an LLM run every poll. The
+     *  completion-side per-owner cooldown keeps using {@link #lastAlertAt}. */
+    public Optional<Instant> lastAlertAtAnyOwner(String symbol, String triggerType) {
+        var rows = jdbc.sql("""
+                SELECT created_at FROM daywalker_alerts
+                WHERE symbol = :s AND trigger_type = :tt
+                ORDER BY created_at DESC
+                LIMIT 1
+                """)
+                .param("s", symbol).param("tt", triggerType)
+                .query((rs, n) -> rs.getTimestamp("created_at").toInstant())
+                .list();
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
     /** Back-compat: insert without an explicit notification outcome (not notified). */
     public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
                        String severity, String thesis, BigDecimal confidence, String runId) {

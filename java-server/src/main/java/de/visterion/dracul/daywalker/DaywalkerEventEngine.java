@@ -45,7 +45,6 @@ public class DaywalkerEventEngine {
     private final AgoraFilings filings;
     private final DaywalkerAlertRepository alerts;
     private final String connection;
-    private final String owner;
     private final double priceThreshold;
     private final double volumeMultiplier;
     private final long cooldownSeconds;
@@ -63,8 +62,7 @@ public class DaywalkerEventEngine {
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
-            @Value("${dracul.position.connection:depot-1}") String connection,
-            @Value("${dracul.primary-user-email:}") String primaryUser) {
+            @Value("${dracul.position.connection:depot-1}") String connection) {
         this.heldPositions = heldPositions;
         this.watchlist = watchlist;
         this.intraday = intraday;
@@ -75,7 +73,6 @@ public class DaywalkerEventEngine {
         this.volumeMultiplier = volumeMultiplier;
         this.cooldownSeconds = cooldownSeconds;
         this.connection = connection;
-        this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
     }
 
     public List<TriggerEvent> detect(Instant since, Instant now) {
@@ -121,7 +118,7 @@ public class DaywalkerEventEngine {
 
             HeldPosition rep = repBySymbol.get(item.ticker());
             for (TriggerEvent base : candidates) {
-                if (!inCooldown(owner, item.ticker(), base.triggerType(), now)) {
+                if (!inCooldown(item.ticker(), base.triggerType(), now)) {
                     out.add(rep != null ? enrich(base, rep) : base);
                 }
             }
@@ -160,8 +157,8 @@ public class DaywalkerEventEngine {
                 base.currentPrice(), base.detail(), position.symbol(), ctx, breached);
     }
 
-    private boolean inCooldown(String owner, String symbol, TriggerType type, Instant now) {
-        return alerts.lastAlertAt(owner, symbol, type.name())
+    private boolean inCooldown(String symbol, TriggerType type, Instant now) {
+        return alerts.lastAlertAtAnyOwner(symbol, type.name())
                 .map(last -> last.isAfter(now.minusSeconds(cooldownSeconds)))
                 .orElse(false);
     }
