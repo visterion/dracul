@@ -70,7 +70,7 @@ public class WatchlistController {
         WatchlistItem created = repo.insert(
                 user, req.symbol(), md.companyName(),
                 md.currentPrice().doubleValue(), hist,
-                req.tag(), req.sourceVerdictId(), md.currency());
+                req.tag(), "manual", req.sourceVerdictId(), md.currency());
         events.publishEvent(new WatchlistChangedEvent());
         return ResponseEntity.status(201).body(mapper.toDisplay(created, settings.getDisplayCurrency()));
     }

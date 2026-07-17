@@ -74,7 +74,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void eventsEndpointReturnsDetectedEvents() {
-        watchlist.insert("default", "SPK", "Spike Co", 100.0, List.of(100.0), "", null, null);
+        watchlist.insert("default", "SPK", "Spike Co", 100.0, List.of(100.0), "", "manual", null, null);
         when(intraday.candles("SPK")).thenReturn(
                 new IntradayCandles(List.of(new BigDecimal("100"), new BigDecimal("106")), List.of()));
 
@@ -109,7 +109,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completeEndpointPersistsAlert() {
-        watchlist.insert("default", "CMP", "Complete Co", 80.0, List.of(80.0), "", null, null);
+        watchlist.insert("default", "CMP", "Complete Co", 80.0, List.of(80.0), "", "manual", null, null);
 
         var resp = rest.post().uri("/api/daywalker/complete")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
@@ -160,7 +160,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completePersistsTaxonomyEventType() {
-        watchlist.insert("default", "EV1", "Event Co 1", 10.0, List.of(10.0), "", null, null);
+        watchlist.insert("default", "EV1", "Event Co 1", 10.0, List.of(10.0), "", "manual", null, null);
         completeWithOutput("run-ev-1", Map.of("symbol", "EV1", "trigger_type", "NEGATIVE_NEWS",
                 "severity", "WARNING", "thesis", "Secondary offering announced.",
                 "confidence", 0.7, "event_type", "dilution"));
@@ -169,7 +169,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completeWithoutEventTypePersistsNull() {
-        watchlist.insert("default", "EV2", "Event Co 2", 10.0, List.of(10.0), "", null, null);
+        watchlist.insert("default", "EV2", "Event Co 2", 10.0, List.of(10.0), "", "manual", null, null);
         completeWithOutput("run-ev-2", Map.of("symbol", "EV2", "trigger_type", "NEGATIVE_NEWS",
                 "severity", "INFO", "thesis", "Routine headline.", "confidence", 0.3));
         assertThat(nullEventTypeCount("EV2")).isEqualTo(1L);
@@ -177,7 +177,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completeWithUnknownEventTypePersistsNull() {
-        watchlist.insert("default", "EV3", "Event Co 3", 10.0, List.of(10.0), "", null, null);
+        watchlist.insert("default", "EV3", "Event Co 3", 10.0, List.of(10.0), "", "manual", null, null);
         completeWithOutput("run-ev-3", Map.of("symbol", "EV3", "trigger_type", "NEGATIVE_NEWS",
                 "severity", "INFO", "thesis", "x", "confidence", 0.3,
                 "event_type", "weird_stuff"));
@@ -186,7 +186,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completeWithNoneEventTypePersistsNull() {
-        watchlist.insert("default", "EV4", "Event Co 4", 10.0, List.of(10.0), "", null, null);
+        watchlist.insert("default", "EV4", "Event Co 4", 10.0, List.of(10.0), "", "manual", null, null);
         completeWithOutput("run-ev-4", Map.of("symbol", "EV4", "trigger_type", "NEGATIVE_NEWS",
                 "severity", "INFO", "thesis", "not material", "confidence", 0.2,
                 "event_type", "none"));
@@ -195,7 +195,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void completeWithOtherEventTypePersistsOtherLiterally() {
-        watchlist.insert("default", "EV5", "Event Co 5", 10.0, List.of(10.0), "", null, null);
+        watchlist.insert("default", "EV5", "Event Co 5", 10.0, List.of(10.0), "", "manual", null, null);
         completeWithOutput("run-ev-5", Map.of("symbol", "EV5", "trigger_type", "NEGATIVE_NEWS",
                 "severity", "WARNING", "thesis", "material but untypable", "confidence", 0.6,
                 "event_type", "other"));
@@ -231,7 +231,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void criticalCompletionPushesAndMarksNotificationSent() {
-        watchlist.insert("default", "CRT", "Critical Co", 70.0, List.of(70.0), "", null, null);
+        watchlist.insert("default", "CRT", "Critical Co", 70.0, List.of(70.0), "", "manual", null, null);
 
         var resp = rest.post().uri("/api/daywalker/complete")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
@@ -253,7 +253,7 @@ class DaywalkerWebhookControllerIT {
 
     @Test
     void infoCompletionDoesNotPush() {
-        watchlist.insert("default", "INF", "Info Co", 40.0, List.of(40.0), "", null, null);
+        watchlist.insert("default", "INF", "Info Co", 40.0, List.of(40.0), "", "manual", null, null);
 
         rest.post().uri("/api/daywalker/complete")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")

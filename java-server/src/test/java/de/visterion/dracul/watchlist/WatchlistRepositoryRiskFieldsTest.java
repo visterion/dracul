@@ -21,7 +21,7 @@ class WatchlistRepositoryRiskFieldsTest {
     @Test
     void entryDateBackfilledAndStopFreezesOnce() {
         var item = repo.insert("u-risk", "RSK", "Risk Co", 10.0, java.util.List.of(),
-                "HELD", null, "EUR");
+                "HELD", "manual", null, "EUR");
         String id = item.id();
 
         var risk = repo.positionRiskByItemId().get(id);

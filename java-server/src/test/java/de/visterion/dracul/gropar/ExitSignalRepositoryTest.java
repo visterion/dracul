@@ -52,7 +52,7 @@ class ExitSignalRepositoryTest {
     @Test
     void duplicateRunAndItemIsNotInsertedTwice() {
         var item = watchlistRepo.insert("default", "ACME", "Acme Corp",
-                50.0, List.of(50.0), "HELD", null, null);
+                50.0, List.of(50.0), "HELD", "manual", null, null);
         String itemId = item.id();
         var s1 = new ExitSignal(java.util.UUID.randomUUID().toString(), itemId, "ACME", "SELL",
                 List.of(), -3.0, "WEAKENING", "r", 0.7, "run-dup", java.time.Instant.now().toString());

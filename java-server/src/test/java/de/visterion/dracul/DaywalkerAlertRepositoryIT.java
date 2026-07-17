@@ -34,7 +34,7 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void insertResolvesWatchlistItemAndCooldownQuery() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null, null);
+                50.0, List.of(50.0), "", "manual", null, null);
 
         assertThat(alerts.findOwnersBySymbol("DWA"))
                 .containsExactly(new DaywalkerAlertRepository.OwnerItem("default", item.id(), false));
@@ -55,9 +55,9 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void findOwnersBySymbolReturnsAllOwnersAcrossUsers() {
         var a = watchlist.insert("u1@x.com", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null, null);
+                50.0, List.of(50.0), "", "manual", null, null);
         var b = watchlist.insert("u2@x.com", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null, null);
+                50.0, List.of(50.0), "", "manual", null, null);
         assertThat(alerts.findOwnersBySymbol("DWA"))
                 .containsExactlyInAnyOrder(
                         new DaywalkerAlertRepository.OwnerItem("u1@x.com", a.id(), false),
@@ -67,9 +67,9 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void findOwnersBySymbolReportsHeldFlag() {
         var a = watchlist.insert("u1@x.com", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "HELD", null, null);
+                50.0, List.of(50.0), "HELD", "manual", null, null);
         var b = watchlist.insert("u2@x.com", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "calm", null, null);
+                50.0, List.of(50.0), "calm", "manual", null, null);
 
         var owners = alerts.findOwnersBySymbol("DWA");
 
@@ -81,7 +81,7 @@ class DaywalkerAlertRepositoryIT {
     @org.junit.jupiter.api.Test
     void insertPersistsNotificationSentFlag() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, java.util.List.of(50.0), "", null, null);
+                50.0, java.util.List.of(50.0), "", "manual", null, null);
 
         alerts.insert("default", item.id(), "DWA", "INSIDER_SELL",
                 "CRITICAL", "Cluster of insider sales.", new java.math.BigDecimal("0.800"),
@@ -96,7 +96,7 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void sameUtcDayLookupFindsAndUpdatesInPlace() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null, null);
+                50.0, List.of(50.0), "", "manual", null, null);
         alerts.insert("default", item.id(), "DWA", "PRICE_SPIKE",
                 "INFO", "first thesis", new BigDecimal("0.500"), "run-1");
 
@@ -119,7 +119,7 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void eventTypeIsPersistedAndSameDayUpdateKeepsItWhenNull() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null, null);
+                50.0, List.of(50.0), "", "manual", null, null);
 
         alerts.insert("default", item.id(), "DWA", "NEGATIVE_NEWS",
                 "WARNING", "guidance cut headline", new BigDecimal("0.700"),
@@ -148,7 +148,7 @@ class DaywalkerAlertRepositoryIT {
     @Test
     void legacyInsertOverloadLeavesEventTypeNull() {
         var item = watchlist.insert("default", "DWA", "Daywalker Test A",
-                50.0, List.of(50.0), "", null, null);
+                50.0, List.of(50.0), "", "manual", null, null);
         alerts.insert("default", item.id(), "DWA", "PRICE_SPIKE",
                 "INFO", "no event type", new BigDecimal("0.500"), "run-et-4");
         Long nulls = jdbc.sql("SELECT COUNT(*) FROM daywalker_alerts "

@@ -28,7 +28,7 @@ public class WatchlistRepository {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count, user_id, currency, entry_currency
+                       entry_price, share_count, user_id, currency, entry_currency, source
                 FROM watchlist_items
                 ORDER BY added_at DESC
                 """)
@@ -64,7 +64,7 @@ public class WatchlistRepository {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count, user_id, currency, entry_currency
+                       entry_price, share_count, user_id, currency, entry_currency, source
                 FROM watchlist_items
                 WHERE user_id = :userId
                 ORDER BY added_at DESC
@@ -120,7 +120,8 @@ public class WatchlistRepository {
                     sc == null ? null : sc.doubleValue(),
                     rs.getString("user_id"),
                     rs.getString("currency"),
-                    rs.getString("entry_currency")
+                    rs.getString("entry_currency"),
+                    rs.getString("source")
             );
         };
     }
@@ -137,7 +138,8 @@ public class WatchlistRepository {
                         item.priceHistory30d(),
                         item.entryPrice(), item.shareCount(),
                         item.owner(),
-                        item.currency(), item.entryCurrency()
+                        item.currency(), item.entryCurrency(),
+                        item.source()
                 ))
                 .toList();
     }
@@ -182,7 +184,7 @@ public class WatchlistRepository {
         var items = jdbc.sql("""
                 SELECT id, ticker, company_name, current_price, day_change_percent,
                        status, added_at, tag, verdict_id, price_history_30d,
-                       entry_price, share_count, user_id, currency, entry_currency
+                       entry_price, share_count, user_id, currency, entry_currency, source
                 FROM watchlist_items
                 WHERE id = :id
                 """)
@@ -219,7 +221,8 @@ public class WatchlistRepository {
 
     public WatchlistItem insert(String userId, String ticker, String companyName,
                                 double currentPrice, java.util.List<Double> history,
-                                String tag, String sourceVerdictId, String currency) {
+                                String tag, String source, String sourceVerdictId,
+                                String currency) {
         UUID id = UUID.randomUUID();
         UUID verdictUuid = sourceVerdictId == null ? null : UUID.fromString(sourceVerdictId);
         String historyJson;
@@ -229,15 +232,16 @@ public class WatchlistRepository {
         jdbc.sql("""
                 INSERT INTO watchlist_items
                   (id, ticker, company_name, current_price, day_change_percent,
-                   status, added_at, tag, verdict_id, price_history_30d, user_id, currency)
+                   status, added_at, tag, verdict_id, price_history_30d, user_id, currency, source)
                 VALUES
                   (:id, :ticker, :name, :price, 0,
-                   'calm', CURRENT_DATE, :tag, :vid, CAST(:hist AS jsonb), :userId, :currency)
+                   'calm', CURRENT_DATE, :tag, :vid, CAST(:hist AS jsonb), :userId, :currency, :source)
                 """)
                 .param("id", id).param("ticker", ticker).param("name", companyName)
-                .param("price", currentPrice).param("tag", tag == null ? "" : tag)
+                .param("price", currentPrice).param("tag", tag == null ? "TRACKING" : tag)
                 .param("vid", verdictUuid).param("hist", historyJson)
                 .param("userId", userId).param("currency", currency)
+                .param("source", source)
                 .update();
 
         return findById(id.toString()).orElseThrow();
