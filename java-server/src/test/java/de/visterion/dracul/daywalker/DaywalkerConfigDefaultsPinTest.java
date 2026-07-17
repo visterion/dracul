@@ -32,4 +32,12 @@ class DaywalkerConfigDefaultsPinTest {
 		assertThat(src).contains("${dracul.daywalker.session-cron}");
 		assertThat(src).doesNotContain("session-cron:");
 	}
+
+	@Test
+	void yamlCarriesTheT22MacroAndSectorDefaults() throws Exception {
+		String yaml = Files.readString(Path.of("src/main/resources/application.yaml"));
+		assertThat(yaml).contains("${DRACUL_DAYWALKER_MACRO_COOLDOWN:28800}");
+		assertThat(yaml).contains("${DRACUL_SECTOR_TTL_SECONDS:86400}");
+		assertThat(yaml).contains("${DRACUL_SECTOR_NEGATIVE_TTL_SECONDS:3600}");
+	}
 }
