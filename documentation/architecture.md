@@ -196,6 +196,22 @@ directly without triggering any market-data call.
 **Daywalker-alert columns (V5):**
 - `notification_sent` (BOOLEAN, default false) — true when a Telegram push was delivered for this alert
 
+**Daywalker-alert columns (V34):**
+- `event_type` (VARCHAR(32), nullable) — the LLM-confirmed news event category from the shared
+  `NewsEventType` taxonomy (`NewsEventType.wireValue()`): `earnings_miss`, `guidance_cut`, `ma`,
+  `dilution`, `restatement`, `investigation`, `macro`, or `"other"` when the LLM reports a
+  NEGATIVE_NEWS assessment that doesn't map to a taxonomy type. Written only by
+  `DaywalkerCompletionService`/`DaywalkerAlertRepository` from the daywalker completion webhook's
+  extended assessment schema (v1.1.0) — no backfill, no other write path. `daywalker-deep`'s
+  schema is not extended with `event_type`, so its escalation completion always passes `null`
+  here; `DaywalkerAlertRepository`'s upsert SQL uses `event_type = COALESCE(:et, event_type)` so
+  a same-day deep-escalation update never nulls out a value the original assessment persisted.
+  `NewsDetector` (the deterministic NEGATIVE_NEWS trigger source) tags each candidate headline
+  with `NewsEventTagger` and rides the matched types along as a comma-separated `event_tags` hint
+  in the trigger's detail map for the LLM; only headlines that tag at least one type reach the
+  LLM as a NEGATIVE_NEWS trigger — untagged headlines are suppressed before any child run (logged
+  at INFO: `news: {} untagged headlines suppressed for {}`).
+
 **Daywalker-alert columns (V30):**
 - `watchlist_item_id` is now nullable (FK kept, enforced only for non-null values) — depot-sourced
   alerts (`DaywalkerEventEngine` fans triggers over `HeldPositionService` positions, A6) carry no

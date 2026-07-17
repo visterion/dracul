@@ -1,10 +1,14 @@
 package de.visterion.dracul.daywalker.detect;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.visterion.dracul.hunting.agora.Form4Filing;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -41,17 +45,73 @@ class SignalDetectorsTest {
     }
 
     @Test
-    void newsFiresWhenHeadlinePresent() {
+    void newsFiresWhenHeadlineTaggedAndCarriesEventTags() {
         var d = new NewsDetector();
         var ev = d.detect(item(), List.of(new NewsHeadline(
                 "Acme cuts guidance", "Q2 miss", "Reuters", "news", Instant.now(), "http://n/1")));
         assertThat(ev).isPresent();
         assertThat(ev.get().triggerType()).isEqualTo(TriggerType.NEGATIVE_NEWS);
+        assertThat(ev.get().detail())
+                .containsEntry("headline", "Acme cuts guidance")
+                .containsEntry("source", "Reuters")
+                .containsEntry("url", "http://n/1")
+                .containsEntry("event_tags", "guidance_cut");
     }
 
     @Test
     void newsEmptyWhenNoHeadlines() {
         assertThat(new NewsDetector().detect(item(), List.of())).isEmpty();
+    }
+
+    @Test
+    void newsFirstTaggedHeadlineWinsNotFirstOverall() {
+        var d = new NewsDetector();
+        var ev = d.detect(item(), List.of(
+                new NewsHeadline("Acme wins award", "nice quarter", "Reuters", "news",
+                        Instant.now(), "http://n/1"),
+                new NewsHeadline("Acme announces public offering amid takeover talk", "",
+                        "Reuters", "news", Instant.now(), "http://n/2")));
+        assertThat(ev).isPresent();
+        assertThat(ev.get().detail())
+                .containsEntry("headline", "Acme announces public offering amid takeover talk")
+                // within one headline: enum declaration order (MA before DILUTION)
+                .containsEntry("event_tags", "ma,dilution");
+    }
+
+    @Test
+    void newsSuppressedAtInfoWhenNoHeadlineTagged() {
+        var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(NewsDetector.class);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var d = new NewsDetector();
+            assertThat(d.detect(item(), List.of(
+                    new NewsHeadline("Acme wins award", "nice quarter", "Reuters", "news",
+                            Instant.now(), "http://n/1"),
+                    new NewsHeadline("Acme opens new factory", "", "Reuters", "news",
+                            Instant.now(), "http://n/2")))).isEmpty();
+            assertThat(appender.list).anySatisfy(e -> {
+                assertThat(e.getLevel()).isEqualTo(Level.INFO);
+                assertThat(e.getFormattedMessage())
+                        .isEqualTo("news: 2 untagged headlines suppressed for ACME");
+            });
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void newsDetailMapIsNullSafe() {
+        var d = new NewsDetector();
+        var ev = d.detect(item(), List.of(new NewsHeadline(
+                "Acme cuts guidance", null, null, "news", Instant.now(), null)));
+        assertThat(ev).isPresent();
+        assertThat(ev.get().detail())
+                .containsEntry("headline", "Acme cuts guidance")
+                .containsEntry("source", "")
+                .containsEntry("url", "")
+                .containsEntry("event_tags", "guidance_cut");
     }
 
     @Test

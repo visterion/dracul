@@ -64,23 +64,40 @@ public class DaywalkerCompletionService {
 
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId) {
-        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, null, false);
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, null, null, false);
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId,
                                   String positionId) {
-        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, positionId, false);
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, positionId, null, false);
     }
 
     /**
      * @param fromEscalation true when this assessment is itself the completion of a
      *                       {@code daywalker-deep} escalation run — guards against a
-     *                       re-triggered escalation looping forever.
+     *                       re-triggered escalation looping forever. Deep runs carry no
+     *                       {@code event_type} (their schema is not extended); the repository
+     *                       COALESCE keeps any previously persisted value.
      */
     public void persistAssessment(String symbol, String triggerType, String severity,
                                   String thesis, BigDecimal confidence, String runId,
                                   String positionId, boolean fromEscalation) {
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, positionId,
+                null, fromEscalation);
+    }
+
+    /** T1.3: {@code eventType} is the controller-mapped LLM event category (nullable). */
+    public void persistAssessment(String symbol, String triggerType, String severity,
+                                  String thesis, BigDecimal confidence, String runId,
+                                  String positionId, String eventType) {
+        persistAssessment(symbol, triggerType, severity, thesis, confidence, runId, positionId,
+                eventType, false);
+    }
+
+    public void persistAssessment(String symbol, String triggerType, String severity,
+                                  String thesis, BigDecimal confidence, String runId,
+                                  String positionId, String eventType, boolean fromEscalation) {
         List<DaywalkerAlertRepository.OwnerItem> owners;
         if (positionId != null) {
             // Depot-sourced assessment (A6): DaywalkerEventEngine now only fans triggers over
@@ -120,11 +137,11 @@ public class DaywalkerCompletionService {
                         ? severity
                         : existing.get().severity();
                 alerts.updateSameDayAlert(existing.get().id(), triggerType, effective,
-                        thesis, confidence, runId, sent);
+                        thesis, confidence, runId, sent, eventType);
             } else {
                 effective = severity;
                 alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
-                        severity, thesis, confidence, runId, sent);
+                        severity, thesis, confidence, runId, sent, eventType);
             }
             effectiveByOwner.put(o.userId(), effective);
         }
