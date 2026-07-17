@@ -367,12 +367,18 @@ public class ReconcileService {
         // `effective` carries the real broker entry price once a RECONCILE_GONE match syncs it,
         // so realizedR below is computed from real entry+exit rather than the stale placeholder.
         ExecutorPosition effective = p;
+        // Set only for the RECONCILE_GONE matched-fill case: realizedR there must be measured
+        // against the ORIGINAL planned risk (planned entry vs initial stop), not recomputed from
+        // the synced real entry -- see realizedRAgainstPlannedRisk() for why.
+        BigDecimal realizedROverride = null;
         if (filledLeg != null && filledLeg.role() == OrderRole.STOP_LOSS) {
             exitReason = "HARD_STOP";
             exitPrice = filledLeg.avgFillPrice();
+            exitPriceSource = "FILL";
         } else if (filledLeg != null && filledLeg.role() == OrderRole.TAKE_PROFIT) {
             exitReason = "TAKE_PROFIT";
             exitPrice = filledLeg.avgFillPrice();
+            exitPriceSource = "FILL";
         } else {
             // Position vanished from the broker with no filled exit leg observed in this
             // reconcile pass (e.g. it opened AND closed entirely between two reconcile cycles).
@@ -388,6 +394,9 @@ public class ReconcileService {
                 match = closed.stream()
                         .filter(cp -> p.sourceSignalId() != null && p.sourceSignalId().equals(cp.clientRef()))
                         .findFirst()
+                        // Symbol-only fallback (no clientRef on p): can bind to the wrong close if the
+                        // same symbol closed more than once between reconcile cycles -- BrokerClosedPosition
+                        // carries no timestamp to tiebreak. Only triggers when clientRef is absent.
                         .or(() -> closed.stream().filter(cp -> p.symbol().equals(cp.symbol())).findFirst())
                         .orElse(null);
             } catch (Exception e) {
@@ -415,6 +424,7 @@ public class ReconcileService {
                         p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
                 exitPrice = match.closePrice();
                 exitPriceSource = "FILL";
+                realizedROverride = realizedRAgainstPlannedRisk(p, match.openPrice(), match.closePrice());
             } else {
                 exitPriceSource = "RECONCILE_GONE";
             }
@@ -423,7 +433,7 @@ public class ReconcileService {
             exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
         }
 
-        BigDecimal realizedR = computeR(effective, exitPrice);
+        BigDecimal realizedR = realizedROverride != null ? realizedROverride : computeR(effective, exitPrice);
 
         if (exitPriceSource != null) {
             positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource);
@@ -519,6 +529,24 @@ public class ReconcileService {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
+    }
+
+    /** Realized R for a matched RECONCILE_GONE close, measured against the ORIGINAL planned risk-per-share
+     *  (planned entry vs initial stop). We must NOT recompute risk from the synced real fill: a gapped fill can
+     *  land on the wrong side of the stop (a long filled below its stop), which inverts an entry-stop denominator
+     *  and flips a realized loss into a positive R. Numerator uses the real open/close fills. */
+    private BigDecimal realizedRAgainstPlannedRisk(ExecutorPosition planned, BigDecimal realEntry, BigDecimal realExit) {
+        BigDecimal plannedRisk;
+        BigDecimal pnl;
+        if ("SELL".equals(planned.side())) {
+            plannedRisk = planned.initialStop().subtract(planned.entryPrice());
+            pnl = realEntry.subtract(realExit);
+        } else {
+            plannedRisk = planned.entryPrice().subtract(planned.initialStop());
+            pnl = realExit.subtract(realEntry);
+        }
+        if (plannedRisk.signum() <= 0) return null;   // guard <= 0, not == 0
+        return pnl.divide(plannedRisk, 6, RoundingMode.HALF_UP);
     }
 
     private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {
