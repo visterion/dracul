@@ -100,7 +100,14 @@ public class VetoService {
         results.add(new VetoResult("LOW_CONFIDENCE", confidenceOk, confidenceMeasured));
         if (!confidenceOk && firstFailure == null) firstFailure = RejectReason.LOW_CONFIDENCE;
 
-        // 3 COOLDOWN — deterministic v1 rule: ANY active cooldown row matching the symbol fails
+        // 3 SIGNAL_EXPIRED
+        boolean expiredOk = ctx.signalAgeTradingDays() <= cfg.maxSignalAgeDays();
+        String expiredMeasured = ctx.signalAgeTradingDays() + (expiredOk ? " <= " : " > ")
+                + cfg.maxSignalAgeDays() + " days";
+        results.add(new VetoResult("SIGNAL_EXPIRED", expiredOk, expiredMeasured));
+        if (!expiredOk && firstFailure == null) firstFailure = RejectReason.SIGNAL_EXPIRED;
+
+        // 4 COOLDOWN — deterministic v1 rule: ANY active cooldown row matching the symbol fails
         // the entry, with no exception. Rationale: the cooldown's ORIGIN mechanism is not stored
         // anywhere (the position that caused it is closed and thus absent from openMechanisms), so
         // no formulation over open positions — whole-book or symbol-scoped — can ever verify "this
@@ -128,13 +135,13 @@ public class VetoService {
         results.add(new VetoResult("COOLDOWN", cooldownOk, cooldownMeasured));
         if (!cooldownOk && firstFailure == null) firstFailure = RejectReason.COOLDOWN;
 
-        // 4 MAX_POSITIONS
+        // 5 MAX_POSITIONS
         boolean capacityOk = ctx.openPositions().size() < cfg.maxPositions();
         String maxPositionsMeasured = ctx.openPositions().size() + (capacityOk ? " < " : " >= ") + cfg.maxPositions();
         results.add(new VetoResult("MAX_POSITIONS", capacityOk, maxPositionsMeasured));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
 
-        // 5 BUDGET + 6 HEAT_LIMIT — all account ccy; shared arithmetic with
+        // 6 BUDGET + 7 HEAT_LIMIT — all account ccy; shared arithmetic with
         // ExecutorWebhookController.addTranche via CapitalBounds so the two capital-bounds
         // enforcement points can never silently drift apart.
         CapitalBounds.Result bounds = CapitalBounds.check(ctx.account(), ctx.openExposure(),
@@ -151,7 +158,7 @@ public class VetoService {
         results.add(new VetoResult("BUDGET", budgetOk, budgetMeasured));
         if (!budgetOk && firstFailure == null) firstFailure = RejectReason.BUDGET;
 
-        // 6 HEAT_LIMIT
+        // 7 HEAT_LIMIT
         boolean heatOk = bounds.heatOk();
         BigDecimal heatUsed = ctx.openHeat().add(sizing.newRiskAccountCcy());
         double heatBeforePct = cfg.totalBudget().signum() == 0 ? 0.0
@@ -163,7 +170,7 @@ public class VetoService {
         results.add(new VetoResult("HEAT_LIMIT", heatOk, heatMeasured));
         if (!heatOk && firstFailure == null) firstFailure = RejectReason.HEAT_LIMIT;
 
-        // 7 CONCENTRATION — case-insensitive sector match
+        // 8 CONCENTRATION — case-insensitive sector match
         long sameSectorCount = ctx.openPositions().stream()
                 .filter(p -> p.sector() != null
                         && p.sector().equalsIgnoreCase(ctx.candidateSector()))
@@ -174,7 +181,7 @@ public class VetoService {
         results.add(new VetoResult("CONCENTRATION", concentrationOk, concentrationMeasured));
         if (!concentrationOk && firstFailure == null) firstFailure = RejectReason.CONCENTRATION;
 
-        // 8 CORRELATED — same sector AND same mechanism as an existing open position
+        // 9 CORRELATED — same sector AND same mechanism as an existing open position
         String candSector = ctx.candidateSector();
         String mech = signal == null ? null : signal.mechanism();
         ExecutorPosition correlatedMatch = (candSector == null || mech == null) ? null
@@ -189,7 +196,7 @@ public class VetoService {
         results.add(new VetoResult("CORRELATED", uncorrelated, correlatedMeasured));
         if (!uncorrelated && firstFailure == null) firstFailure = RejectReason.CORRELATED;
 
-        // 9 CONTRADICTION — MERGER_ARB vs {PEAD, SPINOFF, INSIDER_CLUSTER, INDEX_INCLUSION,
+        // 10 CONTRADICTION — MERGER_ARB vs {PEAD, SPINOFF, INSIDER_CLUSTER, INDEX_INCLUSION,
         // QUALITY_52W_LOW}, both directions, same symbol. Checked against other pending signals
         // (records the contradicting signal id) and against open-position mechanisms.
         boolean contradictionOk = true;
@@ -222,7 +229,7 @@ public class VetoService {
         results.add(new VetoResult("CONTRADICTION", contradictionOk, contradictionMeasured));
         if (!contradictionOk && firstFailure == null) firstFailure = RejectReason.CONTRADICTION;
 
-        // 10 REDUNDANCY — same mechanism already open on the same symbol
+        // 11 REDUNDANCY — same mechanism already open on the same symbol
         boolean redundancyOk = !(schemaOk
                 && signal.mechanism().equals(ctx.openMechanisms().get(signal.symbol())));
         String redundancyMeasured = redundancyOk
@@ -231,7 +238,7 @@ public class VetoService {
         results.add(new VetoResult("REDUNDANCY", redundancyOk, redundancyMeasured));
         if (!redundancyOk && firstFailure == null) firstFailure = RejectReason.REDUNDANCY;
 
-        // 11 LIQUIDITY
+        // 12 LIQUIDITY
         boolean priceOk = ctx.price().compareTo(cfg.minPrice()) >= 0;
         boolean advOk = ctx.adv20Notional().compareTo(
                 ctx.trancheAmount().multiply(BigDecimal.valueOf(cfg.advMultiple()))) >= 0;
@@ -240,13 +247,6 @@ public class VetoService {
                 + ", adv " + (advOk ? "ok" : "insufficient");
         results.add(new VetoResult("LIQUIDITY", liquidityOk, liquidityMeasured));
         if (!liquidityOk && firstFailure == null) firstFailure = RejectReason.LIQUIDITY;
-
-        // 12 SIGNAL_EXPIRED
-        boolean expiredOk = ctx.signalAgeTradingDays() <= cfg.maxSignalAgeDays();
-        String expiredMeasured = ctx.signalAgeTradingDays() + (expiredOk ? " <= " : " > ")
-                + cfg.maxSignalAgeDays() + " days";
-        results.add(new VetoResult("SIGNAL_EXPIRED", expiredOk, expiredMeasured));
-        if (!expiredOk && firstFailure == null) firstFailure = RejectReason.SIGNAL_EXPIRED;
 
         // 13 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
         // schemaOk: a null signal, or a schema-valid signal with a null referencePrice (a field not

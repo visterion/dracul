@@ -9,6 +9,13 @@ import java.util.Set;
  * pre-veto that short-circuits evaluation when {@code EntryContext.missing()} is non-empty, and
  * the BELOW_ANCHOR anchor guard that rejects entries on the invalidating side of the reference
  * price anchor.
+ *
+ * <p>NB: the constant declaration order below is historical and does NOT define veto precedence.
+ * The veto-catalog order (which check runs first, and thus which becomes {@code firstFailure}) is
+ * defined solely by the sequence of checks in {@code VetoService.evaluate}. Since the 2026-07-17
+ * reorder, SIGNAL_EXPIRED runs at catalog #3 (ahead of the transient caps) even though it is still
+ * declared 12th here. {@link #isTransient()} is an order-independent set membership, so neither the
+ * enum ordinal nor this declaration order affects behavior.
  */
 public enum RejectReason {
     DATA_UNAVAILABLE,
@@ -46,16 +53,16 @@ public enum RejectReason {
      * aufgeschoben, nicht disqualifiziert: es bleibt PENDING und wird im nächsten
      * Executor-Lauf erneut geprüft, sobald wieder ein Slot frei ist. Alle übrigen
      * Gründe sind terminal (das Signal ist strukturell nicht handelbar).
-     * Wie lange ein Signal aufgeschoben bleibt, hängt vom Grund ab: Nur bei
-     * PACE_LIMIT (Katalog-Check #15, NACH SIGNAL_EXPIRED #12) begrenzt
-     * SIGNAL_EXPIRED die PENDING-Lebensdauer hart auf maxSignalAgeDays. Die
-     * Kapazitäts-/Cooldown-Deckel COOLDOWN/MAX_POSITIONS/BUDGET/HEAT_LIMIT
-     * (#3–#6, VOR SIGNAL_EXPIRED) schatten SIGNAL_EXPIRED ab, solange der Deckel
-     * greift — ihre PENDING-Lebensdauer ist dadurch begrenzt, wann der Deckel
-     * sich löst, nicht durch den Ablauf. Ein unsicherer oder doppelter Entry ist
-     * dennoch ausgeschlossen: sobald der Deckel fällt, wird der volle Veto-Katalog
-     * (inkl. SIGNAL_EXPIRED) frisch geprüft und ein zu altes Signal terminal
-     * abgelehnt, bevor eine Order entsteht.
+     * Wie lange ein Signal aufgeschoben bleibt, ist für alle fünf transienten Gründe
+     * gleich hart begrenzt: SIGNAL_EXPIRED steht im Veto-Katalog auf Position #3
+     * (nach LOW_CONFIDENCE, VOR den transienten Deckeln COOLDOWN/MAX_POSITIONS/
+     * BUDGET/HEAT_LIMIT und ohnehin vor PACE_LIMIT). Ein zu altes Signal bekommt
+     * damit SIGNAL_EXPIRED als firstFailure — terminal — sobald es maxSignalAgeDays
+     * (Default 5 Handelstage) überschreitet, egal welcher Deckel sonst noch greift.
+     * Innerhalb des Fensters bleibt es bei einem transienten Veto PENDING und wird
+     * nachgeholt; danach kippt es terminal REJECTED, statt ewig PENDING zu liegen.
+     * (Reorder 2026-07-17: SIGNAL_EXPIRED von #12 auf #3 gezogen, damit die
+     * 5-Handelstage-Grenze für alle fünf transienten Gründe gilt, nicht nur PACE_LIMIT.)
      */
     private static final Set<RejectReason> TRANSIENT = EnumSet.of(
             PACE_LIMIT, MAX_POSITIONS, BUDGET, HEAT_LIMIT, COOLDOWN);
