@@ -168,6 +168,7 @@ dracul:
     session-cron: ${DRACUL_DAYWALKER_SESSION_CRON:0 30 13 * * 1-5}
     session-duration: ${DRACUL_DAYWALKER_SESSION_DURATION:23400}
     poll-interval: ${DRACUL_DAYWALKER_POLL_INTERVAL:300}
+    poll-budget-ms: ${DRACUL_DAYWALKER_POLL_BUDGET_MS:60000}
     price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}

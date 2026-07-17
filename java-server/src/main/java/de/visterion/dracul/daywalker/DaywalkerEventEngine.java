@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.*;
 
 /**
  * Deterministic detection over the depot's live positions (via {@link HeldPositionService}).
@@ -48,6 +49,7 @@ public class DaywalkerEventEngine {
     private final double priceThreshold;
     private final double volumeMultiplier;
     private final long cooldownSeconds;
+    private final long pollBudgetMs;
 
     private final PriceVolumeDetector priceVolume = new PriceVolumeDetector();
     private final InsiderSellDetector insiderSell = new InsiderSellDetector();
@@ -62,6 +64,7 @@ public class DaywalkerEventEngine {
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
+            @Value("${dracul.daywalker.poll-budget-ms:60000}") long pollBudgetMs,
             @Value("${dracul.position.connection:depot-1}") String connection) {
         this.heldPositions = heldPositions;
         this.watchlist = watchlist;
@@ -72,10 +75,71 @@ public class DaywalkerEventEngine {
         this.priceThreshold = priceThreshold;
         this.volumeMultiplier = volumeMultiplier;
         this.cooldownSeconds = cooldownSeconds;
+        this.pollBudgetMs = pollBudgetMs;
         this.connection = connection;
     }
 
+    /** Immutable per-poll sweep inputs, prepared inside the budget. */
+    private record SweepPlan(Map<String, WatchlistItem> universe, Map<String, HeldPosition> repBySymbol,
+                             List<Form4Filing> form4, LocalDate fromDate, LocalDate toDate) {}
+
     public List<TriggerEvent> detect(Instant since, Instant now) {
+        // The budget wraps the WHOLE pass — including openPositions, the watchlist query and
+        // the shared Form-4 fetch — because the events poll runs synchronously inside
+        // Vistierie's single scheduler tick; a degraded Agora must not stall all agents.
+        long deadlineNanos = System.nanoTime() + pollBudgetMs * 1_000_000L;
+        ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            Future<SweepPlan> planFuture = exec.submit(() -> plan(since, now));
+            SweepPlan plan;
+            try {
+                plan = planFuture.get(remaining(deadlineNanos), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException e) {
+                planFuture.cancel(true);
+                log.warn("Daywalker poll budget of {} ms exhausted before the sweep started — "
+                        + "skipping all symbols this poll", pollBudgetMs);
+                return List.of();
+            }
+            if (plan.universe().isEmpty()) return List.of();
+
+            List<Future<List<TriggerEvent>>> futures = new ArrayList<>();
+            for (WatchlistItem item : plan.universe().values()) {
+                futures.add(exec.submit(() -> detectSymbol(item, plan, now)));
+            }
+            var out = new ArrayList<TriggerEvent>();
+            int skipped = 0;
+            for (Future<List<TriggerEvent>> f : futures) {
+                try {
+                    out.addAll(f.get(remaining(deadlineNanos), TimeUnit.NANOSECONDS));
+                } catch (TimeoutException e) {
+                    f.cancel(true);
+                    skipped++;
+                } catch (ExecutionException e) {
+                    log.warn("Daywalker per-symbol detection failed: {}",
+                            e.getCause() == null ? e.getMessage() : e.getCause().getMessage());
+                }
+            }
+            if (skipped > 0) {
+                log.warn("Daywalker poll budget of {} ms exhausted — skipped {} of {} symbols this poll",
+                        pollBudgetMs, skipped, futures.size());
+            }
+            return out;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (ExecutionException e) {
+            log.warn("Daywalker poll failed: {}", e.getMessage());
+            return List.of();
+        } finally {
+            exec.shutdownNow();
+        }
+    }
+
+    private static long remaining(long deadlineNanos) {
+        return Math.max(1, deadlineNanos - System.nanoTime());
+    }
+
+    private SweepPlan plan(Instant since, Instant now) {
         var positions = heldPositions.openPositions(connection);
         Map<String, HeldPosition> repBySymbol = new LinkedHashMap<>();
         for (HeldPosition p : positions) {
@@ -92,35 +156,40 @@ public class DaywalkerEventEngine {
         for (WatchlistRepository.SweepRow row : watchlist.distinctSweepRows()) {
             universe.putIfAbsent(row.ticker(), asDetectorItem(row));
         }
-        if (universe.isEmpty()) return List.of();
 
         Instant effectiveSince = since != null ? since : now.minusSeconds(3600);
         LocalDate fromDate = effectiveSince.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate toDate = now.atZone(ZoneOffset.UTC).toLocalDate();
 
-        List<Form4Filing> form4;
-        try {
-            form4 = filings.recentForm4(fromDate, toDate).items();
-        } catch (Exception e) {
-            log.warn("Form-4 fetch failed during Daywalker poll: {}", e.getMessage());
-            form4 = List.of();
+        List<Form4Filing> form4 = List.of();
+        if (!universe.isEmpty()) {
+            try {
+                form4 = filings.recentForm4(fromDate, toDate).items();
+            } catch (Exception e) {
+                log.warn("Form-4 fetch failed during Daywalker poll: {}", e.getMessage());
+            }
         }
+        return new SweepPlan(universe, repBySymbol, form4, fromDate, toDate);
+    }
 
+    /** Per-symbol detector pass — runs on a virtual thread. The shared detector fields
+     *  (priceVolume, insiderSell, news, downgrade — incl. their NewsEventTagger) are
+     *  stateless; pinned by NewsEventTaggerConcurrencyTest. */
+    private List<TriggerEvent> detectSymbol(WatchlistItem item, SweepPlan plan, Instant now) {
+        var candidates = new ArrayList<TriggerEvent>();
+        candidates.addAll(priceVolume.detect(item,
+                intraday.candles(item.ticker()), priceThreshold, volumeMultiplier));
+        insiderSell.detect(item, plan.form4()).ifPresent(candidates::add);
+        news.detect(item, companyData.news(item.ticker(), plan.fromDate(), plan.toDate()))
+                .ifPresent(candidates::add);
+        downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
+        if (candidates.isEmpty()) return List.of();
+
+        HeldPosition rep = plan.repBySymbol().get(item.ticker());
         var out = new ArrayList<TriggerEvent>();
-        for (WatchlistItem item : universe.values()) {
-            var candidates = new ArrayList<TriggerEvent>();
-            candidates.addAll(priceVolume.detect(item,
-                    intraday.candles(item.ticker()), priceThreshold, volumeMultiplier));
-            insiderSell.detect(item, form4).ifPresent(candidates::add);
-            news.detect(item, companyData.news(item.ticker(), fromDate, toDate)).ifPresent(candidates::add);
-            downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
-            if (candidates.isEmpty()) continue;
-
-            HeldPosition rep = repBySymbol.get(item.ticker());
-            for (TriggerEvent base : candidates) {
-                if (!inCooldown(item.ticker(), base.triggerType(), now)) {
-                    out.add(rep != null ? enrich(base, rep) : base);
-                }
+        for (TriggerEvent base : candidates) {
+            if (!inCooldown(item.ticker(), base.triggerType(), now)) {
+                out.add(rep != null ? enrich(base, rep) : base);
             }
         }
         return out;

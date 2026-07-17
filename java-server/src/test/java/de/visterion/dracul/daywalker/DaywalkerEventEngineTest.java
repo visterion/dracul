@@ -41,7 +41,13 @@ class DaywalkerEventEngineTest {
     private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al) {
-        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, 0.03, 3.0, 3600, "depot-1");
+        return engine(hp, wl, in, cd, fi, al, 60_000);
+    }
+
+    private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
+                                        AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
+                                        DaywalkerAlertRepository al, long budgetMs) {
+        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, 0.03, 3.0, 3600, budgetMs, "depot-1");
     }
 
     @Test
@@ -335,5 +341,56 @@ class DaywalkerEventEngineTest {
 
         assertThat(events).extracting(TriggerEvent::triggerType).containsExactly(TriggerType.PRICE_SPIKE);
         verify(al).lastAlertAtAnyOwner("ACME", "PRICE_SPIKE");
+    }
+
+    @Test
+    void budgetExhaustionSkipsUnfinishedSymbolsAndReturnsFinishedOnes() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("FAST", 100), position("SLOW", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("FAST")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(in.candles("SLOW")).thenAnswer(inv -> {
+            Thread.sleep(5_000);
+            return new IntradayCandles(closes(100, 105), List.of());
+        });
+        when(cd.news(anyString(), any(), any())).thenReturn(List.of());
+        when(cd.recommendations(anyString())).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(hp, wl, in, cd, fi, al, 500).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        // SLOW is skipped for this poll (WARN with count); FAST's event survives.
+        assertThat(events).extracting(TriggerEvent::symbol).containsExactly("FAST");
+    }
+
+    @Test
+    void concurrencySmoke_manySymbolsAllProcessedWithinBudget() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        var positions = new java.util.ArrayList<HeldPosition>();
+        for (int i = 0; i < 20; i++) positions.add(position("SYM" + i, 100));
+        when(hp.openPositions("depot-1")).thenReturn(positions);
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles(anyString())).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(anyString(), any(), any())).thenReturn(List.of());
+        when(cd.recommendations(anyString())).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(20);
     }
 }
