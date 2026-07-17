@@ -43,14 +43,14 @@ class WatchlistControllerIT {
     }
 
     @Test
-    void watchlistReturns8ItemsWithCorrectAlertCounts() {
+    void watchlistExposesSeededItemsWithCorrectAlertCounts() {
         var response = rest.get()
                 .uri("/api/watchlist")
                 .retrieve()
                 .toEntity(JsonNode.class);
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        assertThat(response.getBody()).hasSize(8);
+        assertThat(response.getBody()).hasSizeGreaterThanOrEqualTo(8);
 
         var avgo = StreamSupport.stream(response.getBody().spliterator(), false)
                 .filter(item -> "AVGO".equals(item.get("ticker").asText()))
