@@ -218,8 +218,7 @@ section.
 |---|---|---|
 | `DRACUL_RENFIELD_ENABLED` | `false` | Register the agent + activate the webhook controller (`@ConditionalOnProperty`) |
 | `DRACUL_RENFIELD_CRON` | `0 0 12 * * MON-FRI` | Scheduled cron (sec min hour dom mon dow), UTC. Default = 12:00 UTC weekdays (≈ 08:00 ET summer / 07:00 ET winter). |
-| `DRACUL_RENFIELD_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the completion webhook. **Change in production.** |
-| `DRACUL_RENFIELD_WEBHOOK_TOKEN` | `dev-token-change-me` | Bearer token for Renfield's inbound webhook calls (must match the token registered with Vistierie). **Change in production.** |
+| `DRACUL_RENFIELD_TOKEN` | `dev-token-change-me` | Bearer token shared with Vistierie for the completion webhook. Also backs `dracul.renfield.webhook-token`, used for both the outbound trigger's completion-webhook token and inbound webhook verification. **Change in production.** |
 
 Renfield analyzes the watchlist + depot union daily and emits concrete trade proposals as Telegram push + SSE `proposal.new` events. It is a scheduled, trigger-only agent (`schedule=null` is false — it has a cron) that produces no orders or trades. Proposals are bundled and idempotent (retried webhooks insert zero rows). Like every Vistierie agent it also needs a budget set once via the admin endpoint before it can run — see `documentation/operations.md`'s Agent budget guard section.
 

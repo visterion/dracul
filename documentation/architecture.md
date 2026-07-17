@@ -220,13 +220,13 @@ directly without triggering any market-data call.
 
 **Trade proposals table (V35):**
 - `trade_proposals` — one row per Renfield proposal per run (runs daily at 12:00 UTC). Schema:
-  `id` (UUID PK), `run_id` (TEXT NOT NULL, FK → `agent_definition.name = 'renfield'` or null), `symbol` (TEXT NOT NULL),
-  `proposal` (JSONB NOT NULL, opaque LLM output), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()),
-  `user_id` (TEXT NOT NULL DEFAULT 'default'). Unique index `uq_trade_proposals_run_symbol` on
-  `(run_id, symbol)` — one proposal per (run, symbol) pair, enforced via `ON CONFLICT DO NOTHING`
-  (idempotent insert) so retried webhook deliveries never duplicate. One bundled Telegram push per
-  run (sent from `RenfieldCompletionService`); SSE publishes each proposal as `proposal.new` (one
-  event per row). Empty-watchlist runs insert zero rows and send no Telegram/SSE message.
+  `id` (UUID PK), `owner` (VARCHAR NOT NULL), `symbol` (VARCHAR NOT NULL), `action` (VARCHAR(32) NOT NULL),
+  `entry_zone` (TEXT NULL), `stop` (TEXT NULL), `confidence` (NUMERIC NULL), `rationale` (TEXT NOT NULL),
+  `market_note` (TEXT NULL), `run_id` (VARCHAR NOT NULL), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()),
+  with a UNIQUE constraint on `(run_id, symbol)` — one proposal per (run, symbol) pair, enforced via
+  `ON CONFLICT DO NOTHING` (idempotent insert) so retried webhook deliveries never duplicate. One bundled
+  Telegram push per run (sent from `RenfieldCompletionService`); SSE publishes each proposal as
+  `proposal.new` (one event per row). Empty-watchlist runs insert zero rows and send no Telegram/SSE message.
 
 **Verdict columns (V6):**
 - `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
