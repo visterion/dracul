@@ -56,7 +56,7 @@ class StrigoiLazarusWebhookControllerIT {
 
     @Test
     void toolEndpointReturnsCandidatesNearLow() {
-        watchlist.insert("default", "ACME", "Acme Inc", 10.50, List.of(), "lazarus-it", null, null);
+        watchlist.insert("default", "ACME", "Acme Inc", 10.50, List.of(), "lazarus-it", "manual", null, null);
         when(companyData.fundamentals("ACME")).thenReturn(objectMapper.readTree(
                 "{\"52WeekLow\":10.0,\"52WeekHigh\":40.0,\"roaTTM\":5.0,\"currentRatioQuarterly\":1.8," +
                 "\"totalDebt/totalEquityQuarterly\":0.4,\"grossMarginTTM\":35.0,\"netProfitMarginTTM\":8.0," +
@@ -78,7 +78,7 @@ class StrigoiLazarusWebhookControllerIT {
 
     @Test
     void toolEndpointSurfacesUnavailableWhenAgoraDown() {
-        watchlist.insert("default", "DOWN", "DownCo Inc", 5.0, List.of(), "lazarus-it", null, null);
+        watchlist.insert("default", "DOWN", "DownCo Inc", 5.0, List.of(), "lazarus-it", "manual", null, null);
         // Stub every symbol (not just "DOWN"): other IT tests in this class share the same
         // Postgres testcontainer/watchlist rows for user "default", so the reachability probe may
         // land on whichever watchlist item happens to be first depending on test execution order.

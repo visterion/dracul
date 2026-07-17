@@ -25,9 +25,9 @@ class WatchlistPriceRepositoryIT {
     @Test
     void distinctTickersAndUpdatePrice() {
         // Two rows for TSTX under different users (unique constraint is per user+ticker)
-        repo.insert("user1", "TSTX", "Test X", 100.0, java.util.List.of(), null, null, null);
-        repo.insert("user2", "TSTX", "Test X dup", 100.0, java.util.List.of(), null, null, null);
-        repo.insert("default", "TSTY", "Test Y", 50.0, java.util.List.of(), null, null, null);
+        repo.insert("user1", "TSTX", "Test X", 100.0, java.util.List.of(), null, "manual", null, null);
+        repo.insert("user2", "TSTX", "Test X dup", 100.0, java.util.List.of(), null, "manual", null, null);
+        repo.insert("default", "TSTY", "Test Y", 50.0, java.util.List.of(), null, "manual", null, null);
 
         org.assertj.core.api.Assertions.assertThat(repo.distinctTickers()).contains("TSTX", "TSTY");
 

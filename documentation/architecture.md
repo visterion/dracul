@@ -187,6 +187,17 @@ directly without triggering any market-data call.
 **Watchlist indexes:**
 - `uq_watchlist_user_ticker` (UNIQUE) — composite index on (user_id, ticker) for idempotent POST
 
+**Watchlist columns (V36/V37):**
+- `source` (TEXT, NOT NULL, DEFAULT `'manual'`) — provenance of the row: `'manual'`
+  (operator `POST /api/watchlist`), `'verdict'`, or `'seed'`. Backfilled by V36 on
+  existing rows (verdict-linked → `'verdict'`, V32 seed rows → `'seed'`, everything
+  else → `'manual'`). Threaded through `WatchlistItem.source()` and
+  `WatchlistRepository.insert(...)` (Task 3 of the watchlist-provenance plan); exposed
+  read-only on `GET /api/watchlist` (see `api.md`).
+- `tag` gained a CHECK constraint (V37): only `'HELD'` / `'TRACKING'` are valid (case
+  normalized to uppercase; anything else, including `''`, is coerced to `'TRACKING'`
+  by the migration and by `WatchlistRepository.insert`'s null-tag fallback).
+
 **Daywalker-alert columns (V4):**
 - `symbol`, `trigger_type`, `thesis`, `severity`, `vistierie_run_id` (TEXT, nullable)
 - `confidence` (NUMERIC(4,3), nullable)

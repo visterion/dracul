@@ -291,6 +291,14 @@ native code equals the display `currency`):
 
 These fields are purely additive — existing consumers that ignore them are unaffected.
 
+#### Provenance field (`source`)
+
+`GET /api/watchlist` items include a read-only `source` field (`string`, non-null).
+`POST /api/watchlist` (the only current write path) always sets `"manual"`; rows
+that existed before the V36 migration were backfilled to `"verdict"` or `"seed"`
+where their history indicates it (see `watchlist_items.source` in `architecture.md`).
+`source` is set once at insert time and never mutated afterwards.
+
 > **Removed 2026-07-13 (depot-as-SSOT).** `GET /api/portfolio` (the manual,
 > watchlist-HELD-based "portfolio") has been removed. Chronicle's Portfolio nav
 > destination now redirects to `/depots`, which reads live positions from

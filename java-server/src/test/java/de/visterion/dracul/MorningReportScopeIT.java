@@ -43,7 +43,7 @@ class MorningReportScopeIT {
     void reportIsScopedToCurrentUser() {
         // Seed a HELD position for alice
         WatchlistItem aliceItem = watchlist.insert("alice@x.com", "MRA", "Mra Inc",
-                100.0, List.of(), "WATCHED", null, "USD");
+                100.0, List.of(), "WATCHED", "manual", null, "USD");
         watchlist.updatePosition(aliceItem.id(), 90.0, 10.0, "USD");
         watchlist.updateTag(aliceItem.id(), "HELD");
         watchlist.updateRiskSnapshot(aliceItem.id(), new BigDecimal("80"),
@@ -51,7 +51,7 @@ class MorningReportScopeIT {
 
         // Seed a HELD position for bob
         WatchlistItem bobItem = watchlist.insert("bob@x.com", "MRB", "Mrb Inc",
-                200.0, List.of(), "WATCHED", null, "USD");
+                200.0, List.of(), "WATCHED", "manual", null, "USD");
         watchlist.updatePosition(bobItem.id(), 180.0, 5.0, "USD");
         watchlist.updateTag(bobItem.id(), "HELD");
         watchlist.updateRiskSnapshot(bobItem.id(), new BigDecimal("160"),
