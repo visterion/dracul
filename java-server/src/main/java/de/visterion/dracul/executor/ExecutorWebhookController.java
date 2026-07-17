@@ -549,10 +549,13 @@ public class ExecutorWebhookController {
         }
 
         if (!veto.passed()) {
-            String reason = veto.firstFailure().name();
+            RejectReason firstFailure = veto.firstFailure();
+            String reason = firstFailure.name();
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected by veto: " + reason, null, runId, null));
-            signalRepo.markStatus(signalId, "REJECTED");
+            // Transiente Raten-/Kapazitätsdeckel disqualifizieren das Signal nicht -> PENDING
+            // lassen, damit der nächste Executor-Lauf es erneut prüft (Obergrenze: SIGNAL_EXPIRED).
+            signalRepo.markStatus(signalId, firstFailure.isTransient() ? "PENDING" : "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
                     clock.instant());
 
