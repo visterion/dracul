@@ -59,8 +59,8 @@ class DaywalkerWebhookControllerIT {
 
     @BeforeEach
     void setUp() {
-        jdbc.sql("DELETE FROM daywalker_alerts WHERE symbol IN ('SPK','CMP','CRT','INF')").update();
-        jdbc.sql("DELETE FROM watchlist_items WHERE ticker IN ('SPK','CMP','CRT','INF')").update();
+        jdbc.sql("DELETE FROM daywalker_alerts WHERE symbol IN ('SPK','CMP','CRT','INF','EV1','EV2','EV3','EV4','EV5')").update();
+        jdbc.sql("DELETE FROM watchlist_items WHERE ticker IN ('SPK','CMP','CRT','INF','EV1','EV2','EV3','EV4','EV5')").update();
         when(telegramNotifier.notifyAlert(anyString(), anyString(), anyString(), any())).thenReturn(true);
         rest = RestClient.builder()
                 .baseUrl("http://localhost:" + port)
@@ -136,6 +136,70 @@ class DaywalkerWebhookControllerIT {
                 .retrieve().toBodilessEntity();
         assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(alerts.lastAlertAt("default", "GHOST", "PRICE_SPIKE")).isEmpty();
+    }
+
+    private void completeWithOutput(String runId, Map<String, Object> output) {
+        var resp = rest.post().uri("/api/daywalker/complete")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-dw-token")
+                .header("X-Vistierie-Run-Id", runId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", runId, "status", "done", "output", output))
+                .retrieve().toBodilessEntity();
+        assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    private String storedEventType(String symbol) {
+        return jdbc.sql("SELECT event_type FROM daywalker_alerts WHERE symbol = :s")
+                .param("s", symbol).query(String.class).single();
+    }
+
+    private long nullEventTypeCount(String symbol) {
+        return jdbc.sql("SELECT COUNT(*) FROM daywalker_alerts WHERE symbol = :s AND event_type IS NULL")
+                .param("s", symbol).query(Long.class).single();
+    }
+
+    @Test
+    void completePersistsTaxonomyEventType() {
+        watchlist.insert("default", "EV1", "Event Co 1", 10.0, List.of(10.0), "", null, null);
+        completeWithOutput("run-ev-1", Map.of("symbol", "EV1", "trigger_type", "NEGATIVE_NEWS",
+                "severity", "WARNING", "thesis", "Secondary offering announced.",
+                "confidence", 0.7, "event_type", "dilution"));
+        assertThat(storedEventType("EV1")).isEqualTo("dilution");
+    }
+
+    @Test
+    void completeWithoutEventTypePersistsNull() {
+        watchlist.insert("default", "EV2", "Event Co 2", 10.0, List.of(10.0), "", null, null);
+        completeWithOutput("run-ev-2", Map.of("symbol", "EV2", "trigger_type", "NEGATIVE_NEWS",
+                "severity", "INFO", "thesis", "Routine headline.", "confidence", 0.3));
+        assertThat(nullEventTypeCount("EV2")).isEqualTo(1L);
+    }
+
+    @Test
+    void completeWithUnknownEventTypePersistsNull() {
+        watchlist.insert("default", "EV3", "Event Co 3", 10.0, List.of(10.0), "", null, null);
+        completeWithOutput("run-ev-3", Map.of("symbol", "EV3", "trigger_type", "NEGATIVE_NEWS",
+                "severity", "INFO", "thesis", "x", "confidence", 0.3,
+                "event_type", "weird_stuff"));
+        assertThat(nullEventTypeCount("EV3")).isEqualTo(1L);
+    }
+
+    @Test
+    void completeWithNoneEventTypePersistsNull() {
+        watchlist.insert("default", "EV4", "Event Co 4", 10.0, List.of(10.0), "", null, null);
+        completeWithOutput("run-ev-4", Map.of("symbol", "EV4", "trigger_type", "NEGATIVE_NEWS",
+                "severity", "INFO", "thesis", "not material", "confidence", 0.2,
+                "event_type", "none"));
+        assertThat(nullEventTypeCount("EV4")).isEqualTo(1L);
+    }
+
+    @Test
+    void completeWithOtherEventTypePersistsOtherLiterally() {
+        watchlist.insert("default", "EV5", "Event Co 5", 10.0, List.of(10.0), "", null, null);
+        completeWithOutput("run-ev-5", Map.of("symbol", "EV5", "trigger_type", "NEGATIVE_NEWS",
+                "severity", "WARNING", "thesis", "material but untypable", "confidence", 0.6,
+                "event_type", "other"));
+        assertThat(storedEventType("EV5")).isEqualTo("other");
     }
 
     @Test
