@@ -184,7 +184,9 @@ Strigoi run, closing the feedback loop.
 Active during US market hours. Polls prices every 5 minutes for all
 watchlist items. Reacts to news, Form-4 filings, and price spikes.
 Uses a cheap Haiku pre-filter before escalating to a full Sonnet
-assessment. Critical alerts go to Telegram immediately.
+assessment. Critical alerts go to Telegram immediately. Portfolio-aware news
+assessment incorporates position direction, weight, and sector context;
+macro-only headlines trigger portfolio-level alerts capped at 2 per session.
 
 ### Renfield (daily watchlist analyst)
 
@@ -192,7 +194,8 @@ Runs once per business day (12:00 UTC). Reviews the primary user's
 watchlist — each symbol flagged `held` when it is also an open depot
 position — emits concrete trade proposals (never places orders), and
 sends a Telegram digest. The operator reads proposals and decides.
-Read-only by design.
+Read-only by design. Portfolio context (direction, size, sector) accompanies
+each position analysis.
 
 ### Executor (guarded paper trading, opt-in)
 
