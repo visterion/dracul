@@ -124,7 +124,8 @@ class AgoraExecutionGatewayTest {
         Optional<BrokerOrder> result = gw.orderByRef("depot-1", "ref-1");
 
         assertThat(gw.capturedTool).isEqualTo("get_order_by_ref");
-        assertThat(gw.capturedArgs.path("ref").asString()).isEqualTo("ref-1");
+        assertThat(gw.capturedArgs.path("clientRef").asString()).isEqualTo("ref-1");
+        assertThat(gw.capturedArgs.path("ref").isMissingNode()).isTrue();
         assertThat(result).isPresent();
         assertThat(result.get().orderId()).isEqualTo("ord-1");
         assertThat(result.get().role()).isEqualTo(OrderRole.ENTRY);
