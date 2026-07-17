@@ -143,6 +143,14 @@ class ExecutorWebhookControllerTest {
                 c.missing(), c.quoteCurrency());
     }
 
+    private static EntryContext withEntriesThisWeek(EntryContext c, int entriesThisWeek) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), entriesThisWeek, c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing(), c.quoteCurrency());
+    }
+
     private static EntryContext withPendingSignals(EntryContext c, List<ExecutorSignal> pending) {
         return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
@@ -276,6 +284,36 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_paceLimit_transientStaysPending() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        // entriesThisWeek weit über jedem pace-per-week -> PACE_LIMIT ist der einzige (und erste)
+        // fehlschlagende Veto; alles andere aus happyContext() passt.
+        when(assembler.assemble(any())).thenReturn(withEntriesThisWeek(happyContext(), 999));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("PACE_LIMIT");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        // Kern des Fixes: transienter Grund -> Signal bleibt PENDING, NICHT REJECTED.
+        verify(signalRepo).markStatus("sig-1", "PENDING");
+        verify(signalRepo, never()).markStatus("sig-1", "REJECTED");
+
+        // Audit bleibt vollständig: der Reject-Versuch wird weiterhin protokolliert.
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().accepted()).isFalse();
+        assertThat(captor.getValue().rejectReason()).isEqualTo("PACE_LIMIT");
+    }
+
+    @Test
     void placeEntry_lowConfidence_writesRichDecisionLogReject() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.4, new BigDecimal("100")));
 
@@ -338,6 +376,8 @@ class ExecutorWebhookControllerTest {
 
         verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "PENDING");
+        verify(signalRepo, never()).markStatus("sig-1", "REJECTED");
     }
 
     @Test
