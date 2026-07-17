@@ -11,6 +11,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -33,6 +34,8 @@ public class AgoraCompanyData {
     private final AgoraClient agora;
     private final boolean includeSocial;
     private final ObjectMapper mapper = new ObjectMapper();
+    private static final Duration RECOMMENDATIONS_TTL = Duration.ofSeconds(3600);
+    private final TtlCache<String, List<RecommendationTrend>> recommendationsCache = new TtlCache<>();
 
     public AgoraCompanyData(AgoraClient agora,
                             @Value("${dracul.news.include-social:false}") boolean includeSocial) {
@@ -107,10 +110,18 @@ public class AgoraCompanyData {
     }
 
     /** Analyst recommendation trend, newest-first as delivered; empty list on any failure
-     *  (an Agora outage is swallowed — the replaced adapter's contract, kept for echo). */
+     *  (an Agora outage is swallowed — the replaced adapter's contract, kept for echo).
+     *  Positive-only cache (60 min): a successful lookup is cached so repeated polls for the
+     *  same symbol don't re-fetch; an outage is never cached (retried on the very next call) —
+     *  see {@link #recommendationsStrict(String)}, which stays uncached so the Insider/Lazarus
+     *  outage guard keeps seeing every failure. */
     public List<RecommendationTrend> recommendations(String symbol) {
+        List<RecommendationTrend> cached = recommendationsCache.get(symbol);
+        if (cached != null) return cached;
         try {
-            return recommendationsStrict(symbol);
+            List<RecommendationTrend> res = recommendationsStrict(symbol);
+            recommendationsCache.put(symbol, res, RECOMMENDATIONS_TTL);
+            return res;
         } catch (AgoraUnavailableException e) {
             return List.of();
         }
