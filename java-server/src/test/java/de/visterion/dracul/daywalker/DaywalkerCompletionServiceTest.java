@@ -75,9 +75,9 @@ class DaywalkerCompletionServiceTest {
 
         verify(notifier, times(1)).notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis");
         verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true));
+                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true), isNull());
         verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true));
+                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), eq(true), isNull());
         verify(events, times(2)).publishEvent(any(DaywalkerAlertCreatedEvent.class));
         verify(events).publishEvent(
                 new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
@@ -105,7 +105,7 @@ class DaywalkerCompletionServiceTest {
         verify(alerts, never()).findOwnersBySymbol(anyString());
         verify(notifier, times(1)).notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis");
         verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-30"), eq(true));
+                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-30"), eq(true), isNull());
         verify(events, times(1)).publishEvent(
                 new DaywalkerAlertCreatedEvent(PRIMARY_USER, "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
     }
@@ -122,7 +122,7 @@ class DaywalkerCompletionServiceTest {
 
         verifyNoInteractions(notifier);
         verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("INFO"), eq("thesis"), isNull(), eq("run-2"), eq(false));
+                eq("INFO"), eq("thesis"), isNull(), eq("run-2"), eq(false), isNull());
         verify(events, times(1)).publishEvent(
                 new DaywalkerAlertCreatedEvent("u1@x.com", "AAPL", "PRICE_SPIKE", "INFO", "thesis"));
     }
@@ -139,9 +139,9 @@ class DaywalkerCompletionServiceTest {
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                 "thesis", null, "run-3");
 
-        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
         verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis"), isNull(), eq("run-3"), anyBoolean());
+                eq("CRITICAL"), eq("thesis"), isNull(), eq("run-3"), anyBoolean(), isNull());
         verify(events, times(1)).publishEvent(any(DaywalkerAlertCreatedEvent.class));
         verify(events).publishEvent(
                 new DaywalkerAlertCreatedEvent("u2@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "thesis"));
@@ -161,7 +161,7 @@ class DaywalkerCompletionServiceTest {
 
         verifyNoInteractions(notifier);
         verify(alerts, never()).insert(anyString(), anyString(), anyString(), anyString(),
-                anyString(), anyString(), any(), anyString(), anyBoolean());
+                anyString(), anyString(), any(), anyString(), anyBoolean(), any());
         verifyNoInteractions(events);
     }
 
@@ -176,7 +176,7 @@ class DaywalkerCompletionServiceTest {
 
         verifyNoInteractions(notifier);
         verify(alerts, never()).insert(anyString(), anyString(), anyString(), anyString(),
-                anyString(), anyString(), any(), anyString(), anyBoolean());
+                anyString(), anyString(), any(), anyString(), anyBoolean(), any());
         verifyNoInteractions(events);
     }
 
@@ -193,7 +193,7 @@ class DaywalkerCompletionServiceTest {
                 "thesis", new BigDecimal("0.9"), "run-1", "AAPL");
 
         verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), anyBoolean());
+                eq("CRITICAL"), eq("thesis"), eq(new BigDecimal("0.9")), eq("run-1"), anyBoolean(), isNull());
         verify(alerts, never()).findOwnersBySymbol(anyString());
     }
 
@@ -209,8 +209,8 @@ class DaywalkerCompletionServiceTest {
         service(alerts, notifier).persistAssessment("AAPL", "PRICE_SPIKE", "WARNING",
                 "thesis", null, "run-2", null);
 
-        verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), any(), any(), any(), any(), any(), any(), anyBoolean());
-        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+        verify(alerts).insert(eq("u2@x.com"), eq("wid-2"), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        verify(alerts, never()).insert(eq("u1@x.com"), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -226,8 +226,8 @@ class DaywalkerCompletionServiceTest {
                 "thesis", null, "run-10");
 
         verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("INFO"), eq("thesis"), isNull(), eq("run-10"), eq(false));
-        verify(alerts, never()).updateSameDayAlert(any(), any(), any(), any(), any(), any(), anyBoolean());
+                eq("INFO"), eq("thesis"), isNull(), eq("run-10"), eq(false), isNull());
+        verify(alerts, never()).updateSameDayAlert(any(), any(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -245,8 +245,8 @@ class DaywalkerCompletionServiceTest {
                 "updated thesis", new BigDecimal("0.8"), "run-11");
 
         verify(alerts).updateSameDayAlert("a-1", "PRICE_SPIKE", "WARNING",
-                "updated thesis", new BigDecimal("0.8"), "run-11", false); // INFO -> WARNING escalates
-        verify(alerts, never()).insert(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+                "updated thesis", new BigDecimal("0.8"), "run-11", false, null); // INFO -> WARNING escalates
+        verify(alerts, never()).insert(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
         verify(events).publishEvent(new DaywalkerAlertCreatedEvent(
                 "u1@x.com", "AAPL", "PRICE_SPIKE", "WARNING", "updated thesis"));
     }
@@ -266,11 +266,43 @@ class DaywalkerCompletionServiceTest {
 
         // text/ts refresh, severity stays CRITICAL
         verify(alerts).updateSameDayAlert("a-1", "PRICE_SPIKE", "CRITICAL",
-                "later, calmer thesis", null, "run-12", false);
+                "later, calmer thesis", null, "run-12", false, null);
         // the live event must carry the effective (kept-CRITICAL) severity, not incoming INFO,
         // so the SSE toast matches the persisted row
         verify(events).publishEvent(new DaywalkerAlertCreatedEvent(
                 "u1@x.com", "AAPL", "PRICE_SPIKE", "CRITICAL", "later, calmer thesis"));
+    }
+
+    @Test
+    void eventTypeIsPassedThroughToInsert() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        service(alerts, notifier).persistAssessment("AAPL", "NEGATIVE_NEWS", "WARNING",
+                "guidance cut", new BigDecimal("0.7"), "run-40", null, "guidance_cut");
+
+        verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("NEGATIVE_NEWS"),
+                eq("WARNING"), eq("guidance cut"), eq(new BigDecimal("0.7")), eq("run-40"),
+                eq(false), eq("guidance_cut"));
+    }
+
+    @Test
+    void eventTypeIsPassedThroughToSameDayUpdate() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.findOwnersBySymbol("AAPL")).thenReturn(List.of(new OwnerItem("u1@x.com", "wid-1", false)));
+        when(alerts.lastAlertAt("u1@x.com", "AAPL", "NEGATIVE_NEWS"))
+                .thenReturn(Optional.of(Instant.now().minusSeconds(7200)));
+        when(alerts.findSameUtcDay(eq("u1@x.com"), eq("AAPL"), eq("NEGATIVE_NEWS"), any()))
+                .thenReturn(Optional.of(new DaywalkerAlertRepository.SameDayAlert("a-1", "INFO")));
+
+        service(alerts, notifier).persistAssessment("AAPL", "NEGATIVE_NEWS", "WARNING",
+                "updated thesis", new BigDecimal("0.8"), "run-41", null, "dilution");
+
+        verify(alerts).updateSameDayAlert("a-1", "NEGATIVE_NEWS", "WARNING",
+                "updated thesis", new BigDecimal("0.8"), "run-41", false, "dilution");
     }
 
     // =========================================================================
@@ -313,7 +345,7 @@ class DaywalkerCompletionServiceTest {
                 "symbol", "AAPL", "trigger_type", "PRICE_SPIKE",
                 "thesis", "thesis text", "position_id", "AAPL"));
         verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis text"), eq(new BigDecimal("0.4")), eq("run-27"), anyBoolean());
+                eq("CRITICAL"), eq("thesis text"), eq(new BigDecimal("0.4")), eq("run-27"), anyBoolean(), isNull());
     }
 
     @Test
@@ -402,7 +434,7 @@ class DaywalkerCompletionServiceTest {
                         "thesis text", new BigDecimal("0.4"), "run-25");
 
         verify(alerts).insert(eq("u1@x.com"), eq("wid-1"), eq("AAPL"), eq("PRICE_SPIKE"),
-                eq("CRITICAL"), eq("thesis text"), eq(new BigDecimal("0.4")), eq("run-25"), eq(true));
+                eq("CRITICAL"), eq("thesis text"), eq(new BigDecimal("0.4")), eq("run-25"), eq(true), isNull());
         verify(events, times(1)).publishEvent(any(DaywalkerAlertCreatedEvent.class));
     }
 
