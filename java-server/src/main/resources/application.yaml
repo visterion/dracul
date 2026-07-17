@@ -178,6 +178,10 @@ dracul:
   daywalker-deep:
     enabled: ${DRACUL_DAYWALKER_DEEP_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_DEEP_TOKEN:dev-token-change-me}
+  renfield:
+    enabled: ${DRACUL_RENFIELD_ENABLED:false}
+    cron: ${DRACUL_RENFIELD_CRON:0 0 12 * * MON-FRI}
+    webhook-token: ${DRACUL_RENFIELD_TOKEN:dev-token-change-me}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}
