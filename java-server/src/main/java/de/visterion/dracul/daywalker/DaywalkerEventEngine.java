@@ -5,6 +5,7 @@ import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.Form4Filing;
+import de.visterion.dracul.hunting.agora.SectorResolver;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.position.PortfolioWeights;
@@ -49,6 +50,7 @@ public class DaywalkerEventEngine {
     private final AgoraFilings filings;
     private final DaywalkerAlertRepository alerts;
     private final PortfolioWeights portfolioWeights;
+    private final SectorResolver sectors;
     private final String connection;
     private final double priceThreshold;
     private final double volumeMultiplier;
@@ -65,7 +67,7 @@ public class DaywalkerEventEngine {
             AgoraIntraday intraday,
             AgoraCompanyData companyData, AgoraFilings filings,
             DaywalkerAlertRepository alerts,
-            PortfolioWeights portfolioWeights,
+            PortfolioWeights portfolioWeights, SectorResolver sectors,
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
@@ -78,6 +80,7 @@ public class DaywalkerEventEngine {
         this.filings = filings;
         this.alerts = alerts;
         this.portfolioWeights = portfolioWeights;
+        this.sectors = sectors;
         this.priceThreshold = priceThreshold;
         this.volumeMultiplier = volumeMultiplier;
         this.cooldownSeconds = cooldownSeconds;
@@ -194,15 +197,23 @@ public class DaywalkerEventEngine {
         news.detect(item, companyData.news(item.ticker(), plan.fromDate(), plan.toDate()))
                 .ifPresent(candidates::add);
         downgrade.detect(item, companyData.recommendations(item.ticker())).ifPresent(candidates::add);
+
+        // T2.2 Part B (round 1, m5): resolve INSIDE the symbol's own virtual thread, for EVERY
+        // swept symbol — this warms the cache in parallel under the poll budget so the portfolio
+        // snapshot (cache-only read) finds sectors even for symbols without a trigger this poll.
+        String sector = sectors.sector(item.ticker());
+
         if (candidates.isEmpty()) return List.of();
 
         HeldPosition rep = plan.repBySymbol().get(item.ticker());
         var out = new ArrayList<TriggerEvent>();
         for (TriggerEvent base : candidates) {
             if (!inCooldown(item.ticker(), base.triggerType(), now)) {
-                out.add(rep != null
-                        ? enrich(base, rep, plan.weights().get(item.ticker()), null)
-                        : base);
+                if (rep != null) {
+                    out.add(enrich(base, rep, plan.weights().get(item.ticker()), sector));
+                } else {
+                    out.add(withDetailSector(base, sector));
+                }
             }
         }
         return out;
@@ -240,6 +251,17 @@ public class DaywalkerEventEngine {
         String breached = BreachedLevel.evaluate(close, activeStop, null, "short".equals(direction));
         return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
                 base.currentPrice(), base.detail(), position.symbol(), ctx, breached);
+    }
+
+    /** Watchlist-only carrier (round 2, m-3): sector rides as a detail-map key — no new
+     *  TriggerEvent record component, no factory ripple. Detector detail maps may be
+     *  immutable, so copy before adding. Null sector → event unchanged. */
+    private static TriggerEvent withDetailSector(TriggerEvent base, String sector) {
+        if (sector == null) return base;
+        var detail = new LinkedHashMap<>(base.detail());
+        detail.put("sector", sector);
+        return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
+                base.currentPrice(), detail, base.positionId(), base.position(), base.breachedLevel());
     }
 
     private boolean inCooldown(String symbol, TriggerType type, Instant now) {
