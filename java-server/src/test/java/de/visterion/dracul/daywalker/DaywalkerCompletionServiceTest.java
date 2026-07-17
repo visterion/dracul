@@ -550,4 +550,80 @@ class DaywalkerCompletionServiceTest {
                         "CRITICAL", "thesis text", new BigDecimal("0.4"), "run-26"))
                 .doesNotThrowAnyException();
     }
+
+    // =========================================================================
+    // T2.2 C2: PORTFOLIO pseudo-symbol routing and MACRO_PORTFOLIO escalation
+    // =========================================================================
+
+    @Test
+    void portfolioSymbolRoutesToPrimaryOwnerBeforeTheR1Chain() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+        when(notifier.notifyAlert(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+
+        service(alerts, notifier).persistAssessment("PORTFOLIO", "MACRO_PORTFOLIO", "CRITICAL",
+                "rates shock hits ACME (25%) hardest", new BigDecimal("0.8"), "run-1",
+                null, "macro", false);
+
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("PORTFOLIO"), eq("MACRO_PORTFOLIO"),
+                eq("CRITICAL"), eq("rates shock hits ACME (25%) hardest"), eq(new BigDecimal("0.8")),
+                eq("run-1"), eq(true), eq("macro"));
+        verify(alerts, never()).findOwnersBySymbol(anyString());
+        verifyNoInteractions(heldPositions); // no depot lookup for the pseudo-symbol
+    }
+
+    @Test
+    void portfolioSymbolWithEchoedPositionIdStillRoutesToPrimaryOwnerWithoutDepotLookup() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        // an (illegal) echoed position_id must not divert routing or trigger a depot read
+        service(alerts, notifier).persistAssessment("PORTFOLIO", "MACRO_PORTFOLIO", "INFO",
+                "noise", new BigDecimal("0.9"), "run-2", "PORTFOLIO", "macro", false);
+
+        verify(alerts).insert(eq(PRIMARY_USER), isNull(), eq("PORTFOLIO"), eq("MACRO_PORTFOLIO"),
+                eq("INFO"), eq("noise"), eq(new BigDecimal("0.9")), eq("run-2"), eq(false), eq("macro"));
+        verify(alerts, never()).findOwnersBySymbol(anyString());
+        verifyNoInteractions(heldPositions);
+    }
+
+    @Test
+    void portfolioRowMergesOnTheSameUtcDay() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        // outside the per-owner cooldown, but same UTC day: one PORTFOLIO row per day,
+        // severity escalates (spec C2)
+        when(alerts.lastAlertAt(PRIMARY_USER, "PORTFOLIO", "MACRO_PORTFOLIO"))
+                .thenReturn(Optional.of(Instant.now().minusSeconds(7200)));
+        when(alerts.findSameUtcDay(eq(PRIMARY_USER), eq("PORTFOLIO"), eq("MACRO_PORTFOLIO"), any()))
+                .thenReturn(Optional.of(new DaywalkerAlertRepository.SameDayAlert("a-9", "INFO")));
+
+        service(alerts, notifier).persistAssessment("PORTFOLIO", "MACRO_PORTFOLIO", "WARNING",
+                "second macro wave", new BigDecimal("0.7"), "run-9", null, "macro", false);
+
+        verify(alerts).updateSameDayAlert("a-9", "MACRO_PORTFOLIO", "WARNING",
+                "second macro wave", new BigDecimal("0.7"), "run-9", false, "macro");
+        verify(alerts, never()).insert(any(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any());
+    }
+
+    @Test
+    void lowConfidenceCriticalMacroPortfolioNeverEscalates() {
+        var alerts = mock(DaywalkerAlertRepository.class);
+        var notifier = mock(TelegramNotifier.class);
+        var vistierie = mock(VistierieClient.class);
+        when(alerts.lastAlertAt(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(alerts.findSameUtcDay(anyString(), anyString(), anyString(), any())).thenReturn(Optional.empty());
+
+        // escalation fully enabled + low-confidence CRITICAL: every OTHER trigger type would escalate
+        service(alerts, notifier, vistierie, true, DEFAULT_THRESHOLD)
+                .persistAssessment("PORTFOLIO", "MACRO_PORTFOLIO", "CRITICAL",
+                        "macro risk", new BigDecimal("0.3"), "run-3", null, "macro", false);
+
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
+    }
 }

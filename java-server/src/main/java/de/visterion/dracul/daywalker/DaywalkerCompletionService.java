@@ -1,5 +1,7 @@
 package de.visterion.dracul.daywalker;
 
+import de.visterion.dracul.daywalker.detect.TriggerEvent;
+import de.visterion.dracul.daywalker.detect.TriggerType;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.vistierie.VistierieClient;
@@ -112,7 +114,12 @@ public class DaywalkerCompletionService {
                                   String thesis, BigDecimal confidence, String runId,
                                   String positionId, String eventType, boolean fromEscalation) {
         List<DaywalkerAlertRepository.OwnerItem> owners;
-        if (positionId != null) {
+        if (TriggerEvent.PORTFOLIO_SYMBOL.equals(symbol)) {
+            // T2.2 C2: PORTFOLIO is a pseudo-symbol — findOwnersBySymbol would be empty and the R1
+            // depot check would WARN-skip it. Route straight to the primary owner BEFORE the R1
+            // chain; an (illegal) echoed position_id changes nothing and triggers no depot lookup.
+            owners = List.of(new DaywalkerAlertRepository.OwnerItem(depotOwner, null, true));
+        } else if (positionId != null) {
             // Depot-sourced assessment (A6): DaywalkerEventEngine now only fans triggers over
             // depot positions, and positionId round-trips as the depot SYMBOL — never a
             // watchlist_items UUID (that table may not even contain this ticker). Route
@@ -207,6 +214,9 @@ public class DaywalkerCompletionService {
     private void maybeEscalate(String symbol, String triggerType, String severity,
                                String thesis, BigDecimal confidence, String positionId,
                                boolean fromEscalation) {
+        // T2.2 (round 1, M3): the deep agent's input carries only symbol/trigger_type/thesis —
+        // never the portfolio snapshot — a second opinion on portfolio exposure is content-free.
+        if (TriggerType.MACRO_PORTFOLIO.name().equals(triggerType)) return;
         if (!escalationEnabled || !daywalkerDeepEnabled || fromEscalation) return;
         if (!"CRITICAL".equalsIgnoreCase(severity)) return;
         if (confidence == null || confidence.compareTo(escalationThreshold) >= 0) return;
