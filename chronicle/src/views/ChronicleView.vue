@@ -31,6 +31,15 @@
         <i class="ph ph-funnel" aria-hidden="true" /> {{ t('chronicle.filters.button') }} ({{ activeFilterCount }})
       </button>
 
+      <label class="archive-toggle">
+        <input
+          v-model="includeArchived"
+          type="checkbox"
+          data-testid="chronicle-archive-toggle"
+        />
+        {{ t('chronicle.archiveToggle') }}
+      </label>
+
       <div class="chronicle-grid">
         <!-- Feed -->
         <div class="feed">
@@ -166,6 +175,14 @@ onMounted(async () => {
   await loading
   await nextTick()
   scrollMemory.restore()
+})
+
+// ── archive toggle: off by default (active prey only) ─────────────
+// v-model on the store's own flag so the checkbox and the fetched set can
+// never disagree; toggling re-fetches with the new includeArchived value.
+const includeArchived = computed({
+  get: () => store.includeArchived,
+  set: (v: boolean) => { store.load(v) },
 })
 
 // ── filter state ────────────────────────────────────────────────
@@ -403,6 +420,16 @@ function openStrigoi(strigoi: StrigoiStatus) {
   margin-left: auto;
   font-size: var(--text-micro);
   color: var(--ash-gray);
+}
+
+.archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body-sm);
+  color: var(--ash-gray);
+  cursor: pointer;
+  margin-bottom: var(--space-4);
 }
 
 .filter-fab {

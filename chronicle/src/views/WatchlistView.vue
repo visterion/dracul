@@ -143,6 +143,7 @@
                 <span class="wr-flags">
                   <span v-if="showsVerdictBadge(item)" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
                   <span v-if="item.entryPrice !== null" class="wr-held">{{ t('watchlist.flags.position') }}</span>
+                  <WatchlistSourceBadge :source="item.source" />
                 </span>
               </div>
               <div class="wr-price">
@@ -238,6 +239,7 @@ import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import AlertRow from '../components/common/AlertRow.vue'
 import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
+import WatchlistSourceBadge from '../components/watchlist/WatchlistSourceBadge.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'

@@ -189,6 +189,7 @@ export default {
     error: {
       retry: 'Retry',
     },
+    archiveToggle: 'Show archived prey',
     dusk: {
       newPrey: 'prey',
       verdicts: 'verdict | verdicts',
@@ -489,6 +490,12 @@ export default {
     noSelection: 'Select an item from the list.',
     confirmDelete: 'Remove {ticker} from watchlist?',
     back: 'Watchlist',
+    source: {
+      seed: 'Seed',
+      manual: 'Manual',
+      verdict: 'Verdict',
+      agent: 'Strigoi: {name}',
+    },
   },
   report: {
     title: 'Morning Report',

@@ -10,16 +10,21 @@ export const useChronicleStore = defineStore('chronicle', () => {
   const pendingPatterns = ref<Pattern[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  // Default off: active prey only. The chronicle view's archive toggle flips
+  // this and re-loads; kept on the store (not the view) so the "N Beute"
+  // tally and the fetched set can never drift out of sync with each other.
+  const includeArchived = ref(false)
 
   const hasContent = computed(
     () => prey.value.length > 0 || verdicts.value.length > 0,
   )
 
-  async function load() {
+  async function load(archived: boolean = includeArchived.value) {
+    includeArchived.value = archived
     loading.value = true
     error.value = null
     try {
-      const data = await useApi().getChronicle()
+      const data = await useApi().getChronicle(archived)
       prey.value = data.prey
       verdicts.value = data.verdicts
       alerts.value = data.alerts
@@ -31,5 +36,5 @@ export const useChronicleStore = defineStore('chronicle', () => {
     }
   }
 
-  return { prey, verdicts, alerts, pendingPatterns, loading, error, hasContent, load }
+  return { prey, verdicts, alerts, pendingPatterns, loading, error, includeArchived, hasContent, load }
 })

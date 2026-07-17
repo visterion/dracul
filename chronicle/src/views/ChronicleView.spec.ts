@@ -57,3 +57,45 @@ describe('ChronicleView dusk tally', () => {
     expect(dusk.props('verdicts')).toBe(2)
   })
 })
+
+describe('ChronicleView archive toggle', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('loads active prey only by default (includeArchived=false)', async () => {
+    const store = useChronicleStore()
+    const statusStore = useStatusStore()
+    store.load = vi.fn().mockResolvedValue(undefined)
+    statusStore.load = vi.fn().mockResolvedValue(undefined)
+    store.prey = [preyItem('p1')] as never
+
+    shallowMount(ChronicleView, {
+      global: { plugins: [i18n, router], stubs: { DuskStrip: true } },
+    })
+    await router.isReady()
+
+    expect(store.load).toHaveBeenCalledWith()
+    expect(store.includeArchived).toBe(false)
+  })
+
+  it('checking the toggle re-loads the chronicle with includeArchived=true', async () => {
+    const store = useChronicleStore()
+    const statusStore = useStatusStore()
+    store.load = vi.fn().mockResolvedValue(undefined)
+    statusStore.load = vi.fn().mockResolvedValue(undefined)
+    store.prey = [preyItem('p1')] as never
+
+    const w = shallowMount(ChronicleView, {
+      global: { plugins: [i18n, router], stubs: { DuskStrip: true } },
+    })
+    await router.isReady()
+    await w.vm.$nextTick()
+
+    const toggle = w.find('[data-testid="chronicle-archive-toggle"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.setValue(true)
+
+    expect(store.load).toHaveBeenCalledWith(true)
+  })
+})
