@@ -634,6 +634,20 @@ class VetoServiceTest {
         assertThat(result(outcome, "SIGNAL_EXPIRED").passed()).isTrue();
     }
 
+    @Test
+    void firstFailureOrdering_signalExpiredBeatsTransientCap() {
+        // Expired (age 6 > max 5) AND over the position cap (5 open, max 5) — expiry must win
+        // so the signal goes terminal REJECTED instead of lingering PENDING on the transient cap.
+        List<ExecutorPosition> open = List.of(position("A", "Tech"), position("B", "Tech"),
+                position("C", "Tech"), position("D", "Tech"), position("E", "Tech"));
+        EntryContext ctx = ctx().signalAgeTradingDays(6).openPositions(open).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SIGNAL_EXPIRED);
+        assertThat(result(outcome, "MAX_POSITIONS").passed()).isFalse(); // the cap really did trip
+    }
+
     // ---- 13 CHASED_AWAY ----
 
     @Test
@@ -874,9 +888,9 @@ class VetoServiceTest {
     void resultsPreserveSpecOrder() {
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
 
-        List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "COOLDOWN",
-                "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
-                "CONTRADICTION", "REDUNDANCY", "LIQUIDITY", "SIGNAL_EXPIRED", "CHASED_AWAY",
+        List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "SIGNAL_EXPIRED",
+                "COOLDOWN", "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
+                "CONTRADICTION", "REDUNDANCY", "LIQUIDITY", "CHASED_AWAY",
                 "BELOW_ANCHOR", "PACE_LIMIT", "CURRENCY_MISMATCH");
         List<String> actualOrder = outcome.results().stream().map(VetoResult::check).toList();
 
