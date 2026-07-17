@@ -14,15 +14,15 @@ adapters, persistence, synthesis, and the frontend.
                       │     DRACUL      │  Lord (orchestrator, Spring service)
                       └────────┬────────┘
                                │
-          ┌────────────────────┼────────────────────┐
-          │                    │                    │
-   ┌──────▼──────┐      ┌─────▼──────┐      ┌─────▼──────┐
-   │   STRIGOI   │      │  VOIEVOD   │      │ DAYWALKER  │
-   │  6 hunters  │      │ 1 reviewer │      │ 1 guardian │
-   │  scheduled  │      │  scheduled │      │ streaming  │
-   │  nightly    │      │  daily     │      │ mkt hours  │
-   └─────────────┘      └─────────────┘     └─────────────┘
-    hunts prey           reviews outcomes    guards watchlist
+          ┌────────────────────┼────────────────────┬──────────────┐
+          │                    │                    │              │
+   ┌──────▼──────┐      ┌─────▼──────┐      ┌─────▼──────┐   ┌───▼────────┐
+   │   STRIGOI   │      │  VOIEVOD   │      │ DAYWALKER  │   │ RENFIELD   │
+   │  6 hunters  │      │ 1 reviewer │      │ 1 guardian │   │ 1 analyst  │
+   │  scheduled  │      │  scheduled │      │ streaming  │   │ scheduled  │
+   │  nightly    │      │  daily     │      │ mkt hours  │   │ daily      │
+   └─────────────┘      └─────────────┘     └─────────────┘   └────────────┘
+    hunts prey           reviews outcomes    guards watchlist  reviews holdings
 ```
 
 ## Module Layout
@@ -50,7 +50,7 @@ dracul/
 │   └── outcome-analyzer, pattern-extractor, lesson-proposer
 │
 ├── dracul-daywalker/           # Streaming market guardian
-│   └── watchlist-monitor, trigger-detectors, alert-pipeline
+│   └── union (depot ∪ watchlist), trigger-detectors, alert-pipeline
 │
 ├── dracul-synthesizer/         # Verdict generation
 │   └── consensus-detector, narrative-generator
@@ -218,6 +218,16 @@ directly without triggering any market-data call.
   watchlist row at all; `DaywalkerCompletionService` persists these keyed by `symbol` alone, routed
   to the single `dracul.primary-user-email` owner (same convention as gropar's `exit_signals`).
 
+**Trade proposals table (V35):**
+- `trade_proposals` — one row per Renfield proposal per run (runs daily at 12:00 UTC). Schema:
+  `id` (UUID PK), `run_id` (TEXT NOT NULL, FK → `agent_definition.name = 'renfield'` or null), `symbol` (TEXT NOT NULL),
+  `proposal` (JSONB NOT NULL, opaque LLM output), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()),
+  `user_id` (TEXT NOT NULL DEFAULT 'default'). Unique index `uq_trade_proposals_run_symbol` on
+  `(run_id, symbol)` — one proposal per (run, symbol) pair, enforced via `ON CONFLICT DO NOTHING`
+  (idempotent insert) so retried webhook deliveries never duplicate. One bundled Telegram push per
+  run (sent from `RenfieldCompletionService`); SSE publishes each proposal as `proposal.new` (one
+  event per row). Empty-watchlist runs insert zero rows and send no Telegram/SSE message.
+
 **Verdict columns (V6):**
 - `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
 
@@ -295,6 +305,13 @@ Two new tables under the `dracul` schema hold runtime-editable agent definitions
 
 1. `AgentDefinitionBootstrap` (runs at startup, `@EventListener(ApplicationReadyEvent)`) iterates all `AgentDefaultProvider` beans and upserts each default into `agent_definition` + `agent_tool_binding` using insert-if-absent semantics. Rows that already exist (from a previous deploy or runtime edit via the REST API) are not overwritten, so manual customisations survive redeploys.
 2. `GenericAgentRegistrar` reads all agent definitions from the DB, builds a `CreateAgentRequest` for each, prepends `dracul.public-url` to all webhook callback paths, appends the current language directive to the system prompt, and registers or updates the agent with Vistierie. It re-runs whenever an `AgentDefinitionChangedEvent` or `LanguageChangedEvent` is published (e.g. after a `PUT /api/settings/agents/{name}/definition` or `PUT /api/settings/language`), making definition changes effective immediately without a restart.
+
+**R3 client contract (completion_webhook):** Trigger-only agents (Daywalker-Deep, Renfield)
+that may be invoked by either a scheduled cron **or** on-demand via `POST /api/renfield/run` (or
+similar) must pass `completion_webhook` to Vistierie's `triggerRun` call, because the on-demand
+path has no fallback completion handler waiting (unlike a scheduled cron's `RenfieldScheduler`
+bean that runs locally). The webhook URL is prepended with `dracul.public-url` by `GenericAgentRegistrar`.
+Without the webhook, on-demand completion results are lost.
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness, **except** the Executor tables below
@@ -612,6 +629,7 @@ External sources (EDGAR, prices, news, calendar)
    │ Strigoi (6, nightly)         │→ Prey → dracul.prey ─┐
    │ Voievod (1, daily)           │→ Verdicts → dracul.verdicts
    │ Daywalker (1, streaming)     │→ Alerts → dracul.daywalker_alerts
+   │ Renfield (1, daily @ 12 UTC) │→ Proposals → dracul.trade_proposals
    └─────────────────────────────┘                      │
                 │                    (executor enabled)  │
                 │        PreySignalEmitter ◀─────────────┘
@@ -628,6 +646,19 @@ External sources (EDGAR, prices, news, calendar)
                 │
     User — reads, approves patterns, manages watchlist
 ```
+
+**Daywalker sweep universe (A2):** The Daywalker monitors the **union**
+of two disjoint position sources: the watchlist (operator-curated) and
+the live depot (`HeldPositionService.openPositions("depot-1")`,
+broker-sourced). Per-symbol triggers are allocated to the **depot
+representative** (if a symbol appears in both, only the depot's position
+contributes context); a symbol with a depot position but no watchlist
+entry generates alerts keyed by symbol alone (no `watchlist_item_id`),
+routed to `dracul.primary-user-email`. Engine cooldown is per
+`(symbol, trigger_type)`, **owner-agnostic**: a NEGATIVE_NEWS event on
+SAP.DE cools any further NEGATIVE_NEWS events on SAP.DE for the
+configured duration (default 3600 s), regardless of whether the alert
+was depot- or watchlist-sourced or which owner holds it.
 
 **Prey → Verdict synthesis (Voievod):** Each weekday morning a reasoning-tier
 `ScheduledBee` groups all open prey (within their declared horizon) by symbol.

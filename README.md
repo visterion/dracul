@@ -186,6 +186,13 @@ watchlist items. Reacts to news, Form-4 filings, and price spikes.
 Uses a cheap Haiku pre-filter before escalating to a full Sonnet
 assessment. Critical alerts go to Telegram immediately.
 
+### Renfield (daily watchlist analyst)
+
+Runs once per business day (12:00 UTC). Reviews the watchlist and depot
+union for positions that warrant attention, emits concrete trade proposals
+(never places orders), and sends a Telegram digest. The operator reads
+proposals and decides. Read-only by design.
+
 ### Executor (guarded paper trading, opt-in)
 
 Not a hunter and disabled by default. Consumes signals from the Strigoi,

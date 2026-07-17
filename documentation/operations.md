@@ -368,11 +368,164 @@ The next cron tick is suppressed until the switch is released.
 Alternatively, use the Admin section in Dracul's own Settings view
 (`POST /api/admin/kill`), which proxies the same call.
 
-## Daywalker hours
+## Daywalker session window
 
-The Daywalker StreamingBee is active only during US market hours
-(configurable via `dracul.daywalker.market-open` / `market-close`).
-Outside those hours it is dormant and does not consume tokens.
+The Daywalker StreamingBee opens once per business day at a fixed UTC
+cron schedule and runs for a fixed-duration session window (16 hours by
+default), covering US market hours end-to-end. Outside the session it is
+dormant and does not consume tokens.
+
+**Defaults:**
+- Session cron: `0 0 8 * * 1-5` UTC (Monday–Friday, 08:00 UTC)
+- Session duration: `57600` seconds (16 hours)
+- Summer ET: 04:00–20:00 EDT (market open through after-hours close)
+- Winter ET: 03:00–19:00 EST (market open through after-hours close)
+
+**DST caveat:** The session cron is a fixed UTC expression with no DST
+handling — Vistierie crons are calendar-blind. On the EST/EDT boundary
+(second Sunday in March, first Sunday in November) the session open
+drifts ~1 hour relative to US market hours. This is an accepted trade-off
+for simplicity; calendar-aware scheduling is deferred.
+
+## Poll budget sizing
+
+The Daywalker event-detect poll wraps multiple symbol lookups, news
+fetches, and price checks inside a `dracul.daywalker.poll-budget-ms`
+timeout (default 60000 ms = 60 seconds). If one poll cycle exceeds the
+budget, unfinished symbols are skipped for that poll with one WARN log
+including the count; the next poll starts fresh.
+
+**Budget sizing for steady-state:**
+
+The news window is whole-UTC-day granular and the 1-hour per-(symbol,
+trigger_type) cooldown expires ~15 times per 16-hour session. One
+persistent tagged headline can thus yield ~15 LLM runs per day per
+symbol per trigger type. A symbol can fire up to ~5 independent trigger
+types (PRICE_SPIKE, VOLUME_SPIKE, NEGATIVE_NEWS, RECOMMENDATION_CHANGE,
+FORM_4), so worst-case steady-state budget demand ≈ **universe size ×
+15 × 5 runs/day**.
+
+If steady-state cost proves too high (e.g. in production with a large
+watchlist + depot union), increase the per-symbol cooldown via
+`DRACUL_DAYWALKER_COOLDOWN` (env variable, default 3600 s = 60 min; no
+code change needed). Alternatively, cap Vistierie's budget for the
+`daywalker` tenant to force automatic run skipping when token spend
+approaches the daily limit.
+
+## Daywalker prod activation checklist
+
+Before deploying to production, configure:
+
+1. **Session schedule + duration (explicit, even though they match defaults):**
+   ```
+   DRACUL_DAYWALKER_SESSION_CRON="0 0 8 * * 1-5"
+   DRACUL_DAYWALKER_SESSION_DURATION=57600
+   ```
+   This makes the production config self-describing and matches the
+   codebase defaults.
+
+2. **Enable + token:**
+   ```
+   DRACUL_DAYWALKER_ENABLED=true
+   DRACUL_DAYWALKER_TOKEN=<random-bearer-token>
+   ```
+   Replace `dev-token-change-me` in `application.yaml`.
+
+3. **Telegram (same credentials as gropar/morning-report):**
+   ```
+   TELEGRAM_BOT_TOKEN=<bot-token-from-BotFather>
+   TELEGRAM_CHAT_ID=<your-chat-id>
+   DRACUL_DAYWALKER_NOTIFY_LEVEL=CRITICAL
+   ```
+   Keep `notify-level` at CRITICAL for production; set to WARNING if more
+   verbosity is desired. Test with `@BotFather` to create a bot, send it
+   one message, then read the chat id from `https://api.telegram.org/bot<token>/getUpdates`.
+
+4. **Vistierie budget caps:**
+   Set daily and monthly budget caps for both `daywalker` and `renfield`
+   agents via Vistierie admin API to avoid runaway token spend in
+   production. See the Agent budget guard section below for the procedure.
+
+## Renfield (daily watchlist-review agent)
+
+Renfield runs once per business day at 12:00 UTC (≈ 08:00 ET summer /
+07:00 ET winter), analyzes the watchlist + depot union for positions
+that warrant attention, and emits concrete trade proposals to Telegram
+and SSE stream. It is trigger-only (no recursion), produces proposals
+only (never places orders), and respects the operator's read-only
+doctrine.
+
+**Enable + configure:**
+
+```
+DRACUL_RENFIELD_ENABLED=true
+DRACUL_RENFIELD_CRON="0 0 12 * * MON-FRI"        # 12:00 UTC weekdays
+DRACUL_RENFIELD_TOKEN=<random-bearer-token>
+DRACUL_RENFIELD_WEBHOOK_TOKEN=<completion-webhook-token>
+```
+
+If the watchlist is empty, the run silently completes (INFO log) and sends
+nothing. Completions are idempotent: retried webhook deliveries insert
+zero rows and send no duplicate Telegram/SSE messages. Proposals are
+bundled into one Telegram push per run and published to the SSE stream as
+individual `proposal.new` events (one per proposal) for real-time UI updates.
+
+Renfield also requires a Vistierie budget (same procedure as daywalker —
+see Agent budget guard section below).
+
+## Rollout order (critical)
+
+**The bootstrap is insert-if-absent**: agent definitions are not
+overwritten on deploy, so schedule/duration changes in the code default
+never reach the already-stored definition without an explicit reset. This
+ordering is mandatory:
+
+1. **Merge + push** to `main`. CI builds the image
+   (`ghcr.io/visterion/dracul:main`) and runs e2e.
+
+2. **Deploy** the new image (pull on LXC / restart `app` service).
+   Flyway V35 migration runs (adds `trade_proposals` table, Renfield
+   schema seeding). Daywalker + Renfield agent-definition defaults are
+   bundled in the JAR.
+
+3. **MANDATORY: Delete the daywalker agent definition row from the DB:**
+   ```sql
+   DELETE FROM agent_definition WHERE name = 'daywalker';
+   ```
+   Restart the `app` container. `AgentDefinitionBootstrap` re-inserts
+   with the new schedule (`0 0 8 * * 1-5`) and session-duration (`57600`).
+   Renfield is a fresh insert (always inserted, never needs reset).
+
+4. **Verify the reset:**
+   ```sql
+   SELECT name, schedule, session_duration_seconds 
+   FROM agent_definition 
+   WHERE name = 'daywalker';
+   ```
+   Expected: `daywalker | 0 0 8 * * 1-5 | 57600`
+
+5. **Set production environment variables** (see Daywalker prod
+   activation checklist + Renfield config above).
+
+6. **Set Vistierie budget caps** for both `daywalker` and `renfield`
+   agents via admin API (Agent budget guard section, or Vistierie docs).
+
+7. **Verify in production:**
+   - Daywalker session opens at 08:00 UTC
+   - At least one watchlist + depot symbol appears in the first poll
+   - Renfield fires at 12:00 UTC with the daily report
+   - Telegram messages arrive (both Daywalker + Renfield)
+
+## Symbol-namespace verify-before-build
+
+Before relying on the depot ∪ watchlist union in production, confirm
+that depot `get_positions` symbols and watchlist tickers share one
+namespace (e.g. both use `SAP` or both use `SAP.DE`, not a mix). Run
+one production check from the Depots view or via a direct Agora call to
+the live connection, and compare against a watchlist export. If they
+differ, normalize the symbols in one side before the union and pin the
+canonical form in a test (follow-up change, out of scope for this
+deploy).
 
 ## Backups
 
