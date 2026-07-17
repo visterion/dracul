@@ -79,6 +79,31 @@ row is seeded automatically on the next boot — no manual step). The
 `rule_versions` row is an audit-trail record, it does not itself push the
 new prompt text to Vistierie.
 
+### Post-deploy: agent definition reset (daywalker event-tagging / event_type change set)
+
+Deploying the T1.3 news-event-tagging change set (shared `NewsEventType`
+taxonomy + `NewsEventTagger`, NEGATIVE_NEWS gating on tagged headlines, the
+nullable `daywalker_alerts.event_type` column) bumps the `daywalker` agent's
+assessment schema and prompt to v1.1.0 — same insert-if-absent caveat as
+above applies to the `daywalker` agent definition itself. Reset it after
+deploy:
+
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/daywalker/definition/reset
+
+Before resetting, optionally check the currently registered definition —
+note that reset discards any user edits made via the settings UI:
+
+    curl -H "X-Local-Access-Token: $TOKEN" \
+      http://<host-lan-ip>:8080/api/settings/agents/daywalker/definition
+
+This step is **mandatory**, not optional: without it, the registered agent
+never receives the extended schema, the LLM is never asked for `event_type`,
+and the column stays silently `NULL` on every new alert — no error, no log
+line, just a quietly unpopulated column. Verify via `GET /agents/daywalker`
+on Vistierie (`:8090`, tenant token): `output_schema` should include the new
+`event_type` field and `version` should have bumped.
+
 ### Prompt registry & archive
 
 `java-server/src/main/resources/prompts/prompt_registry.json` maps every

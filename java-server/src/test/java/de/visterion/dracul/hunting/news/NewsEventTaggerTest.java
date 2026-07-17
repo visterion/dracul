@@ -40,8 +40,10 @@ class NewsEventTaggerTest {
 
     @Test void maAcquireAtEndOfHeadlineMatchesViaJoiningSpace() {
         // The pinned match text is headline + " " + summary: the joining space makes
-        // "acquire " match even when the headline ENDS with "acquire" (spec §4.1 / R1-m3).
-        assertThat(tag("Assets Acme seeks to acquire", "")).containsExactly(NewsEventType.MA);
+        // "acquire " match even when the headline ENDS with "acquire" and does NOT contain
+        // "to acquire" (spec §4.1 / R1-m3) — isolates the joining-space path from the
+        // "to acquire" keyword, which would otherwise also match and mask the case.
+        assertThat(tag("Which rivals will Acme acquire", "")).containsExactly(NewsEventType.MA);
     }
 
     @Test void tagsRestatement() {
