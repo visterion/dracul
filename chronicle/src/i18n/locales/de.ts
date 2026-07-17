@@ -189,6 +189,7 @@ export default {
     error: {
       retry: 'Wiederholen',
     },
+    archiveToggle: 'Archivierte Beute anzeigen',
     dusk: {
       newPrey: 'Beute',
       verdicts: 'Urteil | Urteile',
@@ -489,6 +490,12 @@ export default {
     noSelection: 'Element aus der Liste auswählen.',
     confirmDelete: '{ticker} aus der Watchlist entfernen?',
     back: 'Watchlist',
+    source: {
+      seed: 'Seed',
+      manual: 'Manuell',
+      verdict: 'Urteil',
+      agent: 'Strigoi: {name}',
+    },
   },
   report: {
     title: 'Morgen-Report',
