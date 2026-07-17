@@ -372,6 +372,37 @@ class HttpVistierieClientTest {
         assertThat(result.startedAt()).isNull();
     }
 
+    @Test
+    void triggerRun_withCompletionWebhook_sendsWebhookAndTokenInBody() {
+        wm.stubFor(post(urlEqualTo("/agents/renfield/run"))
+                .willReturn(okJson("""
+                        {"run_id":"run-77","status":"queued"}
+                        """)));
+
+        var result = client.triggerRun("renfield", java.util.Map.of("k", "v"),
+                "http://localhost:8080/api/renfield/complete", "tok-1");
+
+        assertThat(result.id()).isEqualTo("run-77");
+        wm.verify(postRequestedFor(urlEqualTo("/agents/renfield/run"))
+                .withRequestBody(matchingJsonPath("$.payload.k", equalTo("v")))
+                .withRequestBody(matchingJsonPath("$.completion_webhook",
+                        equalTo("http://localhost:8080/api/renfield/complete")))
+                .withRequestBody(matchingJsonPath("$.completion_webhook_token", equalTo("tok-1"))));
+    }
+
+    @Test
+    void triggerRun_withoutWebhook_omitsWebhookFields() {
+        wm.stubFor(post(urlEqualTo("/agents/spinoff/run"))
+                .willReturn(okJson("""
+                        {"run_id":"run-78","status":"queued"}
+                        """)));
+
+        client.triggerRun("spinoff", java.util.Map.of("k", "v"));
+
+        wm.verify(postRequestedFor(urlEqualTo("/agents/spinoff/run"))
+                .withRequestBody(notMatching(".*completion_webhook.*")));
+    }
+
     // -------------------------------------------------------------------------
     // getRunEvents
     // -------------------------------------------------------------------------

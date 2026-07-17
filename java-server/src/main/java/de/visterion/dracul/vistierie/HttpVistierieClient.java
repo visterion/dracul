@@ -272,9 +272,14 @@ public class HttpVistierieClient implements VistierieClient {
     }
 
     @Override
-    public VistierieRunDetail triggerRun(String agentName, Map<String, Object> input) {
+    public VistierieRunDetail triggerRun(String agentName, Map<String, Object> input,
+            String completionWebhook, String completionWebhookToken) {
         var bodyMap = new java.util.HashMap<String, Object>();
         if (input != null) bodyMap.put("payload", input);
+        if (completionWebhook != null) {
+            bodyMap.put("completion_webhook", completionWebhook);
+            bodyMap.put("completion_webhook_token", completionWebhookToken);
+        }
         var body = tenantClient.post().uri("/agents/{name}/run", agentName)
             .body(bodyMap)
             .retrieve().body(JsonNode.class);
