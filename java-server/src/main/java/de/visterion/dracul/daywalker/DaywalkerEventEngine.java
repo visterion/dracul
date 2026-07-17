@@ -7,6 +7,7 @@ import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.Form4Filing;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
+import de.visterion.dracul.position.PortfolioWeights;
 import de.visterion.dracul.position.PositionMath;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
@@ -47,6 +48,7 @@ public class DaywalkerEventEngine {
     private final AgoraCompanyData companyData;
     private final AgoraFilings filings;
     private final DaywalkerAlertRepository alerts;
+    private final PortfolioWeights portfolioWeights;
     private final String connection;
     private final double priceThreshold;
     private final double volumeMultiplier;
@@ -63,6 +65,7 @@ public class DaywalkerEventEngine {
             AgoraIntraday intraday,
             AgoraCompanyData companyData, AgoraFilings filings,
             DaywalkerAlertRepository alerts,
+            PortfolioWeights portfolioWeights,
             @Value("${dracul.daywalker.price-spike-threshold:0.03}") double priceThreshold,
             @Value("${dracul.daywalker.volume-spike-multiplier:3.0}") double volumeMultiplier,
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
@@ -74,6 +77,7 @@ public class DaywalkerEventEngine {
         this.companyData = companyData;
         this.filings = filings;
         this.alerts = alerts;
+        this.portfolioWeights = portfolioWeights;
         this.priceThreshold = priceThreshold;
         this.volumeMultiplier = volumeMultiplier;
         this.cooldownSeconds = cooldownSeconds;
@@ -81,8 +85,10 @@ public class DaywalkerEventEngine {
         this.connection = connection;
     }
 
-    /** Immutable per-poll sweep inputs, prepared inside the budget. */
+    /** Immutable per-poll sweep inputs, prepared inside the budget. repBySymbol holds ONE
+     *  COLLAPSED entry per symbol (multi-lot rule A1); weights comes from the FULL lot list. */
     private record SweepPlan(Map<String, WatchlistItem> universe, Map<String, HeldPosition> repBySymbol,
+                             Map<String, BigDecimal> weights,
                              List<Form4Filing> form4, LocalDate fromDate, LocalDate toDate) {}
 
     public List<TriggerEvent> detect(Instant since, Instant now) {
@@ -143,8 +149,11 @@ public class DaywalkerEventEngine {
 
     private SweepPlan plan(Instant since, Instant now) {
         var positions = heldPositions.openPositions(connection);
+        // Weight map from the FULL lot list (spec §9 Engine wiring: putIfAbsent-style rep
+        // selection keeps only the first lot; the denominator must sum ALL lots).
+        Map<String, BigDecimal> weights = portfolioWeights.weightsBySymbol(positions);
         Map<String, HeldPosition> repBySymbol = new LinkedHashMap<>();
-        for (HeldPosition p : positions) {
+        for (HeldPosition p : PortfolioWeights.collapseBySymbol(positions)) {
             repBySymbol.putIfAbsent(p.symbol(), p);
         }
 
@@ -171,7 +180,7 @@ public class DaywalkerEventEngine {
                 log.warn("Form-4 fetch failed during Daywalker poll: {}", e.getMessage());
             }
         }
-        return new SweepPlan(universe, repBySymbol, form4, fromDate, toDate);
+        return new SweepPlan(universe, repBySymbol, weights, form4, fromDate, toDate);
     }
 
     /** Per-symbol detector pass — runs on a virtual thread. The shared detector fields
@@ -191,7 +200,9 @@ public class DaywalkerEventEngine {
         var out = new ArrayList<TriggerEvent>();
         for (TriggerEvent base : candidates) {
             if (!inCooldown(item.ticker(), base.triggerType(), now)) {
-                out.add(rep != null ? enrich(base, rep, null, null) : base);
+                out.add(rep != null
+                        ? enrich(base, rep, plan.weights().get(item.ticker()), null)
+                        : base);
             }
         }
         return out;
