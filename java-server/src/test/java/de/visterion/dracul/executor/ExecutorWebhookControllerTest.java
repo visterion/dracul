@@ -869,6 +869,38 @@ class ExecutorWebhookControllerTest {
         assertThat(peer.rejectReason()).isEqualTo("CONTRADICTION"); // peer row labeled by its actual cause
     }
 
+    @Test
+    void placeEntry_transientCapWithContradictingPeer_leavesPeerUntouched() {
+        // Regression pin: when the entering signal is only DEFERRED by a transient cap (MAX_POSITIONS),
+        // a co-existing contradiction must NOT co-reject the peer — otherwise the deferred signal could
+        // enter on a later run after its peer was killed (order-dependent, breaks "trade neither").
+        ExecutorSignal mergerArb = signal("sig-1", 0.9, new BigDecimal("100"), "PENDING", "MERGER_ARB");
+        ExecutorSignal contradicting = signal("sig-2", 0.9, new BigDecimal("100"), "PENDING", "PEAD");
+        when(signalRepo.findById("sig-1")).thenReturn(mergerArb);
+        List<ExecutorPosition> threeOpen = List.of(
+                openPosition(1, "A", "BUY", new BigDecimal("10"), new BigDecimal("9")),
+                openPosition(2, "B", "BUY", new BigDecimal("10"), new BigDecimal("9")),
+                openPosition(3, "C", "BUY", new BigDecimal("10"), new BigDecimal("9")));
+        when(assembler.assemble(any())).thenReturn(
+                withOpenPositions(withPendingSignals(happyContext(), List.of(contradicting)), threeOpen));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("MAX_POSITIONS"); // transient firstFailure
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo).markStatus("sig-1", "PENDING");            // deferred, not terminal
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+        verify(signalRepo, never()).markStatus(eq("sig-2"), anyString()); // peer left completely untouched
+        verify(decisionRepo, times(1)).insert(any());                // only the entering signal's row
+    }
+
     // -------------------------------------------------------------------
     // place-entry: happy path
     // -------------------------------------------------------------------
