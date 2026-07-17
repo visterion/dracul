@@ -47,7 +47,7 @@ class RenfieldSchedulerTest {
 
     private static HeldPosition held(String symbol) {
         return new HeldPosition(symbol, BigDecimal.ONE, BigDecimal.TEN, BigDecimal.TEN,
-                BigDecimal.ZERO, null, null, null, null, null, null, null, null);
+                BigDecimal.ZERO, "USD", null, null, null, null, null, null, null, null);
     }
 
     @Test

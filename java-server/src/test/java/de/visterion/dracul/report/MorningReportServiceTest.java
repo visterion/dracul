@@ -23,7 +23,7 @@ class MorningReportServiceTest {
     private HeldPosition held(String sym, double entry, double shares, BigDecimal activeStop, BigDecimal close) {
         BigDecimal qty = BigDecimal.valueOf(shares);
         BigDecimal marketValue = close == null ? null : close.multiply(qty);
-        return new HeldPosition(sym, qty, BigDecimal.valueOf(entry), marketValue, null,
+        return new HeldPosition(sym, qty, BigDecimal.valueOf(entry), marketValue, null, null,
                 null, null, null, null, null, activeStop, null, null);
     }
 

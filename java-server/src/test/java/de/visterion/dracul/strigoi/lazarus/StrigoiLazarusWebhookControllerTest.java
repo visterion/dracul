@@ -64,7 +64,7 @@ class StrigoiLazarusWebhookControllerTest {
 
     private HeldPosition held(String symbol) {
         return new HeldPosition(symbol, java.math.BigDecimal.ONE, java.math.BigDecimal.TEN,
-                java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO,
+                java.math.BigDecimal.TEN, java.math.BigDecimal.ZERO, null,
                 null, null, null, null, null, null, null, null);
     }
 

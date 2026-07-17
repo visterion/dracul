@@ -99,4 +99,16 @@ class HeldPositionServiceTest {
         assertThat(out).isEmpty();
         verify(contextRepo, never()).findOpenBySymbol(anyString(), anyString());
     }
+
+    @Test
+    void joinPropagatesDepotCurrencyWithAndWithoutContext() {
+        when(depotClient.positions(CONNECTION)).thenReturn(
+                new PositionsSnapshot(List.of(depotPosition("AAA"), depotPosition("BBB")), "2026-07-13T00:00:00Z"));
+        when(contextRepo.findOpenBySymbol(CONNECTION, "AAA")).thenReturn(Optional.of(contextRow("AAA")));
+        when(contextRepo.findOpenBySymbol(CONNECTION, "BBB")).thenReturn(Optional.empty());
+
+        List<HeldPosition> out = service.openPositions(CONNECTION);
+
+        assertThat(out).extracting(HeldPosition::currency).containsExactly("USD", "USD");
+    }
 }
