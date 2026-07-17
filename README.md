@@ -188,10 +188,11 @@ assessment. Critical alerts go to Telegram immediately.
 
 ### Renfield (daily watchlist analyst)
 
-Runs once per business day (12:00 UTC). Reviews the watchlist and depot
-union for positions that warrant attention, emits concrete trade proposals
-(never places orders), and sends a Telegram digest. The operator reads
-proposals and decides. Read-only by design.
+Runs once per business day (12:00 UTC). Reviews the primary user's
+watchlist — each symbol flagged `held` when it is also an open depot
+position — emits concrete trade proposals (never places orders), and
+sends a Telegram digest. The operator reads proposals and decides.
+Read-only by design.
 
 ### Executor (guarded paper trading, opt-in)
 

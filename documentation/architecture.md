@@ -225,8 +225,11 @@ directly without triggering any market-data call.
   `market_note` (TEXT NULL), `run_id` (VARCHAR NOT NULL), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()),
   with a UNIQUE constraint on `(run_id, symbol)` — one proposal per (run, symbol) pair, enforced via
   `ON CONFLICT DO NOTHING` (idempotent insert) so retried webhook deliveries never duplicate. One bundled
-  Telegram push per run (sent from `RenfieldCompletionService`); SSE publishes each proposal as
-  `proposal.new` (one event per row). Empty-watchlist runs insert zero rows and send no Telegram/SSE message.
+  Telegram push per run (sent from `RenfieldWebhookController`); SSE publishes a single bundled
+  `proposal.new` event per completed run (`{count, run_id, ts}`), not one event per proposal row. An
+  empty watchlist means the scheduler never triggers a run at all (no Telegram, no SSE); a completed
+  run whose proposals list comes back empty still inserts zero rows but sends a "keine Vorschläge
+  heute" Telegram digest (no SSE event in that case).
 
 **Verdict columns (V6):**
 - `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.
@@ -306,12 +309,14 @@ Two new tables under the `dracul` schema hold runtime-editable agent definitions
 1. `AgentDefinitionBootstrap` (runs at startup, `@EventListener(ApplicationReadyEvent)`) iterates all `AgentDefaultProvider` beans and upserts each default into `agent_definition` + `agent_tool_binding` using insert-if-absent semantics. Rows that already exist (from a previous deploy or runtime edit via the REST API) are not overwritten, so manual customisations survive redeploys.
 2. `GenericAgentRegistrar` reads all agent definitions from the DB, builds a `CreateAgentRequest` for each, prepends `dracul.public-url` to all webhook callback paths, appends the current language directive to the system prompt, and registers or updates the agent with Vistierie. It re-runs whenever an `AgentDefinitionChangedEvent` or `LanguageChangedEvent` is published (e.g. after a `PUT /api/settings/agents/{name}/definition` or `PUT /api/settings/language`), making definition changes effective immediately without a restart.
 
-**R3 client contract (completion_webhook):** Trigger-only agents (Daywalker-Deep, Renfield)
-that may be invoked by either a scheduled cron **or** on-demand via `POST /api/renfield/run` (or
-similar) must pass `completion_webhook` to Vistierie's `triggerRun` call, because the on-demand
-path has no fallback completion handler waiting (unlike a scheduled cron's `RenfieldScheduler`
-bean that runs locally). The webhook URL is prepended with `dracul.public-url` by `GenericAgentRegistrar`.
-Without the webhook, on-demand completion results are lost.
+**R3 client contract (completion_webhook):** Vistierie's `POST /agents/{name}/run` endpoint does
+not fall back to the agent definition's registered completion webhook — unlike its cron and
+streaming dispatch paths. So any Dracul-triggered run whose result must reach back to Dracul
+(e.g. `RenfieldScheduler`'s daily trigger) must pass `completion_webhook` +
+`completion_webhook_token` explicitly in the run body. `VistierieClient.triggerRun` carries these
+as parameters for exactly this reason (see its javadoc). The webhook URL is prepended with
+`dracul.public-url` by `GenericAgentRegistrar`. Without passing them on the triggered run, the
+completion is lost.
 
 All tables include a `user_id TEXT NOT NULL DEFAULT 'default'` column for
 Phase-2 multi-user readiness, **except** the Executor tables below
