@@ -51,6 +51,24 @@ public class DaywalkerAlertRepository {
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
+    /** Most recent alert time for (symbol, trigger_type) across ALL owners — the ENGINE
+     *  cooldown key (R2). Watchlist alerts persist under each watcher's user_id; a
+     *  per-owner engine lookup would never trip for symbols watched only by a non-primary
+     *  user and the identical event would re-spawn an LLM run every poll. The
+     *  completion-side per-owner cooldown keeps using {@link #lastAlertAt}. */
+    public Optional<Instant> lastAlertAtAnyOwner(String symbol, String triggerType) {
+        var rows = jdbc.sql("""
+                SELECT created_at FROM daywalker_alerts
+                WHERE symbol = :s AND trigger_type = :tt
+                ORDER BY created_at DESC
+                LIMIT 1
+                """)
+                .param("s", symbol).param("tt", triggerType)
+                .query((rs, n) -> rs.getTimestamp("created_at").toInstant())
+                .list();
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
     /** Back-compat: insert without an explicit notification outcome (not notified). */
     public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
                        String severity, String thesis, BigDecimal confidence, String runId) {
@@ -165,6 +183,24 @@ public class DaywalkerAlertRepository {
                 .param("notified", notificationSent)
                 .param("et", eventType)
                 .update();
+    }
+
+    /** One recent alert for the Renfield input. The table has no open/closed lifecycle
+     *  column, so "recent" means created_at >= since (spec: now - 24h). */
+    public record RecentAlert(String triggerType, String severity, String thesis, Instant createdAt) {}
+
+    /** All alerts for a symbol (any owner) since {@code since}, newest first. */
+    public List<RecentAlert> recentAlerts(String symbol, Instant since) {
+        return jdbc.sql("""
+                SELECT trigger_type, severity, thesis, created_at FROM daywalker_alerts
+                WHERE symbol = :s AND created_at >= :since
+                ORDER BY created_at DESC
+                """)
+                .param("s", symbol).param("since", Timestamp.from(since))
+                .query((rs, n) -> new RecentAlert(
+                        rs.getString("trigger_type"), rs.getString("severity"),
+                        rs.getString("thesis"), rs.getTimestamp("created_at").toInstant()))
+                .list();
     }
 
     /** Frontend WatchlistAlert level vocabulary for a precise severity. */

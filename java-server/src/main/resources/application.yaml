@@ -165,9 +165,10 @@ dracul:
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
-    session-cron: ${DRACUL_DAYWALKER_SESSION_CRON:0 30 13 * * 1-5}
-    session-duration: ${DRACUL_DAYWALKER_SESSION_DURATION:23400}
+    session-cron: ${DRACUL_DAYWALKER_SESSION_CRON:0 0 8 * * 1-5}
+    session-duration: ${DRACUL_DAYWALKER_SESSION_DURATION:57600}
     poll-interval: ${DRACUL_DAYWALKER_POLL_INTERVAL:300}
+    poll-budget-ms: ${DRACUL_DAYWALKER_POLL_BUDGET_MS:60000}
     price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
@@ -177,6 +178,10 @@ dracul:
   daywalker-deep:
     enabled: ${DRACUL_DAYWALKER_DEEP_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_DEEP_TOKEN:dev-token-change-me}
+  renfield:
+    enabled: ${DRACUL_RENFIELD_ENABLED:false}
+    cron: ${DRACUL_RENFIELD_CRON:0 0 12 * * MON-FRI}
+    webhook-token: ${DRACUL_RENFIELD_TOKEN:dev-token-change-me}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}

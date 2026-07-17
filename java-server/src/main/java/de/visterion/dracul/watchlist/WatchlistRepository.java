@@ -286,6 +286,25 @@ public class WatchlistRepository {
         return rows > 0;
     }
 
+    /** One sweep representative per distinct ticker across all users — ticker, company name,
+     *  and the last-refreshed price (the Daywalker detectors embed currentPrice into emitted
+     *  events; without it the alert/LLM context would show 0). */
+    public record SweepRow(String ticker, String companyName, double currentPrice) {}
+
+    /** Distinct (ticker, company_name, current_price) across all users for the Daywalker sweep. */
+    public List<SweepRow> distinctSweepRows() {
+        return jdbc.sql("""
+                SELECT DISTINCT ON (ticker) ticker, company_name, current_price
+                FROM watchlist_items
+                ORDER BY ticker, added_at DESC
+                """)
+                .query((rs, rowNum) -> new SweepRow(
+                        rs.getString("ticker"),
+                        rs.getString("company_name"),
+                        rs.getDouble("current_price")))
+                .list();
+    }
+
     /** Distinct tickers across all users — input to the background price refresher. */
     public List<String> distinctTickers() {
         return jdbc.sql("SELECT DISTINCT ticker FROM watchlist_items")

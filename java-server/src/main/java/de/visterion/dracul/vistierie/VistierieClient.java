@@ -27,7 +27,19 @@ public interface VistierieClient {
     /** Triggers a run, forwarding {@code input} as the run's {@code payload}
      *  (Vistierie contract: {@code POST /agents/{name}/run} body {@code {"payload": ...}}).
      *  {@code input} may be {@code null} for a payload-less trigger. */
-    VistierieRunDetail triggerRun(String agentName, java.util.Map<String, Object> input);
+    default VistierieRunDetail triggerRun(String agentName, java.util.Map<String, Object> input) {
+        return triggerRun(agentName, input, null, null);
+    }
+
+    /**
+     * Triggers a run and — when {@code completionWebhook} is non-null — sends
+     * {@code completion_webhook} + {@code completion_webhook_token} in the run body.
+     * Vistierie's {@code POST /agents/{name}/run} path does NOT fall back to the agent
+     * definition's registered webhook (unlike its cron and streaming dispatch paths),
+     * so any triggered run whose completion must reach Dracul MUST pass both here (R3).
+     */
+    VistierieRunDetail triggerRun(String agentName, java.util.Map<String, Object> input,
+            String completionWebhook, String completionWebhookToken);
 
     List<VistierieRunEvent> getRunEvents(String runId);
     java.util.List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
