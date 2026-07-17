@@ -34,6 +34,12 @@ class DaywalkerEventEngineTest {
                 "verdict-1", null, "swing", null, activeStop, activeStop, "executor", "2026-06-01T00:00:00Z");
     }
 
+    private static HeldPosition shortPositionWithStop(String symbol, double avgPrice, BigDecimal activeStop) {
+        return new HeldPosition(symbol, BigDecimal.valueOf(-10), BigDecimal.valueOf(avgPrice),
+                BigDecimal.valueOf(avgPrice * 10), BigDecimal.ZERO, "USD",
+                "verdict-1", null, "swing", null, activeStop, activeStop, "executor", "2026-06-01T00:00:00Z");
+    }
+
     private static List<BigDecimal> closes(double... v) {
         return java.util.Arrays.stream(v).mapToObj(BigDecimal::valueOf).toList();
     }
@@ -392,5 +398,61 @@ class DaywalkerEventEngineTest {
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
 
         assertThat(events).hasSize(20);
+    }
+
+    @Test
+    void shortPositionGetsSignCorrectGainLossAndDirectionAwareBreach() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        // short 10 @ 100, stop ABOVE at 110; close rallies to 112 -> price spike + stop breach
+        when(hp.openPositions("depot-1")).thenReturn(
+                List.of(shortPositionWithStop("ACME", 100, new BigDecimal("110"))));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 112), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(1);
+        var ev = events.get(0);
+        assertThat(ev.position().direction()).isEqualTo("short");
+        // short P&L: (100 - 112)/100 * 100 = -12
+        assertThat(ev.position().gainLossPct()).isEqualByComparingTo("-12");
+        // short stop sits ABOVE: close 112 >= 110 -> STOP
+        assertThat(ev.breachedLevel()).isEqualTo("STOP");
+    }
+
+    @Test
+    void longPositionKeepsDirectionLongAndLongMath() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(
+                List.of(heldPositionWithContext("ACME", 100, new BigDecimal("96"))));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 95), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).position().direction()).isEqualTo("long");
+        assertThat(events.get(0).position().gainLossPct()).isEqualByComparingTo("-5");
+        assertThat(events.get(0).breachedLevel()).isEqualTo("STOP");
     }
 }

@@ -7,6 +7,7 @@ import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.Form4Filing;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
+import de.visterion.dracul.position.PositionMath;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
@@ -191,7 +192,7 @@ public class DaywalkerEventEngine {
         var out = new ArrayList<TriggerEvent>();
         for (TriggerEvent base : candidates) {
             if (!inCooldown(item.ticker(), base.triggerType(), now)) {
-                out.add(rep != null ? enrich(base, rep) : base);
+                out.add(rep != null ? enrich(base, rep, null, null) : base);
             }
         }
         return out;
@@ -212,18 +213,21 @@ public class DaywalkerEventEngine {
                 null, null, null, null, List.of(), List.of(), null, null, null, null, null);
     }
 
-    /** Enrich a market-wide trigger with the position's stored stop/entry context. The context
-     *  block (active/initial stop) is nullable as a group -- a depot position with no open
-     *  {@code position_context} row still gets this event, just without a breach verdict. */
-    private TriggerEvent enrich(TriggerEvent base, HeldPosition position) {
+    /** Enrich a market-wide trigger with the position's stored stop/entry context, direction-aware
+     *  (T2.2). Zero/blank quantity → direction null, long math (status quo), one DEBUG line. */
+    private TriggerEvent enrich(TriggerEvent base, HeldPosition position,
+                                BigDecimal weightPct, String sector) {
         BigDecimal close = base.currentPrice();
         BigDecimal activeStop = position.activeStop() != null ? position.activeStop() : position.initialStop();
         BigDecimal entry = position.avgPrice();
-        BigDecimal gainLossPct = (close != null && entry != null && entry.signum() != 0)
-                ? close.subtract(entry).divide(entry, MathContext.DECIMAL64)
-                    .multiply(BigDecimal.valueOf(100)) : null;
-        var ctx = new PositionContext(entry, gainLossPct, activeStop, null, null, null);
-        String breached = BreachedLevel.evaluate(close, activeStop, null);
+        String direction = PositionMath.direction(position.quantity());
+        if (direction == null) {
+            log.debug("daywalker enrich: zero/blank quantity for {} — direction null, long math", position.symbol());
+        }
+        BigDecimal gainLossPct = PositionMath.gainLossPct(direction, entry, close);
+        var ctx = new PositionContext(entry, gainLossPct, activeStop, null, null, null,
+                direction, weightPct, sector);
+        String breached = BreachedLevel.evaluate(close, activeStop, null, "short".equals(direction));
         return new TriggerEvent(base.symbol(), base.companyName(), base.triggerType(),
                 base.currentPrice(), base.detail(), position.symbol(), ctx, breached);
     }

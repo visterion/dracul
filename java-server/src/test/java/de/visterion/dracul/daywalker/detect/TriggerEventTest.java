@@ -26,7 +26,7 @@ class TriggerEventTest {
     @Test void payloadIncludesPositionContextWhenHeld() {
         var pos = new PositionContext(
                 new BigDecimal("100"), new BigDecimal("12.5"), new BigDecimal("92"),
-                new BigDecimal("120"), new BigDecimal("2"), new BigDecimal("4"));
+                new BigDecimal("120"), new BigDecimal("2"), new BigDecimal("4"), null, null, null);
         var ev = new TriggerEvent("ACME", "ACME Corp", TriggerType.PRICE_SPIKE,
                 new BigDecimal("95"), Map.of("price_change_pct", 0.05),
                 "wid-1", pos, "STOP");
