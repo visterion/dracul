@@ -44,7 +44,7 @@ class DaywalkerCompletionServiceTest {
             BigDecimal escalationThreshold) {
         return new DaywalkerCompletionService(alerts, notifier, events, "CRITICAL", 3600,
                 providerOf(vistierieClient), escalationEnabled, daywalkerDeepEnabled, escalationThreshold,
-                PRIMARY_USER);
+                PRIMARY_USER, "http://localhost:8080", "deep-tkn");
     }
 
     /** Minimal ObjectProvider stub — only {@code getObject()} is abstract; the default
@@ -321,7 +321,8 @@ class DaywalkerCompletionServiceTest {
                         "thesis text", new BigDecimal("0.4"), "run-20");
 
         verify(vistierie).triggerRun("daywalker-deep", Map.of(
-                "symbol", "AAPL", "trigger_type", "PRICE_SPIKE", "thesis", "thesis text"));
+                "symbol", "AAPL", "trigger_type", "PRICE_SPIKE", "thesis", "thesis text"),
+                "http://localhost:8080/api/daywalker-deep/complete", "deep-tkn");
     }
 
     @Test
@@ -340,7 +341,8 @@ class DaywalkerCompletionServiceTest {
                         "thesis text", new BigDecimal("0.4"), "run-27", "AAPL");
 
         var captor = org.mockito.ArgumentCaptor.forClass(Map.class);
-        verify(vistierie).triggerRun(eq("daywalker-deep"), captor.capture());
+        verify(vistierie).triggerRun(eq("daywalker-deep"), captor.capture(),
+                eq("http://localhost:8080/api/daywalker-deep/complete"), eq("deep-tkn"));
         assertThat(captor.getValue()).containsExactlyInAnyOrderEntriesOf(Map.of(
                 "symbol", "AAPL", "trigger_type", "PRICE_SPIKE",
                 "thesis", "thesis text", "position_id", "AAPL"));
@@ -359,7 +361,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.9"), "run-21");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -373,7 +375,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "WARNING",
                         "thesis text", new BigDecimal("0.4"), "run-22");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -387,7 +389,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-23", null, true);
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -401,7 +403,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-24");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -417,7 +419,7 @@ class DaywalkerCompletionServiceTest {
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",
                         "thesis text", new BigDecimal("0.4"), "run-28");
 
-        verify(vistierie, never()).triggerRun(anyString(), any());
+        verify(vistierie, never()).triggerRun(anyString(), any(), any(), any());
     }
 
     @Test
@@ -427,7 +429,8 @@ class DaywalkerCompletionServiceTest {
         var vistierie = mock(VistierieClient.class);
         stubEligibleSingleOwner(alerts, "AAPL", "PRICE_SPIKE");
         when(notifier.notifyAlert("AAPL", "PRICE_SPIKE", "CRITICAL", "thesis text")).thenReturn(true);
-        when(vistierie.triggerRun(anyString(), any())).thenThrow(new RuntimeException("vistierie down"));
+        when(vistierie.triggerRun(anyString(), any(), any(), any()))
+                .thenThrow(new RuntimeException("vistierie down"));
 
         service(alerts, notifier, vistierie, true, DEFAULT_THRESHOLD)
                 .persistAssessment("AAPL", "PRICE_SPIKE", "CRITICAL",

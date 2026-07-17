@@ -38,6 +38,8 @@ public class DaywalkerCompletionService {
     private final boolean daywalkerDeepEnabled;
     private final BigDecimal escalationThreshold;
     private final String depotOwner;
+    private final String publicUrl;
+    private final String deepWebhookToken;
 
     public DaywalkerCompletionService(
             DaywalkerAlertRepository alerts,
@@ -49,7 +51,9 @@ public class DaywalkerCompletionService {
             @Value("${dracul.daywalker.escalation-enabled:true}") boolean escalationEnabled,
             @Value("${dracul.daywalker-deep.enabled:false}") boolean daywalkerDeepEnabled,
             @Value("${dracul.daywalker.escalation-confidence:0.6}") BigDecimal escalationThreshold,
-            @Value("${dracul.primary-user-email:}") String primaryUser) {
+            @Value("${dracul.primary-user-email:}") String primaryUser,
+            @Value("${dracul.public-url}") String publicUrl,
+            @Value("${dracul.daywalker-deep.webhook-token:dev-token-change-me}") String deepWebhookToken) {
         this.alerts = alerts;
         this.notifier = notifier;
         this.events = events;
@@ -60,6 +64,8 @@ public class DaywalkerCompletionService {
         this.daywalkerDeepEnabled = daywalkerDeepEnabled;
         this.escalationThreshold = escalationThreshold;
         this.depotOwner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
+        this.publicUrl = publicUrl;
+        this.deepWebhookToken = deepWebhookToken;
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
@@ -189,7 +195,8 @@ public class DaywalkerCompletionService {
                 input.put("trigger_type", triggerType);
                 input.put("thesis", thesis);
                 if (positionId != null) input.put("position_id", positionId);
-                v.triggerRun("daywalker-deep", input);
+                v.triggerRun("daywalker-deep", input,
+                        publicUrl + "/api/daywalker-deep/complete", deepWebhookToken);
                 log.info("daywalker escalation triggered for {} ({})", symbol, triggerType);
             } catch (Exception e) {
                 log.warn("daywalker escalation failed for {}: {}", symbol, e.getMessage());

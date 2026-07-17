@@ -107,7 +107,8 @@ public class MockVistierieClient implements VistierieClient {
     }
 
     @Override
-    public VistierieRunDetail triggerRun(String agentName, Map<String, Object> input) {
+    public VistierieRunDetail triggerRun(String agentName, Map<String, Object> input,
+            String completionWebhook, String completionWebhookToken) {
         return new VistierieRunDetail("run-mock-triggered", agentName, "running",
             Instant.now().toString(), null, null, null);
     }
