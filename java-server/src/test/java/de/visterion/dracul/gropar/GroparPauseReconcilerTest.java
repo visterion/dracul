@@ -28,8 +28,7 @@ class GroparPauseReconcilerTest {
 
     private HeldPosition position(String symbol) {
         return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1000"), new BigDecimal("0"),
-                null, null, null, null, null, null, null, null);
+                new BigDecimal("1000"), new BigDecimal("0"), null, null, null, null, null, null, null, null, null);
     }
 
     @Test

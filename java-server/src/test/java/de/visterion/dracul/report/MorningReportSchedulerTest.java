@@ -18,8 +18,7 @@ class MorningReportSchedulerTest {
 
     private HeldPosition held(String symbol) {
         return new HeldPosition(symbol, BigDecimal.TEN, BigDecimal.valueOf(100),
-                BigDecimal.valueOf(1000), BigDecimal.ZERO,
-                null, null, null, null, null, null, null, null);
+                BigDecimal.valueOf(1000), BigDecimal.ZERO, null, null, null, null, null, null, null, null, null);
     }
 
     private MorningReportScheduler scheduler(HeldPositionService hp, MorningReportService svc, TelegramNotifier tg) {

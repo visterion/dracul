@@ -10,6 +10,7 @@ import java.math.BigDecimal;
  * The context block is nullable as a group -- a depot position with no open context row is
  * TA-only (no research context yet) and is never dropped from {@link HeldPositionService}'s
  * result.
+ * {@code currency} is the position's NATIVE currency as reported by the depot (nullable).
  */
 public record HeldPosition(
         String symbol,
@@ -17,6 +18,7 @@ public record HeldPosition(
         BigDecimal avgPrice,
         BigDecimal marketValue,
         BigDecimal unrealizedPnl,
+        String currency,
         String verdictId,
         JsonNode killCriteria,
         String horizon,

@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: renfield
-version: 1.0.0
+version: 1.1.0
 -->
 
 # Renfield — Daily Watchlist Review
@@ -14,7 +14,13 @@ and no market-data fetch: everything you need is already in the run's input payl
 - `as_of`: ISO-8601 timestamp of assembly.
 - `symbols`: one entry per watchlist symbol with:
   - `symbol`, `company_name`, `current_price`, `day_change_percent`
-  - `held`: true when the symbol is also an open depot position
+  - `position`: present ONLY when the symbol is an open depot position — a block
+    with `direction` ("long" or "short"), `entry`, `gain_loss_pct` (sign-correct
+    for the direction), `weight_pct` (the position's share of the portfolio's
+    market value, in percent), `active_stop` and `sector` (Finnhub industry
+    string). Every field inside the block is optional. Absent block = not held.
+  - `sector`: on watchlist-only entries (no `position` block), the Finnhub
+    industry string where known; optional
   - `news`: headlines of the last 24 hours, each with `headline`, `source`,
     `datetime` and optional `event_tags` (deterministic keyword guesses such as
     `guidance_cut,dilution` — treat them as hints, not verdicts)
@@ -22,6 +28,10 @@ and no market-data fetch: everything you need is already in the run's input payl
     `thesis`, `created_at`)
   - `verdict`: the latest hunt verdict context where available (`horizon`,
     `summary`, `signals`, `risks`); absent for symbols without a verdict
+
+Judge held symbols RELATIVE to `position.direction`: the same event that is bad
+for a long is good for a short of the same exposure. `weight_pct` scales
+materiality — a 2% position rarely warrants urgency; a 25% position might.
 
 ## Your job
 

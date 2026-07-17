@@ -26,10 +26,10 @@ class TriggerEventTest {
     @Test void payloadIncludesPositionContextWhenHeld() {
         var pos = new PositionContext(
                 new BigDecimal("100"), new BigDecimal("12.5"), new BigDecimal("92"),
-                new BigDecimal("120"), new BigDecimal("2"), new BigDecimal("4"));
+                new BigDecimal("120"), new BigDecimal("2"), new BigDecimal("4"), null, null, null);
         var ev = new TriggerEvent("ACME", "ACME Corp", TriggerType.PRICE_SPIKE,
                 new BigDecimal("95"), Map.of("price_change_pct", 0.05),
-                "wid-1", pos, "STOP");
+                "wid-1", pos, "STOP", null);
         var payload = ev.toEventPayload();
         assertThat(payload).containsEntry("position_id", "wid-1");
         assertThat(payload).containsEntry("breached_level", "STOP");
@@ -43,5 +43,16 @@ class TriggerEventTest {
         assertThat(payload).doesNotContainKey("position_id");
         assertThat(payload).doesNotContainKey("position");
         assertThat(payload).doesNotContainKey("breached_level");
+    }
+
+    @Test void payloadCarriesPortfolioSnapshotOnlyWhenPresent() {
+        var snapshot = java.util.List.<Map<String, Object>>of(
+                Map.of("symbol", "ACME", "direction", "long"));
+        var ev = new TriggerEvent(TriggerEvent.PORTFOLIO_SYMBOL, "Portfolio",
+                TriggerType.MACRO_PORTFOLIO, null, Map.of(), null, null, null, snapshot);
+        assertThat(ev.toEventPayload()).containsEntry("portfolio_snapshot", snapshot);
+        var without = TriggerEvent.watchOnly("ACME", "Acme", TriggerType.PRICE_SPIKE,
+                new BigDecimal("1"), Map.of());
+        assertThat(without.toEventPayload()).doesNotContainKey("portfolio_snapshot");
     }
 }
