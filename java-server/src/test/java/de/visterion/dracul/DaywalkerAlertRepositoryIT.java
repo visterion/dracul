@@ -115,4 +115,44 @@ class DaywalkerAlertRepositoryIT {
                 .query(Long.class).single();
         assertThat(count).isEqualTo(1L); // updated, not duplicated
     }
+
+    @Test
+    void eventTypeIsPersistedAndSameDayUpdateKeepsItWhenNull() {
+        var item = watchlist.insert("default", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "", null, null);
+
+        alerts.insert("default", item.id(), "DWA", "NEGATIVE_NEWS",
+                "WARNING", "guidance cut headline", new BigDecimal("0.700"),
+                "run-et-1", false, "guidance_cut");
+        assertThat(jdbc.sql("SELECT event_type FROM daywalker_alerts WHERE symbol = 'DWA'")
+                .query(String.class).single()).isEqualTo("guidance_cut");
+
+        var sameDay = alerts.findSameUtcDay("default", "DWA", "NEGATIVE_NEWS",
+                java.time.Instant.now()).orElseThrow();
+
+        // A daywalker-deep escalation verdict has NO event_type (its schema is not
+        // extended): null must KEEP the stored value — COALESCE lives in the SQL,
+        // only a real-DB test can prove it (spec §6, R2-M3).
+        alerts.updateSameDayAlert(sameDay.id(), "NEGATIVE_NEWS", "CRITICAL",
+                "deep second opinion", new BigDecimal("0.900"), "run-et-2", false, null);
+        assertThat(jdbc.sql("SELECT event_type FROM daywalker_alerts WHERE symbol = 'DWA'")
+                .query(String.class).single()).isEqualTo("guidance_cut");
+
+        // With a value: overwrites.
+        alerts.updateSameDayAlert(sameDay.id(), "NEGATIVE_NEWS", "CRITICAL",
+                "corrected category", new BigDecimal("0.900"), "run-et-3", false, "other");
+        assertThat(jdbc.sql("SELECT event_type FROM daywalker_alerts WHERE symbol = 'DWA'")
+                .query(String.class).single()).isEqualTo("other");
+    }
+
+    @Test
+    void legacyInsertOverloadLeavesEventTypeNull() {
+        var item = watchlist.insert("default", "DWA", "Daywalker Test A",
+                50.0, List.of(50.0), "", null, null);
+        alerts.insert("default", item.id(), "DWA", "PRICE_SPIKE",
+                "INFO", "no event type", new BigDecimal("0.500"), "run-et-4");
+        Long nulls = jdbc.sql("SELECT COUNT(*) FROM daywalker_alerts "
+                + "WHERE symbol = 'DWA' AND event_type IS NULL").query(Long.class).single();
+        assertThat(nulls).isEqualTo(1L);
+    }
 }

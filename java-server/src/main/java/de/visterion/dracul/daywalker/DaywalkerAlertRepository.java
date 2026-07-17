@@ -60,6 +60,13 @@ public class DaywalkerAlertRepository {
     public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
                        String severity, String thesis, BigDecimal confidence, String runId,
                        boolean notificationSent) {
+        insert(userId, watchlistItemId, symbol, triggerType, severity, thesis, confidence,
+                runId, notificationSent, null);
+    }
+
+    public void insert(String userId, String watchlistItemId, String symbol, String triggerType,
+                       String severity, String thesis, BigDecimal confidence, String runId,
+                       boolean notificationSent, String eventType) {
         // Map the precise severity onto the frontend's WatchlistAlert level vocabulary
         // ('elevated' | 'info' | 'neutral'); the exact severity is preserved in the
         // `severity` column for downstream (Telegram / SSE) consumers.
@@ -79,10 +86,11 @@ public class DaywalkerAlertRepository {
         jdbc.sql("""
                 INSERT INTO daywalker_alerts
                   (id, watchlist_item_id, at, message, level, user_id,
-                   symbol, trigger_type, thesis, confidence, severity, vistierie_run_id, notification_sent)
+                   symbol, trigger_type, thesis, confidence, severity, vistierie_run_id,
+                   notification_sent, event_type)
                 VALUES
                   (:id, :wid, :at, :msg, :lvl, :u,
-                   :sym, :tt, :th, :conf, :sev, :run, :notified)
+                   :sym, :tt, :th, :conf, :sev, :run, :notified, :et)
                 """)
                 .param("id", UUID.randomUUID())
                 .param("wid", wid)
@@ -97,6 +105,7 @@ public class DaywalkerAlertRepository {
                 .param("sev", severity)
                 .param("run", runId)
                 .param("notified", notificationSent)
+                .param("et", eventType)
                 .update();
     }
 
@@ -126,11 +135,22 @@ public class DaywalkerAlertRepository {
      *  passed by the caller, which escalates and never lowers it. */
     public void updateSameDayAlert(String id, String triggerType, String severity, String thesis,
                                    BigDecimal confidence, String runId, boolean notificationSent) {
+        updateSameDayAlert(id, triggerType, severity, thesis, confidence, runId,
+                notificationSent, null);
+    }
+
+    /** Widest form (T1.3): {@code eventType} uses keep-if-null semantics — a daywalker-deep
+     *  escalation verdict (whose schema carries no event_type) must never null a value the
+     *  original daywalker assessment persisted; COALESCE enforces that IN the SQL. */
+    public void updateSameDayAlert(String id, String triggerType, String severity, String thesis,
+                                   BigDecimal confidence, String runId, boolean notificationSent,
+                                   String eventType) {
         jdbc.sql("""
                 UPDATE daywalker_alerts
                    SET at = :at, message = :msg, level = :lvl, thesis = :th, confidence = :conf,
                        severity = :sev, vistierie_run_id = :run,
                        notification_sent = notification_sent OR :notified,
+                       event_type = COALESCE(:et, event_type),
                        created_at = now()
                  WHERE id = :id
                 """)
@@ -143,6 +163,7 @@ public class DaywalkerAlertRepository {
                 .param("sev", severity)
                 .param("run", runId)
                 .param("notified", notificationSent)
+                .param("et", eventType)
                 .update();
     }
 
