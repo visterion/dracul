@@ -8,10 +8,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -23,6 +25,7 @@ import java.util.stream.Collectors;
  * bounds the headlines by date window; repeated re-emission of the same day's headline
  * is suppressed by the per-(symbol, trigger_type) cooldown, not here. Negativity itself
  * is judged by the LLM child run, not here.
+ * T2.2: scans ALL headlines; macro-only hits (tag set exactly {MACRO}) are collected for the portfolio bucket and never fire per-symbol.
  */
 public class NewsDetector {
 
@@ -30,11 +33,19 @@ public class NewsDetector {
 
     private final NewsEventTagger tagger = new NewsEventTagger();
 
-    public Optional<TriggerEvent> detect(WatchlistItem item, List<NewsHeadline> headlines) {
-        if (headlines.isEmpty()) return Optional.empty();
+    public NewsScanResult detect(WatchlistItem item, List<NewsHeadline> headlines) {
+        if (headlines.isEmpty()) return NewsScanResult.empty();
+        TriggerEvent trigger = null;
+        var macroOnly = new ArrayList<MacroHeadline>();
         for (NewsHeadline h : headlines) {
             var tags = tagger.tag(h);
             if (tags.isEmpty()) continue;
+            if (tags.equals(Set.of(NewsEventType.MACRO))) {
+                macroOnly.add(new MacroHeadline(h.headline() == null ? "" : h.headline(),
+                        item.ticker(), h.datetime(), NewsEventType.MACRO.wireValue()));
+                continue;
+            }
+            if (trigger != null) continue; // first specifically-tagged headline wins the slot
             String eventTags = tags.stream()
                     .map(NewsEventType::wireValue)
                     .collect(Collectors.joining(","));
@@ -44,10 +55,12 @@ public class NewsDetector {
             detail.put("source", h.source() == null ? "" : h.source());
             detail.put("url", h.url() == null ? "" : h.url());
             detail.put("event_tags", eventTags);
-            return Optional.of(TriggerEvent.watchOnly(item.ticker(), item.companyName(),
-                    TriggerType.NEGATIVE_NEWS, BigDecimal.valueOf(item.currentPrice()), detail));
+            trigger = TriggerEvent.watchOnly(item.ticker(), item.companyName(),
+                    TriggerType.NEGATIVE_NEWS, BigDecimal.valueOf(item.currentPrice()), detail);
         }
-        log.info("news: {} untagged headlines suppressed for {}", headlines.size(), item.ticker());
-        return Optional.empty();
+        if (trigger == null && macroOnly.isEmpty()) {
+            log.info("news: {} untagged headlines suppressed for {}", headlines.size(), item.ticker());
+        }
+        return new NewsScanResult(Optional.ofNullable(trigger), List.copyOf(macroOnly));
     }
 }

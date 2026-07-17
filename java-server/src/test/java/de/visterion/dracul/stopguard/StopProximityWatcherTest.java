@@ -27,7 +27,7 @@ class StopProximityWatcherTest {
     /** A held depot position with full research context (verdict, kill criteria, stops). */
     private static HeldPosition withContext(String symbol, String verdictId, BigDecimal activeStop) {
         return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1000"), new BigDecimal("0"), verdictId, null, "6m", null,
+                new BigDecimal("1000"), new BigDecimal("0"), "USD", verdictId, null, "6m", null,
                 new BigDecimal("90"), activeStop, "reconcile", "2026-01-01T00:00:00Z");
     }
 
@@ -35,7 +35,7 @@ class StopProximityWatcherTest {
      *  is null (mirrors {@code HeldPositionService.join}'s no-context branch). */
     private static HeldPosition noContext(String symbol) {
         return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1000"), new BigDecimal("0"), null, null, null, null, null, null,
+                new BigDecimal("1000"), new BigDecimal("0"), "USD", null, null, null, null, null, null,
                 null, null);
     }
 

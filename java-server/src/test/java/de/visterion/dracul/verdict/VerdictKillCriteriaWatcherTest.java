@@ -48,7 +48,7 @@ class VerdictKillCriteriaWatcherTest {
 
     private static HeldPosition held(String symbol, String verdictId, JsonNode killCriteria) {
         return new HeldPosition(symbol, new BigDecimal("10"), new BigDecimal("100"),
-                new BigDecimal("1000"), new BigDecimal("0"), verdictId, killCriteria, "6m", null,
+                new BigDecimal("1000"), new BigDecimal("0"), null, verdictId, killCriteria, "6m", null,
                 null, null, "reconcile", "2026-01-01T00:00:00Z");
     }
 

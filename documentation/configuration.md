@@ -188,8 +188,16 @@ outcome is recorded in `daywalker_alerts.notification_sent`.
 | `DRACUL_DAYWALKER_COOLDOWN` | `3600` | Per-`(symbol, trigger_type)` suppression window in seconds (60 min), owner-agnostic. |
 | `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). Escalation only actually fires when `DRACUL_DAYWALKER_DEEP_ENABLED` is **also** `true` — the gate checks both flags. |
 | `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE` | `0.6` | A CRITICAL assessment escalates only when its `confidence` is strictly below this threshold. |
+| `DRACUL_DAYWALKER_MACRO_COOLDOWN` | `28800` | Seconds; 8 h → max 2× per 16 h session; cooldown between MACRO_PORTFOLIO alerts. |
 
 Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
+
+## Sector cache (portfolio-aware news; T2.2)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `DRACUL_SECTOR_TTL_SECONDS` | `86400` | Positive sector cache TTL (seconds; 24 h default). |
+| `DRACUL_SECTOR_NEGATIVE_TTL_SECONDS` | `3600` | Negative sector cache TTL (seconds; 1 h default) — when a sector lookup fails. |
 
 **DST caveat:** the session cron is a fixed UTC expression, so it drifts ~1h
 against US market open across the EST/EDT boundary. A calendar-aware open is
