@@ -52,7 +52,7 @@ class DaywalkerCompletionServiceTest {
 
     private static de.visterion.dracul.position.HeldPosition held(String symbol) {
         return new de.visterion.dracul.position.HeldPosition(symbol, BigDecimal.ONE, BigDecimal.TEN,
-                BigDecimal.TEN, BigDecimal.ZERO, null, null, null, null, null, null, null, null);
+                BigDecimal.TEN, BigDecimal.ZERO, null, null, null, null, null, null, null, null, null);
     }
 
     /** Minimal ObjectProvider stub — only {@code getObject()} is abstract; the default

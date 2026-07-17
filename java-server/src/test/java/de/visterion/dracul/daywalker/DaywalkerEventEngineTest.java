@@ -24,13 +24,13 @@ class DaywalkerEventEngineTest {
 
     private static HeldPosition position(String symbol, double avgPrice) {
         return new HeldPosition(symbol, BigDecimal.valueOf(10), BigDecimal.valueOf(avgPrice),
-                BigDecimal.valueOf(avgPrice * 10), BigDecimal.ZERO,
+                BigDecimal.valueOf(avgPrice * 10), BigDecimal.ZERO, "USD",
                 null, null, null, null, null, null, null, null);
     }
 
     private static HeldPosition heldPositionWithContext(String symbol, double avgPrice, BigDecimal activeStop) {
         return new HeldPosition(symbol, BigDecimal.valueOf(10), BigDecimal.valueOf(avgPrice),
-                BigDecimal.valueOf(avgPrice * 10), BigDecimal.ZERO,
+                BigDecimal.valueOf(avgPrice * 10), BigDecimal.ZERO, "USD",
                 "verdict-1", null, "swing", null, activeStop, activeStop, "executor", "2026-06-01T00:00:00Z");
     }
 

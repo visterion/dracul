@@ -17,6 +17,7 @@ public record HeldPosition(
         BigDecimal avgPrice,
         BigDecimal marketValue,
         BigDecimal unrealizedPnl,
+        String currency,
         String verdictId,
         JsonNode killCriteria,
         String horizon,
