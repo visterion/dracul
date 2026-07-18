@@ -132,7 +132,8 @@ public class EchoEnrichmentService {
             // Single Agora news fetch, reused for BOTH the confounder scan (full, uncapped) and
             // the capped recentNews surfaced to the LLM below.
             List<NewsHeadline> news = safeNews(c.symbol(), c.reportDate());
-            List<String> confounders = eventScreen.confounders(news);
+            NewsScan scan = safeNewsScan(c.symbol(), news);
+            List<String> confounders = scan.confounders();
             Optional<LocalDate> nextEarn = safeNextEarnings(c.symbol());
             Integer daysToNext = nextEarn.map(d -> (int) ChronoUnit.DAYS.between(LocalDate.now(), d)).orElse(null);
 
@@ -144,7 +145,7 @@ public class EchoEnrichmentService {
             List<RecommendationTrend> recTrend = safeRecommendations(c.symbol());
             EarningsRevisions rev = revisions.revisions(recTrend);
             AnalystCoverage cov = AnalystCoverage.of(recTrend);
-            List<EchoNewsItem> recentNews = recentNews(news);
+            List<EchoNewsItem> recentNews = scan.recentNews();
 
             out.add(new EnrichedPeadCandidate(
                     c.symbol(), c.companyName(), c.reportDate(),
@@ -205,13 +206,39 @@ public class EchoEnrichmentService {
     }
 
     /** Newest-first, capped at {@link #recentNewsCap}. The cap applies ONLY here — the
-     *  confounder scan above always sees the full, uncapped {@code news} list. */
+     *  confounder scan above always sees the full, uncapped {@code news} list. A negative
+     *  configured cap is clamped to zero rather than propagating an {@link
+     *  IllegalArgumentException} out of {@link java.util.stream.Stream#limit}. */
     private List<EchoNewsItem> recentNews(List<NewsHeadline> news) {
         return news.stream()
                 .sorted(Comparator.comparing(NewsHeadline::datetime).reversed())
-                .limit(recentNewsCap)
+                .limit(Math.max(0, recentNewsCap))
                 .map(h -> new EchoNewsItem(h.headline(), h.summary(), h.source(), h.credibility(), h.datetime()))
                 .toList();
+    }
+
+    /** Combined confounder-flags + recentNews result for one candidate's news scan. */
+    private record NewsScan(List<String> confounders, List<EchoNewsItem> recentNews) {
+        static NewsScan empty() { return new NewsScan(List.of(), List.of()); }
+    }
+
+    /** Runs the confounder scan and the recentNews shaping over one candidate's already-fetched
+     *  news in one guarded step. Both derive from the SAME uncapped fetch (the single-fetch
+     *  invariant lives in {@link #safeNews}), but an unexpected exception here — e.g. a bug in
+     *  {@link NewsEventTagger} keyword matching — must degrade THIS candidate to empty
+     *  confounders/recentNews rather than aborting the whole {@link #enrich} run — an unexpected
+     *  bug in the keyword-tagging step must not take down the batch, matching the
+     *  fail-open-for-one-candidate posture every other external/derived lookup in this class
+     *  has. Empty confounders means the candidate passes the gate on that dimension, exactly as
+     *  the old {@code safeConfounders} behaved. */
+    private NewsScan safeNewsScan(String symbol, List<NewsHeadline> news) {
+        try {
+            return new NewsScan(eventScreen.confounders(news), recentNews(news));
+        } catch (Exception e) {
+            log.warn("echo: news scan failed for {}, degrading to empty confounders/recentNews: {}",
+                    symbol, e.getMessage());
+            return NewsScan.empty();
+        }
     }
 
     private static BigDecimal revenueSurprise(BigDecimal actual, BigDecimal estimate) {
