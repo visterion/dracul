@@ -129,6 +129,10 @@ export class MockApiClient implements ApiClient {
     await delay(200)
   }
 
+  async updatePatternGate(_id: string, _gate: unknown | null): Promise<void> {
+    // mock: accepted, nothing persisted
+  }
+
   async getSettingsBudgets(): Promise<SettingsBudgetData> {
     await delay(50)
     const mockBudget = (daily: number, monthly: number): BudgetStatus => ({

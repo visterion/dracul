@@ -22,6 +22,7 @@ export interface ApiClient {
   getProviders(): Promise<LlmProvider[]>
   getVistierieData(): Promise<VistierieData>
   patchPattern(id: string, action: PatternAction): Promise<void>
+  updatePatternGate(id: string, gate: unknown | null): Promise<void>
   getSettingsBudgets(): Promise<SettingsBudgetData>
   patchSettingsBudget(patch: BudgetPatch): Promise<BudgetStatus>
   patchAgentBudget(agentName: string, patch: BudgetPatch): Promise<BudgetStatus>
