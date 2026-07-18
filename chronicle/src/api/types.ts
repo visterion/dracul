@@ -52,6 +52,8 @@ export interface Pattern {
   supportedCount?: number          // how many of evidenceCount cases supported the lesson
   avgUpliftPercent?: number | null // null for exclusion/negative lessons
   name?: string                    // slug for active patterns, e.g. "tech-spinoffs-outperform-industrials"
+  gate?: Record<string, unknown> | null // machine-checkable veto predicate; null/absent = advisory
+  blockedCount?: number                 // distinct signals blocked by this gate (server-computed)
 }
 
 export interface PatternCase {

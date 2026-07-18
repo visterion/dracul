@@ -17,6 +17,12 @@
 
     <p class="pt-rule">{{ pattern.statement }}</p>
 
+    <PatternGateEditor
+      :pattern="pattern"
+      :loading="loading"
+      @save-gate="(gate) => emit('save-gate', gate)"
+    />
+
     <footer class="pt-foot">
       <span class="pt-stats mono">
         {{ t('patterns.evidence.basedOn', { n: pattern.evidenceCount }) }}
@@ -53,6 +59,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import BatGlyph from './BatGlyph.vue'
+import PatternGateEditor from './PatternGateEditor.vue'
 import { useRelativeTime } from '../../composables/useRelativeTime'
 import type { Pattern, PatternAction } from '../../api/types'
 
@@ -65,6 +72,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   act: [action: PatternAction]
   'view-cases': []
+  'save-gate': [gate: unknown | null]
 }>()
 
 const { t } = useI18n()

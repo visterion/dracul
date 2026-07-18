@@ -10,6 +10,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
 
@@ -30,6 +31,7 @@ class PatternActionControllerIT {
 
     @LocalServerPort int port;
     @Autowired JsonMapper objectMapper;
+    @Autowired JdbcClient jdbc;
     RestClient rest;
 
     @BeforeEach
@@ -41,6 +43,14 @@ class PatternActionControllerIT {
                     c.add(new JacksonJsonHttpMessageConverter(objectMapper));
                 })
                 .build();
+
+        // Container reuse (ContainerConfig withReuse=true) leaves seed rows in whatever
+        // state the previous run put them; approve is now PENDING-only, so pin the fixture.
+        jdbc.sql("UPDATE patterns SET status = 'PENDING' WHERE id IN (:a::uuid, :b::uuid, :c::uuid)")
+                .param("a", PENDING_ID_1).param("b", PENDING_ID_2).param("c", PENDING_ID_3)
+                .update();
+        jdbc.sql("UPDATE patterns SET status = 'ACTIVE' WHERE id = :id::uuid")
+                .param("id", ACTIVE_ID).update();
     }
 
     @Test
