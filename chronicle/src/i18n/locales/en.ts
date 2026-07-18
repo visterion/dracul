@@ -593,6 +593,18 @@ export default {
         dividendYield: 'Dividend yield',
       },
     },
+    tabs: { live: 'Live', history: 'History' },
+    history: {
+      loading: 'Loading history …',
+      empty: 'No history available.',
+      error: 'Failed to load history.',
+      brokerConfirmed: 'broker-confirmed',
+      why: 'Why',
+      exitReason: 'Exit reason (Dracul, non-authoritative)',
+      realizedR: 'R (Dracul, non-authoritative)',
+      notLinkable: 'No Dracul context linkable',
+      result: 'Result',
+    },
   },
   calibration: {
     sectionLabel: 'Calibration',
