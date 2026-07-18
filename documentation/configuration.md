@@ -94,6 +94,24 @@ first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
 same degradation contract as the old adapter chain, so scheduled refreshes never
 crash.
 
+## News credibility scoring (T1.4)
+
+Every headline entering via the `AgoraCompanyData.news()` chokepoint is scored
+against a static operator table (`dracul.news.credibility.sources` in
+`application.yaml`): exact, case-insensitive matching of the item's url `domain`
+AND its `source` string; if both hit, `min(domainScore, sourceScore)` wins; one
+hit uses that score; no hit uses `default-score` (0.5). Items with
+`score < drop-below` (0.3) are hard-dropped before any consumer (NewsDetector
+triggers incl. MACRO collection, ConfounderScreen, RenfieldScheduler) sees them;
+`score == drop-below` passes. One INFO log line per call summarizes drops. The
+GUI depot passthrough (`DepotInstrumentService`) stays raw. `default-score` must
+be >= `drop-below` — startup fails otherwise, as it does for any score outside
+[0,1]. Survivors carry `credibility` into the daywalker and renfield prompts.
+Reddit rows are deliberately below the threshold: reddit items drop even under
+`DRACUL_NEWS_INCLUDE_SOCIAL=true`; opting reddit in means raising ALL reddit
+rows (domain and `reddit-*` source rows — matching is exact). An empty table
+scores everything 0.5 and drops nothing: the table itself is the switch.
+
 ## Depots (positions view)
 
 Chronicle's `/depots` view and `/api/depots` read Agora's broker-connection
