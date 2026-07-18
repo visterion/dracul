@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.position.PositionContextRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,7 @@ class TrancheCurrencyInvariantTest {
     private Tranche2Detector tranche2Detector;
     private TelegramNotifier telegram;
     private PositionContextRepository positionContextRepo;
+    private PatternRepository patternRepo;
     private JsonMapper mapper;
     private ExecutorWebhookController controller;
 
@@ -74,6 +76,8 @@ class TrancheCurrencyInvariantTest {
         tranche2Detector = mock(Tranche2Detector.class);
         telegram = mock(TelegramNotifier.class);
         positionContextRepo = mock(PositionContextRepository.class);
+        patternRepo = mock(PatternRepository.class);
+        when(patternRepo.findEnforced()).thenReturn(List.of());
         mapper = JsonMapper.builder().build();
 
         when(ruleVersions.active()).thenReturn("exec-v0.2");
@@ -84,7 +88,7 @@ class TrancheCurrencyInvariantTest {
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, new PositionSizer(), new SignalRanker(), tranche2Detector, telegram,
-                positionContextRepo,
+                positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 0.0, 3.0, "USD", fixedClock);
