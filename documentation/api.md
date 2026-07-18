@@ -570,61 +570,86 @@ depot connection.
 ### `GET /api/depots/{connection}/history` response
 
 Broker-authoritative closed-position and order history with optional Dracul annotations.
-For Saxo connections, fetches `get_closed_positions`; for Alpaca, fetches all orders with
-`status=all`. Each entry includes broker-native fields plus optional `why` annotation
+For Saxo (and any non-Alpaca provider), fetches `get_closed_positions`; for Alpaca, fetches
+all orders with `status=all` and filters to the terminal statuses `filled`, `canceled`,
+`cancelled`, `expired`, `rejected` (`partially_filled` is deliberately excluded — an order
+still in flight is not history). Each Alpaca entry includes an optional `why` annotation
 (Strigoi name and rationale) when Dracul can link the trade to an executor decision via
-`broker_order_id`.
+`brokerOrderId`; Saxo closed positions never carry `why` (no order id / timestamp to link on).
 
-Error-status matrix: **`404 NOT_FOUND`** if `{connection}` isn't visible to the current
-user; **`503 SERVICE_UNAVAILABLE`** if either the whole read path failed or `{connection}`
-was found but its broker fetch failed.
+This endpoint always returns **HTTP 200**, never 404/503: an unknown or invisible
+`{connection}` yields `{ entries: [], error: null }`, and a broker fetch failure yields
+`{ entries: [], error: "<message>" }`. The `error` field is the only place a fetch failure
+is surfaced — the frontend must check it, not rely on a non-200 status.
 
 ```json
 {
   "entries": [
     {
-      "brokerOrderId": "o123",
-      "symbol": "ACME",
+      "source": "ORDER",
+      "symbol": "AAPL",
       "side": "buy",
       "qty": 10,
-      "entryPrice": 142.50,
-      "exitPrice": 155.30,
-      "entryDate": "2026-06-15T10:30:00Z",
-      "exitDate": "2026-06-20T14:15:00Z",
-      "realizedPl": 127.50,
+      "entryPrice": null,
+      "exitPrice": null,
+      "profitLoss": null,
+      "status": "filled",
+      "brokerOrderId": "o-1",
+      "brokerConfirmed": true,
       "why": {
-        "strigoi": "gropar",
-        "rationale": "Exit signal: MA cross below 50d; thesis weakening"
+        "strigoi": "index-strigoi",
+        "killCriteria": ["stop below 95"],
+        "entryReasoning": "index inclusion drift",
+        "draculExitReason": "TAKE_PROFIT",
+        "draculRealizedR": 2.0
       }
+    },
+    {
+      "source": "CLOSED_POSITION",
+      "symbol": "SAP",
+      "side": null,
+      "qty": null,
+      "entryPrice": 100,
+      "exitPrice": 120,
+      "profitLoss": 200,
+      "status": "closed",
+      "brokerOrderId": null,
+      "brokerConfirmed": true,
+      "why": null
     }
   ],
   "error": null
 }
 ```
 
-Per-entry fields:
+Per-entry fields (`DepotHistoryEntry`):
 
 | Field | Type | Description |
 |---|---|---|
-| `brokerOrderId` | string | Broker-native trade or order identifier — primary key for linking Dracul "why" annotations |
+| `source` | string | `ORDER` (Alpaca order) or `CLOSED_POSITION` (Saxo/default closed position) |
 | `symbol` | string | Ticker |
-| `side` | string | `buy` / `sell` |
-| `qty` | number | Trade quantity |
-| `entryPrice` | number \| null | Fill price (null for pending orders) |
-| `exitPrice` | number \| null | Exit fill price (null for open orders or Alpaca orders not yet closed) |
-| `entryDate` | string (ISO instant) \| null | Entry fill timestamp (null for unfilled orders) |
-| `exitDate` | string (ISO instant) \| null | Exit/closure timestamp (null for open positions) |
-| `realizedPl` | number \| null | Realized profit/loss in account currency (null when not computable, e.g. unfilled) |
-| `why` | object \| null | Optional Dracul annotation (present only when the broker trade is linked to an executor decision via `broker_order_id`); `null` when no link exists or Dracul executor is disabled |
+| `side` | string \| null | `buy` / `sell` for orders; `null` for closed positions |
+| `qty` | number \| null | Order quantity; `null` for closed positions |
+| `entryPrice` | number \| null | Open price — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
+| `exitPrice` | number \| null | Close price — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
+| `profitLoss` | number \| null | Realized P&L — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
+| `status` | string | Broker order status for `ORDER` (e.g. `filled`); literal `"closed"` for `CLOSED_POSITION` |
+| `brokerOrderId` | string \| null | Broker-native order id — present for `ORDER`, `null` for `CLOSED_POSITION`; also the key `why` enrichment links on |
+| `brokerConfirmed` | boolean | Always `true` — every entry originates from a broker-authoritative source |
+| `why` | object \| null | Optional Dracul annotation (present only for `ORDER` entries linked to an executor decision via `brokerOrderId`, and only when the executor repos are wired, i.e. `dracul.executor.enabled=true`); always `null` for `CLOSED_POSITION` |
 
-`why` object fields (when present):
+`why` object fields (`DepotHistoryEntry.Why`, when present):
 
 | Field | Type | Description |
 |---|---|---|
-| `strigoi` | string | Agent name that issued the decision (e.g. `gropar`) |
-| `rationale` | string | Human-readable reason for the action (not authoritative — Dracul's interpretation, always clearly marked as such in the UI) |
+| `strigoi` | string | Agent name that issued the entry decision (e.g. `index-strigoi`) |
+| `killCriteria` | string[] | Kill criteria recorded on the executor position |
+| `entryReasoning` | string \| null | Entry decision's rationale, from the matching `DecisionLog` (`action=ENTER`); `null` if no matching decision log |
+| `draculExitReason` | string \| null | Executor's recorded exit reason (e.g. `TAKE_PROFIT`) — not authoritative for execution facts |
+| `draculRealizedR` | number \| null | Executor's recorded realized R — not authoritative for execution facts |
 
-`error` is non-null (with `entries` an empty list) only when the broker fetch failed for that connection — HTTP status stays 200.
+All `why` fields are explicitly non-authoritative — the UI always marks them as Dracul's
+interpretation, never as broker fact.
 
 ### `GET /api/depots/chart` response
 
