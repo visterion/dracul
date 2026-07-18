@@ -42,7 +42,7 @@ public class NewsDetector {
             if (tags.isEmpty()) continue;
             if (tags.equals(Set.of(NewsEventType.MACRO))) {
                 macroOnly.add(new MacroHeadline(h.headline() == null ? "" : h.headline(),
-                        item.ticker(), h.datetime(), NewsEventType.MACRO.wireValue()));
+                        item.ticker(), h.datetime(), NewsEventType.MACRO.wireValue(), h.credibility()));
                 continue;
             }
             if (trigger != null) continue; // first specifically-tagged headline wins the slot
@@ -53,6 +53,7 @@ public class NewsDetector {
             Map<String, Object> detail = new LinkedHashMap<>();
             detail.put("headline", h.headline() == null ? "" : h.headline());
             detail.put("source", h.source() == null ? "" : h.source());
+            detail.put("credibility", h.credibility());
             detail.put("url", h.url() == null ? "" : h.url());
             detail.put("event_tags", eventTags);
             trigger = TriggerEvent.watchOnly(item.ticker(), item.companyName(),
