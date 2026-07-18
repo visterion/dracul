@@ -167,4 +167,44 @@ class AgoraDepotClientTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).brokerOrderId()).isEqualTo("ord-2");
     }
+
+    @Test
+    void ordersParsesTimestampsAndFillAndSendsRange() {
+        CapturingClient client = new CapturingClient(mapper);
+        client.canned = json("""
+            {"output":{"orders":[
+              {"brokerOrderId":"abc","symbol":"AAPL","side":"buy","qty":"10","type":"market",
+               "status":"filled","role":"entry","submittedAt":"2026-07-01T10:00:00Z",
+               "filledAt":"2026-07-01T10:00:03Z","avgFillPrice":"191.20"}]}}""");
+
+        List<DepotOrder> res = client.orders("depot-1", "all", "2026-06-01T00:00:00Z", "2026-07-19T00:00:00Z");
+
+        assertThat(res).hasSize(1);
+        DepotOrder o = res.get(0);
+        assertThat(o.submittedAt()).isEqualTo("2026-07-01T10:00:00Z");
+        assertThat(o.filledAt()).isEqualTo("2026-07-01T10:00:03Z");
+        assertThat(o.avgFillPrice()).isEqualByComparingTo("191.20");
+        assertThat(client.capturedArgs.path("status").asString()).isEqualTo("all");
+        assertThat(client.capturedArgs.path("from").asString()).isEqualTo("2026-06-01T00:00:00Z");
+        assertThat(client.capturedArgs.path("to").asString()).isEqualTo("2026-07-19T00:00:00Z");
+    }
+
+    @Test
+    void closedPositionsParsesTimestampsAndHonorsSupportedFalse() {
+        CapturingClient c1 = new CapturingClient(mapper);
+        c1.canned = json("""
+            {"output":{"closedPositions":[],"supported":false}}""");
+        assertThat(c1.closedPositions("depot-1", null, null)).isEmpty();
+
+        CapturingClient c2 = new CapturingClient(mapper);
+        c2.canned = json("""
+            {"output":{"closedPositions":[
+              {"symbol":"NOVO","openPrice":"100","closePrice":"110","profitLoss":"10",
+               "clientRef":"sig-42","openTime":"2026-06-10T09:00:00Z","closeTime":"2026-06-20T15:00:00Z"}]}}""");
+
+        List<DepotClosedPosition> res = c2.closedPositions("depot-1", null, null);
+        assertThat(res).hasSize(1);
+        assertThat(res.get(0).clientRef()).isEqualTo("sig-42");
+        assertThat(res.get(0).closeTime()).isEqualTo("2026-06-20T15:00:00Z");
+    }
 }

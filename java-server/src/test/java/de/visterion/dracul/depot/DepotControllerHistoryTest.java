@@ -19,7 +19,8 @@ class DepotControllerHistoryTest {
         CurrentUserHolder.set("alice@x.com");
         var history = mock(DepotHistoryService.class);
         when(history.history("depot-1", "alice@x.com")).thenReturn(List.of(
-                new DepotHistoryEntry("ORDER", "AAPL", "buy", null, null, null, null, "filled", "o-1", true, null)));
+                new DepotHistoryEntry("ORDER", "AAPL", "buy", null, null, null, null, "filled", "o-1",
+                        null, null, null, true, null)));
 
         var controller = new DepotController(mock(DepotService.class), mock(DepotChartService.class),
                 mock(DepotInstrumentService.class), history);

@@ -14,6 +14,9 @@ public record DepotHistoryEntry(
         BigDecimal profitLoss,
         String status,
         String brokerOrderId,
+        String openedAt,
+        String closedAt,
+        BigDecimal avgFillPrice,
         boolean brokerConfirmed,
         Why why) {
 
