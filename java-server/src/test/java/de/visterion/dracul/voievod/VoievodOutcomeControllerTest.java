@@ -1,5 +1,6 @@
 package de.visterion.dracul.voievod;
 
+import de.visterion.dracul.hunting.agora.SectorCascade;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
@@ -29,6 +30,7 @@ class VoievodOutcomeControllerTest {
     private PreyRepository preyRepo;
     private AgoraMarketData marketData;
     private PatternRepository patternRepo;
+    private SectorCascade sectorCascade;
     private VoievodOutcomeController controller;
 
     @BeforeEach
@@ -36,7 +38,9 @@ class VoievodOutcomeControllerTest {
         preyRepo = mock(PreyRepository.class);
         marketData = mock(AgoraMarketData.class);
         patternRepo = mock(PatternRepository.class);
-        controller = new VoievodOutcomeController("tok", preyRepo, marketData, patternRepo);
+        sectorCascade = mock(SectorCascade.class);
+        controller = new VoievodOutcomeController("tok", preyRepo, marketData, patternRepo,
+                sectorCascade);
     }
 
     private Prey prey(String id, String symbol, String discoveredAt, String horizon) {
@@ -354,5 +358,186 @@ class VoievodOutcomeControllerTest {
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
         verify(patternRepo).insertProposal(eq("default"), eq("strigoi-insider"),
                 eq("CFO presence in insider clusters lifts follow-through"), eq(2));
+    }
+
+    // =========================================================================
+    // T3.3: fetch wire carries sector via the shared cascade; unresolvable
+    // sector -> key omitted, 200, no NPE
+    // =========================================================================
+
+    @Test
+    void fetchElapsedPrey_enrichesWireWithSectorFromCascade() {
+        var p = prey("id-1", "ACME", "2020-01-01T00:00:00Z", "3m");
+        when(preyRepo.findElapsedUnreviewed(eq("default"), isNull())).thenReturn(List.of(p));
+        when(marketData.dailyOhlcHistory(eq("ACME"), anyInt())).thenReturn(bars(100, 110));
+        when(sectorCascade.resolve("ACME")).thenReturn("Biotechnology");
+
+        var resp = controller.fetchElapsedPrey(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) resp.getBody().get("output");
+        @SuppressWarnings("unchecked")
+        var preyList = (List<Map<String, Object>>) output.get("prey");
+        assertThat(preyList.get(0).get("sector")).isEqualTo("Biotechnology");
+    }
+
+    @Test
+    void fetchElapsedPrey_unresolvableSectorOmitsKeyAndStillReturns200() {
+        var p = prey("id-1", "NOSEC", "2020-01-01T00:00:00Z", "3m");
+        when(preyRepo.findElapsedUnreviewed(eq("default"), isNull())).thenReturn(List.of(p));
+        when(marketData.dailyOhlcHistory(eq("NOSEC"), anyInt())).thenReturn(bars(100, 110));
+        when(sectorCascade.resolve("NOSEC")).thenReturn(null);
+
+        var resp = controller.fetchElapsedPrey(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        @SuppressWarnings("unchecked")
+        var output = (Map<String, Object>) resp.getBody().get("output");
+        @SuppressWarnings("unchecked")
+        var preyList = (List<Map<String, Object>>) output.get("prey");
+        assertThat(preyList).hasSize(1);
+        assertThat(preyList.get(0)).doesNotContainKey("sector");
+        verify(preyRepo).markOutcomeReviewed(List.of("id-1"));
+    }
+
+    // =========================================================================
+    // T3.3: suggested_gate handling in /complete
+    // =========================================================================
+
+    @Test
+    void complete_validSuggestedGateIsPersistedWithProposal() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-insider",
+                        "statement": "Insider clusters under 5 USD underperform",
+                        "evidence_symbols": ["AAA", "BBB", "CCC"],
+                        "suggested_gate": { "conditions": [
+                          { "field": "mechanism", "op": "eq", "value": "INSIDER_CLUSTER" },
+                          { "field": "price", "op": "lt", "value": 5 } ] } }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), anyString())).thenReturn(false);
+
+        var resp = controller.complete(BEARER, "run-g1", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        ArgumentCaptor<String> gateCaptor = ArgumentCaptor.forClass(String.class);
+        verify(patternRepo).insertProposal(eq("default"), eq("strigoi-insider"),
+                eq("Insider clusters under 5 USD underperform"), eq(3), gateCaptor.capture());
+        assertThat(gateCaptor.getValue()).contains("\"mechanism\"").contains("\"price\"");
+    }
+
+    @Test
+    void complete_invalidSuggestedGateDroppedStatementKeptAsAdvisory() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-spin",
+                        "statement": "Some lesson",
+                        "evidence_symbols": ["AAA", "BBB", "CCC"],
+                        "suggested_gate": { "conditions": [
+                          { "field": "direction", "op": "eq", "value": "BUY" } ] } }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), anyString())).thenReturn(false);
+
+        var resp = controller.complete(BEARER, "run-g2", body);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(patternRepo).insertProposal(eq("default"), eq("strigoi-spin"),
+                eq("Some lesson"), eq(3));
+        verify(patternRepo, never()).insertProposal(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void complete_confidenceConditionsAreStrippedButRestOfGateKept() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-insider",
+                        "statement": "Stripped lesson",
+                        "evidence_symbols": ["AAA", "BBB", "CCC"],
+                        "suggested_gate": { "conditions": [
+                          { "field": "confidence", "op": "lt", "value": 0.7 },
+                          { "field": "mechanism", "op": "eq", "value": "INSIDER_CLUSTER" } ] } }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), anyString())).thenReturn(false);
+
+        controller.complete(BEARER, "run-g3", body);
+
+        ArgumentCaptor<String> gateCaptor = ArgumentCaptor.forClass(String.class);
+        verify(patternRepo).insertProposal(eq("default"), eq("strigoi-insider"),
+                eq("Stripped lesson"), eq(3), gateCaptor.capture());
+        assertThat(gateCaptor.getValue()).contains("\"mechanism\"");
+        assertThat(gateCaptor.getValue()).doesNotContain("confidence");
+    }
+
+    @Test
+    void complete_gateWithOnlyConfidenceConditionsIsDroppedEntirelyStatementKept() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-insider",
+                        "statement": "Confidence-only lesson",
+                        "evidence_symbols": ["AAA", "BBB", "CCC"],
+                        "suggested_gate": { "conditions": [
+                          { "field": "confidence", "op": "lt", "value": 0.7 } ] } }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), anyString())).thenReturn(false);
+
+        controller.complete(BEARER, "run-g4", body);
+
+        verify(patternRepo).insertProposal(eq("default"), eq("strigoi-insider"),
+                eq("Confidence-only lesson"), eq(3));
+        verify(patternRepo, never()).insertProposal(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void complete_dedupeStaysStatementOnlyEvenWithDifferentGate() throws Exception {
+        String json = """
+                {
+                  "status": "done",
+                  "output": {
+                    "patterns": [
+                      { "applies_to_strigoi": "strigoi-spin",
+                        "statement": "Duplicate lesson",
+                        "evidence_symbols": ["AAA"],
+                        "suggested_gate": { "conditions": [
+                          { "field": "price", "op": "lt", "value": 5 } ] } }
+                    ]
+                  }
+                }
+                """;
+        JsonNode body = JsonMapper.builder().build().readTree(json);
+        when(patternRepo.existsPendingStatement(eq("default"), eq("Duplicate lesson")))
+                .thenReturn(true);
+
+        controller.complete(BEARER, "run-g5", body);
+
+        verify(patternRepo, never()).insertProposal(any(), any(), any(), anyInt());
+        verify(patternRepo, never()).insertProposal(any(), any(), any(), anyInt(), any());
     }
 }

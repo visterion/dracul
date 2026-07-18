@@ -13,6 +13,26 @@
           "evidence_symbols": {
             "type": "array",
             "items": {"type": "string"}
+          },
+          "suggested_gate": {
+            "type": "object",
+            "required": ["conditions"],
+            "properties": {
+              "conditions": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "required": ["field", "op", "value"],
+                  "properties": {
+                    "field": {"type": "string", "enum": ["mechanism", "symbol", "sector", "price"]},
+                    "op": {"type": "string", "enum": ["eq", "ne", "in", "not_in", "lt", "lte", "gt", "gte"]},
+                    "value": {}
+                  }
+                }
+              }
+            }
           }
         }
       }
