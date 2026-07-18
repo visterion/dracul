@@ -81,3 +81,5 @@ Return a JSON object with exactly these fields:
 Order `proposals` by descending priority (most actionable first). Mention a symbol
 only when you propose something or a `hold` needs a warning attached — every symbol
 you do not mention is implicitly `hold`.
+
+Do NOT create a proposal solely to carry a sentiment score: only add `news_sentiment` inside a proposal you were already going to make for another reason. A symbol with sentiment-worthy news but no other trigger stays unmentioned (implicitly `hold`).

@@ -13,7 +13,18 @@
           "entry_zone": {"type": "string"},
           "stop": {"type": "string"},
           "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-          "rationale": {"type": "string"}
+          "rationale": {"type": "string"},
+          "news_sentiment": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["headline", "sentiment"],
+              "properties": {
+                "headline": {"type": "string"},
+                "sentiment": {"type": "number", "minimum": -1, "maximum": 1}
+              }
+            }
+          }
         }
       }
     },
