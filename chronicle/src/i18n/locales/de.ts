@@ -593,6 +593,18 @@ export default {
         dividendYield: 'Dividendenrendite',
       },
     },
+    tabs: { live: 'Live', history: 'Historie' },
+    history: {
+      loading: 'Historie wird geladen …',
+      empty: 'Keine Historie vorhanden.',
+      error: 'Historie konnte nicht geladen werden.',
+      brokerConfirmed: 'broker-bestätigt',
+      why: 'Warum',
+      exitReason: 'Exit-Grund (Dracul, nicht autoritativ)',
+      realizedR: 'R (Dracul, nicht autoritativ)',
+      notLinkable: 'Kein Dracul-Kontext verknüpfbar',
+      result: 'Ergebnis',
+    },
   },
   calibration: {
     sectionLabel: 'Kalibrierung',

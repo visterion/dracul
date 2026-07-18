@@ -26,12 +26,14 @@ public class DepotController {
     private final DepotService service;
     private final DepotChartService chartService;
     private final DepotInstrumentService instrumentService;
+    private final DepotHistoryService historyService;
 
     public DepotController(DepotService service, DepotChartService chartService,
-            DepotInstrumentService instrumentService) {
+            DepotInstrumentService instrumentService, DepotHistoryService historyService) {
         this.service = service;
         this.chartService = chartService;
         this.instrumentService = instrumentService;
+        this.historyService = historyService;
     }
 
     @GetMapping
@@ -59,6 +61,15 @@ public class DepotController {
         return new PositionDetailResponse(
                 new PositionDetailResponse.DepotSummary(depot.id(), depot.provider(), depot.environment()),
                 position, orders, depot.asOf());
+    }
+
+    @GetMapping("/{connection}/history")
+    public DepotHistoryResponse history(@PathVariable String connection) {
+        try {
+            return new DepotHistoryResponse(historyService.history(connection, CurrentUserHolder.get()), null);
+        } catch (DepotUnavailableException e) {
+            return new DepotHistoryResponse(List.of(), e.getMessage());
+        }
     }
 
     @GetMapping("/chart")

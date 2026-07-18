@@ -1,6 +1,6 @@
 import type {
   Depot, DepotsResponse, DepotChart, DepotPositionView, DepotAggregates,
-  InstrumentInfo,
+  InstrumentInfo, DepotHistory,
 } from '../api/types'
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -226,4 +226,18 @@ export const mockInstrumentInfo: InstrumentInfo = {
       { ticker: 'NVDA', insider: 'Jensen Huang', transactionDate: '2026-06-15', type: 'sell', shares: 50000, price: 132.10 },
     ],
   },
+}
+
+// ── History ──────────────────────────────────────────────────────
+
+export const mockDepotHistory: DepotHistory = {
+  entries: [
+    {
+      source: 'ORDER', symbol: 'AAPL', side: 'buy', qty: 10, entryPrice: 100, exitPrice: 110,
+      profitLoss: 100, status: 'filled', brokerOrderId: 'o-1', brokerConfirmed: true,
+      why: { strigoi: 'index-strigoi', killCriteria: ['stop below 95'],
+             entryReasoning: 'index inclusion drift', draculExitReason: 'TAKE_PROFIT', draculRealizedR: 2 },
+    },
+  ],
+  error: null,
 }

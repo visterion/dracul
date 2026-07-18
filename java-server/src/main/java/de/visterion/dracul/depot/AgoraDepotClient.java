@@ -109,8 +109,13 @@ public class AgoraDepotClient {
     }
 
     public List<DepotOrder> orders(String connection) {
+        return orders(connection, null);
+    }
+
+    public List<DepotOrder> orders(String connection, String status) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
+        if (status != null) args.put("status", status);
         JsonNode out = unwrap(call("get_orders", args));
 
         JsonNode array = out.path("orders");
@@ -127,6 +132,28 @@ public class AgoraDepotClient {
                         textOrNull(o, "type"),
                         textOrNull(o, "status"),
                         textOrNull(o, "role")));
+            }
+        }
+        return result;
+    }
+
+    public List<DepotClosedPosition> closedPositions(String connection) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("connection", connection);
+        JsonNode out = unwrap(call("get_closed_positions", args));
+
+        JsonNode array = out.path("closedPositions");
+        if (!array.isArray()) array = out;
+
+        List<DepotClosedPosition> result = new ArrayList<>();
+        if (array.isArray()) {
+            for (JsonNode c : array) {
+                result.add(new DepotClosedPosition(
+                        textOrNull(c, "symbol"),
+                        decimalOrNull(c, "openPrice"),
+                        decimalOrNull(c, "closePrice"),
+                        decimalOrNull(c, "profitLoss"),
+                        textOrNull(c, "clientRef")));
             }
         }
         return result;
