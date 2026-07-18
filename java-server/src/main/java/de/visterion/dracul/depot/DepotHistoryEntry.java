@@ -1,0 +1,24 @@
+package de.visterion.dracul.depot;
+
+import java.math.BigDecimal;
+
+/** One row of the Depot history tab. Facts are broker-authoritative; {@code why} is Dracul's
+ *  optional, non-authoritative rationale annotation (present only when linkable by broker order id). */
+public record DepotHistoryEntry(
+        String source,
+        String symbol,
+        String side,
+        BigDecimal qty,
+        BigDecimal entryPrice,
+        BigDecimal exitPrice,
+        BigDecimal profitLoss,
+        String status,
+        String brokerOrderId,
+        boolean brokerConfirmed,
+        Why why) {
+
+    /** Dracul's rationale annotation — explicitly NOT authoritative for execution facts. */
+    public record Why(String strigoi, java.util.List<String> killCriteria, String entryReasoning,
+            String draculExitReason, BigDecimal draculRealizedR) {
+    }
+}
