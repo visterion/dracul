@@ -40,13 +40,21 @@ class PatternControllerIT {
     }
 
     @Test
-    void patternsReturns17Items() {
+    void patternsReturns17SeedItems() {
         var response = rest.get()
                 .uri("/api/patterns")
                 .retrieve()
                 .toEntity(JsonNode.class);
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        assertThat(response.getBody()).hasSize(17);
+        // Count only the V2 seed rows (ids prefixed c0000000-): other ITs sharing the
+        // reused container (PatternGateRepositoryIT here, the Task 7 scorer fixtures,
+        // the Task 8 controller ITs) insert throwaway patterns for user 'default' that
+        // would otherwise inflate a whole-list count.
+        long seedRows = 0;
+        for (JsonNode item : response.getBody()) {
+            if (item.get("id").asText().startsWith("c0000000-")) seedRows++;
+        }
+        assertThat(seedRows).isEqualTo(17);
     }
 }

@@ -424,6 +424,14 @@ export default {
       error: 'Fälle konnten nicht geladen werden.',
       close: 'Schließen',
     },
+    gate: {
+      title: 'Gate',
+      armed: 'scharf',
+      blocked: '{n} Signale blockiert',
+      save: 'Gate speichern',
+      hint: 'Maschinell prüfbares Veto-Prädikat (JSON). Leer speichern zum Entfernen.',
+      invalid: 'Ungültiges JSON — Gate nicht gespeichert',
+    },
   },
   watchlist: {
     search: {

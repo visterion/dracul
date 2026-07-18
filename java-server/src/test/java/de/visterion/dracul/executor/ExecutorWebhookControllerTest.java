@@ -10,6 +10,7 @@ import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.position.PositionContextRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class ExecutorWebhookControllerTest {
     private Tranche2Detector tranche2Detector;
     private TelegramNotifier telegram;
     private PositionContextRepository positionContextRepo;
+    private PatternRepository patternRepo;
     private JsonMapper mapper;
 
     /** Fixed at 42s after every test signal's createdAt ("2026-07-01T00:00:00Z"), so
@@ -75,6 +77,8 @@ class ExecutorWebhookControllerTest {
         tranche2Detector = mock(Tranche2Detector.class);
         telegram = mock(TelegramNotifier.class);
         positionContextRepo = mock(PositionContextRepository.class);
+        patternRepo = mock(PatternRepository.class);
+        when(patternRepo.findEnforced()).thenReturn(List.of());
         mapper = JsonMapper.builder().build();
 
         when(executorIndicators.levels(anyString(), anyInt(), anyInt()))
@@ -87,7 +91,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker, tranche2Detector, telegram, positionContextRepo,
+                assembler, sizer, ranker, tranche2Detector, telegram, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 0.0, 3.0, "USD", fixedClock);
@@ -236,7 +240,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, customSizer, ranker, tranche2Detector, telegram, positionContextRepo,
+                assembler, customSizer, ranker, tranche2Detector, telegram, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 0.0, 3.0, "USD", fixedClock);
@@ -355,7 +359,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(16);
+        assertThat(vetoResults.size()).isEqualTo(17);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -493,7 +497,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("NO_STOP");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(16);
+        assertThat(log.vetoResults().size()).isEqualTo(17);
     }
 
     // -------------------------------------------------------------------
@@ -802,7 +806,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_TOO_SMALL");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(16);
+        assertThat(log.vetoResults().size()).isEqualTo(17);
     }
 
     @Test
@@ -1020,7 +1024,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(16);
+        assertThat(vetoResults.size()).isEqualTo(17);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -1134,7 +1138,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(16);
+        assertThat(log.vetoResults().size()).isEqualTo(17);
     }
 
     @Test

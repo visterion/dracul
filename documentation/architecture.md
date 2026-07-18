@@ -269,6 +269,50 @@ responses ride `ToolFetchCache`, so a pattern approved/rejected after a tool's
 cache entry was populated is only reflected in `active_patterns` once that entry's
 TTL expires. See `strigoi.md` ("Learning loop") for the full write-up.
 
+**Pattern gates (V38, T3.3):** a `patterns.gate` column (`JSONB`, nullable)
+compiles an operator-approved pattern lesson into a machine-checkable
+predicate: `{"conditions": [{"field": ..., "op": ..., "value": ...}, ...]}`,
+1–8 conditions, AND-only semantics. Fields: `mechanism`/`symbol`/`sector`
+(string; ops `eq`/`ne`/`in`/`not_in`) and `confidence`/`price` (numeric; ops
+`lt`/`lte`/`gt`/`gte`) — 5 fields, 8 ops total. Evaluation
+(`GateEvaluator.evaluate`) is fail-open: any condition whose referenced field
+is null on the signal makes the whole gate unevaluable rather than falsely
+matching or falsely clearing — this applies to `ne`/`not_in` too, so a null
+field never trivially satisfies a negative condition. `GateValidator` is the
+single shared parse/validate path used by all three consumers below.
+
+Three consumers of a gate:
+1. **The `voievod-outcome` completion handler** — the LLM may propose a
+   `suggested_gate` on a pattern it curates; an invalid one is dropped (WARN)
+   while the rest of the statement/evidence is still persisted.
+2. **`VetoService` (place-entry veto catalog, position #12)** — sits between
+   `REDUNDANCY` and `LIQUIDITY`. Every `ACTIVE` pattern with a non-null gate is
+   loaded as an `EnforcedGate`; the first one whose predicate matches the
+   candidate signal vetoes the entry with reason `PATTERN_GATE` and detail
+   `pattern_gate:<id> (<name>)` — first match in repository order wins, a
+   malformed/unevaluable stored gate is skipped with WARN (never blanket-blocks
+   on a data gap).
+3. **`PatternOutcomeScorer` (weekly)** — matches every completed `TRADE`
+   outcome against every gated `PENDING`/`ACTIVE` pattern and writes
+   `pattern_evidence` rows keyed by `outcome_ref` (idempotent via the V38
+   partial unique index on `(pattern_id, outcome_ref) WHERE outcome_ref IS NOT
+   NULL`), then recomputes the pattern's `supported_count`/`avg_uplift_percent`.
+
+All three share one sector vocabulary via `SectorCascade`
+(`sector → finnhubIndustry → gicsSector` cascade over the Agora company
+profile, TTL-cached): the veto path's candidate sector, the scorer's fallback
+when the joined `executor_position` row has no `sector`, and the
+`voievod-outcome` fetch-wire enrichment all resolve through the same cascade —
+one sector value can never disagree with itself across these three call
+sites. `SectorResolver`'s older single-field (`finnhubIndustry`-only) read is
+unchanged and stays in place for `daywalker`/`renfield`, which have no need for
+the cascade's `sector`/`gicsSector` fallbacks.
+
+**Boundary:** gates bite at **place-entry only**. `add-tranche` (adding a
+second tranche to an already-open position) runs `CapitalBounds` checks only —
+it never re-enters the veto catalog, so an `ACTIVE` gate has no effect on
+tranche-2 size-ups.
+
 **Exit signals table (V11):**
 - `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default'). Partial unique index `uq_exit_signals_run_item` (V21) on `(vistierie_run_id, watchlist_item_id)` (where both are non-null) enforces at most one exit signal per run per position; a second partial unique index `(vistierie_run_id, symbol)` (V29, where `vistierie_run_id IS NOT NULL`) is the one that actually fires for gropar's depot-sourced signals since A5 -- they never carry a `watchlist_item_id` (always written `null`), so V21's index never matches them.
 - index on `(user_id, symbol, created_at DESC)`

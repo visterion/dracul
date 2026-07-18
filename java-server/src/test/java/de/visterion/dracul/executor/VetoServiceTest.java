@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.AccountSnapshot;
+import de.visterion.dracul.pattern.EnforcedGate;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -10,7 +11,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Full 16-veto catalog (incl. CURRENCY_MISMATCH) + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
+ * Full 17-veto catalog (incl. CURRENCY_MISMATCH + PATTERN_GATE) + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
  * {@link #cfg()} return pass-everything defaults; each test perturbs exactly what it needs to
  * exercise one veto boundary.
  */
@@ -168,7 +169,7 @@ class VetoServiceTest {
 
         assertThat(outcome.passed()).isTrue();
         assertThat(outcome.firstFailure()).isNull();
-        assertThat(outcome.results()).hasSize(16);
+        assertThat(outcome.results()).hasSize(17);
         assertThat(outcome.results()).allMatch(VetoResult::passed);
         assertThat(outcome.contradictingSignalId()).isNull();
     }
@@ -867,9 +868,9 @@ class VetoServiceTest {
         EntryContext ctx = ctx().entriesThisWeek(3).build(); // fails PACE_LIMIT
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(outcome.results()).hasSize(16);
-        assertThat(outcome.results().get(14).check()).isEqualTo("PACE_LIMIT");
-        assertThat(outcome.results().get(15).check()).isEqualTo("CURRENCY_MISMATCH");
+        assertThat(outcome.results()).hasSize(17);
+        assertThat(outcome.results().get(15).check()).isEqualTo("PACE_LIMIT");
+        assertThat(outcome.results().get(16).check()).isEqualTo("CURRENCY_MISMATCH");
     }
 
     @Test
@@ -890,7 +891,7 @@ class VetoServiceTest {
 
         List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "SIGNAL_EXPIRED",
                 "COOLDOWN", "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
-                "CONTRADICTION", "REDUNDANCY", "LIQUIDITY", "CHASED_AWAY",
+                "CONTRADICTION", "REDUNDANCY", "PATTERN_GATE", "LIQUIDITY", "CHASED_AWAY",
                 "BELOW_ANCHOR", "PACE_LIMIT", "CURRENCY_MISMATCH");
         List<String> actualOrder = outcome.results().stream().map(VetoResult::check).toList();
 
@@ -1070,5 +1071,110 @@ class VetoServiceTest {
         return outcome.results().stream()
                 .filter(r -> r.check().equals(check))
                 .findFirst().orElseThrow();
+    }
+
+    // ---- PATTERN_GATE (T3.3 D4) ----
+
+    private EnforcedGate mechanismGate(String id, String mechanism) {
+        return new EnforcedGate(id, "test-gate", "{\"conditions\":[{\"field\":\"mechanism\","
+                + "\"op\":\"eq\",\"value\":\"" + mechanism + "\"}]}");
+    }
+
+    @Test
+    void patternGate_firesWithIdFirstDetail() {
+        var out = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg(),
+                BigDecimal.valueOf(50), List.of(mechanismGate("11111111-aaaa-bbbb-cccc-000000000001", "PEAD")));
+
+        assertThat(out.passed()).isFalse();
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.PATTERN_GATE);
+        VetoResult r = named(out, "PATTERN_GATE");
+        assertThat(r.passed()).isFalse();
+        assertThat(r.measured()).startsWith("pattern_gate:11111111-aaaa-bbbb-cccc-000000000001");
+        assertThat(r.measured()).contains("test-gate");
+    }
+
+    @Test
+    void patternGate_noMatchPasses() {
+        var out = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg(),
+                BigDecimal.valueOf(50), List.of(mechanismGate("id-1", "MERGER_ARB")));
+
+        assertThat(out.passed()).isTrue();
+        assertThat(named(out, "PATTERN_GATE").passed()).isTrue();
+        assertThat(named(out, "PATTERN_GATE").measured()).isEqualTo("no enforced gate matched");
+    }
+
+    @Test
+    void patternGate_emptyGatesListIsRegressionIdenticalToToday() {
+        var withEmpty = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg(),
+                BigDecimal.valueOf(50), List.of());
+        var legacy = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
+
+        assertThat(withEmpty.passed()).isTrue();
+        assertThat(legacy.passed()).isTrue();
+        assertThat(withEmpty.firstFailure()).isNull();
+        // Same checks in the same order, PATTERN_GATE traced as PASS in both.
+        assertThat(withEmpty.results()).isEqualTo(legacy.results());
+        assertThat(named(legacy, "PATTERN_GATE").passed()).isTrue();
+    }
+
+    @Test
+    void patternGate_catalogPosition_redundancyBeatsIt() {
+        // REDUNDANCY (#11) fires: same mechanism already open on the same symbol. The open
+        // position's sector deliberately differs from the candidate sector ("Tech"), or
+        // CORRELATED (#9, sector+mechanism) would fire first and mask the ordering assert.
+        var ctx = ctx().openPositions(List.of(position("ACME", "Energy")))
+                .openMechanisms(Map.of("ACME", "PEAD")).build();
+        var out = vetoService.evaluate(signal(), ctx, sizing(), cfg(),
+                BigDecimal.valueOf(50), List.of(mechanismGate("id-1", "PEAD")));
+
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.REDUNDANCY);
+        assertThat(named(out, "PATTERN_GATE").passed()).isFalse();
+    }
+
+    @Test
+    void patternGate_catalogPosition_beatsLiquidity() {
+        // LIQUIDITY would fire (price 4 < minPrice 5), but the gate is checked first.
+        var ctx = ctx().price(BigDecimal.valueOf(4)).build();
+        var out = vetoService.evaluate(signal(), ctx, sizing(), cfg(),
+                BigDecimal.valueOf(4), List.of(mechanismGate("id-1", "PEAD")));
+
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.PATTERN_GATE);
+        assertThat(named(out, "LIQUIDITY").passed()).isFalse();
+    }
+
+    @Test
+    void patternGate_firstMatchingGateInRepositoryOrderWinsTheDetail() {
+        var out = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg(),
+                BigDecimal.valueOf(50),
+                List.of(mechanismGate("id-first", "PEAD"), mechanismGate("id-second", "PEAD")));
+
+        assertThat(named(out, "PATTERN_GATE").measured()).startsWith("pattern_gate:id-first");
+    }
+
+    @Test
+    void patternGate_malformedStoredGateSkippedWithoutException() {
+        var broken = new EnforcedGate("id-broken", "broken", "{not json");
+        var out = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg(),
+                BigDecimal.valueOf(50), List.of(broken));
+
+        assertThat(out.passed()).isTrue();
+        assertThat(named(out, "PATTERN_GATE").passed()).isTrue();
+    }
+
+    @Test
+    void patternGate_unevaluableGateFailsOpen() {
+        // Sector condition but ctx has no sector -> not evaluable -> no fire.
+        var sectorGate = new EnforcedGate("id-sec", "sector-gate",
+                "{\"conditions\":[{\"field\":\"sector\",\"op\":\"eq\",\"value\":\"Tech\"}]}");
+        var ctx = ctx().candidateSector(null).build();
+        var out = vetoService.evaluate(signal(), ctx, sizing(), cfg(),
+                BigDecimal.valueOf(50), List.of(sectorGate));
+
+        assertThat(named(out, "PATTERN_GATE").passed()).isTrue();
+    }
+
+    @Test
+    void patternGate_isTransient() {
+        assertThat(RejectReason.PATTERN_GATE.isTransient()).isTrue();
     }
 }

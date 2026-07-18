@@ -10,6 +10,7 @@ import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.position.PositionContextRepository;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
@@ -84,6 +85,7 @@ public class ExecutorWebhookController {
     private final Tranche2Detector tranche2Detector;
     private final TelegramNotifier telegram;
     private final PositionContextRepository positionContextRepo;
+    private final PatternRepository patternRepo;
 
     /**
      * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
@@ -124,6 +126,7 @@ public class ExecutorWebhookController {
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
             PositionContextRepository positionContextRepo,
+            PatternRepository patternRepo,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
@@ -148,7 +151,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
-                tranche2Detector, telegram, positionContextRepo, webhookToken, connection, minConfidence,
+                tranche2Detector, telegram, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
                 entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
@@ -176,6 +179,7 @@ public class ExecutorWebhookController {
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
             PositionContextRepository positionContextRepo,
+            PatternRepository patternRepo,
             String webhookToken,
             String connection,
             double minConfidence,
@@ -229,6 +233,7 @@ public class ExecutorWebhookController {
         this.tranche2Detector = tranche2Detector;
         this.telegram = telegram;
         this.positionContextRepo = positionContextRepo;
+        this.patternRepo = patternRepo;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
                 trancheCount, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency);
@@ -542,7 +547,8 @@ public class ExecutorWebhookController {
             sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false, null);
         }
 
-        VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig, orderPrice);
+        VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig, orderPrice,
+                patternRepo.findEnforced());
         List<String> vetoTrace = new ArrayList<>();
         for (VetoResult r : veto.results()) {
             vetoTrace.add(r.check() + ":" + (r.passed() ? "PASS" : "FAIL") + " (" + r.measured() + ")");

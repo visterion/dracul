@@ -2,6 +2,7 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.hunting.agora.SectorCascade;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.FxService;
@@ -38,13 +39,14 @@ class EntryContextAssemblerTest {
     private final CooldownRepository cooldownRepo = mock(CooldownRepository.class);
     private final ExecutorSignalRepository signalRepo = mock(ExecutorSignalRepository.class);
     private final ObjectMapper mapper = new ObjectMapper();
+    private final SectorCascade sectorCascade = mock(SectorCascade.class);
 
     private EntryContextAssembler assembler;
 
     @BeforeEach
     void setUp() {
         assembler = new EntryContextAssembler(agora, gateway, fx, positionRepo, cooldownRepo,
-                signalRepo, mapper, "depot-1", 22, 20,
+                signalRepo, mapper, sectorCascade, "depot-1", 22, 20,
                 new BigDecimal("10000"), 10, "USD", CLOCK);
 
         when(gateway.account("depot-1"))
@@ -95,21 +97,12 @@ class EntryContextAssemblerTest {
                 "stop-1", null, null, null, null, 0, null, null, null, null, null, null);
     }
 
-    private JsonNode profileResponse(String sector, String finnhubIndustry, String gicsSector) {
-        ObjectNode root = mapper.createObjectNode();
-        ObjectNode profile = root.putObject("profile");
-        if (sector != null) profile.put("sector", sector);
-        if (finnhubIndustry != null) profile.put("finnhubIndustry", finnhubIndustry);
-        if (gicsSector != null) profile.put("gicsSector", gicsSector);
-        return root;
-    }
-
     @Test
     void happyPath_completeContextNoMissing() {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
 
@@ -131,7 +124,7 @@ class EntryContextAssemblerTest {
     @Test
     void agoraIndicatorsUnavailable_missingPriceAtrAdv20() {
         when(agora.callTool(eq("get_indicators"), any())).thenThrow(new AgoraUnavailableException("down"));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
 
@@ -148,7 +141,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse(null, null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn(null);
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
 
@@ -163,7 +156,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         ExecutorSignal sig = signal("ACME", null, "2026-07-10T00:00:00Z");
 
@@ -177,7 +170,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
         when(gateway.account("depot-1"))
                 .thenReturn(new AccountSnapshot(new BigDecimal("50000"), new BigDecimal("50000"), "EUR"));
         // fx is a mock: hasRate() is not stubbed here, so it defaults to false — no cached rate.
@@ -194,7 +187,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
         // account currency USD == instrumentCurrency USD (setUp default) — fx.hasRate is not
         // even consulted for identical currencies.
 
@@ -210,7 +203,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "not-a-date");
 
@@ -225,7 +218,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         ExecutorPosition msft = openPosition("MSFT", BigDecimal.TEN, new BigDecimal("300.00"),
                 new BigDecimal("290.00"), "sig-1");
@@ -252,7 +245,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         // NOW = 2026-07-13 (Monday); previous Friday = 2026-07-10
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T09:00:00Z");
@@ -268,7 +261,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
         EntryContext ctx = assembler.assembleForSymbol("ACME");
 
@@ -295,7 +288,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
         when(agora.callTool(eq("get_quote"), any())).thenReturn(quoteResponse("EUR"));
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
@@ -310,7 +303,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
         when(agora.callTool(eq("get_quote"), any())).thenReturn(quoteResponse(null)); // no currency field
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
@@ -326,7 +319,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
         when(agora.callTool(eq("get_quote"), any())).thenThrow(new AgoraUnavailableException("down"));
 
         ExecutorSignal sig = signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z");
@@ -341,7 +334,7 @@ class EntryContextAssemblerTest {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
-        when(agora.callTool(eq("get_company_profile"), any())).thenReturn(profileResponse("Technology", null, null));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
         // Gateway returns account with null cash but valid buyingPower and currency
         when(gateway.account("depot-1"))
                 .thenReturn(new AccountSnapshot(null, new BigDecimal("50000"), "USD"));

@@ -38,6 +38,7 @@
           data-testid="pending-pattern-card"
           @act="(action) => handlePendingAction(pattern.id, action)"
           @view-cases="openCases(pattern)"
+          @save-gate="(gate) => handleSaveGate(pattern.id, gate)"
         />
       </div>
 
@@ -96,6 +97,11 @@
           </div>
           <div v-if="expandedIds.has(pattern.id)" class="patterns__active-body">
             <p class="patterns__active-text">{{ pattern.statement }}</p>
+            <PatternGateEditor
+              :pattern="pattern"
+              :loading="activeLoadingId === pattern.id"
+              @save-gate="(gate) => handleSaveGate(pattern.id, gate)"
+            />
             <button
               class="btn btn-ghost"
               :disabled="activeLoadingId === pattern.id"
@@ -128,6 +134,7 @@ import type { Pattern, PatternAction, PatternCase } from '../api/types'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import PatternCard from '../components/common/PatternCard.vue'
+import PatternGateEditor from '../components/common/PatternGateEditor.vue'
 import PatternCasesDialog from '../components/common/PatternCasesDialog.vue'
 import { useRelativeTime } from '../composables/useRelativeTime'
 import { patternTitle } from '../utils/patternTitle'
@@ -192,6 +199,16 @@ async function handleDeactivate(id: string) {
     actionError.value = e instanceof Error ? e.message : t('patterns.actionError.deactivateFailed')
   } finally {
     activeLoadingId.value = null
+  }
+}
+
+async function handleSaveGate(id: string, gate: unknown | null) {
+  actionError.value = null
+  try {
+    await api.updatePatternGate(id, gate)
+    allPatterns.value = await api.getPatterns()
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('patterns.actionError.failed')
   }
 }
 

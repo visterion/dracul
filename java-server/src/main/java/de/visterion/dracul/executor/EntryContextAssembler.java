@@ -3,6 +3,7 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import de.visterion.dracul.hunting.agora.SectorCascade;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.FxService;
@@ -46,6 +47,7 @@ public class EntryContextAssembler {
     private final CooldownRepository cooldownRepo;
     private final ExecutorSignalRepository signalRepo;
     private final ObjectMapper mapper;
+    private final SectorCascade sectorCascade;
     private final String connection;
     private final int atrPeriod;
     private final int swingPeriod;
@@ -56,7 +58,7 @@ public class EntryContextAssembler {
 
     public EntryContextAssembler(AgoraClient agora, ExecutionGateway gateway, FxService fx,
             ExecutorPositionRepository positionRepo, CooldownRepository cooldownRepo,
-            ExecutorSignalRepository signalRepo, ObjectMapper mapper,
+            ExecutorSignalRepository signalRepo, ObjectMapper mapper, SectorCascade sectorCascade,
             @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
@@ -71,6 +73,7 @@ public class EntryContextAssembler {
         this.cooldownRepo = cooldownRepo;
         this.signalRepo = signalRepo;
         this.mapper = mapper;
+        this.sectorCascade = sectorCascade;
         this.connection = connection;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
@@ -283,30 +286,14 @@ public class EntryContextAssembler {
         return new Indicators(price, atr, swingLow, adv20Notional, dayHigh);
     }
 
+    /** Sector via the shared cascade helper (T3.3 — one sector vocabulary everywhere).
+     *  Behavior is unchanged: unresolved (including an Agora outage, which the cascade
+     *  degrades to null) → named in {@code missing} and the DATA_UNAVAILABLE pre-veto
+     *  fires, exactly as the previous inline cascade did. Now TTL-cached. */
     private String fetchSector(String symbol, List<String> missing) {
-        ObjectNode args = mapper.createObjectNode();
-        args.put("symbol", symbol);
-        JsonNode r;
-        try {
-            r = agora.callTool("get_company_profile", args);
-        } catch (AgoraUnavailableException e) {
-            missing.add("sector");
-            return null;
-        }
-        JsonNode profile = r.path("profile");
-        String sector = firstNonBlank(
-                profile.path("sector").asString(""),
-                profile.path("finnhubIndustry").asString(""),
-                profile.path("gicsSector").asString(""));
+        String sector = sectorCascade.resolve(symbol);
         if (sector == null) missing.add("sector");
         return sector;
-    }
-
-    private static String firstNonBlank(String... values) {
-        for (String v : values) {
-            if (v != null && !v.isBlank()) return v;
-        }
-        return null;
     }
 
     private long tradingDayAge(String createdAt, List<String> missing) {

@@ -92,6 +92,15 @@ export class HttpApiClient implements ApiClient {
     if (!res.ok) throw new Error(`patchPattern failed: HTTP ${res.status}`)
   }
 
+  async updatePatternGate(id: string, gate: unknown | null): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/patterns/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'update_gate', gate }),
+    })
+    if (!res.ok) throw new Error(`updatePatternGate failed: HTTP ${res.status}`)
+  }
+
   async getSettingsBudgets(): Promise<SettingsBudgetData> {
     const res = await fetch(`${this.baseUrl}/api/settings/budgets`)
     if (!res.ok) throw new Error(`getSettingsBudgets failed: HTTP ${res.status}`)

@@ -424,6 +424,14 @@ export default {
       error: 'Failed to load cases.',
       close: 'Close',
     },
+    gate: {
+      title: 'Gate',
+      armed: 'armed',
+      blocked: '{n} signals blocked',
+      save: 'Save gate',
+      hint: 'Machine-checkable veto predicate (JSON). Leave empty and save to clear.',
+      invalid: 'Invalid JSON — gate not saved',
+    },
   },
   watchlist: {
     search: {

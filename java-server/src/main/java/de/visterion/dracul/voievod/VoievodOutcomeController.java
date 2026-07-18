@@ -1,8 +1,10 @@
 package de.visterion.dracul.voievod;
 
+import de.visterion.dracul.hunting.agora.SectorCascade;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.pattern.GateValidator;
 import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
@@ -15,11 +17,14 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -46,16 +51,19 @@ public class VoievodOutcomeController {
     private final PreyRepository preyRepo;
     private final AgoraMarketData marketData;
     private final PatternRepository patternRepo;
+    private final SectorCascade sectorCascade;
 
     public VoievodOutcomeController(
             @Value("${dracul.voievod-outcome.webhook-token}") String token,
             PreyRepository preyRepo,
             AgoraMarketData marketData,
-            PatternRepository patternRepo) {
+            PatternRepository patternRepo,
+            SectorCascade sectorCascade) {
         this.verifier = new BearerTokenVerifier(token);
         this.preyRepo = preyRepo;
         this.marketData = marketData;
         this.patternRepo = patternRepo;
+        this.sectorCascade = sectorCascade;
     }
 
     @PostMapping("/tools/fetch-elapsed-prey")
@@ -81,14 +89,17 @@ public class VoievodOutcomeController {
         var wire = new ArrayList<Map<String, Object>>();
         var reviewedIds = new ArrayList<String>();
         for (Prey p : batch) {
-            wire.add(Map.ofEntries(
-                    Map.entry("symbol", p.symbol()),
-                    Map.entry("anomalyType", p.anomalyType()),
-                    Map.entry("thesis", p.thesis()),
-                    Map.entry("killCriteria", p.killCriteria()),
-                    Map.entry("discoveredAt", p.discoveredAt()),
-                    Map.entry("horizon", p.horizon()),
-                    Map.entry("ohlc", condensedOhlc(p))));
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("symbol", p.symbol());
+            entry.put("anomalyType", p.anomalyType());
+            entry.put("thesis", p.thesis());
+            entry.put("killCriteria", p.killCriteria());
+            entry.put("discoveredAt", p.discoveredAt());
+            entry.put("horizon", p.horizon());
+            entry.put("ohlc", condensedOhlc(p));
+            String sector = sectorCascade.resolve(p.symbol());
+            if (sector != null) entry.put("sector", sector);
+            wire.add(entry);
             reviewedIds.add(p.id());
         }
 
@@ -125,7 +136,13 @@ public class VoievodOutcomeController {
                 skipped++;
                 continue;
             }
-            patternRepo.insertProposal(USER, appliesToStrigoi, statement, evidenceCount);
+            String gateJson = sanitizedGateJson(node.path("suggested_gate"), statement, runId);
+            if (gateJson != null) {
+                patternRepo.insertProposal(USER, appliesToStrigoi, statement, evidenceCount,
+                        gateJson);
+            } else {
+                patternRepo.insertProposal(USER, appliesToStrigoi, statement, evidenceCount);
+            }
             inserted++;
         }
         log.info("voievod-outcome run {} persisted {} pattern proposals ({} duplicates skipped)",
@@ -170,5 +187,52 @@ public class VoievodOutcomeController {
             return n.intValue();
         }
         return null;
+    }
+
+    /**
+     * suggested_gate sanitizing (spec T3.3 D3), order binding: strip confidence conditions
+     * (WARN) -> re-validate -> if no conditions remain, drop the gate entirely and keep the
+     * statement as advisory (WARN). Invalid gates are dropped with reasons (WARN); a run is
+     * never failed over a bad gate. Returns the serialized gate JSON to store, or null.
+     */
+    private String sanitizedGateJson(JsonNode suggested, String statement, String runId) {
+        if (suggested == null || !suggested.isObject()) return null;
+        JsonNode stripped = stripConfidenceConditions(suggested, statement, runId);
+        if (stripped == null) return null;
+        GateValidator.Result result = GateValidator.validate(stripped);
+        if (!result.valid()) {
+            log.warn("voievod-outcome run {}: invalid suggested_gate for '{}' dropped ({}) — "
+                    + "statement kept as advisory", runId, statement, result.errors());
+            return null;
+        }
+        return stripped.toString();
+    }
+
+    /** Removes field=confidence conditions (LLM must not arm confidence gates — operators
+     *  add those via update_gate). Returns null when no conditions remain; returns the node
+     *  unchanged when conditions is not an array (the validator rejects it downstream). */
+    private JsonNode stripConfidenceConditions(JsonNode suggested, String statement, String runId) {
+        JsonNode conditions = suggested.path("conditions");
+        if (!conditions.isArray()) return suggested;
+        ObjectNode copy = (ObjectNode) suggested.deepCopy();
+        ArrayNode kept = copy.putArray("conditions");
+        int strippedCount = 0;
+        for (JsonNode c : conditions) {
+            if ("confidence".equals(c.path("field").asText(null))) {
+                strippedCount++;
+            } else {
+                kept.add(c.deepCopy());
+            }
+        }
+        if (strippedCount > 0) {
+            log.warn("voievod-outcome run {}: stripped {} confidence condition(s) from "
+                    + "suggested_gate for '{}'", runId, strippedCount, statement);
+        }
+        if (kept.isEmpty()) {
+            log.warn("voievod-outcome run {}: suggested_gate for '{}' had only confidence "
+                    + "conditions — gate dropped, statement kept as advisory", runId, statement);
+            return null;
+        }
+        return copy;
     }
 }

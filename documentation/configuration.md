@@ -409,6 +409,24 @@ Voievod reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and the shared
 price adapter (graceful on failure). The `dracul.voievod.*` properties correspond
 to these env vars via Spring's relaxed-binding rules.
 
+## Pattern outcome scorer (T3.3 gates)
+
+Weekly, pure-code job (`PatternOutcomeScorer`, no LLM) that matches every
+completed TRADE outcome against every gated `PENDING`/`ACTIVE` pattern and
+writes idempotent `pattern_evidence` rows plus the aggregate columns. Scheduled
+one hour before the Saturday `voievod-outcome` run (`0 0 7 * * 6`).
+
+| Env var | Property | Default | Purpose |
+|---|---|---|---|
+| `DRACUL_PATTERN_SCORER_ENABLED` | `dracul.pattern-scorer.enabled` | `true` | Enables the weekly pattern outcome scorer (`@ConditionalOnProperty`, `matchIfMissing = true`). |
+| `DRACUL_PATTERN_SCORER_CRON` | `dracul.pattern-scorer.cron` | `0 0 6 * * 6` | Spring cron (sec min hour dom month dow), UTC. Default: Saturday 06:00 UTC, one hour before the Saturday `voievod-outcome` run (`0 0 7 * * 6`). |
+
+No new env var is mandatory — both keys have defaults. The scorer's sector
+fallback (when the joined `executor_position` row has no `sector`) reuses the
+shared `SectorCascade`, which in turn reads the existing `dracul.sector.ttl-seconds`
+/ `dracul.sector.negative-ttl-seconds` keys (see "Sector cache" above) — no
+separate TTL configuration for the scorer.
+
 ## Gropar (exit-timing agent)
 
 Disabled by default (`enabled=false`). Enable by setting `DRACUL_GROPAR_ENABLED=true` and providing a `DRACUL_GROPAR_WEBHOOK_TOKEN`.
