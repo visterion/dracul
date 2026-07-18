@@ -27,7 +27,7 @@
         {{ t('prey.eyebrow', { anomalyType: anomalyTypeLabel(prey.anomalyType) }) }}
       </template>
       <template #title>
-        <span class="mono title-ticker">{{ prey.symbol }}</span>
+        <TickerButton :symbol="prey.symbol" class="mono title-ticker" />
         <span v-if="displayName(prey.symbol, prey.companyName)" class="title-name">{{ displayName(prey.symbol, prey.companyName) }}</span>
       </template>
     </PageHead>
@@ -133,6 +133,7 @@ import BackLink from '../components/common/BackLink.vue'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import ConfidenceBar from '../components/common/ConfidenceBar.vue'
+import TickerButton from '../components/instrument/TickerButton.vue'
 
 const { t } = useI18n()
 const { anomalyTypeLabel, horizonLabel } = useEnumLabels()

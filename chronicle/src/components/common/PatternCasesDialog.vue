@@ -50,7 +50,7 @@
               :key="`${c.symbol}-${c.occurredAt}-${i}`"
               data-testid="pattern-case-row"
             >
-              <td class="tkr">{{ c.symbol }}</td>
+              <td class="tkr"><TickerButton :symbol="c.symbol" /></td>
               <td>{{ displayName(c.symbol, c.companyName) }}</td>
               <td>{{ anomalyTypeLabel(c.anomalyType) }}</td>
               <td class="mono pc-date">{{ formatDate(c.occurredAt) }}</td>
@@ -82,6 +82,7 @@ import { useDisplay } from 'vuetify'
 import type { Pattern, PatternCase } from '../../api/types'
 import { useEnumLabels } from '../../composables/useEnumLabels'
 import { displayName } from '../../utils/instrument'
+import TickerButton from '../instrument/TickerButton.vue'
 
 defineProps<{
   modelValue: boolean

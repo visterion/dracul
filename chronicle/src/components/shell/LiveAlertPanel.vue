@@ -22,7 +22,7 @@
           <span class="live-panel__sev" :class="`live-panel__sev--${a.severity.toLowerCase()}`">
             {{ severityLabel(a.severity) }}
           </span>
-          <span class="live-panel__symbol">{{ a.symbol }}</span>
+          <TickerButton :symbol="a.symbol" class="live-panel__symbol" />
           <span class="live-panel__trigger">{{ triggerTypeLabel(a.triggerType) }}</span>
         </div>
         <p class="live-panel__thesis">{{ a.thesis }}</p>
@@ -36,6 +36,7 @@
 import { useI18n } from 'vue-i18n'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
 import { useEnumLabels } from '../../composables/useEnumLabels'
+import TickerButton from '../instrument/TickerButton.vue'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()

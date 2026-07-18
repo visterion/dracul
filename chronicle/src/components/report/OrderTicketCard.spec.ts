@@ -1,11 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import OrderTicketCard from './OrderTicketCard.vue'
 import de from '../../i18n/locales/de'
 import type { OrderTicket } from '../../api/types'
 
 const i18n = createI18n({ legacy: false, locale: 'de', messages: { de } })
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 function make(ticket: OrderTicket) {
   return mount(OrderTicketCard, { props: { ticket }, global: { plugins: [i18n] } })

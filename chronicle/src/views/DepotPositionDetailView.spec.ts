@@ -255,4 +255,57 @@ describe('DepotPositionDetailView', () => {
     const after = w.find('[data-testid="pd-header-change"]').text()
     expect(after).not.toEqual(before)
   })
+
+  // ── Post-refactor regressions (InstrumentInfoPanel extraction) ──
+
+  it('preserves DOM order: header price → chart ranges → stat tiles', async () => {
+    getInstrumentInfoImpl = async () => fullInfo
+    const w = mountView()
+    await flushPromises()
+
+    const html = w.html()
+    const price = html.indexOf('data-testid="pd-price"')
+    const chartRange = html.indexOf('data-testid="pd-range-1m"')
+    const tiles = html.indexOf('data-testid="pd-stat-position"')
+    const news = html.indexOf('data-testid="pd-section-news"')
+
+    expect(price).toBeGreaterThanOrEqual(0)
+    expect(chartRange).toBeGreaterThan(price)
+    expect(tiles).toBeGreaterThan(chartRange)
+    // Info sections (owned by the panel) render after the between-slot tiles.
+    expect(news).toBeGreaterThan(tiles)
+  })
+
+  it('fetches the instrument info bundle exactly once per page view', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    expect(getInstrumentInfoSpy).toHaveBeenCalledTimes(1)
+    expect(getInstrumentInfoSpy).toHaveBeenCalledWith('NVDA')
+    expect(w.find('[data-testid="pd-price"]').exists()).toBe(true)
+  })
+
+  it('formats the analyst price target in the position currency (EUR, not USD)', async () => {
+    getDepotPositionImpl = async () => ({
+      position: position({ currency: 'EUR' }),
+      orders: [order()],
+      asOf: '2026-07-11T08:00:00Z',
+    })
+    getInstrumentInfoImpl = async () => ({
+      ...fullInfo,
+      analystEstimates: {
+        symbol: 'NVDA',
+        priceTarget: 200,
+        recommendations: [{ period: '2026-07', strongBuy: 8, buy: 4, hold: 3, sell: 1, strongSell: 0 }],
+      },
+    })
+    const w = mountView()
+    await flushPromises()
+
+    const insights = w.find('[data-testid="pd-section-insights"]')
+    expect(insights.exists()).toBe(true)
+    expect(insights.text()).toContain('200')
+    expect(insights.text()).toContain('€')
+    expect(insights.text()).not.toContain('$')
+  })
 })

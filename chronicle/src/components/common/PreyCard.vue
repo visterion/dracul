@@ -11,7 +11,7 @@
   >
     <!-- Header -->
     <header class="prey-head">
-      <span class="prey-ticker font-mono">{{ prey.symbol }}</span>
+      <TickerButton :symbol="prey.symbol" class="prey-ticker font-mono" />
       <span v-if="displayName(prey.symbol, prey.companyName)" class="prey-name">{{ displayName(prey.symbol, prey.companyName) }}</span>
       <span class="prey-head-spacer" />
       <span class="anomaly-badge">{{ anomalyTypeLabel(prey.anomalyType) }}</span>
@@ -60,6 +60,7 @@ import ConfidenceBar from './ConfidenceBar.vue'
 import { useRelativeTime } from '../../composables/useRelativeTime'
 import { useEnumLabels } from '../../composables/useEnumLabels'
 import { displayName } from '../../utils/instrument'
+import TickerButton from '../instrument/TickerButton.vue'
 
 const props = defineProps<{ prey: Prey }>()
 defineEmits<{ (e: 'open', prey: Prey): void }>()

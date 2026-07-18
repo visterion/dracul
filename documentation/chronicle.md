@@ -195,6 +195,40 @@ Below 960px:
 The responsive system is specified in `DESIGN.md` Part 4 (Breakpoints), Part 5.8
 (Tables, mobile) and Part 9.1 (Mobile Shell).
 
+## Instrument overlay
+
+Nearly every rendered ticker across Chronicle is clickable and opens a
+shared, global **instrument overlay** with a live quote and info panel for
+that symbol — without navigating away from the current view. Two spots
+intentionally stay raw text instead of a `TickerButton`: `DepotPositionsTable`
+rows (the row itself already `@click`-navigates to the position detail — a
+nested ticker button would fight that navigation) and the `WatchlistView`
+detail-pane header/verdict label (it is context for the already-selected row,
+not a separate navigation target).
+
+- **`TickerButton.vue`** (`src/components/instrument/`) is a small wrapper:
+  it renders the symbol as an inline `<button>` (inherits the caller's
+  `class`, so existing ticker styling like `.vc-ticker`/`.mono` is
+  unchanged) and calls `useInstrumentOverlayStore().open(symbol)` on click
+  or Enter/Space. It stops the event (`@click.stop`, `@keydown...stop.prevent`)
+  so it never triggers a surrounding row/card's own click handler (e.g. a
+  `VerdictCard`'s "open verdict" or a watchlist row's "select row").
+- **`useInstrumentOverlayStore`** (`src/stores/instrumentOverlay.ts`) holds
+  a single `openSymbol: string | null`; `open(symbol)` / `close()` toggle it.
+- **`InstrumentOverlay.vue`** is mounted once in `App.vue` (present on every
+  route) and renders as a `v-dialog` bound to `store.openSymbol != null`. It
+  shows the symbol, a live header (name/price/change, emitted up from
+  `InstrumentInfoPanel`), and — if the symbol is a current depot holding
+  (`useDepotsStore().findHolding`) — a banner linking to that position's
+  detail view; clicking the banner closes the overlay first. Escape/backdrop
+  closes only this dialog.
+
+`TickerButton` is wired into every ticker-bearing spot: `VerdictCard`,
+`PreyCard`, `WatchlistView` rows, `WatchlistCompare` (all three buckets),
+`MorningReportView`, `DepotSection` (order rows), `OrderTicketCard`,
+`PatternCasesDialog` (case table), `LiveAlertPanel`, and the ticker headings
+on `VerdictDetailView`, `PreyDetailView`, `ExitSignalDetailView`.
+
 ## ApiClient abstraction
 
 The frontend uses an `ApiClient` interface with two implementations:
