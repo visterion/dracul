@@ -122,6 +122,30 @@ token): `system_prompt` should include portfolio context and `version` should
 have bumped. Daywalker's prompt will contain `MACRO_PORTFOLIO` and `direction`;
 renfield's will reference `position` instead of `held`.
 
+### Post-deploy: agent definition reset (T1.4 news credibility scoring)
+
+The daywalker (v1.3.0) and renfield (v1.2.0) prompts now document the
+per-headline `credibility` field. `AgentDefinitionBootstrap` is
+insert-if-absent — deploy alone never updates stored agents:
+
+1. Deploy the new image.
+2. **MANDATORY:**
+   ```sql
+   DELETE FROM agent_definition WHERE name IN ('daywalker', 'renfield');
+   ```
+   Restart the `app` container; bootstrap re-inserts both with the new
+   prompt versions.
+3. Verify:
+   ```sql
+   SELECT name, substring(prompt_text from 'version: [0-9.]+')
+   FROM agent_definition WHERE name IN ('daywalker', 'renfield');
+   ```
+   Expected: `version: 1.3.0` (daywalker) and `version: 1.2.0` (renfield).
+
+Deploy-order note: Agora ships its additive `domain` field FIRST; Dracul
+tolerates an older Agora via source-string fallback, so there is no lockstep,
+but the seed table only reaches full precision once Agora is current.
+
 ### Prompt registry & archive
 
 `java-server/src/main/resources/prompts/prompt_registry.json` maps every
