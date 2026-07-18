@@ -1,5 +1,11 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.pattern.EnforcedGate;
+import de.visterion.dracul.pattern.GateEvaluator;
+import de.visterion.dracul.pattern.GateSignalView;
+import de.visterion.dracul.pattern.GateValidator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -14,13 +20,15 @@ import java.util.Set;
  * Code-enforced pre-trade vetos ("Garantien in Code"). Pure and deterministic — no I/O, no clock.
  * The LLM's judgment never overrides these.
  *
- * <p>{@link #evaluate} runs the full 16-veto catalog against an assembled {@link EntryContext},
+ * <p>{@link #evaluate} runs the full 17-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
  * mandatory upstream data was missing at assembly time.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class VetoService {
+
+    private static final Logger log = LoggerFactory.getLogger(VetoService.class);
 
     /** Mechanisms that contradict MERGER_ARB on the same symbol (checked both directions). */
     private static final Set<String> MERGER_ARB_CONTRADICTIONS = Set.of(
@@ -49,8 +57,15 @@ public class VetoService {
         return evaluate(signal, ctx, sizing, cfg, ctx == null ? null : ctx.price());
     }
 
+    /** Back-compat overload: no enforced gates (identical behavior to the pre-T3.3 catalog —
+     *  PATTERN_GATE traces PASS vacuously). */
     public Outcome evaluate(ExecutorSignal signal, EntryContext ctx, Sizing sizing, VetoConfig cfg,
                             BigDecimal orderPrice) {
+        return evaluate(signal, ctx, sizing, cfg, orderPrice, List.of());
+    }
+
+    public Outcome evaluate(ExecutorSignal signal, EntryContext ctx, Sizing sizing, VetoConfig cfg,
+                            BigDecimal orderPrice, List<EnforcedGate> gates) {
         if (ctx.missing() != null && !ctx.missing().isEmpty()) {
             String joined = String.join(",", ctx.missing());
             return new Outcome(false, RejectReason.DATA_UNAVAILABLE,
@@ -238,7 +253,45 @@ public class VetoService {
         results.add(new VetoResult("REDUNDANCY", redundancyOk, redundancyMeasured));
         if (!redundancyOk && firstFailure == null) firstFailure = RejectReason.REDUNDANCY;
 
-        // 12 LIQUIDITY
+        // 12 PATTERN_GATE — operator-approved pattern lessons compiled to predicates (T3.3).
+        // Positioned after REDUNDANCY (mechanism/context checks) and before LIQUIDITY (market
+        // microstructure). First matching gate in repository order wins the detail; malformed
+        // or unevaluable gates are skipped with WARN (fail-open — a lesson-gate must never
+        // blanket-block on data gaps).
+        boolean gateOk = true;
+        String gateMeasured = "no enforced gate matched";
+        if (gates != null && !gates.isEmpty()) {
+            GateSignalView view = new GateSignalView(
+                    signal == null ? null : signal.mechanism(),
+                    signal == null ? null : signal.symbol(),
+                    ctx.candidateSector(),
+                    signal == null ? null : signal.confidence(),
+                    orderPrice != null ? orderPrice : ctx.price());
+            for (EnforcedGate gate : gates) {
+                GateValidator.Result parsed = GateValidator.validate(gate.gateJson());
+                if (!parsed.valid()) {
+                    log.warn("pattern gate {} has invalid stored gate JSON — skipped: {}",
+                            gate.id(), parsed.errors());
+                    continue;
+                }
+                var match = GateEvaluator.evaluate(parsed.predicate(), view);
+                if (match.isEmpty()) {
+                    log.warn("pattern gate {} not evaluable for signal {} — fail-open",
+                            gate.id(), signal == null ? "n/a" : signal.signalId());
+                    continue;
+                }
+                if (match.get().matched()) {
+                    gateOk = false;
+                    gateMeasured = "pattern_gate:" + gate.id() + " ("
+                            + (gate.name() != null ? gate.name() : "unnamed") + ")";
+                    break;
+                }
+            }
+        }
+        results.add(new VetoResult("PATTERN_GATE", gateOk, gateMeasured));
+        if (!gateOk && firstFailure == null) firstFailure = RejectReason.PATTERN_GATE;
+
+        // 13 LIQUIDITY
         boolean priceOk = ctx.price().compareTo(cfg.minPrice()) >= 0;
         boolean advOk = ctx.adv20Notional().compareTo(
                 ctx.trancheAmount().multiply(BigDecimal.valueOf(cfg.advMultiple()))) >= 0;
@@ -248,7 +301,7 @@ public class VetoService {
         results.add(new VetoResult("LIQUIDITY", liquidityOk, liquidityMeasured));
         if (!liquidityOk && firstFailure == null) firstFailure = RejectReason.LIQUIDITY;
 
-        // 13 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
+        // 14 CHASED_AWAY — unlike the other signal-dependent vetos above, this one is NOT gated by
         // schemaOk: a null signal, or a schema-valid signal with a null referencePrice (a field not
         // covered by SCHEMA_INVALID's checklist), can otherwise reach this line and NPE. Made total:
         // schema-invalid ⇒ traces PASS (consistent with the other gated vetos; SCHEMA_INVALID is
@@ -288,7 +341,7 @@ public class VetoService {
         results.add(new VetoResult("CHASED_AWAY", chasedOk, chasedMeasured));
         if (!chasedOk && firstFailure == null) firstFailure = RejectReason.CHASED_AWAY;
 
-        // 14 BELOW_ANCHOR — adverse-side mirror of CHASED_AWAY. Not gated by schemaOk for the same
+        // 15 BELOW_ANCHOR — adverse-side mirror of CHASED_AWAY. Not gated by schemaOk for the same
         // NPE-safety reason. C1: NO signal.* read before the guard (DRIFT_ANCHOR_MECHANISMS.contains(null)
         // and signal.mechanism() would NPE on the legal null-signal path). Compares the EFFECTIVE entry
         // price (min(orderPrice, market) long) against reference ± band; band = τ×ATR, τ drift=0 / value=3.
@@ -322,13 +375,13 @@ public class VetoService {
         results.add(new VetoResult("BELOW_ANCHOR", anchorOk, anchorMeasured));
         if (!anchorOk && firstFailure == null) firstFailure = RejectReason.BELOW_ANCHOR;
 
-        // 15 PACE_LIMIT
+        // 16 PACE_LIMIT
         boolean paceOk = ctx.entriesThisWeek() < cfg.pacePerWeek();
         String paceMeasured = ctx.entriesThisWeek() + (paceOk ? " < " : " >= ") + cfg.pacePerWeek() + " this week";
         results.add(new VetoResult("PACE_LIMIT", paceOk, paceMeasured));
         if (!paceOk && firstFailure == null) firstFailure = RejectReason.PACE_LIMIT;
 
-        // 16 CURRENCY_MISMATCH — the executor is single-currency in this slice: it can only size a
+        // 17 CURRENCY_MISMATCH — the executor is single-currency in this slice: it can only size a
         // bracket in the configured account/instrument currency (cfg.instrumentCurrency()). A find
         // whose instrument trades in another currency (EUR/JPY/HKD), or whose quote carried NO
         // currency at all (null — NOT silently coerced to USD upstream), must never be entered, or

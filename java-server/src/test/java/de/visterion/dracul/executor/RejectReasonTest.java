@@ -17,7 +17,8 @@ class RejectReasonTest {
             RejectReason.MAX_POSITIONS,
             RejectReason.BUDGET,
             RejectReason.HEAT_LIMIT,
-            RejectReason.COOLDOWN);
+            RejectReason.COOLDOWN,
+            RejectReason.PATTERN_GATE);
 
     @ParameterizedTest
     @EnumSource(RejectReason.class)
