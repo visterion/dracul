@@ -706,6 +706,50 @@ Response (200): `PatternCase[]`
 | `returnPercent` | `number \| null` | realized return of the case; null if unknown |
 | `note` | `string \| null` | optional free-text annotation |
 
+### Pattern gates (T3.3)
+
+`GET /api/patterns` response items now additionally include:
+
+| Field | Type | Description |
+|---|---|---|
+| `gate` | `object \| null` | the pattern's stored machine-checkable predicate (see schema below); `null` = advisory-only, not enforced |
+| `blockedCount` | number | distinct signals (`COUNT(DISTINCT signal_id)`) rejected with reason `PATTERN_GATE` attributed to this pattern, computed at read time (not persisted). With overlapping gates, a block attributes to the first matching gate in repository order — a later, also-matching gate can show `0` here despite matching the same signals. |
+
+`PATCH /api/patterns/{id}` gains action `update_gate`:
+
+- Request body: `{"action": "update_gate", "gate": {...} | null}`.
+- `gate` field missing from the body → `400` (guards against accidentally
+  wiping an armed gate on a malformed request).
+- `gate: null` → clears the pattern's gate (goes back to advisory-only).
+- `gate: {...}` → validated; invalid predicate → `400` with
+  `{"errors": ["..."]}` (one message per invalid condition).
+- Pattern status `REJECTED` → `400` (a rejected pattern's gate can no longer
+  be edited).
+- Unknown pattern id → `404`.
+- On success: `204 No Content`. Replacing a gate deletes the pattern's
+  machine-scored auto-evidence (`pattern_evidence` rows with `outcome_ref IS
+  NOT NULL`) in the same transaction; the next weekly scorer rescan rebuilds
+  it under the new predicate.
+
+Gate schema:
+
+```json
+{
+  "conditions": [
+    {"field": "mechanism|symbol|sector|confidence|price", "op": "eq|ne|in|not_in|lt|lte|gt|gte", "value": "..."}
+  ]
+}
+```
+
+1–8 conditions, combined with AND semantics. `mechanism`/`symbol`/`sector`
+are string fields (ops `eq`/`ne`/`in`/`not_in`; `in`/`not_in` take a
+non-empty string array); `confidence`/`price` are numeric fields (ops
+`lt`/`lte`/`gt`/`gte`; value must be a number).
+
+`PATCH /api/patterns/{id}` action `approve`: only allowed from status
+`PENDING` (activates the pattern and, if it carries a gate, arms enforcement
+immediately); any other status → `400`.
+
 ## Cost / Vistierie Proxy
 
 | Method | Path | Purpose |
