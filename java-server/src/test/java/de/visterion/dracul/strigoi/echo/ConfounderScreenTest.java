@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ConfounderScreenTest {
@@ -63,5 +64,22 @@ class ConfounderScreenTest {
                 news("Acme agrees to merger with MegaCorp", ""))));
         assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5)))
                 .containsExactly("dilution", "m&a");
+    }
+
+    // --- T1.5: pure overload over an already-fetched headline list (spec §5.3/§7) ---
+
+    @Test void pureOverloadScansAGivenHeadlineListWithoutFetching() {
+        AgoraCompanyData d = mock(AgoraCompanyData.class); // deliberately unstubbed for .news()
+        var screen = new ConfounderScreen(d);
+
+        var flags = screen.confounders(List.of(news("Acme agrees to merger with MegaCorp", "")));
+
+        assertThat(flags).containsExactly("m&a");
+        verifyNoInteractions(d);
+    }
+
+    @Test void pureOverloadOnEmptyListYieldsEmptyFlags() {
+        var screen = new ConfounderScreen(mock(AgoraCompanyData.class));
+        assertThat(screen.confounders(List.<NewsHeadline>of())).isEmpty();
     }
 }
