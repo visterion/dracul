@@ -425,6 +425,7 @@ Order ticket fields (`ticket`):
 |---|---|---|
 | GET | `/api/depots` | List depot connections and their positions/orders for the current user. Served from a per-connection display cache (TTL `dracul.depots.cache-ttl-seconds`, default 60s); `?refresh=true` bypasses it and re-fetches from the broker. |
 | GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders). Fetches only the requested connection (cached), not all connections. |
+| GET | `/api/depots/{connection}/history` | Broker-authoritative trade history (closed positions for Saxo, all orders for Alpaca) with optional Dracul "why" annotation (Strigoi/rationale per `broker_order_id` when linked). Returns `{ entries: [...], error }`. |
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
 | GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
@@ -565,6 +566,90 @@ depot connection.
   same per-connection failure that shows up as an `error` entry in
   `GET /api/depots`'s `depots[]`). In both cases the response body is
   the plain error message, not a JSON envelope.
+
+### `GET /api/depots/{connection}/history` response
+
+Broker-authoritative closed-position and order history with optional Dracul annotations.
+For Saxo (and any non-Alpaca provider), fetches `get_closed_positions`; for Alpaca, fetches
+all orders with `status=all` and filters to the terminal statuses `filled`, `canceled`,
+`cancelled`, `expired`, `rejected` (`partially_filled` is deliberately excluded — an order
+still in flight is not history). Each Alpaca entry includes an optional `why` annotation
+(Strigoi name and rationale) when Dracul can link the trade to an executor decision via
+`brokerOrderId`; Saxo closed positions never carry `why` (no order id / timestamp to link on).
+
+This endpoint always returns **HTTP 200**, never 404/503: an unknown or invisible
+`{connection}` yields `{ entries: [], error: null }`, and a broker fetch failure yields
+`{ entries: [], error: "<message>" }`. The `error` field is the only place a fetch failure
+is surfaced — the frontend must check it, not rely on a non-200 status.
+
+```json
+{
+  "entries": [
+    {
+      "source": "ORDER",
+      "symbol": "AAPL",
+      "side": "buy",
+      "qty": 10,
+      "entryPrice": null,
+      "exitPrice": null,
+      "profitLoss": null,
+      "status": "filled",
+      "brokerOrderId": "o-1",
+      "brokerConfirmed": true,
+      "why": {
+        "strigoi": "index-strigoi",
+        "killCriteria": ["stop below 95"],
+        "entryReasoning": "index inclusion drift",
+        "draculExitReason": "TAKE_PROFIT",
+        "draculRealizedR": 2.0
+      }
+    },
+    {
+      "source": "CLOSED_POSITION",
+      "symbol": "SAP",
+      "side": null,
+      "qty": null,
+      "entryPrice": 100,
+      "exitPrice": 120,
+      "profitLoss": 200,
+      "status": "closed",
+      "brokerOrderId": null,
+      "brokerConfirmed": true,
+      "why": null
+    }
+  ],
+  "error": null
+}
+```
+
+Per-entry fields (`DepotHistoryEntry`):
+
+| Field | Type | Description |
+|---|---|---|
+| `source` | string | `ORDER` (Alpaca order) or `CLOSED_POSITION` (Saxo/default closed position) |
+| `symbol` | string | Ticker |
+| `side` | string \| null | `buy` / `sell` for orders; `null` for closed positions |
+| `qty` | number \| null | Order quantity; `null` for closed positions |
+| `entryPrice` | number \| null | Open price — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
+| `exitPrice` | number \| null | Close price — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
+| `profitLoss` | number \| null | Realized P&L — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
+| `status` | string | Broker order status for `ORDER` (e.g. `filled`); literal `"closed"` for `CLOSED_POSITION` |
+| `brokerOrderId` | string \| null | Broker-native order id — present for `ORDER`, `null` for `CLOSED_POSITION`; also the key `why` enrichment links on |
+| `brokerConfirmed` | boolean | Always `true` — every entry originates from a broker-authoritative source |
+| `why` | object \| null | Optional Dracul annotation (present only for `ORDER` entries linked to an executor decision via `brokerOrderId`, and only when the executor repos are wired, i.e. `dracul.executor.enabled=true`); always `null` for `CLOSED_POSITION` |
+
+`why` object fields (`DepotHistoryEntry.Why`, when present):
+
+| Field | Type | Description |
+|---|---|---|
+| `strigoi` | string | Agent name that issued the entry decision (e.g. `index-strigoi`) |
+| `killCriteria` | string[] | Kill criteria recorded on the executor position |
+| `entryReasoning` | string \| null | Entry decision's rationale, from the matching `DecisionLog` (`action=ENTER`); `null` if no matching decision log |
+| `draculExitReason` | string \| null | Executor's recorded exit reason (e.g. `TAKE_PROFIT`) — not authoritative for execution facts |
+| `draculRealizedR` | number \| null | Executor's recorded realized R — not authoritative for execution facts |
+
+All `why` fields are explicitly non-authoritative — the UI always marks them as Dracul's
+interpretation, never as broker fact.
 
 ### `GET /api/depots/chart` response
 
