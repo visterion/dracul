@@ -244,6 +244,16 @@ public class ExecutorPositionRepository {
                 .orElse(null);
     }
 
+    /** Looks up a position by the broker's order id — the join key used to enrich executor
+     *  positions with broker-side fill/order data (depot history). Returns {@code null} if none. */
+    public ExecutorPosition findByBrokerOrderId(String brokerOrderId) {
+        return jdbc.sql("SELECT * FROM executor_position WHERE broker_order_id = :bid ORDER BY entry_date DESC LIMIT 1")
+                .param("bid", brokerOrderId)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
     public List<ExecutorPosition> findOpen() {
         return jdbc.sql("""
                 SELECT * FROM executor_position WHERE status = 'OPEN'
