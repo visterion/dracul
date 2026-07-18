@@ -5,6 +5,7 @@ import de.visterion.dracul.executor.DecisionLogRepository;
 import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -18,14 +19,16 @@ import java.util.Set;
 public class DepotHistoryService {
 
     private static final Set<String> CLOSED_ORDER_STATUSES =
-            Set.of("filled", "partially_filled", "canceled", "cancelled", "expired", "rejected");
+            Set.of("filled", "canceled", "cancelled", "expired", "rejected");
 
     private final AgoraDepotClient client;
     private final DepotService depotService;
     private final Optional<ExecutorPositionRepository> positions;
     private final Optional<DecisionLogRepository> decisions;
 
-    // Spring picks this constructor; ObjectProvider makes the executor repos optional.
+    // @Autowired is required here: there are two constructors, so Spring cannot infer which
+    // one to use on its own. ObjectProvider makes the executor repos optional.
+    @Autowired
     public DepotHistoryService(AgoraDepotClient client, DepotService depotService,
             ObjectProvider<ExecutorPositionRepository> positions,
             ObjectProvider<DecisionLogRepository> decisions) {

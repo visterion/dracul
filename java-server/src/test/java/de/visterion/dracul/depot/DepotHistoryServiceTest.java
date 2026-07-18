@@ -52,6 +52,27 @@ class DepotHistoryServiceTest {
     }
 
     @Test
+    void alpacaOrdersWithoutExecutorReposYieldEntryWithoutWhy() {
+        // Executor disabled (dracul.executor.enabled=false): both repos are absent, exercising
+        // the exact wiring path that the missing @Autowired constructor previously broke.
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+
+        when(depotService.depot("depot-1", "u@x", false)).thenReturn(depotWithProvider("alpaca"));
+        when(client.orders("depot-1", "all")).thenReturn(List.of(
+                new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry")));
+
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty());
+        var out = svc.history("depot-1", "u@x");
+
+        assertThat(out).hasSize(1);
+        var e = out.get(0);
+        assertThat(e.source()).isEqualTo("ORDER");
+        assertThat(e.brokerConfirmed()).isTrue();
+        assertThat(e.why()).isNull();
+    }
+
+    @Test
     void saxoClosedPositionsHaveNoWhy() {
         var client = mock(AgoraDepotClient.class);
         var depotService = mock(DepotService.class);
