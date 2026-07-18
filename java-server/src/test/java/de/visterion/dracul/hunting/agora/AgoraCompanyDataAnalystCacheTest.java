@@ -1,5 +1,7 @@
 package de.visterion.dracul.hunting.agora;
 
+import de.visterion.dracul.hunting.news.NewsCredibilityProperties;
+import de.visterion.dracul.hunting.news.NewsCredibilityScorer;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
@@ -27,12 +29,18 @@ class AgoraCompanyDataAnalystCacheTest {
 
     private JsonNode json(String s) { return mapper.readTree(s); }
 
+    /** News path is unused in this test class — an empty table is fine. */
+    private static AgoraCompanyData data(AgoraClient client, boolean includeSocial) {
+        NewsCredibilityProperties props = new NewsCredibilityProperties(0.5, 0.3, List.of());
+        return new AgoraCompanyData(client, includeSocial, new NewsCredibilityScorer(props), props);
+    }
+
     @Test void recommendationsCachesSuccessButStrictStillThrowsDuringOutage() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_analyst_estimates"), any())).thenReturn(json(
                 "{\"symbol\":\"STT\",\"recommendations\":[" +
                 "{\"period\":\"2026-07\",\"strongBuy\":3,\"buy\":2,\"hold\":1,\"sell\":0,\"strongSell\":0}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         // Warm the cache via the swallowing entry point.
         List<RecommendationTrend> first = data.recommendations("STT");
@@ -56,7 +64,7 @@ class AgoraCompanyDataAnalystCacheTest {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_analyst_estimates"), any()))
                 .thenThrow(new AgoraUnavailableException("down"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         assertThat(data.recommendations("STT")).isEmpty();
         assertThat(data.recommendations("STT")).isEmpty();
@@ -69,7 +77,7 @@ class AgoraCompanyDataAnalystCacheTest {
         when(client.callTool(eq("get_analyst_estimates"), any())).thenReturn(json(
                 "{\"symbol\":\"STT\",\"recommendations\":[" +
                 "{\"period\":\"2026-07\",\"strongBuy\":3,\"buy\":2,\"hold\":1,\"sell\":0,\"strongSell\":0}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         assertThat(data.recommendations("STT")).hasSize(1);
         assertThat(data.recommendations("STT")).hasSize(1);

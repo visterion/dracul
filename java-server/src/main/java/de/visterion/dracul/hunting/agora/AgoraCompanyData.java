@@ -1,6 +1,8 @@
 package de.visterion.dracul.hunting.agora;
 
 import de.visterion.dracul.hunting.DataSourceResult;
+import de.visterion.dracul.hunting.news.NewsCredibilityProperties;
+import de.visterion.dracul.hunting.news.NewsCredibilityScorer;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.slf4j.Logger;
@@ -36,11 +38,17 @@ public class AgoraCompanyData {
     private final ObjectMapper mapper = new ObjectMapper();
     private static final Duration RECOMMENDATIONS_TTL = Duration.ofSeconds(3600);
     private final TtlCache<String, List<RecommendationTrend>> recommendationsCache = new TtlCache<>();
+    private final NewsCredibilityScorer credibilityScorer;
+    private final NewsCredibilityProperties credibilityProperties;
 
     public AgoraCompanyData(AgoraClient agora,
-                            @Value("${dracul.news.include-social:false}") boolean includeSocial) {
+                            @Value("${dracul.news.include-social:false}") boolean includeSocial,
+                            NewsCredibilityScorer credibilityScorer,
+                            NewsCredibilityProperties credibilityProperties) {
         this.agora = agora;
         this.includeSocial = includeSocial;
+        this.credibilityScorer = credibilityScorer;
+        this.credibilityProperties = credibilityProperties;
     }
 
     /**
@@ -53,6 +61,10 @@ public class AgoraCompanyData {
      * client-side (defense against an old Agora that ignores the param); when true, the
      * param is omitted and nothing is filtered. Dateless/social items stay visible through
      * the raw tool and the depot passthrough (DepotInstrumentService).
+     * After the social filter and the dateless drop, every item is scored against the static
+     * credibility table (dracul.news.credibility.*, min-of-hits over url domain and source);
+     * score < drop-below items are dropped with one INFO summary line per call. Survivors
+     * carry domain (nullable) and credibility (always set).
      */
     public List<NewsHeadline> news(String symbol, LocalDate from, LocalDate to) {
         JsonNode res;
@@ -69,6 +81,7 @@ public class AgoraCompanyData {
         List<NewsHeadline> out = new ArrayList<>();
         int droppedDateless = 0;
         int filteredSocial = 0;
+        int droppedLowCredibility = 0;
         for (JsonNode n : res.path("news")) {
             String headline = n.path("headline").asString("");
             if (headline.isBlank()) continue;
@@ -82,19 +95,33 @@ public class AgoraCompanyData {
                 droppedDateless++;
                 continue;
             }
+            String domain = nullableNonBlank(n.path("domain"));
+            String source = n.path("source").asString("");
+            double credibility = credibilityScorer.score(domain, source);
+            if (credibility < credibilityProperties.dropBelow()) {
+                droppedLowCredibility++;
+                continue;
+            }
             out.add(new NewsHeadline(
                     headline,
                     n.path("summary").asString(""),
-                    n.path("source").asString(""),
+                    source,
                     sourceType,
                     datetime,
-                    n.path("url").asString("")));
+                    n.path("url").asString(""),
+                    domain,
+                    credibility));
         }
         if (filteredSocial > 0) {
             log.debug("news: filtered {} social items for {}", filteredSocial, symbol);
         }
         if (droppedDateless > 0) {
             log.debug("news: dropped {} dateless items for {}", droppedDateless, symbol);
+        }
+        if (droppedLowCredibility > 0) {
+            // INFO on purpose (R1 Minor 7): credibility drops are operator-policy outcomes
+            // and must be visible in prod, unlike the DEBUG-level social/dateless drops.
+            log.info("news: dropped {} low-credibility items for {}", droppedLowCredibility, symbol);
         }
         return out;
     }
@@ -107,6 +134,14 @@ public class AgoraCompanyData {
         } catch (DateTimeParseException e) {
             return null;
         }
+    }
+
+    /** Explicit JSON null, a missing key and a blank string all mean "no domain"
+     *  (T1.4, R3 Minor 3) — a blank value must never key-match the table. */
+    private static String nullableNonBlank(JsonNode node) {
+        if (node.isMissingNode() || node.isNull()) return null;
+        String s = node.asString("");
+        return s.isBlank() ? null : s;
     }
 
     /** Analyst recommendation trend, newest-first as delivered; empty list on any failure
