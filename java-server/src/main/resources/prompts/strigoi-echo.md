@@ -16,6 +16,11 @@ Process:
    - Liquidity & size: `currentPrice`, `adv` (avg daily $ volume), `marketCap`, `beta`, `sector`, `metricsAvailable`, `analystCoverage` (number of analysts covering the name, from the latest recommendation trend), `coverageAvailable`.
    - Earnings quality & timing: `accrualRatio` (Sloan; lower/negative = cash-backed, higher = lower quality), `accrualsAvailable`, `netEstimateRevisionsProxy` (analyst recommendation-trend delta), `netEstimateRevisionsDirection` (`up`/`down`/`flat`, the sign of that proxy), `revisionsAvailable`, `nextEarningsDate`, `daysToNextEarnings`.
    - Timing: `daysSinceReport`.
+   - Recent news: `recentNews` — up to N=10 most-recent post-report headlines for this
+     symbol, newest first, each `{headline, summary, source, credibility, datetime}`
+     (`credibility` 0–1, same weighting posture as elsewhere). Score their sentiment (see
+     Financial sentiment below); hard confounders are already dropped server-side, so do NOT
+     re-gate or veto a prey based on `recentNews`.
 2. Rank by **SUE / sueDecile**, NOT by raw surprise %. Higher decile = stronger drift.
 3. Apply the confidence rubric below. Output at most 5 prey, highest confidence first.
 
@@ -31,7 +36,7 @@ Neglect premium: when `coverageAvailable` is true, a LOW `analystCoverage` (few 
 
 Horizon: PEAD plays out over 1-3 months. Default `horizon: "3m"`; use `"1m"` only for the freshest top-decile names.
 
-The screener has already HARD-DROPPED candidates whose beat is accrual-driven (low quality), that carry a confounding corporate event (M&A, restatement, guidance cut, dilution, investigation), or whose next earnings report is imminent — you will not see those. As defence-in-depth, still treat a high `accrualRatio` as a quality risk, a positive `netEstimateRevisionsProxy` / `netEstimateRevisionsDirection: up` as a mild confirming tailwind, and more `daysToNextEarnings` as a cleaner drift window.
+The screener has already HARD-DROPPED candidates whose beat is accrual-driven (low quality), that carry a confounding corporate event (M&A, restatement, guidance cut, dilution, investigation), or whose next earnings report is imminent — those hard confounders are dropped server-side by the gate before you ever see this candidate. You DO receive `recentNews` (see above): it may still contain other, non-blocking post-report headlines — score their sentiment, but do NOT re-gate or veto the prey on them (sentiment is a soft feature, never a PEAD kill criterion, and must never fabricate or suppress prey). As defence-in-depth, still treat a high `accrualRatio` as a quality risk, a positive `netEstimateRevisionsProxy` / `netEstimateRevisionsDirection: up` as a mild confirming tailwind, and more `daysToNextEarnings` as a cleaner drift window.
 
 Signals (3-5 short strings per prey) — you MUST explicitly include BOTH the numeric SUE/decile AND the announcement-CAR, e.g. "SUE 2.4 (decile 10) — top-decile surprise", "Announcement CAR +3.1% vs SPY — market confirming", "EPS and revenue both beat (double beat)", "Reported 2 days ago — full drift window ahead", "Clean accruals (ratio 0.03)", "Analyst revisions trending up". If `carAvailable` is false, state "announcement-CAR unavailable".
 

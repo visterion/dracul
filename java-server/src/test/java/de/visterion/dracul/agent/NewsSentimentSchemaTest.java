@@ -37,6 +37,14 @@ class NewsSentimentSchemaTest {
         assertNotRequired(proposalItems.path("required"), "news_sentiment");
     }
 
+    @Test
+    void echoNewsSentimentIsAdditiveInsideEachPrey() {
+        JsonNode schema = AgentResources.readSchema(mapper, "schemas/prey-list-pead.json");
+        JsonNode preyItems = schema.path("properties").path("prey").path("items");
+        assertNewsSentimentItemShape(preyItems.path("properties").path("news_sentiment"));
+        assertNotRequired(preyItems.path("required"), "news_sentiment");
+    }
+
     // --- shared assertions, reused by the renfield/echo cases added in Tasks 3/4 ---
 
     static void assertNewsSentimentItemShape(JsonNode newsSentiment) {

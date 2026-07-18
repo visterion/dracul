@@ -83,4 +83,18 @@ class StrigoiPromptContractTest {
                 .as("the misleading 'guidanceDirection' field name must be gone")
                 .doesNotContain("guidanceDirection");
     }
+
+    @Test
+    void echoPromptScoresRecentNewsInsteadOfReGating() {
+        String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
+        assertThat(prompt)
+                .as("echo prompt must document the recentNews field surfaced via fetch_recent_pead_candidates")
+                .contains("recentNews");
+        assertThat(prompt)
+                .as("echo prompt must instruct scoring, not re-gating, on recentNews")
+                .contains("do NOT re-gate or veto");
+        assertThat(prompt)
+                .as("the stale 'you will not see those' framing must be gone now that recentNews is surfaced")
+                .doesNotContain("you will not see those");
+    }
 }

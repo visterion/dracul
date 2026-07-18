@@ -16,7 +16,18 @@
           "signals":     {"type": "array", "items": {"type": "string"}},
           "risks":       {"type": "array", "items": {"type": "string"}},
           "horizon":     {"type": "string", "enum": ["1m", "3m", "6m", "12m"]},
-          "kill_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5}
+          "kill_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5},
+          "news_sentiment": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["headline", "sentiment"],
+              "properties": {
+                "headline": {"type": "string"},
+                "sentiment": {"type": "number", "minimum": -1, "maximum": 1}
+              }
+            }
+          }
         }
       }
     }
