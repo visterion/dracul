@@ -425,6 +425,7 @@ Order ticket fields (`ticket`):
 |---|---|---|
 | GET | `/api/depots` | List depot connections and their positions/orders for the current user. Served from a per-connection display cache (TTL `dracul.depots.cache-ttl-seconds`, default 60s); `?refresh=true` bypasses it and re-fetches from the broker. |
 | GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders). Fetches only the requested connection (cached), not all connections. |
+| GET | `/api/depots/{connection}/history` | Broker-authoritative trade history (closed positions for Saxo, all orders for Alpaca) with optional Dracul "why" annotation (Strigoi/rationale per `broker_order_id` when linked). Returns `{ entries: [...], error }`. |
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
 | GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
@@ -565,6 +566,65 @@ depot connection.
   same per-connection failure that shows up as an `error` entry in
   `GET /api/depots`'s `depots[]`). In both cases the response body is
   the plain error message, not a JSON envelope.
+
+### `GET /api/depots/{connection}/history` response
+
+Broker-authoritative closed-position and order history with optional Dracul annotations.
+For Saxo connections, fetches `get_closed_positions`; for Alpaca, fetches all orders with
+`status=all`. Each entry includes broker-native fields plus optional `why` annotation
+(Strigoi name and rationale) when Dracul can link the trade to an executor decision via
+`broker_order_id`.
+
+Error-status matrix: **`404 NOT_FOUND`** if `{connection}` isn't visible to the current
+user; **`503 SERVICE_UNAVAILABLE`** if either the whole read path failed or `{connection}`
+was found but its broker fetch failed.
+
+```json
+{
+  "entries": [
+    {
+      "brokerOrderId": "o123",
+      "symbol": "ACME",
+      "side": "buy",
+      "qty": 10,
+      "entryPrice": 142.50,
+      "exitPrice": 155.30,
+      "entryDate": "2026-06-15T10:30:00Z",
+      "exitDate": "2026-06-20T14:15:00Z",
+      "realizedPl": 127.50,
+      "why": {
+        "strigoi": "gropar",
+        "rationale": "Exit signal: MA cross below 50d; thesis weakening"
+      }
+    }
+  ],
+  "error": null
+}
+```
+
+Per-entry fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `brokerOrderId` | string | Broker-native trade or order identifier — primary key for linking Dracul "why" annotations |
+| `symbol` | string | Ticker |
+| `side` | string | `buy` / `sell` |
+| `qty` | number | Trade quantity |
+| `entryPrice` | number \| null | Fill price (null for pending orders) |
+| `exitPrice` | number \| null | Exit fill price (null for open orders or Alpaca orders not yet closed) |
+| `entryDate` | string (ISO instant) \| null | Entry fill timestamp (null for unfilled orders) |
+| `exitDate` | string (ISO instant) \| null | Exit/closure timestamp (null for open positions) |
+| `realizedPl` | number \| null | Realized profit/loss in account currency (null when not computable, e.g. unfilled) |
+| `why` | object \| null | Optional Dracul annotation (present only when the broker trade is linked to an executor decision via `broker_order_id`); `null` when no link exists or Dracul executor is disabled |
+
+`why` object fields (when present):
+
+| Field | Type | Description |
+|---|---|---|
+| `strigoi` | string | Agent name that issued the decision (e.g. `gropar`) |
+| `rationale` | string | Human-readable reason for the action (not authoritative — Dracul's interpretation, always clearly marked as such in the UI) |
+
+`error` is non-null (with `entries` an empty list) only when the broker fetch failed for that connection — HTTP status stays 200.
 
 ### `GET /api/depots/chart` response
 
