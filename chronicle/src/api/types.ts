@@ -560,6 +560,33 @@ export interface DepotOrderView {
   role: string | null
 }
 
+export interface DepotHistoryWhy {
+  strigoi: string | null
+  killCriteria: string[] | null
+  entryReasoning: string | null
+  draculExitReason: string | null
+  draculRealizedR: number | null
+}
+
+export interface DepotHistoryEntry {
+  source: 'ORDER' | 'CLOSED_POSITION'
+  symbol: string
+  side: string | null
+  qty: number | null
+  entryPrice: number | null
+  exitPrice: number | null
+  profitLoss: number | null
+  status: string
+  brokerOrderId: string | null
+  brokerConfirmed: boolean
+  why: DepotHistoryWhy | null
+}
+
+export interface DepotHistory {
+  entries: DepotHistoryEntry[]
+  error: string | null
+}
+
 export interface Depot {
   id: string
   provider: string
