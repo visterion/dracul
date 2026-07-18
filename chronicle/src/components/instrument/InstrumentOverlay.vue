@@ -59,8 +59,12 @@ watch(() => store.openSymbol, sym => {
 </script>
 
 <style scoped>
-.io-card { background: var(--crypt-black); padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); }
-.io-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+/* The v-dialog's `scrollable` prop only wires up a scroll container for a
+   v-card/v-card-text; this custom card must scroll itself. Without a bounded
+   height + overflow the overflowing content is simply clipped by
+   .v-overlay__content and cannot be touch-scrolled on iOS. */
+.io-card { background: var(--crypt-black); padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); max-height: 88vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.io-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); position: sticky; top: 0; margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0; padding: var(--space-5) var(--space-5) var(--space-3); background: var(--crypt-black); z-index: 1; }
 .io-symbol { color: var(--bone-ivory); font-size: 1.5rem; margin: 0; }
 .io-name { color: var(--ash-gray); font-size: var(--text-body-sm); }
 .io-price-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
