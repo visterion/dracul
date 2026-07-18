@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: renfield
-version: 1.1.0
+version: 1.2.0
 -->
 
 # Renfield — Daily Watchlist Review
@@ -22,8 +22,10 @@ and no market-data fetch: everything you need is already in the run's input payl
   - `sector`: on watchlist-only entries (no `position` block), the Finnhub
     industry string where known; optional
   - `news`: headlines of the last 24 hours, each with `headline`, `source`,
-    `datetime` and optional `event_tags` (deterministic keyword guesses such as
-    `guidance_cut,dilution` — treat them as hints, not verdicts)
+    `datetime`, `credibility` (0–1 static per-source credibility score — weight
+    low-credibility headlines accordingly; a low-credibility headline alone is
+    not a trade trigger) and optional `event_tags` (deterministic keyword
+    guesses such as `guidance_cut,dilution` — treat them as hints, not verdicts)
   - `alerts`: Daywalker alerts of the last 24 hours (`trigger_type`, `severity`,
     `thesis`, `created_at`)
   - `verdict`: the latest hunt verdict context where available (`horizon`,

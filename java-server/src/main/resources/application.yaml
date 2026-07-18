@@ -28,6 +28,58 @@ dracul:
     # client-side at the AgoraCompanyData chokepoint (covers NewsDetector + ConfounderScreen).
     # The depot instrument bundle (DepotInstrumentService) deliberately bypasses this filter.
     include-social: ${DRACUL_NEWS_INCLUDE_SOCIAL:false}
+    # T1.4 credibility scoring — static operator table applied at the AgoraCompanyData
+    # chokepoint AFTER the social filter and the dateless drop. Matching is EXACT and
+    # case-insensitive against BOTH the item's url domain and its source string; if both
+    # hit, min(domainScore, sourceScore) wins (a reddit link-post must never inherit
+    # wire-grade credibility from the linked domain). First hit wins in list order.
+    # score < drop-below => item is hard-dropped (one INFO summary line per call);
+    # score == drop-below passes. Unknown source/domain => default-score. An empty
+    # table scores everything default-score and drops nothing — the table is the switch.
+    # default-score must be >= drop-below (enforced at startup by NewsCredibilityProperties):
+    # otherwise every unknown source would be silently hard-dropped.
+    # Reddit rows sit below drop-below on purpose: reddit items drop even under
+    # include-social=true. An operator opting reddit in must raise ALL reddit rows
+    # (old.reddit.com, reddit.com, reddit-stocks, reddit-wallstreetbets) — matching is
+    # exact, and which row fires depends on the item-link host (live-verified as
+    # old.reddit.com; reddit.com kept for www/new-reddit link variants) vs. the feed id.
+    # Finnhub (the primary provider) proxies every item's url through
+    # finnhub.io/api/news?id=... (live-verified, 247/247) — the url domain is therefore
+    # useless for Finnhub items. Do NOT add a finnhub.io row: it would collapse every
+    # Finnhub item onto one score. Instead the source string carries the real publisher
+    # as a display name, so the source rows below are the actual discriminator for
+    # Finnhub-sourced news. The original sample contained Yahoo/Benzinga/CNBC/SeekingAlpha/
+    # ChartMill; Reuters/Bloomberg/WSJ/MarketWatch were added for known Finnhub source values
+    # observed beyond the initial sample.
+    credibility:
+      default-score: 0.5
+      drop-below: 0.3
+      sources:
+        - { match: "reuters.com", score: 0.9 }
+        - { match: "bloomberg.com", score: 0.9 }
+        - { match: "wsj.com", score: 0.85 }
+        - { match: "ft.com", score: 0.85 }
+        - { match: "cnbc.com", score: 0.7 }
+        - { match: "marketwatch.com", score: 0.65 }
+        - { match: "finance.yahoo.com", score: 0.6 }
+        - { match: "seekingalpha.com", score: 0.5 }
+        - { match: "benzinga.com", score: 0.45 }
+        - { match: "globenewswire.com", score: 0.4 }
+        - { match: "prnewswire.com", score: 0.4 }
+        - { match: "businesswire.com", score: 0.4 }
+        - { match: "reddit.com", score: 0.2 }
+        - { match: "old.reddit.com", score: 0.2 }
+        - { match: "reddit-stocks", score: 0.2 }
+        - { match: "reddit-wallstreetbets", score: 0.2 }
+        - { match: "Yahoo", score: 0.6 }
+        - { match: "Benzinga", score: 0.45 }
+        - { match: "CNBC", score: 0.7 }
+        - { match: "SeekingAlpha", score: 0.5 }
+        - { match: "ChartMill", score: 0.45 }
+        - { match: "Reuters", score: 0.9 }
+        - { match: "Bloomberg", score: 0.9 }
+        - { match: "WSJ", score: 0.85 }
+        - { match: "MarketWatch", score: 0.65 }
   strigoi:
     insider:
       enabled: ${STRIGOI_INSIDER_ENABLED:false}

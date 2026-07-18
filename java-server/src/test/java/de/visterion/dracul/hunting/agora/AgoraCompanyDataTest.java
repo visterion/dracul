@@ -1,5 +1,7 @@
 package de.visterion.dracul.hunting.agora;
 
+import de.visterion.dracul.hunting.news.NewsCredibilityProperties;
+import de.visterion.dracul.hunting.news.NewsCredibilityScorer;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,20 @@ class AgoraCompanyDataTest {
 
     private JsonNode json(String s) { return mapper.readTree(s); }
 
+    /** Seed-like table for chokepoint tests: one wire domain, one reddit source row, one boundary row. */
+    private static NewsCredibilityProperties testProps() {
+        return new NewsCredibilityProperties(0.5, 0.3, List.of(
+                new NewsCredibilityProperties.SourceEntry("reuters.com", 0.9),
+                new NewsCredibilityProperties.SourceEntry("reddit-stocks", 0.2),
+                new NewsCredibilityProperties.SourceEntry("boundary.example", 0.3),
+                new NewsCredibilityProperties.SourceEntry("", 0.1)));
+    }
+
+    private static AgoraCompanyData data(AgoraClient client, boolean includeSocial) {
+        NewsCredibilityProperties props = testProps();
+        return new AgoraCompanyData(client, includeSocial, new NewsCredibilityScorer(props), props);
+    }
+
     @Test void newsMapsRowsParsesInstantAndSkipsBlankHeadline() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
@@ -35,7 +51,7 @@ class AgoraCompanyDataTest {
                 "\"datetime\":\"2026-06-30T14:05:00Z\",\"url\":\"http://n/1\"}," +
                 "{\"headline\":\"\",\"summary\":\"no headline\",\"source\":\"X\"," +
                 "\"datetime\":\"2026-06-30T15:00:00Z\",\"url\":\"http://n/2\"}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         List<NewsHeadline> out = data.news("AAPL", LocalDate.parse("2026-06-28"), LocalDate.parse("2026-07-01"));
         assertThat(out).hasSize(1);
@@ -55,7 +71,7 @@ class AgoraCompanyDataTest {
     @Test void newsReturnsEmptyListOnAgoraFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_company_news"), any())).thenThrow(new AgoraUnavailableException("down"));
-        assertThat(new AgoraCompanyData(client, false).news("AAPL", LocalDate.now().minusDays(1), LocalDate.now()))
+        assertThat(data(client, false).news("AAPL", LocalDate.now().minusDays(1), LocalDate.now()))
                 .isEmpty();
     }
 
@@ -67,7 +83,7 @@ class AgoraCompanyDataTest {
                 "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}," +
                 "{\"headline\":\"New Agora item with sourceType\",\"summary\":\"s\",\"source\":\"yahoo-rss\"," +
                 "\"sourceType\":\"news\",\"datetime\":\"2026-07-15T11:00:00Z\",\"url\":\"http://n/2\"}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         List<NewsHeadline> out = data.news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
         assertThat(out).hasSize(2);
@@ -85,7 +101,7 @@ class AgoraCompanyDataTest {
                 "\"url\":\"http://n/2\"}," +
                 "{\"headline\":\"Unparseable datetime\",\"summary\":\"s\",\"source\":\"yahoo-rss\"," +
                 "\"datetime\":\"Tue, 15 Jul 2026 10:00:00 EST\",\"url\":\"http://n/3\"}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         ch.qos.logback.classic.Logger logger =
                 (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AgoraCompanyData.class);
@@ -116,7 +132,7 @@ class AgoraCompanyDataTest {
                 "\"sourceType\":\"news\",\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}," +
                 "{\"headline\":\"Forum chatter\",\"summary\":\"s\",\"source\":\"reddit-stocks\"," +
                 "\"sourceType\":\"social\",\"datetime\":\"2026-07-15T11:00:00Z\",\"url\":\"http://n/2\"}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         List<NewsHeadline> out =
                 data.news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
@@ -130,7 +146,7 @@ class AgoraCompanyDataTest {
         assertThat(args.getValue().path("sourceTypes").get(0).asString()).isEqualTo("news");
     }
 
-    @Test void newsOmitsSourceTypesArgAndKeepsSocialWhenIncludeSocialTrue() {
+    @Test void newsOmitsSourceTypesArgWhenIncludeSocialTrueAndCredibilityStillDropsReddit() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
                 "{\"symbol\":\"AAPL\",\"news\":[" +
@@ -138,12 +154,12 @@ class AgoraCompanyDataTest {
                 "\"sourceType\":\"news\",\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}," +
                 "{\"headline\":\"Forum chatter\",\"summary\":\"s\",\"source\":\"reddit-stocks\"," +
                 "\"sourceType\":\"social\",\"datetime\":\"2026-07-15T11:00:00Z\",\"url\":\"http://n/2\"}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, true);
+        AgoraCompanyData data = data(client, true);
 
         List<NewsHeadline> out =
                 data.news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
-        assertThat(out).hasSize(2);
-        assertThat(out.get(1).sourceType()).isEqualTo("social");
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).headline()).isEqualTo("Real news");
 
         ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
         Mockito.verify(client).callTool(eq("get_company_news"), args.capture());
@@ -156,7 +172,7 @@ class AgoraCompanyDataTest {
                 "{\"symbol\":\"AAPL\",\"news\":[" +
                 "{\"headline\":\"Forum chatter\",\"summary\":\"s\",\"source\":\"reddit-stocks\"," +
                 "\"sourceType\":\"social\",\"datetime\":\"2026-07-15T11:00:00Z\",\"url\":\"http://n/2\"}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         ch.qos.logback.classic.Logger logger =
                 (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AgoraCompanyData.class);
@@ -183,7 +199,7 @@ class AgoraCompanyDataTest {
                 "{\"symbol\":\"AAPL\",\"recommendations\":[" +
                 "{\"period\":\"2026-06-01\",\"strongBuy\":10,\"buy\":5,\"hold\":3,\"sell\":1,\"strongSell\":0}," +
                 "{\"period\":\"2026-05-01\",\"strongBuy\":8,\"buy\":5,\"hold\":4,\"sell\":2,\"strongSell\":1}]}"));
-        AgoraCompanyData data = new AgoraCompanyData(client, false);
+        AgoraCompanyData data = data(client, false);
 
         List<RecommendationTrend> out = data.recommendations("AAPL");
         assertThat(out).hasSize(2);
@@ -198,14 +214,14 @@ class AgoraCompanyDataTest {
     @Test void recommendationsReturnsEmptyListOnAgoraFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_analyst_estimates"), any())).thenThrow(new AgoraUnavailableException("down"));
-        assertThat(new AgoraCompanyData(client, false).recommendations("AAPL")).isEmpty();
+        assertThat(data(client, false).recommendations("AAPL")).isEmpty();
     }
 
     @Test void fundamentalsReturnsRawMetricsBlob() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_fundamentals"), any())).thenReturn(json(
                 "{\"symbol\":\"AAPL\",\"metrics\":{\"beta\":1.2,\"52WeekLow\":150.0,\"roaTTM\":21.5}}"));
-        JsonNode m = new AgoraCompanyData(client, false).fundamentals("AAPL");
+        JsonNode m = data(client, false).fundamentals("AAPL");
         assertThat(m).isNotNull();
         assertThat(m.path("beta").asDouble()).isEqualTo(1.2);
         assertThat(m.path("52WeekLow").asDouble()).isEqualTo(150.0);
@@ -214,25 +230,134 @@ class AgoraCompanyDataTest {
     @Test void fundamentalsReturnsNullOnAgoraFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_fundamentals"), any())).thenThrow(new AgoraUnavailableException("down"));
-        assertThat(new AgoraCompanyData(client, false).fundamentals("AAPL")).isNull();
+        assertThat(data(client, false).fundamentals("AAPL")).isNull();
     }
 
     @Test void fundamentalsReturnsNullWhenMetricsMissingOrNull() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_fundamentals"), any())).thenReturn(json("{\"symbol\":\"AAPL\",\"metrics\":null}"));
-        assertThat(new AgoraCompanyData(client, false).fundamentals("AAPL")).isNull();
+        assertThat(data(client, false).fundamentals("AAPL")).isNull();
     }
 
     @Test void profileReturnsRawBlobAndNullOnFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_company_profile"), any())).thenReturn(json(
                 "{\"symbol\":\"AAPL\",\"profile\":{\"name\":\"Apple Inc\",\"finnhubIndustry\":\"Technology\"}}"));
-        JsonNode p = new AgoraCompanyData(client, false).profile("AAPL");
+        JsonNode p = data(client, false).profile("AAPL");
         assertThat(p).isNotNull();
         assertThat(p.path("finnhubIndustry").asString()).isEqualTo("Technology");
 
         AgoraClient down = Mockito.mock(AgoraClient.class);
         when(down.callTool(eq("get_company_profile"), any())).thenThrow(new AgoraUnavailableException("down"));
-        assertThat(new AgoraCompanyData(down, false).profile("AAPL")).isNull();
+        assertThat(data(down, false).profile("AAPL")).isNull();
+    }
+
+    // ---- T1.4 credibility scoring at the chokepoint ----
+
+    @Test void newsDropsLowCredibilityItemsWithInfoSummaryLog() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Wire story\",\"summary\":\"s\",\"source\":\"Reuters\",\"sourceType\":\"news\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"https://www.reuters.com/a\",\"domain\":\"reuters.com\"}," +
+                "{\"headline\":\"Forum chatter\",\"summary\":\"s\",\"source\":\"reddit-stocks\",\"sourceType\":\"social\"," +
+                "\"datetime\":\"2026-07-15T11:00:00Z\",\"url\":\"https://old.reddit.com/r/stocks/x\",\"domain\":\"old.reddit.com\"}]}"));
+        AgoraCompanyData cd = data(client, true);
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AgoraCompanyData.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            List<NewsHeadline> out =
+                    cd.news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+            assertThat(out).hasSize(1);
+            assertThat(out.get(0).headline()).isEqualTo("Wire story");
+            // R1 Minor 7: credibility drops are operator-policy outcomes -> INFO, not DEBUG.
+            assertThat(appender.list)
+                    .anySatisfy(e -> {
+                        assertThat(e.getLevel()).isEqualTo(Level.INFO);
+                        assertThat(e.getFormattedMessage())
+                                .isEqualTo("news: dropped 1 low-credibility items for AAPL");
+                    });
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test void newsSurvivorCarriesCredibilityAndDomain() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Wire story\",\"summary\":\"s\",\"source\":\"Reuters\",\"sourceType\":\"news\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"https://www.reuters.com/a\",\"domain\":\"reuters.com\"}]}"));
+        List<NewsHeadline> out = data(client, false)
+                .news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).domain()).isEqualTo("reuters.com");
+        assertThat(out.get(0).credibility()).isEqualTo(0.9);
+    }
+
+    @Test void newsBoundaryScoreEqualToDropBelowPasses() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Boundary item\",\"summary\":\"s\",\"source\":\"x\",\"sourceType\":\"news\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"https://boundary.example/a\",\"domain\":\"boundary.example\"}]}"));
+        List<NewsHeadline> out = data(client, false)
+                .news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+        assertThat(out).hasSize(1); // drop iff score < dropBelow; 0.3 == 0.3 passes
+        assertThat(out.get(0).credibility()).isEqualTo(0.3);
+    }
+
+    @Test void newsRedditGuaranteeUnknownDomainDropsViaSourceFallback() {
+        // Locks the opt-in mechanism regardless of reddit's actual link host.
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Reddit post\",\"summary\":\"s\",\"source\":\"reddit-stocks\",\"sourceType\":\"social\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"https://some.unknownhost.example/x\",\"domain\":\"some.unknownhost.example\"}]}"));
+        assertThat(data(client, true)
+                .news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"))).isEmpty();
+    }
+
+    @Test void newsAcceptedLossPinRedditSourceWithWireDomainStillDrops() {
+        // R3 accepted-loss decision as an executable test: min(0.2, 0.9) < 0.3 -> drop.
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Reddit link-post to a wire story\",\"summary\":\"s\",\"source\":\"reddit-stocks\"," +
+                "\"sourceType\":\"social\",\"datetime\":\"2026-07-15T10:00:00Z\"," +
+                "\"url\":\"https://www.reuters.com/a\",\"domain\":\"reuters.com\"}]}"));
+        assertThat(data(client, true)
+                .news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"))).isEmpty();
+    }
+
+    @Test void newsOldAgoraPayloadWithoutDomainKeyScoresViaSourceFallbackAndSurvives() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Old Agora item\",\"summary\":\"s\",\"source\":\"SomeWire\"," +
+                "\"datetime\":\"2026-07-15T10:00:00Z\",\"url\":\"http://n/1\"}]}"));
+        List<NewsHeadline> out = data(client, false)
+                .news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).domain()).isNull();
+        assertThat(out.get(0).credibility()).isEqualTo(0.5); // unknown source -> defaultScore
+    }
+
+    @Test void newsExplicitNullDomainNeverHitsAnEmptyStringTableRow() {
+        // New-Agora unparsable-URL shape: "domain": null. The "" table row must not fire.
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_company_news"), any())).thenReturn(json(
+                "{\"symbol\":\"AAPL\",\"news\":[" +
+                "{\"headline\":\"Null domain item\",\"summary\":\"s\",\"source\":\"\"," +
+                "\"sourceType\":\"news\",\"datetime\":\"2026-07-15T10:00:00Z\"," +
+                "\"url\":\"not a url\",\"domain\":null}]}"));
+        List<NewsHeadline> out = data(client, false)
+                .news("AAPL", LocalDate.parse("2026-07-14"), LocalDate.parse("2026-07-16"));
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).credibility()).isEqualTo(0.5); // NOT the "" row's 0.1
     }
 }

@@ -186,6 +186,7 @@ public class RenfieldScheduler {
             n.put("headline", h.headline());
             n.put("source", h.source());
             n.put("datetime", h.datetime() == null ? null : h.datetime().toString());
+            n.put("credibility", h.credibility());
             Set<NewsEventType> tags = tagger.tag(h);
             if (!tags.isEmpty()) {
                 n.put("event_tags", tags.stream().map(NewsEventType::wireValue)

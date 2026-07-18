@@ -195,4 +195,25 @@ class SignalDetectorsTest {
         assertThat(res.trigger().get().detail()).containsEntry("headline", "Acme cuts guidance");
         assertThat(res.macroOnly()).hasSize(1);
     }
+
+    @Test
+    void newsDetectorDetailCarriesCredibility() {
+        var d = new NewsDetector();
+        var h = new NewsHeadline("Acme cuts guidance", "s", "Reuters", "news",
+                Instant.parse("2026-07-15T10:00:00Z"), "https://www.reuters.com/a", "reuters.com", 0.9);
+        var ev = d.detect(item(), List.of(h)).trigger();
+        assertThat(ev).isPresent();
+        assertThat(ev.get().detail()).containsEntry("credibility", 0.9);
+        assertThat(ev.get().detail()).containsEntry("source", "Reuters"); // existing key stays
+    }
+
+    @Test
+    void macroHeadlineCarriesCredibility() {
+        var d = new NewsDetector();
+        var h = new NewsHeadline("Fed raises rates again", "s", "Reuters", "news",
+                Instant.parse("2026-07-15T10:00:00Z"), "https://www.reuters.com/a", "reuters.com", 0.9);
+        var res = d.detect(item(), List.of(h));
+        assertThat(res.macroOnly()).hasSize(1);
+        assertThat(res.macroOnly().get(0).credibility()).isEqualTo(0.9);
+    }
 }
