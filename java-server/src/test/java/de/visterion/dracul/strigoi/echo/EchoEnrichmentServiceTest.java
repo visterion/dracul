@@ -276,4 +276,42 @@ class EchoEnrichmentServiceTest {
         assertThat(out).hasSize(1);
         assertThat(out.get(0).recentNews()).isEmpty();
     }
+
+    @Test
+    void negativeRecentNewsCapClampsToEmptyInsteadOfThrowing() {
+        // A misconfigured negative dracul.strigoi.echo.recent-news-cap must not abort the whole
+        // enrich run via Stream.limit's IllegalArgumentException (Minor-2 regression guard).
+        var cd = companyData(trend(1, 8), cleanHeadlines(3));
+        var svc = new EchoEnrichmentService(new SueEngine(), filings(), shaper(historyFor(REPORT)), marketData(),
+                new MarketSignalService(), equityMetrics(), "SPY", 320,
+                accruals(new BigDecimal("0.03")), new RevisionsProxy(), cd, nextEarnings(40),
+                new ConfounderScreen(cd), new EchoDeterministicGate(new BigDecimal("0.10"), 10), -1);
+
+        var out = svc.enrich(List.of(cand("NEG", 1.80)));
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).recentNews()).isEmpty();
+    }
+
+    @Test
+    void confounderScanFailureDegradesOneCandidateAndContinuesTheBatch() {
+        // Simulates an unexpected bug in the keyword-tagging step (not an Agora fetch failure,
+        // which is guarded separately by safeNews). Per-candidate degradation must fail open
+        // (empty confounders/recentNews) for the broken candidate and still process the rest of
+        // the batch (Minor-1 regression guard).
+        var cd = companyData(trend(1, 8), cleanHeadlines(2));
+        ConfounderScreen brokenScreen = mock(ConfounderScreen.class);
+        when(brokenScreen.confounders(org.mockito.ArgumentMatchers.<NewsHeadline>anyList()))
+                .thenThrow(new RuntimeException("tagger blew up"));
+        var svc = new EchoEnrichmentService(new SueEngine(), filings(), shaper(historyFor(REPORT)), marketData(),
+                new MarketSignalService(), equityMetrics(), "SPY", 320,
+                accruals(new BigDecimal("0.03")), new RevisionsProxy(), cd, nextEarnings(40),
+                brokenScreen, new EchoDeterministicGate(new BigDecimal("0.10"), 10), 10);
+
+        var out = svc.enrich(List.of(cand("BROKEN", 1.80), cand("FINE", 1.80)));
+
+        assertThat(out).hasSize(2);
+        assertThat(out.get(0).recentNews()).isEmpty();
+        assertThat(out.get(1).recentNews()).isEmpty(); // both share the same mocked, always-throwing screen
+    }
 }
