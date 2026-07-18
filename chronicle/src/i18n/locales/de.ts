@@ -712,6 +712,13 @@ export default {
       Routine: 'Routine',
     },
   },
+  instrument: {
+    openInfo: 'Info zu {symbol} öffnen',
+    held: 'Gehalten',
+    noData: 'Keine Daten',
+    error: 'Daten konnten nicht geladen werden',
+    close: 'Schließen',
+  },
   strigoi: {
     back: 'zurück',
     loadError: 'Strigoi konnte nicht geladen werden.',
