@@ -1,3 +1,4 @@
 .env.local
 test-results/
 tsconfig.tsbuildinfo
+node_modules
