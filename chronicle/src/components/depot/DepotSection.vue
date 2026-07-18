@@ -21,7 +21,30 @@
       <span>{{ depot.error }}</span>
     </div>
 
-    <template v-if="depot.account">
+    <div class="dp-tabs" role="tablist">
+      <button class="dp-tab-btn" :class="{ active: tab === 'live' }"
+        data-testid="depot-tab-live" @click="tab = 'live'">{{ t('depots.tabs.live') }}</button>
+      <button class="dp-tab-btn" :class="{ active: tab === 'history' }"
+        data-testid="depot-tab-history" @click="selectHistory()">{{ t('depots.tabs.history') }}</button>
+    </div>
+
+    <div v-if="tab === 'history'" class="dp-history">
+      <div v-if="historyLoading">{{ t('depots.history.loading') }}</div>
+      <div v-else-if="historyError">{{ historyError }}</div>
+      <div v-else-if="history.length === 0">{{ t('depots.history.empty') }}</div>
+      <div v-else>
+        <div v-for="(e, i) in history" :key="i" class="dp-history-row" data-testid="depot-history-row">
+          <span class="dp-hist-sym">{{ e.symbol }}</span>
+          <span class="dp-hist-status">{{ orderStatusLabel(e.status, t).label }}</span>
+          <span v-if="e.profitLoss !== null" class="dp-hist-pl">{{ e.profitLoss }}</span>
+          <span v-if="e.brokerConfirmed" class="dp-hist-badge">{{ t('depots.history.brokerConfirmed') }}</span>
+          <span v-if="e.why" class="dp-hist-why">{{ e.why.strigoi }} — {{ e.why.entryReasoning }}</span>
+          <span v-else class="dp-hist-nowhy">{{ t('depots.history.notLinkable') }}</span>
+        </div>
+      </div>
+    </div>
+
+    <template v-if="tab === 'live' && depot.account">
       <div class="dp-headline">
         <span class="dp-headline-value mono">{{ formatMoney(depot.account.equity, depot.account.currency) }}</span>
         <span
@@ -137,7 +160,7 @@ import PriceChart from '../common/PriceChart.vue'
 import DepotPositionsTable from './DepotPositionsTable.vue'
 import TickerButton from '../instrument/TickerButton.vue'
 import { useApi } from '../../api'
-import type { Depot, DepotChart, ChartRange } from '../../api/types'
+import type { Depot, DepotChart, ChartRange, DepotHistoryEntry } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
 import { fmtPl, allocationSegments, isStale, formatAbsoluteTime } from '../../lib/depotDisplay'
 import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../../lib/orderDisplay'
@@ -158,6 +181,37 @@ function pnlClass(v: number | null): string {
 }
 
 const metric = ref<'sinceBuy' | 'today'>('sinceBuy')
+
+// ── Tabs / history ────────────────────────────────────────────────
+
+const tab = ref<'live' | 'history'>('live')
+const history = ref<DepotHistoryEntry[]>([])
+const historyLoading = ref(false)
+const historyError = ref<string | null>(null)
+let historyRequestId = 0
+let historyLoaded = false
+
+function selectHistory() {
+  tab.value = 'history'
+  if (!historyLoaded) loadHistory()
+}
+
+async function loadHistory() {
+  const requestId = ++historyRequestId
+  historyLoading.value = true
+  historyError.value = null
+  try {
+    const res = await api.getDepotHistory(props.depot.id)
+    if (requestId !== historyRequestId) return
+    history.value = res.entries
+    historyLoaded = true
+  } catch (e) {
+    if (requestId !== historyRequestId) return
+    historyError.value = e instanceof Error ? e.message : t('depots.history.error')
+  } finally {
+    if (requestId === historyRequestId) historyLoading.value = false
+  }
+}
 
 const allocation = computed(() => allocationSegments(props.depot.positions))
 
@@ -278,6 +332,14 @@ function formatChartValue(v: number): string {
 .pnl-cell { cursor: pointer; font-size: var(--text-body); }
 .pnl-cell.pos { color: var(--signal-positive-bright); }
 .pnl-cell.neg { color: var(--blood-crimson-bright); }
+
+.dp-tabs { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
+.dp-tab-btn { background: transparent; border: 1px solid var(--ash-gray); color: var(--ash-gray-light);
+  font-size: var(--text-micro); padding: 4px 12px; border-radius: 3px; cursor: pointer; }
+.dp-tab-btn.active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
+.dp-history-row { display: flex; gap: var(--space-3); padding: 6px 0; border-bottom: 1px solid var(--ash-gray); }
+.dp-hist-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
+.dp-hist-nowhy { color: var(--ash-gray-light); font-size: var(--text-micro); }
 
 .dp-chart-ranges { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
 .dp-range-btn {
