@@ -580,6 +580,9 @@ export interface DepotHistoryEntry {
   brokerOrderId: string | null
   brokerConfirmed: boolean
   why: DepotHistoryWhy | null
+  openedAt?: string | null
+  closedAt?: string | null
+  avgFillPrice?: number | null
 }
 
 export interface DepotHistory {

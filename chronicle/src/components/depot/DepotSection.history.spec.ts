@@ -49,6 +49,18 @@ describe('DepotSection history tab', () => {
     expect(w.text()).toContain('TAKE_PROFIT')
   })
 
+  it('renders the close date and fill price in the history tab', async () => {
+    mockGetDepotHistory.mockResolvedValue({ entries: [
+      { source: 'ORDER', symbol: 'AAPL', side: 'buy', qty: 10, entryPrice: 100, exitPrice: 110,
+        profitLoss: 100, status: 'filled', brokerOrderId: 'o-1', brokerConfirmed: true, why: null,
+        openedAt: '2026-06-15T09:30:00Z', closedAt: '2026-06-20T14:32:10Z', avgFillPrice: 191.20 }], error: null })
+    const w = mountSection()
+    await w.find('[data-testid="depot-tab-history"]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('20.06.')
+    expect(w.text()).toContain('191,20')
+  })
+
   it('shows the broker error instead of the empty-history text when the response carries an error', async () => {
     mockGetDepotHistory.mockResolvedValue({ entries: [], error: 'boom' })
     const w = mountSection()
