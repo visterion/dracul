@@ -720,6 +720,13 @@ export default {
       Routine: 'Routine',
     },
   },
+  instrument: {
+    openInfo: 'Open info for {symbol}',
+    held: 'Held',
+    noData: 'No data',
+    error: 'Could not load data',
+    close: 'Close',
+  },
   strigoi: {
     back: 'back',
     loadError: 'Failed to load strigoi.',

@@ -26,7 +26,7 @@
       <li v-for="line in report.positions" :key="line.symbol" class="report-row">
         <div class="report-main">
           <span class="report-action tag-pill" :class="actionPillClass(line.action)">{{ line.action }}</span>
-          <span class="report-symbol mono">{{ line.symbol }}</span>
+          <TickerButton :symbol="line.symbol" class="report-symbol mono" />
           <span v-if="displayName(line.symbol, line.companyName)" class="report-name">{{ displayName(line.symbol, line.companyName) }}</span>
         </div>
         <div class="report-metrics mono">
@@ -48,6 +48,7 @@ import { useI18n } from 'vue-i18n'
 import PageHead from '../components/common/PageHead.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import OrderTicketCard from '../components/report/OrderTicketCard.vue'
+import TickerButton from '../components/instrument/TickerButton.vue'
 import { useApi } from '../api'
 import type { MorningReport } from '../api/types'
 import { formatMoney, formatPercent } from '../utils/format'

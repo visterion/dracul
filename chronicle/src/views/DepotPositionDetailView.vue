@@ -48,36 +48,19 @@
           <span
             class="pd-header-change pnl-cell"
             data-testid="pd-header-change"
-            :class="pnlClass(headerChange.abs)"
+            :class="pnlClass(header.change)"
             @click="toggle()"
-          >{{ fmtPl(headerChange.abs, headerChange.pct, mode, position.currency) }}</span>
+          >{{ fmtPl(header.change, header.changePct, mode, position.currency) }}</span>
         </div>
       </div>
 
-      <!-- ── Chart ──────────────────────────────────────────── -->
-      <div class="pd-chart-block">
-        <div class="pd-chart-ranges" role="tablist">
-          <button
-            v-for="r in ranges"
-            :key="r.value"
-            class="dp-range-btn"
-            :class="{ active: range === r.value }"
-            :data-testid="`pd-range-${r.value}`"
-            @click="range = r.value"
-          >{{ r.label }}</button>
-        </div>
-        <div v-if="chartLoading" class="dp-chart-loading">{{ t('depots.chart.loading') }}</div>
-        <div v-else-if="chartError" class="dp-chart-error">{{ chartError }}</div>
-        <PriceChart
-          v-else-if="chartSeries.length"
-          :series="chartSeries"
-          :times="chartTimes"
-          :value-formatter="formatChartValue"
-          :baseline="chartSeries[0]?.data[0] ?? null"
-          :height="180"
-        />
-      </div>
-
+      <InstrumentInfoPanel
+        :symbol="position.symbol"
+        :currency="position.currency"
+        testid-prefix="pd"
+        @header="onHeader"
+      >
+        <template #between>
       <!-- ── Stat tiles ─────────────────────────────────────── -->
       <div class="stat-grid pd-stats">
         <StatTile data-testid="pd-stat-position" :label="t('depots.detail.stat.position')" :value="formatMoney(position.marketValue, position.currency)" />
@@ -127,59 +110,8 @@
           <span class="dp-order-role">{{ row.role }}</span>
         </div>
       </div>
-
-      <!-- ── News ───────────────────────────────────────────── -->
-      <InfoCardRow v-if="newsItems.length" :title="t('depots.detail.news.title')" testid="pd-section-news">
-        <component
-          :is="n.url ? 'a' : 'div'"
-          v-for="(n, i) in newsItems"
-          :key="i"
-          class="icr-card icr-news"
-          :href="n.url"
-          :target="n.url ? '_blank' : undefined"
-          :rel="n.url ? 'noopener noreferrer' : undefined"
-        >
-          <div class="icr-card-title">{{ n.headline }}</div>
-          <div v-if="n.summary" class="icr-card-summary">{{ n.summary }}</div>
-          <div class="icr-card-sub">{{ n.source }}<span v-if="n.publishedAt"> · {{ relativeTime(n.publishedAt) }}</span><span v-if="n.url" class="icr-news-arrow"> ↗</span></div>
-        </component>
-      </InfoCardRow>
-
-      <!-- ── Ereignisse ─────────────────────────────────────── -->
-      <InfoCardRow v-if="eventItems.length" :title="t('depots.detail.events.title')" testid="pd-section-events">
-        <div v-for="(ev, i) in eventItems" :key="i" class="icr-card">
-          <div class="icr-card-badge mono">{{ ev.reportDate }}</div>
-          <div class="icr-card-title">{{ ev.period ?? position.symbol }}</div>
-          <div class="icr-card-sub">{{ eventDaysLabel(ev.reportDate) }}</div>
-        </div>
-      </InfoCardRow>
-
-      <!-- ── Insights ───────────────────────────────────────── -->
-      <InfoCardRow v-if="insightCards.length" :title="t('depots.detail.insights.title')" testid="pd-section-insights">
-        <div v-for="c in insightCards" :key="c.key" class="icr-card">
-          <div class="icr-card-title">{{ c.title }}</div>
-          <div class="icr-card-value mono" :class="c.valueTone">{{ c.value }}</div>
-          <div v-if="c.sub" class="icr-card-sub">{{ c.sub }}</div>
-          <div v-if="c.breakdown" class="icr-card-sub">{{ c.breakdown }}</div>
-          <a
-            v-if="c.sourceUrl"
-            class="icr-card-source"
-            :href="c.sourceUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-          >{{ c.sourceLabel }}</a>
-        </div>
-      </InfoCardRow>
-
-      <!-- ── Finanzen ───────────────────────────────────────── -->
-      <InfoCardRow v-if="financeRows.length" :title="t('depots.detail.finance.title')" testid="pd-section-finance">
-        <div class="icr-card icr-finance-table">
-          <div v-for="row in financeRows" :key="row.label" class="icr-finance-row">
-            <span class="icr-finance-k">{{ row.label }}</span>
-            <span class="icr-finance-v mono">{{ row.value }}</span>
-          </div>
-        </div>
-      </InfoCardRow>
+        </template>
+      </InstrumentInfoPanel>
     </template>
   </div>
 </template>
@@ -190,16 +122,12 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import BackLink from '../components/common/BackLink.vue'
 import StatTile from '../components/common/StatTile.vue'
-import PriceChart from '../components/common/PriceChart.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import TagPill from '../components/common/TagPill.vue'
-import InfoCardRow from '../components/depot/InfoCardRow.vue'
+import InstrumentInfoPanel from '../components/instrument/InstrumentInfoPanel.vue'
 import { useApi } from '../api'
-import type {
-  DepotPositionView, DepotOrderView, DepotChart, InstrumentInfo, ChartRange,
-} from '../api/types'
+import type { DepotPositionView, DepotOrderView } from '../api/types'
 import { useDisplayMode } from '../composables/useDisplayMode'
-import { useRelativeTime } from '../composables/useRelativeTime'
 import { fmtPl, isStale, formatAbsoluteTime } from '../lib/depotDisplay'
 import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../lib/orderDisplay'
 import { formatMoney, formatNumber, formatPercent, pctClass } from '../utils/format'
@@ -210,7 +138,6 @@ const route = useRoute()
 const router = useRouter()
 const api = useApi()
 const { mode, toggle } = useDisplayMode()
-const { relativeTime } = useRelativeTime()
 
 function goBack() { router.push({ name: 'depots' }) }
 
@@ -222,6 +149,15 @@ const brokerDown = ref(false)
 const position = ref<DepotPositionView | null>(null)
 const orders = ref<DepotOrderView[]>([])
 const asOf = ref<string | null>(null)
+
+// Header data (company name + chart-derived change) is owned by the
+// InstrumentInfoPanel and pushed up via its `header` emit.
+const header = ref<{ name: string; lastPrice: number | null; change: number | null; changePct: number | null }>(
+  { name: '', lastPrice: null, change: null, changePct: null },
+)
+function onHeader(h: { name: string; lastPrice: number | null; change: number | null; changePct: number | null }) {
+  header.value = h
+}
 
 const stale = computed(() => isStale(asOf.value))
 
@@ -264,10 +200,7 @@ async function loadPosition() {
 const companyName = computed(() => {
   const p = position.value
   if (!p) return ''
-  if (p.name) return p.name
-  const profile = profileRecord.value
-  const name = typeof profile?.name === 'string' ? profile.name : ''
-  return displayName(p.symbol, name)
+  return displayName(p.symbol, p.name ?? header.value.name)
 })
 
 /** "Gehalten seit" date, day/month/year only — no time-of-day (unlike
@@ -298,254 +231,12 @@ const orderRows = computed(() =>
   })),
 )
 
-// ── Timeframe chart ─────────────────────────────────────────────
-
-const ranges: { value: ChartRange; label: string }[] = [
-  { value: '1d', label: '1T' },
-  { value: '1w', label: '1W' },
-  { value: '1m', label: '1M' },
-  { value: '1y', label: '1J' },
-  { value: 'max', label: 'Max' },
-]
-
-const range = ref<ChartRange>('1m')
-const chart = ref<DepotChart | null>(null)
-const chartLoading = ref(false)
-const chartError = ref<string | null>(null)
-
-let chartRequestId = 0
-
-async function loadChart() {
-  const id = ++chartRequestId
-  const symbol = String(route.params.symbol)
-  const requestedRange = range.value
-  chartLoading.value = true
-  chartError.value = null
-  try {
-    const result = await api.getInstrumentChart(symbol, requestedRange)
-    if (id !== chartRequestId) return
-    chart.value = result
-  } catch (e) {
-    if (id !== chartRequestId) return
-    chart.value = null
-    chartError.value = e instanceof Error ? e.message : t('depots.chart.error')
-  } finally {
-    if (id === chartRequestId) chartLoading.value = false
-  }
-}
-
-const chartSeries = computed(() => {
-  if (!chart.value || chart.value.points.length === 0) return []
-  return [{ data: chart.value.points.map(p => p.value), color: 'var(--cathedral-gold)' }]
-})
-
-/** Short localized date per point (e.g. "14. Mai") for the axis-tooltip header —
- *  replaces the raw point index the chart falls back to without this prop. */
-const chartTimes = computed(() =>
-  (chart.value?.points ?? []).map(p => new Date(p.t).toLocaleDateString(locale.value, { day: '2-digit', month: 'short' })),
-)
-
-/** The instrument chart carries no currency (it's the raw instrument price
- *  series, not a depot value) — a plain 2-decimal number, no invented symbol. */
-function formatChartValue(v: number): string {
-  return formatNumber(v, 2)
-}
-
-const headerChange = computed<{ abs: number | null; pct: number | null }>(() => {
-  const pts = chart.value?.points ?? []
-  if (pts.length < 2) return { abs: null, pct: null }
-  const first = pts[0].value
-  const last = pts[pts.length - 1].value
-  const abs = Math.round((last - first) * 100) / 100
-  const pct = first !== 0 ? Math.round(((last - first) / first) * 10000) / 100 : null
-  return { abs, pct }
-})
-
-watch(range, loadChart)
-
-// ── Instrument info bundle ──────────────────────────────────────
-
-const info = ref<InstrumentInfo | null>(null)
-let infoRequestId = 0
-
-async function loadInfo() {
-  const id = ++infoRequestId
-  const symbol = String(route.params.symbol)
-  try {
-    const result = await api.getInstrumentInfo(symbol)
-    if (id !== infoRequestId) return
-    info.value = result
-  } catch {
-    // A failed info bundle must never error the page — the sections that
-    // depend on it simply stay hidden (info.value stays null).
-    if (id !== infoRequestId) return
-    info.value = null
-  }
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null
-}
-function asArray(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : []
-}
-function asNumber(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null
-}
-function asString(v: unknown): string {
-  return typeof v === 'string' ? v : ''
-}
-
-// Profile record — used only as the companyName fallback (position.name,
-// Saxo-native, is preferred; see `companyName` above). Finnhub's profile2
-// carries no usable description, so no "Informationen" section exists here.
-const profileRecord = computed(() => asRecord(info.value?.profile))
-
-// News
-interface NewsRow { headline: string; source: string; publishedAt?: string; url?: string; summary?: string }
-const newsItems = computed<NewsRow[]>(() => {
-  const rec = asRecord(info.value?.news)
-  return asArray(rec?.news)
-    .map(row => asRecord(row))
-    .filter((row): row is Record<string, unknown> => row !== null && typeof row.headline === 'string')
-    .map(row => ({
-      headline: asString(row.headline),
-      source: asString(row.source),
-      // Agora's get_company_news emits `datetime` (ISO instant), not `publishedAt`.
-      publishedAt: typeof row.datetime === 'string' ? row.datetime : undefined,
-      // Only accept http(s) URLs — a javascript:/data: scheme in an href would be an
-      // XSS vector, and news urls come from an external source (Finnhub).
-      url: typeof row.url === 'string' && /^https?:\/\//i.test(row.url) ? asString(row.url) : undefined,
-      summary: typeof row.summary === 'string' && row.summary ? asString(row.summary) : undefined,
-    }))
-})
-
-// Ereignisse (earnings rows, already server-filtered to this symbol)
-interface EarningsRow { period?: string; reportDate: string }
-const eventItems = computed<EarningsRow[]>(() => {
-  const rec = asRecord(info.value?.earnings)
-  return asArray(rec?.earnings)
-    .map(row => asRecord(row))
-    .filter((row): row is Record<string, unknown> => row !== null && typeof row.reportDate === 'string')
-    .map(row => ({ period: typeof row.period === 'string' ? row.period : undefined, reportDate: asString(row.reportDate) }))
-})
-
-function eventDaysLabel(reportDate: string): string {
-  const days = Math.ceil((new Date(reportDate).getTime() - Date.now()) / 86_400_000)
-  if (days === 0) return t('depots.detail.events.today')
-  if (days < 0) return reportDate
-  return t('depots.detail.events.inDays', { n: days })
-}
-
-// Insights (analyst consensus + price target, EPS estimate, fundamental
-// score, insider activity) — each is its own card and only appears when its
-// source section has usable data.
-interface InsightCard {
-  key: string; title: string; value: string; sub?: string
-  valueTone?: string; breakdown?: string; sourceLabel?: string; sourceUrl?: string
-}
-const insightCards = computed<InsightCard[]>(() => {
-  const cards: InsightCard[] = []
-
-  const analyst = asRecord(info.value?.analystEstimates)
-  const recommendations = asArray(analyst?.recommendations).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
-  const latestRec = recommendations[recommendations.length - 1]
-  if (latestRec) {
-    const strongBuy = asNumber(latestRec.strongBuy) ?? 0
-    const buyN = asNumber(latestRec.buy) ?? 0
-    const hold = asNumber(latestRec.hold) ?? 0
-    const sellN = asNumber(latestRec.sell) ?? 0
-    const strongSell = asNumber(latestRec.strongSell) ?? 0
-    const total = strongBuy + buyN + hold + sellN + strongSell
-    const buyCount = strongBuy + buyN
-    const sellCount = sellN + strongSell
-
-    let rating = '—'
-    let valueTone = ''
-    if (total > 0) {
-      const score = (strongBuy * 5 + buyN * 4 + hold * 3 + sellN * 2 + strongSell * 1) / total
-      if (score >= 4.5) { rating = t('depots.detail.insights.rating.strongBuy'); valueTone = 'pos' }
-      else if (score >= 3.5) { rating = t('depots.detail.insights.rating.buy'); valueTone = 'pos' }
-      else if (score >= 2.5) { rating = t('depots.detail.insights.rating.hold'); valueTone = '' }
-      else if (score >= 1.5) { rating = t('depots.detail.insights.rating.sell'); valueTone = 'neg' }
-      else { rating = t('depots.detail.insights.rating.strongSell'); valueTone = 'neg' }
-    }
-
-    const priceTarget = asNumber(analyst?.priceTarget) ?? asNumber(analyst?.averagePriceTarget)
-    const symbol = position.value?.symbol ?? ''
-    const symbolIsSafe = /^[A-Za-z.\-]{1,12}$/.test(symbol)
-
-    cards.push({
-      key: 'analyst',
-      title: t('depots.detail.insights.analystConsensus'),
-      value: rating,
-      valueTone,
-      sub: priceTarget != null ? `${t('depots.detail.insights.priceTarget')}: ${formatMoney(priceTarget, position.value?.currency ?? 'USD')}` : undefined,
-      breakdown: total > 0
-        ? t('depots.detail.insights.analystBreakdown', { total, buy: buyCount, hold, sell: sellCount })
-        : undefined,
-      sourceLabel: symbolIsSafe ? t('depots.detail.insights.analystSource') : undefined,
-      sourceUrl: symbolIsSafe ? `https://finance.yahoo.com/quote/${symbol}/analysis` : undefined,
-    })
-  }
-
-  const earningsEst = asRecord(info.value?.earningsEstimates)
-  const estimates = asArray(earningsEst?.estimates).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
-  const latestEst = estimates[estimates.length - 1]
-  const epsAvg = latestEst ? asNumber(latestEst.epsAvg) : null
-  if (epsAvg != null) {
-    const epsLow = asNumber(latestEst?.epsLow)
-    const epsHigh = asNumber(latestEst?.epsHigh)
-    cards.push({
-      key: 'eps',
-      title: t('depots.detail.insights.epsEstimate'),
-      value: formatNumber(epsAvg, 2),
-      sub: epsLow != null && epsHigh != null ? `${formatNumber(epsLow, 2)} – ${formatNumber(epsHigh, 2)}` : undefined,
-    })
-  }
-
-  const score = asNumber(asRecord(info.value?.fundamentalScore)?.score)
-  if (score != null) {
-    cards.push({ key: 'score', title: t('depots.detail.insights.fundamentalScore'), value: formatNumber(score, 0) })
-  }
-
-  const insider = asRecord(info.value?.insiderActivity)
-  const transactions = asArray(insider?.transactions).map(r => asRecord(r)).filter((r): r is Record<string, unknown> => r !== null)
-  if (transactions.length > 0) {
-    const buys = transactions.filter(tx => asString(tx.type).toLowerCase() === 'buy').length
-    const sells = transactions.filter(tx => asString(tx.type).toLowerCase() === 'sell').length
-    cards.push({
-      key: 'insider',
-      title: t('depots.detail.insights.insiderActivity'),
-      value: t('depots.detail.insights.buys', { n: buys }),
-      sub: t('depots.detail.insights.sells', { n: sells }),
-    })
-  }
-
-  return cards
-})
-
-// Finanzen (mini table from fundamentals — only the fields actually present)
-interface FinanceRow { label: string; value: string }
-const financeRows = computed<FinanceRow[]>(() => {
-  const fundamentals = asRecord(info.value?.fundamentals)
-  if (!fundamentals) return []
-  const rows: FinanceRow[] = []
-  const peRatio = asNumber(fundamentals.peRatio)
-  if (peRatio != null) rows.push({ label: t('depots.detail.finance.peRatio'), value: formatNumber(peRatio, 1) })
-  const pbRatio = asNumber(fundamentals.pbRatio)
-  if (pbRatio != null) rows.push({ label: t('depots.detail.finance.pbRatio'), value: formatNumber(pbRatio, 1) })
-  const dividendYield = asNumber(fundamentals.dividendYield)
-  if (dividendYield != null) rows.push({ label: t('depots.detail.finance.dividendYield'), value: formatPercent(dividendYield * 100) })
-  return rows
-})
-
-// ── Route param changes must re-trigger every load ──────────────
+// ── Route param changes must re-trigger the position load ───────
+// The chart + info bundle are owned by InstrumentInfoPanel (it reloads on
+// its own `symbol` prop watch), so only loadPosition is triggered here.
 
 watch(() => [route.params.connection, route.params.symbol], () => {
   loadPosition()
-  loadChart()
-  loadInfo()
 }, { immediate: true })
 </script>
 
@@ -566,9 +257,6 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .pd-header-change { cursor: pointer; font-size: var(--text-body); }
 .pd-header-change.pos { color: var(--signal-positive-bright); }
 .pd-header-change.neg { color: var(--blood-crimson-bright); }
-
-.pd-chart-block { display: flex; flex-direction: column; gap: var(--space-2); }
-.pd-chart-ranges { display: flex; gap: var(--space-2); }
 
 .pd-stats { margin-top: var(--space-2); }
 .pd-asof { font-size: var(--text-micro); color: var(--ash-gray); }
@@ -591,42 +279,6 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .dp-order-side.tone-ash { color: var(--ash-gray-light); }
 .dp-order-arrow { font-size: var(--text-micro); }
 .dp-order-role { color: var(--cathedral-gold); font-size: var(--text-body-sm); }
-
-.icr-card {
-  background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px;
-  padding: var(--space-3) var(--space-4); min-width: 220px; max-width: min(78vw, 300px);
-  display: flex; flex-direction: column; gap: var(--space-1);
-}
-.icr-card-title {
-  color: var(--bone-ivory); font-size: var(--text-body-sm);
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-  overflow: hidden; white-space: normal; line-height: 1.35;
-}
-.icr-card-sub { color: var(--ash-gray); font-size: var(--text-micro); margin-top: auto; }
-.icr-news { min-height: 138px; text-decoration: none; color: inherit; }
-.icr-news:hover { border-color: var(--cathedral-gold); }
-.icr-news:focus-visible { outline: 2px solid var(--cathedral-gold); outline-offset: 2px; }
-.icr-card-summary {
-  color: var(--bone-ivory-dim); font-size: var(--text-micro); line-height: 1.4;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
-}
-.icr-news-arrow { color: var(--cathedral-gold); }
-.icr-card-value { color: var(--cathedral-gold); font-size: var(--text-body); }
-.icr-card-value.pos { color: var(--signal-positive-bright); }
-.icr-card-value.neg { color: var(--blood-crimson-bright); }
-.icr-card-source {
-  color: var(--cathedral-gold); font-size: var(--text-micro); text-decoration: none;
-  margin-top: auto;
-}
-.icr-card-source:hover { text-decoration: underline; }
-.icr-card-source:focus-visible { outline: 2px solid var(--cathedral-gold); outline-offset: 2px; }
-.icr-card-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
-
-.icr-finance-table { min-width: 240px; }
-.icr-finance-row { display: flex; justify-content: space-between; padding: var(--space-1) 0; border-bottom: 1px solid var(--rule); }
-.icr-finance-row:last-child { border-bottom: none; }
-.icr-finance-k { color: var(--ash-gray); font-size: var(--text-body-sm); }
-.icr-finance-v { color: var(--bone-ivory); font-size: var(--text-body-sm); }
 
 @media (max-width: 600px) {
   .pd-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }

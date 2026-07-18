@@ -9,6 +9,7 @@
       <AppBottomNav v-if="smAndDown" />
     </div>
     <LiveAlertPanel :open="panelOpen" @close="panelOpen = false" />
+    <InstrumentOverlay />
     <AppToast />
   </v-app>
 </template>
@@ -16,19 +17,26 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useDisplay } from 'vuetify'
+import { useRouter } from 'vue-router'
 import AppTopBar from './components/shell/AppTopBar.vue'
 import AppStatusBar from './components/shell/AppStatusBar.vue'
 import AppBottomNav from './components/shell/AppBottomNav.vue'
 import LiveAlertPanel from './components/shell/LiveAlertPanel.vue'
 import AppToast from './components/shell/AppToast.vue'
+import InstrumentOverlay from './components/instrument/InstrumentOverlay.vue'
 import { useStatusStore } from './stores/status'
 import { useLiveAlertsStore } from './stores/liveAlerts'
+import { useInstrumentOverlayStore } from './stores/instrumentOverlay'
 
 const { smAndDown } = useDisplay()
 
 const statusStore = useStatusStore()
 const liveStore = useLiveAlertsStore()
 const panelOpen = ref(false)
+
+const router = useRouter()
+const overlay = useInstrumentOverlayStore()
+router.afterEach(() => overlay.close())
 
 function toggleLive() {
   panelOpen.value = !panelOpen.value

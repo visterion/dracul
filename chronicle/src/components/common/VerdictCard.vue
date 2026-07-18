@@ -2,7 +2,7 @@
   <article class="verdict-card" data-testid="verdict-card" @click="$emit('open', verdict)">
     <div class="vc-main">
       <header class="vc-head">
-        <span class="vc-ticker font-mono">{{ verdict.symbol }}</span>
+        <TickerButton :symbol="verdict.symbol" class="vc-ticker font-mono" />
         <span v-if="displayName(verdict.symbol, verdict.companyName)" class="vc-name">{{ displayName(verdict.symbol, verdict.companyName) }}</span>
         <span class="vc-spacer" />
         <span class="vc-meta font-mono tabular">{{ t('chronicle.verdictCard.consensus') }}: {{ formatNumber(verdict.consensusScore, 2) }}</span>
@@ -48,6 +48,7 @@ import type { Verdict } from '../../api/types'
 import { useRelativeTime } from '../../composables/useRelativeTime'
 import ConsensusRing from './ConsensusRing.vue'
 import BatGlyph from './BatGlyph.vue'
+import TickerButton from '../instrument/TickerButton.vue'
 import { formatNumber } from '../../utils/format'
 import { displayName } from '../../utils/instrument'
 

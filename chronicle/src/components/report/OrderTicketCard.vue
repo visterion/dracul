@@ -2,6 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import type { OrderTicket } from '../../api/types'
 import { formatMoney, formatNumber } from '../../utils/format'
+import TickerButton from '../instrument/TickerButton.vue'
 
 defineProps<{ ticket: OrderTicket }>()
 const { t } = useI18n()
@@ -16,7 +17,7 @@ const fmtShares = (v: number) => formatNumber(v, Number.isInteger(v) ? 0 : 4)
   <div class="ticket" :class="`ticket--${ticket.side.toLowerCase()}`" data-testid="order-ticket">
     <div class="ticket__head">
       <span class="ticket__side">{{ ticket.side }}</span>
-      <span class="ticket__symbol mono">{{ ticket.symbol }}</span>
+      <TickerButton :symbol="ticket.symbol" class="ticket__symbol mono" />
     </div>
     <dl class="ticket__grid">
       <dt>{{ t('report.ticket.shares') }}</dt><dd class="mono">{{ fmtShares(ticket.shares) }}</dd>
