@@ -298,13 +298,27 @@ const headerData = computed(() => ({
 watch(headerData, v => emit('header', v), { immediate: true })
 
 // ── Symbol change drives (re)load ────────────────────────────
-watch(() => props.symbol, () => { range.value = '1m'; loadChart(); loadInfo() }, { immediate: true })
+watch(() => props.symbol, () => {
+  // Assigning range.value here also fires the `watch(range, loadChart)` above
+  // when the previous range was not the default — only call loadChart
+  // ourselves when that watcher won't already do it, to avoid a double fetch.
+  const wasDefaultRange = range.value === '1m'
+  range.value = '1m'
+  if (wasDefaultRange) loadChart()
+  loadInfo()
+}, { immediate: true })
 </script>
 
 <style scoped>
 .ip-panel { display: flex; flex-direction: column; gap: var(--space-5); }
 .pd-chart-block { display: flex; flex-direction: column; gap: var(--space-2); }
 .pd-chart-ranges { display: flex; gap: var(--space-2); }
+.dp-range-btn {
+  background: transparent; border: 1px solid var(--ash-gray); color: var(--ash-gray-light);
+  font-size: var(--text-micro); padding: 4px 10px; border-radius: 3px; cursor: pointer;
+}
+.dp-range-btn.active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
+.dp-chart-loading, .dp-chart-error { color: var(--ash-gray); font-size: var(--text-body-sm); padding: var(--space-4) 0; }
 
 .icr-card { background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px; padding: var(--space-3) var(--space-4); min-width: 220px; max-width: min(78vw, 300px); display: flex; flex-direction: column; gap: var(--space-1); }
 .icr-card-title { color: var(--bone-ivory); font-size: var(--text-body-sm); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; line-height: 1.35; }
