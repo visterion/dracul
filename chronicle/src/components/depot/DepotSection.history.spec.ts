@@ -45,5 +45,7 @@ describe('DepotSection history tab', () => {
     expect(mockGetDepotHistory).toHaveBeenCalledWith('depot-1')
     expect(w.find('[data-testid="depot-history-row"]').text()).toContain('AAPL')
     expect(w.text()).toContain('index-strigoi')
+    expect(w.text()).toContain('nicht autoritativ')
+    expect(w.text()).toContain('TAKE_PROFIT')
   })
 })

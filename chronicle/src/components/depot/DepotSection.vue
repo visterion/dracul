@@ -38,7 +38,11 @@
           <span class="dp-hist-status">{{ orderStatusLabel(e.status, t).label }}</span>
           <span v-if="e.profitLoss !== null" class="dp-hist-pl">{{ e.profitLoss }}</span>
           <span v-if="e.brokerConfirmed" class="dp-hist-badge">{{ t('depots.history.brokerConfirmed') }}</span>
-          <span v-if="e.why" class="dp-hist-why">{{ e.why.strigoi }} — {{ e.why.entryReasoning }}</span>
+          <template v-if="e.why">
+            <span class="dp-hist-why">{{ e.why.strigoi }} — {{ e.why.entryReasoning }}</span>
+            <span v-if="e.why.draculExitReason !== null" class="dp-hist-dracul">{{ t('depots.history.exitReason') }}: {{ e.why.draculExitReason }}</span>
+            <span v-if="e.why.draculRealizedR !== null" class="dp-hist-dracul">{{ t('depots.history.realizedR') }}: {{ e.why.draculRealizedR }}</span>
+          </template>
           <span v-else class="dp-hist-nowhy">{{ t('depots.history.notLinkable') }}</span>
         </div>
       </div>
@@ -340,6 +344,7 @@ function formatChartValue(v: number): string {
 .dp-history-row { display: flex; gap: var(--space-3); padding: 6px 0; border-bottom: 1px solid var(--ash-gray); }
 .dp-hist-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
 .dp-hist-nowhy { color: var(--ash-gray-light); font-size: var(--text-micro); }
+.dp-hist-dracul { color: var(--ash-gray-light); font-size: var(--text-micro); }
 
 .dp-chart-ranges { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
 .dp-range-btn {
