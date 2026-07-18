@@ -682,14 +682,17 @@ redirects here): one `DepotSection` per connected broker
   an orders list; and an inline error alert (`data-testid="depot-error"`)
   when `depot.error` is set — the rest of the section still renders
   whatever data the depot does have.
-  - **Historie tab** (closed trades): a tabular list of closed positions and historical
-    orders, fetched from `GET /api/depots/{connection}/history`. Shows broker-authoritative
-    facts (entry date, exit date, entry/exit price, realized P&L) as the primary source of
-    truth. Dracul's `why` annotation (Strigoi name and rationale) appears when linked to an
-    executor decision via `broker_order_id`; this annotation is explicitly marked as
-    non-authoritative (advisory only) in the UI. Rows are sortable by date, symbol, P&L,
-    and qty. A null `error` field means successful fetch; a non-null `error` renders an
-    inline alert explaining the broker fetch failure.
+  - **Historie tab** (closed trades): a list of closed positions (Saxo) and historical Alpaca
+    orders, fetched from `GET /api/depots/{connection}/history`. Each row shows the symbol,
+    a status pill, realized P&L (when present, `CLOSED_POSITION` entries only), and a
+    "broker-confirmed" badge. When Dracul can link an Alpaca order to an executor decision
+    via `brokerOrderId`, a `why` block appears (Strigoi name, entry reasoning, exit reason,
+    realized R) explicitly labeled as Dracul's non-authoritative interpretation, never as
+    broker fact; entries with no link show a "not linkable" note instead. There is no
+    client- or server-side sorting, and no entry-date/exit-date columns — the DTO carries no
+    date fields. The response is always HTTP 200; a non-null `error` field (with `entries`
+    empty) renders an inline alert explaining the broker fetch failure, replacing the
+    empty-history text.
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change
