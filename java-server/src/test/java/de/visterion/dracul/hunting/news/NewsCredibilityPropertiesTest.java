@@ -1,6 +1,7 @@
 package de.visterion.dracul.hunting.news;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -58,5 +59,31 @@ class NewsCredibilityPropertiesTest {
         // R2 Minor 4: dropBelow 0.6 would silently hard-drop every unknown source.
         runner.withPropertyValues("dracul.news.credibility.drop-below=0.6")
             .run(ctx -> assertThat(ctx).hasFailed());
+    }
+
+    /** Task 8: binds the real seed table from application.yaml — a broken yaml or an
+     *  out-of-range score in the checked-in table would fail every SpringBootTest, not
+     *  just this one, so this pins the operator table itself, not just the record. */
+    @Test void realApplicationYamlSeedTableBindsValidly() {
+        new ApplicationContextRunner()
+                .withInitializer(new ConfigDataApplicationContextInitializer())
+                .withUserConfiguration(Config.class)
+                .run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    var p = ctx.getBean(NewsCredibilityProperties.class);
+                    assertThat(p.defaultScore()).isEqualTo(0.5);
+                    assertThat(p.dropBelow()).isEqualTo(0.3);
+                    assertThat(p.sources()).isNotEmpty();
+                    assertThat(p.sources()).allSatisfy(entry -> {
+                        assertThat(entry.score()).isBetween(0.0, 1.0);
+                        assertThat(entry.match()).isNotBlank();
+                    });
+                    assertThat(p.sources())
+                            .extracting(NewsCredibilityProperties.SourceEntry::match)
+                            .contains(
+                                    "reddit.com", "old.reddit.com", "reddit-stocks",
+                                    "reddit-wallstreetbets", "Yahoo", "Benzinga", "CNBC",
+                                    "SeekingAlpha", "ChartMill");
+                });
     }
 }
