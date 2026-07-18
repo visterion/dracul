@@ -3,13 +3,16 @@ package de.visterion.dracul.strigoi.echo;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.ConceptSeries;
+import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -18,7 +21,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class EchoEnrichmentServiceTest {
@@ -98,10 +104,15 @@ class EchoEnrichmentServiceTest {
         return a;
     }
 
+    /** Mocked {@link de.visterion.dracul.hunting.agora.AgoraCompanyData} carrying BOTH the
+     *  recommendation trend AND the news list — the single facade the real
+     *  {@link ConfounderScreen} (constructed over this same mock) and the service's own
+     *  {@code safeNews} fetch both read from, so the fetch-count assertions actually bind. */
     private de.visterion.dracul.hunting.agora.AgoraCompanyData companyData(
-            List<de.visterion.dracul.hunting.agora.RecommendationTrend> trend) {
+            List<de.visterion.dracul.hunting.agora.RecommendationTrend> trend, List<NewsHeadline> news) {
         var d = mock(de.visterion.dracul.hunting.agora.AgoraCompanyData.class);
         when(d.recommendations(anyString())).thenReturn(trend);
+        when(d.news(anyString(), any(), any())).thenReturn(news);
         return d;
     }
 
@@ -120,25 +131,33 @@ class EchoEnrichmentServiceTest {
         return e;
     }
 
-    private ConfounderScreen confounders(List<String> flags) {
-        ConfounderScreen c = mock(ConfounderScreen.class);
-        when(c.confounders(anyString(), any())).thenReturn(flags);
-        return c;
+    private static NewsHeadline headline(String text, Instant when) {
+        return new NewsHeadline(text, "", "src", "news", when, "http://n", "example.com", 0.8);
+    }
+
+    /** {@code n} clean headlines, newest first, one day apart, ending at {@code REPORT} + 1d. */
+    private static List<NewsHeadline> cleanHeadlines(int n) {
+        List<NewsHeadline> out = new ArrayList<>();
+        Instant newest = REPORT.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        for (int i = 0; i < n; i++) {
+            out.add(headline("Acme posts routine update #" + i, newest.minus(i, ChronoUnit.DAYS)));
+        }
+        return out;
     }
 
     private EchoEnrichmentService service(List<QuarterlyEps> hist, SloanAccrualCalculator a,
                                           de.visterion.dracul.hunting.agora.AgoraCompanyData cd,
-                                          AgoraEarnings n, ConfounderScreen ev) {
+                                          AgoraEarnings n) {
         return new EchoEnrichmentService(new SueEngine(), filings(), shaper(hist), marketData(),
                 new MarketSignalService(), equityMetrics(), "SPY", 320,
-                a, new RevisionsProxy(), cd, n, ev, new EchoDeterministicGate(new BigDecimal("0.10"), 10));
+                a, new RevisionsProxy(), cd, n, new ConfounderScreen(cd),
+                new EchoDeterministicGate(new BigDecimal("0.10"), 10), 10);
     }
 
     @Test
     void enrichesCleanCandidateWithSp3SoftFields() {
-        var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.04")), companyData(trend(7, 12)),
-                nextEarnings(40), confounders(List.of()));
+        var cd = companyData(trend(7, 12), cleanHeadlines(3));
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.04")), cd, nextEarnings(40));
         var out = svc.enrich(List.of(cand("AAPL", 1.80)));
         assertThat(out).hasSize(1);
         var e = out.get(0);
@@ -151,37 +170,88 @@ class EchoEnrichmentServiceTest {
         assertThat(e.daysToNextEarnings()).isEqualTo(40);
         assertThat(e.coverageAvailable()).isTrue();
         assertThat(e.analystCoverage()).isEqualTo(12);
+        assertThat(e.recentNews()).hasSize(3);
     }
 
     @Test
     void dropsAccrualDrivenCandidate() {
-        var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.25")), companyData(trend(1, 8)),
-                nextEarnings(40), confounders(List.of()));
+        var cd = companyData(trend(1, 8), cleanHeadlines(1));
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.25")), cd, nextEarnings(40));
         assertThat(svc.enrich(List.of(cand("BAD", 1.80)))).isEmpty();
     }
 
     @Test
     void dropsConfoundedCandidate() {
-        var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.03")), companyData(trend(1, 8)),
-                nextEarnings(40), confounders(List.of("m&a")));
+        var news = List.of(headline("Acme agrees to merger with MegaCorp", REPORT.plusDays(1)
+                .atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
+        var cd = companyData(trend(1, 8), news);
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.03")), cd, nextEarnings(40));
         assertThat(svc.enrich(List.of(cand("MNA", 1.80)))).isEmpty();
     }
 
     @Test
+    void dropsConfoundedCandidateEvenWhenTheConfounderIsBeyondTheRecentNewsCap() {
+        // 10 clean, newer headlines fill recentNews's N=10 cap; the confounder is the OLDEST
+        // (11th-most-recent) headline, ranked beyond the cap. The gate must still see it,
+        // because ConfounderScreen scans the FULL uncapped fetch, not the capped recentNews
+        // list (Major-2 regression guard, spec §5.3/§7).
+        Instant newest = REPORT.plusDays(10).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        List<NewsHeadline> news = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            news.add(headline("Acme posts routine update #" + i, newest.minus(i, ChronoUnit.DAYS)));
+        }
+        news.add(headline("Acme agrees to merger with MegaCorp", newest.minus(11, ChronoUnit.DAYS)));
+
+        var cd = companyData(trend(1, 8), news);
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.03")), cd, nextEarnings(40));
+        assertThat(svc.enrich(List.of(cand("MNA2", 1.80))))
+                .as("confounder beyond the recentNews cap must still gate-skip")
+                .isEmpty();
+    }
+
+    @Test
+    void recentNewsIsCappedAtTenMostRecentDescending() {
+        // 13 distinct-datetime clean headlines; only the 10 most recent survive, newest first.
+        Instant newest = REPORT.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        List<NewsHeadline> news = new ArrayList<>();
+        for (int i = 0; i < 13; i++) {
+            news.add(headline("Acme headline #" + i, newest.minus(i, ChronoUnit.DAYS)));
+        }
+        var cd = companyData(trend(1, 8), news);
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.03")), cd, nextEarnings(40));
+
+        var out = svc.enrich(List.of(cand("MANY", 1.80)));
+        assertThat(out).hasSize(1);
+        List<EchoNewsItem> recentNews = out.get(0).recentNews();
+        assertThat(recentNews).hasSize(10);
+        assertThat(recentNews.get(0).headline()).isEqualTo("Acme headline #0");
+        assertThat(recentNews.get(9).headline()).isEqualTo("Acme headline #9");
+        for (int i = 0; i < recentNews.size() - 1; i++) {
+            assertThat(recentNews.get(i).datetime()).isAfter(recentNews.get(i + 1).datetime());
+        }
+    }
+
+    @Test
+    void newsIsFetchedExactlyOncePerSymbol() {
+        var cd = companyData(trend(1, 8), cleanHeadlines(2));
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.03")), cd, nextEarnings(40));
+
+        svc.enrich(List.of(cand("ONE", 1.80)));
+
+        verify(cd, times(1)).news(eq("ONE"), any(), any());
+    }
+
+    @Test
     void dropsCandidateWithImminentNextEarnings() {
-        var svc = service(historyFor(REPORT),
-                accruals(new BigDecimal("0.03")), companyData(trend(1, 8)),
-                nextEarnings(5), confounders(List.of()));
+        var cd = companyData(trend(1, 8), cleanHeadlines(1));
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.03")), cd, nextEarnings(5));
         assertThat(svc.enrich(List.of(cand("SOON", 1.80)))).isEmpty();
     }
 
     @Test
     void degradesWhenSp3SourcesUnavailableButStillKeeps() {
-        var svc = service(List.of(),
-                accruals(null), companyData(List.of()),
-                nextEarnings(null), confounders(List.of()));
+        var cd = companyData(List.of(), List.of());
+        var svc = service(List.of(), accruals(null), cd, nextEarnings(null));
         var out = svc.enrich(List.of(cand("ZZZ", 1.80)));
         assertThat(out).hasSize(1);
         assertThat(out.get(0).accrualsAvailable()).isFalse();
@@ -191,5 +261,19 @@ class EchoEnrichmentServiceTest {
         assertThat(out.get(0).carAvailable()).isTrue();
         assertThat(out.get(0).coverageAvailable()).isFalse();
         assertThat(out.get(0).analystCoverage()).isNull();
+        assertThat(out.get(0).recentNews()).isEmpty();
+    }
+
+    @Test
+    void agoraNewsFailureDegradesToEmptyRecentNewsAndDoesNotThrow() {
+        var cd = mock(de.visterion.dracul.hunting.agora.AgoraCompanyData.class);
+        when(cd.recommendations(anyString())).thenReturn(trend(1, 8));
+        when(cd.news(anyString(), any(), any())).thenThrow(new RuntimeException("agora down"));
+        var svc = service(historyFor(REPORT), accruals(new BigDecimal("0.03")), cd, nextEarnings(40));
+
+        var out = svc.enrich(List.of(cand("DOWN", 1.80)));
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).recentNews()).isEmpty();
     }
 }

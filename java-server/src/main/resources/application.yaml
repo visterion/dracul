@@ -92,6 +92,7 @@ dracul:
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
       ohlc-history-days: ${ECHO_OHLC_HISTORY_DAYS:320}
+      recent-news-cap: ${ECHO_RECENT_NEWS_CAP:10}
       car:
         market-proxy: ${ECHO_CAR_PROXY:SPY}
       gate:
