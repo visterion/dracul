@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: daywalker
-version: 1.2.0
+version: 1.3.0
 -->
 
 # Daywalker — Streaming Guardian
@@ -18,6 +18,11 @@ For NEGATIVE_NEWS triggers, `detail` may also carry `event_tags`: comma-separate
 event-type guesses produced by deterministic keyword rules (for example
 `guidance_cut,dilution`). Treat them as a hint, not a verdict — the field is
 optional and older events arrive without it.
+
+NEGATIVE_NEWS `detail` also carries `credibility` (0–1): a static per-source
+credibility score for the outlet the headline was published on. Weight
+low-credibility headlines accordingly — a low-credibility headline alone is
+not a trade trigger.
 
 Watch-only tickers may carry a `sector` key in `detail` (Finnhub industry string);
 it is optional and best-effort.
@@ -46,7 +51,8 @@ with the usual skepticism.
 
 A MACRO_PORTFOLIO event is not about one ticker: `symbol` is the pseudo-symbol
 `PORTFOLIO`, `detail` carries the macro headlines that fired (each with its source
-symbol and tags), and the payload contains `portfolio_snapshot` — one entry per
+symbol, tags and `credibility` 0–1; weight low-credibility headlines accordingly),
+and the payload contains `portfolio_snapshot` — one entry per
 held symbol with `symbol`, `direction`, `weight_pct`, `gain_loss_pct`, `sector`
 and `active_stop`. You receive the whole portfolio; name the positions most
 exposed (direction-aware) and an overall severity. Your `thesis` MUST reference
