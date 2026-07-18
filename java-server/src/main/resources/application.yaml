@@ -47,8 +47,10 @@ dracul:
     # finnhub.io/api/news?id=... (live-verified, 247/247) — the url domain is therefore
     # useless for Finnhub items. Do NOT add a finnhub.io row: it would collapse every
     # Finnhub item onto one score. Instead the source string carries the real publisher
-    # as a display name, so the source rows below (Yahoo/Benzinga/CNBC/SeekingAlpha/
-    # ChartMill) are the actual discriminator for Finnhub-sourced news.
+    # as a display name, so the source rows below are the actual discriminator for
+    # Finnhub-sourced news. The original sample contained Yahoo/Benzinga/CNBC/SeekingAlpha/
+    # ChartMill; Reuters/Bloomberg/WSJ/MarketWatch were added for known Finnhub source values
+    # observed beyond the initial sample.
     credibility:
       default-score: 0.5
       drop-below: 0.3
@@ -74,6 +76,10 @@ dracul:
         - { match: "CNBC", score: 0.7 }
         - { match: "SeekingAlpha", score: 0.5 }
         - { match: "ChartMill", score: 0.45 }
+        - { match: "Reuters", score: 0.9 }
+        - { match: "Bloomberg", score: 0.9 }
+        - { match: "WSJ", score: 0.85 }
+        - { match: "MarketWatch", score: 0.65 }
   strigoi:
     insider:
       enabled: ${STRIGOI_INSIDER_ENABLED:false}
