@@ -641,6 +641,86 @@ Optionally tune the proximity band width and Telegram verbosity:
 
 See [configuration.md](./configuration.md) for the full knob reference.
 
+## Pattern gates (T3.3)
+
+**Approve = enforce immediately.** Approving a `PENDING` pattern that carries a
+stored `gate` predicate flips it to `ACTIVE` and the gate is enforced on the
+very next signal evaluation — the veto catalog runs `PATTERN_GATE` (position
+#12, after `REDUNDANCY`, before `LIQUIDITY`) against every candidate entry. A
+matching signal is vetoed with reason `PATTERN_GATE` and a detail string
+`pattern_gate:<id> (<name>)`. `PATTERN_GATE` is one of the **transient** reject
+reasons (`RejectReason.isTransient()`): a blocked signal is not disqualified —
+it stays `PENDING` and is retried on subsequent executor runs until it either
+passes or hits `SIGNAL_EXPIRED` (max signal age, default 5 trading days).
+
+**Recovering from a bad gate.** If a gate turns out to be mistranslated or too
+broad, the operator has two levers: deactivate the whole pattern (`reject`/
+`deactivate` action, both flip status to `REJECTED`), or edit just the gate
+via `update_gate` (`PATCH /api/patterns/{id}`,
+see `documentation/api.md`). The Chronicle gate editor (`PatternGateEditor`) is
+available both on `PENDING` cards and on expanded `ACTIVE` rows — editing an
+armed gate is the operator's main correction lever, since an `ACTIVE` pattern
+can't be "unapproved" back to `PENDING`. Once the gate is cleared or
+corrected, the still-`PENDING` signals it was blocking flow again on the next
+run.
+
+**Honest limitation (spec D5).** An `ACTIVE` gate blocks the trades it matches
+*before* they are ever placed, so its own machine-checkable supporting
+evidence can only ever grow from **pre-approve** trade history (the weekly
+scorer matches gated patterns against completed `TRADE` outcomes) — an
+enforced gate can never accumulate new supporting/refuting evidence from
+trades it itself prevented. The gate's *ongoing* effect is visible instead as
+`blockedCount` in the pattern API/UI: `COUNT(DISTINCT signal_id)` over
+`decision_log` rows whose `reason_code` is `PATTERN_GATE`, computed at read
+time (not persisted). This has a first-match attribution bias: when two or
+more `ACTIVE` gates could match the same signal, `VetoService` records the
+detail of only the **first** matching gate in repository order — so with
+overlapping gates, later gates can show `blockedCount = 0` even though they
+would also have matched every one of those blocked signals.
+
+**`update_gate` and evidence.** `update_gate` deletes the pattern's
+machine-scored auto-evidence (`pattern_evidence` rows with `outcome_ref IS NOT
+NULL`) and clears the runtime-derived aggregates (`supported_count`,
+`avg_uplift_percent`, but not the LLM-seeded `evidence_count`, which is
+protected by a `GREATEST` floor) in the same transaction as the gate replace.
+The next weekly scorer full rescan rebuilds both under the new predicate — no
+watermark, so this is a full rescan every run and self-heals for free. If a
+gate edit lands mid-way through a running scorer batch, a few old-predicate
+evidence rows can be left behind until the next weekly rescan; this is
+accepted (no locking between the edit and the scorer).
+
+**Rollout note.** Deploying the `voievod-outcome` prompt/schema bump (v1.1.0,
+adding the optional `suggested_gate` output field) requires the same
+insert-if-absent reset as every other agent-definition change:
+
+    DELETE FROM agent_definition WHERE name = 'voievod-outcome';
+
+then restart the `app` container so `AgentDefinitionBootstrap` re-seeds the
+row with prompt v1.1.0 and the `suggested_gate` schema. `daywalker` and
+`renfield` are untouched by this bump. Verify via `GET /agents/voievod-outcome`
+on Vistierie (`:8090`, tenant token): `version` should read `1.1.0`. One
+staging run must additionally verify Vistierie passes the optional
+`suggested_gate` structured-output field through end to end before relying on
+it in production (not unit-testable — see the spec's Testing section, D3
+must-verify).
+
+**Scorer operations.** `PatternOutcomeScorer` runs weekly (default Saturday
+06:00 UTC, one hour before the Saturday `voievod-outcome` run at 07:00 UTC —
+see `documentation/configuration.md`). Each run is a full rescan (no
+watermark) over every completed `TRADE` outcome against every gated
+`PENDING`/`ACTIVE` pattern; a single outcome's match/insert failure is caught
+and logged per-outcome so one bad row never aborts the whole run. Outcomes
+with a structurally null `realized_r`/`entry_price`/`initial_stop`, or a
+zero `entry_price`/r-per-share, are skipped at DEBUG (a defined skip, not an
+error). Idempotency is the `(pattern_id, outcome_ref)` partial unique index on
+`pattern_evidence` (`ON CONFLICT DO NOTHING`), so re-running the scorer over
+already-scored outcomes is a no-op.
+
+**Boundary:** gates bite at **place-entry only**. `add-tranche` (tranche-2
+adds to an already-open position) runs `CapitalBounds` checks only — it does
+not re-run the veto catalog, so an `ACTIVE` gate cannot block a size-up on a
+position that already cleared entry.
+
 ## Branch images
 
 PRs and `slice-*` branches produce tagged images

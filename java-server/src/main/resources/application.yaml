@@ -162,6 +162,10 @@ dracul:
   outcome:
     enabled: ${DRACUL_OUTCOME_ENABLED:true}
     cron: ${DRACUL_OUTCOME_CRON:0 30 22 * * 2-6}
+  pattern-scorer:
+    enabled: ${DRACUL_PATTERN_SCORER_ENABLED:true}
+    # Weekly, one hour before the Saturday voievod-outcome run (default 0 0 7 * * 6).
+    cron: ${DRACUL_PATTERN_SCORER_CRON:0 0 6 * * 6}
   daywalker:
     enabled: ${DRACUL_DAYWALKER_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_TOKEN:dev-token-change-me}
