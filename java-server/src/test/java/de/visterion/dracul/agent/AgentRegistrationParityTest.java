@@ -35,7 +35,10 @@ import static org.assertj.core.api.Assertions.assertThat;
     "dracul.strigoi.echo.enabled=true", "dracul.strigoi.lazarus.enabled=true",
     "dracul.strigoi.merger.enabled=true", "dracul.strigoi.index.enabled=true",
     "dracul.strigoi.insider.enabled=true", "dracul.strigoi.spin.enabled=true",
-    "dracul.renfield.enabled=true"
+    "dracul.renfield.enabled=true",
+    "dracul.voievod-outcome.enabled=true",
+    "dracul.voievod-outcome.webhook-token=test-token",
+    "dracul.voievod-outcome.schedule=0 0 7 * * 6"
 })
 @Import(ContainerConfig.class)
 @ActiveProfiles("dev")
