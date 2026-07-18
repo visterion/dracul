@@ -52,6 +52,10 @@ class DaywalkerEventEngineTest {
         return new NewsHeadline(text, "", "Reuters", "news", at, "http://n/m");
     }
 
+    private static NewsHeadline macroHeadline(String text, Instant at, double credibility) {
+        return new NewsHeadline(text, "", "wire", "news", at, "https://x/1", null, credibility);
+    }
+
     private final PortfolioWeights portfolioWeights = mock(PortfolioWeights.class);
     private final SectorResolver sectors = mock(SectorResolver.class);
 
@@ -587,6 +591,63 @@ class DaywalkerEventEngineTest {
         assertThat((BigDecimal) entry.get("weight_pct")).isEqualByComparingTo("100.0");
         // gain_loss_pct from |marketValue|/|quantity| vs avgPrice: 1000/10 = 100 vs 100 -> 0
         assertThat((BigDecimal) entry.get("gain_loss_pct")).isEqualByComparingTo("0");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void macroWireHeadlineMapsCarryCredibility() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of(
+                new de.visterion.dracul.watchlist.WatchlistRepository.SweepRow("WTCH", "Watch Co", 50.0)));
+        when(in.candles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of(
+                macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"), 0.9)));
+        when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations(anyString())).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+        when(portfolioWeights.weightsBySymbol(any())).thenReturn(java.util.Map.of("ACME", new BigDecimal("100.0")));
+        when(sectors.cachedSector("ACME")).thenReturn("Semiconductors");
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        var headlines = (List<Map<String, Object>>) events.get(0).detail().get("headlines");
+        assertThat(headlines.get(0)).containsEntry("credibility", 0.9);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void macroTextDedupKeepsHigherCredibilityInstanceDeterministically() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100), position("BETA", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of(
+                macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"), 0.2)));
+        when(cd.news(eq("BETA"), any(), any())).thenReturn(List.of(
+                macroHeadline("  FED RAISES RATES AGAIN ", Instant.parse("2026-06-03T12:00:00Z"), 0.9)));
+        when(cd.recommendations(anyString())).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        var headlines = (List<Map<String, Object>>) events.get(0).detail().get("headlines");
+        assertThat(headlines).hasSize(1);
+        assertThat(headlines.get(0)).containsEntry("credibility", 0.9);
     }
 
     @Test

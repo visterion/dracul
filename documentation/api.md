@@ -640,7 +640,11 @@ Backed by eight Agora tool calls, made **sequentially**
 nothing) and each wrapped in its own try/catch: `get_company_profile`,
 `get_company_news` (window: `from` = today − 14 days, `to` = today),
 `get_earnings_window`, `get_analyst_estimates`, `get_earnings_estimates`,
-`get_fundamental_score`, `get_fundamentals`, `get_form4_transactions`.
+`get_fundamental_score`, `get_fundamentals`, `get_form4_transactions`. Since
+T1.4 each item may carry a `domain` field (new Agora; lowercase url host) and
+Dracul drops sub-threshold-credibility items at the chokepoint before any
+trigger/review consumer sees them; an older Agora without `domain` degrades to
+source-string matching.
 **Every section is independently nullable** — a single tool failing
 (Agora error, timeout, etc.) sets only that section to `null`; the
 other sections and the `200 OK` response shape are unaffected. If all

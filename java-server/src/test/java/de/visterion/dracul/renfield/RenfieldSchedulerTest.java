@@ -77,7 +77,7 @@ class RenfieldSchedulerTest {
                 new Quote(new BigDecimal("42.50"), new BigDecimal("-2.1"))));
         when(companyData.news(eq("ACME"), any(), any())).thenReturn(List.of(
                 new NewsHeadline("ACME cuts guidance", "outlook lowered", "wire", "news",
-                        Instant.parse("2026-07-17T09:00:00Z"), null)));
+                        Instant.parse("2026-07-17T09:00:00Z"), null, "reuters.com", 0.9)));
         when(alerts.recentAlerts(eq("ACME"), any())).thenReturn(List.of(
                 new DaywalkerAlertRepository.RecentAlert("NEGATIVE_NEWS", "WARNING", "guidance cut",
                         Instant.parse("2026-07-17T10:00:00Z"))));
@@ -105,6 +105,7 @@ class RenfieldSchedulerTest {
         var news = (List<Map<String, Object>>) acme.get("news");
         assertThat(news).hasSize(1);
         assertThat(news.get(0)).containsEntry("headline", "ACME cuts guidance");
+        assertThat(news.get(0)).containsEntry("credibility", 0.9);
         assertThat((String) news.get(0).get("event_tags")).contains("guidance_cut");
         var alertList = (List<Map<String, Object>>) acme.get("alerts");
         assertThat(alertList).hasSize(1);
