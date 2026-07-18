@@ -254,6 +254,17 @@ public class ExecutorPositionRepository {
                 .orElse(null);
     }
 
+    /** Looks up a position by its originating signal id — most-recent match by
+     *  {@code entry_date}, used to join executor positions against Saxo history rows carrying
+     *  the same {@code source_signal_id}. Returns {@code null} if none. */
+    public ExecutorPosition findBySourceSignalId(String signalId) {
+        return jdbc.sql("SELECT * FROM executor_position WHERE source_signal_id = :sig ORDER BY entry_date DESC LIMIT 1")
+                .param("sig", signalId)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
     public List<ExecutorPosition> findOpen() {
         return jdbc.sql("""
                 SELECT * FROM executor_position WHERE status = 'OPEN'
