@@ -9,6 +9,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
+  DepotHistory,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -360,5 +361,13 @@ export class HttpApiClient implements ApiClient {
     }
     if (!res.ok) throw new Error(`getDepotPosition failed: HTTP ${res.status}`)
     return res.json() as Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }>
+  }
+
+  async getDepotHistory(connection: string): Promise<DepotHistory> {
+    const res = await fetch(`${this.baseUrl}/api/depots/${encodeURIComponent(connection)}/history`)
+    if (res.status === 404) throw new Error(`getDepotHistory: connection not found: ${connection}`)
+    if (res.status === 503) throw new Error(`getDepotHistory: depot unavailable: ${connection}`)
+    if (!res.ok) throw new Error(`getDepotHistory failed: HTTP ${res.status}`)
+    return res.json() as Promise<DepotHistory>
   }
 }

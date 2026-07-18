@@ -8,6 +8,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
+  DepotHistory,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -25,6 +26,7 @@ import { mockMorningReport } from '../mocks/morningReport'
 import { mockExecutorCalibration, mockExecutorBehavior } from '../mocks/executorCalibration'
 import {
   mockDepots, mockDepotsResponse, mockDepotChart, mockInstrumentChart, mockInstrumentInfo,
+  mockDepotHistory,
 } from '../mocks/depots'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -433,5 +435,10 @@ export class MockApiClient implements ApiClient {
       orders: depot.orders.filter(o => o.symbol === symbol).map(o => ({ ...o })),
       asOf: depot.asOf,
     }
+  }
+
+  async getDepotHistory(_connection: string): Promise<DepotHistory> {
+    await delay(50)
+    return structuredClone(mockDepotHistory)
   }
 }
