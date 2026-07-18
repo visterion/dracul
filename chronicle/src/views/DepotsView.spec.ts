@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import DepotsView from './DepotsView.vue'
@@ -79,6 +80,7 @@ function mountView() {
 
 beforeEach(() => {
   localStorage.clear()
+  setActivePinia(createPinia())
   router.push('/depots')
   getDepotChartImpl = async () => mockDepotChart
   mockGetDepots.mockClear()

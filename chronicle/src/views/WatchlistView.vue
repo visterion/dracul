@@ -138,7 +138,7 @@
               @keydown.space.prevent="selectedId = item.id"
             >
               <div class="wr-id">
-                <span class="wr-ticker mono">{{ item.ticker }}</span>
+                <TickerButton :symbol="item.ticker" class="wr-ticker mono" />
                 <span v-if="displayName(item.ticker, item.companyName)" class="wr-name">{{ displayName(item.ticker, item.companyName) }}</span>
                 <span class="wr-flags">
                   <span v-if="showsVerdictBadge(item)" class="wr-track">{{ t('watchlist.flags.tracked') }}</span>
@@ -241,6 +241,7 @@ import AlertRow from '../components/common/AlertRow.vue'
 import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import WatchlistSourceBadge from '../components/watchlist/WatchlistSourceBadge.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
+import TickerButton from '../components/instrument/TickerButton.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import { useToast } from '../composables/useToast'

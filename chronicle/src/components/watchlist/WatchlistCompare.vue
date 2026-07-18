@@ -12,7 +12,7 @@
       :data-testid="`compare-both-${row.ticker}`"
     >
       <div class="wcmp-shared-head">
-        <span class="wcmp-ticker mono">{{ row.ticker }}</span>
+        <TickerButton :symbol="row.ticker" class="wcmp-ticker mono" />
         <span v-if="displayName(row.ticker, row.companyName)" class="wcmp-name">{{ displayName(row.ticker, row.companyName) }}</span>
         <span class="wcmp-px mono"><MoneyDisplay :amount="row.currentPrice" :currency="row.mine.currency" :native-amount="row.mine.nativeCurrentPrice" :native-currency="row.mine.nativeCurrency" /></span>
         <span class="wcmp-chg mono" :class="pctClass(row.dayChangePercent)">
@@ -41,7 +41,7 @@
       class="wcmp-solo"
       :data-testid="`compare-mine-${item.ticker}`"
     >
-      <span class="wcmp-ticker mono">{{ item.ticker }}</span>
+      <TickerButton :symbol="item.ticker" class="wcmp-ticker mono" />
       <span v-if="displayName(item.ticker, item.companyName)" class="wcmp-name">{{ displayName(item.ticker, item.companyName) }}</span>
       <span class="wcmp-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
       <span class="wcmp-dot" :class="`dot-${dotClass(item.status)}`" />
@@ -56,7 +56,7 @@
       class="wcmp-solo"
       :data-testid="`compare-theirs-${item.ticker}`"
     >
-      <span class="wcmp-ticker mono">{{ item.ticker }}</span>
+      <TickerButton :symbol="item.ticker" class="wcmp-ticker mono" />
       <span v-if="displayName(item.ticker, item.companyName)" class="wcmp-name">{{ displayName(item.ticker, item.companyName) }}</span>
       <span class="wcmp-px mono"><MoneyDisplay :amount="item.currentPrice" :currency="item.currency" :native-amount="item.nativeCurrentPrice" :native-currency="item.nativeCurrency" /></span>
       <span class="wcmp-dot" :class="`dot-${dotClass(item.status)}`" />
@@ -70,6 +70,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SectionHeader from '../common/SectionHeader.vue'
 import MoneyDisplay from '../common/MoneyDisplay.vue'
+import TickerButton from '../instrument/TickerButton.vue'
 import { buildComparison } from '../../lib/watchlistComparison'
 import type { WatchlistItem, WatchlistStatus } from '../../api/types'
 import { formatPercent, pctClass } from '../../utils/format'

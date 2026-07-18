@@ -15,7 +15,7 @@
       <div class="ed-head">
         <TagPill :tone="badgeTone" class="ed-action">{{ signal.action }}</TagPill>
         <div class="ed-id">
-          <h1 class="ed-sym mono">{{ signal.symbol }}</h1>
+          <h1 class="ed-sym mono"><TickerButton :symbol="signal.symbol" /></h1>
         </div>
         <span class="ed-runat mono">{{ signal.runAt }}</span>
       </div>
@@ -63,6 +63,7 @@ import BackLink from '../components/common/BackLink.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import ConfidenceBar from '../components/common/ConfidenceBar.vue'
 import TagPill from '../components/common/TagPill.vue'
+import TickerButton from '../components/instrument/TickerButton.vue'
 import { useApi } from '../api'
 import type { ExitSignal, DepotPositionView } from '../api/types'
 import { formatMoney, formatNumber, formatPercent } from '../utils/format'

@@ -112,7 +112,7 @@
           <span>{{ t('depots.orders.col.status') }}</span>
         </div>
         <div v-for="row in orderRows" :key="row.key" class="dp-order-row">
-          <span class="mono">{{ row.symbol }}</span>
+          <TickerButton :symbol="row.symbol" class="mono" />
           <span class="dp-order-side" :class="`tone-${row.side.tone}`">
             <span v-if="row.side.arrow" class="dp-order-arrow" aria-hidden="true">{{ row.side.arrow }}</span>{{ row.side.label }}
           </span>
@@ -135,6 +135,7 @@ import TagPill from '../common/TagPill.vue'
 import StatTile from '../common/StatTile.vue'
 import PriceChart from '../common/PriceChart.vue'
 import DepotPositionsTable from './DepotPositionsTable.vue'
+import TickerButton from '../instrument/TickerButton.vue'
 import { useApi } from '../../api'
 import type { Depot, DepotChart, ChartRange } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
