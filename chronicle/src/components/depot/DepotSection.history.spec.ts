@@ -48,4 +48,13 @@ describe('DepotSection history tab', () => {
     expect(w.text()).toContain('nicht autoritativ')
     expect(w.text()).toContain('TAKE_PROFIT')
   })
+
+  it('shows the broker error instead of the empty-history text when the response carries an error', async () => {
+    mockGetDepotHistory.mockResolvedValue({ entries: [], error: 'boom' })
+    const w = mountSection()
+    await w.find('[data-testid="depot-tab-history"]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('boom')
+    expect(w.text()).not.toContain('Keine Historie')
+  })
 })
