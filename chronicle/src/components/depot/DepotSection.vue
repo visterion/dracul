@@ -36,10 +36,10 @@
         <div v-for="(e, i) in history" :key="i" class="dp-history-row" data-testid="depot-history-row">
           <span class="dp-hist-sym">{{ e.symbol }}</span>
           <span class="dp-hist-status">{{ orderStatusLabel(e.status, t).label }}</span>
-          <span v-if="e.profitLoss !== null" class="dp-hist-pl">{{ e.profitLoss }}</span>
+          <span v-if="e.profitLoss !== null" class="dp-hist-pl">{{ t('depots.history.result') }}: {{ e.profitLoss }}</span>
           <span v-if="e.brokerConfirmed" class="dp-hist-badge">{{ t('depots.history.brokerConfirmed') }}</span>
           <template v-if="e.why">
-            <span class="dp-hist-why">{{ e.why.strigoi }} — {{ e.why.entryReasoning }}</span>
+            <span class="dp-hist-why">{{ t('depots.history.why') }}: {{ e.why.strigoi }} — {{ e.why.entryReasoning }}</span>
             <span v-if="e.why.draculExitReason !== null" class="dp-hist-dracul">{{ t('depots.history.exitReason') }}: {{ e.why.draculExitReason }}</span>
             <span v-if="e.why.draculRealizedR !== null" class="dp-hist-dracul">{{ t('depots.history.realizedR') }}: {{ e.why.draculRealizedR }}</span>
           </template>
@@ -208,6 +208,7 @@ async function loadHistory() {
     const res = await api.getDepotHistory(props.depot.id)
     if (requestId !== historyRequestId) return
     history.value = res.entries
+    if (res.error) historyError.value = res.error
     historyLoaded = true
   } catch (e) {
     if (requestId !== historyRequestId) return
