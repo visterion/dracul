@@ -6,8 +6,12 @@ import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -25,25 +29,32 @@ public class DepotHistoryService {
     private final DepotService depotService;
     private final Optional<ExecutorPositionRepository> positions;
     private final Optional<DecisionLogRepository> decisions;
+    private final int lookbackDays;
+    private final Clock clock;
 
-    // @Autowired is required here: there are two constructors, so Spring cannot infer which
-    // one to use on its own. ObjectProvider makes the executor repos optional.
+    // @Autowired required: two constructors, so Spring cannot infer which to use. ObjectProvider
+    // makes the executor repos optional.
     @Autowired
     public DepotHistoryService(AgoraDepotClient client, DepotService depotService,
             ObjectProvider<ExecutorPositionRepository> positions,
-            ObjectProvider<DecisionLogRepository> decisions) {
+            ObjectProvider<DecisionLogRepository> decisions,
+            @Value("${dracul.depots.history-lookback-days:90}") int lookbackDays) {
         this(client, depotService,
                 Optional.ofNullable(positions.getIfAvailable()),
-                Optional.ofNullable(decisions.getIfAvailable()));
+                Optional.ofNullable(decisions.getIfAvailable()),
+                lookbackDays, Clock.systemUTC());
     }
 
-    // Test-friendly constructor.
+    // Test-friendly constructor (inject repos + clock directly).
     DepotHistoryService(AgoraDepotClient client, DepotService depotService,
-            Optional<ExecutorPositionRepository> positions, Optional<DecisionLogRepository> decisions) {
+            Optional<ExecutorPositionRepository> positions, Optional<DecisionLogRepository> decisions,
+            int lookbackDays, Clock clock) {
         this.client = client;
         this.depotService = depotService;
         this.positions = positions;
         this.decisions = decisions;
+        this.lookbackDays = lookbackDays;
+        this.clock = clock;
     }
 
     public List<DepotHistoryEntry> history(String connection, String userEmail) {
@@ -51,32 +62,53 @@ public class DepotHistoryService {
         if (depot == null) return List.of();
         String provider = depot.provider() == null ? "" : depot.provider().toLowerCase();
 
+        String to = Instant.now(clock).toString();
+        String from = Instant.now(clock).minus(Duration.ofDays(lookbackDays)).toString();
+
         if (provider.contains("alpaca")) {
-            return client.orders(connection, "all").stream()
+            return client.orders(connection, "all", from, to).stream()
                     .filter(o -> o.status() != null && CLOSED_ORDER_STATUSES.contains(o.status().toLowerCase()))
                     .map(this::fromOrder)
                     .toList();
         }
-        // Default / Saxo: closed positions (no order id, no timestamp → no why link today).
-        return client.closedPositions(connection).stream()
+        // Default / Saxo: closed positions, enriched via clientRef -> source_signal_id.
+        return client.closedPositions(connection, from, to).stream()
                 .map(this::fromClosedPosition)
                 .toList();
     }
 
     private DepotHistoryEntry fromOrder(DepotOrder o) {
-        DepotHistoryEntry.Why why = enrich(o.brokerOrderId());
+        // Alpaca path: link is by broker order id (unchanged behaviour), timestamps from the order.
+        DepotHistoryEntry.Why why = enrichByBrokerOrderId(o.brokerOrderId());
         return new DepotHistoryEntry("ORDER", o.symbol(), o.side(), o.qty(), null, null, null,
-                o.status(), o.brokerOrderId(), true, why);
+                o.status(), o.brokerOrderId(), o.submittedAt(), o.filledAt(), o.avgFillPrice(),
+                true, why);
     }
 
     private DepotHistoryEntry fromClosedPosition(DepotClosedPosition c) {
+        DepotHistoryEntry.Why why = enrichBySignalId(c.clientRef());
         return new DepotHistoryEntry("CLOSED_POSITION", c.symbol(), null, null,
-                c.openPrice(), c.closePrice(), c.profitLoss(), "closed", null, true, null);
+                c.openPrice(), c.closePrice(), c.profitLoss(), "closed", null,
+                c.openTime(), c.closeTime(), null, true, why);
     }
 
-    private DepotHistoryEntry.Why enrich(String brokerOrderId) {
+    /** Alpaca link: executor_position by broker order id (unchanged). */
+    private DepotHistoryEntry.Why enrichByBrokerOrderId(String brokerOrderId) {
         if (brokerOrderId == null || positions.isEmpty()) return null;
-        ExecutorPosition p = positions.get().findByBrokerOrderId(brokerOrderId);
+        return whyFor(positions.get().findByBrokerOrderId(brokerOrderId));
+    }
+
+    /** Saxo link: clientRef echoes Dracul's signal id (entry = signalId, T2 add-on = "t2-"+signalId). */
+    private DepotHistoryEntry.Why enrichBySignalId(String clientRef) {
+        if (clientRef == null || positions.isEmpty()) return null;
+        ExecutorPosition p = positions.get().findBySourceSignalId(clientRef);
+        if (p == null && clientRef.startsWith("t2-")) {
+            p = positions.get().findBySourceSignalId(clientRef.substring(3));
+        }
+        return whyFor(p);
+    }
+
+    private DepotHistoryEntry.Why whyFor(ExecutorPosition p) {
         if (p == null) return null;
         String reasoning = null;
         if (decisions.isPresent() && p.sourceSignalId() != null) {
