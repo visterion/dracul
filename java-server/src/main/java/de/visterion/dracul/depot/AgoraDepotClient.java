@@ -109,13 +109,19 @@ public class AgoraDepotClient {
     }
 
     public List<DepotOrder> orders(String connection) {
-        return orders(connection, null);
+        return orders(connection, null, null, null);
     }
 
     public List<DepotOrder> orders(String connection, String status) {
+        return orders(connection, status, null, null);
+    }
+
+    public List<DepotOrder> orders(String connection, String status, String from, String to) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
         if (status != null) args.put("status", status);
+        if (from != null) args.put("from", from);
+        if (to != null) args.put("to", to);
         JsonNode out = unwrap(call("get_orders", args));
 
         JsonNode array = out.path("orders");
@@ -131,16 +137,30 @@ public class AgoraDepotClient {
                         decimalOrNull(o, "qty"),
                         textOrNull(o, "type"),
                         textOrNull(o, "status"),
-                        textOrNull(o, "role")));
+                        textOrNull(o, "role"),
+                        textOrNull(o, "submittedAt"),
+                        textOrNull(o, "filledAt"),
+                        decimalOrNull(o, "avgFillPrice")));
             }
         }
         return result;
     }
 
     public List<DepotClosedPosition> closedPositions(String connection) {
+        return closedPositions(connection, null, null);
+    }
+
+    public List<DepotClosedPosition> closedPositions(String connection, String from, String to) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
+        if (from != null) args.put("from", from);
+        if (to != null) args.put("to", to);
         JsonNode out = unwrap(call("get_closed_positions", args));
+
+        // Agora signals an unsupported source (Alpaca) explicitly: {closedPositions:[], supported:false}.
+        if (out.path("supported").isBoolean() && !out.path("supported").asBoolean()) {
+            return List.of();
+        }
 
         JsonNode array = out.path("closedPositions");
         if (!array.isArray()) array = out;
@@ -153,7 +173,9 @@ public class AgoraDepotClient {
                         decimalOrNull(c, "openPrice"),
                         decimalOrNull(c, "closePrice"),
                         decimalOrNull(c, "profitLoss"),
-                        textOrNull(c, "clientRef")));
+                        textOrNull(c, "clientRef"),
+                        textOrNull(c, "openTime"),
+                        textOrNull(c, "closeTime")));
             }
         }
         return result;
