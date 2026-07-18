@@ -305,12 +305,15 @@ public class DaywalkerEventEngine {
                 .orElse(false);
         if (dbCooldown) return Optional.empty();
 
-        // Dedup (round 1, m3; round 2, m-4): key = normalized text, first source symbol wins;
+        // Dedup (round 1, m3; round 2, m-4; T1.4/R3-m5): key = normalized text; on collision
+        // the HIGHER-credibility instance wins (deterministic wire credibility instead of
+        // first-seen pinning a low score); ties keep the first-seen instance.
         // sort datetime DESC with NULLs LAST (NewsHeadline.datetime is nullable), then text;
         // cap 10 AFTER dedup+sort.
         Map<String, MacroHeadline> deduped = new LinkedHashMap<>();
         for (MacroHeadline h : macro) {
-            deduped.putIfAbsent(h.headline().toLowerCase(java.util.Locale.ROOT).trim(), h);
+            deduped.merge(h.headline().toLowerCase(java.util.Locale.ROOT).trim(), h,
+                    (kept, candidate) -> candidate.credibility() > kept.credibility() ? candidate : kept);
         }
         List<MacroHeadline> ordered = deduped.values().stream()
                 .sorted(java.util.Comparator
@@ -327,6 +330,7 @@ public class DaywalkerEventEngine {
             m.put("source_symbol", h.sourceSymbol());
             m.put("datetime", h.datetime() == null ? null : h.datetime().toString());
             m.put("tags", h.tags());
+            m.put("credibility", h.credibility());
             headlineMaps.add(m);
         }
         Map<String, Object> detail = new LinkedHashMap<>();
