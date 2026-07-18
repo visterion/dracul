@@ -682,6 +682,14 @@ redirects here): one `DepotSection` per connected broker
   an orders list; and an inline error alert (`data-testid="depot-error"`)
   when `depot.error` is set — the rest of the section still renders
   whatever data the depot does have.
+  - **Historie tab** (closed trades): a tabular list of closed positions and historical
+    orders, fetched from `GET /api/depots/{connection}/history`. Shows broker-authoritative
+    facts (entry date, exit date, entry/exit price, realized P&L) as the primary source of
+    truth. Dracul's `why` annotation (Strigoi name and rationale) appears when linked to an
+    executor decision via `broker_order_id`; this annotation is explicitly marked as
+    non-authoritative (advisory only) in the UI. Rows are sortable by date, symbol, P&L,
+    and qty. A null `error` field means successful fetch; a non-null `error` renders an
+    inline alert explaining the broker fetch failure.
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change
@@ -740,14 +748,6 @@ by clicking a row in a `DepotSection`'s positions table.
 - **Open orders**: reuses the same row layout as `DepotSection`'s orders
   list, scoped to this symbol (`getDepotPosition`'s `orders` are already
   server-filtered).
-- **Historie (Closed trades)**: a tabular list of closed positions and historical
-  orders, fetched from `GET /api/depots/{connection}/history`. Shows broker-authoritative
-  facts (entry date, exit date, entry/exit price, realized P&L) as the primary source of
-  truth. Dracul's `why` annotation (Strigoi name and rationale) appears when linked to an
-  executor decision via `broker_order_id`; this annotation is explicitly marked as
-  non-authoritative (advisory only) in the UI. Rows are sortable by date, symbol, P&L,
-  and qty. A null `error` field means successful fetch; a non-null `error` renders an
-  inline alert explaining the broker fetch failure.
 - **Informationen**: the profile's `description` field (Finnhub-style
   passthrough object under `InstrumentInfo.profile`, shape otherwise
   `unknown`) — truncated at 240 chars with a "Mehr/Weniger anzeigen"
