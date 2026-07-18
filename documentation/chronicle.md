@@ -197,9 +197,14 @@ The responsive system is specified in `DESIGN.md` Part 4 (Breakpoints), Part 5.8
 
 ## Instrument overlay
 
-Every rendered ticker across Chronicle is clickable and opens a shared,
-global **instrument overlay** with a live quote and info panel for that
-symbol — without navigating away from the current view.
+Nearly every rendered ticker across Chronicle is clickable and opens a
+shared, global **instrument overlay** with a live quote and info panel for
+that symbol — without navigating away from the current view. Two spots
+intentionally stay raw text instead of a `TickerButton`: `DepotPositionsTable`
+rows (the row itself already `@click`-navigates to the position detail — a
+nested ticker button would fight that navigation) and the `WatchlistView`
+detail-pane header/verdict label (it is context for the already-selected row,
+not a separate navigation target).
 
 - **`TickerButton.vue`** (`src/components/instrument/`) is a small wrapper:
   it renders the symbol as an inline `<button>` (inherits the caller's
