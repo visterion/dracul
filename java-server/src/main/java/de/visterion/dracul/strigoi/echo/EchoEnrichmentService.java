@@ -3,6 +3,7 @@ package de.visterion.dracul.strigoi.echo;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
+import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
@@ -16,6 +17,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,7 +25,13 @@ import java.util.Optional;
  *  double-beat, consecutive seasonal beats. SP2: market-adjusted announcement-CAR, abnormal
  *  volume, momentum and ADV (from OHLC vs the market proxy) plus beta/marketCap/sector.
  *  All external data comes from the Agora facades; the shaping helpers hold the interpretation.
- *  Every external lookup is wrapped so a failure degrades one field, never the whole run. */
+ *  Every external lookup is wrapped so a failure degrades one field, never the whole run.
+ *
+ *  <p>T1.5: also fetches company news ONCE per candidate (single {@link AgoraCompanyData#news}
+ *  round-trip — that call is uncached) and reuses it for both the {@link ConfounderScreen} flags
+ *  feeding the deterministic gate AND the {@code recentNews} surfaced to the Echo LLM for
+ *  sentiment scoring. {@code recentNews} is sorted newest-first and capped at
+ *  {@link #recentNewsCap}; the confounder screen always sees the FULL, uncapped fetch. */
 @Component
 public class EchoEnrichmentService {
 
@@ -43,6 +51,7 @@ public class EchoEnrichmentService {
     private final AgoraEarnings earnings;
     private final ConfounderScreen eventScreen;
     private final EchoDeterministicGate gate;
+    private final int recentNewsCap;
 
     public EchoEnrichmentService(
             SueEngine sueEngine,
@@ -58,7 +67,8 @@ public class EchoEnrichmentService {
             AgoraCompanyData companyData,
             AgoraEarnings earnings,
             ConfounderScreen eventScreen,
-            EchoDeterministicGate gate) {
+            EchoDeterministicGate gate,
+            @Value("${dracul.strigoi.echo.recent-news-cap:10}") int recentNewsCap) {
         this.sueEngine = sueEngine;
         this.filings = filings;
         this.epsShaper = epsShaper;
@@ -73,6 +83,7 @@ public class EchoEnrichmentService {
         this.earnings = earnings;
         this.eventScreen = eventScreen;
         this.gate = gate;
+        this.recentNewsCap = recentNewsCap;
     }
 
     public List<EnrichedPeadCandidate> enrich(List<PeadCandidate> candidates) {
@@ -118,7 +129,10 @@ public class EchoEnrichmentService {
             MarketSignals ms = marketSignals.compute(stockBars, marketBars, c.reportDate(), em.beta());
 
             AccrualMetrics accr = safeAccruals(c.symbol());
-            List<String> confounders = safeConfounders(c.symbol(), c.reportDate());
+            // Single Agora news fetch, reused for BOTH the confounder scan (full, uncapped) and
+            // the capped recentNews surfaced to the LLM below.
+            List<NewsHeadline> news = safeNews(c.symbol(), c.reportDate());
+            List<String> confounders = eventScreen.confounders(news);
             Optional<LocalDate> nextEarn = safeNextEarnings(c.symbol());
             Integer daysToNext = nextEarn.map(d -> (int) ChronoUnit.DAYS.between(LocalDate.now(), d)).orElse(null);
 
@@ -130,6 +144,7 @@ public class EchoEnrichmentService {
             List<RecommendationTrend> recTrend = safeRecommendations(c.symbol());
             EarningsRevisions rev = revisions.revisions(recTrend);
             AnalystCoverage cov = AnalystCoverage.of(recTrend);
+            List<EchoNewsItem> recentNews = recentNews(news);
 
             out.add(new EnrichedPeadCandidate(
                     c.symbol(), c.companyName(), c.reportDate(),
@@ -143,7 +158,7 @@ public class EchoEnrichmentService {
                     accr.accrualRatio(), accr.available(),
                     rev.netProxy(), rev.direction(), rev.available(),
                     nextEarn.orElse(null), daysToNext,
-                    cov.coverage(), cov.available()));
+                    cov.coverage(), cov.available(), recentNews));
         }
         return out;
     }
@@ -176,14 +191,27 @@ public class EchoEnrichmentService {
         catch (Exception e) { log.debug("echo: recommendations unavailable for {}: {}", symbol, e.getMessage()); return List.of(); }
     }
 
-    private List<String> safeConfounders(String symbol, LocalDate since) {
-        try { return eventScreen.confounders(symbol, since); }
-        catch (Exception e) { log.debug("echo: event screen failed for {}: {}", symbol, e.getMessage()); return List.of(); }
+    /** Single per-candidate news fetch, reused for confounders + recentNews (T1.5). Never
+     *  throws: an Agora failure degrades to an empty list, same posture as every other
+     *  external lookup in this class. */
+    private List<NewsHeadline> safeNews(String symbol, LocalDate since) {
+        try { return companyData.news(symbol, since, LocalDate.now()); }
+        catch (Exception e) { log.debug("echo: news unavailable for {}: {}", symbol, e.getMessage()); return List.of(); }
     }
 
     private Optional<LocalDate> safeNextEarnings(String symbol) {
         try { return earnings.nextEarningsDate(symbol); }
         catch (Exception e) { log.debug("echo: next-earnings unavailable for {}: {}", symbol, e.getMessage()); return Optional.empty(); }
+    }
+
+    /** Newest-first, capped at {@link #recentNewsCap}. The cap applies ONLY here — the
+     *  confounder scan above always sees the full, uncapped {@code news} list. */
+    private List<EchoNewsItem> recentNews(List<NewsHeadline> news) {
+        return news.stream()
+                .sorted(Comparator.comparing(NewsHeadline::datetime).reversed())
+                .limit(recentNewsCap)
+                .map(h -> new EchoNewsItem(h.headline(), h.summary(), h.source(), h.credibility(), h.datetime()))
+                .toList();
     }
 
     private static BigDecimal revenueSurprise(BigDecimal actual, BigDecimal estimate) {

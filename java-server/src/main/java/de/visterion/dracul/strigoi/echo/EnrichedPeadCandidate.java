@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.echo;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /** Candidate enriched with deterministic PEAD signals (SP1 surprise/quality + SP2
  *  market reaction). Nullable / {@code *Available=false} = signal unavailable. */
@@ -41,5 +42,7 @@ public record EnrichedPeadCandidate(
         LocalDate nextEarningsDate,
         Integer daysToNextEarnings,
         Integer analystCoverage,
-        boolean coverageAvailable
+        boolean coverageAvailable,
+        // T1.5: post-report headlines surfaced for LLM sentiment scoring (never re-gated on).
+        List<EchoNewsItem> recentNews
 ) {}
