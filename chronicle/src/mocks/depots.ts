@@ -237,6 +237,7 @@ export const mockDepotHistory: DepotHistory = {
       profitLoss: 100, status: 'filled', brokerOrderId: 'o-1', brokerConfirmed: true,
       why: { strigoi: 'index-strigoi', killCriteria: ['stop below 95'],
              entryReasoning: 'index inclusion drift', draculExitReason: 'TAKE_PROFIT', draculRealizedR: 2 },
+      openedAt: '2026-06-15T09:30:00Z', closedAt: '2026-06-20T14:32:10Z', avgFillPrice: 191.20,
     },
   ],
   error: null,

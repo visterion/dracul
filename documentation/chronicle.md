@@ -683,16 +683,19 @@ redirects here): one `DepotSection` per connected broker
   when `depot.error` is set — the rest of the section still renders
   whatever data the depot does have.
   - **Historie tab** (closed trades): a list of closed positions (Saxo) and historical Alpaca
-    orders, fetched from `GET /api/depots/{connection}/history`. Each row shows the symbol,
-    a status pill, realized P&L (when present, `CLOSED_POSITION` entries only), and a
-    "broker-confirmed" badge. When Dracul can link an Alpaca order to an executor decision
-    via `brokerOrderId`, a `why` block appears (Strigoi name, entry reasoning, exit reason,
-    realized R) explicitly labeled as Dracul's non-authoritative interpretation, never as
-    broker fact; entries with no link show a "not linkable" note instead. There is no
-    client- or server-side sorting, and no entry-date/exit-date columns — the DTO carries no
-    date fields. The response is always HTTP 200; a non-null `error` field (with `entries`
-    empty) renders an inline alert explaining the broker fetch failure, replacing the
-    empty-history text.
+    orders, fetched from `GET /api/depots/{connection}/history` (90-day rolling window by
+    default, `dracul.depots.history-lookback-days`). Each row shows the symbol, a date column
+    (`openedAt` → `closedAt`), a status pill, realized P&L (when present, `CLOSED_POSITION`
+    entries only), fill price (`avgFillPrice`, `ORDER` entries only), and a "broker-confirmed"
+    badge. When Dracul can link the trade to an executor decision, a `why` block appears
+    (Strigoi name, entry reasoning, exit reason, realized R) explicitly labeled as Dracul's
+    non-authoritative interpretation, never as broker fact; entries with no link show a "not
+    linkable" note instead. This now includes Saxo `CLOSED_POSITION` rows: they link via
+    `clientRef → executor_position.source_signal_id`, so Saxo trades get the same "why"
+    drilldown as Alpaca orders (previously Saxo rows never carried a `why`). There is no
+    client- or server-side sorting. The response is always HTTP 200; a non-null `error` field
+    (with `entries` empty) renders an inline alert explaining the broker fetch failure,
+    replacing the empty-history text.
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change

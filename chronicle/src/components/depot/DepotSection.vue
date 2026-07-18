@@ -36,6 +36,12 @@
         <div v-for="(e, i) in history" :key="i" class="dp-history-row" data-testid="depot-history-row">
           <span class="dp-hist-sym">{{ e.symbol }}</span>
           <span class="dp-hist-status">{{ orderStatusLabel(e.status, t).label }}</span>
+          <span v-if="e.closedAt" class="dp-hist-date"
+            :aria-label="`${t('depots.history.closedAt')}: ${formatAbsoluteTime(e.closedAt)}`"
+            :title="e.openedAt ? `${t('depots.history.openedAt')}: ${formatAbsoluteTime(e.openedAt)}` : undefined">
+            {{ t('depots.history.date') }}: {{ formatAbsoluteTime(e.closedAt) }}
+          </span>
+          <span v-if="e.avgFillPrice != null" class="dp-hist-fill mono">{{ t('depots.history.fillPrice') }}: {{ formatMoney(e.avgFillPrice, depot.account?.currency ?? 'USD') }}</span>
           <span v-if="e.profitLoss !== null" class="dp-hist-pl">{{ t('depots.history.result') }}: {{ e.profitLoss }}</span>
           <span v-if="e.brokerConfirmed" class="dp-hist-badge">{{ t('depots.history.brokerConfirmed') }}</span>
           <template v-if="e.why">
@@ -344,6 +350,8 @@ function formatChartValue(v: number): string {
 .dp-tab-btn.active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
 .dp-history-row { display: flex; gap: var(--space-3); padding: 6px 0; border-bottom: 1px solid var(--ash-gray); }
 .dp-hist-badge { color: var(--cathedral-gold); font-size: var(--text-micro); }
+.dp-hist-date { color: var(--ash-gray-light); font-size: var(--text-micro); }
+.dp-hist-fill { color: var(--bone-ivory-dim); font-size: var(--text-micro); }
 .dp-hist-nowhy { color: var(--ash-gray-light); font-size: var(--text-micro); }
 .dp-hist-dracul { color: var(--ash-gray-light); font-size: var(--text-micro); }
 
