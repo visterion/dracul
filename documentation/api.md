@@ -573,9 +573,23 @@ Broker-authoritative closed-position and order history with optional Dracul anno
 For Saxo (and any non-Alpaca provider), fetches `get_closed_positions`; for Alpaca, fetches
 all orders with `status=all` and filters to the terminal statuses `filled`, `canceled`,
 `cancelled`, `expired`, `rejected` (`partially_filled` is deliberately excluded — an order
-still in flight is not history). Each Alpaca entry includes an optional `why` annotation
-(Strigoi name and rationale) when Dracul can link the trade to an executor decision via
-`brokerOrderId`; Saxo closed positions never carry `why` (no order id / timestamp to link on).
+still in flight is not history). Both calls send a rolling `from`/`to` window
+(`dracul.depots.history-lookback-days`, default **90 days**, see `configuration.md`) —
+`from = now - lookbackDays`, `to = now`.
+
+Each Alpaca entry includes an optional `why` annotation (Strigoi name and rationale) when
+Dracul can link the trade to an executor decision via `brokerOrderId`. Saxo closed positions
+now carry `why` too: `DepotHistoryService` joins Agora's `closedPosition.clientRef` against
+`executor_position.source_signal_id` (exact match; if that misses and `clientRef` starts
+with `t2-`, it retries with the prefix stripped) — no new column, because the `clientRef`
+Dracul sends when placing a Saxo order already **is** the signal id (entry order:
+`clientRef = signalId`; T2 add-on order: `clientRef = "t2-" + signalId`).
+
+If Agora signals a source as unsupported (`{closedPositions: [], supported: false}` — this
+is how Agora reports Alpaca's `get_closed_positions`, since Alpaca history comes from
+`get_orders` instead), `AgoraDepotClient.closedPositions` returns an empty list rather than
+surfacing the flag; the endpoint behaves as if that source simply had no closed positions in
+the window.
 
 This endpoint always returns **HTTP 200**, never 404/503: an unknown or invisible
 `{connection}` yields `{ entries: [], error: null }`, and a broker fetch failure yields
@@ -595,6 +609,9 @@ is surfaced — the frontend must check it, not rely on a non-200 status.
       "profitLoss": null,
       "status": "filled",
       "brokerOrderId": "o-1",
+      "openedAt": "2026-06-01T14:32:00Z",
+      "closedAt": "2026-06-01T14:32:05Z",
+      "avgFillPrice": 187.42,
       "brokerConfirmed": true,
       "why": {
         "strigoi": "index-strigoi",
@@ -614,8 +631,17 @@ is surfaced — the frontend must check it, not rely on a non-200 status.
       "profitLoss": 200,
       "status": "closed",
       "brokerOrderId": null,
+      "openedAt": "2026-05-20T09:00:00Z",
+      "closedAt": "2026-06-10T15:45:00Z",
+      "avgFillPrice": null,
       "brokerConfirmed": true,
-      "why": null
+      "why": {
+        "strigoi": "spin-strigoi",
+        "killCriteria": ["stop below 130"],
+        "entryReasoning": "spin-off separation thesis",
+        "draculExitReason": "STOP_BREACHED",
+        "draculRealizedR": -0.8
+      }
     }
   ],
   "error": null
@@ -634,9 +660,12 @@ Per-entry fields (`DepotHistoryEntry`):
 | `exitPrice` | number \| null | Close price — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
 | `profitLoss` | number \| null | Realized P&L — only populated for `CLOSED_POSITION`; `null` for `ORDER` |
 | `status` | string | Broker order status for `ORDER` (e.g. `filled`); literal `"closed"` for `CLOSED_POSITION` |
-| `brokerOrderId` | string \| null | Broker-native order id — present for `ORDER`, `null` for `CLOSED_POSITION`; also the key `why` enrichment links on |
+| `brokerOrderId` | string \| null | Broker-native order id — present for `ORDER`, `null` for `CLOSED_POSITION`; the key `why` enrichment links on for `ORDER` entries |
+| `openedAt` | string \| null | ISO timestamp: order `submittedAt` for `ORDER`, position `openTime` for `CLOSED_POSITION` |
+| `closedAt` | string \| null | ISO timestamp: order `filledAt` for `ORDER`, position `closeTime` for `CLOSED_POSITION` |
+| `avgFillPrice` | number \| null | Average fill price — only populated for `ORDER`; `null` for `CLOSED_POSITION` |
 | `brokerConfirmed` | boolean | Always `true` — every entry originates from a broker-authoritative source |
-| `why` | object \| null | Optional Dracul annotation (present only for `ORDER` entries linked to an executor decision via `brokerOrderId`, and only when the executor repos are wired, i.e. `dracul.executor.enabled=true`); always `null` for `CLOSED_POSITION` |
+| `why` | object \| null | Optional Dracul annotation, only when the executor repos are wired (`dracul.executor.enabled=true`). For `ORDER`, links via `brokerOrderId` → `executor_position.broker_order_id`. For `CLOSED_POSITION`, links via `clientRef` → `executor_position.source_signal_id` (stripping a leading `t2-` on second attempt). `null` when no matching `executor_position` is found. |
 
 `why` object fields (`DepotHistoryEntry.Why`, when present):
 
