@@ -155,6 +155,21 @@ public record WatchlistItem(
 ) {}
 ```
 
+### Depot order data (live, non-persisted)
+
+`DepotOrder` (`de.visterion.dracul.depot`, backing `GET /api/depots`'s
+`orders[]`) is a passthrough DTO over Agora's `get_orders` — not a `dracul`
+schema table. It carries `parentId` (nullable `String`): the broker's
+bracket-parent linkage, populated by `AgoraDepotClient` from Agora's raw
+`parentId` field. A protective leg (target/stop) that belongs to a bracket
+carries its entry order's id in `parentId`; a standalone entry order has
+`parentId == null`. The frontend's `DepotOrderView` (`chronicle/src/api/
+types.ts`) mirrors the field 1:1 and uses it (`groupOrders()` in
+`chronicle/src/lib/orderDisplay.ts`) to group flat broker orders into bracket
+displays — see `documentation/chronicle.md` § "Self-explaining UI". No price
+(limit/stop) field was added alongside it; that remains a separate, gated
+follow-up.
+
 ## Database Schema (`dracul` schema)
 
 Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
