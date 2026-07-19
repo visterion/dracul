@@ -70,8 +70,15 @@ public class VerdictSynthesizer {
                 horizon, signals, risks, details, preyIds, userId);
         // Cell-only write-back (T1.6 Task 9, D9): verdicts never trade, so there is no
         // research_memory_link row — just the thesis cell, written once on first synthesis.
-        memory.writeThesisMemory("verdict", symbol, anomalyTypes.isEmpty() ? null : anomalyTypes.get(0),
-                summary, signals, risks, List.of(), horizon, "voievod", avgConfidence, symbol);
+        // Best-effort: writeThesisMemory is itself guarded/never-throwing
+        // (HiveMemResearchService), and this try/catch is defense-in-depth so a memory-write
+        // failure can never fail this completion.
+        try {
+            memory.writeThesisMemory("verdict", symbol, anomalyTypes.isEmpty() ? null : anomalyTypes.get(0),
+                    summary, signals, risks, List.of(), horizon, "voievod", avgConfidence, symbol);
+        } catch (RuntimeException e) {
+            log.warn("voievod: memory write for verdict {} failed unexpectedly: {}", symbol, e.getMessage());
+        }
         return Result.INSERTED;
     }
 

@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -114,5 +115,27 @@ class VerdictSynthesizerMemoryTest {
         assertThat(result).isEqualTo(VerdictSynthesizer.Result.NOOP_UNCHANGED);
         verify(memory, never()).writeThesisMemory(any(), any(), any(), any(), any(), any(), any(),
                 any(), any(), anyDouble(), any());
+    }
+
+    @Test
+    void memoryThrows_insertedResultStillReturned() {
+        VerdictRepository verdictRepo = mock(VerdictRepository.class);
+        AgoraMarketData marketData = mock(AgoraMarketData.class);
+        HiveMemResearchService memory = mock(HiveMemResearchService.class);
+        doThrow(new RuntimeException("bug")).when(memory).writeThesisMemory(anyString(), anyString(),
+                any(), anyString(), any(), any(), any(), any(), anyString(), anyDouble(), anyString());
+        when(verdictRepo.findActiveBySymbol(eq("ACME"), anyString())).thenReturn(Optional.empty());
+        when(marketData.resolve(eq("ACME"))).thenReturn(null);
+
+        var synth = new VerdictSynthesizer(verdictRepo, marketData, memory);
+        var cluster = new ConsensusCluster("ACME", "Acme Inc",
+                List.of(prey("ACME", "strigoi-echo", 0.7), prey("ACME", "strigoi-spin", 0.6)));
+
+        var result = synth.upsert("ACME", "consensus summary", cluster, "user-1");
+
+        assertThat(result).isEqualTo(VerdictSynthesizer.Result.INSERTED);
+        verify(verdictRepo, times(1)).insertSynthesized(eq("ACME"), anyString(), any(), anyDouble(),
+                anyString(), any(), any(), any(), anyDouble(), anyString(), any(), any(), any(), any(),
+                anyString());
     }
 }
