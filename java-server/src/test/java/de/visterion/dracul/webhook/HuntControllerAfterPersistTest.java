@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
@@ -90,7 +91,7 @@ class HuntControllerAfterPersistTest {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
             // insertAll echoes its argument: every mapped prey is "newly inserted".
-            when(preyRepo.insertAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+            when(preyRepo.insertAll(anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
             RecordingHuntController controller = newController(ctx, preyRepo);
 
             var resp = controller.complete("Bearer test-token", "run-1", doneBodyWithOnePrey());
@@ -107,7 +108,7 @@ class HuntControllerAfterPersistTest {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
             // Duplicate delivery: everything collided on the natural key, nothing inserted.
-            when(preyRepo.insertAll(anyList())).thenReturn(List.of());
+            when(preyRepo.insertAll(anyList(), any())).thenReturn(List.of());
             RecordingHuntController controller = newController(ctx, preyRepo);
 
             var resp = controller.complete("Bearer test-token", "run-2", doneBodyWithOnePrey());
