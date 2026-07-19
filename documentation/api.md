@@ -429,7 +429,7 @@ Order ticket fields (`ticket`):
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
 | GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
-| GET | `/api/depots/run/{runId}/transcript` | Read-only proxy for Vistierie's raw run transcript (Schicht 2). Returns `{ transcript, expired }`; `expired: true` (and `transcript: null`) when Vistierie has pruned the run or is unreachable — never a 500. |
+| GET | `/api/depots/run/{runId}/transcript` | Read-only proxy for Vistierie's raw run transcript (Schicht 2). Ownership-scoped to the current user via the originating `prey` row's `run_id`; an unknown `runId` or one belonging to another user returns `404`. Returns `{ transcript, expired }`; `expired: true` (and `transcript: null`) when Vistierie has pruned the run or is unreachable — never a 500. |
 
 Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
 /api/depots` calls `DepotService.depots(userEmail, refresh)` (default
@@ -791,7 +791,15 @@ ever contain rows for `{symbol}`, with the rest of Agora's envelope
 
 ### `GET /api/depots/run/{runId}/transcript` response
 
-Read-only pass-through (Schicht 2): `DepotController.transcript` calls
+Ownership-scoped: the controller first checks
+`PreyRepository.runExistsForUser(runId, CurrentUserHolder.get())` — true
+only when a `prey` row discovered for the current user carries this
+`run_id`. An unknown `runId`, or one that belongs to another user,
+returns `404` (not `403`, to avoid leaking whether the run exists at
+all) before Vistierie is ever called.
+
+Once ownership is confirmed, this is a read-only pass-through
+(Schicht 2): `DepotController.transcript` calls
 `VistierieClient.getRunTranscript(runId, "full")` and wraps the result
 without any transformation — `transcript` is Vistierie's raw run
 transcript body (`view=full`: complete message history, exact prompt +
