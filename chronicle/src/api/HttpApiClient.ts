@@ -9,7 +9,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
-  DepotHistory, RunTranscript,
+  DepotHistory, RunTranscript, InspectorRunsResponse,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -375,5 +375,21 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.baseUrl}/api/depots/run/${encodeURIComponent(runId)}/transcript`)
     if (!res.ok) return { transcript: null, expired: true }
     return res.json() as Promise<RunTranscript>
+  }
+
+  async getInspectorTranscript(runId: string): Promise<RunTranscript> {
+    const res = await fetch(`${this.baseUrl}/api/inspector/run/${encodeURIComponent(runId)}/transcript`)
+    if (!res.ok) return { transcript: null, expired: true }
+    return res.json() as Promise<RunTranscript>
+  }
+
+  async getInspectorRuns(agent: string | null, limit = 50, offset = 0): Promise<InspectorRunsResponse> {
+    const params = new URLSearchParams()
+    if (agent) params.set('agent', agent)
+    params.set('limit', String(limit))
+    params.set('offset', String(offset))
+    const res = await fetch(`${this.baseUrl}/api/inspector/runs?${params.toString()}`)
+    if (!res.ok) return { runs: [] }
+    return res.json() as Promise<InspectorRunsResponse>
   }
 }
