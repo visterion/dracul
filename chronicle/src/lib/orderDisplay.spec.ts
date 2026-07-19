@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { prettifyEnum, orderSideLabel, orderTypeLabel, orderStatusLabel } from './orderDisplay'
+import { prettifyEnum, orderSideLabel, orderTypeLabel, orderStatusLabel, normalizeRole, orderStateLabel } from './orderDisplay'
 
 // Stub translate: echoes the key so tests assert which i18n key was chosen.
 const t = (k: string) => k
@@ -83,5 +83,26 @@ describe('orderStatusLabel', () => {
   })
   it('unknown → prettified, ash', () => {
     expect(orderStatusLabel('pending_new', t)).toEqual({ label: 'Pending New', tone: 'ash' })
+  })
+})
+
+describe('normalizeRole', () => {
+  it('maps real Agora role strings to canonical roles', () => {
+    expect(normalizeRole('entry')).toBe('entry')
+    expect(normalizeRole('stop_loss')).toBe('stop')
+    expect(normalizeRole('take_profit')).toBe('target')
+    expect(normalizeRole('other')).toBe('other')
+    expect(normalizeRole(null)).toBe(null)
+    expect(normalizeRole('STOP_LOSS')).toBe('stop') // case-insensitive
+    expect(normalizeRole('exit')).toBe('other')     // unknown non-blank → other
+  })
+})
+
+describe('orderStateLabel', () => {
+  it('says "waiting for entry" for an inactive protective leg', () => {
+    expect(orderStateLabel('notWorking', 'target', t).label).toBe('depots.orders.state.waitingForEntry')
+  })
+  it('keeps normal status for the entry leg', () => {
+    expect(orderStateLabel('working', 'entry', t).label).toBe('depots.orders.status.active')
   })
 })
