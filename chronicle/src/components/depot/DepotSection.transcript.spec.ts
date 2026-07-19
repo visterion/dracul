@@ -92,4 +92,22 @@ describe('DepotSection raw transcript panel', () => {
     expect(mockGetRunTranscript).toHaveBeenCalledWith('run-old')
     expect(w.text()).toContain(de.depots.transcript.expired)
   })
+
+  it('falls back to the expired hint when the transcript fetch throws', async () => {
+    mockGetDepotHistory.mockResolvedValue({ entries: [
+      { source: 'ORDER', symbol: 'AAPL', side: 'buy', qty: 10, entryPrice: 100, exitPrice: 110,
+        profitLoss: 100, status: 'filled', brokerOrderId: 'o-1', brokerConfirmed: true,
+        why: { strigoi: 'index-strigoi', killCriteria: ['x'], entryReasoning: 'drift',
+               draculExitReason: 'TAKE_PROFIT', draculRealizedR: 2, runId: 'run-boom' } }], error: null })
+    mockGetRunTranscript.mockRejectedValue(new Error('network down'))
+    const w = mountSection()
+    await w.find('[data-testid="depot-tab-history"]').trigger('click')
+    await flushPromises()
+
+    await w.find('[data-testid="transcript-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(mockGetRunTranscript).toHaveBeenCalledWith('run-boom')
+    expect(w.text()).toContain(de.depots.transcript.expired)
+  })
 })
