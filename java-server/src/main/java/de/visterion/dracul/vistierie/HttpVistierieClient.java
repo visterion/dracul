@@ -463,6 +463,50 @@ public class HttpVistierieClient implements VistierieClient {
     }
 
     @Override
+    public List<RunSearchHit> listAgentRuns(String agent, int limit, int offset) {
+        try {
+            // tenant-scoped /runs, dracul-only; agent-filter is client-side because
+            // /runs ignores the agent param. Bare array response, no "tenant" field
+            // (unlike /admin/runs, which is admin-scoped across ALL tenants and
+            // would leak other tenants' runs, e.g. hivemem-prod, into this operator view).
+            var body = tenantClient.get().uri(b -> {
+                b.path("/runs").queryParam("limit", limit).queryParam("offset", offset);
+                return b.build();
+            }).retrieve().body(JsonNode.class);
+            if (body == null || !body.isArray()) return List.of();
+            var result = new ArrayList<RunSearchHit>();
+            for (var n : body) {
+                var agentName = n.path("agent_name").asText();
+                if (agent != null && !agent.isBlank() && !agent.equals(agentName)) continue;
+                var startedAtText = n.path("started_at").asText(null);
+                Instant startedAt = null;
+                if (startedAtText != null && !startedAtText.isBlank()) {
+                    try {
+                        startedAt = Instant.parse(startedAtText);
+                    } catch (Exception ignored) {
+                        // leave startedAt null if the upstream format is unparseable
+                    }
+                }
+                var errorNode = n.path("error");
+                boolean hasError = !errorNode.isNull() && !errorNode.asText("").isBlank();
+                var summaryNode = n.path("summary");
+                result.add(new RunSearchHit(
+                        n.path("run_id").asText(),
+                        agentName,
+                        n.path("status").asText(),
+                        hasError,
+                        startedAt,
+                        0.0,
+                        summaryNode.isNull() ? null : summaryNode.asText(null)));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Vistierie listAgentRuns failed: {}", e.toString());
+            return List.of();
+        }
+    }
+
+    @Override
     public JsonNode getRunTranscript(String runId, String view) {
         try {
             return tenantClient.get()

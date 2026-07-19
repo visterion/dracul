@@ -41,6 +41,7 @@ Both documents are required reading before implementing any view.
 | 10 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
 | 11 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders), plus the operator-analytics Calibration card | High | ✅ Task C2 / A9 |
 | 12 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
+| 13 | Agent Activity (Inspector) | `/inspector` | Operator-only browser of every Vistierie run across all agents: agent filter (client-side constant list of known agents + "all"), paginated run list (agent, started-at, status, error marker, snippet), click-to-expand raw transcript via `RawTranscriptPanel`, "load more" pagination | Low (operator tool) | ✅ Agent Activity Inspector, Task 4 |
 
 > **Portfolio retired (Task A9, depot-as-SSOT).** The manual, watchlist-HELD-based
 > "Portfolio" view (`/portfolio`, backed by `GET /api/portfolio`) has been removed.
@@ -822,3 +823,19 @@ by clicking a row in a `DepotSection`'s positions table.
   `null` (executor repos disabled, no open `executor_position` row for the
   symbol, or no linked run) simply omits the panel — same "no context to
   show" behavior as the history tab's "not linkable" case.
+- **Move timeline (Agent Activity Inspector, Task 5)**: below the
+  single-run transcript panel, a `data-testid="pd-moves"` section
+  (`depots.detail.moves.title` i18n key) lists every executor decision
+  (`ENTER`/`ADD`/`TRIM`/`EXIT`) recorded against this open position —
+  `getDepotPosition`'s response now carries a `moves: DepotMove[]` array
+  (`{ action, reasonCode, createdAt, runId }`), already delivered by the
+  backend in ascending `created_at` order — the view renders it as-is and
+  never re-sorts. Each `data-testid="pd-move-row"` shows the action, its
+  reason code (when present), and `createdAt` via the shared
+  `formatAbsoluteTime`. When a move carries a `runId`, its row renders a
+  `RawTranscriptPanel` with `source="inspector"` (not `"depot"` — moves are
+  executor runs fetched through `getInspectorTranscript`, the
+  operator-gated inspector path, not the depot/prey-gated one); a move
+  without a `runId` is a row with no panel. This gives each individual move
+  its own chat drilldown, distinct from the single heuristic `runId` panel
+  above it (which links the *position* as a whole to one run).

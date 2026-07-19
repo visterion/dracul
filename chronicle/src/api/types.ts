@@ -580,6 +580,61 @@ export interface RunTranscript {
   expired: boolean
 }
 
+/** Row of the operator-gated inspector run browser (`GET /api/inspector/runs`). */
+export interface InspectorRun {
+  runId: string
+  agent: string
+  status: string
+  hasError: boolean
+  startedAt: string | null
+  snippet: string | null
+}
+
+export interface InspectorRunsResponse {
+  runs: InspectorRun[]
+}
+
+/** Defensive, loosely-typed shape of a Vistierie `view=full` transcript.
+ *  All fields are optional: the transcript is Vistierie's raw JSON and can
+ *  evolve independently of this frontend. Rendering code must never assume
+ *  a field is present — always use optional chaining. */
+export interface TranscriptToolCall {
+  tool_use_id?: string
+  name?: string
+  input?: unknown
+  output?: unknown
+  is_error?: boolean
+  error_detail?: unknown
+}
+
+export interface TranscriptMsg {
+  role?: string
+  content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: unknown }>
+}
+
+export interface TranscriptTurn {
+  index?: number
+  llm_input_messages?: TranscriptMsg[]
+  text?: string | null
+  stop_reason?: string
+  tool_use?: Array<{ tool_use_id?: string; name?: string; input?: unknown }>
+  tool_calls?: TranscriptToolCall[]
+  tokens?: { input?: number; output?: number; cacheCreate?: number; cacheRead?: number }
+}
+
+export interface RunTranscriptFull {
+  run_id?: string
+  agent?: string
+  status?: string
+  model?: string
+  turn_count?: number
+  started_at?: string
+  finished_at?: string
+  turns?: TranscriptTurn[]
+  final_output?: unknown
+  error?: unknown
+}
+
 export interface DepotHistoryEntry {
   source: 'ORDER' | 'CLOSED_POSITION'
   symbol: string
@@ -600,6 +655,18 @@ export interface DepotHistoryEntry {
 export interface DepotHistory {
   entries: DepotHistoryEntry[]
   error: string | null
+}
+
+/** One executor decision (ENTER/ADD/TRIM/EXIT) in an open position's move
+ *  timeline, carrying the `runId` of the executor run that decided it —
+ *  lets the frontend link each move to its raw Vistierie transcript via
+ *  `getInspectorTranscript`. `createdAt` is a raw backend string, already
+ *  delivered in ascending order — never re-sort it here. */
+export interface DepotMove {
+  action: string
+  reasonCode: string | null
+  createdAt: string
+  runId: string | null
 }
 
 export interface Depot {

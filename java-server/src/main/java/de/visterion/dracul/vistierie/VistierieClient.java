@@ -45,6 +45,12 @@ public interface VistierieClient {
     java.util.List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
             java.util.List<String> status, java.time.Instant from, java.time.Instant to,
             int limit, int offset);
+
+    /** Runs for the operator's activity inspector, newest first. {@code agent} null = all agents.
+     *  Backed by tenant-scoped {@code /runs}, dracul-only; agent-filter is client-side
+     *  because {@code /runs} ignores the agent param. */
+    java.util.List<RunSearchHit> listAgentRuns(String agent, int limit, int offset);
+
     tools.jackson.databind.JsonNode getRunTranscript(String runId, String view);
     tools.jackson.databind.JsonNode getRunToolCall(String runId, String toolUseId);
 

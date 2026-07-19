@@ -185,8 +185,10 @@ class DepotControllerTest {
         assertThat(out.orders()).extracting(DepotOrder::symbol).containsOnly("ACME");
         assertThat(out.asOf()).isEqualTo("2026-07-11T12:00:00Z");
         // newController() wires a bare mock(DepotHistoryService.class), which defaults to
-        // null for runIdForOpenPosition — asserting it explicitly locks in "no link = null".
+        // null for runIdForOpenPosition and an empty list for movesForOpenPosition —
+        // asserting explicitly locks in "no link = null / empty".
         assertThat(out.runId()).isNull();
+        assertThat(out.moves()).isEmpty();
     }
 
     @Test
@@ -206,6 +208,28 @@ class DepotControllerTest {
 
         assertThat(out.runId()).isEqualTo("run-heuristic-1");
         verify(historyService).runIdForOpenPosition("conn-1", "ACME");
+    }
+
+    @Test
+    void foundPositionCarriesMoveTimelineFromHistoryService() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = depotWithPosition("conn-1", "ACME");
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
+        var historyService = mock(DepotHistoryService.class);
+        List<DepotMove> moves = List.of(
+                new DepotMove("ENTER", "OK", "2026-07-01T10:00:00Z", "run-enter"),
+                new DepotMove("TRIM", "T2_TARGET", "2026-07-05T10:00:00Z", "run-trim"));
+        when(historyService.movesForOpenPosition("conn-1", "ACME")).thenReturn(moves);
+
+        var controller = new DepotController(service, mock(DepotChartService.class),
+                mock(DepotInstrumentService.class), historyService, mock(VistierieClient.class),
+                mock(PreyRepository.class));
+
+        var out = controller.positionDetail("conn-1", "ACME");
+
+        assertThat(out.moves()).isEqualTo(moves);
+        verify(historyService).movesForOpenPosition("conn-1", "ACME");
     }
 
     @Test
