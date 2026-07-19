@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { prettifyEnum, orderSideLabel, orderTypeLabel, orderStatusLabel, normalizeRole, orderStateLabel } from './orderDisplay'
+import { prettifyEnum, orderSideLabel, orderTypeLabel, orderStatusLabel, normalizeRole, orderStateLabel, groupOrders } from './orderDisplay'
+import type { DepotOrderView } from '../api/types'
 
 // Stub translate: echoes the key so tests assert which i18n key was chosen.
 const t = (k: string) => k
@@ -104,5 +105,51 @@ describe('orderStateLabel', () => {
   })
   it('keeps normal status for the entry leg', () => {
     expect(orderStateLabel('working', 'entry', t).label).toBe('depots.orders.status.active')
+  })
+})
+
+function ord(p: Partial<DepotOrderView>): DepotOrderView {
+  return { brokerOrderId: 'x', symbol: 'STT', side: null, qty: 6, type: 'limit',
+    status: 'working', role: 'entry', parentId: null, ...p }
+}
+
+describe('groupOrders', () => {
+  it('groups an entry with its stop/target legs by parentId, entry first', () => {
+    // Real broker shape: entry has parentId=null, legs carry parentId = entry id.
+    const orders = [
+      ord({ brokerOrderId: 'e', role: 'entry', parentId: null, status: 'working' }),
+      ord({ brokerOrderId: 't', role: 'take_profit', parentId: 'e', status: 'notWorking', type: 'limit' }),
+      ord({ brokerOrderId: 's', role: 'stop_loss', parentId: 'e', status: 'notWorking', type: 'stop' }),
+    ]
+    const groups = groupOrders(orders)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].legs.map(l => l.canonicalRole)).toEqual(['entry', 'target', 'stop'])
+  })
+
+  it('falls back to symbol grouping when parentId is null', () => {
+    const orders = [
+      ord({ brokerOrderId: 'e', role: 'entry', parentId: null }),
+      ord({ brokerOrderId: 's', role: 'stop_loss', parentId: null, type: 'stop' }),
+    ]
+    const groups = groupOrders(orders)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].legs).toHaveLength(2)
+  })
+
+  it('keeps an unrelated single order as its own group', () => {
+    const groups = groupOrders([ord({ brokerOrderId: 'z', symbol: 'AAA', role: 'other', parentId: null })])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].legs).toHaveLength(1)
+  })
+
+  it('nails the documented caveat: two entries + one orphan leg, same symbol (no parentId)', () => {
+    const groups = groupOrders([
+      ord({ brokerOrderId: 'e1', role: 'entry', parentId: null }),
+      ord({ brokerOrderId: 'e2', role: 'entry', parentId: null }),
+      ord({ brokerOrderId: 's', role: 'stop_loss', parentId: null, type: 'stop' }),
+    ])
+    expect(groups).toHaveLength(2)
+    const withStop = groups.find(g => g.legs.some(l => l.canonicalRole === 'stop'))!
+    expect(withStop.legs.map(l => l.order.brokerOrderId)).toContain('e1')
   })
 })
