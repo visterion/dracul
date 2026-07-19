@@ -72,7 +72,7 @@ class ExecutorNotifierTest {
         when(positionRepo.findOpen()).thenReturn(List.of());
         ExecutorSignal s = sig("PEAD", 0.72, json.getNodeFactory().textNode("Post-earnings drift"));
         notifier(true).notifyEntryPlaced(s, "BUY", new BigDecimal("12"), new BigDecimal("187.50"),
-                new BigDecimal("178.00"), 0.72, "depot-1");
+                new BigDecimal("178.00"), "depot-1");
         ArgumentCaptor<String> t = ArgumentCaptor.forClass(String.class);
         verify(telegram).notifyDigest(t.capture());
         assertThat(t.getValue())

@@ -61,8 +61,7 @@ public class ExecutorNotifier {
     }
 
     public void notifyEntryPlaced(ExecutorSignal signal, String side, BigDecimal qty,
-                                  BigDecimal price, BigDecimal stop, Double decisionConfidence,
-                                  String venue) {
+                                  BigDecimal price, BigDecimal stop, String venue) {
         if (!enabled) return;
         try {
             StringBuilder sb = new StringBuilder();
@@ -137,12 +136,7 @@ public class ExecutorNotifier {
 
     private void appendSignalLine(StringBuilder sb, ExecutorSignal signal) {
         try {
-            StringBuilder line = new StringBuilder();
-            line.append("Mechanismus: ").append(signal.mechanism() == null ? "?" : signal.mechanism());
-            if (signal.confidence() != null) line.append(" · Confidence: ").append(conf(signal.confidence()));
-            String thesis = thesisText(signal.thesis());
-            if (!thesis.isBlank()) line.append("\nThese: ").append(thesis);
-            sb.append("\n").append(line);
+            sb.append("\n").append(signalLine(signal.mechanism(), signal.confidence(), signal.thesis()));
         } catch (Exception e) {
             log.warn("signal line render failed: {}", e.getMessage());
         }
@@ -192,18 +186,21 @@ public class ExecutorNotifier {
         try {
             ExecutorSignal s = signalRepo.findById(sourceSignalId);
             if (s == null) return "";
-            StringBuilder sb = new StringBuilder();
-            sb.append("Mechanismus: ").append(s.mechanism() == null ? "?" : s.mechanism());
-            if (s.confidence() != null) {
-                sb.append(" · Confidence: ").append(conf(s.confidence()));
-            }
-            String thesis = thesisText(s.thesis());
-            if (!thesis.isBlank()) sb.append("\nThese: ").append(thesis);
-            return sb.toString();
+            return signalLine(s.mechanism(), s.confidence(), s.thesis());
         } catch (Exception e) {
             log.warn("signal line resolution failed for {}: {}", sourceSignalId, e.getMessage());
             return "";
         }
+    }
+
+    /** Builds "Mechanismus: X · Confidence: Y\nThese: Z" (Confidence/These lines omitted when absent). */
+    private String signalLine(String mechanism, Double confidence, JsonNode thesis) {
+        StringBuilder line = new StringBuilder();
+        line.append("Mechanismus: ").append(mechanism == null ? "?" : mechanism);
+        if (confidence != null) line.append(" · Confidence: ").append(conf(confidence));
+        String t = thesisText(thesis);
+        if (!t.isBlank()) line.append("\nThese: ").append(t);
+        return line.toString();
     }
 
     private String thesisText(JsonNode thesis) {
