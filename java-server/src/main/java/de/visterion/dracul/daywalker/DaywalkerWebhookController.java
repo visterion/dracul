@@ -1,6 +1,7 @@
 package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.daywalker.detect.TriggerEvent;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.news.NewsEventType;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
@@ -15,6 +16,8 @@ import tools.jackson.databind.JsonNode;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -27,14 +30,20 @@ public class DaywalkerWebhookController {
     private final BearerTokenVerifier verifier;
     private final DaywalkerEventEngine engine;
     private final DaywalkerCompletionService completionService;
+    private final HiveMemResearchService memory;
+    private final long priorMemoryBudgetMs;
 
     public DaywalkerWebhookController(
             @Value("${dracul.daywalker.webhook-token}") String token,
             DaywalkerEventEngine engine,
-            DaywalkerCompletionService completionService) {
+            DaywalkerCompletionService completionService,
+            HiveMemResearchService memory,
+            @Value("${dracul.daywalker.prior-memory-budget-ms:2000}") long priorMemoryBudgetMs) {
         this.verifier = new BearerTokenVerifier(token);
         this.engine = engine;
         this.completionService = completionService;
+        this.memory = memory;
+        this.priorMemoryBudgetMs = priorMemoryBudgetMs;
     }
 
     /** Event-source webhook: deterministic detection over the watchlist. */
@@ -47,9 +56,23 @@ public class DaywalkerWebhookController {
         Instant now = parseInstant(body.get("now"), Instant.now());
         Instant since = parseInstant(body.get("since"), null);
 
+        // W3: prior_memory is folded in strictly AFTER detect() returns -- the deterministic
+        // detector must never see memory. Task 11 (spec §11): wall-clock-only short-circuit
+        // shared across ALL emitted events in this invocation, not per-event -- searchForInput
+        // never throws (degrades to List.of() internally), so there is no exception to catch
+        // here; once the budget is spent, remaining events simply skip the call.
+        List<TriggerEvent> events = engine.detect(since, now);
+        long priorMemoryDeadline = System.nanoTime() + priorMemoryBudgetMs * 1_000_000L;
         var payloads = new ArrayList<Map<String, Object>>();
-        for (TriggerEvent ev : engine.detect(since, now)) {
-            payloads.add(ev.toEventPayload());
+        for (TriggerEvent ev : events) {
+            Map<String, Object> payload = new LinkedHashMap<>(ev.toEventPayload());
+            List<Map<String, Object>> priorMemory = System.nanoTime() < priorMemoryDeadline
+                    ? memory.searchForInput(ev.symbol(), 3).stream()
+                            .map(h -> Map.<String, Object>of("summary", h.summary(), "content", h.content()))
+                            .toList()
+                    : List.of();
+            payload.put("prior_memory", priorMemory);
+            payloads.add(payload);
         }
         return ResponseEntity.ok(Map.of("events", payloads));
     }

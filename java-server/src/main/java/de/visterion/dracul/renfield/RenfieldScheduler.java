@@ -1,6 +1,7 @@
 package de.visterion.dracul.renfield;
 
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.hunting.agora.SectorResolver;
@@ -58,23 +59,26 @@ public class RenfieldScheduler {
     private final PortfolioWeights portfolioWeights;
     private final SectorResolver sectors;
     private final VistierieClient vistierie;
+    private final HiveMemResearchService memory;
     private final String publicUrl;
     private final String webhookToken;
     private final String connection;
     private final String owner;
     private final int maxSymbols;
+    private final long priorMemoryBudgetMs;
     private final NewsEventTagger tagger = new NewsEventTagger();
 
     public RenfieldScheduler(WatchlistRepository watchlist, AgoraMarketData marketData,
             AgoraCompanyData companyData, DaywalkerAlertRepository alerts,
             VerdictRepository verdicts, HeldPositionService heldPositions,
             PortfolioWeights portfolioWeights, SectorResolver sectors,
-            VistierieClient vistierie,
+            VistierieClient vistierie, HiveMemResearchService memory,
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.renfield.webhook-token:dev-token-change-me}") String webhookToken,
             @Value("${dracul.position.connection:depot-1}") String connection,
             @Value("${dracul.primary-user-email:}") String primaryUser,
-            @Value("${dracul.renfield.max-symbols:30}") int maxSymbols) {
+            @Value("${dracul.renfield.max-symbols:30}") int maxSymbols,
+            @Value("${dracul.renfield.prior-memory-budget-ms:2000}") long priorMemoryBudgetMs) {
         this.watchlist = watchlist;
         this.marketData = marketData;
         this.companyData = companyData;
@@ -84,11 +88,13 @@ public class RenfieldScheduler {
         this.portfolioWeights = portfolioWeights;
         this.sectors = sectors;
         this.vistierie = vistierie;
+        this.memory = memory;
         this.publicUrl = publicUrl;
         this.webhookToken = webhookToken;
         this.connection = connection;
         this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
         this.maxSymbols = maxSymbols;
+        this.priorMemoryBudgetMs = priorMemoryBudgetMs;
     }
 
     // zone is mandatory here — codebase precedent is split and the spec pins UTC.
@@ -132,6 +138,11 @@ public class RenfieldScheduler {
         LocalDate to = now.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate from = to.minusDays(1);
 
+        // Task 11 (spec §11): wall-clock-only short-circuit. searchForInput never throws (it
+        // degrades to List.of() internally), so there is no exception to catch here -- once the
+        // budget is spent, remaining symbols simply skip the call and get an empty prior_memory.
+        long priorMemoryDeadline = System.nanoTime() + priorMemoryBudgetMs * 1_000_000L;
+
         var symbols = new ArrayList<Map<String, Object>>();
         for (WatchlistItem item : items) {
             var m = new LinkedHashMap<String, Object>();
@@ -171,6 +182,12 @@ public class RenfieldScheduler {
                     m.put("verdict", vm);
                 });
             }
+            List<Map<String, Object>> priorMemory = System.nanoTime() < priorMemoryDeadline
+                    ? memory.searchForInput(item.ticker(), 3).stream()
+                            .map(h -> Map.<String, Object>of("summary", h.summary(), "content", h.content()))
+                            .toList()
+                    : List.of();
+            m.put("prior_memory", priorMemory);
             symbols.add(m);
         }
         var input = new LinkedHashMap<String, Object>();
