@@ -1,6 +1,7 @@
 package de.visterion.dracul.depot;
 
 import de.visterion.dracul.auth.CurrentUserHolder;
+import de.visterion.dracul.vistierie.VistierieClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,13 +28,16 @@ public class DepotController {
     private final DepotChartService chartService;
     private final DepotInstrumentService instrumentService;
     private final DepotHistoryService historyService;
+    private final VistierieClient vistierie;
 
     public DepotController(DepotService service, DepotChartService chartService,
-            DepotInstrumentService instrumentService, DepotHistoryService historyService) {
+            DepotInstrumentService instrumentService, DepotHistoryService historyService,
+            VistierieClient vistierie) {
         this.service = service;
         this.chartService = chartService;
         this.instrumentService = instrumentService;
         this.historyService = historyService;
+        this.vistierie = vistierie;
     }
 
     @GetMapping
@@ -70,6 +74,17 @@ public class DepotController {
         } catch (DepotUnavailableException e) {
             return new DepotHistoryResponse(List.of(), e.getMessage());
         }
+    }
+
+    /**
+     * Raw Vistierie run transcript (Schicht 2): exact prompt + raw LLM answer + tool results,
+     * un-truncated ({@code view=full}), proxied read-only. Returns {@code {transcript:null,
+     * expired:true}} when Vistierie pruned the run or is unreachable (never 500).
+     */
+    @GetMapping("/run/{runId}/transcript")
+    public TranscriptResponse transcript(@PathVariable String runId) {
+        JsonNode node = vistierie.getRunTranscript(runId, "full");
+        return new TranscriptResponse(node, node == null);
     }
 
     @GetMapping("/chart")
@@ -156,5 +171,12 @@ public class DepotController {
     public record InstrumentResponse(String symbol, JsonNode profile, JsonNode news, JsonNode earnings,
             JsonNode analystEstimates, JsonNode earningsEstimates, JsonNode fundamentalScore,
             JsonNode fundamentals, JsonNode insiderActivity) {
+    }
+
+    /**
+     * Response for {@code GET /api/depots/run/{runId}/transcript}: the raw Vistierie transcript
+     * body, or {@code expired:true} when Vistierie has none (pruned run or unreachable).
+     */
+    public record TranscriptResponse(JsonNode transcript, boolean expired) {
     }
 }

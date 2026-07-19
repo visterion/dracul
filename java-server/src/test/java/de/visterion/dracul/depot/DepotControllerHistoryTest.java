@@ -1,6 +1,7 @@
 package de.visterion.dracul.depot;
 
 import de.visterion.dracul.auth.CurrentUserHolder;
+import de.visterion.dracul.vistierie.VistierieClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -23,7 +24,7 @@ class DepotControllerHistoryTest {
                         null, null, null, true, null)));
 
         var controller = new DepotController(mock(DepotService.class), mock(DepotChartService.class),
-                mock(DepotInstrumentService.class), history);
+                mock(DepotInstrumentService.class), history, mock(VistierieClient.class));
         var out = controller.history("depot-1");
 
         assertThat(out.entries()).hasSize(1);
