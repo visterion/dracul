@@ -11,7 +11,7 @@
     <template v-else-if="calibration && behavior">
       <!-- Brier calibration -->
       <section class="cal-block">
-        <h3 class="cal-block-title">{{ t('calibration.brierTitle') }}</h3>
+        <h3 class="cal-block-title">{{ t('calibration.brierTitle') }} <InfoDot topic="calibration" anchor="brier" /></h3>
         <div class="cal-executor-row">
           <span class="cal-executor-label">{{ t('calibration.executor') }}</span>
           <TagPill v-if="calibration.executor.insufficient" tone="ash">
@@ -79,7 +79,7 @@
 
       <!-- Veto precision -->
       <section class="cal-block">
-        <h3 class="cal-block-title">{{ t('calibration.vetoPrecision') }}</h3>
+        <h3 class="cal-block-title">{{ t('calibration.vetoPrecision') }} <InfoDot topic="calibration" anchor="vetoPrecision" /></h3>
         <div class="table-scroll">
           <table class="dt">
             <thead>
@@ -97,7 +97,7 @@
                 v-for="row in behavior.veto_precision" :key="row.reason_code"
                 data-testid="veto-precision-row" :data-reason="row.reason_code"
               >
-                <td class="tkr">{{ row.reason_code }}</td>
+                <td class="tkr">{{ row.reason_code }} <InfoDot topic="calibration" :anchor="vetoAnchor(row.reason_code)" /></td>
                 <td class="num">{{ row.n }}</td>
                 <td class="num">{{ row.skipped }}</td>
                 <td class="num">{{ fmtR(row.mean_hypothetical_r_20d) }}</td>
@@ -139,6 +139,7 @@ import type { ExecutorCalibration, ExecutorBehavior } from '../api/types'
 import SectionHeader from './common/SectionHeader.vue'
 import StatTile from './common/StatTile.vue'
 import TagPill from './common/TagPill.vue'
+import InfoDot from './common/InfoDot.vue'
 
 const { t } = useI18n()
 const api = useApi()
@@ -165,6 +166,21 @@ const fmtBrier = (v: number) => v.toFixed(3)
 const fmtR = (v: number) => v.toFixed(2)
 const fmtPct = (v: number) => `${v.toFixed(1)}%`
 const fmtSeconds = (v: number) => `${v}s`
+
+// Maps a veto reason code to its explainer anchor within the 'calibration'
+// topic. Unknown/rarer codes (budget, concentration, ...) fall back to the
+// section-level 'vetoPrecision' anchor rather than a non-existent one.
+const VETO_REASON_ANCHORS: Record<string, string> = {
+  BROKER_ERROR: 'brokerError',
+  NO_STOP: 'noStop',
+  LOW_CONFIDENCE: 'lowConfidence',
+  PACE_LIMIT: 'paceLimit',
+  COOLDOWN: 'cooldown',
+  BELOW_ANCHOR: 'belowAnchor',
+}
+function vetoAnchor(reasonCode: string): string {
+  return VETO_REASON_ANCHORS[reasonCode] ?? 'vetoPrecision'
+}
 </script>
 
 <style scoped>

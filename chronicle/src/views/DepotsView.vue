@@ -2,6 +2,7 @@
   <div class="content-inner depots-view">
     <PageHead :title="t('depots.title')" :sub="t('depots.subtitle')">
       <template #right>
+        <InfoDot topic="orders.bracket" />
         <button class="btn btn-secondary" data-testid="depots-refresh" @click="load(true)">
           <i class="ph ph-arrow-clockwise" aria-hidden="true" /> {{ t('depots.refresh') }}
         </button>
@@ -45,6 +46,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PageHead from '../components/common/PageHead.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
+import InfoDot from '../components/common/InfoDot.vue'
 import DepotSection from '../components/depot/DepotSection.vue'
 import CalibrationCard from '../components/CalibrationCard.vue'
 import { useApi } from '../api'
