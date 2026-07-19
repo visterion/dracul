@@ -463,6 +463,45 @@ public class HttpVistierieClient implements VistierieClient {
     }
 
     @Override
+    public List<RunSearchHit> listAgentRuns(String agent, int limit, int offset) {
+        try {
+            // Modeled on getStrigoiDetail's proven /admin/runs parse: admin-scoped, top-level array.
+            var body = adminClient.get().uri(b -> {
+                b.path("/admin/runs").queryParam("limit", limit).queryParam("offset", offset);
+                if (agent != null && !agent.isBlank()) b.queryParam("agent", agent);
+                return b.build();
+            }).retrieve().body(JsonNode.class);
+            if (body == null || !body.isArray()) return List.of();
+            var result = new ArrayList<RunSearchHit>();
+            for (var n : body) {
+                var startedAtText = n.path("started_at").asText(null);
+                Instant startedAt = null;
+                if (startedAtText != null && !startedAtText.isBlank()) {
+                    try {
+                        startedAt = Instant.parse(startedAtText);
+                    } catch (Exception ignored) {
+                        // leave startedAt null if the upstream format is unparseable
+                    }
+                }
+                var snippetNode = n.path("summary").isMissingNode() || n.path("summary").isNull()
+                        ? n.path("snippet") : n.path("summary");
+                result.add(new RunSearchHit(
+                        n.path("id").asText(),
+                        n.path("agent").asText(),
+                        n.path("status").asText(),
+                        n.path("has_error").asBoolean(false),
+                        startedAt,
+                        0.0,
+                        snippetNode.isNull() ? null : snippetNode.asText(null)));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Vistierie listAgentRuns failed: {}", e.toString());
+            return List.of();
+        }
+    }
+
+    @Override
     public JsonNode getRunTranscript(String runId, String view) {
         try {
             return tenantClient.get()
