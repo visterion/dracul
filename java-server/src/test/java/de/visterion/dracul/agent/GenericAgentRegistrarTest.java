@@ -234,6 +234,95 @@ class GenericAgentRegistrarTest {
         verify(client, never()).registerAgent(any());
     }
 
+    /**
+     * Task 11 closing regression (spec §12): {@code RenfieldScheduler}/{@code
+     * DaywalkerWebhookController} gained the {@code prior_memory} pre-fetch, but neither
+     * agent's {@link AgentDefinition}/{@link ToolBinding} list changed -- only their
+     * Java-assembled INPUT did. {@code matches()} must still return {@code true} on a
+     * simulated second boot (desired built from the same definition twice, compared against
+     * an {@link AgentDetail} built from the first {@code desired}) -- no re-register storm.
+     */
+    private AgentDefinition daywalker() {
+        return new AgentDefinition("daywalker", "reasoning",
+                PromptDocument.bodyFromClasspath("prompts/daywalker.md"),
+                json.createObjectNode().put("type", "object"),
+                "0 0 8 * * 1-5", 8, 600, "/api/daywalker/complete",
+                "/api/daywalker/events", 57600, 300, true, List.of());
+    }
+
+    private AgentDefinition renfield() {
+        return new AgentDefinition("renfield", "reasoning",
+                PromptDocument.bodyFromClasspath("prompts/renfield.md"),
+                json.createObjectNode().put("type", "object"),
+                null, 4, 600, "/api/renfield/complete",
+                null, null, null, true, List.of());
+    }
+
+    @Test
+    void daywalkerSecondBootMatchesFromSameDefinitionWithoutReRegister() {
+        var client = mock(VistierieClient.class);
+        var store = mock(AgentDefinitionStore.class);
+        when(store.findAllEnabled()).thenReturn(List.of(daywalker()));
+        var settings = mock(AppSettingsRepository.class);
+        when(settings.getLanguage()).thenReturn("en");
+        var registrar = new GenericAgentRegistrar(client, store, catalog(), settings,
+                "https://dracul.example.com", name -> "tok-" + name,
+                List.of(), json, "http://hivemem:8421", "read-tok");
+        var def = daywalker();
+        var desired1 = registrar.buildRequest(def);
+        var desired2 = registrar.buildRequest(def);
+        assertThat(desired2).isEqualTo(desired1);
+
+        var existing = new AgentDetail(
+                "id-daywalker", "daywalker",
+                desired1.system_prompt(), "reasoning",
+                desired1.tools(), desired1.output_schema(),
+                8, 600, false, 1,
+                Instant.EPOCH, Instant.EPOCH,
+                desired1.schedule(), null,
+                desired1.completion_webhook(), desired1.completion_webhook_token(),
+                desired1.event_source_url(), desired1.session_duration_seconds(),
+                desired1.poll_interval_seconds());
+        when(client.getAgent("daywalker")).thenReturn(Optional.of(existing));
+
+        registrar.registerAll();
+
+        verify(client, never()).updateAgent(any(), any());
+        verify(client, never()).registerAgent(any());
+    }
+
+    @Test
+    void renfieldSecondBootMatchesFromSameDefinitionWithoutReRegister() {
+        var client = mock(VistierieClient.class);
+        var store = mock(AgentDefinitionStore.class);
+        when(store.findAllEnabled()).thenReturn(List.of(renfield()));
+        var settings = mock(AppSettingsRepository.class);
+        when(settings.getLanguage()).thenReturn("en");
+        var registrar = new GenericAgentRegistrar(client, store, catalog(), settings,
+                "https://dracul.example.com", name -> "tok-" + name,
+                List.of(), json, "http://hivemem:8421", "read-tok");
+        var def = renfield();
+        var desired1 = registrar.buildRequest(def);
+        var desired2 = registrar.buildRequest(def);
+        assertThat(desired2).isEqualTo(desired1);
+
+        var existing = new AgentDetail(
+                "id-renfield", "renfield",
+                desired1.system_prompt(), "reasoning",
+                desired1.tools(), desired1.output_schema(),
+                4, 600, false, 1,
+                Instant.EPOCH, Instant.EPOCH,
+                null, null,
+                desired1.completion_webhook(), desired1.completion_webhook_token(),
+                null, null, null);
+        when(client.getAgent("renfield")).thenReturn(Optional.of(existing));
+
+        registrar.registerAll();
+
+        verify(client, never()).updateAgent(any(), any());
+        verify(client, never()).registerAgent(any());
+    }
+
     @Test
     void streamingFieldsUnchangedIsUpToDate() {
         var client = mock(VistierieClient.class);
