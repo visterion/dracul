@@ -184,7 +184,7 @@ The `yahooRestClient` bean and the keys below remain in use for FX only
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | _(blank)_ | Telegram bot token for Daywalker push alerts. Blank disables push. |
+| `TELEGRAM_BOT_TOKEN` | _(blank)_ | Telegram bot token, shared across Daywalker push alerts, Renfield proposal pushes, and executor action pushes (`DRACUL_EXECUTOR_NOTIFY_ENABLED`, see the Executor table). Blank disables push. |
 | `TELEGRAM_CHAT_ID` | _(blank)_ | Target chat / user id. Blank disables push. |
 | `TELEGRAM_BASE_URL` | `https://api.telegram.org` | Override for tests. |
 | `DRACUL_DAYWALKER_NOTIFY_LEVEL` | `CRITICAL` | Minimum alert severity that triggers a Telegram push (INFO / WARNING / CRITICAL). |
@@ -528,6 +528,7 @@ Dracul's read-only design.
 | `DRACUL_EXECUTOR_ENTRY_GTD_DAYS` | `dracul.executor.entry-gtd-days` | `2` | Good-till-date window for a `place-entry` limit bracket: `ExecutorPositionRepository.setEntryExpiresAt` is set to this many trading days after placement (calendar days added, then rolled forward to the next Monday if the result lands on a Saturday or Sunday — a documented approximation, no exchange-holiday calendar in v1). `EntryExpiryService` cancels (never re-prices) any entry still `WORKING`/`PARTIALLY_FILLED` once `entry_expires_at` has passed; see `documentation/api.md`'s `CANCEL_EXPIRED` decision-log action. |
 | `DRACUL_EXECUTOR_INSTRUMENT_CURRENCY` | `dracul.executor.instrument-currency` | `USD` | The currency instrument-side prices/ATR/tranche amounts are assumed to be in (v1: always USD). Used as the `EntryContextAssembler`'s FX-conversion basis and as the fallback account currency when the broker account snapshot is unavailable. |
 | `DRACUL_EXECUTOR_MAX_BROKER_ATTEMPTS` | `dracul.executor.max-broker-attempts` | `3` | Number of BROKER_ERROR attempts before a pending entry signal is terminally rejected; below it the signal stays PENDING for retry. |
+| `DRACUL_EXECUTOR_NOTIFY_ENABLED` | `dracul.executor.notify-enabled` | `true` | Master switch for best-effort Telegram push on executor **actions** (entry placed, entry filled, exit/close, tranche-2 add, stop ratchet). Reuses the `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` bot (same as Daywalker). Independent of — and additional to — the executor's existing CRITICAL escalation pushes (orphaned order/position, stale pending exit). Best-effort: a push failure never affects order placement or the position book. `false` silences all five action pushes. Amounts are shown in `instrument-currency` (no FX conversion); expired/never-filled entry cancels emit no push. |
 | `DRACUL_OUTCOME_ENABLED` | `dracul.outcome.enabled` | `true` | Activates `OutcomeBatchJob`, the deterministic nightly `outcome_log` batch (Task 9) — code only, no LLM. Also requires `dracul.executor.enabled=true` (the job reads `decision_log`/`executor_position`, whose repository beans only exist when the executor is enabled); with the executor off, the job stays inactive regardless of this flag, so a fresh default install never fails to start for lack of those beans. |
 | `DRACUL_OUTCOME_CRON` | `dracul.outcome.cron` | `0 30 22 * * 2-6` | Spring cron (sec min hour dom month dow), UTC, for `OutcomeBatchJob`. Default runs Tue–Sat 22:30 UTC, after the executor's evening cycle. |
 
