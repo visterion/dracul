@@ -11,6 +11,7 @@ import type {
   DepotHistory,
   RunTranscript,
   InspectorRunsResponse,
+  DepotMove,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -426,7 +427,7 @@ export class MockApiClient implements ApiClient {
   async getDepotPosition(
     connection: string,
     symbol: string,
-  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }> {
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null; moves: DepotMove[] }> {
     await delay(50)
     const depot = mockDepots.find(d => d.id === connection)
     if (!depot) throw new Error(`getDepotPosition: connection not found: ${connection}`)
@@ -439,6 +440,12 @@ export class MockApiClient implements ApiClient {
       // No executor-position mock fixture to heuristically link from — the mock client has
       // no open-position/signal book, so this stays null (real backend fills it in).
       runId: null,
+      // Canned move timeline: an entry (with a linkable run) followed by a
+      // trim that has no run_id (predates the executor writing one).
+      moves: [
+        { action: 'ENTER', reasonCode: 'thesis-confirmed', createdAt: '2026-06-01T09:30:00Z', runId: 'run-mock-enter-1' },
+        { action: 'TRIM', reasonCode: 'partial-target-hit', createdAt: '2026-06-20T14:05:00Z', runId: null },
+      ],
     }
   }
 
