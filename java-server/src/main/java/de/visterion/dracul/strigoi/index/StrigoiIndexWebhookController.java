@@ -1,11 +1,13 @@
 package de.visterion.dracul.strigoi.index;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraReference;
 import de.visterion.dracul.hunting.agora.IndexChangeEvent;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,10 +57,12 @@ public class StrigoiIndexWebhookController extends HuntController {
             IndexEventEnricher enricher,
             PreyRepository preyRepo,
             ToolFetchCache cache,
+            HiveMemResearchService memory,
+            ResearchMemoryLinkRepository memoryLinks,
             @Value("${dracul.strigoi.index.lookback-days:30}") int defaultLookback,
             @Value("${dracul.strigoi.index.promotion-window-days-sp:5}") int promotionWindowDaysSp,
             @Value("${dracul.strigoi.index.promotion-window-days-russell:20}") int promotionWindowDaysRussell) {
-        super(token, preyRepo, cache);
+        super(token, preyRepo, cache, memory, memoryLinks);
         this.reference = reference;
         this.indexEventRepo = indexEventRepo;
         this.reconciler = reconciler;

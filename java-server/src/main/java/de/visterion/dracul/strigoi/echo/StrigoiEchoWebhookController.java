@@ -1,9 +1,11 @@
 package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -29,8 +31,10 @@ public class StrigoiEchoWebhookController extends HuntController {
             EchoPeadScreener screener,
             EchoEnrichmentService enrichment,
             PreyRepository preyRepo,
-            ToolFetchCache cache) {
-        super(token, preyRepo, cache);
+            ToolFetchCache cache,
+            HiveMemResearchService memory,
+            ResearchMemoryLinkRepository memoryLinks) {
+        super(token, preyRepo, cache, memory, memoryLinks);
         this.earnings = earnings;
         this.screener = screener;
         this.enrichment = enrichment;
