@@ -696,6 +696,20 @@ redirects here): one `DepotSection` per connected broker
     client- or server-side sorting. The response is always HTTP 200; a non-null `error` field
     (with `entries` empty) renders an inline alert explaining the broker fetch failure,
     replacing the empty-history text.
+    - **Raw transcript panel** (Schicht 2): when a history row's `why` block carries a
+      non-null `runId`, a "Roh-Transcript ▸" toggle appears
+      (`RawTranscriptPanel.vue`, `src/components/depot/RawTranscriptPanel.vue`). Expanding it
+      lazily fetches `GET /api/depots/run/{runId}/transcript`
+      (`HttpApiClient.getRunTranscript`) once per row and renders the raw JSON response
+      (`transcript` field) pretty-printed in a `<pre>` block — the transcript shape is
+      Vistierie's own and intentionally untyped (`unknown`) on the frontend, so no field is
+      accessed directly. `expired: true` (the Vistierie run was pruned or is unreachable)
+      shows a localized hint instead of content. A best-effort heuristic flags SHA256-redacted
+      image blocks in the raw text with an "image redacted" note (no image reconstruction).
+      The same panel is intended for the open-position detail view, but the single-position
+      DTO (`GET /api/depots/{connection}/positions/{symbol}`) does not currently carry a
+      `runId`, so the position-detail view does not show the panel yet — wiring it there
+      requires a backend DTO change, out of scope for this slice.
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change

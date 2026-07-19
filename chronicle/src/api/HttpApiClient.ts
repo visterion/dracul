@@ -9,7 +9,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
-  DepotHistory,
+  DepotHistory, RunTranscript,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -369,5 +369,11 @@ export class HttpApiClient implements ApiClient {
     if (res.status === 503) throw new Error(`getDepotHistory: depot unavailable: ${connection}`)
     if (!res.ok) throw new Error(`getDepotHistory failed: HTTP ${res.status}`)
     return res.json() as Promise<DepotHistory>
+  }
+
+  async getRunTranscript(runId: string): Promise<RunTranscript> {
+    const res = await fetch(`${this.baseUrl}/api/depots/run/${encodeURIComponent(runId)}/transcript`)
+    if (!res.ok) return { transcript: null, expired: true }
+    return res.json() as Promise<RunTranscript>
   }
 }
