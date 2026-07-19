@@ -121,9 +121,15 @@ public class OutcomeBatchJob {
 
         LocalDate entryDate = parseLocalDate(p.entryDate());
         LocalDate closedDate = parseLocalDate(p.closedAt());
-        // Widen to whole calendar days either side since entryDate/closedAt lose time-of-day
-        // precision relative to decision_log.created_at (a timestamptz).
-        Instant windowFrom = entryDate != null ? entryDate.atStartOfDay(ZoneOffset.UTC).toInstant() : null;
+        // Widen to whole calendar days either side since entryDate/closedAt are local-timezone-
+        // rendered dates (Timestamp.toString) but decision_log.created_at is compared as an
+        // absolute UTC instant. A run whose local date is a day ahead of a leg's UTC instant
+        // (e.g. the 22:30 UTC cron firing at 00:30 in a UTC+2 deployment) would otherwise place
+        // windowFrom in the future relative to that leg and silently drop it — collapsing a
+        // trimmed position's quantity-weighted R to the final leg only. The ±1-day pad absorbs
+        // that skew; per-position TRIM/exit linkage stays exact via ownedByPosition(position_id).
+        Instant windowFrom = entryDate != null
+                ? entryDate.minusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant() : null;
         Instant windowTo = closedDate != null
                 ? closedDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant() : Instant.now();
 
