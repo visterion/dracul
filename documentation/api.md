@@ -548,7 +548,7 @@ status stays 200; per-connection failures instead surface as a non-null
     "nativePrice": null,
     "nativeCurrency": null
   },
-  "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry", "parentId": null } ],
+  "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry", "parentId": null, "limitPrice": null, "stopPrice": null } ],
   "asOf": "2026-07-11T08:00:00Z",
   "runId": "run-xyz",
   "moves": [
@@ -567,7 +567,12 @@ passed through from Agora's `get_orders`. A protective leg (`role: "stop"` /
 `role: "target"`) that belongs to a bracket carries its entry order's
 `brokerOrderId` in `parentId`; a standalone entry order has `parentId: null`.
 The Chronicle frontend uses it to group flat orders into bracket displays
-(see `documentation/chronicle.md`). No limit/stop price field exists yet.
+(see `documentation/chronicle.md`). Each order also carries `limitPrice`
+and `stopPrice` (number, nullable), passed through from Agora's
+`get_orders` — an order carries at most one of the two (a limit/take-profit
+leg has `limitPrice`, a stop leg has `stopPrice`; a plain market order has
+neither). The Chronicle frontend renders `limitPrice ?? stopPrice` as the
+order's "Preis" column, falling back to `—` when both are null.
 
 `runId` (Task 4b) and `moves` (Task 2) are populated only for **open**
 positions with a linked `executor_position` (symbol-linked via

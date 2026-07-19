@@ -39,9 +39,9 @@ describe('DepotSection orders — grouped brackets', () => {
       aggregates: null,
       positions: [],
       orders: [
-        { brokerOrderId: 'e', symbol: 'STT', side: 'buy', qty: 6, type: 'limit', status: 'working', role: 'entry', parentId: null },
-        { brokerOrderId: 't', symbol: 'STT', side: null, qty: 6, type: 'limit', status: 'notWorking', role: 'take_profit', parentId: 'e' },
-        { brokerOrderId: 's', symbol: 'STT', side: null, qty: 6, type: 'stop', status: 'notWorking', role: 'stop_loss', parentId: 'e' },
+        { brokerOrderId: 'e', symbol: 'STT', side: 'buy', qty: 6, type: 'limit', status: 'working', role: 'entry', parentId: null, limitPrice: 182.53, stopPrice: null },
+        { brokerOrderId: 't', symbol: 'STT', side: null, qty: 6, type: 'limit', status: 'notWorking', role: 'take_profit', parentId: 'e', limitPrice: 226.03, stopPrice: null },
+        { brokerOrderId: 's', symbol: 'STT', side: null, qty: 6, type: 'stop', status: 'notWorking', role: 'stop_loss', parentId: 'e', limitPrice: null, stopPrice: 168.03 },
       ],
     })
     const text = w.text()
@@ -49,5 +49,21 @@ describe('DepotSection orders — grouped brackets', () => {
     expect(text).toContain('Ziel')
     expect(text).toContain('Stop')
     expect(text).toContain('wartet auf Einstieg')
+    expect(text).toContain('182,53')
+    expect(text).toContain('226,03')
+    expect(text).toContain('168,03')
+  })
+
+  it('renders an em-dash when a leg has neither limit nor stop price', () => {
+    const w = mountSection({
+      account: { equity: 100, cash: 100, buyingPower: 100, currency: 'USD', status: 'OK', asOf: '2026-07-19T20:04:23Z' },
+      aggregates: null,
+      positions: [],
+      orders: [
+        { brokerOrderId: 'm', symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', status: 'filled', role: 'entry', parentId: null, limitPrice: null, stopPrice: null },
+      ],
+    })
+    const row = w.get('[data-testid="depot-order-leg"]')
+    expect(row.text()).toContain('—')
   })
 })
