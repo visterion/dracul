@@ -19,7 +19,20 @@ public record ExecutorSignal(
         BigDecimal referencePrice,
         String status,
         String createdAt,
-        JsonNode thesis) {
+        JsonNode thesis,
+        String preyId) {
+
+    /**
+     * Back-compat constructor for the many existing call sites (tests, other
+     * production callers) that predate the {@code preyId} field. Defaults it
+     * to {@code null} — no originating Prey (or unknown one).
+     */
+    public ExecutorSignal(String signalId, String source, String agentVersion, String symbol, String direction,
+            Double confidence, String mechanism, List<String> killCriteria, String horizon,
+            BigDecimal referencePrice, String status, String createdAt, JsonNode thesis) {
+        this(signalId, source, agentVersion, symbol, direction, confidence, mechanism, killCriteria, horizon,
+                referencePrice, status, createdAt, thesis, null);
+    }
 
     /**
      * Back-compat constructor for the many existing call sites (tests, other
@@ -30,6 +43,6 @@ public record ExecutorSignal(
             Double confidence, String mechanism, List<String> killCriteria, String horizon,
             BigDecimal referencePrice, String status, String createdAt) {
         this(signalId, source, agentVersion, symbol, direction, confidence, mechanism, killCriteria, horizon,
-                referencePrice, status, createdAt, null);
+                referencePrice, status, createdAt, null, null);
     }
 }

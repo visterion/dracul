@@ -49,7 +49,8 @@ public class PreySignalMapper {
                 null,                          // referencePrice — resolved at execution time
                 "PENDING",                     // matches the inject seam's literal status
                 null,                          // createdAt — DB defaults to now(), like inject
-                thesisSnapshot(p));
+                thesisSnapshot(p),
+                p.id());                       // preyId — links the signal back to its Prey/thesis cell
     }
 
     /** Prey → the same snapshot shape the reconciler builds from a verdict
