@@ -71,6 +71,40 @@ const en: ExplainerTable = {
       { anchor: 'merger', heading: 'merger — Merger arbitrage', body: 'The target trades below the offer price — the gap is the profit if the deal closes.' },
     ],
   },
+  'orders.roles': {
+    title: 'Entry, target & stop',
+    sections: [
+      { anchor: 'entry', heading: 'Entry', body: 'The actual buy. Until it fills, the target and stop are not yet armed.' },
+      { anchor: 'target', heading: 'Target (take-profit)', body: 'A limit order that sells the position at a profit when the price reaches the target.' },
+      { anchor: 'stop', heading: 'Stop (loss protection)', body: 'A stop order that closes the position when the price falls below the stop level.' },
+      { anchor: 'limitVsStop', heading: 'Limit vs. stop', body: 'Limit = buys/sells only at this price or better. Stop = becomes an order only once the price reaches the stop level.' },
+    ],
+  },
+  'depot.metrics': {
+    title: 'Cash, invested & buying power',
+    sections: [
+      { anchor: 'cash', heading: 'Cash', body: 'Free money in the account, not tied up in positions.' },
+      { anchor: 'invested', heading: 'Invested', body: 'The current value of the open positions.' },
+      { anchor: 'buyingPower', heading: 'Buying power', body: 'The amount still available to buy with right now.' },
+    ],
+  },
+  'calibration': {
+    title: 'Executor calibration',
+    sections: [
+      { anchor: 'brier', heading: 'Brier score', body: "A measure of how well the executor's probability estimates land (smaller is better, 0 would be perfect). Needs at least 30 cases, otherwise it shows \"insufficient data\"." },
+      { anchor: 'vetoPrecision', heading: 'Veto precision', body: 'How often a rejected trade turned out to be rightly rejected. The reasons below are the most common — this is not the full list (there are rarer ones such as budget or concentration limits).' },
+      { anchor: 'brokerError', heading: 'BROKER_ERROR', body: 'The broker rejected the order or there was a technical error.' },
+      { anchor: 'noStop', heading: 'NO_STOP', body: 'No valid stop could be computed — nothing is traded without protection.' },
+      { anchor: 'lowConfidence', heading: 'LOW_CONFIDENCE', body: 'Conviction was below the minimum threshold.' },
+      { anchor: 'paceLimit', heading: 'PACE_LIMIT', body: 'The weekly limit on new entries was reached.' },
+      { anchor: 'cooldown', heading: 'COOLDOWN', body: 'Cooldown period after the last trade in the same name.' },
+      { anchor: 'belowAnchor', heading: 'BELOW_ANCHOR', body: 'The price was on the invalidating side of the anchor/reference level.' },
+      { anchor: 'avgR', heading: 'Avg R 20d / 60d', body: 'The average hypothetical result of rejected signals in "R" (a multiple of the risked amount) after 20 or 60 trading days — computed optimistically (assuming fills at the reference price).' },
+      { anchor: 'stoppedOut', heading: 'Stopped out', body: 'The share of cases that would have been closed at a loss by the stop.' },
+      { anchor: 'slippage', heading: 'Slippage', body: 'The difference between the expected and the actual fill price.' },
+      { anchor: 'hardExitLatency', heading: 'Hard-exit latency', body: 'The time from detecting an emergency exit to submitting the order to the broker.' },
+    ],
+  },
 }
 
 export default en

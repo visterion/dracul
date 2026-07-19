@@ -71,6 +71,40 @@ const de: ExplainerTable = {
       { anchor: 'merger', heading: 'merger — Übernahme-Arbitrage', body: 'Die Zielaktie handelt unter dem Angebotspreis — die Lücke ist der Gewinn, wenn der Deal durchgeht.' },
     ],
   },
+  'orders.roles': {
+    title: 'Einstieg, Ziel & Stop',
+    sections: [
+      { anchor: 'entry', heading: 'Einstieg', body: 'Der eigentliche Kauf. Solange er nicht ausgeführt ist, sind Ziel und Stop noch nicht scharf.' },
+      { anchor: 'target', heading: 'Ziel (Gewinnmitnahme)', body: 'Eine Limit-Order, die die Position mit Gewinn verkauft, wenn der Kurs das Ziel erreicht.' },
+      { anchor: 'stop', heading: 'Stop (Verlustschutz)', body: 'Eine Stop-Order, die die Position schließt, wenn der Kurs unter das Stop-Level fällt.' },
+      { anchor: 'limitVsStop', heading: 'Limit vs. Stop', body: 'Limit = kauft/verkauft nur zu diesem Preis oder besser. Stop = wird erst zur Order, wenn der Kurs das Stop-Level erreicht.' },
+    ],
+  },
+  'depot.metrics': {
+    title: 'Cash, Investiert & Kaufkraft',
+    sections: [
+      { anchor: 'cash', heading: 'Cash', body: 'Freies Geld auf dem Konto, nicht in Positionen gebunden.' },
+      { anchor: 'invested', heading: 'Investiert', body: 'Der aktuelle Wert der offenen Positionen.' },
+      { anchor: 'buyingPower', heading: 'Kaufkraft', body: 'Der Betrag, für den aktuell noch gekauft werden kann.' },
+    ],
+  },
+  'calibration': {
+    title: 'Executor-Kalibrierung',
+    sections: [
+      { anchor: 'brier', heading: 'Brier-Score', body: 'Ein Maß, wie gut die Wahrscheinlichkeits-Schätzungen des Executors treffen (kleiner ist besser, 0 wäre perfekt). Braucht mindestens 30 Fälle, sonst steht „unzureichende Daten".' },
+      { anchor: 'vetoPrecision', heading: 'Veto-Präzision', body: 'Wie oft ein abgelehnter Handel im Nachhinein zu Recht abgelehnt war. Die folgenden Gründe sind die häufigsten — das ist nicht die vollständige Liste (es gibt weitere, seltenere Gründe wie Budget- oder Konzentrationsgrenzen).' },
+      { anchor: 'brokerError', heading: 'BROKER_ERROR', body: 'Der Broker hat abgelehnt oder es gab einen technischen Fehler.' },
+      { anchor: 'noStop', heading: 'NO_STOP', body: 'Es ließ sich kein gültiger Stop berechnen — ohne Absicherung wird nicht gehandelt.' },
+      { anchor: 'lowConfidence', heading: 'LOW_CONFIDENCE', body: 'Die Überzeugung lag unter der Mindestschwelle.' },
+      { anchor: 'paceLimit', heading: 'PACE_LIMIT', body: 'Das wöchentliche Limit an neuen Einstiegen war erreicht.' },
+      { anchor: 'cooldown', heading: 'COOLDOWN', body: 'Abklingzeit nach dem letzten Handel im selben Namen.' },
+      { anchor: 'belowAnchor', heading: 'BELOW_ANCHOR', body: 'Der Kurs stand auf der ungültig machenden Seite des Anker-/Referenzniveaus.' },
+      { anchor: 'avgR', heading: 'Ø R 20T / 60T', body: 'Das durchschnittliche hypothetische Ergebnis abgelehnter Signale in „R" (Vielfaches des riskierten Betrags) nach 20 bzw. 60 Handelstagen — optimistisch gerechnet (Ausführung zum Referenzpreis unterstellt).' },
+      { anchor: 'stoppedOut', heading: 'Ausgestoppt', body: 'Der Anteil der Fälle, die per Stop mit Verlust geschlossen worden wären.' },
+      { anchor: 'slippage', heading: 'Slippage', body: 'Die Differenz zwischen erwartetem und tatsächlichem Ausführungspreis.' },
+      { anchor: 'hardExitLatency', heading: 'Hard-Exit-Latenz', body: 'Die Zeit von der Erkennung eines Notausstiegs bis zur Aufgabe der Order beim Broker.' },
+    ],
+  },
 }
 
 export default de
