@@ -64,4 +64,28 @@ class ExecutorSignalRepositoryTest {
         assertThat(found.confidence()).isNull();
         assertThat(found.referencePrice()).isNull();
     }
+
+    @Test
+    void preyIdRoundTrips() {
+        String id = UUID.randomUUID().toString();
+        var s = new ExecutorSignal(id, "strigoi-spin", "v1", "PREYCO", "LONG", 0.6,
+                "mechanism", List.of(), "3M", null, "PENDING", null, null, "prey-42");
+        repo.insert(s);
+
+        var found = repo.findById(id);
+        assertThat(found).isNotNull();
+        assertThat(found.preyId()).isEqualTo("prey-42");
+    }
+
+    @Test
+    void nullPreyIdRoundTripsForBackCompatSignals() {
+        String id = UUID.randomUUID().toString();
+        var s = new ExecutorSignal(id, "strigoi-spin", "v1", "NOPREYCO", "LONG", 0.6,
+                "mechanism", List.of(), "3M", null, "PENDING", null);
+        repo.insert(s);
+
+        var found = repo.findById(id);
+        assertThat(found).isNotNull();
+        assertThat(found.preyId()).isNull();
+    }
 }

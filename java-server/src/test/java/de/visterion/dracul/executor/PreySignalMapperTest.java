@@ -92,4 +92,10 @@ class PreySignalMapperTest {
         Prey p = preyWith("HELE", "PEAD", null, List.of(), List.of(), "1M", List.of(), 0.7);
         assertThat(mapper.map(p).thesis()).isNull();   // no {summary:null,...} husk
     }
+
+    @Test
+    void map_stampsPreyIdOntoSignal() {
+        Prey p = samplePrey();
+        assertThat(mapper.map(p).preyId()).isEqualTo(p.id());
+    }
 }
