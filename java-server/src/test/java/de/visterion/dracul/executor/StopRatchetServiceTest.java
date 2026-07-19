@@ -27,6 +27,7 @@ class StopRatchetServiceTest {
     private final DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
+    private final ExecutorNotifier executorNotifier = mock(ExecutorNotifier.class);
 
     private StopRatchetService service;
 
@@ -34,7 +35,7 @@ class StopRatchetServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new StopRatchetService(gateway, positionRepo, decisionRepo, ruleVersions,
-                new StopRatchetGuard(), mapper, 3.0);
+                new StopRatchetGuard(), mapper, executorNotifier, 3.0);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
@@ -83,6 +84,8 @@ class StopRatchetServiceTest {
         assertThat(log.ruleVersion()).isEqualTo("exec-v0.2");
         assertThat(log.orderJson().get("new_stop").asDouble()).isEqualTo(104.0);
         assertThat(log.orderJson().get("stop_basis").asString()).contains("chandelier");
+
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
     }
 
     @Test
