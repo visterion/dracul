@@ -560,6 +560,9 @@ export default {
         today: 'Heute',
       },
       orders: 'Offene Orders',
+      moves: {
+        title: 'Bewegungen',
+      },
       assetClass: 'Anlageklasse',
       heldSince: 'Gehalten seit {date}',
       news: { title: 'News' },

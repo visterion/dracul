@@ -823,3 +823,19 @@ by clicking a row in a `DepotSection`'s positions table.
   `null` (executor repos disabled, no open `executor_position` row for the
   symbol, or no linked run) simply omits the panel — same "no context to
   show" behavior as the history tab's "not linkable" case.
+- **Move timeline (Agent Activity Inspector, Task 5)**: below the
+  single-run transcript panel, a `data-testid="pd-moves"` section
+  (`depots.detail.moves.title` i18n key) lists every executor decision
+  (`ENTER`/`ADD`/`TRIM`/`EXIT`) recorded against this open position —
+  `getDepotPosition`'s response now carries a `moves: DepotMove[]` array
+  (`{ action, reasonCode, createdAt, runId }`), already delivered by the
+  backend in ascending `created_at` order — the view renders it as-is and
+  never re-sorts. Each `data-testid="pd-move-row"` shows the action, its
+  reason code (when present), and `createdAt` via the shared
+  `formatAbsoluteTime`. When a move carries a `runId`, its row renders a
+  `RawTranscriptPanel` with `source="inspector"` (not `"depot"` — moves are
+  executor runs fetched through `getInspectorTranscript`, the
+  operator-gated inspector path, not the depot/prey-gated one); a move
+  without a `runId` is a row with no panel. This gives each individual move
+  its own chat drilldown, distinct from the single heuristic `runId` panel
+  above it (which links the *position* as a whole to one run).

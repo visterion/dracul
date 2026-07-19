@@ -118,6 +118,19 @@
         </div>
         <RawTranscriptPanel :run-id="runId" />
       </div>
+
+      <!-- ── Move timeline (executor decisions on this open position) ── -->
+      <div v-if="moves.length" class="pd-moves" data-testid="pd-moves">
+        <div class="section-head">{{ t('depots.detail.moves.title') }}</div>
+        <div v-for="(move, i) in moves" :key="`${move.createdAt}-${i}`" class="pd-move-row" data-testid="pd-move-row">
+          <div class="pd-move-meta">
+            <span class="pd-move-action mono">{{ move.action }}</span>
+            <span v-if="move.reasonCode" class="pd-move-reason">{{ move.reasonCode }}</span>
+            <span class="pd-move-time">{{ formatAbsoluteTime(move.createdAt) }}</span>
+          </div>
+          <RawTranscriptPanel v-if="move.runId" :run-id="move.runId" source="inspector" />
+        </div>
+      </div>
         </template>
       </InstrumentInfoPanel>
     </template>
@@ -135,7 +148,7 @@ import TagPill from '../components/common/TagPill.vue'
 import InstrumentInfoPanel from '../components/instrument/InstrumentInfoPanel.vue'
 import RawTranscriptPanel from '../components/depot/RawTranscriptPanel.vue'
 import { useApi } from '../api'
-import type { DepotPositionView, DepotOrderView } from '../api/types'
+import type { DepotPositionView, DepotOrderView, DepotMove } from '../api/types'
 import { useDisplayMode } from '../composables/useDisplayMode'
 import { fmtPl, isStale, formatAbsoluteTime } from '../lib/depotDisplay'
 import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../lib/orderDisplay'
@@ -159,6 +172,7 @@ const position = ref<DepotPositionView | null>(null)
 const orders = ref<DepotOrderView[]>([])
 const asOf = ref<string | null>(null)
 const runId = ref<string | null>(null)
+const moves = ref<DepotMove[]>([])
 
 // Header data (company name + chart-derived change) is owned by the
 // InstrumentInfoPanel and pushed up via its `header` emit.
@@ -192,12 +206,14 @@ async function loadPosition() {
     orders.value = result.orders
     asOf.value = result.asOf
     runId.value = result.runId
+    moves.value = result.moves
   } catch (e) {
     if (id !== posRequestId) return
     position.value = null
     orders.value = []
     asOf.value = null
     runId.value = null
+    moves.value = []
     const msg = e instanceof Error ? e.message : String(e)
     if (msg.includes('not found')) {
       notFound.value = true
@@ -294,6 +310,13 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 
 .pd-transcript { margin-top: var(--space-2); }
 .pd-transcript-hint { color: var(--ash-gray); font-size: var(--text-micro); margin-bottom: var(--space-1); }
+
+.pd-moves { display: flex; flex-direction: column; gap: var(--space-2); }
+.pd-move-row { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
+.pd-move-meta { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; font-size: var(--text-body-sm); }
+.pd-move-action { color: var(--cathedral-gold); }
+.pd-move-reason { color: var(--ash-gray-light); }
+.pd-move-time { color: var(--ash-gray); font-size: var(--text-micro); }
 
 @media (max-width: 600px) {
   .pd-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }

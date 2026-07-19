@@ -657,6 +657,18 @@ export interface DepotHistory {
   error: string | null
 }
 
+/** One executor decision (ENTER/ADD/TRIM/EXIT) in an open position's move
+ *  timeline, carrying the `runId` of the executor run that decided it —
+ *  lets the frontend link each move to its raw Vistierie transcript via
+ *  `getInspectorTranscript`. `createdAt` is a raw backend string, already
+ *  delivered in ascending order — never re-sort it here. */
+export interface DepotMove {
+  action: string
+  reasonCode: string | null
+  createdAt: string
+  runId: string | null
+}
+
 export interface Depot {
   id: string
   provider: string
