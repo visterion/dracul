@@ -304,6 +304,59 @@ amounts) are shown in the operator's configured display currency.
 - **LLM costs**: agent run costs are always shown in USD regardless of the
   display-currency setting (Vistierie's cost ledger is USD-denominated).
 
+## Self-explaining UI (info explainers)
+
+An **(i) explainer** mechanism lets the UI explain its own concepts inline,
+without sending the operator to external docs.
+
+- **`InfoDot.vue`** (`src/components/common/`) renders a small clickable "i"
+  glyph for a given `topic` string. It looks the topic up via
+  `hasExplainer(locale, topic)` / `getExplainer(locale, topic)`
+  (`src/i18n/explainers.ts`, a typed registry backed by
+  `explainers.de.ts`/`explainers.en.ts`) and renders **nothing** for an
+  unknown/not-yet-authored topic, so a missing key never crashes the parent
+  view. Clicking it opens **`ExplainerPanel.vue`** — a modal dialog (teleported
+  to `<body>`, focus-trapped close button, Escape-to-close) showing the
+  explainer's title and one or more `{ heading, body }` sections; an optional
+  per-section `anchor` lets a caller open the panel scrolled straight to one
+  section.
+- **Content lives in `src/i18n/explainers.{de,en}.ts`**, keyed by topic string
+  (e.g. `hunter.spin`, `orders.bracket`, `orders.roles`, `depot.metrics`,
+  `calibration`, `hunter.overview`) — plain prose, not routed through
+  `vue-i18n`'s interpolation, so it can hold full paragraphs per language.
+  A git pre-push hook keeps these texts in sync with the underlying concept
+  code (see `documentation/operations.md`).
+- **On Chronicle** (`/`): an (i) next to the "Meute-Profile" (brood) section
+  heading opens a brood overview (`hunter.overview` — what the six Strigoi are
+  and a one-line idea per hunter); each individual hunter row in
+  `BroodMini.vue` carries its own (i) (`hunter.<name>`) explaining that
+  hunter's idea, its inputs/hunting grounds, and how it strikes.
+- **On Depots** (`/depots`): a page-level (i) plus inline (i) markers explain
+  the concepts operators otherwise have to infer from a broker UI — bracket
+  orders (`orders.bracket`), the entry/target/stop roles (`orders.roles`),
+  cash/invested/buying-power (`depot.metrics`), and the Calibration card's
+  metrics including each veto reason code (`calibration`).
+
+### Grouped bracket orders (Depots)
+
+The orders list in `DepotSection.vue` no longer renders one flat row per
+broker order. `groupOrders()` (`src/lib/orderDisplay.ts`) groups the depot's
+raw `DepotOrderView[]` into brackets: a protective leg (target/stop) with a
+non-null `parentId` is attached to the group seeded by its bracket parent
+(the entry order); an entry order (no `parentId`) seeds its own group; a
+protective leg with no `parentId` (defensive fallback for a broker that
+doesn't send one) is matched to an existing same-symbol entry group instead.
+Within a group, legs render entry → target → stop → other, with the entry as
+a header row and its target/stop legs indented beneath it
+(`data-testid="depot-order-leg"`). Each leg shows its **canonical role**
+label (Einstieg/Ziel/Stop, normalized from Agora's raw `entry`/`stop_loss`/
+`take_profit`/`stop`/`target`/`other` vocabulary via `normalizeRole()`) and a
+plain-language status: a target/stop leg that is broker-`notworking`/
+`inactive` reads "wartet auf Einstieg" / "waiting for entry"
+(`orderStateLabel()`) instead of the raw broker status, since that leg simply
+hasn't armed yet. There is **no limit/stop price column yet** — that is
+tracked separately as a gated follow-up.
+
 ## Development
 
 ```bash
@@ -680,7 +733,8 @@ redirects here): one `DepotSection` per connected broker
   `getDepotChart`); a single stacked allocation bar built from each
   position's `weightPct`; `DepotPositionsTable.vue` (sortable columns:
   symbol, qty, avg entry, price, market value, P&L, day change, weight %);
-  an orders list; and an inline error alert (`data-testid="depot-error"`)
+  an orders list grouped into brackets (see "Self-explaining UI" above); and
+  an inline error alert (`data-testid="depot-error"`)
   when `depot.error` is set — the rest of the section still renders
   whatever data the depot does have.
   - **Historie tab** (closed trades): a list of closed positions (Saxo) and historical Alpaca

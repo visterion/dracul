@@ -548,7 +548,7 @@ status stays 200; per-connection failures instead surface as a non-null
     "nativePrice": null,
     "nativeCurrency": null
   },
-  "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry" } ],
+  "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry", "parentId": null } ],
   "asOf": "2026-07-11T08:00:00Z",
   "runId": "run-xyz",
   "moves": [
@@ -560,6 +560,14 @@ status stays 200; per-connection failures instead surface as a non-null
 
 `orders` is filtered to only the orders for `{symbol}` within that
 depot connection.
+
+Each order entry (`DepotOrder`/`DepotOrderView`) additionally carries
+`parentId` (string, nullable) — the broker's bracket-parent order id,
+passed through from Agora's `get_orders`. A protective leg (`role: "stop"` /
+`role: "target"`) that belongs to a bracket carries its entry order's
+`brokerOrderId` in `parentId`; a standalone entry order has `parentId: null`.
+The Chronicle frontend uses it to group flat orders into bracket displays
+(see `documentation/chronicle.md`). No limit/stop price field exists yet.
 
 `runId` (Task 4b) and `moves` (Task 2) are populated only for **open**
 positions with a linked `executor_position` (symbol-linked via

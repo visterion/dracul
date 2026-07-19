@@ -2,7 +2,7 @@
   <div class="stat-tile">
     <div class="st-label">
       <i v-if="icon" :class="['ph', icon]" />
-      {{ label }}
+      {{ label }}<slot name="label-suffix" />
     </div>
     <div :class="['st-value', 'mono', valueClass]" :data-testid="testId">
       {{ value }}<span v-if="unit" class="st-unit"> {{ unit }}</span>

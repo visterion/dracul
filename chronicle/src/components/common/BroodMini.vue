@@ -1,23 +1,23 @@
 <template>
   <div class="brood-mini" data-testid="brood-mini">
-    <button
-      v-for="st in strigoi"
-      :key="st.name"
-      type="button"
-      class="brood-row"
-      @click="$emit('open', st)"
-    >
-      <StateDot :state="st.state" />
-      <span class="font-mono">{{ st.name }}</span>
-      <span class="fc-count font-mono">{{ counts?.[st.name] ?? 0 }}</span>
-      <i class="ph ph-caret-right brood-chevron" aria-hidden="true" />
-    </button>
+    <div v-for="st in strigoi" :key="st.name" class="brood-row">
+      <button type="button" class="brood-row-open" @click="$emit('open', st)">
+        <StateDot :state="st.state" />
+        <span class="font-mono">{{ st.name }}</span>
+        <span class="fc-count font-mono">{{ counts?.[st.name] ?? 0 }}</span>
+        <i class="ph ph-caret-right brood-chevron" aria-hidden="true" />
+      </button>
+      <InfoDot v-if="hasTopic(st.name)" :topic="topicFor(st.name)" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { StrigoiStatus } from '../../api/types'
 import StateDot from './StateDot.vue'
+import InfoDot from './InfoDot.vue'
+import { hasExplainer } from '../../i18n/explainers'
 
 defineProps<{
   strigoi: StrigoiStatus[]
@@ -25,6 +25,10 @@ defineProps<{
   counts?: Record<string, number>
 }>()
 defineEmits<{ (e: 'open', strigoi: StrigoiStatus): void }>()
+
+const { locale } = useI18n()
+const topicFor = (name: string) => `hunter.${name.replace(/^strigoi-/, '')}`
+const hasTopic = (name: string) => hasExplainer(locale.value, topicFor(name))
 </script>
 
 <style scoped>
@@ -35,6 +39,12 @@ defineEmits<{ (e: 'open', strigoi: StrigoiStatus): void }>()
 }
 
 .brood-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.brood-row-open {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -50,12 +60,12 @@ defineEmits<{ (e: 'open', strigoi: StrigoiStatus): void }>()
   transition: background var(--transition-fast);
 }
 
-.brood-row:hover {
+.brood-row-open:hover {
   background: rgba(184, 148, 92, 0.05);
   color: var(--bone-ivory);
 }
 
-.brood-row .fc-count {
+.brood-row-open .fc-count {
   margin-left: auto;
   color: var(--ash-gray);
   font-family: var(--font-mono);

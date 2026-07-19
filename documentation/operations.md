@@ -747,3 +747,31 @@ position that already cleared entry.
 PRs and `slice-*` branches produce tagged images
 (`ghcr.io/visterion/dracul:<branch>`). Use these for testing before
 merging to `main`.
+
+## Local dev hooks
+
+After cloning, run once:
+
+```
+bash hooks/install.sh
+```
+
+This installs a `pre-push` drift guard into the repo's existing hooks
+directory (`git rev-parse --git-path hooks`). It blocks a push when
+concept code changed (`java-server` strigoi / veto / calibration /
+order-role logic) but the (i)-explainer texts
+(`chronicle/src/i18n/explainers.{de,en}.ts`) did not — the explainers
+describe those concepts in plain language and must not drift from the
+code.
+
+The installed hook is a one-line shim that always execs the tracked
+`hooks/pre-push` of the pushed worktree, so future updates to the
+tracked hook need no re-install. The installer refuses to overwrite an
+unrelated existing `pre-push` and never touches `core.hooksPath`, so
+the code-review-graph `pre-commit` hook keeps working unchanged.
+
+Override when the drift is intentional or a false positive:
+
+- add an `Explainers-checked: <reason>` trailer to a commit in the
+  push (e.g. `git commit --allow-empty -m "chore: explainers checked" -m "Explainers-checked: <reason>"`), or
+- one-off skip: `SKIP_EXPLAINER_CHECK=1 git push …`

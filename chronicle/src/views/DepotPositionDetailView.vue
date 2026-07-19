@@ -151,7 +151,7 @@ import { useApi } from '../api'
 import type { DepotPositionView, DepotOrderView, DepotMove } from '../api/types'
 import { useDisplayMode } from '../composables/useDisplayMode'
 import { fmtPl, isStale, formatAbsoluteTime } from '../lib/depotDisplay'
-import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../lib/orderDisplay'
+import { orderSideLabel, orderTypeLabel, orderStatusLabel, normalizeRole } from '../lib/orderDisplay'
 import { formatMoney, formatNumber, formatPercent, pctClass } from '../utils/format'
 import { displayName } from '../utils/instrument'
 
@@ -237,15 +237,11 @@ function formatValueDate(isoDate: string): string {
   return new Date(isoDate).toLocaleDateString(locale.value, { day: 'numeric', month: 'numeric', year: 'numeric' })
 }
 
-const ORDER_ROLE_KEYS: Record<string, string> = { entry: 'entry', stop: 'stop', target: 'target', other: 'other' }
-
-/** Known roles map to an i18n label; unknown roles are prettified
- *  (Title-cased) rather than shown raw or hidden. */
+/** Routes through the canonical role normalizer so Agora's raw role strings
+ *  (entry/stop_loss/take_profit/other) map onto the i18n role labels. */
 function orderRoleLabel(role: string | null): string {
-  if (!role) return ''
-  const key = ORDER_ROLE_KEYS[role.toLowerCase()]
-  if (key) return t(`depots.orders.role.${key}`)
-  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()
+  const canonical = normalizeRole(role)
+  return canonical ? t(`depots.orders.role.${canonical}`) : ''
 }
 
 const orderRows = computed(() =>
