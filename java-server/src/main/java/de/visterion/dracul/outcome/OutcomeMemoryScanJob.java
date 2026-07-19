@@ -15,7 +15,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
@@ -28,6 +27,15 @@ import java.util.List;
  * exactly the calibration case this feature exists for), and writes a realized-outcome HiveMem
  * cell. A HiveMem outage on the completion night is retried by the NEXT run of this job,
  * independent of {@code OutcomeBatchJob}'s own completeness bookkeeping.
+ *
+ * <p>The realized R is NOT final at close: {@link OutcomeBatchJob} recomputes a quantity-weighted
+ * {@code realized_r} across trims/re-entries during its 14-calendar-day re-entry window
+ * ({@code REENTRY_WINDOW_CALENDAR_DAYS}), and only the {@code outcome_log} TRADE row carries that
+ * final weighted value — the position's own {@code realized_r}/{@code mfe_r} are un-weighted and
+ * can be stale. So this scan gates the cell write on {@link OutcomeLogRepository#
+ * findCompleteTradeByPositionId} (mirrors {@code OutcomeBatchJob.isComplete}'s
+ * {@code reentryWindowElapsed} flag) and reads {@code realizedR}/{@code maeR}/{@code mfeR}/
+ * {@code holdingDays} from that row, never from the position.
  */
 @Component
 @ConditionalOnProperty(value = "dracul.outcome.enabled", havingValue = "true", matchIfMissing = true)
@@ -40,16 +48,18 @@ public class OutcomeMemoryScanJob {
     private final ResearchMemoryLinkRepository links;
     private final ExecutorPositionRepository positions;
     private final ExecutorSignalRepository signals;
+    private final OutcomeLogRepository outcomeLog;
     private final HiveMemResearchService memory;
     private final int maxAgeDays;
 
     public OutcomeMemoryScanJob(ResearchMemoryLinkRepository links,
             ExecutorPositionRepository positions, ExecutorSignalRepository signals,
-            HiveMemResearchService memory,
+            OutcomeLogRepository outcomeLog, HiveMemResearchService memory,
             @Value("${dracul.outcome.memory-scan-max-age-days:120}") int maxAgeDays) {
         this.links = links;
         this.positions = positions;
         this.signals = signals;
+        this.outcomeLog = outcomeLog;
         this.memory = memory;
         this.maxAgeDays = maxAgeDays;
     }
@@ -98,16 +108,14 @@ public class OutcomeMemoryScanJob {
             return; // already written, excluded, or no thesis cell was ever recorded for this prey
         }
 
-        if (p.realizedR() == null && p.exitPrice() == null) {
-            return; // not enough data yet — a later scan will retry
+        OutcomeLogRow row = outcomeLog.findCompleteTradeByPositionId(p.id());
+        if (row == null) {
+            return; // not complete yet (still within OutcomeBatchJob's re-entry window, or the
+            // TRADE row hasn't been written at all yet) — a later scan will retry
         }
 
-        // MAE-in-R is already computed for the TRADE row elsewhere (OutcomeBatchJob.maeR); this
-        // job only has the position's own stored fields, which don't carry MAE-in-R directly,
-        // and recomputing OutcomeBatchJob's rPerShare math a second time here isn't worth the
-        // duplication for a nullable, best-effort field (spec §8) — pass null.
         boolean written = memory.writeOutcomeCell(link.cellId(), p.symbol(), signal.mechanism(),
-                p.realizedR(), null, p.mfeR(), holdingDays(p));
+                row.realizedR(), row.maeR(), row.mfeR(), row.holdingDays());
         if (written) {
             links.markOutcomeWritten(link.id());
         }
@@ -126,19 +134,6 @@ public class OutcomeMemoryScanJob {
                         + "no completed trade after {} days", link.id(), link.symbol(),
                         link.refId(), maxAgeDays);
             }
-        }
-    }
-
-    private static Integer holdingDays(ExecutorPosition p) {
-        try {
-            if (p.entryDate() == null || p.closedAt() == null) {
-                return null;
-            }
-            return (int) ChronoUnit.DAYS.between(
-                    LocalDate.parse(p.entryDate().substring(0, 10)),
-                    LocalDate.parse(p.closedAt().substring(0, 10)));
-        } catch (RuntimeException e) {
-            return null;
         }
     }
 }

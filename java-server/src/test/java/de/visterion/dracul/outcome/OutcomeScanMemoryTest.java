@@ -53,10 +53,11 @@ class OutcomeScanMemoryTest {
     private final ResearchMemoryLinkRepository links = mock(ResearchMemoryLinkRepository.class);
     private final ExecutorPositionRepository positions = mock(ExecutorPositionRepository.class);
     private final ExecutorSignalRepository signals = mock(ExecutorSignalRepository.class);
+    private final OutcomeLogRepository outcomeLog = mock(OutcomeLogRepository.class);
     private final HiveMemResearchService memory = mock(HiveMemResearchService.class);
 
     private final OutcomeMemoryScanJob job =
-            new OutcomeMemoryScanJob(links, positions, signals, memory, 120);
+            new OutcomeMemoryScanJob(links, positions, signals, outcomeLog, memory, 120);
 
     private Logger logger;
     private ListAppender<ILoggingEvent> appender;
@@ -115,6 +116,17 @@ class OutcomeScanMemoryTest {
         return closedPosition(id, symbol, signalId, exitPrice, realizedR, "operator");
     }
 
+    /** A COMPLETE {@code outcome_log} TRADE row for {@code positionId}, carrying the FINAL
+     *  quantity-weighted values {@link OutcomeBatchJob} would have written — the data source
+     *  {@link OutcomeMemoryScanJob} must read from, never the position's own (un-weighted,
+     *  possibly-stale) fields. */
+    private static OutcomeLogRow completeTradeRow(long positionId, String symbol,
+            BigDecimal realizedR, BigDecimal maeR, BigDecimal mfeR, Integer holdingDays) {
+        return new OutcomeLogRow("TRADE", "log-" + positionId, positionId, symbol, null,
+                true, null, null, holdingDays, mfeR, maeR, realizedR, null, null, null,
+                null, null, null, null, null, null, null, true);
+    }
+
     private static ExecutorPosition closedPosition(long id, String symbol, String signalId,
             BigDecimal exitPrice, BigDecimal realizedR, String sourceAgent) {
         return new ExecutorPosition(
@@ -140,6 +152,10 @@ class OutcomeScanMemoryTest {
         when(positions.findClosed()).thenReturn(List.of(
                 closedPosition(10L, "ACME", "sig-1", bd("110"), bd("1.0"), "strigoi-spin"),
                 closedPosition(11L, "ACME", "sig-2", bd("90"), bd("-1.0"), "strigoi-spin")));
+        when(outcomeLog.findCompleteTradeByPositionId(10L)).thenReturn(
+                completeTradeRow(10L, "ACME", bd("1.0"), null, null, 9));
+        when(outcomeLog.findCompleteTradeByPositionId(11L)).thenReturn(
+                completeTradeRow(11L, "ACME", bd("-1.0"), null, null, 9));
         when(memory.writeOutcomeCell(anyString(), anyString(), anyString(), any(), any(), any(), any()))
                 .thenReturn(true);
 
@@ -165,6 +181,8 @@ class OutcomeScanMemoryTest {
         when(signals.findById("sig-5")).thenReturn(signal("sig-5", "ACME", "prey-5"));
         ExecutorPosition position = closedPosition(20L, "ACME", "sig-5", bd("110"), bd("1.0"), "strigoi-spin");
         when(positions.findClosed()).thenReturn(List.of(position));
+        when(outcomeLog.findCompleteTradeByPositionId(20L)).thenReturn(
+                completeTradeRow(20L, "ACME", bd("1.0"), null, null, 9));
 
         when(memory.writeOutcomeCell(anyString(), anyString(), anyString(), any(), any(), any(), any()))
                 .thenReturn(false);
@@ -195,6 +213,8 @@ class OutcomeScanMemoryTest {
         when(signals.findById("sig-6")).thenReturn(signal("sig-6", "ACME", "prey-6"));
         when(positions.findClosed()).thenReturn(List.of(
                 closedPosition(21L, "ACME", "sig-6", bd("110"), bd("1.0"), "strigoi-spin")));
+        when(outcomeLog.findCompleteTradeByPositionId(21L)).thenReturn(
+                completeTradeRow(21L, "ACME", bd("1.0"), null, null, 9));
         when(memory.writeOutcomeCell(anyString(), anyString(), anyString(), any(), any(), any(), any()))
                 .thenReturn(true);
 
@@ -267,15 +287,20 @@ class OutcomeScanMemoryTest {
     }
 
     // ------------------------------------------------------------------------------------------
-    // (f) outcome-cell content: realizedR/result/holdingDays non-null; mae/mfe stay nullable
+    // (f) outcome-cell content: realizedR/maeR/mfeR/holdingDays come from the COMPLETE outcome_log
+    // row (the final, quantity-weighted values) — NEVER from the position's own un-weighted fields.
     // ------------------------------------------------------------------------------------------
 
     @Test
-    void closedTrade_writesRealizedRAndHoldingDays_maeStaysNull() {
+    void closedTrade_writesFinalWeightedValuesFromCompleteOutcomeLogRow() {
         backLinksWith(List.of(link(12L, "prey-12", "ACME", "cell-12")));
         when(signals.findById("sig-12")).thenReturn(signal("sig-12", "ACME", "prey-12"));
+        // position's own realizedR/holdingDays deliberately differ from the outcome_log row below,
+        // to prove the cell content is sourced from the row, not the position.
         ExecutorPosition position = closedPosition(26L, "ACME", "sig-12", bd("110"), bd("1.4"), "strigoi-spin");
         when(positions.findClosed()).thenReturn(List.of(position));
+        when(outcomeLog.findCompleteTradeByPositionId(26L)).thenReturn(
+                completeTradeRow(26L, "ACME", bd("1.1"), bd("-0.3"), bd("2.2"), 11));
         when(memory.writeOutcomeCell(anyString(), anyString(), anyString(), any(), any(), any(), any()))
                 .thenReturn(true);
 
@@ -283,13 +308,49 @@ class OutcomeScanMemoryTest {
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> maeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<Integer> holdingDaysCaptor = ArgumentCaptor.forClass(Integer.class);
         verify(memory).writeOutcomeCell(eq("cell-12"), eq("ACME"), eq("SPINOFF"),
-                realizedRCaptor.capture(), maeCaptor.capture(), any(), holdingDaysCaptor.capture());
+                realizedRCaptor.capture(), maeCaptor.capture(), mfeCaptor.capture(),
+                holdingDaysCaptor.capture());
 
-        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("1.4");
-        assertThat(holdingDaysCaptor.getValue()).isEqualTo(9); // 2026-06-01 -> 2026-06-10
-        assertThat(maeCaptor.getValue()).isNull(); // best-effort/nullable in v1 — never fabricated
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("1.1");
+        assertThat(maeCaptor.getValue()).isEqualByComparingTo("-0.3");
+        assertThat(mfeCaptor.getValue()).isEqualByComparingTo("2.2");
+        assertThat(holdingDaysCaptor.getValue()).isEqualTo(11);
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // (h) M3 reentry gate: a closed position whose outcome_log TRADE row is NOT yet complete
+    // (still within OutcomeBatchJob's 14-calendar-day re-entry window) must NOT get a cell —
+    // the scan retries on a later run, and writes exactly once the row flips complete.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    void closedPositionOutcomeLogNotYetComplete_writesNoCellUntilReentryWindowElapses() {
+        backLinksWith(List.of(link(15L, "prey-15", "ACME", "cell-15")));
+        when(signals.findById("sig-15")).thenReturn(signal("sig-15", "ACME", "prey-15"));
+        ExecutorPosition position = closedPosition(27L, "ACME", "sig-15", bd("110"), bd("1.0"), "strigoi-spin");
+        when(positions.findClosed()).thenReturn(List.of(position));
+
+        // still inside the re-entry window: OutcomeBatchJob hasn't finalized the TRADE row yet.
+        when(outcomeLog.findCompleteTradeByPositionId(27L)).thenReturn(null);
+
+        job.scanOnce();
+
+        verifyNoInteractions(memory);
+        verify(links, never()).markOutcomeWritten(anyLong());
+
+        // re-entry window elapses: outcome_log row flips complete with the final weighted R.
+        when(outcomeLog.findCompleteTradeByPositionId(27L)).thenReturn(
+                completeTradeRow(27L, "ACME", bd("1.0"), null, null, 14));
+        when(memory.writeOutcomeCell(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+                .thenReturn(true);
+
+        job.scanOnce();
+
+        verify(memory, times(1)).writeOutcomeCell(eq("cell-15"), anyString(), anyString(), any(), any(), any(), any());
+        verify(links, times(1)).markOutcomeWritten(15L);
     }
 
     // ------------------------------------------------------------------------------------------
