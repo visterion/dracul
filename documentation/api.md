@@ -429,6 +429,7 @@ Order ticket fields (`ticket`):
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
 | GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
+| GET | `/api/depots/run/{runId}/transcript` | Read-only proxy for Vistierie's raw run transcript (Schicht 2). Returns `{ transcript, expired }`; `expired: true` (and `transcript: null`) when Vistierie has pruned the run or is unreachable — never a 500. |
 
 Both endpoints are user-scoped via `CurrentUserHolder.get()`. `GET
 /api/depots` calls `DepotService.depots(userEmail, refresh)` (default
@@ -787,6 +788,26 @@ ever contain rows for `{symbol}`, with the rest of Agora's envelope
   "insiderActivity": { "transactions": [ { "ticker": "ACME", "...": "..." } ] }
 }
 ```
+
+### `GET /api/depots/run/{runId}/transcript` response
+
+Read-only pass-through (Schicht 2): `DepotController.transcript` calls
+`VistierieClient.getRunTranscript(runId, "full")` and wraps the result
+without any transformation — `transcript` is Vistierie's raw run
+transcript body (`view=full`: complete message history, exact prompt +
+raw LLM answer + tool results, un-truncated).
+
+```json
+{
+  "transcript": { "...": "raw Vistierie transcript body" },
+  "expired": false
+}
+```
+
+`VistierieClient.getRunTranscript` catches any error internally (pruned
+run, unreachable Vistierie) and returns `null`; the controller turns
+that into `{ "transcript": null, "expired": true }`. This endpoint never
+returns a non-2xx status.
 
 ## Daywalker Alerts
 

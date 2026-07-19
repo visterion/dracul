@@ -185,7 +185,12 @@ transcripts. Returns a list of snippet hits (run ID, score, excerpt).
 Useful for surfacing past runs that mention a specific ticker or filing.
 
 **`getRunTranscript(runId, view)`** — retrieves a single run's transcript
-at one of three verbosity levels:
+at one of three verbosity levels. Since Schicht 2, `DepotController`'s
+`GET /api/depots/run/{runId}/transcript` proxies this method with
+`view="full"`, passing Vistierie's raw transcript body straight through
+to Chronicle without transformation (exact prompt + raw LLM answer +
+tool results, un-truncated). See `documentation/api.md` for the response
+shape.
 
 | `view` value | Content |
 |---|---|
