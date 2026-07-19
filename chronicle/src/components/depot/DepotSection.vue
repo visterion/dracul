@@ -145,6 +145,7 @@
           <span>{{ t('depots.orders.col.role') }}</span>
           <span>{{ t('depots.orders.col.qty') }}</span>
           <span>{{ t('depots.orders.col.type') }}</span>
+          <span>{{ t('depots.orders.col.price') }}</span>
           <span>{{ t('depots.orders.col.status') }}</span>
         </div>
         <div v-for="group in orderGroups" :key="group.key" class="dp-order-group" data-testid="depot-order-group">
@@ -160,6 +161,7 @@
             <span class="dp-order-role">{{ leg.roleLabel }}</span>
             <span class="mono">{{ leg.qty }}</span>
             <span class="dp-order-type">{{ leg.type.label }}</span>
+            <span class="mono">{{ leg.price }}</span>
             <span class="dp-order-status">
               <TagPill :tone="leg.state.tone">{{ leg.state.label }}</TagPill>
             </span>
@@ -242,13 +244,17 @@ const orderGroups = computed(() =>
   groupOrders(props.depot.orders).map(group => ({
     key: group.key,
     symbol: group.symbol,
-    legs: group.legs.map(leg => ({
-      key: leg.order.brokerOrderId,
-      roleLabel: leg.canonicalRole ? t(`depots.orders.role.${leg.canonicalRole}`) : '—',
-      qty: formatNumber(leg.order.qty, Number.isInteger(leg.order.qty) ? 0 : 4),
-      type: orderTypeLabel(leg.order.type, t),
-      state: orderStateLabel(leg.order.status, leg.order.role, t),
-    })),
+    legs: group.legs.map(leg => {
+      const price = leg.order.limitPrice ?? leg.order.stopPrice
+      return {
+        key: leg.order.brokerOrderId,
+        roleLabel: leg.canonicalRole ? t(`depots.orders.role.${leg.canonicalRole}`) : '—',
+        qty: formatNumber(leg.order.qty, Number.isInteger(leg.order.qty) ? 0 : 4),
+        type: orderTypeLabel(leg.order.type, t),
+        price: price != null ? formatMoney(price, props.depot.account?.currency ?? 'USD') : '—',
+        state: orderStateLabel(leg.order.status, leg.order.role, t),
+      }
+    }),
   })),
 )
 
@@ -394,7 +400,7 @@ function formatChartValue(v: number): string {
 .dp-orders { display: flex; flex-direction: column; gap: var(--space-2); }
 .dp-order-group { display: flex; flex-direction: column; }
 .dp-order-row {
-  display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: var(--space-2);
+  display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1.2fr 1fr; gap: var(--space-2);
   align-items: center;
   font-size: var(--text-body-sm); color: var(--bone-ivory-dim); padding: var(--space-2) 0;
   border-bottom: 1px solid var(--rule);

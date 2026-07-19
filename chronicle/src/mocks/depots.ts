@@ -89,9 +89,9 @@ export const mockDepotPaper: Depot = {
   aggregates: aggregatesFor(depot1Positions),
   positions: depot1Positions,
   orders: [
-    { brokerOrderId: 'o-1001', symbol: 'NVDA', side: 'buy', qty: 10, type: 'market', status: 'filled', role: 'entry', parentId: null },
-    { brokerOrderId: 'o-1002', symbol: 'ABB', side: 'buy', qty: 20, type: 'market', status: 'filled', role: 'entry', parentId: null },
-    { brokerOrderId: 'o-1003', symbol: 'TSM', side: 'buy', qty: 15, type: 'market', status: 'filled', role: 'entry', parentId: null },
+    { brokerOrderId: 'o-1001', symbol: 'NVDA', side: 'buy', qty: 10, type: 'market', status: 'filled', role: 'entry', parentId: null, limitPrice: null, stopPrice: null },
+    { brokerOrderId: 'o-1002', symbol: 'ABB', side: 'buy', qty: 20, type: 'market', status: 'filled', role: 'entry', parentId: null, limitPrice: null, stopPrice: null },
+    { brokerOrderId: 'o-1003', symbol: 'TSM', side: 'buy', qty: 15, type: 'market', status: 'filled', role: 'entry', parentId: null, limitPrice: null, stopPrice: null },
   ],
   asOf: '2026-07-11T08:00:00Z',
 }
@@ -129,7 +129,7 @@ export const mockDepotLive: Depot = {
   aggregates: aggregatesFor(liveDepotPositions),
   positions: liveDepotPositions,
   orders: [
-    { brokerOrderId: 'o-2001', symbol: 'ASML', side: 'buy', qty: 5, type: 'market', status: 'filled', role: 'entry', parentId: null },
+    { brokerOrderId: 'o-2001', symbol: 'ASML', side: 'buy', qty: 5, type: 'market', status: 'filled', role: 'entry', parentId: null, limitPrice: null, stopPrice: null },
   ],
   asOf: '2026-07-11T08:00:00Z',
 }
