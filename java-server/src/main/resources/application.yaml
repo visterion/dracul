@@ -22,6 +22,11 @@ dracul:
     base-url: ${DRACUL_AGORA_BASE_URL:http://agora:8080}
     token: ${DRACUL_AGORA_TOKEN:}
     timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:8000}
+  hivemem:
+    base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}
+    mcp-token: ${DRACUL_HIVEMEM_MCP_TOKEN:}
+    agent-read-token: ${DRACUL_HIVEMEM_AGENT_READ_TOKEN:}
+    timeout-ms: ${DRACUL_HIVEMEM_TIMEOUT_MS:8000}
   news:
     # Trigger-path social filter (T1.1b): when false (default), get_company_news is called
     # with sourceTypes ["news"] and sourceType=social items are additionally filtered
