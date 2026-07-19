@@ -851,4 +851,8 @@ export default {
     loadMore: 'Load more',
     loadingMore: 'Loading …',
   },
+  explainer: {
+    close: 'Close',
+    open: 'Open explanation',
+  },
 }
