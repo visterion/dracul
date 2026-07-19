@@ -54,7 +54,8 @@ class PreySignalEmitterTest {
     private ExecutorSignal mapperSignal(String agentVersion) {
         return new ExecutorSignal(
                 "sig-1", "strigoi-spin", agentVersion, "ACME", "BUY", 0.73, "SPINOFF",
-                List.of("Close below 90.00"), "6m", null, "PENDING", "2026-07-08T10:00:00Z");
+                List.of("Close below 90.00"), "6m", null, "PENDING", "2026-07-08T10:00:00Z",
+                null, "prey-1");
     }
 
     private void stubNoOpenOrPending() {
@@ -90,6 +91,7 @@ class PreySignalEmitterTest {
         assertThat(persisted.horizon()).isEqualTo(mapped.horizon());
         assertThat(persisted.status()).isEqualTo(mapped.status());
         assertThat(persisted.createdAt()).isEqualTo(mapped.createdAt());
+        assertThat(persisted.preyId()).isEqualTo(samplePrey().id());
     }
 
     @Test
@@ -119,6 +121,7 @@ class PreySignalEmitterTest {
         assertThat(persisted.horizon()).isEqualTo(mapped.horizon());
         assertThat(persisted.status()).isEqualTo(mapped.status());
         assertThat(persisted.createdAt()).isEqualTo(mapped.createdAt());
+        assertThat(persisted.preyId()).isEqualTo(samplePrey().id());
     }
 
     @Test
