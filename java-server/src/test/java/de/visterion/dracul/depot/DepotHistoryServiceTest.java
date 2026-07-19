@@ -36,7 +36,7 @@ class DepotHistoryServiceTest {
         when(depotService.depot("depot-1", "u@x", false)).thenReturn(depotWithProvider("alpaca"));
         when(client.orders(eq("depot-1"), eq("all"), any(), any())).thenReturn(List.of(
                 new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry", null,
-                        null, null, null)));
+                        null, null, null, null, null)));
         when(positions.findByBrokerOrderId("o-1")).thenReturn(new ExecutorPosition(
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-1", "index-strigoi", null, null, "CLOSED", "o-1",
@@ -70,7 +70,7 @@ class DepotHistoryServiceTest {
         when(depotService.depot("depot-1", "u@x", false)).thenReturn(depotWithProvider("alpaca"));
         when(client.orders(eq("depot-1"), eq("all"), any(), any())).thenReturn(List.of(
                 new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry", null,
-                        null, null, null)));
+                        null, null, null, null, null)));
 
         var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(), Optional.empty(),
                 90, FIXED_CLOCK);
@@ -110,7 +110,7 @@ class DepotHistoryServiceTest {
         when(depotService.depot("depot-1", "u@x", false)).thenReturn(depotWithProvider("alpaca"));
         when(client.orders(eq("depot-1"), eq("all"), any(), any())).thenReturn(List.of(
                 new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry", null,
-                        "2026-07-01T10:00:00Z", "2026-07-01T10:00:03Z", new BigDecimal("191.20"))));
+                        "2026-07-01T10:00:00Z", "2026-07-01T10:00:03Z", new BigDecimal("191.20"), null, null)));
 
         var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(), Optional.empty(),
                 90, FIXED_CLOCK);

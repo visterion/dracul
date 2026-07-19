@@ -23,6 +23,7 @@ function order(overrides: Partial<DepotOrderView> = {}): DepotOrderView {
   return {
     brokerOrderId: 'o-1', symbol: 'NVDA', side: 'buy', qty: 10,
     type: 'market', status: 'filled', role: 'entry', parentId: null,
+    limitPrice: null, stopPrice: null,
     ...overrides,
   }
 }
