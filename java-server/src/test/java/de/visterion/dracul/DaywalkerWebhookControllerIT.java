@@ -8,6 +8,8 @@ import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.AgoraIntraday;
 import de.visterion.dracul.hunting.agora.IntradayCandles;
 import de.visterion.dracul.notify.TelegramNotifier;
+import de.visterion.dracul.position.HeldPosition;
+import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -53,6 +55,7 @@ class DaywalkerWebhookControllerIT {
     @MockitoBean AgoraCompanyData companyData;
     @MockitoBean AgoraFilings filings;
     @MockitoBean TelegramNotifier telegramNotifier;
+    @MockitoBean HeldPositionService heldPositions;
     @Autowired JdbcClient jdbc;
 
     RestClient rest;
@@ -70,6 +73,10 @@ class DaywalkerWebhookControllerIT {
         when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
         when(companyData.recommendations(anyString())).thenReturn(List.of());
         when(filings.recentForm4(any(), any())).thenReturn(de.visterion.dracul.hunting.DataSourceResult.healthy("agora", List.of()));
+        // Reachable depot that does not hold GHOST -- see completeEndpointAcknowledgesUnknownSymbolWithoutPersisting.
+        when(heldPositions.openPositions(anyString())).thenReturn(List.of(new HeldPosition(
+                "HELDSYM", BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE,
+                "USD", null, null, null, null, null, null, null, null)));
     }
 
     @Test
