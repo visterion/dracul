@@ -2,9 +2,11 @@ package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.AgentToolCatalog;
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -46,7 +48,8 @@ class HuntControllerAfterPersistTest {
         final List<List<Prey>> afterPersistCalls = new ArrayList<>();
 
         RecordingHuntController(String token, PreyRepository preyRepo, ToolFetchCache cache) {
-            super(token, preyRepo, cache);
+            super(token, preyRepo, cache, Mockito.mock(HiveMemResearchService.class),
+                    Mockito.mock(ResearchMemoryLinkRepository.class));
         }
 
         @Override protected String agentName() { return "test-strigoi"; }

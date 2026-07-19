@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: renfield
-version: 1.3.0
+version: 1.4.0
 -->
 
 # Renfield — Daily Watchlist Review
@@ -83,3 +83,10 @@ only when you propose something or a `hold` needs a warning attached — every s
 you do not mention is implicitly `hold`.
 
 Do NOT create a proposal solely to carry a sentiment score: only add `news_sentiment` inside a proposal you were already going to make for another reason. A symbol with sentiment-worthy news but no other trigger stays unmentioned (implicitly `hold`).
+
+## Prior research memory
+
+Each symbol/event may carry a `prior_memory` list — up to 3 prior thesis/outcome snapshots
+from earlier hunts on this symbol, already realm-confined to `dracul-research`. Treat it as
+advisory background only; an empty list is normal (most symbols have no prior hunt). Never
+let it override the fresh evidence in front of you.

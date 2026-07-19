@@ -2,10 +2,12 @@ package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.agent.AgentToolCatalog;
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +54,7 @@ class StrigoiLazarusProbeTest {
 
         controller = new StrigoiLazarusWebhookController(
                 "tok", watchlist, companyData, screener, enrichment, preyRepo, cache,
+                mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, CONNECTION,
                 0.10, 3.0, 2.0, 20, CANARY);
     }

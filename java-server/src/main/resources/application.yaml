@@ -22,6 +22,11 @@ dracul:
     base-url: ${DRACUL_AGORA_BASE_URL:http://agora:8080}
     token: ${DRACUL_AGORA_TOKEN:}
     timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:8000}
+  hivemem:
+    base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}
+    mcp-token: ${DRACUL_HIVEMEM_MCP_TOKEN:}
+    agent-read-token: ${DRACUL_HIVEMEM_AGENT_READ_TOKEN:}
+    timeout-ms: ${DRACUL_HIVEMEM_TIMEOUT_MS:8000}
   news:
     # Trigger-path social filter (T1.1b): when false (default), get_company_news is called
     # with sourceTypes ["news"] and sourceType=social items are additionally filtered
@@ -216,6 +221,12 @@ dracul:
   outcome:
     enabled: ${DRACUL_OUTCOME_ENABLED:true}
     cron: ${DRACUL_OUTCOME_CRON:0 30 22 * * 2-6}
+    # OutcomeMemoryScanJob (T1.6 D9): own periodic scan writing realized-outcome HiveMem cells,
+    # independent of OutcomeBatchJob's one-shot completeness bookkeeping above.
+    hivemem-scan-cron: ${DRACUL_OUTCOME_HIVEMEM_SCAN_CRON:0 45 22 * * 2-6}
+    # Terminal scan-bound: a never-traded research_memory_link older than this (max(horizon)+
+    # reentry window) is marked excluded so the unwritten candidate set doesn't grow unboundedly.
+    memory-scan-max-age-days: ${DRACUL_OUTCOME_MEMORY_SCAN_MAX_AGE_DAYS:120}
   pattern-scorer:
     enabled: ${DRACUL_PATTERN_SCORER_ENABLED:true}
     # Weekly, one hour before the Saturday voievod-outcome run (default 0 0 7 * * 6).
@@ -234,6 +245,10 @@ dracul:
     escalation-enabled: ${DRACUL_DAYWALKER_ESCALATION_ENABLED:true}
     escalation-confidence: ${DRACUL_DAYWALKER_ESCALATION_CONFIDENCE:0.6}
     macro-cooldown: ${DRACUL_DAYWALKER_MACRO_COOLDOWN:28800}
+    # Task 11 (spec §11): total wall-clock budget for the /events prior_memory pre-fetch
+    # across ALL emitted events in one invocation (not per-event) -- bounds a black-holing
+    # HiveMem so a multi-event poll never blows the poller timeout.
+    prior-memory-budget-ms: ${DRACUL_DAYWALKER_PRIOR_MEMORY_BUDGET_MS:2000}
   daywalker-deep:
     enabled: ${DRACUL_DAYWALKER_DEEP_ENABLED:false}
     webhook-token: ${DRACUL_DAYWALKER_DEEP_TOKEN:dev-token-change-me}
@@ -245,6 +260,9 @@ dracul:
     cron: ${DRACUL_RENFIELD_CRON:0 0 12 * * MON-FRI}
     webhook-token: ${DRACUL_RENFIELD_TOKEN:dev-token-change-me}
     max-symbols: ${DRACUL_RENFIELD_MAX_SYMBOLS:30}
+    # Task 11 (spec §11): total wall-clock budget for the prior_memory pre-fetch across the
+    # WHOLE assembleInput run (not per-symbol) -- bounds a black-holing HiveMem.
+    prior-memory-budget-ms: ${DRACUL_RENFIELD_PRIOR_MEMORY_BUDGET_MS:2000}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}

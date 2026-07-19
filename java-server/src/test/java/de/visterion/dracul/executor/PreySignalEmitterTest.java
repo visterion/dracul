@@ -184,6 +184,25 @@ class PreySignalEmitterTest {
     }
 
     @Test
+    void preyIdFlowsIntoPersistedSignal() {
+        stubNoOpenOrPending();
+        ExecutorSignal mapped = new ExecutorSignal(
+                "sig-1", "strigoi-spin", "p-abc", "ACME", "BUY", 0.73, "SPINOFF",
+                List.of("Close below 90.00"), "6m", null, "PENDING", "2026-07-08T10:00:00Z",
+                null, "prey-1");
+        when(mapper.map(any(Prey.class))).thenReturn(mapped);
+        when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
+        when(indicators.levels(anyString(), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+
+        emitter.emit(List.of(samplePrey()));
+
+        ArgumentCaptor<ExecutorSignal> captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(signalRepo).insert(captor.capture());
+        assertThat(captor.getValue().preyId()).isEqualTo("prey-1");
+    }
+
+    @Test
     void versionMissingFromRegistryButMatchingLiveDbVersionIsEmitted() {
         stubNoOpenOrPending();
         ExecutorSignal mapped = mapperSignal("p-edited");

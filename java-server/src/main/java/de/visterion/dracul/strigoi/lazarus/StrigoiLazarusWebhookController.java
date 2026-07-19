@@ -1,10 +1,12 @@
 package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -47,6 +49,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
             LazarusEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
+            HiveMemResearchService memory,
+            ResearchMemoryLinkRepository memoryLinks,
             HeldPositionService heldPositionService,
             @Value("${dracul.position.connection:depot-1}") String connection,
             @Value("${dracul.strigoi.lazarus.max-above-low:0.10}") double maxAboveLow,
@@ -54,7 +58,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
             @Value("${dracul.strigoi.lazarus.max-price-to-book:2.0}") double maxPriceToBook,
             @Value("${dracul.strigoi.lazarus.max-p-fcf:20}") double maxPFcf,
             @Value("${dracul.strigoi.lazarus.probe-symbol:AAPL}") String probeSymbol) {
-        super(token, preyRepo, cache);
+        super(token, preyRepo, cache, memory, memoryLinks);
         this.watchlist = watchlist;
         this.companyData = companyData;
         this.screener = screener;

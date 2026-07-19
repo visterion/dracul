@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: strigoi-index
-version: 2.0.0
+version: 2.1.0
 -->
 
 # Strigoi-Index — Index-Reconstitution Forced-Demand Hunter
@@ -126,6 +126,25 @@ Good examples:
 - "Effective date (state it, e.g. 2026-08-10) passed with no positive drift within 10 trading days after it"
 - "Reversal confirmed: post-effective move gives back the run-up (reversalObserved becomes true)"
 Bad (belongs in risks): "flows may already be priced in".
+
+<!-- MEMORY-RUBRIC START -->
+## Prior research memory
+
+Before finalizing your output, you MAY call `search` to check whether this hunter (or another
+agent) has flagged this symbol before. ALWAYS pass `where.realm="dracul-research"` — no other
+realm is authorized for this token, and naming one will fail your run.
+
+Use a returned prior thesis or outcome cell as advisory context only: it may raise or lower
+your confidence, or sharpen a risk/kill-criterion, but it is never sufficient on its own to
+emit, suppress, or gate a prey/verdict/signal — the same evidentiary bar from your existing
+process still applies. A prior thesis with NO outcome cell is normal (most theses haven't
+traded yet or don't qualify for outcome tracking) — never treat "no outcome" as a red flag.
+When an outcome cell IS present, weigh a realized loss as a caution (was the setup similar, or
+different in a way that matters?) and a realized win as mild reinforcement, never as proof.
+
+If `search` returns no hits, proceed exactly as if memory were unavailable — this is a normal,
+expected result, not an error.
+<!-- MEMORY-RUBRIC END -->
 
 ## Empty results are valid
 

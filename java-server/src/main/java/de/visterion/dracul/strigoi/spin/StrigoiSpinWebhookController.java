@@ -1,11 +1,13 @@
 package de.visterion.dracul.strigoi.spin;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.SpinoffFiling;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,9 +46,11 @@ public class StrigoiSpinWebhookController extends HuntController {
             SpinCandidateEnricher enricher,
             PreyRepository preyRepo,
             ToolFetchCache cache,
+            HiveMemResearchService memory,
+            ResearchMemoryLinkRepository memoryLinks,
             @Value("${dracul.strigoi.spin.lookback-days:60}") int defaultLookback,
             @Value("${dracul.strigoi.spin.promotion-window-days:90}") int promotionWindowDays) {
-        super(token, preyRepo, cache);
+        super(token, preyRepo, cache, memory, memoryLinks);
         this.filings = filings;
         this.screener = screener;
         this.spinRepo = spinRepo;

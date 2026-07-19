@@ -1,6 +1,8 @@
 package de.visterion.dracul.renfield;
 
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
+import de.visterion.dracul.hivemem.MemoryHit;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.marketdata.AgoraMarketData;
@@ -38,16 +40,21 @@ class RenfieldSchedulerTest {
     private final PortfolioWeights portfolioWeights = mock(PortfolioWeights.class);
     private final SectorResolver sectors = mock(SectorResolver.class);
     private final VistierieClient vistierie = mock(VistierieClient.class);
+    private final HiveMemResearchService memory = mock(HiveMemResearchService.class);
 
     private RenfieldScheduler scheduler() {
         return scheduler(30);
     }
 
     private RenfieldScheduler scheduler(int maxSymbols) {
+        return scheduler(maxSymbols, 2000L);
+    }
+
+    private RenfieldScheduler scheduler(int maxSymbols, long priorMemoryBudgetMs) {
         return new RenfieldScheduler(watchlist, marketData, companyData, alerts, verdicts,
-                heldPositions, portfolioWeights, sectors, vistierie,
+                heldPositions, portfolioWeights, sectors, vistierie, memory,
                 "http://localhost:8080", "ren-tkn", "depot-1", "primary@x.com",
-                maxSymbols);
+                maxSymbols, priorMemoryBudgetMs);
     }
 
     private static WatchlistItem item(String ticker, String verdictId) {
@@ -355,5 +362,67 @@ class RenfieldSchedulerTest {
         @SuppressWarnings("unchecked")
         var symbols = (List<Map<String, Object>>) captor.getValue().get("symbols");
         assertThat(symbols.get(0)).doesNotContainKey("sector");
+    }
+
+    /** Task 11: prior_memory pre-fetch — healthy HiveMem populates every symbol within budget. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void assembleInputPopulatesPriorMemoryForEverySymbolWhenHiveMemIsHealthy() {
+        List<WatchlistItem> items = List.of(item("ACME", null), item("BETA", null));
+        when(marketData.quotes(anyCollection())).thenReturn(Map.of());
+        when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
+        when(alerts.recentAlerts(anyString(), any())).thenReturn(List.of());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+        when(portfolioWeights.weightsBySymbol(any())).thenReturn(Map.of());
+        when(sectors.sector(anyString())).thenReturn(null);
+        when(memory.searchForInput(eq("ACME"), eq(3)))
+                .thenReturn(List.of(new MemoryHit("id-1", "sum-acme", "content-acme")));
+        when(memory.searchForInput(eq("BETA"), eq(3)))
+                .thenReturn(List.of(new MemoryHit("id-2", "sum-beta", "content-beta")));
+
+        var input = scheduler(30, 2000L).assembleInput(items, Instant.now());
+
+        var symbols = (List<Map<String, Object>>) input.get("symbols");
+        assertThat(symbols).hasSize(2);
+        var acmeMemory = (List<Map<String, Object>>) symbols.get(0).get("prior_memory");
+        assertThat(acmeMemory).hasSize(1);
+        assertThat(acmeMemory.get(0)).containsEntry("summary", "sum-acme")
+                .containsEntry("content", "content-acme");
+        var betaMemory = (List<Map<String, Object>>) symbols.get(1).get("prior_memory");
+        assertThat(betaMemory).hasSize(1);
+        assertThat(betaMemory.get(0)).containsEntry("summary", "sum-beta")
+                .containsEntry("content", "content-beta");
+    }
+
+    /** Task 11: a black-holing HiveMem (hangs, never throws) must not blow the scheduler's total
+     *  wall-clock past the configured budget (+ small slack) -- NOT budget x symbol-count -- and
+     *  symbols reviewed after the deadline elapses degrade to an empty prior_memory. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void assembleInputStaysWallClockBoundedWhenHiveMemBlackHoles() {
+        List<WatchlistItem> items = List.of(item("A", null), item("B", null), item("C", null));
+        when(marketData.quotes(anyCollection())).thenReturn(Map.of());
+        when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
+        when(alerts.recentAlerts(anyString(), any())).thenReturn(List.of());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+        when(portfolioWeights.weightsBySymbol(any())).thenReturn(Map.of());
+        when(sectors.sector(anyString())).thenReturn(null);
+        when(memory.searchForInput(anyString(), eq(3))).thenAnswer(inv -> {
+            Thread.sleep(300);
+            return List.of();
+        });
+
+        long budgetMs = 50L;
+        long startNanos = System.nanoTime();
+        var input = scheduler(30, budgetMs).assembleInput(items, Instant.now());
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+
+        // bounded by ~one blocking call, not by 3x the black-hole sleep.
+        assertThat(elapsedMs).isLessThan(300 + 250);
+        verify(memory, times(1)).searchForInput(anyString(), eq(3));
+
+        var symbols = (List<Map<String, Object>>) input.get("symbols");
+        assertThat((List<Object>) symbols.get(1).get("prior_memory")).isEmpty();
+        assertThat((List<Object>) symbols.get(2).get("prior_memory")).isEmpty();
     }
 }
