@@ -1,6 +1,8 @@
 package de.visterion.dracul.depot;
 
 import de.visterion.dracul.auth.CurrentUserHolder;
+import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.vistierie.VistierieClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,13 +29,18 @@ public class DepotController {
     private final DepotChartService chartService;
     private final DepotInstrumentService instrumentService;
     private final DepotHistoryService historyService;
+    private final VistierieClient vistierie;
+    private final PreyRepository prey;
 
     public DepotController(DepotService service, DepotChartService chartService,
-            DepotInstrumentService instrumentService, DepotHistoryService historyService) {
+            DepotInstrumentService instrumentService, DepotHistoryService historyService,
+            VistierieClient vistierie, PreyRepository prey) {
         this.service = service;
         this.chartService = chartService;
         this.instrumentService = instrumentService;
         this.historyService = historyService;
+        this.vistierie = vistierie;
+        this.prey = prey;
     }
 
     @GetMapping
@@ -58,9 +65,10 @@ public class DepotController {
                 .filter(o -> symbol.equals(o.symbol()))
                 .toList();
 
+        String runId = historyService.runIdForOpenPosition(connection, symbol);
         return new PositionDetailResponse(
                 new PositionDetailResponse.DepotSummary(depot.id(), depot.provider(), depot.environment()),
-                position, orders, depot.asOf());
+                position, orders, depot.asOf(), runId);
     }
 
     @GetMapping("/{connection}/history")
@@ -70,6 +78,23 @@ public class DepotController {
         } catch (DepotUnavailableException e) {
             return new DepotHistoryResponse(List.of(), e.getMessage());
         }
+    }
+
+    /**
+     * Raw Vistierie run transcript (Schicht 2): exact prompt + raw LLM answer + tool results,
+     * un-truncated ({@code view=full}), proxied read-only. Returns {@code {transcript:null,
+     * expired:true}} when Vistierie pruned the run or is unreachable (never 500).
+     * <p>Ownership-scoped: {@code runId} must belong to a {@link de.visterion.dracul.prey.Prey}
+     * discovered for the current user, otherwise 404 (not 403 — avoids leaking whether a run
+     * exists at all) to prevent one user reading another user's run transcript.
+     */
+    @GetMapping("/run/{runId}/transcript")
+    public TranscriptResponse transcript(@PathVariable String runId) {
+        if (!prey.runExistsForUser(runId, CurrentUserHolder.get())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown run");
+        }
+        JsonNode node = vistierie.getRunTranscript(runId, "full");
+        return new TranscriptResponse(node, node == null);
     }
 
     @GetMapping("/chart")
@@ -132,9 +157,12 @@ public class DepotController {
     public record DepotsResponse(List<DepotDto> depots, String error) {
     }
 
-    /** Response for the per-position slice: the owning depot's identity, the position, and its orders. */
+    /** Response for the per-position slice: the owning depot's identity, the position, its
+     *  orders, and — for open positions only — a heuristic run_id (symbol-linked, see
+     *  {@link DepotHistoryService#runIdForOpenPosition}) driving the raw-transcript drilldown;
+     *  {@code null} when unlinkable. */
     public record PositionDetailResponse(DepotSummary depot, DepotPositionDto position,
-            List<DepotOrder> orders, String asOf) {
+            List<DepotOrder> orders, String asOf, String runId) {
         public record DepotSummary(String id, String provider, String environment) {
         }
     }
@@ -156,5 +184,12 @@ public class DepotController {
     public record InstrumentResponse(String symbol, JsonNode profile, JsonNode news, JsonNode earnings,
             JsonNode analystEstimates, JsonNode earningsEstimates, JsonNode fundamentalScore,
             JsonNode fundamentals, JsonNode insiderActivity) {
+    }
+
+    /**
+     * Response for {@code GET /api/depots/run/{runId}/transcript}: the raw Vistierie transcript
+     * body, or {@code expired:true} when Vistierie has none (pruned run or unreachable).
+     */
+    public record TranscriptResponse(JsonNode transcript, boolean expired) {
     }
 }

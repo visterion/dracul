@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
@@ -20,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ExecutorSignalRepositoryTest {
 
     @Autowired ExecutorSignalRepository repo;
+    @Autowired JdbcClient jdbc;
 
     @Test
     void insertAndFindPending() {
@@ -68,24 +70,55 @@ class ExecutorSignalRepositoryTest {
     @Test
     void preyIdRoundTrips() {
         String id = UUID.randomUUID().toString();
+        String preyId = UUID.randomUUID().toString();
         var s = new ExecutorSignal(id, "strigoi-spin", "v1", "PREYCO", "LONG", 0.6,
-                "mechanism", List.of(), "3M", null, "PENDING", null, null, "prey-42");
+                "mechanism", List.of(), "3M", null, "PENDING", null, null, preyId);
         repo.insert(s);
 
         var found = repo.findById(id);
         assertThat(found).isNotNull();
-        assertThat(found.preyId()).isEqualTo("prey-42");
+        assertThat(found.preyId()).isEqualTo(preyId);
     }
 
     @Test
-    void nullPreyIdRoundTripsForBackCompatSignals() {
+    void injectStyleSignalHasNullPreyId() {
         String id = UUID.randomUUID().toString();
-        var s = new ExecutorSignal(id, "strigoi-spin", "v1", "NOPREYCO", "LONG", 0.6,
+        var s = new ExecutorSignal(id, "injected", "operator", "INJCO", "LONG", 0.6,
                 "mechanism", List.of(), "3M", null, "PENDING", null);
         repo.insert(s);
 
         var found = repo.findById(id);
         assertThat(found).isNotNull();
         assertThat(found.preyId()).isNull();
+    }
+
+    @Test
+    void findRunIdBySignalIdReturnsPreyRunId() {
+        var preyId = java.util.UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO prey (id, symbol, company_name, anomaly_type, confidence, thesis,
+                                  signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
+                                  user_id, run_id)
+                VALUES (:id, 'AAPL', 'Apple', 'PEAD', 0.7, 'thesis',
+                        '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'SWING', 'oracle', now(),
+                        'default', 'run-xyz')
+                """)
+                .param("id", preyId)
+                .update();
+        var s = new ExecutorSignal("sig-run-1", "strigoi", "v1", "AAPL", "LONG", 0.7,
+                "PEAD", java.util.List.of(), "SWING", null, "PENDING", null, null, preyId.toString());
+        repo.insert(s);
+
+        assertThat(repo.findRunIdBySignalId("sig-run-1")).isEqualTo("run-xyz");
+    }
+
+    @Test
+    void findRunIdBySignalIdNullWhenNoPreyLink() {
+        var s = new ExecutorSignal("sig-run-2", "strigoi", "v1", "AAPL", "LONG", 0.7,
+                "PEAD", java.util.List.of(), "SWING", null, "PENDING", null);
+        repo.insert(s);
+
+        assertThat(repo.findRunIdBySignalId("sig-run-2")).isNull();
+        assertThat(repo.findRunIdBySignalId("does-not-exist")).isNull();
     }
 }

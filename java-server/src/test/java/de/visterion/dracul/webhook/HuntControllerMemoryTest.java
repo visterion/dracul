@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -99,7 +100,7 @@ class HuntControllerMemoryTest {
     void newlyInsertedPrey_writesThesisMemoryAndLinkRow() {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
-            when(preyRepo.insertAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+            when(preyRepo.insertAll(anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
             HiveMemResearchService memory = Mockito.mock(HiveMemResearchService.class);
             when(memory.writeThesisMemory(eq("prey"), eq("AAA"), eq("TEST"), eq("t"),
                     any(), any(), any(), eq("3m"), eq("test-strigoi"), eq(0.5), anyString()))
@@ -120,7 +121,7 @@ class HuntControllerMemoryTest {
     void hiveMemDegrade_preyStillPersisted_204_andNoLinkRow() {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
-            when(preyRepo.insertAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+            when(preyRepo.insertAll(anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
             HiveMemResearchService memory = Mockito.mock(HiveMemResearchService.class);
             when(memory.writeThesisMemory(anyString(), anyString(), any(), any(),
                     any(), any(), any(), any(), anyString(), anyDouble(), anyString()))
@@ -131,7 +132,7 @@ class HuntControllerMemoryTest {
             var resp = controller.complete("Bearer test-token", "run-2", doneBodyWithOnePrey());
 
             assertThat(resp.getStatusCode().value()).isEqualTo(204);
-            verify(preyRepo, times(1)).insertAll(anyList());
+            verify(preyRepo, times(1)).insertAll(anyList(), any());
             verifyNoInteractions(memoryLinks);
         }
     }
@@ -140,7 +141,7 @@ class HuntControllerMemoryTest {
     void memoryThrows_completionStillReturns204() {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
-            when(preyRepo.insertAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+            when(preyRepo.insertAll(anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
             HiveMemResearchService memory = Mockito.mock(HiveMemResearchService.class);
             doThrow(new RuntimeException("bug")).when(memory).writeThesisMemory(anyString(),
                     anyString(), any(), any(), any(), any(), any(), any(), anyString(),
@@ -177,7 +178,7 @@ class HuntControllerMemoryTest {
     void allDuplicatePrey_memoryNeverCalled() {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
-            when(preyRepo.insertAll(anyList())).thenReturn(List.of());
+            when(preyRepo.insertAll(anyList(), any())).thenReturn(List.of());
             HiveMemResearchService memory = Mockito.mock(HiveMemResearchService.class);
             ResearchMemoryLinkRepository memoryLinks = Mockito.mock(ResearchMemoryLinkRepository.class);
             var controller = newController(ctx, preyRepo, memory, memoryLinks);
@@ -193,7 +194,7 @@ class HuntControllerMemoryTest {
     void afterPersistFiresBeforeMemoryWrite() {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             PreyRepository preyRepo = Mockito.mock(PreyRepository.class);
-            when(preyRepo.insertAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+            when(preyRepo.insertAll(anyList(), any())).thenAnswer(inv -> inv.getArgument(0));
             HiveMemResearchService memory = Mockito.mock(HiveMemResearchService.class);
             when(memory.writeThesisMemory(anyString(), anyString(), any(), any(),
                     any(), any(), any(), any(), anyString(), anyDouble(), anyString()))

@@ -36,8 +36,8 @@ public class ExecutorSignalRepository {
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
                    kill_criteria, horizon, reference_price, status, thesis, prey_id)
                 VALUES (:signalId, :source, :agentVersion, :symbol, :direction, :confidence, :mechanism,
-                        CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status, CAST(:thesis AS jsonb),
-                        :preyId)
+                        CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status,
+                        CAST(:thesis AS jsonb), CAST(:preyId AS uuid))
                 ON CONFLICT (signal_id) DO NOTHING
                 """)
                 .param("signalId", s.signalId())
@@ -70,6 +70,21 @@ public class ExecutorSignalRepository {
         return jdbc.sql("SELECT * FROM executor_signal WHERE signal_id = :signalId")
                 .param("signalId", signalId)
                 .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
+    /** Run-id of the prey linked to this signal (Schicht 1 FK executor_signal.prey_id -> prey.id).
+     *  Null when the signal is unknown, has no prey_id (operator inject / legacy), or prey.run_id is null. */
+    public String findRunIdBySignalId(String signalId) {
+        return jdbc.sql("""
+                SELECT p.run_id
+                FROM executor_signal es
+                JOIN prey p ON p.id = es.prey_id
+                WHERE es.signal_id = :signalId
+                """)
+                .param("signalId", signalId)
+                .query(String.class)
                 .optional()
                 .orElse(null);
     }

@@ -135,7 +135,7 @@ public abstract class HuntController {
             log.info("{} run {} produced no persistable prey", agentName(), runId);
             return ResponseEntity.noContent().build();
         }
-        var inserted = preyRepo.insertAll(prey);
+        var inserted = preyRepo.insertAll(prey, runId);
         if (inserted.isEmpty()) {
             log.info("{} run {} — all {} prey already persisted (duplicate delivery?)", agentName(), runId, prey.size());
             return ResponseEntity.noContent().build();
