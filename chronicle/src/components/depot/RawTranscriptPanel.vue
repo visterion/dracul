@@ -61,6 +61,11 @@ async function load() {
       imageRedacted.value = IMAGE_REDACTED_PATTERN.test(rawText.value ?? '')
     }
     loaded = true
+  } catch {
+    // Network failure or a malformed 200 body: never leave the panel silently
+    // blank — surface it as unavailable (and don't retry-loop on re-open).
+    expired.value = true
+    loaded = true
   } finally {
     loading.value = false
   }
