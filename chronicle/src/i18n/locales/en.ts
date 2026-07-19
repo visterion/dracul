@@ -26,6 +26,7 @@ export default {
       patternLibrary: 'pattern library',
       backtest: 'backtest',
       settings: 'settings',
+      inspector: 'agent activity',
     },
     liveAlerts: {
       title: 'Live Alerts',
@@ -835,5 +836,16 @@ export default {
       started: 'Hunt started',
       pausedTooltip: 'Agent paused',
     },
+  },
+  inspector: {
+    filter: {
+      label: 'Agent',
+      all: 'all',
+    },
+    loading: 'Loading runs …',
+    empty: 'No runs found.',
+    error: 'Error',
+    loadMore: 'Load more',
+    loadingMore: 'Loading …',
   },
 }

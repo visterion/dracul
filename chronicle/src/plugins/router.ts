@@ -55,6 +55,11 @@ const router = createRouter({
       component: () => import('../views/SettingsView.vue'),
     },
     {
+      path: '/inspector',
+      name: 'inspector',
+      component: () => import('../views/InspectorView.vue'),
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/',
     },
