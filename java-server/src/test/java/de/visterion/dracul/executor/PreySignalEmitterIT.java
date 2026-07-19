@@ -33,8 +33,12 @@ class PreySignalEmitterIT {
     @Autowired ExecutorPositionRepository positionRepo;
 
     private Prey prey(String symbol) {
+        return prey(symbol, java.util.UUID.randomUUID().toString());
+    }
+
+    private Prey prey(String symbol, String preyId) {
         return new Prey(
-                "prey-" + symbol, symbol, symbol + " Corp", "SPINOFF",
+                preyId, symbol, symbol + " Corp", "SPINOFF",
                 0.7, "thesis", List.of("signal"), List.of("risk"),
                 List.of("kill"),
                 "6m", "strigoi-spin", "2026-07-08T10:00:00Z");
@@ -55,6 +59,7 @@ class PreySignalEmitterIT {
         String fresh = "FRESHIT" + System.nanoTime();
         String open = "OPENIT" + System.nanoTime();
         String pending = "PENDIT" + System.nanoTime();
+        String freshPreyId = java.util.UUID.randomUUID().toString();
 
         // seed: an open position and a pending signal
         positionRepo.insert(openPosition(open));
@@ -62,7 +67,7 @@ class PreySignalEmitterIT {
                 java.util.UUID.randomUUID().toString(), "strigoi-spin", null, pending,
                 "BUY", 0.6, "SPINOFF", List.of(), "6m", null, "PENDING", null));
 
-        emitter.emit(List.of(prey(fresh), prey(open), prey(pending)));
+        emitter.emit(List.of(prey(fresh, freshPreyId), prey(open), prey(pending)));
 
         var pendingNow = signalRepo.findPending(Integer.MAX_VALUE);
 
@@ -73,6 +78,7 @@ class PreySignalEmitterIT {
             assertThat(s.mechanism()).isEqualTo("SPINOFF");
             assertThat(s.source()).isEqualTo("strigoi-spin");
             assertThat(s.status()).isEqualTo("PENDING");
+            assertThat(s.preyId()).isEqualTo(freshPreyId);              // fails if the emitter drops the mapper's preyId
         });
 
         // open-position symbol -> skipped (no signal emitted for it)
@@ -86,7 +92,7 @@ class PreySignalEmitterIT {
     void emit_persistsPreyThesisOnSignal() {
         String symbol = "HELE" + System.nanoTime();
         Prey p = new Prey(
-                "prey-" + symbol, symbol, symbol + " Corp", "PEAD",
+                java.util.UUID.randomUUID().toString(), symbol, symbol + " Corp", "PEAD",
                 0.7, "big beat", List.of("s"), List.of("r"),
                 List.of("k"), "1M", "strigoi-spin", "2026-07-08T10:00:00Z");
 
