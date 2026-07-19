@@ -84,6 +84,7 @@ public class ExecutorWebhookController {
     private final VetoConfig vetoConfig;
     private final Tranche2Detector tranche2Detector;
     private final TelegramNotifier telegram;
+    private final ExecutorNotifier executorNotifier;
     private final PositionContextRepository positionContextRepo;
     private final PatternRepository patternRepo;
 
@@ -125,6 +126,7 @@ public class ExecutorWebhookController {
             SignalRanker ranker,
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
+            ExecutorNotifier executorNotifier,
             PositionContextRepository positionContextRepo,
             PatternRepository patternRepo,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
@@ -151,7 +153,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
-                tranche2Detector, telegram, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
+                tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
                 entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
@@ -178,6 +180,7 @@ public class ExecutorWebhookController {
             SignalRanker ranker,
             Tranche2Detector tranche2Detector,
             TelegramNotifier telegram,
+            ExecutorNotifier executorNotifier,
             PositionContextRepository positionContextRepo,
             PatternRepository patternRepo,
             String webhookToken,
@@ -232,6 +235,7 @@ public class ExecutorWebhookController {
         this.ranker = ranker;
         this.tranche2Detector = tranche2Detector;
         this.telegram = telegram;
+        this.executorNotifier = executorNotifier;
         this.positionContextRepo = positionContextRepo;
         this.patternRepo = patternRepo;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
@@ -732,6 +736,8 @@ public class ExecutorWebhookController {
                         signalId, positionId, brokerOrderId, e.getMessage(), e);
             }
 
+            executorNotifier.notifyEntryPlaced(signal, side, qty, orderPrice, stopPrice, connection);
+
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,
                     "broker_order_id", brokerOrderId,
@@ -1091,6 +1097,8 @@ public class ExecutorWebhookController {
                 "SOFT_TRIGGER", null, null, null, symbol, inputs, null,
                 "EXIT_FULL", reason, orderJson, reasoning, confidence, null, null));
 
+        executorNotifier.notifyExit(position, reason, exitPrice, realizedR, connection);
+
         return ResponseEntity.ok(Map.of("output",
                 Map.of("exited", true, "exit_reason", reason)));
     }
@@ -1274,6 +1282,9 @@ public class ExecutorWebhookController {
                                 + "broker order {}: {}",
                         position.sourceSignalId(), position.id(), brokerOrderId, e.getMessage(), e);
             }
+
+            executorNotifier.notifyTranche2(position, sizing.qty(), orderPrice, newQty, newEntry,
+                    t2.reason(), connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,

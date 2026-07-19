@@ -49,6 +49,7 @@ class ExecutorWebhookControllerTest {
     private SignalRanker ranker;
     private Tranche2Detector tranche2Detector;
     private TelegramNotifier telegram;
+    private ExecutorNotifier executorNotifier;
     private PositionContextRepository positionContextRepo;
     private PatternRepository patternRepo;
     private JsonMapper mapper;
@@ -76,6 +77,7 @@ class ExecutorWebhookControllerTest {
         ranker = new SignalRanker(); // pure, real instance
         tranche2Detector = mock(Tranche2Detector.class);
         telegram = mock(TelegramNotifier.class);
+        executorNotifier = mock(ExecutorNotifier.class);
         positionContextRepo = mock(PositionContextRepository.class);
         patternRepo = mock(PatternRepository.class);
         when(patternRepo.findEnforced()).thenReturn(List.of());
@@ -91,7 +93,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker, tranche2Detector, telegram, positionContextRepo, patternRepo,
+                assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 0.0, 3.0, "USD", fixedClock);
@@ -240,7 +242,7 @@ class ExecutorWebhookControllerTest {
                 signalRepo, positionRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, customSizer, ranker, tranche2Detector, telegram, positionContextRepo, patternRepo,
+                assembler, customSizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 0.0, 3.0, "USD", fixedClock);
@@ -959,6 +961,8 @@ class ExecutorWebhookControllerTest {
         // entryGtdDays=2, FIXED_NOW="2026-07-01T00:00:42Z" is a Wednesday -> +2 days lands on
         // Friday 2026-07-03 (no weekend roll needed).
         verify(positionRepo).setEntryExpiresAt(77L, Instant.parse("2026-07-03T00:00:42Z"));
+
+        verify(executorNotifier).notifyEntryPlaced(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -2000,6 +2004,8 @@ class ExecutorWebhookControllerTest {
         assertThat(log.triggerType()).isEqualTo("SOFT_TRIGGER");
         assertThat(log.action()).isEqualTo("EXIT_FULL");
         assertThat(log.confidenceInDecision()).isEqualTo(0.7);
+
+        verify(executorNotifier).notifyExit(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -2399,6 +2405,8 @@ class ExecutorWebhookControllerTest {
         assertThat(decision.accepted()).isTrue();
         assertThat(decision.rationale()).isEqualTo("tranche 2 added: R_CONFIRMED");
         assertThat(decision.brokerOrderId()).isEqualTo("brk-2");
+
+        verify(executorNotifier).notifyTranche2(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
