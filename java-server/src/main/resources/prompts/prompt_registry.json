@@ -4,7 +4,7 @@
   "executor": { "version": "1.0.0", "body_hash": "p-b1bf1adc3707" },
   "gropar": { "version": "1.1.0", "body_hash": "p-352147003074" },
   "renfield": { "version": "1.4.0", "body_hash": "p-fef5991230e7" },
-  "strigoi-echo": { "version": "1.5.0", "body_hash": "p-f49c7316d77c" },
+  "strigoi-echo": { "version": "1.6.0", "body_hash": "p-078835487409" },
   "strigoi-index": { "version": "2.1.0", "body_hash": "p-f5e05a0d9eeb" },
   "strigoi-insider": { "version": "1.5.0", "body_hash": "p-97c990c03d88" },
   "strigoi-lazarus": { "version": "1.4.0", "body_hash": "p-1f57bf138b17" },
