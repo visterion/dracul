@@ -101,6 +101,20 @@ public class DecisionLogRepository {
                 .orElse(null);
     }
 
+    /** All decision-log rows for a signal, regardless of action, oldest first — the move
+     *  timeline (ENTER/ADD/TRIM/EXIT) for the position that signal opened, each row carrying
+     *  its own {@code run_id} (the executor run that decided that move). */
+    public List<DecisionLog> findBySignalId(String signalId) {
+        return jdbc.sql("""
+                SELECT * FROM decision_log
+                WHERE signal_id = :signalId
+                ORDER BY created_at
+                """)
+                .param("signalId", signalId)
+                .query(this::mapRow)
+                .list();
+    }
+
     /** All decision rows for a symbol with the given action, oldest first — used for the
      *  symbol+nearest-timestamp ENTER fallback join and for the reentry-within-10d whipsaw
      *  check. */

@@ -288,4 +288,80 @@ class DepotHistoryServiceTest {
 
         assertThat(svc.runIdForOpenPosition("depot-1", "AAPL")).isNull();
     }
+
+    // ── movesForOpenPosition (Task 2: depot move timeline) ──────────────────────
+
+    @Test
+    void movesForOpenPositionMapsDecisionLogRowsForTheOpenPositionsSignal() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+        var signals = mock(ExecutorSignalRepository.class);
+
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+                7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
+                null, List.of("stop below 95"), "sig-open", "index-strigoi", null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null));
+        when(decisions.findBySignalId("sig-open")).thenReturn(List.of(
+                new DecisionLog("log-1", "run-enter", null, "SIGNAL", "sig-open", "index-strigoi", null,
+                        "AAPL", null, null, "ENTER", "OK", null, "opened", 0.8, null, "2026-07-01T10:00:00Z"),
+                new DecisionLog("log-2", "run-trim", null, "SOFT_TRIGGER", "sig-open", "index-strigoi", null,
+                        "AAPL", null, null, "TRIM", "T2_TARGET", null, "trimmed", 0.6, null, "2026-07-05T10:00:00Z")));
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.of(signals), 90, FIXED_CLOCK);
+
+        var moves = svc.movesForOpenPosition("depot-1", "AAPL");
+
+        assertThat(moves).containsExactly(
+                new DepotMove("ENTER", "OK", "2026-07-01T10:00:00Z", "run-enter"),
+                new DepotMove("TRIM", "T2_TARGET", "2026-07-05T10:00:00Z", "run-trim"));
+    }
+
+    @Test
+    void movesForOpenPositionReturnsEmptyWhenNoOpenPositionMatches() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(null);
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.empty(), 90, FIXED_CLOCK);
+
+        assertThat(svc.movesForOpenPosition("depot-1", "AAPL")).isEmpty();
+    }
+
+    @Test
+    void movesForOpenPositionReturnsEmptyWhenPositionHasNoSourceSignalId() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+                7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
+                null, List.of("stop below 95"), null, "index-strigoi", null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null));
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.empty(), 90, FIXED_CLOCK);
+
+        assertThat(svc.movesForOpenPosition("depot-1", "AAPL")).isEmpty();
+    }
+
+    @Test
+    void movesForOpenPositionReturnsEmptyWhenExecutorReposAbsent() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(),
+                Optional.empty(), 90, FIXED_CLOCK);
+
+        assertThat(svc.movesForOpenPosition("depot-1", "AAPL")).isEmpty();
+    }
 }

@@ -48,6 +48,30 @@ class DecisionLogRepositoryTest {
     }
 
     @Test
+    void findBySignalIdReturnsAllActionsForThatSignalOldestFirst() {
+        String signalId = "sig-" + UUID.randomUUID();
+
+        var enter = new DecisionLog(
+                null, "run-enter", "exec-v0.2", "SIGNAL", signalId, "strigoi-spin", "v1",
+                "ACME", null, null, "ENTER", "OK",
+                null, "opened on spin-off drift", 0.8, null, null);
+        repo.insert(enter);
+
+        var trim = new DecisionLog(
+                null, "run-trim", "exec-v0.2", "SOFT_TRIGGER", signalId, "strigoi-spin", "v1",
+                "ACME", null, null, "TRIM", "T2_TARGET",
+                null, "trimmed at T2 target", 0.6, null, null);
+        repo.insert(trim);
+
+        var moves = repo.findBySignalId(signalId);
+
+        assertThat(moves).hasSize(2);
+        assertThat(moves).extracting(DecisionLog::action).containsExactly("ENTER", "TRIM");
+        assertThat(moves).extracting(DecisionLog::runId).containsExactly("run-enter", "run-trim");
+        assertThat(moves).allSatisfy(d -> assertThat(d.signalId()).isEqualTo(signalId));
+    }
+
+    @Test
     void nullableJsonAndConfidence() {
         String symbol = "DLOG-" + UUID.randomUUID();
         var d = new DecisionLog(
