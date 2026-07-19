@@ -139,4 +139,19 @@ public class DepotHistoryService {
         if (p == null || p.sourceSignalId() == null) return null;
         return signals.get().findRunIdBySignalId(p.sourceSignalId());
     }
+
+    /** The move timeline (ENTER/ADD/TRIM/EXIT) for an open depot position: the open
+     *  {@code executor_position} for (connection, symbol) -> its {@code source_signal_id} ->
+     *  every {@code decision_log} row for that signal, oldest first, each carrying its own
+     *  {@code run_id} so the frontend can link each move to its raw executor transcript.
+     *  Returns {@code List.of()} when the executor repos are disabled, no open position
+     *  matches, or the position has no linked signal. */
+    public List<DepotMove> movesForOpenPosition(String connection, String symbol) {
+        if (positions.isEmpty() || decisions.isEmpty()) return List.of();
+        ExecutorPosition p = positions.get().findOpenBySymbol(connection, symbol);
+        if (p == null || p.sourceSignalId() == null) return List.of();
+        return decisions.get().findBySignalId(p.sourceSignalId()).stream()
+                .map(d -> new DepotMove(d.action(), d.reasonCode(), d.createdAt(), d.runId()))
+                .toList();
+    }
 }

@@ -424,7 +424,7 @@ Order ticket fields (`ticket`):
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/depots` | List depot connections and their positions/orders for the current user. Served from a per-connection display cache (TTL `dracul.depots.cache-ttl-seconds`, default 60s); `?refresh=true` bypasses it and re-fetches from the broker. |
-| GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, and only that symbol's orders). Fetches only the requested connection (cached), not all connections. |
+| GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, only that symbol's orders, and — for open positions — a heuristic `runId` plus the `decision_log`-derived move timeline `moves[]`, each move carrying its own `runId`). Fetches only the requested connection (cached), not all connections. |
 | GET | `/api/depots/{connection}/history` | Broker-authoritative trade history (closed positions for Saxo, all orders for Alpaca) with optional Dracul "why" annotation (Strigoi/rationale per `broker_order_id` when linked). Returns `{ entries: [...], error }`. |
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
 | GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
@@ -549,12 +549,31 @@ status stays 200; per-connection failures instead surface as a non-null
     "nativeCurrency": null
   },
   "orders": [ { "brokerOrderId": "o1", "symbol": "ACME", "side": "buy", "qty": 10, "type": "market", "status": "filled", "role": "entry" } ],
-  "asOf": "2026-07-11T08:00:00Z"
+  "asOf": "2026-07-11T08:00:00Z",
+  "runId": "run-xyz",
+  "moves": [
+    { "action": "ENTER", "reasonCode": "OK", "createdAt": "2026-07-01T10:00:00Z", "runId": "run-enter" },
+    { "action": "TRIM", "reasonCode": "T2_TARGET", "createdAt": "2026-07-05T10:00:00Z", "runId": "run-trim" }
+  ]
 }
 ```
 
 `orders` is filtered to only the orders for `{symbol}` within that
 depot connection.
+
+`runId` (Task 4b) and `moves` (Task 2) are populated only for **open**
+positions with a linked `executor_position` (symbol-linked via
+`DepotHistoryService.runIdForOpenPosition`/`movesForOpenPosition`);
+both are `null`/empty otherwise (executor disabled, no open position
+match, or the position has no `source_signal_id`).
+
+`moves` is the position's move timeline: every `decision_log` row for
+the open position's `source_signal_id` (ENTER/ADD/TRIM/EXIT), oldest
+first, each carrying its **own** `runId` — the executor run that
+decided that particular move (`decision_log.run_id`, distinct from the
+position-level `runId` above, which is the entry signal's run). The
+frontend links each move to its raw executor transcript via
+`GET /api/depots/run/{runId}/transcript`.
 
 - **`404 NOT_FOUND`** — `{connection}` isn't visible to the current
   user (unknown, or a live connection outside the allow-list), or
