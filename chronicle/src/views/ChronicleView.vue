@@ -116,7 +116,10 @@
           </div>
 
           <div class="filter-group">
-            <div class="fg-head">{{ t('chronicle.filters.broodProfiles') }}</div>
+            <div class="fg-head">
+              {{ t('chronicle.filters.broodProfiles') }}
+              <InfoDot topic="hunter.overview" />
+            </div>
             <BroodMini
               :strigoi="statusStore.status?.strigoi ?? []"
               :counts="broodCounts"
@@ -148,6 +151,7 @@ import DuskStrip from '../components/common/DuskStrip.vue'
 import VerdictCard from '../components/common/VerdictCard.vue'
 import PreyCard from '../components/common/PreyCard.vue'
 import BroodMini from '../components/common/BroodMini.vue'
+import InfoDot from '../components/common/InfoDot.vue'
 import BatGlyph from '../components/common/BatGlyph.vue'
 import FilterSheet from '../components/chronicle/FilterSheet.vue'
 import { filterToQuery, queryToFilter } from '../utils/filterQuery'
