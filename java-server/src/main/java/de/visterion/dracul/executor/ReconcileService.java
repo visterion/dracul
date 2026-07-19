@@ -61,6 +61,7 @@ public class ReconcileService {
     private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
     private final TelegramNotifier telegram;
+    private final ExecutorNotifier executorNotifier;
     private final int cooldownDays;
     private final int pendingExitStaleHours;
     private final Clock clock;
@@ -74,10 +75,11 @@ public class ReconcileService {
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
             TelegramNotifier telegram,
+            ExecutorNotifier executorNotifier,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
             @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
-                cooldownDays, pendingExitStaleHours, Clock.systemUTC());
+                executorNotifier, cooldownDays, pendingExitStaleHours, Clock.systemUTC());
     }
 
     ReconcileService(
@@ -88,6 +90,7 @@ public class ReconcileService {
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
             TelegramNotifier telegram,
+            ExecutorNotifier executorNotifier,
             int cooldownDays,
             int pendingExitStaleHours,
             Clock clock) {
@@ -98,6 +101,7 @@ public class ReconcileService {
         this.ruleVersions = ruleVersions;
         this.mapper = mapper;
         this.telegram = telegram;
+        this.executorNotifier = executorNotifier;
         this.cooldownDays = cooldownDays;
         this.pendingExitStaleHours = pendingExitStaleHours;
         this.clock = clock;
@@ -320,6 +324,8 @@ public class ReconcileService {
                 "pending exit confirmed for " + p.symbol() + ": broker no longer holds the position "
                         + "and the exit order is no longer working — booking the close",
                 null, null, null));
+
+        executorNotifier.notifyExit(p, exitReason, exitPrice, realizedR, p.connection());
     }
 
     /**
@@ -464,6 +470,8 @@ public class ReconcileService {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
                 action, exitReason, orderJson, null, null, null, null));
+
+        executorNotifier.notifyExit(effective, exitReason, exitPrice, realizedR, connection);
     }
 
     /** {@code true} only if both prices are present and strictly positive -- guards against a
@@ -478,7 +486,8 @@ public class ReconcileService {
         // GTD expiry marker: from here on `entry_expires_at IS NULL` doubles as the persisted
         // "entry filled" flag (set at placement, cleared here on fill or by EntryExpiryService
         // on cancel), which ExecutorWebhookController.exitPosition uses to gate LLM exits.
-        if (p.entryExpiresAt() != null) {
+        boolean entryJustFilled = p.entryExpiresAt() != null;
+        if (entryJustFilled) {
             positionRepo.clearEntryExpiry(p.id());
         }
 
@@ -505,6 +514,11 @@ public class ReconcileService {
                     p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                     p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                     p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
+        }
+
+        if (entryJustFilled) {
+            executorNotifier.notifyEntryFilled(p, p.qty(),
+                    brokerBasis != null ? brokerBasis : p.entryPrice(), p.connection());
         }
 
         BigDecimal currentClose = bp.marketPrice();
