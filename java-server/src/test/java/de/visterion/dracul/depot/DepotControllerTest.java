@@ -329,8 +329,8 @@ class DepotControllerTest {
                 BigDecimal.valueOf(100), "USD",
                 null, null, null, null, null);
         List<DepotOrder> orders = List.of(
-                new DepotOrder("o1", symbol, "buy", BigDecimal.ONE, "market", "filled", "entry", null, null, null),
-                new DepotOrder("o2", "OTHER", "sell", BigDecimal.ONE, "market", "filled", "exit", null, null, null));
+                new DepotOrder("o1", symbol, "buy", BigDecimal.ONE, "market", "filled", "entry", null, null, null, null),
+                new DepotOrder("o2", "OTHER", "sell", BigDecimal.ONE, "market", "filled", "exit", "o1", null, null, null));
         return new DepotDto(connId, "alpaca", "paper", "connected", "2026-07-11T12:00:00Z", null,
                 null, null, List.of(position), orders, "2026-07-11T12:00:00Z");
     }

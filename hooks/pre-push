@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/lib/explainer-check.sh"
+
+[ "${SKIP_EXPLAINER_CHECK:-}" = "1" ] && exit 0
+ZERO="0000000000000000000000000000000000000000"
+
+while read -r _localref localsha _remoteref remotesha; do
+  [ "$localsha" = "$ZERO" ] && continue          # branch deletion
+  if [ "$remotesha" != "$ZERO" ]; then
+    base="$remotesha"
+  else
+    base="$(git merge-base origin/main "$localsha" 2>/dev/null || true)"
+  fi
+  if [ -n "$base" ]; then
+    changed="$(git diff --name-only "$base" "$localsha")"
+    override_src="$(git log --format='%B' "$base..$localsha" 2>/dev/null || true)"
+  else
+    empty="$(git hash-object -t tree /dev/null)"
+    changed="$(git diff --name-only "$empty" "$localsha")"
+    override_src="$(git log --format='%B' "$localsha" 2>/dev/null || true)"
+  fi
+  override=0
+  printf '%s\n' "$override_src" | grep -qiE '^Explainers-checked:' && override=1
+
+  if ! explainer_drift_verdict "$changed" "$override"; then
+    concept_list="$(printf '%s\n' "$changed" | grep -E "$CONCEPT_PATTERNS" || true)"
+    {
+      echo "⛔ PRE-PUSH BLOCKIERT — Konzepte geändert, (i)-Erklärtexte nicht."
+      echo
+      echo "Geänderte Konzept-Dateien in diesem Push:"
+      printf '  • %s\n' $concept_list
+      echo
+      echo "Die (i)-Erklärungen in chronicle/src/i18n/explainers.{de,en}.ts beschreiben"
+      echo "GENAU diese Konzepte in Klartext (Jäger-Idee/Inputs/wie er zuschlägt ·"
+      echo "Veto-Gründe · Kalibrierungs-Kennzahlen · Order-Rollen)."
+      echo
+      echo "ANWEISUNG: Prüfe deine Änderung gegen die Erklärtexte und ziehe sie nach,"
+      echo "falls sich Idee, Datenquellen, Schwellen, Veto-Gründe oder Kennzahl-"
+      echo "Bedeutungen geändert haben — sonst driften sie vom Code."
+      echo
+      echo "Danach: Texte aktualisieren und erneut pushen, ODER bewusst bestätigen"
+      echo "(kein Geheimnis in die Begründung schreiben):"
+      echo "  git commit --allow-empty -m 'chore: explainers checked' \\"
+      echo "    -m 'Explainers-checked: <kurzer Grund>'"
+      echo "  (Notausgang: SKIP_EXPLAINER_CHECK=1 git push …)"
+    } >&2
+    exit 1
+  fi
+done
+exit 0

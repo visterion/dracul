@@ -138,6 +138,7 @@ public class AgoraDepotClient {
                         textOrNull(o, "type"),
                         textOrNull(o, "status"),
                         textOrNull(o, "role"),
+                        textOrNull(o, "parentId"),
                         textOrNull(o, "submittedAt"),
                         textOrNull(o, "filledAt"),
                         decimalOrNull(o, "avgFillPrice")));

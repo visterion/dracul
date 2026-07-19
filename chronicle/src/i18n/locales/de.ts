@@ -541,6 +541,7 @@ export default {
         inactive: 'inaktiv', canceled: 'storniert', expired: 'verfallen', rejected: 'abgelehnt',
       },
       role: { entry: 'Einstieg', stop: 'Stop', target: 'Ziel', other: 'Sonstige' },
+      state: { waitingForEntry: 'wartet auf Einstieg' },
     },
     table: {
       symbol: 'Symbol', qty: 'Stück', avgEntry: 'Ø Einstieg', price: 'Kurs',
@@ -850,5 +851,9 @@ export default {
     error: 'Fehler',
     loadMore: 'Mehr laden',
     loadingMore: 'Wird geladen …',
+  },
+  explainer: {
+    close: 'Schließen',
+    open: 'Erklärung öffnen',
   },
 }

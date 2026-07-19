@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { prettifyEnum, orderSideLabel, orderTypeLabel, orderStatusLabel } from './orderDisplay'
+import { prettifyEnum, orderSideLabel, orderTypeLabel, orderStatusLabel, normalizeRole, orderStateLabel, groupOrders } from './orderDisplay'
+import type { DepotOrderView } from '../api/types'
 
 // Stub translate: echoes the key so tests assert which i18n key was chosen.
 const t = (k: string) => k
@@ -83,5 +84,72 @@ describe('orderStatusLabel', () => {
   })
   it('unknown → prettified, ash', () => {
     expect(orderStatusLabel('pending_new', t)).toEqual({ label: 'Pending New', tone: 'ash' })
+  })
+})
+
+describe('normalizeRole', () => {
+  it('maps real Agora role strings to canonical roles', () => {
+    expect(normalizeRole('entry')).toBe('entry')
+    expect(normalizeRole('stop_loss')).toBe('stop')
+    expect(normalizeRole('take_profit')).toBe('target')
+    expect(normalizeRole('other')).toBe('other')
+    expect(normalizeRole(null)).toBe(null)
+    expect(normalizeRole('STOP_LOSS')).toBe('stop') // case-insensitive
+    expect(normalizeRole('exit')).toBe('other')     // unknown non-blank → other
+  })
+})
+
+describe('orderStateLabel', () => {
+  it('says "waiting for entry" for an inactive protective leg', () => {
+    expect(orderStateLabel('notWorking', 'target', t).label).toBe('depots.orders.state.waitingForEntry')
+  })
+  it('keeps normal status for the entry leg', () => {
+    expect(orderStateLabel('working', 'entry', t).label).toBe('depots.orders.status.active')
+  })
+})
+
+function ord(p: Partial<DepotOrderView>): DepotOrderView {
+  return { brokerOrderId: 'x', symbol: 'STT', side: null, qty: 6, type: 'limit',
+    status: 'working', role: 'entry', parentId: null, ...p }
+}
+
+describe('groupOrders', () => {
+  it('groups an entry with its stop/target legs by parentId, entry first', () => {
+    // Real broker shape: entry has parentId=null, legs carry parentId = entry id.
+    const orders = [
+      ord({ brokerOrderId: 'e', role: 'entry', parentId: null, status: 'working' }),
+      ord({ brokerOrderId: 't', role: 'take_profit', parentId: 'e', status: 'notWorking', type: 'limit' }),
+      ord({ brokerOrderId: 's', role: 'stop_loss', parentId: 'e', status: 'notWorking', type: 'stop' }),
+    ]
+    const groups = groupOrders(orders)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].legs.map(l => l.canonicalRole)).toEqual(['entry', 'target', 'stop'])
+  })
+
+  it('falls back to symbol grouping when parentId is null', () => {
+    const orders = [
+      ord({ brokerOrderId: 'e', role: 'entry', parentId: null }),
+      ord({ brokerOrderId: 's', role: 'stop_loss', parentId: null, type: 'stop' }),
+    ]
+    const groups = groupOrders(orders)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].legs).toHaveLength(2)
+  })
+
+  it('keeps an unrelated single order as its own group', () => {
+    const groups = groupOrders([ord({ brokerOrderId: 'z', symbol: 'AAA', role: 'other', parentId: null })])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].legs).toHaveLength(1)
+  })
+
+  it('nails the documented caveat: two entries + one orphan leg, same symbol (no parentId)', () => {
+    const groups = groupOrders([
+      ord({ brokerOrderId: 'e1', role: 'entry', parentId: null }),
+      ord({ brokerOrderId: 'e2', role: 'entry', parentId: null }),
+      ord({ brokerOrderId: 's', role: 'stop_loss', parentId: null, type: 'stop' }),
+    ])
+    expect(groups).toHaveLength(2)
+    const withStop = groups.find(g => g.legs.some(l => l.canonicalRole === 'stop'))!
+    expect(withStop.legs.map(l => l.order.brokerOrderId)).toContain('e1')
   })
 })

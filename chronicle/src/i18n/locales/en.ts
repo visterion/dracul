@@ -541,6 +541,7 @@ export default {
         inactive: 'inactive', canceled: 'canceled', expired: 'expired', rejected: 'rejected',
       },
       role: { entry: 'Entry', stop: 'Stop', target: 'Target', other: 'Other' },
+      state: { waitingForEntry: 'waiting for entry' },
     },
     table: {
       symbol: 'Symbol', qty: 'Qty', avgEntry: 'Avg entry', price: 'Price',
@@ -850,5 +851,9 @@ export default {
     error: 'Error',
     loadMore: 'Load more',
     loadingMore: 'Loading …',
+  },
+  explainer: {
+    close: 'Close',
+    open: 'Open explanation',
   },
 }
