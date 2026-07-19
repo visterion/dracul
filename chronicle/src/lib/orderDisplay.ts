@@ -72,3 +72,38 @@ export function orderStatusLabel(
   if (hit) return { label: t(hit.key), tone: hit.tone }
   return { label: prettifyEnum(status), tone: 'ash' }
 }
+
+/** Canonical role vocabulary used by the UI (i18n keys depots.orders.role.*).
+ *  Agora emits entry/stop_loss/take_profit/other — normalize to entry/stop/target/other. */
+export type CanonicalRole = 'entry' | 'stop' | 'target' | 'other'
+
+const ROLE_ALIASES: Record<string, CanonicalRole> = {
+  entry: 'entry',
+  stop: 'stop',
+  stop_loss: 'stop',
+  target: 'target',
+  take_profit: 'target',
+  other: 'other',
+}
+
+export function normalizeRole(role: string | null): CanonicalRole | null {
+  if (isBlank(role)) return null
+  return ROLE_ALIASES[role.toLowerCase()] ?? 'other'
+}
+
+/** Status label with lay-language override: a protective leg (target/stop) that
+ *  is not yet armed reads "waiting for entry" instead of the bare broker
+ *  "inactive". The entry leg and all filled/active states keep orderStatusLabel. */
+export function orderStateLabel(
+  status: string | null,
+  role: string | null,
+  t: TFn,
+): { label: string; tone: OrderTone } {
+  const canonical = normalizeRole(role)
+  const raw = (status ?? '').toLowerCase()
+  const inactive = raw === 'notworking' || raw === 'inactive'
+  if (inactive && (canonical === 'target' || canonical === 'stop')) {
+    return { label: t('depots.orders.state.waitingForEntry'), tone: 'ash' }
+  }
+  return orderStatusLabel(status, t)
+}
