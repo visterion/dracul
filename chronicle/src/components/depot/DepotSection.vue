@@ -73,7 +73,9 @@
       </div>
 
       <div class="stat-grid dp-stats">
-        <StatTile :label="t('depots.stat.cash')" test-id="depots-total-cash" :value="formatMoney(depot.account.cash, depot.account.currency)" />
+        <StatTile :label="t('depots.stat.cash')" test-id="depots-total-cash" :value="formatMoney(depot.account.cash, depot.account.currency)">
+          <template #label-suffix><InfoDot topic="depot.metrics" anchor="cash" /></template>
+        </StatTile>
         <StatTile :label="t('depots.stat.invested')" :value="depot.aggregates ? formatMoney(depot.aggregates.investedValue, depot.account.currency) : '—'" />
         <StatTile :label="t('depots.stat.buyingPower')" :value="formatMoney(depot.account.buyingPower, depot.account.currency)" />
       </div>
@@ -137,7 +139,7 @@
       </div>
 
       <div v-if="orderGroups.length" class="dp-orders" data-testid="depot-orders">
-        <div class="section-head">{{ t('depots.orders.title') }}</div>
+        <div class="section-head">{{ t('depots.orders.title') }} <InfoDot topic="orders.roles" /></div>
         <div class="dp-order-row dp-order-head">
           <span>{{ t('depots.orders.col.symbol') }}</span>
           <span>{{ t('depots.orders.col.role') }}</span>
@@ -174,6 +176,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import TagPill from '../common/TagPill.vue'
 import StatTile from '../common/StatTile.vue'
+import InfoDot from '../common/InfoDot.vue'
 import PriceChart from '../common/PriceChart.vue'
 import DepotPositionsTable from './DepotPositionsTable.vue'
 import TickerButton from '../instrument/TickerButton.vue'
