@@ -10,6 +10,7 @@ import type {
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory,
   RunTranscript,
+  InspectorRunsResponse,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -449,5 +450,20 @@ export class MockApiClient implements ApiClient {
   async getRunTranscript(runId: string): Promise<RunTranscript> {
     await delay(50)
     return { transcript: { runId, note: 'mock transcript' }, expired: false }
+  }
+
+  async getInspectorTranscript(runId: string): Promise<RunTranscript> {
+    await delay(50)
+    return { transcript: { runId, note: 'mock inspector transcript' }, expired: false }
+  }
+
+  async getInspectorRuns(agent: string | null, _limit = 50, _offset = 0): Promise<InspectorRunsResponse> {
+    await delay(50)
+    return {
+      runs: [
+        { runId: 'run-1', agent: agent ?? 'index-strigoi', status: 'COMPLETED', hasError: false,
+          startedAt: '2026-07-18T22:00:00Z', snippet: 'mock run snippet' },
+      ],
+    }
   }
 }
