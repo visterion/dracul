@@ -92,6 +92,16 @@ When a ScheduledBee run finishes, Vistierie POSTs the validated agent
 output to a single Dracul completion webhook. Dracul writes the result
 into the appropriate table (`dracul.prey`, `dracul.patterns`).
 
+Every completion webhook carries an `X-Vistierie-Run-Id` header. As of
+V39/Schicht 1, the Strigoi hunt `/complete` webhook (`HuntController.complete`)
+persists it into `prey.run_id` (TEXT, nullable) via
+`PreyRepository.insertAll(prey, runId)`, instead of only logging it. This
+forward-only column (pre-V39 prey stays `run_id = null`) is the anchor a later
+retrieval step (Schicht 2) will use to fetch the full raw Vistierie run
+transcript for a given prey finding. Other completion webhooks
+(gropar/renfield/daywalker/voievod/executor) still only log the header — they
+do not yet persist it.
+
 ## Agent budgets and definition updates
 
 Two operational gotchas apply to any scheduled agent registered with
