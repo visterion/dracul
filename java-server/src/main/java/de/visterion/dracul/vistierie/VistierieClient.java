@@ -47,7 +47,8 @@ public interface VistierieClient {
             int limit, int offset);
 
     /** Runs for the operator's activity inspector, newest first. {@code agent} null = all agents.
-     *  Modeled on the proven /admin/runs listing already used by getStrigoiDetail. */
+     *  Backed by tenant-scoped {@code /runs}, dracul-only; agent-filter is client-side
+     *  because {@code /runs} ignores the agent param. */
     java.util.List<RunSearchHit> listAgentRuns(String agent, int limit, int offset);
 
     tools.jackson.databind.JsonNode getRunTranscript(String runId, String view);
