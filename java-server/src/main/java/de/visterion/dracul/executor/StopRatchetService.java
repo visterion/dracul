@@ -38,6 +38,7 @@ public class StopRatchetService {
     private final RuleVersionProvider ruleVersions;
     private final StopRatchetGuard guard;
     private final ObjectMapper mapper;
+    private final ExecutorNotifier executorNotifier;
     private final double chandelierMult;
 
     public StopRatchetService(
@@ -47,6 +48,7 @@ public class StopRatchetService {
             RuleVersionProvider ruleVersions,
             StopRatchetGuard guard,
             ObjectMapper mapper,
+            ExecutorNotifier executorNotifier,
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -54,6 +56,7 @@ public class StopRatchetService {
         this.ruleVersions = ruleVersions;
         this.guard = guard;
         this.mapper = mapper;
+        this.executorNotifier = executorNotifier;
         this.chandelierMult = chandelierMult;
     }
 
@@ -66,6 +69,8 @@ public class StopRatchetService {
 
             BigDecimal chandelier = computeChandelier(p, atr);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
+
+            BigDecimal oldStop = p.activeStop();
 
             String primaryOrderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
             List<String> orderIds = p.tranche2StopOrderId() != null
@@ -88,6 +93,8 @@ public class StopRatchetService {
                     chandelier, null);
 
             recordRatchet(p, atr, chandelier, runId);
+
+            executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
         }
     }
 

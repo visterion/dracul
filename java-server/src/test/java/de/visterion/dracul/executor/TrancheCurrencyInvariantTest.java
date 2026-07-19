@@ -56,6 +56,7 @@ class TrancheCurrencyInvariantTest {
     private EntryContextAssembler assembler;
     private Tranche2Detector tranche2Detector;
     private TelegramNotifier telegram;
+    private ExecutorNotifier executorNotifier;
     private PositionContextRepository positionContextRepo;
     private PatternRepository patternRepo;
     private JsonMapper mapper;
@@ -75,6 +76,7 @@ class TrancheCurrencyInvariantTest {
         assembler = mock(EntryContextAssembler.class);
         tranche2Detector = mock(Tranche2Detector.class);
         telegram = mock(TelegramNotifier.class);
+        executorNotifier = mock(ExecutorNotifier.class);
         positionContextRepo = mock(PositionContextRepository.class);
         patternRepo = mock(PatternRepository.class);
         when(patternRepo.findEnforced()).thenReturn(List.of());
@@ -88,7 +90,7 @@ class TrancheCurrencyInvariantTest {
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, new PositionSizer(), new SignalRanker(), tranche2Detector, telegram,
-                positionContextRepo, patternRepo,
+                executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 0.0, 3.0, "USD", fixedClock);

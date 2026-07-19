@@ -39,6 +39,7 @@ class ReconcileServiceTest {
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final TelegramNotifier telegram = mock(TelegramNotifier.class);
+    private final ExecutorNotifier executorNotifier = mock(ExecutorNotifier.class);
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
 
     private ReconcileService service;
@@ -47,7 +48,7 @@ class ReconcileServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, telegram, 10, 24, clock);
+                ruleVersions, mapper, telegram, executorNotifier, 10, 24, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -92,6 +93,7 @@ class ReconcileServiceTest {
 
         assertThat(survivors).isEmpty();
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(executorNotifier).notifyExit(any(), any(), any(), any(), any());
     }
 
     private ExecutorPosition pendingExitPosition(long id, String symbol, BigDecimal entry,
@@ -271,6 +273,7 @@ class ReconcileServiceTest {
         assertThat(log.symbol()).isEqualTo("PSMT");
 
         assertThat(survivors).isEmpty();
+        verify(executorNotifier).notifyExit(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -612,6 +615,7 @@ class ReconcileServiceTest {
         assertThat(result.unfilledIds()).isEmpty();
         assertThat(result.survivors()).hasSize(1);
         assertThat(result.survivors().get(0).entryExpiresAt()).isNull();
+        verify(executorNotifier).notifyEntryFilled(any(), any(), any(), any());
     }
 
     @Test
