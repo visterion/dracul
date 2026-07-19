@@ -51,7 +51,8 @@ class GenericAgentRegistrarTest {
         var settings = mock(AppSettingsRepository.class);
         when(settings.getLanguage()).thenReturn("en");
         return new GenericAgentRegistrar(client, store, catalog(), settings,
-                "https://dracul.example.com", name -> "tok-" + name);
+                "https://dracul.example.com", name -> "tok-" + name,
+                List.of(), json, "http://hivemem:8421", "read-tok");
     }
 
     private GenericAgentRegistrar newStreamingRegistrar(VistierieClient client) {
@@ -61,7 +62,8 @@ class GenericAgentRegistrarTest {
         var settings = mock(AppSettingsRepository.class);
         when(settings.getLanguage()).thenReturn("en");
         return new GenericAgentRegistrar(client, store, catalog(), settings,
-                "https://dracul.example.com", name -> "tok-" + name);
+                "https://dracul.example.com", name -> "tok-" + name,
+                List.of(), json, "http://hivemem:8421", "read-tok");
     }
 
     @Test
