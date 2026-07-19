@@ -74,6 +74,21 @@ public class ExecutorSignalRepository {
                 .orElse(null);
     }
 
+    /** Run-id of the prey linked to this signal (Schicht 1 FK executor_signal.prey_id -> prey.id).
+     *  Null when the signal is unknown, has no prey_id (operator inject / legacy), or prey.run_id is null. */
+    public String findRunIdBySignalId(String signalId) {
+        return jdbc.sql("""
+                SELECT p.run_id
+                FROM executor_signal es
+                JOIN prey p ON p.id = es.prey_id
+                WHERE es.signal_id = :signalId
+                """)
+                .param("signalId", signalId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
     public void markStatus(String signalId, String status) {
         jdbc.sql("""
                 UPDATE executor_signal SET status = :status, processed_at = now()
