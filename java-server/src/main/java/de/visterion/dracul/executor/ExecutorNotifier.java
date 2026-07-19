@@ -60,7 +60,109 @@ public class ExecutorNotifier {
         }
     }
 
+    public void notifyEntryPlaced(ExecutorSignal signal, String side, BigDecimal qty,
+                                  BigDecimal price, BigDecimal stop, Double decisionConfidence,
+                                  String venue) {
+        if (!enabled) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("🟢 ENTRY PLATZIERT ").append(signal.symbol())
+              .append(" (").append(venue).append(")\n");
+            sb.append(side).append(" ").append(plain(qty)).append(" @ ").append(num(price))
+              .append(" — Stop ").append(num(stop));
+            appendSignalLine(sb, signal);
+            sb.append("\nBetrag: ").append(money(amount(qty, price)));
+            appendInvestedTotal(sb);
+            telegram.notifyDigest(sb.toString());
+        } catch (Exception e) {
+            log.warn("executor notify (entry placed) failed for {}: {}", signal.symbol(), e.getMessage());
+        }
+    }
+
+    public void notifyEntryFilled(ExecutorPosition position, BigDecimal qty,
+                                  BigDecimal fillPrice, String venue) {
+        if (!enabled) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("✅ ENTRY GEFÜLLT ").append(position.symbol())
+              .append(" (").append(venue).append(")\n");
+            sb.append(position.side()).append(" ").append(plain(qty)).append(" @ ").append(num(fillPrice))
+              .append(" — Stop ").append(num(position.activeStop()));
+            appendSignalLineFor(sb, position.sourceSignalId());
+            sb.append("\nBetrag: ").append(money(amount(qty, fillPrice)));
+            appendInvestedTotal(sb);
+            telegram.notifyDigest(sb.toString());
+        } catch (Exception e) {
+            log.warn("executor notify (entry filled) failed for {}: {}", position.symbol(), e.getMessage());
+        }
+    }
+
+    public void notifyExit(ExecutorPosition position, String exitReason, BigDecimal exitPrice,
+                           BigDecimal realizedR, String venue) {
+        if (!enabled) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("🔻 EXIT ").append(position.symbol())
+              .append(" (").append(venue).append(") — ").append(exitReason).append("\n");
+            sb.append(plain(position.qty())).append(" @ ").append(num(exitPrice));
+            if (realizedR != null) sb.append(" · realized ").append(plain(realizedR)).append("R");
+            appendSignalLineFor(sb, position.sourceSignalId());
+            sb.append("\nBetrag: ").append(money(amount(position.qty(), exitPrice)));
+            appendInvestedTotal(sb);
+            telegram.notifyDigest(sb.toString());
+        } catch (Exception e) {
+            log.warn("executor notify (exit) failed for {}: {}", position.symbol(), e.getMessage());
+        }
+    }
+
+    public void notifyTranche2(ExecutorPosition position, BigDecimal addedQty, BigDecimal addPrice,
+                               BigDecimal newQty, BigDecimal newAvgEntry, String reason, String venue) {
+        if (!enabled) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("➕ TRANCHE 2 ").append(position.symbol())
+              .append(" (").append(venue).append(") — ").append(reason).append("\n");
+            sb.append("+").append(plain(addedQty)).append(" @ ").append(num(addPrice))
+              .append(" → gesamt ").append(plain(newQty)).append(" @ Ø ").append(num(newAvgEntry));
+            appendSignalLineFor(sb, position.sourceSignalId());
+            sb.append("\nBetrag: ").append(money(amount(addedQty, addPrice)));
+            appendInvestedTotal(sb);
+            telegram.notifyDigest(sb.toString());
+        } catch (Exception e) {
+            log.warn("executor notify (tranche2) failed for {}: {}", position.symbol(), e.getMessage());
+        }
+    }
+
     // ---- helpers ----
+
+    private void appendSignalLine(StringBuilder sb, ExecutorSignal signal) {
+        try {
+            StringBuilder line = new StringBuilder();
+            line.append("Mechanismus: ").append(signal.mechanism() == null ? "?" : signal.mechanism());
+            if (signal.confidence() != null) line.append(" · Confidence: ").append(conf(signal.confidence()));
+            String thesis = thesisText(signal.thesis());
+            if (!thesis.isBlank()) line.append("\nThese: ").append(thesis);
+            sb.append("\n").append(line);
+        } catch (Exception e) {
+            log.warn("signal line render failed: {}", e.getMessage());
+        }
+    }
+
+    private void appendSignalLineFor(StringBuilder sb, String sourceSignalId) {
+        String line = resolveSignalLine(sourceSignalId);
+        if (!line.isBlank()) sb.append("\n").append(line);
+    }
+
+    private BigDecimal amount(BigDecimal qty, BigDecimal price) {
+        if (qty == null || price == null) return null;
+        return qty.multiply(price);
+    }
+
+    /** Whole/undecorated number (no currency, no forced 2 decimals) for share counts and R, German locale. */
+    private String plain(BigDecimal v) {
+        if (v == null) return "?";
+        return new DecimalFormat("#,##0.##########", new DecimalFormatSymbols(Locale.GERMANY)).format(v);
+    }
 
     /** Appends "\nInvestiert gesamt: X" or nothing if the query fails. Best-effort. */
     private void appendInvestedTotal(StringBuilder sb) {
