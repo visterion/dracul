@@ -41,6 +41,7 @@ Both documents are required reading before implementing any view.
 | 10 | Morning Report | `/report` | Daily morning report — per-position stop, +2R target, current price, distance-to-stop, and a read-only order ticket | Medium | ✅ |
 | 11 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders), plus the operator-analytics Calibration card | High | ✅ Task C2 / A9 |
 | 12 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
+| 13 | Agent Activity (Inspector) | `/inspector` | Operator-only browser of every Vistierie run across all agents: agent filter (client-side constant list of known agents + "all"), paginated run list (agent, started-at, status, error marker, snippet), click-to-expand raw transcript via `RawTranscriptPanel`, "load more" pagination | Low (operator tool) | ✅ Agent Activity Inspector, Task 4 |
 
 > **Portfolio retired (Task A9, depot-as-SSOT).** The manual, watchlist-HELD-based
 > "Portfolio" view (`/portfolio`, backed by `GET /api/portfolio`) has been removed.
