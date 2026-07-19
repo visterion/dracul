@@ -4,6 +4,7 @@ import de.visterion.dracul.notify.TelegramNotifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
@@ -17,8 +18,14 @@ import java.util.Locale;
  * tranche-2, stop ratchet). Gated by {@code dracul.executor.notify-enabled} (default true).
  * Never throws — a push failure must never affect persistence. Distinct from
  * {@link TelegramNotifier}'s CRITICAL escalation path.
+ *
+ * <p>Gated on {@code dracul.executor.enabled} like the rest of the executor package: its
+ * dependencies ({@link ExecutorPositionRepository}, {@link ExecutorSignalRepository}) are
+ * themselves {@code @ConditionalOnProperty}, so an unconditional bean would break every
+ * application context that doesn't enable the executor.
  */
 @Component
+@ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class ExecutorNotifier {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutorNotifier.class);
