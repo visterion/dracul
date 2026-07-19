@@ -609,6 +609,12 @@ export default {
       notLinkable: 'Kein Dracul-Kontext verknüpfbar',
       result: 'Ergebnis',
     },
+    transcript: {
+      toggle: 'Roh-Transcript',
+      loading: 'Transcript wird geladen …',
+      expired: 'Vistierie-Lauf nicht mehr verfügbar',
+      imageRedacted: 'Bild redigiert',
+    },
   },
   calibration: {
     sectionLabel: 'Kalibrierung',

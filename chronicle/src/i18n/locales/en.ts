@@ -609,6 +609,12 @@ export default {
       notLinkable: 'No Dracul context linkable',
       result: 'Result',
     },
+    transcript: {
+      toggle: 'Raw transcript',
+      loading: 'Loading transcript …',
+      expired: 'Vistierie run no longer available',
+      imageRedacted: 'Image redacted',
+    },
   },
   calibration: {
     sectionLabel: 'Calibration',

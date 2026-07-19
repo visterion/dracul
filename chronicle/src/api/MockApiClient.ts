@@ -9,6 +9,7 @@ import type {
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory,
+  RunTranscript,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -440,5 +441,10 @@ export class MockApiClient implements ApiClient {
   async getDepotHistory(_connection: string): Promise<DepotHistory> {
     await delay(50)
     return structuredClone(mockDepotHistory)
+  }
+
+  async getRunTranscript(runId: string): Promise<RunTranscript> {
+    await delay(50)
+    return { transcript: { runId, note: 'mock transcript' }, expired: false }
   }
 }
