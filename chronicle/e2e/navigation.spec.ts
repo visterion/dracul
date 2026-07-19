@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Top-bar navigation', () => {
-  test('top nav has exactly 7 destinations', async ({ page }) => {
+  test('top nav has exactly 8 destinations', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('a.top-bar__tab')).toHaveCount(7)
+    await expect(page.locator('a.top-bar__tab')).toHaveCount(8)
   })
 
   test('top nav includes the depots destination', async ({ page }) => {

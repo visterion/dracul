@@ -14,8 +14,8 @@ test.describe('Responsive shell (mobile viewport)', () => {
     await expect(page.locator('.top-bar__nav')).toBeHidden()
   })
 
-  test('bottom nav lists all 7 destinations', async ({ page }) => {
-    await expect(page.locator('.bottom-nav__tab')).toHaveCount(7)
+  test('bottom nav lists all 8 destinations', async ({ page }) => {
+    await expect(page.locator('.bottom-nav__tab')).toHaveCount(8)
   })
 
   test('bottom nav does not contain a vistierie destination', async ({ page }) => {
