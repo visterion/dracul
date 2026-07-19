@@ -223,6 +223,35 @@ class ExecutorPositionRepositoryTest {
     }
 
     @Test
+    void findOpenBySymbolReturnsOpenPositionForConnectionAndSymbol() {
+        String symbol = "FOBS-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "193.88");
+
+        ExecutorPosition found = repo.findOpenBySymbol("depot-1", symbol);
+
+        assertThat(found).isNotNull();
+        assertThat(found.id()).isEqualTo(id);
+        assertThat(found.symbol()).isEqualTo(symbol);
+        assertThat(found.status()).isEqualTo("OPEN");
+    }
+
+    @Test
+    void findOpenBySymbolReturnsNullWhenNoOpenPositionMatches() {
+        String symbol = "FOBS-NONE-" + UUID.randomUUID();
+
+        assertThat(repo.findOpenBySymbol("depot-1", symbol)).isNull();
+    }
+
+    @Test
+    void findOpenBySymbolIgnoresClosedPositions() {
+        String symbol = "FOBS-CLOSED-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "193.88");
+        repo.close(id, new BigDecimal("195"), new BigDecimal("0.2"), "TAKE_PROFIT");
+
+        assertThat(repo.findOpenBySymbol("depot-1", symbol)).isNull();
+    }
+
+    @Test
     void closeWithSourcePersistsExitPriceSource() {
         String symbol = "PSMT-" + UUID.randomUUID();
         long id = insertOpenPosition(symbol, "193.88");

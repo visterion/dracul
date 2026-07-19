@@ -18,7 +18,10 @@ import java.util.UUID;
  * <p>The mapping mirrors the operator inject seam in
  * {@link ExecutorSignalController#inject}: a fresh random {@code signalId}, a
  * literal {@code PENDING} status, and a {@code null} {@code createdAt} (the DB
- * column defaults to {@code now()}).
+ * column defaults to {@code now()}). Unlike the inject seam, {@code prey_id}
+ * is set here — it is the provenance FK back to the {@link Prey} this signal
+ * was derived from (Schicht 1). The inject seam has no Prey, so its signals
+ * keep {@code prey_id = null}.
  */
 @Component
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -50,7 +53,7 @@ public class PreySignalMapper {
                 "PENDING",                     // matches the inject seam's literal status
                 null,                          // createdAt — DB defaults to now(), like inject
                 thesisSnapshot(p),
-                p.id());                       // preyId — links the signal back to its Prey/thesis cell
+                p.id());                       // prey_id — provenance FK (Schicht 1)
     }
 
     /** Prey → the same snapshot shape the reconciler builds from a verdict

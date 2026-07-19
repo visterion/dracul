@@ -98,6 +98,18 @@ public class PreyRepository {
                 .update();
     }
 
+    /** True if a prey with this originating run_id belongs to the given user. Basis for the
+     *  read-only transcript authorization check (Schicht 2) — prevents cross-user run access. */
+    public boolean runExistsForUser(String runId, String userId) {
+        return Boolean.TRUE.equals(jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM prey WHERE run_id = :runId AND user_id = :userId)
+                """)
+                .param("runId", runId)
+                .param("userId", userId)
+                .query(Boolean.class)
+                .single());
+    }
+
     private Prey mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         return new Prey(
                 rs.getString("id"),
@@ -120,6 +132,12 @@ public class PreyRepository {
      *  Returns only the subset actually inserted, so retried webhook deliveries don't
      *  re-trigger downstream effects for prey that were already persisted. */
     public java.util.List<Prey> insertAll(java.util.List<Prey> prey) {
+        return insertAll(prey, null);
+    }
+
+    /** Same as {@link #insertAll(List)}, additionally stamping {@code runId} (the originating
+     *  Vistierie run id, if known) into every inserted row's {@code run_id} column. */
+    public java.util.List<Prey> insertAll(java.util.List<Prey> prey, String runId) {
         java.util.List<Prey> inserted = new java.util.ArrayList<>();
         if (prey.isEmpty()) return inserted;
         for (Prey p : prey) {
@@ -136,15 +154,16 @@ public class PreyRepository {
             int rows = jdbc.sql("""
                     INSERT INTO prey
                       (id, symbol, company_name, anomaly_type, confidence,
-                       thesis, signals, risks, kill_criteria, horizon, discovered_by, discovered_at, user_id)
-                    VALUES (?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?::timestamptz, ?)
+                       thesis, signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
+                       user_id, run_id)
+                    VALUES (?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?::timestamptz, ?, ?)
                     ON CONFLICT (symbol, anomaly_type, discovered_by, user_id,
                                  ((discovered_at AT TIME ZONE 'UTC')::date)) DO NOTHING
                     """)
                     .params(p.id(), p.symbol(), p.companyName(), p.anomalyType(),
                             p.confidence(), p.thesis(),
                             signalsJson, risksJson, killCriteriaJson,
-                            p.horizon(), p.discoveredBy(), p.discoveredAt(), "default")
+                            p.horizon(), p.discoveredBy(), p.discoveredAt(), "default", runId)
                     .update();
             if (rows > 0) inserted.add(p);
         }

@@ -566,6 +566,18 @@ export interface DepotHistoryWhy {
   entryReasoning: string | null
   draculExitReason: string | null
   draculRealizedR: number | null
+  runId: string | null
+}
+
+/** Raw pass-through of a Vistierie agent-run transcript for a given
+ *  runId, as delivered by `GET /api/depots/run/{runId}/transcript`.
+ *  `expired: true` means the Vistierie run has been pruned/is no longer
+ *  reachable — `transcript` is then always null. The shape of
+ *  `transcript` is intentionally untyped: it is Vistierie's raw JSON,
+ *  which can evolve independently of this frontend. */
+export interface RunTranscript {
+  transcript: unknown | null
+  expired: boolean
 }
 
 export interface DepotHistoryEntry {

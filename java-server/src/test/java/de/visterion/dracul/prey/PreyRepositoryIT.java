@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
@@ -18,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PreyRepositoryIT {
 
     @Autowired PreyRepository repo;
+    @Autowired JdbcClient jdbc;
 
     private Prey preyFixture(String symbol, String anomalyType, String discoveredBy, String discoveredAt) {
         return new Prey(
@@ -121,5 +123,42 @@ class PreyRepositoryIT {
         repo.markOutcomeReviewed(List.of());
         repo.markOutcomeReviewed(null);
         // no exception is the assertion
+    }
+
+    @Test
+    void insertAllPersistsRunId() {
+        Prey p = preyFixture("RUNID" + System.nanoTime(), "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        repo.insertAll(List.of(p), "run-xyz");
+        String runId = jdbc.sql("SELECT run_id FROM prey WHERE id = ?::uuid")
+                .param(p.id()).query(String.class).single();
+        assertThat(runId).isEqualTo("run-xyz");
+    }
+
+    @Test
+    void insertAllLegacySignature_leavesRunIdNull() {
+        Prey p = preyFixture("RUNIDNULL" + System.nanoTime(), "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        repo.insertAll(List.of(p));
+        String runId = jdbc.sql("SELECT run_id FROM prey WHERE id = ?::uuid")
+                .param(p.id()).query(String.class).optional().orElse(null);
+        assertThat(runId).isNull();
+    }
+
+    @Test
+    void runExistsForUser_trueWhenOwnedByGivenUser() {
+        String runId = "run-owned-" + System.nanoTime();
+        Prey p = preyFixture("OWN" + System.nanoTime(), "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        repo.insertAll(List.of(p), runId); // inserted rows are always stamped user_id="default"
+
+        assertThat(repo.runExistsForUser(runId, "default")).isTrue();
+    }
+
+    @Test
+    void runExistsForUser_falseForOtherUserOrUnknownRun() {
+        String runId = "run-other-" + System.nanoTime();
+        Prey p = preyFixture("OTH" + System.nanoTime(), "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        repo.insertAll(List.of(p), runId);
+
+        assertThat(repo.runExistsForUser(runId, "someone-else")).isFalse();
+        assertThat(repo.runExistsForUser("run-does-not-exist", "default")).isFalse();
     }
 }

@@ -9,6 +9,7 @@ import type {
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory,
+  RunTranscript,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -424,7 +425,7 @@ export class MockApiClient implements ApiClient {
   async getDepotPosition(
     connection: string,
     symbol: string,
-  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }> {
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }> {
     await delay(50)
     const depot = mockDepots.find(d => d.id === connection)
     if (!depot) throw new Error(`getDepotPosition: connection not found: ${connection}`)
@@ -434,11 +435,19 @@ export class MockApiClient implements ApiClient {
       position: { ...position },
       orders: depot.orders.filter(o => o.symbol === symbol).map(o => ({ ...o })),
       asOf: depot.asOf,
+      // No executor-position mock fixture to heuristically link from — the mock client has
+      // no open-position/signal book, so this stays null (real backend fills it in).
+      runId: null,
     }
   }
 
   async getDepotHistory(_connection: string): Promise<DepotHistory> {
     await delay(50)
     return structuredClone(mockDepotHistory)
+  }
+
+  async getRunTranscript(runId: string): Promise<RunTranscript> {
+    await delay(50)
+    return { transcript: { runId, note: 'mock transcript' }, expired: false }
   }
 }
