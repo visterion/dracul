@@ -221,6 +221,12 @@ dracul:
   outcome:
     enabled: ${DRACUL_OUTCOME_ENABLED:true}
     cron: ${DRACUL_OUTCOME_CRON:0 30 22 * * 2-6}
+    # OutcomeMemoryScanJob (T1.6 D9): own periodic scan writing realized-outcome HiveMem cells,
+    # independent of OutcomeBatchJob's one-shot completeness bookkeeping above.
+    hivemem-scan-cron: ${DRACUL_OUTCOME_HIVEMEM_SCAN_CRON:0 45 22 * * 2-6}
+    # Terminal scan-bound: a never-traded research_memory_link older than this (max(horizon)+
+    # reentry window) is marked excluded so the unwritten candidate set doesn't grow unboundedly.
+    memory-scan-max-age-days: ${DRACUL_OUTCOME_MEMORY_SCAN_MAX_AGE_DAYS:120}
   pattern-scorer:
     enabled: ${DRACUL_PATTERN_SCORER_ENABLED:true}
     # Weekly, one hour before the Saturday voievod-outcome run (default 0 0 7 * * 6).
