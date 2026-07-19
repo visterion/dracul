@@ -12,6 +12,7 @@ import de.visterion.dracul.marketdata.OhlcBar;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -41,6 +42,7 @@ class OutcomeBatchJobIT {
     @Autowired ExecutorPositionRepository positionRepo;
     @Autowired ExecutorSignalRepository signalRepo;
     @Autowired ObjectMapper mapper;
+    @Autowired JdbcClient jdbc;
     @MockitoBean AgoraMarketData marketData;
 
     private static BigDecimal bd(String v) { return new BigDecimal(v); }
@@ -127,6 +129,64 @@ class OutcomeBatchJobIT {
         job.run();
         OutcomeLogRow again = outcomeLogRepo.findByLogIdRef(enter.logId());
         assertThat(again.realizedR()).isEqualByComparingTo(row.realizedR());
+    }
+
+    /**
+     * Regression: a TRIM whose {@code created_at} lands on the UTC calendar day BEFORE the
+     * position's {@code entry_date} must still be quantity-weighted into realized R. This is
+     * exactly what a timezone-skewed nightly run produces — the position's entry_date renders in
+     * local time one day ahead of the trim's actual UTC instant (e.g. the {@code 22:30 UTC} cron
+     * fires at {@code 00:30} in a UTC+2 deployment). The trim-linkage window must tolerate ±1
+     * calendar day either side, or the trim is dropped and realized R collapses to the final
+     * leg only (0.8 instead of 1.196), silently corrupting calibration data.
+     */
+    @Test
+    void tradeRecord_trimOnPriorUtcDay_stillQuantityWeighted() {
+        String symbol = "OTRDTZ" + System.nanoTime();
+        String signalId = "sig-" + symbol;
+
+        var inputsSnapshot = mapper.readTree("{\"order_price\":100,\"atr\":2}");
+        var enterOrderJson = (tools.jackson.databind.node.ObjectNode) mapper.createObjectNode();
+        enterOrderJson.put("limit_price", bd("99"));
+        decisionLogRepo.insert(new DecisionLog(null, "run-1", "exec-v0.2", "SIGNAL", signalId,
+                "strigoi-spin", "v1", symbol, inputsSnapshot, null, "ENTER", null,
+                enterOrderJson, null, 0.9, null, null));
+        DecisionLog enter = decisionLogRepo.findBySignalIdAndAction(signalId, "ENTER");
+
+        long positionId = positionRepo.insert(openPosition(symbol, signalId, bd("100")));
+
+        // Trim 33 @ 110 (R = 2.0). Backdate its created_at to noon on the prior UTC calendar day,
+        // simulating a timezone-skewed run where entry_date's local date is one day ahead.
+        positionRepo.recordTrim(positionId, bd("67"), 1);
+        var trimOrderJson = (tools.jackson.databind.node.ObjectNode) mapper.createObjectNode();
+        trimOrderJson.put("fraction", 0.33);
+        trimOrderJson.put("qty_closed", bd("33"));
+        trimOrderJson.put("qty_remaining", bd("67"));
+        trimOrderJson.put("price", bd("110"));
+        decisionLogRepo.insert(new DecisionLog(null, "run-1", "exec-v0.2", "SOFT_TRIGGER", null,
+                null, null, symbol, null, null, "TRIM", null, trimOrderJson, null, null, null, null));
+        var priorUtcDayNoon = java.sql.Timestamp.from(
+                java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1)
+                        .atTime(12, 0).toInstant(java.time.ZoneOffset.UTC));
+        int updated = jdbc.sql("UPDATE decision_log SET created_at = :ts WHERE symbol = :sym AND action = 'TRIM'")
+                .param("ts", priorUtcDayNoon).param("sym", symbol).update();
+        assertThat(updated).isEqualTo(1);
+
+        // Final exit 67 @ 104 (R = 0.8).
+        positionRepo.updateAdverseExtreme(positionId, bd("93"));
+        positionRepo.close(positionId, bd("104"), bd("0.8"), "TAKE_PROFIT");
+        var exitInputs = mapper.readTree("{\"exit_price\":104,\"realized_r\":0.8}");
+        decisionLogRepo.insert(new DecisionLog(null, "run-1", "exec-v0.2", "SOFT_TRIGGER", null,
+                null, null, symbol, exitInputs, null, "EXIT_FULL", "TAKE_PROFIT", null, null, null, null, null));
+
+        job.run();
+
+        OutcomeLogRow row = outcomeLogRepo.findByLogIdRef(enter.logId());
+        assertThat(row).isNotNull();
+        // weighted R = (33*2.0 + 67*0.8) / 100 = 1.196 — trim must NOT be dropped by the window.
+        assertThat(row.realizedR()).isEqualByComparingTo("1.196");
+        assertThat(row.partialExits()).isNotNull();
+        assertThat(row.partialExits().get(0).path("price").asDouble()).isEqualTo(110.0);
     }
 
     @Test
