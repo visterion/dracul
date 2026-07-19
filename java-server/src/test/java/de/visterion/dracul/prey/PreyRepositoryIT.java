@@ -142,4 +142,23 @@ class PreyRepositoryIT {
                 .param(p.id()).query(String.class).optional().orElse(null);
         assertThat(runId).isNull();
     }
+
+    @Test
+    void runExistsForUser_trueWhenOwnedByGivenUser() {
+        String runId = "run-owned-" + System.nanoTime();
+        Prey p = preyFixture("OWN" + System.nanoTime(), "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        repo.insertAll(List.of(p), runId); // inserted rows are always stamped user_id="default"
+
+        assertThat(repo.runExistsForUser(runId, "default")).isTrue();
+    }
+
+    @Test
+    void runExistsForUser_falseForOtherUserOrUnknownRun() {
+        String runId = "run-other-" + System.nanoTime();
+        Prey p = preyFixture("OTH" + System.nanoTime(), "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
+        repo.insertAll(List.of(p), runId);
+
+        assertThat(repo.runExistsForUser(runId, "someone-else")).isFalse();
+        assertThat(repo.runExistsForUser("run-does-not-exist", "default")).isFalse();
+    }
 }

@@ -8,7 +8,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
-  DepotHistory,
+  DepotHistory, RunTranscript,
 } from './types'
 
 export interface ApiClient {
@@ -57,6 +57,7 @@ export interface ApiClient {
   getDepotPosition(
     connection: string,
     symbol: string,
-  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }>
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }>
   getDepotHistory(connection: string): Promise<DepotHistory>
+  getRunTranscript(runId: string): Promise<RunTranscript>
 }

@@ -110,6 +110,14 @@
           <span class="dp-order-role">{{ row.role }}</span>
         </div>
       </div>
+
+      <!-- ── Raw transcript drilldown (heuristic symbol link) ──── -->
+      <div v-if="runId" class="pd-transcript" data-testid="pd-transcript">
+        <div class="pd-transcript-hint" data-testid="pd-transcript-heuristic">
+          {{ t('depots.transcript.heuristic') }}
+        </div>
+        <RawTranscriptPanel :run-id="runId" />
+      </div>
         </template>
       </InstrumentInfoPanel>
     </template>
@@ -125,6 +133,7 @@ import StatTile from '../components/common/StatTile.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import TagPill from '../components/common/TagPill.vue'
 import InstrumentInfoPanel from '../components/instrument/InstrumentInfoPanel.vue'
+import RawTranscriptPanel from '../components/depot/RawTranscriptPanel.vue'
 import { useApi } from '../api'
 import type { DepotPositionView, DepotOrderView } from '../api/types'
 import { useDisplayMode } from '../composables/useDisplayMode'
@@ -149,6 +158,7 @@ const brokerDown = ref(false)
 const position = ref<DepotPositionView | null>(null)
 const orders = ref<DepotOrderView[]>([])
 const asOf = ref<string | null>(null)
+const runId = ref<string | null>(null)
 
 // Header data (company name + chart-derived change) is owned by the
 // InstrumentInfoPanel and pushed up via its `header` emit.
@@ -181,11 +191,13 @@ async function loadPosition() {
     position.value = result.position
     orders.value = result.orders
     asOf.value = result.asOf
+    runId.value = result.runId
   } catch (e) {
     if (id !== posRequestId) return
     position.value = null
     orders.value = []
     asOf.value = null
+    runId.value = null
     const msg = e instanceof Error ? e.message : String(e)
     if (msg.includes('not found')) {
       notFound.value = true
@@ -279,6 +291,9 @@ watch(() => [route.params.connection, route.params.symbol], () => {
 .dp-order-side.tone-ash { color: var(--ash-gray-light); }
 .dp-order-arrow { font-size: var(--text-micro); }
 .dp-order-role { color: var(--cathedral-gold); font-size: var(--text-body-sm); }
+
+.pd-transcript { margin-top: var(--space-2); }
+.pd-transcript-hint { color: var(--ash-gray); font-size: var(--text-micro); margin-bottom: var(--space-1); }
 
 @media (max-width: 600px) {
   .pd-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
