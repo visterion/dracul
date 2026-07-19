@@ -127,4 +127,16 @@ public class DepotHistoryService {
         return new DepotHistoryEntry.Why(p.sourceAgent(), p.killCriteria(), reasoning,
                 p.exitReason(), p.realizedR(), runId);
     }
+
+    /** Heuristic run_id for an open depot position, linked by symbol (open broker positions
+     *  carry no clientRef/order id to join on directly): the open {@code executor_position} for
+     *  (connection, symbol) -> its {@code source_signal_id} -> the linked prey's run_id.
+     *  Returns {@code null} when the executor repos are disabled, no open position matches, or
+     *  the position has no linked run. */
+    public String runIdForOpenPosition(String connection, String symbol) {
+        if (positions.isEmpty() || signals.isEmpty()) return null;
+        ExecutorPosition p = positions.get().findOpenBySymbol(connection, symbol);
+        if (p == null || p.sourceSignalId() == null) return null;
+        return signals.get().findRunIdBySignalId(p.sourceSignalId());
+    }
 }

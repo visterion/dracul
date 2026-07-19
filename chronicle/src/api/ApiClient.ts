@@ -57,7 +57,7 @@ export interface ApiClient {
   getDepotPosition(
     connection: string,
     symbol: string,
-  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }>
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }>
   getDepotHistory(connection: string): Promise<DepotHistory>
   getRunTranscript(runId: string): Promise<RunTranscript>
 }

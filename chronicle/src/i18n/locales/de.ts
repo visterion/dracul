@@ -614,6 +614,7 @@ export default {
       loading: 'Transcript wird geladen …',
       expired: 'Vistierie-Lauf nicht mehr verfügbar',
       imageRedacted: 'Bild redigiert',
+      heuristic: 'Heuristisch über das Symbol verknüpft — kein direkter Datenbank-Fremdschlüssel.',
     },
   },
   calibration: {

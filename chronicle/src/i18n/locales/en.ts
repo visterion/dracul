@@ -614,6 +614,7 @@ export default {
       loading: 'Loading transcript …',
       expired: 'Vistierie run no longer available',
       imageRedacted: 'Image redacted',
+      heuristic: 'Linked heuristically by symbol — no direct database foreign key.',
     },
   },
   calibration: {

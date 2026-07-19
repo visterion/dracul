@@ -706,10 +706,9 @@ redirects here): one `DepotSection` per connected broker
       accessed directly. `expired: true` (the Vistierie run was pruned or is unreachable)
       shows a localized hint instead of content. A best-effort heuristic flags SHA256-redacted
       image blocks in the raw text with an "image redacted" note (no image reconstruction).
-      The same panel is intended for the open-position detail view, but the single-position
-      DTO (`GET /api/depots/{connection}/positions/{symbol}`) does not currently carry a
-      `runId`, so the position-detail view does not show the panel yet — wiring it there
-      requires a backend DTO change, out of scope for this slice.
+      The same panel is also wired into the open-position detail view (Task 4b) — see
+      "Depot position detail view" below for the heuristic symbol-link it uses there, since an
+      open position's DTO carries no broker order id / clientRef to join on directly.
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change
@@ -803,3 +802,23 @@ by clicking a row in a `DepotSection`'s positions table.
   by its own monotonically-increasing request id — the known bug class from
   the 2026-07-10 review (a param-only route reuse not re-fetching) does not
   apply here.
+- **Raw transcript panel for open positions (Schicht 2, Task 4b)**: when
+  `getDepotPosition`'s response carries a non-null `runId`, the same
+  `RawTranscriptPanel.vue` used by the history tab renders below the open
+  orders list (`data-testid="pd-transcript"`), preceded by a
+  `data-testid="pd-transcript-heuristic"` hint (`depots.transcript.heuristic`
+  i18n key) explaining the link is heuristic, not a direct foreign key. The
+  backend derives `runId` by symbol: `ExecutorPositionRepository
+  .findOpenBySymbol(connection, symbol)` → its `source_signal_id` →
+  `ExecutorSignalRepository.findRunIdBySignalId`
+  (`DepotHistoryService.runIdForOpenPosition`, `DepotController
+  .positionDetail`, new last field on `PositionDetailResponse`). This is
+  heuristic because an open broker position carries no `clientRef`/broker
+  order id to join on directly — unlike closed positions/orders, which link
+  via `source_signal_id`/`broker_order_id` (see the history tab above). The
+  DB unique constraint on `(connection, symbol)` for `status = 'OPEN'` makes
+  the symbol lookup practically unambiguous (at most one open row per
+  symbol per connection), but it is still not an FK, hence the UI disclaimer.
+  `null` (executor repos disabled, no open `executor_position` row for the
+  symbol, or no linked run) simply omits the panel — same "no context to
+  show" behavior as the history tab's "not linkable" case.
