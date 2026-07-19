@@ -2,6 +2,7 @@ package de.visterion.dracul.gropar;
 
 import de.visterion.dracul.agent.AgentToolCatalog;
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.notify.TelegramNotifier;
@@ -64,7 +65,7 @@ class GroparWebhookControllerTest {
         controller = new GroparWebhookController(
                 "tok",
                 heldPositionService, marketData, exitSignalRepo, telegram,
-                indicatorService, riskService, cache, mapper,
+                indicatorService, riskService, cache, mapper, mock(HiveMemResearchService.class),
                 CONNECTION,
                 "alice@x",   // dracul.primary-user-email
                 260,  // historyDays

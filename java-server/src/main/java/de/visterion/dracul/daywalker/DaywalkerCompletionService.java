@@ -2,6 +2,7 @@ package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.daywalker.detect.TriggerEvent;
 import de.visterion.dracul.daywalker.detect.TriggerType;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.vistierie.VistierieClient;
@@ -45,6 +46,7 @@ public class DaywalkerCompletionService {
     private final String deepWebhookToken;
     private final HeldPositionService heldPositions;
     private final String connection;
+    private final HiveMemResearchService memory;
 
     public DaywalkerCompletionService(
             DaywalkerAlertRepository alerts,
@@ -60,7 +62,8 @@ public class DaywalkerCompletionService {
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.daywalker-deep.webhook-token:dev-token-change-me}") String deepWebhookToken,
             HeldPositionService heldPositions,
-            @Value("${dracul.position.connection:depot-1}") String connection) {
+            @Value("${dracul.position.connection:depot-1}") String connection,
+            HiveMemResearchService memory) {
         this.alerts = alerts;
         this.notifier = notifier;
         this.events = events;
@@ -75,6 +78,7 @@ public class DaywalkerCompletionService {
         this.deepWebhookToken = deepWebhookToken;
         this.heldPositions = heldPositions;
         this.connection = connection;
+        this.memory = memory;
     }
 
     public void persistAssessment(String symbol, String triggerType, String severity,
@@ -178,6 +182,21 @@ public class DaywalkerCompletionService {
                 effective = severity;
                 alerts.insert(o.userId(), o.watchlistItemId(), symbol, triggerType,
                         severity, thesis, confidence, runId, sent, eventType);
+                // Cell-only write-back (T1.6 Task 9): one thesis cell per newly-inserted owner
+                // row -- append-only per spec §6, no research_memory_link row (daywalker alerts
+                // never resolve to a Task-10 outcome the way prey do). A same-day update
+                // (existing.isPresent() branch above) is a mere severity/text refresh, not a new
+                // row, so it does NOT write a cell. Best-effort: writeThesisMemory is itself
+                // guarded/never-throwing; the outer try/catch is defense-in-depth so a bug here
+                // can't 500 the completion.
+                try {
+                    memory.writeThesisMemory("daywalker_alert", symbol, triggerType, thesis,
+                            List.of(), List.of(), List.of(), null, "daywalker",
+                            confidence == null ? 0.0 : confidence.doubleValue(), runId);
+                } catch (RuntimeException e) {
+                    log.warn("daywalker run {} — memory write for {} failed unexpectedly: {}",
+                            runId, symbol, e.getMessage());
+                }
             }
             effectiveByOwner.put(o.userId(), effective);
         }
