@@ -218,4 +218,74 @@ class DepotHistoryServiceTest {
         assertThat(h.get(0).why()).isNotNull();
         assertThat(h.get(0).why().runId()).isEqualTo("run-xyz");
     }
+
+    // ── runIdForOpenPosition (Task 4b: open-position transcript drilldown) ──────
+
+    @Test
+    void runIdForOpenPositionReturnsRunIdWhenOpenPositionLinksToSignalWithRun() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+        var signals = mock(ExecutorSignalRepository.class);
+
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+                7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
+                null, List.of("stop below 95"), "sig-open", "index-strigoi", null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null));
+        when(signals.findRunIdBySignalId("sig-open")).thenReturn("run-open-1");
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.of(signals), 90, FIXED_CLOCK);
+
+        assertThat(svc.runIdForOpenPosition("depot-1", "AAPL")).isEqualTo("run-open-1");
+    }
+
+    @Test
+    void runIdForOpenPositionReturnsNullWhenNoOpenPositionMatches() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+        var signals = mock(ExecutorSignalRepository.class);
+
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(null);
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.of(signals), 90, FIXED_CLOCK);
+
+        assertThat(svc.runIdForOpenPosition("depot-1", "AAPL")).isNull();
+    }
+
+    @Test
+    void runIdForOpenPositionReturnsNullWhenExecutorReposAbsent() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(),
+                Optional.empty(), 90, FIXED_CLOCK);
+
+        assertThat(svc.runIdForOpenPosition("depot-1", "AAPL")).isNull();
+    }
+
+    @Test
+    void runIdForOpenPositionReturnsNullWhenPositionHasNoSourceSignalId() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+        var signals = mock(ExecutorSignalRepository.class);
+
+        when(positions.findOpenBySymbol("depot-1", "AAPL")).thenReturn(new ExecutorPosition(
+                7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
+                null, List.of("stop below 95"), null, "index-strigoi", null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null));
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.of(signals), 90, FIXED_CLOCK);
+
+        assertThat(svc.runIdForOpenPosition("depot-1", "AAPL")).isNull();
+    }
 }

@@ -65,9 +65,10 @@ public class DepotController {
                 .filter(o -> symbol.equals(o.symbol()))
                 .toList();
 
+        String runId = historyService.runIdForOpenPosition(connection, symbol);
         return new PositionDetailResponse(
                 new PositionDetailResponse.DepotSummary(depot.id(), depot.provider(), depot.environment()),
-                position, orders, depot.asOf());
+                position, orders, depot.asOf(), runId);
     }
 
     @GetMapping("/{connection}/history")
@@ -156,9 +157,12 @@ public class DepotController {
     public record DepotsResponse(List<DepotDto> depots, String error) {
     }
 
-    /** Response for the per-position slice: the owning depot's identity, the position, and its orders. */
+    /** Response for the per-position slice: the owning depot's identity, the position, its
+     *  orders, and — for open positions only — a heuristic run_id (symbol-linked, see
+     *  {@link DepotHistoryService#runIdForOpenPosition}) driving the raw-transcript drilldown;
+     *  {@code null} when unlinkable. */
     public record PositionDetailResponse(DepotSummary depot, DepotPositionDto position,
-            List<DepotOrder> orders, String asOf) {
+            List<DepotOrder> orders, String asOf, String runId) {
         public record DepotSummary(String id, String provider, String environment) {
         }
     }

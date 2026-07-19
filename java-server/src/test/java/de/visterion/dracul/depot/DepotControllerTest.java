@@ -184,6 +184,28 @@ class DepotControllerTest {
         assertThat(out.position().symbol()).isEqualTo("ACME");
         assertThat(out.orders()).extracting(DepotOrder::symbol).containsOnly("ACME");
         assertThat(out.asOf()).isEqualTo("2026-07-11T12:00:00Z");
+        // newController() wires a bare mock(DepotHistoryService.class), which defaults to
+        // null for runIdForOpenPosition — asserting it explicitly locks in "no link = null".
+        assertThat(out.runId()).isNull();
+    }
+
+    @Test
+    void foundPositionCarriesHeuristicRunIdFromHistoryService() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = depotWithPosition("conn-1", "ACME");
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
+        var historyService = mock(DepotHistoryService.class);
+        when(historyService.runIdForOpenPosition("conn-1", "ACME")).thenReturn("run-heuristic-1");
+
+        var controller = new DepotController(service, mock(DepotChartService.class),
+                mock(DepotInstrumentService.class), historyService, mock(VistierieClient.class),
+                mock(PreyRepository.class));
+
+        var out = controller.positionDetail("conn-1", "ACME");
+
+        assertThat(out.runId()).isEqualTo("run-heuristic-1");
+        verify(historyService).runIdForOpenPosition("conn-1", "ACME");
     }
 
     @Test

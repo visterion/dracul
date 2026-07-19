@@ -349,7 +349,7 @@ export class HttpApiClient implements ApiClient {
   async getDepotPosition(
     connection: string,
     symbol: string,
-  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }> {
+  ): Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }> {
     const res = await fetch(
       `${this.baseUrl}/api/depots/${encodeURIComponent(connection)}/positions/${encodeURIComponent(symbol)}`,
     )
@@ -360,7 +360,7 @@ export class HttpApiClient implements ApiClient {
       throw new Error(`getDepotPosition: depot unavailable: ${connection}/${symbol}`)
     }
     if (!res.ok) throw new Error(`getDepotPosition failed: HTTP ${res.status}`)
-    return res.json() as Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }>
+    return res.json() as Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }>
   }
 
   async getDepotHistory(connection: string): Promise<DepotHistory> {
