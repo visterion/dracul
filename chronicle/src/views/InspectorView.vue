@@ -14,17 +14,17 @@
       </label>
     </div>
 
-    <div v-if="loading && runs.length === 0" class="empty small">
+    <div v-if="loading && allRuns.length === 0" class="empty small">
       <div class="em-text">{{ t('inspector.loading') }}</div>
     </div>
 
-    <div v-else-if="runs.length === 0" class="empty small">
+    <div v-else-if="filteredRuns.length === 0" class="empty small">
       <div class="em-text">{{ t('inspector.empty') }}</div>
     </div>
 
     <div v-else class="insp-rows">
       <div
-        v-for="r in runs"
+        v-for="r in filteredRuns"
         :key="r.runId"
         class="insp-row"
         role="button"
@@ -53,7 +53,7 @@
     </div>
 
     <button
-      v-if="runs.length > 0"
+      v-if="allRuns.length > 0"
       class="btn btn-secondary insp-more"
       data-testid="inspector-load-more"
       :disabled="loadingMore"
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RawTranscriptPanel from '../components/depot/RawTranscriptPanel.vue'
 import { useApi } from '../api'
@@ -84,11 +84,25 @@ const { t } = useI18n()
 const api = useApi()
 
 const selectedAgent = ref<string | null>(null)
-const runs = ref<InspectorRun[]>([])
-const offset = ref(0)
+
+/** Unfiltered upstream page accumulation. The agent filter is applied only
+ *  for display (see `filteredRuns`) — pagination always walks the full,
+ *  unfiltered upstream list so `fetchOffset` stays valid regardless of
+ *  which agent is selected. Filtering the fetch itself would desync the
+ *  offset from the upstream list (duplicates / skipped runs), since the
+ *  backend applies the agent filter to a single upstream page rather than
+ *  to the full result set. */
+const allRuns = ref<InspectorRun[]>([])
+const fetchOffset = ref(0)
 const loading = ref(true)
 const loadingMore = ref(false)
 const expandedRunId = ref<string | null>(null)
+
+const filteredRuns = computed(() =>
+  selectedAgent.value === null
+    ? allRuns.value
+    : allRuns.value.filter(r => r.agent === selectedAgent.value),
+)
 
 function toggleExpanded(runId: string) {
   expandedRunId.value = expandedRunId.value === runId ? null : runId
@@ -97,10 +111,11 @@ function toggleExpanded(runId: string) {
 async function loadFirstPage() {
   loading.value = true
   expandedRunId.value = null
-  offset.value = 0
+  fetchOffset.value = 0
   try {
-    const res = await api.getInspectorRuns(selectedAgent.value, PAGE_SIZE, 0)
-    runs.value = res.runs
+    const res = await api.getInspectorRuns(null, PAGE_SIZE, 0)
+    allRuns.value = res.runs
+    fetchOffset.value = res.runs.length
   } finally {
     loading.value = false
   }
@@ -109,16 +124,17 @@ async function loadFirstPage() {
 async function loadMore() {
   loadingMore.value = true
   try {
-    const nextOffset = runs.value.length
-    const res = await api.getInspectorRuns(selectedAgent.value, PAGE_SIZE, nextOffset)
-    runs.value = [...runs.value, ...res.runs]
-    offset.value = nextOffset
+    const res = await api.getInspectorRuns(null, PAGE_SIZE, fetchOffset.value)
+    allRuns.value = [...allRuns.value, ...res.runs]
+    fetchOffset.value += res.runs.length
   } finally {
     loadingMore.value = false
   }
 }
 
-watch(selectedAgent, () => { void loadFirstPage() })
+// Changing the agent filter only re-filters the already-loaded unfiltered
+// runs (see `filteredRuns`) — no refetch needed, and refetching here would
+// desync `allRuns`/`fetchOffset` from the upstream pagination cursor.
 
 onMounted(() => { void loadFirstPage() })
 </script>

@@ -48,6 +48,7 @@
                 v-if="isTruncatable(call?.output)"
                 type="button"
                 class="tv-more-toggle"
+                :aria-expanded="isMoreOpen(toolOutputKey(ti, ci))"
                 @click="toggleMore(toolOutputKey(ti, ci))"
               >{{ isMoreOpen(toolOutputKey(ti, ci)) ? t('depots.transcript.less') : t('depots.transcript.more') }}</button>
             </div>
@@ -62,7 +63,7 @@
           </div>
 
           <div v-if="turn.llm_input_messages?.length" class="tv-prompt">
-            <button type="button" class="tv-prompt-toggle" @click="togglePrompt(ti)">
+            <button type="button" class="tv-prompt-toggle" :aria-expanded="isPromptOpen(ti)" @click="togglePrompt(ti)">
               {{ isPromptOpen(ti) ? t('depots.transcript.hidePrompt') : t('depots.transcript.showPrompt') }}
             </button>
             <div v-if="isPromptOpen(ti)" class="tv-prompt-body">
