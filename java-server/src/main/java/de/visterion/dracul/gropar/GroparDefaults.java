@@ -36,7 +36,8 @@ class GroparDefaults {
                         schedule, 25, 1800,
                         "/api/gropar/complete",
                         null, null, null, true,
-                        List.of(new ToolBinding(FETCH, null, null, 0)));
+                        List.of(new ToolBinding(FETCH, null, null, 0),
+                                new ToolBinding("search", null, null, 1)));
             }
 
             @Override

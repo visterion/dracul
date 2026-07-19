@@ -20,8 +20,8 @@ class GroparDefaultsTest {
         assertThat(def.completionPath()).isEqualTo("/api/gropar/complete");
         assertThat(def.promptText()).isNotBlank();
         assertThat(def.outputSchema()).isNotNull();
-        assertThat(def.tools()).singleElement()
-                .satisfies(t -> assertThat(t.toolName()).isEqualTo("fetch_held_positions"));
+        assertThat(def.tools()).extracting(de.visterion.dracul.agent.ToolBinding::toolName)
+                .containsExactly("fetch_held_positions", "search");
         assertThat(p.catalogEntries()).singleElement()
                 .satisfies(e -> {
                     assertThat(e.toolName()).isEqualTo("fetch_held_positions");

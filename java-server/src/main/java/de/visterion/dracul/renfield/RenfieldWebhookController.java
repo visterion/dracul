@@ -1,6 +1,7 @@
 package de.visterion.dracul.renfield;
 
 import de.visterion.dracul.events.SseBroadcaster;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.webhook.BearerTokenVerifier;
 import org.slf4j.Logger;
@@ -43,18 +44,21 @@ public class RenfieldWebhookController {
     private final TradeProposalRepository proposals;
     private final TelegramNotifier notifier;
     private final SseBroadcaster broadcaster;
+    private final HiveMemResearchService memory;
 
     public RenfieldWebhookController(
             @Value("${dracul.renfield.webhook-token}") String token,
             @Value("${dracul.primary-user-email:}") String primaryUser,
             TradeProposalRepository proposals,
             TelegramNotifier notifier,
-            SseBroadcaster broadcaster) {
+            SseBroadcaster broadcaster,
+            HiveMemResearchService memory) {
         this.verifier = new BearerTokenVerifier(token);
         this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
         this.proposals = proposals;
         this.notifier = notifier;
         this.broadcaster = broadcaster;
+        this.memory = memory;
     }
 
     @PostMapping("/complete")
@@ -95,12 +99,29 @@ public class RenfieldWebhookController {
 
         int inserted = 0;
         for (JsonNode p : valid) {
+            String symbol = p.path("symbol").asText();
+            String action = p.path("action").asText();
+            String rationale = p.path("rationale").asText("");
             BigDecimal confidence = p.path("confidence").isNumber()
                     ? new BigDecimal(p.path("confidence").asText()) : null;
-            inserted += proposals.insert(owner, p.path("symbol").asText(),
-                    p.path("action").asText(), p.path("entry_zone").asText(""),
-                    p.path("stop").asText(""), confidence,
-                    p.path("rationale").asText(""), marketNote, runId);
+            int rowsInserted = proposals.insert(owner, symbol, action,
+                    p.path("entry_zone").asText(""), p.path("stop").asText(""), confidence,
+                    rationale, marketNote, runId);
+            inserted += rowsInserted;
+            if (rowsInserted > 0) {
+                // Cell-only write-back (T1.6 Task 9): per-proposal, not per-batch -- no
+                // research_memory_link row (proposals never resolve to a Task-10 outcome the
+                // way prey do). Best-effort: writeThesisMemory is itself guarded/never-throwing;
+                // the outer try/catch is defense-in-depth so a bug here can't 500 the completion.
+                try {
+                    memory.writeThesisMemory("trade_proposal", symbol, action, rationale,
+                            List.of(), List.of(), List.of(), null, "renfield",
+                            confidence == null ? 0.0 : confidence.doubleValue(), runId);
+                } catch (RuntimeException e) {
+                    log.warn("renfield run {} — memory write for {} failed unexpectedly: {}",
+                            runId, symbol, e.getMessage());
+                }
+            }
         }
 
         if (inserted > 0) {

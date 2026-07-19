@@ -105,6 +105,22 @@ public class OutcomeLogRepository {
                 .orElse(false));
     }
 
+    /** Full COMPLETE TRADE row for {@code positionId}, or null if no TRADE row exists yet for
+     *  that position or it is still within {@link OutcomeBatchJob}'s 14-calendar-day re-entry
+     *  window. {@link OutcomeMemoryScanJob} gates its HiveMem cell write on this: the position's
+     *  own {@code realized_r} is the un-weighted, possibly-stale figure at close, while this row
+     *  carries the FINAL quantity-weighted value once trims/re-entries have settled. */
+    public OutcomeLogRow findCompleteTradeByPositionId(long positionId) {
+        return jdbc.sql("""
+                SELECT * FROM outcome_log
+                WHERE position_id = :positionId AND kind = 'TRADE' AND complete = true
+                """)
+                .param("positionId", positionId)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
     /** Test/debug accessor: full row by log_id_ref, or null. */
     public OutcomeLogRow findByLogIdRef(String logIdRef) {
         return jdbc.sql("SELECT * FROM outcome_log WHERE log_id_ref = :ref")

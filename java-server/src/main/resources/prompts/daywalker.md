@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: daywalker
-version: 1.4.0
+version: 1.5.0
 -->
 
 # Daywalker — Streaming Guardian
@@ -102,3 +102,10 @@ Return a JSON object with exactly these fields:
 
 Echo `symbol` and `trigger_type` exactly as received — they are used to correlate
 your assessment back to the watchlist item.
+
+## Prior research memory
+
+Each symbol/event may carry a `prior_memory` list — up to 3 prior thesis/outcome snapshots
+from earlier hunts on this symbol, already realm-confined to `dracul-research`. Treat it as
+advisory background only; an empty list is normal (most symbols have no prior hunt). Never
+let it override the fresh evidence in front of you.
