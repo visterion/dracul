@@ -1,6 +1,7 @@
 package de.visterion.dracul.renfield;
 
 import de.visterion.dracul.events.SseBroadcaster;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.notify.TelegramNotifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,8 @@ class RenfieldWebhookControllerTest {
         proposals = mock(TradeProposalRepository.class);
         notifier = mock(TelegramNotifier.class);
         broadcaster = mock(SseBroadcaster.class);
-        controller = new RenfieldWebhookController("tok", OWNER, proposals, notifier, broadcaster);
+        controller = new RenfieldWebhookController("tok", OWNER, proposals, notifier, broadcaster,
+                mock(HiveMemResearchService.class));
     }
 
     private static JsonNode json(String s) throws Exception {
@@ -139,6 +141,7 @@ class RenfieldWebhookControllerTest {
                 .withBean(TradeProposalRepository.class, () -> mock(TradeProposalRepository.class))
                 .withBean(TelegramNotifier.class, () -> mock(TelegramNotifier.class))
                 .withBean(SseBroadcaster.class, () -> mock(SseBroadcaster.class))
+                .withBean(HiveMemResearchService.class, () -> mock(HiveMemResearchService.class))
                 .withUserConfiguration(RenfieldWebhookController.class);
         // dracul.renfield.enabled defaults false → no bean.
         runner.run(ctx -> assertThat(ctx).doesNotHaveBean(RenfieldWebhookController.class));

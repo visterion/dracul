@@ -1,6 +1,7 @@
 package de.visterion.dracul.daywalker;
 
 import de.visterion.dracul.daywalker.DaywalkerAlertRepository.OwnerItem;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.vistierie.VistierieClient;
 import org.junit.jupiter.api.Test;
@@ -47,7 +48,8 @@ class DaywalkerCompletionServiceTest {
             BigDecimal escalationThreshold) {
         return new DaywalkerCompletionService(alerts, notifier, events, "CRITICAL", 3600,
                 providerOf(vistierieClient), escalationEnabled, daywalkerDeepEnabled, escalationThreshold,
-                PRIMARY_USER, "http://localhost:8080", "deep-tkn", heldPositions, "depot-1");
+                PRIMARY_USER, "http://localhost:8080", "deep-tkn", heldPositions, "depot-1",
+                mock(HiveMemResearchService.class));
     }
 
     private static de.visterion.dracul.position.HeldPosition held(String symbol) {

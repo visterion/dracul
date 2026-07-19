@@ -1,6 +1,7 @@
 package de.visterion.dracul.gropar;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.notify.TelegramNotifier;
@@ -47,6 +48,7 @@ public class GroparWebhookController {
     private final RiskMetricsService riskService;
     private final ToolFetchCache cache;
     private final ObjectMapper mapper;
+    private final HiveMemResearchService memory;
 
     private final String connection;
     private final String owner;
@@ -65,6 +67,7 @@ public class GroparWebhookController {
             RiskMetricsService riskService,
             ToolFetchCache cache,
             ObjectMapper mapper,
+            HiveMemResearchService memory,
             @Value("${dracul.position.connection:depot-1}") String connection,
             @Value("${dracul.primary-user-email:}") String primaryUser,
             @Value("${dracul.gropar.history-days:260}") int historyDays,
@@ -81,6 +84,7 @@ public class GroparWebhookController {
         this.riskService = riskService;
         this.cache = cache;
         this.mapper = mapper;
+        this.memory = memory;
         this.connection = connection;
         this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
         this.historyDays = historyDays;
@@ -274,6 +278,22 @@ public class GroparWebhookController {
                     Instant.now().toString());
 
             boolean fresh = exitSignalRepo.insert(signal, owner);
+
+            if (fresh) {
+                // Cell-only write-back (T1.6 Task 9): every fresh signal row, HOLD included --
+                // per spec §8 outcome-less cells are expected, HOLD is not exempt. No
+                // research_memory_link row (exit signals never resolve to a Task-10 outcome the
+                // way prey do). Best-effort: writeThesisMemory is itself guarded/never-throwing;
+                // the outer try/catch is defense-in-depth so a bug here can't 500 the completion.
+                try {
+                    memory.writeThesisMemory("exit_signal", symbol, action, rationale,
+                            List.of(), List.of(), List.of(), null, "gropar",
+                            confidence == null ? 0.0 : confidence, signal.id());
+                } catch (RuntimeException e) {
+                    log.warn("gropar run {} — memory write for {} failed unexpectedly: {}",
+                            runId, symbol, e.getMessage());
+                }
+            }
 
             if (fresh && !HOLD.equals(action)) {
                 // "EXIT" is the triggerType label; owner is prefixed so downstream consumers of
