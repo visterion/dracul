@@ -64,4 +64,29 @@ class ExecutorSignalRepositoryTest {
         assertThat(found.confidence()).isNull();
         assertThat(found.referencePrice()).isNull();
     }
+
+    @Test
+    void preyIdRoundTrips() {
+        String id = UUID.randomUUID().toString();
+        String preyId = UUID.randomUUID().toString();
+        var s = new ExecutorSignal(id, "strigoi-spin", "v1", "PREYCO", "LONG", 0.6,
+                "mechanism", List.of(), "3M", null, "PENDING", null, null, preyId);
+        repo.insert(s);
+
+        var found = repo.findById(id);
+        assertThat(found).isNotNull();
+        assertThat(found.preyId()).isEqualTo(preyId);
+    }
+
+    @Test
+    void injectStyleSignalHasNullPreyId() {
+        String id = UUID.randomUUID().toString();
+        var s = new ExecutorSignal(id, "injected", "operator", "INJCO", "LONG", 0.6,
+                "mechanism", List.of(), "3M", null, "PENDING", null);
+        repo.insert(s);
+
+        var found = repo.findById(id);
+        assertThat(found).isNotNull();
+        assertThat(found.preyId()).isNull();
+    }
 }
