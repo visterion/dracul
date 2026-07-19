@@ -273,6 +273,7 @@ class ReconcileServiceTest {
         assertThat(log.symbol()).isEqualTo("PSMT");
 
         assertThat(survivors).isEmpty();
+        verify(executorNotifier).notifyExit(any(), any(), any(), any(), any());
     }
 
     @Test
