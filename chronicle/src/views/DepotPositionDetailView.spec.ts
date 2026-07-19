@@ -5,7 +5,7 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import DepotPositionDetailView from './DepotPositionDetailView.vue'
 import de from '../i18n/locales/de'
 import type {
-  DepotPositionView, DepotOrderView, DepotChart, InstrumentInfo, ChartRange, RunTranscript,
+  DepotPositionView, DepotOrderView, DepotChart, InstrumentInfo, ChartRange, RunTranscript, DepotMove,
 } from '../api/types'
 
 function position(overrides: Partial<DepotPositionView> = {}): DepotPositionView {
@@ -57,19 +57,22 @@ const analystDetailInfo: InstrumentInfo = {
   },
 }
 
-let getDepotPositionImpl: (connection: string, symbol: string) => Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }> =
-  async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null })
+let getDepotPositionImpl: (connection: string, symbol: string) => Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null; moves: DepotMove[] }> =
+  async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null, moves: [] })
 let getInstrumentChartImpl: (symbol: string, range: ChartRange) => Promise<DepotChart> =
   async () => chart([100, 110, 120])
 let getInstrumentInfoImpl: (symbol: string) => Promise<InstrumentInfo> =
   async () => emptyInfo
 let getRunTranscriptImpl: (runId: string) => Promise<RunTranscript> =
   async runId => ({ transcript: { runId, note: 'mock transcript' }, expired: false })
+let getInspectorTranscriptImpl: (runId: string) => Promise<RunTranscript> =
+  async runId => ({ transcript: { runId, note: 'mock inspector transcript' }, expired: false })
 
 const getDepotPositionSpy = vi.fn((connection: string, symbol: string) => getDepotPositionImpl(connection, symbol))
 const getInstrumentChartSpy = vi.fn((symbol: string, range: ChartRange) => getInstrumentChartImpl(symbol, range))
 const getInstrumentInfoSpy = vi.fn((symbol: string) => getInstrumentInfoImpl(symbol))
 const getRunTranscriptSpy = vi.fn((runId: string) => getRunTranscriptImpl(runId))
+const getInspectorTranscriptSpy = vi.fn((runId: string) => getInspectorTranscriptImpl(runId))
 
 vi.mock('../api', () => ({
   useApi: () => ({
@@ -77,6 +80,7 @@ vi.mock('../api', () => ({
     getInstrumentChart: getInstrumentChartSpy,
     getInstrumentInfo: getInstrumentInfoSpy,
     getRunTranscript: getRunTranscriptSpy,
+    getInspectorTranscript: getInspectorTranscriptSpy,
   }),
 }))
 
@@ -96,14 +100,16 @@ function mountView() {
 beforeEach(() => {
   localStorage.clear()
   router.push('/depots/depot-1/NVDA')
-  getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null })
+  getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null, moves: [] })
   getInstrumentChartImpl = async () => chart([100, 110, 120])
   getInstrumentInfoImpl = async () => emptyInfo
   getRunTranscriptImpl = async runId => ({ transcript: { runId, note: 'mock transcript' }, expired: false })
+  getInspectorTranscriptImpl = async runId => ({ transcript: { runId, note: 'mock inspector transcript' }, expired: false })
   getDepotPositionSpy.mockClear()
   getInstrumentChartSpy.mockClear()
   getInstrumentInfoSpy.mockClear()
   getRunTranscriptSpy.mockClear()
+  getInspectorTranscriptSpy.mockClear()
 })
 
 describe('DepotPositionDetailView', () => {
@@ -194,6 +200,7 @@ describe('DepotPositionDetailView', () => {
       orders: [order({ role: 'stop' })],
       asOf: '2026-07-11T08:00:00Z',
       runId: null,
+      moves: [],
     })
     const w = mountView()
     await flushPromises()
@@ -222,7 +229,7 @@ describe('DepotPositionDetailView', () => {
     await flushPromises()
     expect(getDepotPositionSpy).toHaveBeenCalledWith('depot-1', 'NVDA')
 
-    getDepotPositionImpl = async () => ({ position: position({ symbol: 'ABB', avgEntryPrice: 35 }), orders: [], asOf: '2026-07-11T08:00:00Z', runId: null })
+    getDepotPositionImpl = async () => ({ position: position({ symbol: 'ABB', avgEntryPrice: 35 }), orders: [], asOf: '2026-07-11T08:00:00Z', runId: null, moves: [] })
     await router.push('/depots/depot-1/ABB')
     await flushPromises()
 
@@ -298,6 +305,7 @@ describe('DepotPositionDetailView', () => {
       orders: [order()],
       asOf: '2026-07-11T08:00:00Z',
       runId: null,
+      moves: [],
     })
     getInstrumentInfoImpl = async () => ({
       ...fullInfo,
@@ -320,7 +328,7 @@ describe('DepotPositionDetailView', () => {
   // ── Raw transcript drilldown (Schicht 2, Task 4b) ────────────────
 
   it('does not render the transcript panel when the position has no linked run', async () => {
-    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null })
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null, moves: [] })
     const w = mountView()
     await flushPromises()
 
@@ -328,7 +336,7 @@ describe('DepotPositionDetailView', () => {
   })
 
   it('renders the transcript panel with a heuristic-link hint when the position has a linked run', async () => {
-    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: 'run-open-1' })
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: 'run-open-1', moves: [] })
     const w = mountView()
     await flushPromises()
 
@@ -339,7 +347,7 @@ describe('DepotPositionDetailView', () => {
   })
 
   it('loads the run transcript on toggle click when a run is linked', async () => {
-    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: 'run-open-1' })
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: 'run-open-1', moves: [] })
     const w = mountView()
     await flushPromises()
 
@@ -350,5 +358,83 @@ describe('DepotPositionDetailView', () => {
 
     expect(getRunTranscriptSpy).toHaveBeenCalledWith('run-open-1')
     expect(w.find('[data-testid="transcript-raw"]').text()).toContain('run-open-1')
+  })
+
+  // ── Move timeline (Task 5) ────────────────────────────────────────
+
+  function moves(overrides: Partial<DepotMove>[] = []): DepotMove[] {
+    const base: DepotMove[] = [
+      { action: 'ENTER', reasonCode: 'thesis-confirmed', createdAt: '2026-06-01T09:30:00Z', runId: 'r1' },
+      { action: 'TRIM', reasonCode: 'partial-target-hit', createdAt: '2026-06-20T14:05:00Z', runId: 'r2' },
+    ]
+    return overrides.length ? overrides.map((o, i) => ({ ...base[i % base.length], ...o })) : base
+  }
+
+  it('does not render a moves section when the position has no moves', async () => {
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null, moves: [] })
+    const w = mountView()
+    await flushPromises()
+
+    expect(w.find('[data-testid="pd-moves"]').exists()).toBe(false)
+  })
+
+  it('renders each move in the timeline with a per-move transcript panel when it has a runId', async () => {
+    getDepotPositionImpl = async () => ({
+      position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null,
+      moves: moves(),
+    })
+    const w = mountView()
+    await flushPromises()
+
+    const section = w.find('[data-testid="pd-moves"]')
+    expect(section.exists()).toBe(true)
+
+    const rows = w.findAll('[data-testid="pd-move-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('ENTER')
+    expect(rows[0].text()).toContain('thesis-confirmed')
+    expect(rows[1].text()).toContain('TRIM')
+    expect(rows[1].text()).toContain('partial-target-hit')
+
+    // Rendered in delivered order — no re-sort.
+    expect(section.text().indexOf('ENTER')).toBeLessThan(section.text().indexOf('TRIM'))
+
+    const panels = section.findAllComponents({ name: 'RawTranscriptPanel' })
+    expect(panels).toHaveLength(2)
+  })
+
+  it('links each move panel to its own runId via the inspector source', async () => {
+    getDepotPositionImpl = async () => ({
+      position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null,
+      moves: moves(),
+    })
+    const w = mountView()
+    await flushPromises()
+
+    const panels = w.findAllComponents({ name: 'RawTranscriptPanel' })
+    expect(panels).toHaveLength(2)
+    expect(panels[0].props('runId')).toBe('r1')
+    expect(panels[0].props('source')).toBe('inspector')
+    expect(panels[1].props('runId')).toBe('r2')
+    expect(panels[1].props('source')).toBe('inspector')
+  })
+
+  it('renders a move row without a transcript panel when the move has no runId', async () => {
+    getDepotPositionImpl = async () => ({
+      position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null,
+      moves: [
+        { action: 'ENTER', reasonCode: 'thesis-confirmed', createdAt: '2026-06-01T09:30:00Z', runId: 'r1' },
+        { action: 'EXIT', reasonCode: null, createdAt: '2026-07-01T10:00:00Z', runId: null },
+      ],
+    })
+    const w = mountView()
+    await flushPromises()
+
+    const rows = w.findAll('[data-testid="pd-move-row"]')
+    expect(rows).toHaveLength(2)
+
+    const panels = w.findAllComponents({ name: 'RawTranscriptPanel' })
+    expect(panels).toHaveLength(1)
+    expect(panels[0].props('runId')).toBe('r1')
   })
 })

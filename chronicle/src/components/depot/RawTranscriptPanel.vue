@@ -13,12 +13,7 @@
       <div v-else-if="expired" class="rtp-expired" data-testid="transcript-expired">
         {{ t('depots.transcript.expired') }}
       </div>
-      <template v-else-if="rawText !== null">
-        <div v-if="imageRedacted" class="rtp-image-note" data-testid="transcript-image-redacted">
-          {{ t('depots.transcript.imageRedacted') }}
-        </div>
-        <pre class="rtp-pre mono" data-testid="transcript-raw">{{ rawText }}</pre>
-      </template>
+      <TranscriptView v-else-if="loaded" :transcript="loadedTranscript" />
     </div>
   </div>
 </template>
@@ -28,8 +23,11 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../../api'
 import type { RunTranscript } from '../../api/types'
+import TranscriptView from './TranscriptView.vue'
 
-const props = defineProps<{ runId: string }>()
+const props = withDefaults(defineProps<{ runId: string; source?: 'depot' | 'inspector' }>(), {
+  source: 'depot',
+})
 
 const { t } = useI18n()
 const api = useApi()
@@ -37,35 +35,30 @@ const api = useApi()
 const open = ref(false)
 const loading = ref(false)
 const expired = ref(false)
-const rawText = ref<string | null>(null)
-const imageRedacted = ref(false)
-let loaded = false
-
-/** Heuristic marker for a SHA256-redacted image block inside the raw
- *  transcript text. Vistierie's transcript format is out of Dracul's
- *  control and may change; this is a best-effort flag, not a parser. */
-const IMAGE_REDACTED_PATTERN = /sha256[:=]?\s*[a-f0-9]{64}/i
+const loadedTranscript = ref<unknown>(null)
+const loaded = ref(false)
 
 function toggleOpen() {
   open.value = !open.value
-  if (open.value && !loaded) void load()
+  if (open.value && !loaded.value) void load()
 }
 
 async function load() {
   loading.value = true
   try {
-    const res: RunTranscript = await api.getRunTranscript(props.runId)
+    const res: RunTranscript = props.source === 'inspector'
+      ? await api.getInspectorTranscript(props.runId)
+      : await api.getRunTranscript(props.runId)
     expired.value = res.expired
     if (!res.expired) {
-      rawText.value = JSON.stringify(res.transcript, null, 2)
-      imageRedacted.value = IMAGE_REDACTED_PATTERN.test(rawText.value ?? '')
+      loadedTranscript.value = res.transcript
     }
-    loaded = true
+    loaded.value = true
   } catch {
     // Network failure or a malformed 200 body: never leave the panel silently
     // blank — surface it as unavailable (and don't retry-loop on re-open).
     expired.value = true
-    loaded = true
+    loaded.value = true
   } finally {
     loading.value = false
   }
@@ -83,15 +76,4 @@ async function load() {
   padding: 0;
 }
 .rtp-body { margin-top: 4px; }
-.rtp-pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow: auto;
-  font-size: 0.8em;
-  padding: 8px;
-  border: 1px solid var(--color-border, #444);
-  border-radius: 4px;
-}
-.rtp-image-note { font-size: 0.8em; font-style: italic; margin-bottom: 4px; }
 </style>

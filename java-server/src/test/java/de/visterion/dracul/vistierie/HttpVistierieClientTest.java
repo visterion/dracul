@@ -734,6 +734,61 @@ class HttpVistierieClientTest {
         assertThat(client.searchRuns(null, "x", null, null, null, null, 20, 0)).isEmpty();
     }
 
+    // -------------------------------------------------------------------------
+    // listAgentRuns — regression coverage for the tenant-scoped /runs bugfix
+    // (previously wrongly called the cross-tenant /admin/runs endpoint)
+    // -------------------------------------------------------------------------
+
+    @Test void listAgentRunsParsesRunsAndUsesTenantRunsEndpoint() {
+        wm.stubFor(get(urlPathEqualTo("/runs")).willReturn(okJson("""
+                [{"run_id":"R1","agent_name":"strigoi-echo","status":"done",
+                  "started_at":"2026-07-18T00:00:00Z","finished_at":"2026-07-18T00:01:00Z",
+                  "summary":"found AAPL","error":null},
+                 {"run_id":"R2","agent_name":"daywalker","status":"failed",
+                  "started_at":"2026-07-18T02:00:00Z","finished_at":"2026-07-18T02:01:00Z",
+                  "summary":"x","error":"boom"}]""")));
+
+        var hits = client.listAgentRuns(null, 50, 0);
+
+        assertThat(hits).hasSize(2);
+        assertThat(hits.get(0).runId()).isEqualTo("R1");
+        assertThat(hits.get(0).agent()).isEqualTo("strigoi-echo");
+        assertThat(hits.get(0).status()).isEqualTo("done");
+        assertThat(hits.get(0).startedAt()).isEqualTo(java.time.Instant.parse("2026-07-18T00:00:00Z"));
+        assertThat(hits.get(0).snippet()).isEqualTo("found AAPL");
+        assertThat(hits.get(0).hasError()).isFalse();
+
+        assertThat(hits.get(1).runId()).isEqualTo("R2");
+        assertThat(hits.get(1).agent()).isEqualTo("daywalker");
+        assertThat(hits.get(1).hasError()).isTrue();
+
+        wm.verify(getRequestedFor(urlPathEqualTo("/runs"))
+                .withHeader("X-Tenant-Id", equalTo("dracul"))
+                .withHeader("Authorization", equalTo("Bearer tenant-tkn")));
+        wm.verify(0, getRequestedFor(urlPathEqualTo("/admin/runs")));
+    }
+
+    @Test void listAgentRunsFiltersByAgentClientSide() {
+        wm.stubFor(get(urlPathEqualTo("/runs")).willReturn(okJson("""
+                [{"run_id":"R1","agent_name":"strigoi-echo","status":"done",
+                  "started_at":"2026-07-18T00:00:00Z","finished_at":"2026-07-18T00:01:00Z",
+                  "summary":"found AAPL","error":null},
+                 {"run_id":"R2","agent_name":"daywalker","status":"failed",
+                  "started_at":"2026-07-18T02:00:00Z","finished_at":"2026-07-18T02:01:00Z",
+                  "summary":"x","error":"boom"}]""")));
+
+        var hits = client.listAgentRuns("daywalker", 50, 0);
+
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).runId()).isEqualTo("R2");
+        assertThat(hits.get(0).agent()).isEqualTo("daywalker");
+    }
+
+    @Test void listAgentRunsReturnsEmptyOnError() {
+        wm.stubFor(get(urlPathEqualTo("/runs")).willReturn(aResponse().withStatus(500)));
+        assertThat(client.listAgentRuns(null, 50, 0)).isEmpty();
+    }
+
     @Test void getRunTranscriptReturnsNullOnError() {
         wm.stubFor(get(urlPathEqualTo("/runs/Rx/transcript")).willReturn(aResponse().withStatus(404)));
         assertThat(client.getRunTranscript("Rx", "digest")).isNull();
