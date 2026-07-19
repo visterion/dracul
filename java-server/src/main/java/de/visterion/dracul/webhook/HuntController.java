@@ -2,9 +2,11 @@ package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.executor.PreySignalEmitter;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -29,6 +31,8 @@ public abstract class HuntController {
     private final PreyRepository preyRepo;
     private final PreyMapper preyMapper = new PreyMapper();
     private final ToolFetchCache cache;
+    private final HiveMemResearchService memory;
+    private final ResearchMemoryLinkRepository memoryLinks;
 
     /** Optional: only present when the executor is enabled. Field-injected so
      *  subclass constructors stay unchanged. When absent, hunts still complete. */
@@ -41,10 +45,13 @@ public abstract class HuntController {
     @Autowired
     private ObjectProvider<PatternRepository> patternRepo;
 
-    protected HuntController(String token, PreyRepository preyRepo, ToolFetchCache cache) {
+    protected HuntController(String token, PreyRepository preyRepo, ToolFetchCache cache,
+            HiveMemResearchService memory, ResearchMemoryLinkRepository memoryLinks) {
         this.verifier = new BearerTokenVerifier(token);
         this.preyRepo = preyRepo;
         this.cache = cache;
+        this.memory = memory;
+        this.memoryLinks = memoryLinks;
     }
 
     protected abstract String agentName();
@@ -145,6 +152,23 @@ public abstract class HuntController {
         // only newly-inserted prey trigger downstream effects, so a retried/duplicate
         // delivery (inserted empty) skips the hook and can never re-fire promotion.
         afterPersist(inserted, body);
+        // Write-back hook (T1.6 Task 9): one thesis cell + one research_memory_link row per
+        // newly-inserted prey, AFTER afterPersist so a spin/index promotion side effect is
+        // durably recorded before any memory write is attempted. Best-effort: writeThesisMemory
+        // is itself guarded/never-throwing (HiveMemResearchService), and the outer try/catch here
+        // is defense-in-depth so a bug in the link-insert path (Dracul's own DB) can't 500 this
+        // completion either — a memory-write failure must never fail a hunt.
+        for (Prey p : inserted) {
+            try {
+                memory.writeThesisMemory("prey", p.symbol(), p.anomalyType(), p.thesis(),
+                            p.signals(), p.risks(), p.killCriteria(), p.horizon(), p.discoveredBy(),
+                            p.confidence(), p.id())
+                        .ifPresent(cellId -> memoryLinks.insert("prey", p.id(), p.symbol(), cellId));
+            } catch (RuntimeException e) {
+                log.warn("{} run {} — memory write for prey {} failed unexpectedly: {}",
+                        agentName(), runId, p.id(), e.getMessage());
+            }
+        }
         return ResponseEntity.noContent().build();
     }
 

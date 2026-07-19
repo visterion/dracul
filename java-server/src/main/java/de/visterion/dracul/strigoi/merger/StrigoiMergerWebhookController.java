@@ -1,8 +1,10 @@
 package de.visterion.dracul.strigoi.merger;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -30,8 +32,10 @@ public class StrigoiMergerWebhookController extends HuntController {
             MergerEnrichmentService enrichment,
             PreyRepository preyRepo,
             ToolFetchCache cache,
+            HiveMemResearchService memory,
+            ResearchMemoryLinkRepository memoryLinks,
             @Value("${dracul.strigoi.merger.lookback-days:45}") int defaultLookback) {
-        super(token, preyRepo, cache);
+        super(token, preyRepo, cache, memory, memoryLinks);
         this.filings = filings;
         this.screener = screener;
         this.enrichment = enrichment;

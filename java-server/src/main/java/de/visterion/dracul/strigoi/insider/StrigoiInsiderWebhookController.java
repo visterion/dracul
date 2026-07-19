@@ -1,8 +1,10 @@
 package de.visterion.dracul.strigoi.insider;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.prey.PreyRepository;
+import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.webhook.HuntController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -28,8 +30,10 @@ public class StrigoiInsiderWebhookController extends HuntController {
             InsiderClusterScreener screener,
             InsiderEnrichmentService enrichment,
             PreyRepository preyRepo,
-            ToolFetchCache cache) {
-        super(token, preyRepo, cache);
+            ToolFetchCache cache,
+            HiveMemResearchService memory,
+            ResearchMemoryLinkRepository memoryLinks) {
+        super(token, preyRepo, cache, memory, memoryLinks);
         this.filings = filings;
         this.screener = screener;
         this.enrichment = enrichment;
