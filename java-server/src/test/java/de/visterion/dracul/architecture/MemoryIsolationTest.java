@@ -42,8 +42,14 @@ class MemoryIsolationTest {
   private static final List<String> BANNED_GLOBS =
       List.of(
           "glob:strigoi/**/*Gate*.java",
+          "glob:strigoi/*Gate*.java",
           "glob:strigoi/**/*Screen*.java",
-          "glob:daywalker/detect/**/*.java",
+          "glob:strigoi/*Screen*.java",
+          // "**" requires at least one intervening path segment, so it does NOT match flat
+          // files directly under detect/ (e.g. detect/NewsDetector.java) — only detect/*.java
+          // catches those; both forms are kept so nested future files stay covered too.
+          "glob:daywalker/detect/**",
+          "glob:daywalker/detect/*.java",
           "glob:daywalker/DaywalkerEventEngine.java",
           "glob:voievod/*Detector*.java",
           "glob:voievod/ConsensusDetector.java");
@@ -56,9 +62,11 @@ class MemoryIsolationTest {
   @Test
   void deterministicComponentsDoNotImportHiveMemory() throws IOException {
     List<String> offenders = new ArrayList<>();
+    List<Path> scanned = new ArrayList<>();
     try (var paths = Files.walk(ROOT)) {
       paths
           .filter(p -> p.toString().endsWith(".java"))
+          .peek(scanned::add)
           .filter(MemoryIsolationTest::isBanned)
           .forEach(
               p -> {
@@ -70,6 +78,10 @@ class MemoryIsolationTest {
                 }
               });
     }
+    // Sanity floor: a wrong ROOT or an empty source tree must never silently pass this guard.
+    assertThat(scanned.size())
+        .as("source-tree walk must have visited a non-trivial number of .java files")
+        .isGreaterThan(50);
     assertThat(offenders)
         .as("deterministic components must not touch HiveMem memory")
         .isEmpty();
