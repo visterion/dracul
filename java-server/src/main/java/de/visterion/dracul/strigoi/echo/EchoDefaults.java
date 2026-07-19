@@ -31,7 +31,7 @@ class EchoDefaults {
             @Override
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
-                        NAME, "routine",
+                        NAME, "reasoning",
                         PromptDocument.bodyFromClasspath("prompts/strigoi-echo.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-echo/complete",

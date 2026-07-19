@@ -31,7 +31,7 @@ class InsiderDefaults {
             @Override
             public AgentDefinition defaultDefinition() {
                 return new AgentDefinition(
-                        NAME, "routine",
+                        NAME, "reasoning",
                         PromptDocument.bodyFromClasspath("prompts/strigoi-insider.md"), schema,
                         schedule, 25, 1800,
                         "/api/strigoi-insider/complete",
