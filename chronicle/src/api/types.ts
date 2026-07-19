@@ -558,6 +558,7 @@ export interface DepotOrderView {
   type: string
   status: string
   role: string | null
+  parentId: string | null
 }
 
 export interface DepotHistoryWhy {
