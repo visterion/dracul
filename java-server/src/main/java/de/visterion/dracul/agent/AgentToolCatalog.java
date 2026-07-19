@@ -1,5 +1,6 @@
 package de.visterion.dracul.agent;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -13,9 +14,24 @@ public class AgentToolCatalog {
 
     private final Map<String, ToolCatalogEntry> byName = new LinkedHashMap<>();
 
+    /** Convenience for existing unit tests that only exercise {@link AgentDefaultProvider}
+     *  entries; production wiring always goes through the two-arg constructor below. */
     public AgentToolCatalog(List<AgentDefaultProvider> providers) {
+        this(providers, List.of());
+    }
+
+    @Autowired
+    public AgentToolCatalog(List<AgentDefaultProvider> providers,
+                            List<ToolCatalogContributor> contributors) {
         for (var provider : providers) {
             for (var e : provider.catalogEntries()) {
+                if (byName.putIfAbsent(e.toolName(), e) != null) {
+                    throw new IllegalStateException("duplicate tool in catalog: " + e.toolName());
+                }
+            }
+        }
+        for (var contributor : contributors) {
+            for (var e : contributor.catalogEntries()) {
                 if (byName.putIfAbsent(e.toolName(), e) != null) {
                     throw new IllegalStateException("duplicate tool in catalog: " + e.toolName());
                 }
