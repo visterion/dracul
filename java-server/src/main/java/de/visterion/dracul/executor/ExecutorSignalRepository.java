@@ -34,9 +34,10 @@ public class ExecutorSignalRepository {
         jdbc.sql("""
                 INSERT INTO executor_signal
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
-                   kill_criteria, horizon, reference_price, status, thesis)
+                   kill_criteria, horizon, reference_price, status, thesis, prey_id)
                 VALUES (:signalId, :source, :agentVersion, :symbol, :direction, :confidence, :mechanism,
-                        CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status, CAST(:thesis AS jsonb))
+                        CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status,
+                        CAST(:thesis AS jsonb), CAST(:preyId AS uuid))
                 ON CONFLICT (signal_id) DO NOTHING
                 """)
                 .param("signalId", s.signalId())
@@ -51,6 +52,7 @@ public class ExecutorSignalRepository {
                 .param("referencePrice", s.referencePrice())
                 .param("status", status)
                 .param("thesis", writeThesis(s.thesis()))
+                .param("preyId", s.preyId())
                 .update();
     }
 
@@ -99,7 +101,8 @@ public class ExecutorSignalRepository {
                 referencePrice,
                 rs.getString("status"),
                 createdAtObj == null ? null : createdAtObj.toString(),
-                readThesis(rs.getString("thesis")));
+                readThesis(rs.getString("thesis")),
+                rs.getString("prey_id"));
     }
 
     private String writeJson(List<String> v) {
