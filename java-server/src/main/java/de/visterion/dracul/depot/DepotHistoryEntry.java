@@ -20,8 +20,9 @@ public record DepotHistoryEntry(
         boolean brokerConfirmed,
         Why why) {
 
-    /** Dracul's rationale annotation — explicitly NOT authoritative for execution facts. */
+    /** Dracul's rationale annotation — explicitly NOT authoritative for execution facts.
+     *  {@code runId} anchors the raw Vistierie transcript (Schicht 2); null when not linkable. */
     public record Why(String strigoi, java.util.List<String> killCriteria, String entryReasoning,
-            String draculExitReason, BigDecimal draculRealizedR) {
+            String draculExitReason, BigDecimal draculRealizedR, String runId) {
     }
 }

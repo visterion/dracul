@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.DecisionLog;
 import de.visterion.dracul.executor.DecisionLogRepository;
 import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
+import de.visterion.dracul.executor.ExecutorSignalRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,7 @@ public class DepotHistoryService {
     private final DepotService depotService;
     private final Optional<ExecutorPositionRepository> positions;
     private final Optional<DecisionLogRepository> decisions;
+    private final Optional<ExecutorSignalRepository> signals;
     private final int lookbackDays;
     private final Clock clock;
 
@@ -38,21 +40,24 @@ public class DepotHistoryService {
     public DepotHistoryService(AgoraDepotClient client, DepotService depotService,
             ObjectProvider<ExecutorPositionRepository> positions,
             ObjectProvider<DecisionLogRepository> decisions,
+            ObjectProvider<ExecutorSignalRepository> signals,
             @Value("${dracul.depots.history-lookback-days:90}") int lookbackDays) {
         this(client, depotService,
                 Optional.ofNullable(positions.getIfAvailable()),
                 Optional.ofNullable(decisions.getIfAvailable()),
+                Optional.ofNullable(signals.getIfAvailable()),
                 lookbackDays, Clock.systemUTC());
     }
 
     // Test-friendly constructor (inject repos + clock directly).
     DepotHistoryService(AgoraDepotClient client, DepotService depotService,
             Optional<ExecutorPositionRepository> positions, Optional<DecisionLogRepository> decisions,
-            int lookbackDays, Clock clock) {
+            Optional<ExecutorSignalRepository> signals, int lookbackDays, Clock clock) {
         this.client = client;
         this.depotService = depotService;
         this.positions = positions;
         this.decisions = decisions;
+        this.signals = signals;
         this.lookbackDays = lookbackDays;
         this.clock = clock;
     }
@@ -115,7 +120,11 @@ public class DepotHistoryService {
             DecisionLog d = decisions.get().findBySignalIdAndAction(p.sourceSignalId(), "ENTER");
             if (d != null) reasoning = d.reasoning();
         }
+        String runId = null;
+        if (signals.isPresent() && p.sourceSignalId() != null) {
+            runId = signals.get().findRunIdBySignalId(p.sourceSignalId());
+        }
         return new DepotHistoryEntry.Why(p.sourceAgent(), p.killCriteria(), reasoning,
-                p.exitReason(), p.realizedR());
+                p.exitReason(), p.realizedR(), runId);
     }
 }

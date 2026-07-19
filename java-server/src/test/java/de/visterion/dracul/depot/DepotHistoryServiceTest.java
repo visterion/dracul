@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.DecisionLog;
 import de.visterion.dracul.executor.DecisionLogRepository;
 import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
+import de.visterion.dracul.executor.ExecutorSignalRepository;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -45,7 +46,7 @@ class DepotHistoryServiceTest {
                 "log-1", "run-1", null, "SIGNAL", "sig-1", "index-strigoi", null, "AAPL",
                 null, null, "ENTER", "OK", null, "index inclusion drift", 0.7, null, null));
 
-        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions), Optional.empty(),
                 90, FIXED_CLOCK);
         var out = svc.history("depot-1", "u@x");
 
@@ -71,7 +72,7 @@ class DepotHistoryServiceTest {
                 new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry",
                         null, null, null)));
 
-        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(),
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(), Optional.empty(),
                 90, FIXED_CLOCK);
         var out = svc.history("depot-1", "u@x");
 
@@ -91,7 +92,7 @@ class DepotHistoryServiceTest {
                 new DepotClosedPosition("SAP", new BigDecimal("100"), new BigDecimal("120"),
                         new BigDecimal("200"), "cr-1", null, null)));
 
-        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(),
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(), Optional.empty(),
                 90, FIXED_CLOCK);
         var out = svc.history("depot-1", "u@x");
 
@@ -111,7 +112,7 @@ class DepotHistoryServiceTest {
                 new DepotOrder("o-1", "AAPL", "buy", new BigDecimal("10"), "market", "filled", "entry",
                         "2026-07-01T10:00:00Z", "2026-07-01T10:00:03Z", new BigDecimal("191.20"))));
 
-        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(),
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(), Optional.empty(),
                 90, FIXED_CLOCK);
         List<DepotHistoryEntry> h = svc.history("depot-1", "u@x");
 
@@ -137,7 +138,7 @@ class DepotHistoryServiceTest {
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
                 null, null, null, null, null, 0, null, null, null, null, null, null));
 
-        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions), Optional.empty(),
                 90, FIXED_CLOCK);
         List<DepotHistoryEntry> h = svc.history("depot-1", "u@x");
 
@@ -166,7 +167,7 @@ class DepotHistoryServiceTest {
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
                 null, null, null, null, null, 0, null, null, null, null, null, null));
 
-        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions), Optional.empty(),
                 90, FIXED_CLOCK);
         List<DepotHistoryEntry> h = svc.history("depot-1", "u@x");
 
@@ -183,10 +184,38 @@ class DepotHistoryServiceTest {
         when(depotService.depot("depot-1", "u@x", false)).thenReturn(depotWithProvider("alpaca"));
         when(client.orders(eq("depot-1"), eq("all"), any(), any())).thenReturn(List.of());
 
-        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(),
+        var svc = new DepotHistoryService(client, depotService, Optional.empty(), Optional.empty(), Optional.empty(),
                 90, FIXED_CLOCK);
         svc.history("depot-1", "u@x");
 
         verify(client).orders("depot-1", "all", "2026-04-20T00:00:00Z", "2026-07-19T00:00:00Z");
+    }
+
+    @Test
+    void whyCarriesRunIdFromSignalRepo() {
+        var client = mock(AgoraDepotClient.class);
+        var depotService = mock(DepotService.class);
+        var positions = mock(ExecutorPositionRepository.class);
+        var decisions = mock(DecisionLogRepository.class);
+        var signals = mock(ExecutorSignalRepository.class);
+
+        when(depotService.depot("depot-1", "u@x", false)).thenReturn(depotWithProvider("saxo"));
+        when(client.closedPositions(eq("depot-1"), any(), any())).thenReturn(List.of(
+                new DepotClosedPosition("SAP", new BigDecimal("100"), new BigDecimal("120"),
+                        new BigDecimal("200"), "sig-1", "2026-06-01T09:00:00Z", "2026-06-05T15:00:00Z")));
+        when(positions.findBySourceSignalId("sig-1")).thenReturn(new ExecutorPosition(
+                7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
+                null, List.of("stop below 95"), "sig-1", "pead", null, null, "CLOSED", null,
+                null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
+                null, null, null, null, null, 0, null, null, null, null, null, null));
+        when(signals.findRunIdBySignalId("sig-1")).thenReturn("run-xyz");
+
+        var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
+                Optional.of(signals), 90, FIXED_CLOCK);
+        List<DepotHistoryEntry> h = svc.history("depot-1", "u@x");
+
+        assertThat(h).hasSize(1);
+        assertThat(h.get(0).why()).isNotNull();
+        assertThat(h.get(0).why().runId()).isEqualTo("run-xyz");
     }
 }
