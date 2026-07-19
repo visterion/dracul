@@ -354,8 +354,10 @@ label (Einstieg/Ziel/Stop, normalized from Agora's raw `entry`/`stop_loss`/
 plain-language status: a target/stop leg that is broker-`notworking`/
 `inactive` reads "wartet auf Einstieg" / "waiting for entry"
 (`orderStateLabel()`) instead of the raw broker status, since that leg simply
-hasn't armed yet. There is **no limit/stop price column yet** — that is
-tracked separately as a gated follow-up.
+hasn't armed yet. Each leg also shows a **Preis** column: `limitPrice ??
+stopPrice` (a limit/take-profit leg carries `limitPrice`, a stop leg carries
+`stopPrice`, never both), formatted via `formatMoney()` in the depot's
+account currency, or `—` when both are null (plain market order).
 
 ## Development
 

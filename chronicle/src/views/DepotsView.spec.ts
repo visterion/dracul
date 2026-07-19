@@ -306,8 +306,8 @@ describe('DepotsView', () => {
         depot({
           id: 'depot-1',
           orders: [
-            { brokerOrderId: 'o1', symbol: 'PSMT', side: 'buy', qty: 5, type: 'limit', status: 'working', role: 'entry', parentId: null },
-            { brokerOrderId: 'o2', symbol: 'PSMT', side: null, qty: 5, type: 'stopiftraded', status: 'notworking', role: 'stop_loss', parentId: 'o1' },
+            { brokerOrderId: 'o1', symbol: 'PSMT', side: 'buy', qty: 5, type: 'limit', status: 'working', role: 'entry', parentId: null, limitPrice: null, stopPrice: null },
+            { brokerOrderId: 'o2', symbol: 'PSMT', side: null, qty: 5, type: 'stopiftraded', status: 'notworking', role: 'stop_loss', parentId: 'o1', limitPrice: null, stopPrice: null },
           ],
         }),
       ],
