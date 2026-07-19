@@ -1,5 +1,6 @@
 package de.visterion.dracul.voievod;
 
+import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.verdict.ContributingStrigoiDetail;
@@ -23,10 +24,13 @@ public class VerdictSynthesizer {
 
     private final VerdictRepository verdictRepo;
     private final AgoraMarketData marketData;
+    private final HiveMemResearchService memory;
 
-    public VerdictSynthesizer(VerdictRepository verdictRepo, AgoraMarketData marketData) {
+    public VerdictSynthesizer(VerdictRepository verdictRepo, AgoraMarketData marketData,
+            HiveMemResearchService memory) {
         this.verdictRepo = verdictRepo;
         this.marketData = marketData;
+        this.memory = memory;
     }
 
     public Result upsert(String symbol, String summary, ConsensusCluster cluster, String userId) {
@@ -64,6 +68,10 @@ public class VerdictSynthesizer {
         verdictRepo.insertSynthesized(symbol, cluster.companyName(), contributingStrigoi,
                 consensusScore, summary, anomalyTypes, pp.price(), pp.currency(), avgConfidence,
                 horizon, signals, risks, details, preyIds, userId);
+        // Cell-only write-back (T1.6 Task 9, D9): verdicts never trade, so there is no
+        // research_memory_link row — just the thesis cell, written once on first synthesis.
+        memory.writeThesisMemory("verdict", symbol, anomalyTypes.isEmpty() ? null : anomalyTypes.get(0),
+                summary, signals, risks, List.of(), horizon, "voievod", avgConfidence, symbol);
         return Result.INSERTED;
     }
 
