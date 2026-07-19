@@ -98,6 +98,18 @@ public class PreyRepository {
                 .update();
     }
 
+    /** True if a prey with this originating run_id belongs to the given user. Basis for the
+     *  read-only transcript authorization check (Schicht 2) — prevents cross-user run access. */
+    public boolean runExistsForUser(String runId, String userId) {
+        return Boolean.TRUE.equals(jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM prey WHERE run_id = :runId AND user_id = :userId)
+                """)
+                .param("runId", runId)
+                .param("userId", userId)
+                .query(Boolean.class)
+                .single());
+    }
+
     private Prey mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         return new Prey(
                 rs.getString("id"),

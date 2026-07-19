@@ -5,7 +5,7 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import DepotPositionDetailView from './DepotPositionDetailView.vue'
 import de from '../i18n/locales/de'
 import type {
-  DepotPositionView, DepotOrderView, DepotChart, InstrumentInfo, ChartRange,
+  DepotPositionView, DepotOrderView, DepotChart, InstrumentInfo, ChartRange, RunTranscript,
 } from '../api/types'
 
 function position(overrides: Partial<DepotPositionView> = {}): DepotPositionView {
@@ -57,22 +57,26 @@ const analystDetailInfo: InstrumentInfo = {
   },
 }
 
-let getDepotPositionImpl: (connection: string, symbol: string) => Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null }> =
-  async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z' })
+let getDepotPositionImpl: (connection: string, symbol: string) => Promise<{ position: DepotPositionView; orders: DepotOrderView[]; asOf: string | null; runId: string | null }> =
+  async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null })
 let getInstrumentChartImpl: (symbol: string, range: ChartRange) => Promise<DepotChart> =
   async () => chart([100, 110, 120])
 let getInstrumentInfoImpl: (symbol: string) => Promise<InstrumentInfo> =
   async () => emptyInfo
+let getRunTranscriptImpl: (runId: string) => Promise<RunTranscript> =
+  async runId => ({ transcript: { runId, note: 'mock transcript' }, expired: false })
 
 const getDepotPositionSpy = vi.fn((connection: string, symbol: string) => getDepotPositionImpl(connection, symbol))
 const getInstrumentChartSpy = vi.fn((symbol: string, range: ChartRange) => getInstrumentChartImpl(symbol, range))
 const getInstrumentInfoSpy = vi.fn((symbol: string) => getInstrumentInfoImpl(symbol))
+const getRunTranscriptSpy = vi.fn((runId: string) => getRunTranscriptImpl(runId))
 
 vi.mock('../api', () => ({
   useApi: () => ({
     getDepotPosition: getDepotPositionSpy,
     getInstrumentChart: getInstrumentChartSpy,
     getInstrumentInfo: getInstrumentInfoSpy,
+    getRunTranscript: getRunTranscriptSpy,
   }),
 }))
 
@@ -92,12 +96,14 @@ function mountView() {
 beforeEach(() => {
   localStorage.clear()
   router.push('/depots/depot-1/NVDA')
-  getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z' })
+  getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null })
   getInstrumentChartImpl = async () => chart([100, 110, 120])
   getInstrumentInfoImpl = async () => emptyInfo
+  getRunTranscriptImpl = async runId => ({ transcript: { runId, note: 'mock transcript' }, expired: false })
   getDepotPositionSpy.mockClear()
   getInstrumentChartSpy.mockClear()
   getInstrumentInfoSpy.mockClear()
+  getRunTranscriptSpy.mockClear()
 })
 
 describe('DepotPositionDetailView', () => {
@@ -187,6 +193,7 @@ describe('DepotPositionDetailView', () => {
       }),
       orders: [order({ role: 'stop' })],
       asOf: '2026-07-11T08:00:00Z',
+      runId: null,
     })
     const w = mountView()
     await flushPromises()
@@ -215,7 +222,7 @@ describe('DepotPositionDetailView', () => {
     await flushPromises()
     expect(getDepotPositionSpy).toHaveBeenCalledWith('depot-1', 'NVDA')
 
-    getDepotPositionImpl = async () => ({ position: position({ symbol: 'ABB', avgEntryPrice: 35 }), orders: [], asOf: '2026-07-11T08:00:00Z' })
+    getDepotPositionImpl = async () => ({ position: position({ symbol: 'ABB', avgEntryPrice: 35 }), orders: [], asOf: '2026-07-11T08:00:00Z', runId: null })
     await router.push('/depots/depot-1/ABB')
     await flushPromises()
 
@@ -290,6 +297,7 @@ describe('DepotPositionDetailView', () => {
       position: position({ currency: 'EUR' }),
       orders: [order()],
       asOf: '2026-07-11T08:00:00Z',
+      runId: null,
     })
     getInstrumentInfoImpl = async () => ({
       ...fullInfo,
@@ -307,5 +315,40 @@ describe('DepotPositionDetailView', () => {
     expect(insights.text()).toContain('200')
     expect(insights.text()).toContain('€')
     expect(insights.text()).not.toContain('$')
+  })
+
+  // ── Raw transcript drilldown (Schicht 2, Task 4b) ────────────────
+
+  it('does not render the transcript panel when the position has no linked run', async () => {
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: null })
+    const w = mountView()
+    await flushPromises()
+
+    expect(w.find('[data-testid="pd-transcript"]').exists()).toBe(false)
+  })
+
+  it('renders the transcript panel with a heuristic-link hint when the position has a linked run', async () => {
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: 'run-open-1' })
+    const w = mountView()
+    await flushPromises()
+
+    const panel = w.find('[data-testid="pd-transcript"]')
+    expect(panel.exists()).toBe(true)
+    expect(w.find('[data-testid="pd-transcript-heuristic"]').exists()).toBe(true)
+    expect(w.find('[data-testid="transcript-panel"]').exists()).toBe(true)
+  })
+
+  it('loads the run transcript on toggle click when a run is linked', async () => {
+    getDepotPositionImpl = async () => ({ position: position(), orders: [order()], asOf: '2026-07-11T08:00:00Z', runId: 'run-open-1' })
+    const w = mountView()
+    await flushPromises()
+
+    expect(getRunTranscriptSpy).not.toHaveBeenCalled()
+
+    await w.find('[data-testid="transcript-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(getRunTranscriptSpy).toHaveBeenCalledWith('run-open-1')
+    expect(w.find('[data-testid="transcript-raw"]').text()).toContain('run-open-1')
   })
 })

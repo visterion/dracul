@@ -265,6 +265,24 @@ public class ExecutorPositionRepository {
                 .orElse(null);
     }
 
+    /** The open executor position for this connection+symbol, or {@code null}. Heuristic link
+     *  basis for the open-position transcript drilldown (open broker positions carry no
+     *  clientRef/order id) — at most one OPEN row exists per (connection, symbol) by the
+     *  {@code secondOpenRowForSameConnectionSymbolFails} DB constraint, so "most recent" is
+     *  purely defensive here. */
+    public ExecutorPosition findOpenBySymbol(String connection, String symbol) {
+        return jdbc.sql("""
+                SELECT * FROM executor_position
+                WHERE status = 'OPEN' AND connection = :conn AND symbol = :symbol
+                ORDER BY entry_date DESC LIMIT 1
+                """)
+                .param("conn", connection)
+                .param("symbol", symbol)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
     public List<ExecutorPosition> findOpen() {
         return jdbc.sql("""
                 SELECT * FROM executor_position WHERE status = 'OPEN'

@@ -48,6 +48,7 @@
             <span class="dp-hist-why">{{ t('depots.history.why') }}: {{ e.why.strigoi }} — {{ e.why.entryReasoning }}</span>
             <span v-if="e.why.draculExitReason !== null" class="dp-hist-dracul">{{ t('depots.history.exitReason') }}: {{ e.why.draculExitReason }}</span>
             <span v-if="e.why.draculRealizedR !== null" class="dp-hist-dracul">{{ t('depots.history.realizedR') }}: {{ e.why.draculRealizedR }}</span>
+            <RawTranscriptPanel v-if="e.why.runId" :run-id="e.why.runId" />
           </template>
           <span v-else class="dp-hist-nowhy">{{ t('depots.history.notLinkable') }}</span>
         </div>
@@ -169,6 +170,7 @@ import StatTile from '../common/StatTile.vue'
 import PriceChart from '../common/PriceChart.vue'
 import DepotPositionsTable from './DepotPositionsTable.vue'
 import TickerButton from '../instrument/TickerButton.vue'
+import RawTranscriptPanel from './RawTranscriptPanel.vue'
 import { useApi } from '../../api'
 import type { Depot, DepotChart, ChartRange, DepotHistoryEntry } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
