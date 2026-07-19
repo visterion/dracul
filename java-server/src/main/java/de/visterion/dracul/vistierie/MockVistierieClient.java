@@ -243,6 +243,18 @@ public class MockVistierieClient implements VistierieClient {
     }
 
     @Override
+    public java.util.List<RunSearchHit> listAgentRuns(String agent, int limit, int offset) {
+        var all = java.util.List.of(
+                new RunSearchHit("run-spin-1", "strigoi-spin", "done", false,
+                        Instant.now().minus(22, ChronoUnit.MINUTES), 0, "4 prey found"),
+                new RunSearchHit("run-insider-1", "strigoi-insider", "done", false,
+                        Instant.now().minus(1, ChronoUnit.DAYS), 0, "2 prey found")
+        );
+        if (agent == null || agent.isBlank()) return all;
+        return all.stream().filter(h -> h.agent().equals(agent)).toList();
+    }
+
+    @Override
     public tools.jackson.databind.JsonNode getRunTranscript(String runId, String view) {
         return null;
     }

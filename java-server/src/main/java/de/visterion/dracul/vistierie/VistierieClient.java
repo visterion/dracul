@@ -45,6 +45,11 @@ public interface VistierieClient {
     java.util.List<RunSearchHit> searchRuns(String agent, String q, Boolean hasError,
             java.util.List<String> status, java.time.Instant from, java.time.Instant to,
             int limit, int offset);
+
+    /** Runs for the operator's activity inspector, newest first. {@code agent} null = all agents.
+     *  Modeled on the proven /admin/runs listing already used by getStrigoiDetail. */
+    java.util.List<RunSearchHit> listAgentRuns(String agent, int limit, int offset);
+
     tools.jackson.databind.JsonNode getRunTranscript(String runId, String view);
     tools.jackson.databind.JsonNode getRunToolCall(String runId, String toolUseId);
 
