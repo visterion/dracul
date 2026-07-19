@@ -175,8 +175,15 @@ tenant and degrade gracefully on error (empty list or `null`).
 | Method | Vistierie endpoint | Returns on error |
 |---|---|---|
 | `searchRuns(query, …)` | `GET /runs/search` | empty list |
+| `listAgentRuns(agent, limit, offset)` | `GET /runs` (tenant-scoped) | empty list |
 | `getRunTranscript(runId, view)` | `GET /runs/{id}/transcript?view=digest\|compact\|full` | `null` |
 | `getRunToolCall(runId, toolUseId)` | `GET /runs/{id}/tool-calls/{toolUseId}` | `null` |
+
+**`listAgentRuns(agent, limit, offset)`** — lists the tenant's own agent runs
+(newest first) for the operator-gated activity inspector (`GET
+/api/inspector/runs`). Uses the **tenant-scoped** `/runs` endpoint (dracul only —
+never `/admin/runs`, which is cross-tenant); the `agent` filter is applied
+client-side because `/runs` ignores it. Paginates via `limit`/`offset`.
 
 ### Method details
 
