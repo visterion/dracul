@@ -136,25 +136,32 @@
         <div class="em-text">{{ t('depots.positions.empty') }}</div>
       </div>
 
-      <div v-if="depot.orders.length" class="dp-orders" data-testid="depot-orders">
+      <div v-if="orderGroups.length" class="dp-orders" data-testid="depot-orders">
         <div class="section-head">{{ t('depots.orders.title') }}</div>
         <div class="dp-order-row dp-order-head">
           <span>{{ t('depots.orders.col.symbol') }}</span>
-          <span>{{ t('depots.orders.col.side') }}</span>
+          <span>{{ t('depots.orders.col.role') }}</span>
           <span>{{ t('depots.orders.col.qty') }}</span>
           <span>{{ t('depots.orders.col.type') }}</span>
           <span>{{ t('depots.orders.col.status') }}</span>
         </div>
-        <div v-for="row in orderRows" :key="row.key" class="dp-order-row">
-          <TickerButton :symbol="row.symbol" class="mono" />
-          <span class="dp-order-side" :class="`tone-${row.side.tone}`">
-            <span v-if="row.side.arrow" class="dp-order-arrow" aria-hidden="true">{{ row.side.arrow }}</span>{{ row.side.label }}
-          </span>
-          <span class="mono">{{ row.qty }}</span>
-          <span class="dp-order-type">{{ row.type.label }}</span>
-          <span class="dp-order-status">
-            <TagPill :tone="row.status.tone">{{ row.status.label }}</TagPill>
-          </span>
+        <div v-for="group in orderGroups" :key="group.key" class="dp-order-group" data-testid="depot-order-group">
+          <div
+            v-for="(leg, i) in group.legs"
+            :key="leg.key"
+            class="dp-order-row"
+            :class="{ 'dp-order-leg': i > 0 }"
+            data-testid="depot-order-leg"
+          >
+            <TickerButton v-if="i === 0" :symbol="group.symbol" class="mono" />
+            <span v-else class="dp-order-symbol-spacer" aria-hidden="true" />
+            <span class="dp-order-role">{{ leg.roleLabel }}</span>
+            <span class="mono">{{ leg.qty }}</span>
+            <span class="dp-order-type">{{ leg.type.label }}</span>
+            <span class="dp-order-status">
+              <TagPill :tone="leg.state.tone">{{ leg.state.label }}</TagPill>
+            </span>
+          </div>
         </div>
       </div>
     </template>
@@ -175,7 +182,7 @@ import { useApi } from '../../api'
 import type { Depot, DepotChart, ChartRange, DepotHistoryEntry } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
 import { fmtPl, allocationSegments, isStale, formatAbsoluteTime } from '../../lib/depotDisplay'
-import { orderSideLabel, orderTypeLabel, orderStatusLabel } from '../../lib/orderDisplay'
+import { orderTypeLabel, orderStatusLabel, groupOrders, orderStateLabel } from '../../lib/orderDisplay'
 import { formatMoney, formatNumber } from '../../utils/format'
 
 const props = defineProps<{ depot: Depot }>()
@@ -228,14 +235,17 @@ async function loadHistory() {
 
 const allocation = computed(() => allocationSegments(props.depot.positions))
 
-const orderRows = computed(() =>
-  props.depot.orders.map(o => ({
-    key: o.brokerOrderId,
-    symbol: o.symbol,
-    qty: formatNumber(o.qty, Number.isInteger(o.qty) ? 0 : 4),
-    side: orderSideLabel(o.side, t),
-    type: orderTypeLabel(o.type, t),
-    status: orderStatusLabel(o.status, t),
+const orderGroups = computed(() =>
+  groupOrders(props.depot.orders).map(group => ({
+    key: group.key,
+    symbol: group.symbol,
+    legs: group.legs.map(leg => ({
+      key: leg.order.brokerOrderId,
+      roleLabel: leg.canonicalRole ? t(`depots.orders.role.${leg.canonicalRole}`) : '—',
+      qty: formatNumber(leg.order.qty, Number.isInteger(leg.order.qty) ? 0 : 4),
+      type: orderTypeLabel(leg.order.type, t),
+      state: orderStateLabel(leg.order.status, leg.order.role, t),
+    })),
   })),
 )
 
@@ -379,6 +389,7 @@ function formatChartValue(v: number): string {
 }
 
 .dp-orders { display: flex; flex-direction: column; gap: var(--space-2); }
+.dp-order-group { display: flex; flex-direction: column; }
 .dp-order-row {
   display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: var(--space-2);
   align-items: center;
@@ -389,11 +400,10 @@ function formatChartValue(v: number): string {
   font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--ash-gray); border-bottom: 1px solid var(--rule);
 }
-.dp-order-side { display: inline-flex; align-items: center; gap: 4px; }
-.dp-order-side.tone-green { color: var(--signal-positive-bright); }
-.dp-order-side.tone-crimson { color: var(--blood-crimson-bright); }
-.dp-order-side.tone-ash { color: var(--ash-gray-light); }
-.dp-order-arrow { font-size: var(--text-micro); }
+.dp-order-group .dp-order-row:not(:last-child) { border-bottom: none; }
+.dp-order-row.dp-order-leg { padding-left: var(--space-4); }
+.dp-order-symbol-spacer { display: inline-block; }
+.dp-order-role { color: var(--bone-ivory-dim); }
 
 @media (max-width: 600px) {
   .dp-stats { grid-template-columns: 1fr 1fr; gap: var(--space-3); }

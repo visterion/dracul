@@ -21,12 +21,13 @@ const router = createRouter({ history: createMemoryHistory(), routes: [
   { path: '/depots/:connection/:symbol', name: 'depot-position-detail', component: { template: '<div/>' } },
 ] })
 
-const depot: Depot = {
+const baseDepot: Depot = {
   id: 'depot-1', provider: 'alpaca', environment: 'paper', status: 'ok', probedAt: null, error: null,
   account: null, aggregates: null, positions: [], orders: [], asOf: null,
 }
 
-function mountSection() {
+function mountSection(overrides: Partial<Depot> = {}) {
+  const depot: Depot = { ...baseDepot, ...overrides }
   return mount(DepotSection, { props: { depot }, global: { plugins: [i18n, router] } })
 }
 

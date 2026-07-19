@@ -300,14 +300,14 @@ describe('DepotsView', () => {
     expect(requestedConnections).toContain('saxo-live-1')
   })
 
-  it('renders order rows with readable labels, a header row, and a status pill', async () => {
+  it('renders order rows grouped by bracket, with role labels, a header row, and a status pill', async () => {
     depotsResponse = {
       depots: [
         depot({
           id: 'depot-1',
           orders: [
-            { brokerOrderId: 'o1', symbol: 'PSMT', side: 'buy', qty: 5, type: 'limit', status: 'working', role: null, parentId: null },
-            { brokerOrderId: 'o2', symbol: 'PSMT', side: null, qty: 5, type: 'stopiftraded', status: 'notworking', role: null, parentId: null },
+            { brokerOrderId: 'o1', symbol: 'PSMT', side: 'buy', qty: 5, type: 'limit', status: 'working', role: 'entry', parentId: null },
+            { brokerOrderId: 'o2', symbol: 'PSMT', side: null, qty: 5, type: 'stopiftraded', status: 'notworking', role: 'stop_loss', parentId: 'o1' },
           ],
         }),
       ],
@@ -321,19 +321,19 @@ describe('DepotsView', () => {
     const text = orders.text()
 
     // Column header row is present.
-    expect(text).toContain('Richtung')
+    expect(text).toContain('Rolle')
     expect(text).toContain('Stück')
 
-    // Readable labels, not raw broker enums.
-    expect(text).toContain('Kauf')
-    expect(text).toContain('aktiv')
-    expect(text).toContain('inaktiv')
+    // Readable role + status labels, not raw broker enums.
+    expect(text).toContain('Einstieg')
     expect(text).toContain('Stop')
+    expect(text).toContain('aktiv')
     expect(text).not.toContain('working') // neither 'working' nor 'notworking'
     expect(text).not.toContain('stopiftraded')
 
-    // Missing side renders as a dash.
-    expect(text).toContain('—')
+    // The protective leg is not yet armed, so it reads in plain language rather
+    // than the raw broker "inactive".
+    expect(text).toContain('wartet auf Einstieg')
 
     // Status is rendered as a TagPill.
     expect(orders.findAll('.tag-pill').length).toBe(2)
