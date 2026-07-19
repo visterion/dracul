@@ -571,9 +571,11 @@ match, or the position has no `source_signal_id`).
 the open position's `source_signal_id` (ENTER/ADD/TRIM/EXIT), oldest
 first, each carrying its **own** `runId` — the executor run that
 decided that particular move (`decision_log.run_id`, distinct from the
-position-level `runId` above, which is the entry signal's run). The
-frontend links each move to its raw executor transcript via
-`GET /api/depots/run/{runId}/transcript`.
+position-level `runId` above, which is the entry signal's run). Move
+runs are executor runs with no owning `Prey`, so the prey-gated
+`GET /api/depots/run/{runId}/transcript` cannot authorize them; the
+frontend links each move to its raw executor transcript via the
+operator-gated `GET /api/inspector/run/{runId}/transcript` instead.
 
 - **`404 NOT_FOUND`** — `{connection}` isn't visible to the current
   user (unknown, or a live connection outside the allow-list), or
