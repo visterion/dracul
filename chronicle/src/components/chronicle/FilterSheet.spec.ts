@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import FilterSheet from './FilterSheet.vue'
+import InfoDot from '../common/InfoDot.vue'
 import de from '../../i18n/locales/de'
 
 const i18n = createI18n({ legacy: false, locale: 'de', messages: { de } })
@@ -100,6 +101,14 @@ describe('FilterSheet', () => {
     expect(document.activeElement).toBe(trigger)
     w.unmount()
     trigger.remove()
+  })
+
+  it('shows the Meute-overview explainer InfoDot on the brood-profiles head', () => {
+    const w = make()
+    // Mobile users must reach the same hunter.overview explainer the desktop
+    // sidebar exposes next to "Die Meute".
+    const topics = w.findAllComponents(InfoDot).map(c => c.props('topic'))
+    expect(topics).toContain('hunter.overview')
   })
 
   it('does not repeat the panel title "Filter" as a section head', () => {
