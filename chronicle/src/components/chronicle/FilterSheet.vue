@@ -26,7 +26,10 @@
         </button>
       </template>
 
-      <div class="fg-head">{{ t('chronicle.filters.broodProfiles') }}</div>
+      <div class="fg-head">
+        {{ t('chronicle.filters.broodProfiles') }}
+        <InfoDot topic="hunter.overview" />
+      </div>
       <BroodMini :strigoi="strigoi" :counts="broodCounts" @open="s => $emit('openStrigoi', s)" />
     </section>
   </div>
@@ -37,6 +40,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiStatus } from '../../api/types'
 import BroodMini from '../common/BroodMini.vue'
+import InfoDot from '../common/InfoDot.vue'
 import { useEnumLabels } from '../../composables/useEnumLabels'
 
 const props = defineProps<{
