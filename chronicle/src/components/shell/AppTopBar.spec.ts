@@ -39,14 +39,12 @@ describe('AppTopBar', () => {
     setActivePinia(createPinia())
   })
 
-  it('shows the decision-overview (i) next to the bell', async () => {
+  it('shows the decision (i) next to the bell', async () => {
     const w = mountBar()
     const info = w.find('[data-testid="decision-info"]')
     expect(info.exists()).toBe(true)
-    const dot = w.findComponent({ name: 'InfoDot' })
-    expect(dot.props('topic')).toBe('decision.overview')
-    expect(dot.props('variant')).toBe('icon')
-    // Clicking the (i) opens the teleported explainer overlay.
+    // The API stub has no getDecisionDoc, so the doc load fails -> null and the
+    // button falls back to the static decision.overview explainer overlay.
     expect(document.querySelector('[data-testid="explainer-overlay"]')).toBeNull()
     await info.trigger('click')
     expect(document.querySelector('[data-testid="explainer-overlay"]')).not.toBeNull()
@@ -57,8 +55,8 @@ describe('AppTopBar', () => {
     const w = mountBar()
     const controls = w.find('.top-bar__controls').element
     const bell = w.find('[data-testid="live-toggle"]').element
-    // The InfoDot renders its icon button with the .info-dot--icon class.
-    const info = w.find('.info-dot--icon').element
+    // DecisionDocButton renders the (i) trigger with this testid.
+    const info = w.find('[data-testid="decision-info"]').element
     expect(bell.parentElement).toBe(controls)
     expect(info.parentElement).toBe(controls)
     expect(bell.nextElementSibling).toBe(info)

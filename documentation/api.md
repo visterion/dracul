@@ -1054,6 +1054,32 @@ the cache. Each entry: `id`, `label`, `configured`, `status` (`ok` /
 `rate_limited` / `error` / `not_configured` / `timeout`), `httpStatus`, `detail`,
 `latencyMs`, `usedBy` (Strigoi names), `rateLimitNote`, `checkedAt`.
 
+## Decision Doc
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/decision-doc` | Returns this instance's mounted "how Dracul decides" Markdown doc |
+
+Serves the deployment-local decision doc that the Chronicle top-bar (i) renders
+(see `documentation/chronicle.md`). The file is pointed at via
+`DRACUL_DECISION_DOC_PATH` and read from a read-only mount — it is never
+committed or baked into the image (see `documentation/configuration.md` and
+`documentation/operations.md`).
+
+- **`200 OK`** — `{ "markdown": "..." }` when a decision doc is mounted and
+  readable.
+- **`404 NOT_FOUND`** — when the feature is unconfigured (`DRACUL_DECISION_DOC_PATH`
+  blank), the path is not a readable regular file, or the file exceeds
+  `DRACUL_DECISION_DOC_MAX_BYTES`. Chronicle falls back to the built-in
+  overview on 404.
+
+Behind Cloudflare Access like the rest of `/api/**` (operator-only, no bearer
+token).
+
+```json
+{ "markdown": "# Wie Dracul entscheidet\n\n..." }
+```
+
 ## Admin
 
 | Method | Path | Purpose |

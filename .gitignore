@@ -30,3 +30,6 @@ chronicle/.env*.local
 .classpath
 .project
 .settings/
+
+# decision-doc served at runtime, never committed
+decision-doc.md
