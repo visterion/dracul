@@ -46,9 +46,14 @@
 import { onMounted, ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Explainer } from '../../i18n/explainers'
+import { useScrollLock } from '../../composables/useScrollLock'
 
 const props = defineProps<{ explainer: Explainer; anchor?: string }>()
 defineEmits<{ close: [] }>()
+
+// Lock the page scroll for the panel's whole mounted lifetime (it has no
+// `open` prop — it exists only while shown).
+useScrollLock(ref(true))
 
 const { t } = useI18n()
 const closeBtn = ref<HTMLElement | null>(null)
@@ -78,6 +83,7 @@ onMounted(async () => {
 .explainer-panel {
   background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 6px;
   max-width: 560px; width: 100%; max-height: 80vh; overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-5); outline: none;
 }
 .ex-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
