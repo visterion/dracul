@@ -71,6 +71,78 @@ const en: ExplainerTable = {
       { anchor: 'merger', heading: 'merger — Merger arbitrage', body: 'The target trades below the offer price — the gap is the profit if the deal closes.' },
     ],
   },
+  'hunter.daywalker': {
+    title: 'Daywalker — Day watcher',
+    sections: [
+      { heading: 'Role', body: 'Watches your held positions and watchlist during the day. Detects notable events on its own — without the LLM — and lets the LLM only classify the severity.' },
+      { heading: 'When', body: 'On weekdays during trading hours, at regular intervals (default every 5 minutes, configurable — every 15 minutes on this system).' },
+      { heading: 'What for', body: 'Price jump, volume spike, insider sale, negative news, analyst downgrade.', table: [{ label: 'Price jump', value: '≥ 3 %' }, { label: 'Volume', value: '≥ 3×' }, { label: 'Severities', value: 'INFO · WARNING · CRITICAL' }] },
+      { heading: 'What it does', body: 'Writes an alert into the chronicle and sends a Telegram note on CRITICAL. It trades nothing.' },
+    ],
+  },
+  'hunter.daywalker-deep': {
+    title: 'Daywalker-Deep — Second opinion',
+    sections: [
+      { heading: 'Role', body: 'The more thorough second assessor for the day watcher. Steps in only when the LLM is itself unsure about a CRITICAL alert.' },
+      { heading: 'When', body: 'Only on low self-confidence (confidence below 0.6) on a CRITICAL alert — asynchronously, in the background.' },
+      { heading: 'Important', body: 'Never delays or lowers the original alert. A severity is only ever raised on the same day, never lowered.' },
+    ],
+  },
+  'hunter.gropar': {
+    title: 'Gropar — Evening exit',
+    sections: [
+      { heading: 'Role', body: 'Advises on every open position in the evening: sell, trim or hold. An advisor — it does not trade.' },
+      { heading: 'When', body: 'On weekdays at 22:00 UTC.' },
+      { heading: 'What it measures', body: 'Deterministic exit indicators.', table: [{ label: 'Trailing stop', value: 'ATR 22 × 3.0' }, { label: 'Trend', value: 'MA 50 / 200' }, { label: 'Target', value: '+40 %' }, { label: 'Stop', value: '−15 %' }] },
+      { heading: 'What it does', body: 'Writes an exit signal (SELL/TRIM/HOLD) into the chronicle, Telegram on SELL/TRIM.' },
+    ],
+  },
+  'hunter.voievod': {
+    title: 'Voievod — The council',
+    sections: [
+      { heading: 'Role', body: 'Bundles the hunters\' finds into a verdict: only symbols that at least two different Strigoi flagged independently.' },
+      { heading: 'When', body: 'On weekdays at 08:00 UTC.' },
+      { heading: 'How', body: 'The consensus value is computed in code; the LLM only writes the summary. A decision you have already made is never overwritten.' },
+    ],
+  },
+  'hunter.voievod-outcome': {
+    title: 'Voievod-Outcome — The learning',
+    sections: [
+      { heading: 'Role', body: 'Weekly review: checks how old finds turned out and proposes new patterns (lessons) from them.' },
+      { heading: 'When', body: 'On Saturdays at 07:00 UTC.' },
+      { heading: 'What it does', body: 'Looks at prey whose horizon expired more than 30 days ago and creates pattern proposals for approval — active only after you confirm them.' },
+    ],
+  },
+  'hunter.renfield': {
+    title: 'Renfield — Suggestions',
+    sections: [
+      { heading: 'Role', body: 'Daily review of your watchlist. Gathers facts per symbol and lets the LLM turn them into ranked trade suggestions.' },
+      { heading: 'When', body: 'On weekdays at 12:00 UTC.' },
+      { heading: 'Important', body: 'The LLM has no tools here and never trades — it only suggests (up to 30 symbols). Telegram digest per run.' },
+    ],
+  },
+  'hunter.executor': {
+    title: 'Executor — The execution',
+    sections: [
+      { heading: 'Role', body: 'The only agent that actually places orders — guarded entries (with target and stop) and exits.' },
+      { heading: 'Guarded by', body: 'Veto catalog, order guard, position sizer, stop ratchet — the LLM cannot trigger an order directly, only guarded tools.', table: [{ label: 'Minimum confidence', value: '0.65' }, { label: 'Max. positions', value: '5' }, { label: 'Max. per sector', value: '2' }, { label: 'Pace', value: '2 / week' }, { label: 'Signal age', value: '≤ 5 days' }] },
+      { heading: 'Important', body: 'Budget and venue are configurable (default: 10,000, paper/Saxo-Sim). Runs only when enabled.' },
+    ],
+  },
+  'decision.overview': {
+    title: 'How Dracul decides',
+    sections: [
+      { heading: 'What Dracul is', body: 'Dracul is an autonomous research assistant for stock anomalies — not an auto-trader, not investment advice. It finds candidates; you decide.' },
+      { heading: 'The hunters (Strigoi)', body: 'Six specialised pattern hunters wake at night and scan the market for one documented pattern each.', table: [{ label: 'Spin', value: 'Spin-offs' }, { label: 'Insider', value: 'Insider cluster buys' }, { label: 'Echo', value: 'Post-earnings drift (PEAD)' }, { label: 'Lazarus', value: 'Quality at the 52-week low' }, { label: 'Index', value: 'Index-inclusion drift' }, { label: 'Merger', value: 'Merger arbitrage' }] },
+      { heading: 'From signal to prey', body: 'Before the expensive LLM, deterministic pre-checks filter in code. Only what passes goes to the LLM. The result is "prey" (a find) with a confidence.' },
+      { heading: 'The council (Voievod)', body: 'On weekdays at 08:00 UTC the council bundles symbols that at least two hunters flagged independently into a verdict. The consensus value comes from code, the LLM only writes the summary — your decision is never overwritten.' },
+      { heading: 'The watchers', body: 'During the day the Daywalker checks held positions regularly (default every 5 min., configurable — here every 15 min.) for price jump ≥3 %, volume ≥3×, insider sale, negative news, downgrade. In the evening (22:00 UTC) the Gropar advises sell/trim/hold (ATR stop 22×3.0, MA 50/200, target +40 % / stop −15 %).' },
+      { heading: 'The suggestions (Renfield)', body: 'On weekdays at 12:00 UTC Renfield reviews up to 30 watchlist symbols and makes ranked suggestions — without tools, without trading itself.' },
+      { heading: 'The execution (Executor)', body: 'The only agent that places orders — strictly guarded. Budget and venue are configurable (default 10,000, paper/Saxo-Sim); it runs only when enabled.', table: [{ label: 'Minimum confidence', value: '0.65' }, { label: 'Max. positions', value: '5' }, { label: 'Max. per sector', value: '2' }, { label: 'Pace', value: '2 / week' }, { label: 'Signal age', value: '≤ 5 days' }] },
+      { heading: 'The learning (Voievod-Outcome)', body: 'On Saturdays at 07:00 UTC Dracul looks back: prey whose horizon expired more than 30 days ago is evaluated and turned into new pattern proposals — active only after your approval.' },
+      { heading: 'Your decision', body: 'Every morning you review the finds in the chronicle and decide. Dracul only executes what you (or the enabled, guarded Executor) approve.' },
+    ],
+  },
   'orders.roles': {
     title: 'Entry, target & stop',
     sections: [

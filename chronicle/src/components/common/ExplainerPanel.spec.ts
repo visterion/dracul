@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ExplainerPanel from './ExplainerPanel.vue'
 import de from '../../i18n/locales/de'
@@ -14,6 +14,16 @@ const explainer: Explainer = {
 }
 
 const i18n = createI18n({ legacy: false, locale: 'de', messages: { de } })
+
+// Unmount every wrapper after each test so the module-level scroll-lock
+// ref-count (useScrollLock) never leaks between tests.
+enableAutoUnmount(afterEach)
+
+function stubMain(overflow = 'auto') {
+  document.querySelector('main.app-main')?.remove()
+  const m = document.createElement('main'); m.className = 'app-main'; m.style.overflow = overflow
+  document.body.appendChild(m); return m
+}
 
 function make(anchor?: string) {
   return mount(ExplainerPanel, {
@@ -49,5 +59,31 @@ describe('ExplainerPanel', () => {
     await w.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(2)
     w.unmount()
+  })
+
+  it('renders a section bullet list and key→value table when present', () => {
+    const explainer = {
+      title: 'T',
+      sections: [
+        { heading: 'Plain', body: 'just prose' },
+        { heading: 'Rich', body: 'intro', bullets: ['one', 'two'],
+          table: [{ label: 'Wann', value: '08:00 UTC' }, { label: 'Kappe', value: '5' }] },
+      ],
+    }
+    const w = mount(ExplainerPanel, { props: { explainer }, global: { plugins: [i18n] } })
+    expect(w.findAll('[data-testid="explainer-bullets"] li')).toHaveLength(2)
+    const rows = w.findAll('[data-testid="explainer-table"] [data-testid="ex-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('Wann')
+    expect(rows[0].text()).toContain('08:00 UTC')
+    expect(w.findAll('[data-testid="explainer-bullets"]')).toHaveLength(1) // plain section has none
+  })
+
+  it('locks main.app-main while open and releases on unmount', () => {
+    stubMain('auto')
+    const w = mount(ExplainerPanel, { props: { explainer: { title: 'T', sections: [] } }, global: { plugins: [i18n] } })
+    expect(document.querySelector<HTMLElement>('main.app-main')!.style.overflow).toBe('hidden')
+    w.unmount()
+    expect(document.querySelector<HTMLElement>('main.app-main')!.style.overflow).toBe('auto')
   })
 })

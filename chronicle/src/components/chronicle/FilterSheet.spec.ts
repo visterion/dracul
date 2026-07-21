@@ -1,11 +1,21 @@
-import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import FilterSheet from './FilterSheet.vue'
 import InfoDot from '../common/InfoDot.vue'
 import de from '../../i18n/locales/de'
 
 const i18n = createI18n({ legacy: false, locale: 'de', messages: { de } })
+
+// Unmount every wrapper after each test so the module-level scroll-lock
+// ref-count (useScrollLock) never leaks between tests.
+enableAutoUnmount(afterEach)
+
+function stubMain(overflow = 'auto') {
+  document.querySelector('main.app-main')?.remove()
+  const m = document.createElement('main'); m.className = 'app-main'; m.style.overflow = overflow
+  document.body.appendChild(m); return m
+}
 
 function make(props = {}) {
   return mount(FilterSheet, {
@@ -117,5 +127,16 @@ describe('FilterSheet', () => {
     // Header already shows "Filter"; the first fg-head section must be a real
     // grouping ("Anomalie-Klasse"), not a second "Filter" label.
     expect(headTexts).not.toContain('Filter')
+  })
+
+  it('locks main.app-main while open and restores it when open flips to false', async () => {
+    const m = stubMain('auto')
+    const w = make({ open: true })
+    await w.vm.$nextTick()
+    expect(m.style.overflow).toBe('hidden')
+    await w.setProps({ open: false })
+    await w.vm.$nextTick()
+    expect(m.style.overflow).toBe('auto')
+    w.unmount()
   })
 })
