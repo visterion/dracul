@@ -585,6 +585,20 @@ The digest only sends on days with at least one **actionable** position (`SELL` 
 | `DRACUL_REPORT_MORNING_ENABLED` (`dracul.report.morning.enabled`) | `false` | Enables the scheduled morning-report Telegram digest. Set to `true` to activate. Requires Telegram bot-token + chat-id to be configured. |
 | `DRACUL_REPORT_MORNING_CRON` (`dracul.report.morning.cron`) | `0 0 7 * * 1-5` | Spring cron (zone: Europe/Berlin) for the digest send. Default: 07:00 Berlin time on weekdays. |
 
+## Decision doc (Chronicle "how Dracul decides")
+
+The Chronicle top-bar (i) can render a deployment-local Markdown doc explaining
+how this instance decides (see `documentation/chronicle.md`). The file is mounted
+read-only at runtime and never committed or baked into the image (mount procedure
+in `documentation/operations.md`). Blank path = feature off; the (i) then shows
+the built-in overview instead. Served by `GET /api/decision-doc` (see
+`documentation/api.md`).
+
+| Env var / property | Default | Purpose |
+|---|---|---|
+| `DRACUL_DECISION_DOC_PATH` (`dracul.decision-doc.path`) | *(blank)* | Filesystem path to a Markdown file served to the Chronicle "how Dracul decides" (i). Blank disables the feature (endpoint returns 404 and the UI falls back to the built-in overview). |
+| `DRACUL_DECISION_DOC_MAX_BYTES` (`dracul.decision-doc.max-bytes`) | `1048576` | Max size (bytes) of the served file. A file larger than this is treated as absent (endpoint returns 404). |
+
 ## Wikipedia
 
 Strigoi-Index resolves announced constituent changes via Agora
