@@ -62,4 +62,5 @@ export interface ApiClient {
   getRunTranscript(runId: string): Promise<RunTranscript>
   getInspectorTranscript(runId: string): Promise<RunTranscript>
   getInspectorRuns(agent: string | null, limit?: number, offset?: number): Promise<InspectorRunsResponse>
+  getDecisionDoc(): Promise<{ markdown: string } | null>
 }

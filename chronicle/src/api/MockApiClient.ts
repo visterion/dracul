@@ -473,4 +473,9 @@ export class MockApiClient implements ApiClient {
       ],
     }
   }
+
+  async getDecisionDoc(): Promise<{ markdown: string }> {
+    await delay(50)
+    return { markdown: '# Wie Dracul entscheidet\n\n*(Beispiel im Dev-Modus)*\n\n## Die Jäger\n\n- Spin\n- Insider\n\n| Agent | Wann |\n|---|---|\n| voievod | 08:00 |\n' }
+  }
 }
