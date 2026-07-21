@@ -48,6 +48,7 @@ public class DecisionDocController {
         Path p = Path.of(path);
         try {
             if (!Files.isRegularFile(p) || !Files.isReadable(p)) {
+                log.warn("decision-doc path {} is not a readable regular file", p);
                 return ResponseEntity.notFound().build();
             }
             long size = Files.size(p);
