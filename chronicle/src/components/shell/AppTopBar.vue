@@ -35,6 +35,12 @@
           <span v-if="live.unread === 1" class="top-bar__live-dot" data-testid="live-unread" />
           <span v-else-if="live.unread >= 2" class="top-bar__live-badge" data-testid="live-unread">{{ live.unread }}</span>
         </button>
+        <InfoDot
+          topic="decision.overview"
+          variant="icon"
+          :label="t('app.decisionInfo.title')"
+          data-testid="decision-info"
+        />
         <span v-if="me && !mobile" class="top-bar__user mono" data-testid="topbar-user">{{ me }}</span>
         <a v-if="me && me !== 'default'" class="top-bar__icon-btn" href="/cdn-cgi/access/logout"
            :aria-label="t('shell.logout')" :title="t('shell.logout')"><i class="ph ph-sign-out" /></a>
@@ -53,6 +59,7 @@ import { useRoute } from 'vue-router'
 import { useLiveAlertsStore } from '../../stores/liveAlerts'
 import { useNavItems, isNavActive } from '../../composables/useNavItems'
 import { useMe } from '../../composables/useMe'
+import InfoDot from '../common/InfoDot.vue'
 
 defineProps<{ mobile?: boolean }>()
 defineEmits<{ 'toggle-live': [] }>()

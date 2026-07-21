@@ -32,6 +32,9 @@ export default {
       title: 'Live Alerts',
       empty: 'No live alerts yet.',
     },
+    decisionInfo: {
+      title: 'How Dracul decides',
+    },
     status: {
       strigoi: 'Strigoi',
       hunting: 'hunting',

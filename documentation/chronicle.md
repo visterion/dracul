@@ -328,9 +328,21 @@ without sending the operator to external docs.
   code (see `documentation/operations.md`).
 - **On Chronicle** (`/`): an (i) next to the "Meute-Profile" (brood) section
   heading opens a brood overview (`hunter.overview` — what the six Strigoi are
-  and a one-line idea per hunter); each individual hunter row in
-  `BroodMini.vue` carries its own (i) (`hunter.<name>`) explaining that
-  hunter's idea, its inputs/hunting grounds, and how it strikes.
+  and a one-line idea per hunter). **Every agent listed in "Die Meute" now
+  carries its own inline (i)** — the six Strigoi hunters (`hunter.<name>`,
+  explaining each hunter's idea, inputs/hunting grounds, and how it strikes)
+  **plus the seven pipeline/guardian agents** daywalker, daywalker-deep,
+  executor, gropar, renfield, voievod, and voievod-outcome (`hunter.<name>`
+  too, each covering that agent's role, schedule, and thresholds). On mobile
+  the per-agent (i)s are reached through the filter sheet (`FilterSheet.vue`),
+  which hosts the same brood mini-profiles as the desktop rail.
+- **Top-bar decision overview**: a prominent (i) sits in the top bar
+  immediately to the right of the live-alert bell. It opens a full "Wie Dracul
+  entscheidet" overview (`decision.overview`) that walks the whole pipeline in
+  order — hunters → prey → consensus verdict (Voievod) → guardians (Daywalker,
+  Gropar) → proposals (Renfield) → execution (Executor) → learning
+  (Voievod-Outcome) → your decision — so an operator can understand the end-to-end
+  flow without leaving the app.
 - **On Depots** (`/depots`): a page-level (i) plus inline (i) markers explain
   the concepts operators otherwise have to infer from a broker UI — bracket
   orders (`orders.bracket`), the entry/target/stop roles (`orders.roles`),

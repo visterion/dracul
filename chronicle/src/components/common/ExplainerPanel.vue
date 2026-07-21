@@ -29,6 +29,14 @@
       >
         <h3 class="ex-section-head">{{ s.heading }}</h3>
         <p class="ex-section-body">{{ s.body }}</p>
+        <ul v-if="s.bullets?.length" class="ex-bullets" data-testid="explainer-bullets">
+          <li v-for="(b, i) in s.bullets" :key="i">{{ b }}</li>
+        </ul>
+        <dl v-if="s.table?.length" class="ex-table" data-testid="explainer-table">
+          <div v-for="(r, i) in s.table" :key="i" class="ex-row" data-testid="ex-row">
+            <dt>{{ r.label }}</dt><dd class="mono">{{ r.value }}</dd>
+          </div>
+        </dl>
       </section>
     </div>
   </div>
@@ -38,9 +46,14 @@
 import { onMounted, ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Explainer } from '../../i18n/explainers'
+import { useScrollLock } from '../../composables/useScrollLock'
 
 const props = defineProps<{ explainer: Explainer; anchor?: string }>()
 defineEmits<{ close: [] }>()
+
+// Lock the page scroll for the panel's whole mounted lifetime (it has no
+// `open` prop — it exists only while shown).
+useScrollLock(ref(true))
 
 const { t } = useI18n()
 const closeBtn = ref<HTMLElement | null>(null)
@@ -70,6 +83,7 @@ onMounted(async () => {
 .explainer-panel {
   background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 6px;
   max-width: 560px; width: 100%; max-height: 80vh; overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-5); outline: none;
 }
 .ex-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
@@ -79,6 +93,12 @@ onMounted(async () => {
 .ex-section { margin-bottom: var(--space-4); }
 .ex-section-head { font-size: var(--text-body); color: var(--cathedral-gold); margin-bottom: var(--space-1); }
 .ex-section-body { font-size: var(--text-body-sm); color: var(--bone-ivory-dim); line-height: 1.5; }
+.ex-bullets { margin-top: var(--space-2); padding-left: var(--space-4); font-size: var(--text-body-sm); color: var(--bone-ivory-dim); line-height: 1.5; }
+.ex-bullets li { list-style: disc; }
+.ex-table { margin-top: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+.ex-row { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--text-body-sm); }
+.ex-row dt { color: var(--ash-gray); }
+.ex-row dd { color: var(--bone-ivory-dim); }
 
 @media (max-width: 600px) {
   .explainer-overlay { align-items: flex-end; padding: 0; }
