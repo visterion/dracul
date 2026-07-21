@@ -7,6 +7,8 @@ export interface ExplainerSection {
   heading: string
   body: string
   anchor?: string
+  bullets?: string[]
+  table?: { label: string; value: string }[]
 }
 export interface Explainer {
   title: string
