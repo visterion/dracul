@@ -50,4 +50,22 @@ describe('ExplainerPanel', () => {
     expect(w.emitted('close')).toHaveLength(2)
     w.unmount()
   })
+
+  it('renders a section bullet list and key→value table when present', () => {
+    const explainer = {
+      title: 'T',
+      sections: [
+        { heading: 'Plain', body: 'just prose' },
+        { heading: 'Rich', body: 'intro', bullets: ['one', 'two'],
+          table: [{ label: 'Wann', value: '08:00 UTC' }, { label: 'Kappe', value: '5' }] },
+      ],
+    }
+    const w = mount(ExplainerPanel, { props: { explainer }, global: { plugins: [i18n] } })
+    expect(w.findAll('[data-testid="explainer-bullets"] li')).toHaveLength(2)
+    const rows = w.findAll('[data-testid="explainer-table"] [data-testid="ex-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('Wann')
+    expect(rows[0].text()).toContain('08:00 UTC')
+    expect(w.findAll('[data-testid="explainer-bullets"]')).toHaveLength(1) // plain section has none
+  })
 })
