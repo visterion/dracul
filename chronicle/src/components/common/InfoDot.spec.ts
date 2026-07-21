@@ -36,4 +36,23 @@ describe('InfoDot', () => {
     expect(w.find('button').exists()).toBe(false)
     w.unmount()
   })
+
+  it('icon variant renders a ph-info button with a custom label and still opens the panel', async () => {
+    const w = mount(InfoDot, {
+      props: { topic: 'depot.metrics', variant: 'icon', label: 'Wie Dracul entscheidet' },
+      global: { plugins: [i18n] },
+    })
+    const btn = w.get('button')
+    expect(btn.attributes('aria-label')).toBe('Wie Dracul entscheidet')
+    expect(w.find('i.ph-info').exists()).toBe(true)
+    await btn.trigger('click')
+    expect(document.querySelector('[data-testid="explainer-overlay"]')).not.toBeNull()
+    w.unmount()
+  })
+
+  it('default variant is unchanged (dot, default aria-label)', () => {
+    const w = mount(InfoDot, { props: { topic: 'depot.metrics' }, global: { plugins: [i18n] } })
+    expect(w.get('button').attributes('aria-label')).toBe(i18n.global.t('explainer.open'))
+    w.unmount()
+  })
 })
