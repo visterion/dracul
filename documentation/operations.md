@@ -365,6 +365,21 @@ Cloudflare login).
 - The attack surface widens only to a party that can both reach `:8080` directly AND holds the
   token. Leave it off unless needed; enabling requires a container restart.
 
+## Decision doc (Chronicle "how Dracul decides")
+
+To show this instance's own decision doc in the Chronicle top-bar (i), mount a
+Markdown file **read-only** into the container and point Dracul at it:
+
+    DRACUL_DECISION_DOC_PATH=/path/to/decision-doc.md
+
+The file is deployment-local: it must **never** be committed or baked into the
+image (the repo ignores `decision-doc.md` and the build context excludes it).
+Leave `DRACUL_DECISION_DOC_PATH` blank to disable the feature — the (i) then
+renders the built-in "Wie Dracul entscheidet" overview instead. Size is capped
+by `DRACUL_DECISION_DOC_MAX_BYTES` (default 1 MiB); an over-large or unreadable
+file is treated as absent. The `GET /api/decision-doc` endpoint sits behind
+Cloudflare Access like the rest of `/api/**`.
+
 ## Building and starting the stack
 
 The image is a multi-stage build (`java-server/Dockerfile`):

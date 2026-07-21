@@ -337,10 +337,14 @@ without sending the operator to external docs.
   the per-agent (i)s are reached through the filter sheet (`FilterSheet.vue`),
   which hosts the same brood mini-profiles as the desktop rail.
 - **Top-bar decision overview**: a prominent (i) sits in the top bar
-  immediately to the right of the live-alert bell. It opens a full "Wie Dracul
-  entscheidet" overview (`decision.overview`) that walks the whole pipeline in
-  order — hunters → prey → consensus verdict (Voievod) → guardians (Daywalker,
-  Gropar) → proposals (Renfield) → execution (Executor) → learning
+  immediately to the right of the live-alert bell. When a deployment-local
+  decision doc is mounted (`GET /api/decision-doc` returns `200`; see
+  `documentation/operations.md`), it renders that instance's doc as Markdown in
+  a **wide panel** — the actual, deployment-specific "how Dracul decides" writeup.
+  When no doc is configured (endpoint `404`), it falls back to the built-in
+  "Wie Dracul entscheidet" overview (`decision.overview`) that walks the whole
+  pipeline in order — hunters → prey → consensus verdict (Voievod) → guardians
+  (Daywalker, Gropar) → proposals (Renfield) → execution (Executor) → learning
   (Voievod-Outcome) → your decision — so an operator can understand the end-to-end
   flow without leaving the app.
 - **On Depots** (`/depots`): a page-level (i) plus inline (i) markers explain
