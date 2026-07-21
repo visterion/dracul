@@ -39,15 +39,18 @@ describe('AppTopBar', () => {
     setActivePinia(createPinia())
   })
 
-  it('shows the decision-overview (i) next to the bell', () => {
+  it('shows the decision-overview (i) next to the bell', async () => {
     const w = mountBar()
+    const info = w.find('[data-testid="decision-info"]')
+    expect(info.exists()).toBe(true)
     const dot = w.findComponent({ name: 'InfoDot' })
-    // InfoDot renders a fragment (button + Teleport), so the data-testid
-    // cannot fall through to the DOM; assert the component + its props instead.
-    expect(dot.exists()).toBe(true)
     expect(dot.props('topic')).toBe('decision.overview')
     expect(dot.props('variant')).toBe('icon')
-    expect(dot.find('i.ph-info').exists()).toBe(true)
+    // Clicking the (i) opens the teleported explainer overlay.
+    expect(document.querySelector('[data-testid="explainer-overlay"]')).toBeNull()
+    await info.trigger('click')
+    expect(document.querySelector('[data-testid="explainer-overlay"]')).not.toBeNull()
+    w.unmount()
   })
 
   it('positions the (i) immediately after the bell button', () => {

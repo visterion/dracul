@@ -50,6 +50,19 @@ describe('InfoDot', () => {
     w.unmount()
   })
 
+  it('forwards fall-through attrs (data-testid) onto the trigger button', () => {
+    const w = mount(InfoDot, {
+      props: { topic: 'depot.metrics', variant: 'icon' },
+      attrs: { 'data-testid': 'decision-info' },
+      global: { plugins: [i18n] },
+    })
+    const btn = w.get('button')
+    expect(btn.attributes('data-testid')).toBe('decision-info')
+    // The forwarded attr must land on the button, not on the teleported panel.
+    expect(w.find('[data-testid="decision-info"]').element).toBe(btn.element)
+    w.unmount()
+  })
+
   it('default variant is unchanged (dot, default aria-label)', () => {
     const w = mount(InfoDot, { props: { topic: 'depot.metrics' }, global: { plugins: [i18n] } })
     expect(w.get('button').attributes('aria-label')).toBe(i18n.global.t('explainer.open'))

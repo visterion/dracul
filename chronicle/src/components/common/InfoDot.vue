@@ -6,6 +6,7 @@
     type="button"
     :aria-label="ariaLabel"
     :title="ariaLabel"
+    v-bind="$attrs"
     @click.stop="open = true"
   >
     <i class="ph ph-info" aria-hidden="true" />
@@ -25,6 +26,10 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExplainerPanel from './ExplainerPanel.vue'
 import { getExplainer, hasExplainer } from '../../i18n/explainers'
+
+// The component renders a fragment (button + Teleport), so fall-through attrs
+// cannot inherit automatically — bind them explicitly onto the trigger button.
+defineOptions({ inheritAttrs: false })
 
 const props = withDefaults(
   defineProps<{ topic: string; anchor?: string; variant?: 'dot' | 'icon'; label?: string }>(),
