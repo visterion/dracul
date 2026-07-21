@@ -5,7 +5,7 @@
     :aria-label="title"
     :title="title"
     data-testid="decision-info"
-    @click.stop="open = true"
+    @click.stop="openPanel"
   >
     <i class="ph ph-info" aria-hidden="true" />
   </button>
@@ -72,8 +72,18 @@ const title = computed(() => t('app.decisionInfo.title'))
 const hasDoc = computed(
   () => typeof markdown.value === 'string' && markdown.value.length > 0,
 )
-const wideOpen = computed(() => open.value && hasDoc.value)
-const fallbackOpen = computed(() => open.value && !hasDoc.value)
+
+// Snapshot the branch decision at click time so an in-flight doc fetch that
+// resolves while the panel is already open cannot swap the fallback explainer
+// for the wide dialog (or vice versa) mid-session.
+const showDoc = ref(false)
+function openPanel() {
+  showDoc.value = hasDoc.value
+  open.value = true
+}
+
+const wideOpen = computed(() => open.value && showDoc.value)
+const fallbackOpen = computed(() => open.value && !showDoc.value)
 
 // The static explainer is only read when the fallback path is taken.
 const explainer = computed(() => getExplainer(locale.value, 'decision.overview'))
