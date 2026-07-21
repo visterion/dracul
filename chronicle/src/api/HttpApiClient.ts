@@ -392,4 +392,11 @@ export class HttpApiClient implements ApiClient {
     if (!res.ok) return { runs: [] }
     return res.json() as Promise<InspectorRunsResponse>
   }
+
+  async getDecisionDoc(): Promise<{ markdown: string } | null> {
+    const res = await fetch(`${this.baseUrl}/api/decision-doc`)
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`getDecisionDoc failed: HTTP ${res.status}`)
+    return res.json() as Promise<{ markdown: string }>
+  }
 }
