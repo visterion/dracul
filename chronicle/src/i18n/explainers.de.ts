@@ -71,6 +71,78 @@ const de: ExplainerTable = {
       { anchor: 'merger', heading: 'merger — Übernahme-Arbitrage', body: 'Die Zielaktie handelt unter dem Angebotspreis — die Lücke ist der Gewinn, wenn der Deal durchgeht.' },
     ],
   },
+  'hunter.daywalker': {
+    title: 'Daywalker — Tag-Wächter',
+    sections: [
+      { heading: 'Rolle', body: 'Bewacht tagsüber deine gehaltenen Positionen und die Watchlist. Erkennt selbst — ohne LLM — auffällige Ereignisse und lässt das LLM nur den Schweregrad einordnen.' },
+      { heading: 'Wann', body: 'Werktags während der Handelszeit, in regelmäßigen Abständen (Standard alle 5 Minuten, konfigurierbar — auf diesem System alle 15 Minuten).' },
+      { heading: 'Worauf', body: 'Kurssprung, Volumensprung, Insider-Verkauf, negative Nachrichten, Analysten-Abstufung.', table: [{ label: 'Kurssprung', value: '≥ 3 %' }, { label: 'Volumen', value: '≥ 3×' }, { label: 'Schweregrade', value: 'INFO · WARNING · CRITICAL' }] },
+      { heading: 'Was er tut', body: 'Schreibt eine Warnung in die Chronik und schickt bei CRITICAL einen Telegram-Hinweis. Er handelt nichts.' },
+    ],
+  },
+  'hunter.daywalker-deep': {
+    title: 'Daywalker-Deep — Zweitmeinung',
+    sections: [
+      { heading: 'Rolle', body: 'Der gründlichere Zweitgutachter des Tag-Wächters. Springt nur ein, wenn sich das LLM bei einer CRITICAL-Warnung selbst unsicher ist.' },
+      { heading: 'Wann', body: 'Nur bei geringer Selbstsicherheit (Confidence unter 0,6) auf einer CRITICAL-Warnung — asynchron, im Hintergrund.' },
+      { heading: 'Wichtig', body: 'Verzögert oder senkt die ursprüngliche Warnung nie. Ein Schweregrad wird am selben Tag nur hochgestuft, nie gesenkt.' },
+    ],
+  },
+  'hunter.gropar': {
+    title: 'Gropar — Abend-Ausstieg',
+    sections: [
+      { heading: 'Rolle', body: 'Berät abends zu jeder offenen Position: Verkaufen, Reduzieren oder Halten. Ein Berater — er handelt nicht.' },
+      { heading: 'Wann', body: 'Werktags um 22:00 UTC.' },
+      { heading: 'Woran er misst', body: 'Deterministische Ausstiegs-Indikatoren.', table: [{ label: 'Trailing-Stop', value: 'ATR 22 × 3,0' }, { label: 'Trend', value: 'MA 50 / 200' }, { label: 'Ziel', value: '+40 %' }, { label: 'Stop', value: '−15 %' }] },
+      { heading: 'Was er tut', body: 'Schreibt ein Ausstiegssignal (SELL/TRIM/HOLD) in die Chronik, Telegram bei SELL/TRIM.' },
+    ],
+  },
+  'hunter.voievod': {
+    title: 'Voievod — Der Rat',
+    sections: [
+      { heading: 'Rolle', body: 'Bündelt die Funde der Jäger zu einem Urteil (Verdict): nur Symbole, die mindestens zwei verschiedene Strigoi unabhängig markiert haben.' },
+      { heading: 'Wann', body: 'Werktags um 08:00 UTC.' },
+      { heading: 'Wie', body: 'Der Konsens-Wert wird im Code berechnet; das LLM schreibt nur die Zusammenfassung. Eine bereits von dir getroffene Entscheidung wird nie überschrieben.' },
+    ],
+  },
+  'hunter.voievod-outcome': {
+    title: 'Voievod-Outcome — Das Lernen',
+    sections: [
+      { heading: 'Rolle', body: 'Wöchentliche Rückschau: prüft, wie alte Funde ausgegangen sind, und schlägt daraus neue Muster (Lehren) vor.' },
+      { heading: 'Wann', body: 'Samstags um 07:00 UTC.' },
+      { heading: 'Was er tut', body: 'Sieht sich Beute an, deren Horizont vor über 30 Tagen ablief, und legt Muster-Vorschläge zur Freigabe an — aktiv erst nach deiner Bestätigung.' },
+    ],
+  },
+  'hunter.renfield': {
+    title: 'Renfield — Vorschläge',
+    sections: [
+      { heading: 'Rolle', body: 'Tägliche Durchsicht deiner Watchlist. Trägt Fakten je Symbol zusammen und lässt das LLM daraus gerankte Handelsvorschläge machen.' },
+      { heading: 'Wann', body: 'Werktags um 12:00 UTC.' },
+      { heading: 'Wichtig', body: 'Das LLM hat dabei keine Werkzeuge und handelt nie — es schlägt nur vor (bis zu 30 Symbole). Telegram-Digest je Lauf.' },
+    ],
+  },
+  'hunter.executor': {
+    title: 'Executor — Die Ausführung',
+    sections: [
+      { heading: 'Rolle', body: 'Der einzige Agent, der wirklich Orders platziert — bewachte Einstiege (mit Ziel und Stop) und Ausstiege.' },
+      { heading: 'Bewacht durch', body: 'Veto-Katalog, Order-Guard, Positions-Sizer, Stop-Ratchet — das LLM kann keine Order direkt auslösen, nur bewachte Werkzeuge.', table: [{ label: 'Mindest-Confidence', value: '0,65' }, { label: 'Max. Positionen', value: '5' }, { label: 'Max. je Sektor', value: '2' }, { label: 'Tempo', value: '2 / Woche' }, { label: 'Signal-Alter', value: '≤ 5 Tage' }] },
+      { heading: 'Wichtig', body: 'Budget und Handelsplatz sind konfigurierbar (Standard: 10.000, Paper/Saxo-Sim). Läuft nur, wenn aktiviert.' },
+    ],
+  },
+  'decision.overview': {
+    title: 'Wie Dracul entscheidet',
+    sections: [
+      { heading: 'Was Dracul ist', body: 'Dracul ist ein autonomer Recherche-Assistent für Aktien-Anomalien — kein Auto-Trader, keine Anlageberatung. Er findet Kandidaten; entscheiden tust du.' },
+      { heading: 'Die Jäger (Strigoi)', body: 'Sechs spezialisierte Muster-Jäger wachen nachts und durchsuchen den Markt nach je einem dokumentierten Muster.', table: [{ label: 'Spin', value: 'Abspaltungen (Spin-offs)' }, { label: 'Insider', value: 'Insider-Käufe im Cluster' }, { label: 'Echo', value: 'Drift nach Quartalszahlen (PEAD)' }, { label: 'Lazarus', value: 'Qualität am 52-Wochen-Tief' }, { label: 'Index', value: 'Index-Aufnahme-Drift' }, { label: 'Merger', value: 'Übernahme-Arbitrage' }] },
+      { heading: 'Vom Signal zur Beute', body: 'Vor dem teuren LLM filtern deterministische Vor-Prüfungen im Code. Nur was durchkommt, geht an das LLM. Ergebnis ist „Beute" (ein Fund) mit einer Confidence.' },
+      { heading: 'Der Rat (Voievod)', body: 'Werktags um 08:00 UTC bündelt der Rat Symbole, die mindestens zwei Jäger unabhängig markiert haben, zu einem Urteil. Der Konsens-Wert kommt aus dem Code, das LLM schreibt nur die Zusammenfassung — deine Entscheidung wird nie überschrieben.' },
+      { heading: 'Die Wächter', body: 'Tagsüber prüft der Daywalker gehaltene Positionen regelmäßig (Standard alle 5 Min., konfigurierbar — hier alle 15 Min.) auf Kurssprung ≥3 %, Volumen ≥3×, Insider-Verkauf, negative News, Abstufung. Abends (22:00 UTC) rät der Gropar zu Verkaufen/Reduzieren/Halten (ATR-Stop 22×3,0, MA 50/200, Ziel +40 % / Stop −15 %).' },
+      { heading: 'Die Vorschläge (Renfield)', body: 'Werktags um 12:00 UTC sichtet Renfield bis zu 30 Watchlist-Symbole und macht gerankte Vorschläge — ohne Werkzeuge, ohne selbst zu handeln.' },
+      { heading: 'Die Ausführung (Executor)', body: 'Der einzige Agent, der Orders platziert — streng bewacht. Budget und Handelsplatz sind konfigurierbar (Standard 10.000, Paper/Saxo-Sim); er läuft nur, wenn aktiviert.', table: [{ label: 'Mindest-Confidence', value: '0,65' }, { label: 'Max. Positionen', value: '5' }, { label: 'Max. je Sektor', value: '2' }, { label: 'Tempo', value: '2 / Woche' }, { label: 'Signal-Alter', value: '≤ 5 Tage' }] },
+      { heading: 'Das Lernen (Voievod-Outcome)', body: 'Samstags um 07:00 UTC schaut Dracul zurück: Beute, deren Horizont vor über 30 Tagen ablief, wird ausgewertet und zu neuen Muster-Vorschlägen — aktiv erst nach deiner Freigabe.' },
+      { heading: 'Deine Entscheidung', body: 'Jeden Morgen prüfst du die Funde in der Chronik und entscheidest. Dracul führt nur aus, was du (oder der aktivierte, bewachte Executor) freigibst.' },
+    ],
+  },
   'orders.roles': {
     title: 'Einstieg, Ziel & Stop',
     sections: [
