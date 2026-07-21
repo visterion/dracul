@@ -36,12 +36,13 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { StrigoiStatus } from '../../api/types'
 import BroodMini from '../common/BroodMini.vue'
 import InfoDot from '../common/InfoDot.vue'
 import { useEnumLabels } from '../../composables/useEnumLabels'
+import { useScrollLock } from '../../composables/useScrollLock'
 
 const props = defineProps<{
   open: boolean
@@ -92,20 +93,11 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') emit('close')
 }
 
-let priorOverflow = ''
-function setBodyOverflow(hidden: boolean) {
-  const scroller = document.querySelector<HTMLElement>('main.app-main')
-  if (!scroller) return
-  if (hidden) {
-    priorOverflow = scroller.style.overflow
-    scroller.style.overflow = 'hidden'
-  } else {
-    scroller.style.overflow = priorOverflow
-  }
-}
+// Lock the page scroll while the sheet is open (shared, ref-counted; also
+// restores on unmount). Focus handling stays here.
+useScrollLock(toRef(props, 'open'))
 
 watch(() => props.open, (isOpen) => {
-  setBodyOverflow(isOpen)
   if (isOpen) {
     previouslyFocused = document.activeElement as HTMLElement | null
     trapFocus()
@@ -117,7 +109,6 @@ watch(() => props.open, (isOpen) => {
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
-  setBodyOverflow(false)
 })
 </script>
 
@@ -126,6 +117,7 @@ onBeforeUnmount(() => {
 .filter-sheet__panel {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 300;
   max-height: 75vh; overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--crypt-black-elevated);
   border-top: var(--hairline);
   border-radius: 12px 12px 0 0;
