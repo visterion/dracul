@@ -4,6 +4,7 @@
 # build regenerates node_modules via `npm ci`, so none of these break the build.
 docs/
 decision-doc.md
-**/.env*
+# only local/secret env files — NOT committed build inputs like chronicle/.env.production
+**/.env*.local
 .git
 node_modules
