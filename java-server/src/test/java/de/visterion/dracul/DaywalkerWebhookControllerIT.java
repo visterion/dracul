@@ -42,6 +42,7 @@ import static org.springframework.boot.test.context.SpringBootTest.WebEnvironmen
         "dracul.daywalker.enabled=true",
         "dracul.daywalker.webhook-token=test-dw-token",
         "dracul.daywalker.session-cron=0 30 13 * * 1-5",
+        "dracul.daywalker.watchlist-enabled=true",
         "dracul.public-url=http://test.invalid:9090"
 })
 class DaywalkerWebhookControllerIT {
