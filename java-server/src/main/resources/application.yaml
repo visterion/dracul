@@ -238,6 +238,10 @@ dracul:
     session-cron: ${DRACUL_DAYWALKER_SESSION_CRON:0 0 8 * * 1-5}
     session-duration: ${DRACUL_DAYWALKER_SESSION_DURATION:57600}
     poll-interval: ${DRACUL_DAYWALKER_POLL_INTERVAL:300}
+    # Intraday sweep universe: false = depot positions only (default, protects the Claude
+    # Max quota); true = legacy depot ∪ full watchlist. Parsed fail-safe (any non-"true"
+    # value → false); see DaywalkerEventEngine.parseWatchlistEnabled.
+    watchlist-enabled: ${DRACUL_DAYWALKER_WATCHLIST_ENABLED:false}
     poll-budget-ms: ${DRACUL_DAYWALKER_POLL_BUDGET_MS:60000}
     price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
