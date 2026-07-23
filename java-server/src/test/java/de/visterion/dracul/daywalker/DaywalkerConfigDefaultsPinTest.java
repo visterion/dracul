@@ -40,4 +40,10 @@ class DaywalkerConfigDefaultsPinTest {
 		assertThat(yaml).contains("${DRACUL_SECTOR_TTL_SECONDS:86400}");
 		assertThat(yaml).contains("${DRACUL_SECTOR_NEGATIVE_TTL_SECONDS:3600}");
 	}
+
+	@Test
+	void yamlCarriesTheWatchlistEnabledDefault() throws Exception {
+		String yaml = Files.readString(Path.of("src/main/resources/application.yaml"));
+		assertThat(yaml).contains("${DRACUL_DAYWALKER_WATCHLIST_ENABLED:false}");
+	}
 }
