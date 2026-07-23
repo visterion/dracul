@@ -29,15 +29,17 @@ import java.util.Optional;
 import java.util.concurrent.*;
 
 /**
- * Deterministic detection over the union of the depot's live positions (via
- * {@link HeldPositionService}) and the watchlist — deduped per symbol, with the depot
- * representative winning when a symbol appears in both. Fetches the shared market-wide
- * Form-4 window once per poll (via Agora), runs the four detectors once per distinct
- * symbol (triggers are market-wide), and emits an event whenever that
- * (symbol, trigger_type) pair — owner-agnostic — is outside its cooldown. All external
- * fetches degrade to empty on failure -- the poll never crashes the Vistierie scheduler
- * tick, and a depot-down {@link HeldPositionService#openPositions} simply yields no
- * depot positions to fan over (not an error); a non-empty watchlist still sweeps.
+ * Deterministic detection over the depot's live positions (via {@link HeldPositionService}).
+ * When {@code dracul.daywalker.watchlist-enabled=true} the universe additionally unions the
+ * watchlist (legacy behavior), deduped per symbol with the depot representative winning; by
+ * default the watchlist is NOT swept (depot-only — protects the Claude Max quota). Fetches
+ * the shared market-wide Form-4 window once per poll (via Agora), runs the four detectors
+ * once per distinct symbol, and emits an event whenever that (symbol, trigger_type) pair —
+ * owner-agnostic — is outside its cooldown. All external fetches degrade to empty on failure;
+ * under the default depot-only scope, a depot-down {@link HeldPositionService#openPositions}
+ * yields an empty universe and the poll no-ops (logged at INFO); in legacy mode a non-empty
+ * watchlist still sweeps, and that empty-universe INFO log is gated on watchlist being
+ * disabled, so a legacy empty-universe poll no-ops silently.
  */
 @Component
 public class DaywalkerEventEngine {
@@ -199,9 +201,10 @@ public class DaywalkerEventEngine {
             repBySymbol.putIfAbsent(p.symbol(), p);
         }
 
-        // Universe = depot ∪ watchlist, deduped per symbol; the depot representative wins
-        // (it carries positionId → position context in the LLM prompt). D2: no hunt-prey
-        // expansion. An empty depot with a non-empty watchlist still sweeps.
+        // Universe = depot positions, plus the watchlist ONLY when watchlist-enabled (legacy).
+        // Deduped per symbol; the depot representative wins (it carries positionId → position
+        // context in the LLM prompt). Depot-only is the default; the watchlist sweep below is
+        // gated. An empty depot under depot-only yields an empty universe (poll no-ops).
         Map<String, WatchlistItem> universe = new LinkedHashMap<>();
         for (HeldPosition rep : repBySymbol.values()) {
             universe.put(rep.symbol(), asDetectorItem(rep));

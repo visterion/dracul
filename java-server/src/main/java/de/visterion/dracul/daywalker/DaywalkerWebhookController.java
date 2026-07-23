@@ -46,7 +46,8 @@ public class DaywalkerWebhookController {
         this.priorMemoryBudgetMs = priorMemoryBudgetMs;
     }
 
-    /** Event-source webhook: deterministic detection over the watchlist. */
+    /** Event-source webhook: deterministic detection over the depot's open positions (and,
+     *  in legacy mode, the watchlist). */
     @PostMapping("/events")
     public ResponseEntity<Map<String, Object>> events(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
