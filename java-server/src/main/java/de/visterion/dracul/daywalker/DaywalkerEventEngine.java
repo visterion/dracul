@@ -53,6 +53,7 @@ public class DaywalkerEventEngine {
     private final PortfolioWeights portfolioWeights;
     private final SectorResolver sectors;
     private final String connection;
+    private final boolean watchlistEnabled;
     private final double priceThreshold;
     private final double volumeMultiplier;
     private final long cooldownSeconds;
@@ -93,7 +94,8 @@ public class DaywalkerEventEngine {
             @Value("${dracul.daywalker.cooldown:3600}") long cooldownSeconds,
             @Value("${dracul.daywalker.macro-cooldown:28800}") long macroCooldownSeconds,
             @Value("${dracul.daywalker.poll-budget-ms:60000}") long pollBudgetMs,
-            @Value("${dracul.position.connection:depot-1}") String connection) {
+            @Value("${dracul.position.connection:depot-1}") String connection,
+            @Value("${dracul.daywalker.watchlist-enabled:false}") String watchlistEnabledRaw) {
         this.heldPositions = heldPositions;
         this.watchlist = watchlist;
         this.intraday = intraday;
@@ -108,6 +110,9 @@ public class DaywalkerEventEngine {
         this.macroCooldownSeconds = macroCooldownSeconds;
         this.pollBudgetMs = pollBudgetMs;
         this.connection = connection;
+        this.watchlistEnabled = parseWatchlistEnabled(watchlistEnabledRaw);
+        log.info("daywalker intraday universe: {}",
+                this.watchlistEnabled ? "depot + watchlist" : "depot-only");
     }
 
     /** Immutable per-poll sweep inputs, prepared inside the budget. repBySymbol holds ONE
@@ -135,7 +140,13 @@ public class DaywalkerEventEngine {
                         + "skipping all symbols this poll", pollBudgetMs);
                 return List.of();
             }
-            if (plan.universe().isEmpty()) return List.of();
+            if (plan.universe().isEmpty()) {
+                if (!watchlistEnabled) {
+                    log.info("daywalker: no open depot positions this poll "
+                            + "(watchlist disabled) — no symbols swept");
+                }
+                return List.of();
+            }
 
             List<Future<SymbolScan>> futures = new ArrayList<>();
             for (WatchlistItem item : plan.universe().values()) {
@@ -195,8 +206,10 @@ public class DaywalkerEventEngine {
         for (HeldPosition rep : repBySymbol.values()) {
             universe.put(rep.symbol(), asDetectorItem(rep));
         }
-        for (WatchlistRepository.SweepRow row : watchlist.distinctSweepRows()) {
-            universe.putIfAbsent(row.ticker(), asDetectorItem(row));
+        if (watchlistEnabled) {
+            for (WatchlistRepository.SweepRow row : watchlist.distinctSweepRows()) {
+                universe.putIfAbsent(row.ticker(), asDetectorItem(row));
+            }
         }
 
         Instant effectiveSince = since != null ? since : now.minusSeconds(3600);
