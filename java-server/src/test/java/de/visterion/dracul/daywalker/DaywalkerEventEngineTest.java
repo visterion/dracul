@@ -69,7 +69,14 @@ class DaywalkerEventEngineTest {
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al, long budgetMs) {
         return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights, sectors,
-                0.03, 3.0, 3600, 28800, budgetMs, "depot-1");
+                0.03, 3.0, 3600, 28800, budgetMs, "depot-1", "true");
+    }
+
+    private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
+                                        AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
+                                        DaywalkerAlertRepository al, long budgetMs, String watchlistScope) {
+        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights, sectors,
+                0.03, 3.0, 3600, 28800, budgetMs, "depot-1", watchlistScope);
     }
 
     @Test
@@ -853,5 +860,72 @@ class DaywalkerEventEngineTest {
         // partial-sweep rule (round 1, C1): macro news is market-wide — emit from what completed
         assertThat(events).extracting(TriggerEvent::triggerType)
                 .containsExactly(TriggerType.MACRO_PORTFOLIO);
+    }
+
+    @Test
+    void depotOnlyNeverQueriesWatchlistAndSweepsOnlyDepot() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engine(hp, wl, in, cd, fi, al, 60_000, "false")
+                .detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).extracting(TriggerEvent::triggerType).containsExactly(TriggerType.PRICE_SPIKE);
+        verify(wl, never()).distinctSweepRows();
+        verify(in, never()).candles("WTCH");
+    }
+
+    @Test
+    void depotOnlyEmptyDepotNoOpsWithNoAgoraCalls() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of());
+
+        var events = engine(hp, wl, in, cd, fi, al, 60_000, "false")
+                .detect(null, Instant.parse("2026-06-03T18:00:00Z"));
+
+        assertThat(events).isEmpty();
+        verify(wl, never()).distinctSweepRows();
+        verifyNoInteractions(in, cd, fi);
+    }
+
+    @Test
+    void depotOnlyStillEmitsMacroPortfolioForHeldSymbol() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        var now = Instant.parse("2026-06-03T18:00:00Z");
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 100), List.of()));
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+        when(cd.news(eq("ACME"), any(), any()))
+                .thenReturn(List.of(macroHeadline("Fed raises rates again", now.minusSeconds(120))));
+
+        var events = engine(hp, wl, in, cd, fi, al, 60_000, "false").detect(null, now);
+
+        assertThat(events).extracting(TriggerEvent::triggerType).contains(TriggerType.MACRO_PORTFOLIO);
+        verify(wl, never()).distinctSweepRows();
     }
 }
