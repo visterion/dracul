@@ -65,6 +65,23 @@ public class DaywalkerEventEngine {
     private final NewsDetector news = new NewsDetector();
     private final DowngradeDetector downgrade = new DowngradeDetector();
 
+    /** Fail-safe parse of the watchlist-scope flag: only a clean "true" (case-insensitive,
+     *  trimmed) enables the legacy depot ∪ watchlist sweep. Every other value — false,
+     *  blank, null, or garbage — resolves to depot-only (the quota-preserving scope), so a
+     *  typo'd env override degrades safely instead of a native @Value boolean binding that
+     *  would treat "yes"/"1" as true or crash bean creation on an unrecognized value. */
+    static boolean parseWatchlistEnabled(String raw) {
+        if (raw != null) {
+            String t = raw.trim();
+            if ("true".equalsIgnoreCase(t)) return true;
+            if (!"false".equalsIgnoreCase(t)) {
+                log.warn("dracul.daywalker.watchlist-enabled='{}' is not a clean true/false "
+                        + "— defaulting to depot-only (false)", raw);
+            }
+        }
+        return false;
+    }
+
     public DaywalkerEventEngine(
             HeldPositionService heldPositions, WatchlistRepository watchlist,
             AgoraIntraday intraday,
