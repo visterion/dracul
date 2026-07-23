@@ -28,6 +28,8 @@ services:
       STRIGOI_INSIDER_ENABLED: "true"
       STRIGOI_INSIDER_TOKEN: ${STRIGOI_INSIDER_TOKEN:?STRIGOI_INSIDER_TOKEN required}
       DRACUL_EDGAR_USER_AGENT: ${DRACUL_EDGAR_USER_AGENT:?DRACUL_EDGAR_USER_AGENT required}
+      # Daywalker intraday scope: false (default) = depot-only; true = legacy depot ∪ watchlist.
+      DRACUL_DAYWALKER_WATCHLIST_ENABLED: ${DRACUL_DAYWALKER_WATCHLIST_ENABLED:-false}
 
 networks:
   hivemem-net:
