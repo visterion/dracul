@@ -208,6 +208,7 @@ outcome is recorded in `daywalker_alerts.notification_sent`.
 | `DRACUL_DAYWALKER_ESCALATION_ENABLED` | `true` | Master toggle for the `daywalker-deep` reasoning-tier second-opinion escalation (see `documentation/strigoi.md`). Escalation only actually fires when `DRACUL_DAYWALKER_DEEP_ENABLED` is **also** `true` — the gate checks both flags. |
 | `DRACUL_DAYWALKER_ESCALATION_CONFIDENCE` | `0.6` | A CRITICAL assessment escalates only when its `confidence` is strictly below this threshold. |
 | `DRACUL_DAYWALKER_MACRO_COOLDOWN` | `28800` | Seconds; 8 h → max 2× per 16 h session; cooldown between MACRO_PORTFOLIO alerts. |
+| `DRACUL_DAYWALKER_WATCHLIST_ENABLED` (`dracul.daywalker.watchlist-enabled`) | `false` | `false` (default) = daywalker's intraday sweep watches the depot's open positions only (protects the Claude Max quota). `true` = legacy behavior — the swept universe is depot ∪ full watchlist, deduped per symbol with the depot representative winning. Parsed fail-safe (`DaywalkerEventEngine.parseWatchlistEnabled`): any value other than a clean `true`/`false` (case-insensitive, trimmed) logs a WARN and resolves to `false`. |
 
 Daywalker reuses `DRACUL_PUBLIC_URL` (webhook callback base URL).
 

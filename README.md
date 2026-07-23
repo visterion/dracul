@@ -181,8 +181,9 @@ Strigoi run, closing the feedback loop.
 
 ### Daywalker (streaming guardian)
 
-Active during US market hours. Polls prices every 5 minutes for all
-watchlist items. Reacts to news, Form-4 filings, and price spikes.
+Active during US market hours. Watches the depot's open positions intraday —
+the full watchlist only in legacy mode (`watchlist-enabled=true`) — reacting
+to news, Form-4 filings, and price spikes.
 Uses a cheap Haiku pre-filter before escalating to a full Sonnet
 assessment. Critical alerts go to Telegram immediately. Portfolio-aware news
 assessment incorporates position direction, weight, and sector context;

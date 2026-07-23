@@ -624,10 +624,11 @@ sub-project 2 of 4). Not a scheduled agent — Vistierie opens a window-bounded
 session at market open and polls Dracul's event-source webhook every 5 minutes.
 
 1. `POST /api/daywalker/events` runs deterministic detection over the depot's live
-   positions (`HeldPositionService.openPositions("depot-1")`, no LLM) and returns
-   trigger events. Each trigger type is evaluated **once per distinct symbol** —
-   price/volume spikes, negative news, insider sells, and analyst downgrades are
-   market-wide signals, so a single market-data fetch per symbol suffices.
+   positions (`HeldPositionService.openPositions("depot-1")`, no LLM) — and, only when
+   `dracul.daywalker.watchlist-enabled=true` (legacy; default `false`), additionally over
+   the watchlist — and returns trigger events. Each trigger type is evaluated **once per
+   distinct symbol** — price/volume spikes, negative news, insider sells, and analyst
+   downgrades are market-wide signals, so a single market-data fetch per symbol suffices.
 2. Vistierie spawns one reasoning-tier (Sonnet) child run per triggered symbol; the
    run judges severity and returns `{severity, thesis, confidence}`.
 3. `POST /api/daywalker/complete` persists the assessment. Since step 1 is depot-sourced
@@ -636,11 +637,13 @@ session at market open and polls Dracul's event-source webhook every 5 minutes.
    `dracul.primary-user-email` owner (same convention as gropar) rather than resolving
    owners via a watchlist lookup — one `dracul.daywalker_alerts` row is written for that
    owner if its `(owner, symbol, trigger_type)` cooldown has not yet elapsed. The
-   watchlist-owner fan-out path (`findOwnersBySymbol`, "every owner of that symbol") only
-   still fires for triggers with no `position_id` at all, which the depot-sourced engine
-   never produces.
+   watchlist-owner fan-out path (`findOwnersBySymbol`, "every owner of that symbol") is
+   only reachable under the legacy `watchlist-enabled=true` mode, where a watchlist-only
+   symbol (no depot position) can produce a trigger with no `position_id`; under the
+   default depot-only scope every event is a depot position and always carries a
+   `positionId`.
 
-Every depot position is a real holding, so every trigger is fanned out per position and
+Under the default depot-only scope, every depot position is a real holding, so every trigger is fanned out per position and
 judged against its stored context (`position_context.active_stop`, falling back to
 `initial_stop`) rather than abstract percentages, carrying a deterministic
 `breached_level` (STOP/TARGET — TARGET does not currently fire, see below). A level

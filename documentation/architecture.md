@@ -22,7 +22,8 @@ adapters, persistence, synthesis, and the frontend.
    │  scheduled  │      │  scheduled │      │ streaming  │   │ scheduled  │
    │  nightly    │      │  daily     │      │ mkt hours  │   │ daily      │
    └─────────────┘      └─────────────┘     └─────────────┘   └────────────┘
-    hunts prey           reviews outcomes    guards watchlist  reviews holdings
+    hunts prey           reviews outcomes    guards depot(*)   reviews holdings
+                                              (*legacy: +watchlist)
 ```
 
 ## Module Layout
@@ -50,7 +51,8 @@ dracul/
 │   └── outcome-analyzer, pattern-extractor, lesson-proposer
 │
 ├── dracul-daywalker/           # Streaming market guardian
-│   └── union (depot ∪ watchlist), trigger-detectors, alert-pipeline
+│   └── depot-only by default (union with watchlist only when watchlist-enabled=true),
+│       trigger-detectors, alert-pipeline
 │
 ├── dracul-synthesizer/         # Verdict generation
 │   └── consensus-detector, narrative-generator
@@ -181,7 +183,7 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 | `verdict_notes` | Append-only audit trail per verdict (id, verdict_id FK, body, created_at, user_id) |
 | `patterns` | Voievod-proposed heuristics (`PENDING` → `ACTIVE` / `REJECTED`) |
 | `pattern_evidence` | Supporting cases per pattern (symbol, anomaly, outcome, return); `pattern_id` FK ON DELETE CASCADE |
-| `watchlist_items` | Items the Daywalker monitors; `active` generated column |
+| `watchlist_items` | Watchlist items (interest / tracked holdings / verdict candidates). Reviewed nightly by Strigoi and each morning by renfield; **not** swept by daywalker intraday unless `dracul.daywalker.watchlist-enabled=true`; `active` generated column |
 | `daywalker_alerts` | Every Daywalker trigger, with LLM assessment and notification flag |
 
 **Verdict columns added:**
@@ -742,18 +744,20 @@ External sources (EDGAR, prices, news, calendar)
     User — reads, approves patterns, manages watchlist
 ```
 
-**Daywalker sweep universe (A2):** The Daywalker monitors the **union**
-of two disjoint position sources: the watchlist (operator-curated) and
-the live depot (`HeldPositionService.openPositions("depot-1")`,
-broker-sourced). Per-symbol triggers are allocated to the **depot
-representative** (if a symbol appears in both, only the depot's position
-contributes context); a symbol with a depot position but no watchlist
-entry generates alerts keyed by symbol alone (no `watchlist_item_id`),
-routed to `dracul.primary-user-email`. Engine cooldown is per
-`(symbol, trigger_type)`, **owner-agnostic**: a NEGATIVE_NEWS event on
-SAP.DE cools any further NEGATIVE_NEWS events on SAP.DE for the
-configured duration (default 3600 s), regardless of whether the alert
-was depot- or watchlist-sourced or which owner holds it.
+**Daywalker sweep universe (A2):** By default the Daywalker monitors only the
+live depot (`HeldPositionService.openPositions("depot-1")`, broker-sourced) —
+depot-only, protecting the Claude Max quota. Only when
+`dracul.daywalker.watchlist-enabled=true` (legacy behavior, default `false`)
+does it monitor the **union** of two disjoint position sources instead: the
+watchlist (operator-curated) and the live depot. Per-symbol triggers are
+allocated to the **depot representative** (if a symbol appears in both, only
+the depot's position contributes context); under the legacy union mode, a
+symbol with a depot position but no watchlist entry generates alerts keyed by
+symbol alone (no `watchlist_item_id`), routed to `dracul.primary-user-email`.
+Engine cooldown is per `(symbol, trigger_type)`, **owner-agnostic**: a
+NEGATIVE_NEWS event on SAP.DE cools any further NEGATIVE_NEWS events on SAP.DE
+for the configured duration (default 3600 s), regardless of whether the alert
+was depot- or watchlist-sourced (legacy mode) or which owner holds it.
 
 **Portfolio-aware news implication (T2.2):** Daywalker's renfield input and macroeconomic-news triggers now carry extended portfolio context. The renfield analysis (`fetch_held_positions` tool) reports a `position` block per held symbol: `{direction, entry, gain_loss_pct, weight_pct, active_stop, sector}` (FX-converted to display currency). Short positions respect sign-correct math: breach detection is direction-aware (e.g. a short entered at 100 with stop at 110 breaches its stop when price *rises* to or above 110, reversed from long logic). The macro trigger (`MACRO_PORTFOLIO`) collects macro-only headline assessments across a session poll, deduplicates and caps them at 10 per poll, and issues one consolidated alert keyed by the pseudo-symbol `PORTFOLIO` (visible in Telegram/SSE only; excluded from Chronicle watchlist UI and daywalker-deep escalation). Alerts persist under `PORTFOLIO` with `portfolio_snapshot` populated — FX-converted weights mapped to the display currency under strict hasRate discipline. `MACRO_PORTFOLIO` assessments are routed to the primary owner (`dracul.primary-user-email`). Cooldown for `MACRO_PORTFOLIO` is dual-scoped: `(PORTFOLIO, MACRO_PORTFOLIO)` cooldown (default 28800 s = 8 h) ensures at most 2 per 16-hour session; per-symbol NEGATIVE_NEWS cooldown (default 3600 s) remains unchanged. Sector metadata is cached (positive TTL 86400 s = 24 h, negative TTL 3600 s = 1 h) to avoid repeated lookups for inactive symbols.
 
