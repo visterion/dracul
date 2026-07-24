@@ -104,6 +104,24 @@ line, just a quietly unpopulated column. Verify via `GET /agents/daywalker`
 on Vistierie (`:8090`, tenant token): `output_schema` should include the new
 `event_type` field and `version` should have bumped.
 
+### Post-deploy: agent definition reset (daywalker news_sentiment array, v1.6.0)
+
+Deploying the daywalker `news_sentiment` fix updates the `daywalker` prompt to
+**v1.6.0** (it now lists `news_sentiment` in the output contract and states that
+it is an array of `{headline, sentiment}` objects, never a bare number). Same
+insert-if-absent caveat: an existing agent definition is **not** updated
+automatically. After deploying, reset the agent definition:
+
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/daywalker/definition/reset
+
+Verify via the `app` container logs: `AgentDefinitionController.reset()` logs
+`agent {} definition reset: prompt {} -> {}` — confirm the new hash lands on
+`p-0f557214387f` (daywalker), matching `prompt_registry.json`. This fix is
+preventive: daywalker had never emitted the field as a scalar, but its prompt
+did not mention `news_sentiment` at all while the schema requires an array —
+the same setup that broke strigoi-echo and renfield.
+
 ### Post-deploy: agent definition reset (renfield news_sentiment array, v1.5.0)
 
 Deploying the renfield `news_sentiment` fix updates the `renfield` prompt to
