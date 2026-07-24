@@ -104,6 +104,24 @@ line, just a quietly unpopulated column. Verify via `GET /agents/daywalker`
 on Vistierie (`:8090`, tenant token): `output_schema` should include the new
 `event_type` field and `version` should have bumped.
 
+### Post-deploy: agent definition reset (renfield news_sentiment array, v1.5.0)
+
+Deploying the renfield `news_sentiment` fix updates the `renfield` prompt to
+**v1.5.0** (it now states explicitly that `news_sentiment` is an array of
+`{headline, sentiment}` objects, never a bare number). Same insert-if-absent
+caveat as below: an existing agent definition is **not** updated automatically.
+After deploying, reset the agent definition so Vistierie picks up the new
+prompt:
+
+    curl -H "X-Local-Access-Token: $TOKEN" -X POST \
+      http://<host-lan-ip>:8080/api/settings/agents/renfield/definition/reset
+
+Verify via the `app` container logs: `AgentDefinitionController.reset()` logs
+`agent {} definition reset: prompt {} -> {}` — confirm the new hash lands on
+`p-fd0f7f07128b` (renfield), matching `prompt_registry.json`. Without this
+reset the agent keeps emitting a scalar and every run fails schema validation
+with `/proposals/0/news_sentiment: number found, array expected`.
+
 ### Post-deploy: agent definition reset (T2.2 portfolio-aware news implication)
 
 Deploying T2.2 (portfolio-aware news assessment + MACRO_PORTFOLIO trigger)
