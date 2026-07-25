@@ -246,6 +246,11 @@ dracul:
     price-spike-threshold: ${DRACUL_DAYWALKER_PRICE_SPIKE:0.03}
     volume-spike-multiplier: ${DRACUL_DAYWALKER_VOLUME_MULT:3.0}
     cooldown: ${DRACUL_DAYWALKER_COOLDOWN:3600}
+    # Emissions-Guard: sperrt ein (symbol, trigger_type) ab dem Zeitpunkt der EMISSION,
+    # unabhängig vom Ausgang des Runs. Bei Erfolg dominiert der längere `cooldown` (der
+    # Alert-Eintrag wird nur bei status=done geschrieben); bei Fehlschlag ist dies die
+    # einzige Bremse. 0 oder negativ = Guard aus. Siehe DaywalkerEventEngine.claimEmission.
+    attempt-cooldown: ${DRACUL_DAYWALKER_ATTEMPT_COOLDOWN:600}
     notify-level: ${DRACUL_DAYWALKER_NOTIFY_LEVEL:CRITICAL}
     escalation-enabled: ${DRACUL_DAYWALKER_ESCALATION_ENABLED:true}
     escalation-confidence: ${DRACUL_DAYWALKER_ESCALATION_CONFIDENCE:0.6}
