@@ -502,6 +502,12 @@ code change needed). Alternatively, cap Vistierie's budget for the
 `daywalker` tenant to force automatic run skipping when token spend
 approaches the daily limit.
 
+Note that the cooldown above only applies once a run has **succeeded** —
+`daywalker_alerts` is written for `status=done` only. Runs that fail (LLM
+provider outage, quota limit) are bounded instead by the in-memory emission
+guard `DRACUL_DAYWALKER_ATTEMPT_COOLDOWN` (default 600 s), which caps a
+failing `(symbol, trigger_type)` at ~6 runs/h rather than one per poll.
+
 ## Daywalker prod activation checklist
 
 Before deploying to production, configure:
