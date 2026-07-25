@@ -46,4 +46,10 @@ class DaywalkerConfigDefaultsPinTest {
 		String yaml = Files.readString(Path.of("src/main/resources/application.yaml"));
 		assertThat(yaml).contains("${DRACUL_DAYWALKER_WATCHLIST_ENABLED:false}");
 	}
+
+	@Test
+	void yamlCarriesTheAttemptCooldownDefault() throws Exception {
+		String yaml = Files.readString(Path.of("src/main/resources/application.yaml"));
+		assertThat(yaml).contains("${DRACUL_DAYWALKER_ATTEMPT_COOLDOWN:600}");
+	}
 }
