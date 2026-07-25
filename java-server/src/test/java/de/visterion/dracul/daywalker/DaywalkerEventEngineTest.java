@@ -156,6 +156,126 @@ class DaywalkerEventEngineTest {
         assertThat(engine.detect(null, now.plusSeconds(1))).hasSize(1);
     }
 
+    /** A headline the NewsEventTagger tags as EARNINGS_MISS — a SPECIFIC (non-MACRO) tag, so
+     *  NewsDetector fires a per-symbol NEGATIVE_NEWS trigger instead of a macro bucket entry. */
+    private static NewsHeadline earningsMissHeadline(Instant at) {
+        return new NewsHeadline("Acme misses estimates", "", "Reuters", "news", at, "http://n/e");
+    }
+
+    @Test
+    void differentTriggerTypesOnTheSameSymbolDoNotBlockEachOther() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+        // ONE symbol that trips BOTH a price spike and a specifically-tagged news headline.
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any()))
+                .thenReturn(List.of(earningsMissHeadline(now.minusSeconds(600))));
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engineWithGuard(hp, wl, in, cd, fi, al, 600).detect(null, now);
+
+        // The guard key carries the trigger_type; a symbol-only key would swallow the second.
+        assertThat(events).extracting(TriggerEvent::triggerType)
+                .containsExactlyInAnyOrder(TriggerType.PRICE_SPIKE, TriggerType.NEGATIVE_NEWS);
+    }
+
+    @Test
+    void differentSymbolsDoNotBlockEachOther() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(
+                position("ACME", 100), position("BETA", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles(anyString())).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(anyString(), any(), any())).thenReturn(List.of());
+        when(cd.recommendations(anyString())).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var events = engineWithGuard(hp, wl, in, cd, fi, al, 600)
+                .detect(null, Instant.parse("2026-07-24T12:00:00Z"));
+
+        assertThat(events).extracting(TriggerEvent::symbol)
+                .containsExactlyInAnyOrder("ACME", "BETA");
+    }
+
+    @Test
+    void dbCooldownStillDominatesOnTheSuccessPath() {
+        var m = guardMocks();
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+        // Success path: the webhook DID persist an alert row 10 min ago — inside the 3600s DB
+        // cooldown but outside the 600s guard. The DB cooldown must still suppress.
+        when(m.al().lastAlertAtAnyOwner("ACME", "PRICE_SPIKE"))
+                .thenReturn(Optional.of(now.minusSeconds(600)));
+
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), 600);
+
+        assertThat(engine.detect(null, now)).isEmpty();
+    }
+
+    @Test
+    void macroPortfolioIsNotGovernedByTheEmissionGuard() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(List.of(), List.of()));
+        when(cd.news(eq("ACME"), any(), any()))
+                .thenReturn(List.of(macroHeadline("Fed raises rates again", now.minusSeconds(120))));
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        var engine = engineWithGuard(hp, wl, in, cd, fi, al, 600);   // SAME instance both polls
+
+        assertThat(engine.detect(null, now)).extracting(TriggerEvent::triggerType)
+                .containsExactly(TriggerType.MACRO_PORTFOLIO);
+        // +700s: the 600s emission guard would have expired, the 28800s macro guard has not.
+        assertThat(engine.detect(null, now.plusSeconds(700))).isEmpty();
+    }
+
+    @Test
+    void concurrentPollsDoNotEmitTheSamePairTwice() throws Exception {
+        var m = guardMocks();
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), 600);
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+
+        // Two overlapping polls with the SAME `now` — the shape of a poll running into its
+        // successor. claimEmission's atomic compute() must let exactly one of them through.
+        var start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.Callable<List<TriggerEvent>> poll = () -> {
+            start.await();
+            return engine.detect(null, now);
+        };
+        try (var exec = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var a = exec.submit(poll);
+            var b = exec.submit(poll);
+            start.countDown();
+            assertThat(a.get().size() + b.get().size()).isEqualTo(1);
+        }
+    }
+
     @Test
     void emitsPriceSpikeAndAppliesCooldown() {
         var hp = mock(HeldPositionService.class);
