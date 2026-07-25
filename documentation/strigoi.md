@@ -665,6 +665,19 @@ symbol event** on the global live stream, not per owner.
 A per-`(owner, symbol, trigger_type)` cooldown (default 60 min) keeps a sustained
 condition from generating repeat rows for the same owner on every poll.
 
+**Emission guard (2026-07-25).** The DB cooldown above reads `daywalker_alerts`, and
+that row is only written when a run completes with `status=done`. A **failed** run
+therefore leaves no trace, so before this guard existed every 5-minute poll re-emitted
+the same `(symbol, trigger_type)` without limit — during the 2026-07-23/24 LLM outage
+daywalker sped up from ~15 to 55–76 runs/h instead of failing quietly. `DaywalkerEventEngine`
+now records the emission timestamp per `(symbol, trigger_type)` in memory and suppresses
+re-emission for `dracul.daywalker.attempt-cooldown` seconds (default 600), regardless of
+how the run ends. Emission time is the floor, the DB cooldown the ceiling: on the success
+path the longer 60-min cooldown still dominates. The map is in-memory (expired entries are
+evicted each poll) and does not survive a restart; `0` or a negative value disables the
+guard. `MACRO_PORTFOLIO` has its own, independent emission guard
+(`DRACUL_DAYWALKER_MACRO_COOLDOWN`).
+
 **Same-UTC-day dedup.** Within the cooldown window, if an owner already has an
 alert row for `(owner, symbol, trigger_type)` on the same UTC calendar day
 (`DaywalkerAlertRepository.findSameUtcDay`), no new row is inserted. Instead
