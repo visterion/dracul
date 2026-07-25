@@ -155,6 +155,14 @@ public class DaywalkerEventEngine {
         // the shared Form-4 fetch — because the events poll runs synchronously inside
         // Vistierie's single scheduler tick; a degraded Agora must not stall all agents.
         long deadlineNanos = System.nanoTime() + pollBudgetMs * 1_000_000L;
+
+        // Die Guard-Map darf in einem monatelang laufenden Prozess nicht unbegrenzt
+        // wachsen: abgelaufene Einträge fliegen bei jedem Poll raus. Damit ist die Größe
+        // durch die Zahl AKTIVER Paare beschränkt, nicht durch die je gesehenen.
+        if (attemptCooldownSeconds > 0) {
+            lastEmittedAt.values().removeIf(t -> !t.isAfter(now.minusSeconds(attemptCooldownSeconds)));
+        }
+
         ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
         try {
             Future<SweepPlan> planFuture = exec.submit(() -> plan(since, now));
@@ -375,6 +383,11 @@ public class DaywalkerEventEngine {
                     symbol, type, attemptCooldownSeconds);
         }
         return claimed.get();
+    }
+
+    /** Nur für Tests: aktuelle Größe des Emissions-Guards. */
+    int emissionGuardSize() {
+        return lastEmittedAt.size();
     }
 
     /** C1: one MACRO_PORTFOLIO trigger per non-empty deduped bucket, gated by the DUAL cooldown
