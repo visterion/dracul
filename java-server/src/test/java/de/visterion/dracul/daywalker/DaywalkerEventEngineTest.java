@@ -69,14 +69,91 @@ class DaywalkerEventEngineTest {
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al, long budgetMs) {
         return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights, sectors,
-                0.03, 3.0, 3600, 28800, budgetMs, "depot-1", "true");
+                0.03, 3.0, 3600, 28800, budgetMs, "depot-1", "true", 0);
     }
 
     private DaywalkerEventEngine engine(HeldPositionService hp, de.visterion.dracul.watchlist.WatchlistRepository wl,
                                         AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
                                         DaywalkerAlertRepository al, long budgetMs, String watchlistScope) {
         return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights, sectors,
-                0.03, 3.0, 3600, 28800, budgetMs, "depot-1", watchlistScope);
+                0.03, 3.0, 3600, 28800, budgetMs, "depot-1", watchlistScope, 0);
+    }
+
+    private DaywalkerEventEngine engineWithGuard(HeldPositionService hp,
+                                                 de.visterion.dracul.watchlist.WatchlistRepository wl,
+                                                 AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
+                                                 DaywalkerAlertRepository al, long attemptCooldown) {
+        return new DaywalkerEventEngine(hp, wl, in, cd, fi, al, portfolioWeights, sectors,
+                0.03, 3.0, 3600, 28800, 60000, "depot-1", "true", attemptCooldown);
+    }
+
+    /** Mock set for the emission-guard tests: one symbol, one price spike, and — crucially —
+     *  NO alert row ({@code lastAlertAtAnyOwner -> empty}). That is the FAILED-run shape: the
+     *  webhook never persisted anything, so the DB cooldown cannot brake the re-emission. */
+    private record GuardMocks(HeldPositionService hp,
+                              de.visterion.dracul.watchlist.WatchlistRepository wl,
+                              AgoraIntraday in, AgoraCompanyData cd, AgoraFilings fi,
+                              DaywalkerAlertRepository al) {}
+
+    private static GuardMocks guardMocks() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var fi = mock(AgoraFilings.class);
+        var al = mock(DaywalkerAlertRepository.class);
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
+        when(wl.distinctSweepRows()).thenReturn(List.of());
+        when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
+        when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("ACME")).thenReturn(List.of());
+        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+        return new GuardMocks(hp, wl, in, cd, fi, al);
+    }
+
+    @Test
+    void secondPollWithinAttemptCooldownDoesNotReEmit() {
+        var m = guardMocks();
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), 600);
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+
+        var first = engine.detect(null, now);
+        var second = engine.detect(null, now.plusSeconds(300));   // next poll
+
+        assertThat(first).hasSize(1);
+        assertThat(second).isEmpty();   // without the guard this would be 1 as well
+    }
+
+    @Test
+    void reEmitsAfterAttemptCooldownExpires() {
+        var m = guardMocks();
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), 600);
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+
+        assertThat(engine.detect(null, now)).hasSize(1);
+        assertThat(engine.detect(null, now.plusSeconds(601))).hasSize(1);
+    }
+
+    @Test
+    void attemptCooldownZeroDisablesTheGuard() {
+        var m = guardMocks();
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), 0);
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+
+        assertThat(engine.detect(null, now)).hasSize(1);
+        assertThat(engine.detect(null, now.plusSeconds(1))).hasSize(1);   // legacy behavior
+    }
+
+    @Test
+    void negativeAttemptCooldownBehavesLikeZero() {
+        var m = guardMocks();
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), -60);
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+
+        assertThat(engine.detect(null, now)).hasSize(1);
+        assertThat(engine.detect(null, now.plusSeconds(1))).hasSize(1);
     }
 
     @Test

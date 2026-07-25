@@ -61,7 +61,30 @@ public class DaywalkerEventEngine {
     private final long cooldownSeconds;
     private final long macroCooldownSeconds;
     private final long pollBudgetMs;
+    private final long attemptCooldownSeconds;
     private volatile Instant lastMacroEmittedAt;
+
+    /**
+     * Emissions-Guard je (symbol, trigger_type): Zeitpunkt der letzten EMISSION,
+     * unabhängig vom Ausgang des Runs.
+     *
+     * <p>Der Ausgang wird bewusst nie abgefragt. Läuft der Run durch, schreibt
+     * {@code DaywalkerWebhookController.complete()} eine Alert-Zeile und der
+     * DB-Cooldown ({@code dracul.daywalker.cooldown}, 3600 s) dominiert — er ist
+     * länger als dieser Guard. Scheitert der Run, bleibt die Zeile aus
+     * ({@code complete()} persistiert bei {@code status != "done"} nichts) und
+     * dieser Guard ist das Einzige, was das Paar noch bremst. Emissionszeit ist
+     * der Boden, DB-Cooldown die Decke.
+     *
+     * <p>Ohne ihn re-emittierte jeder Poll dasselbe gescheiterte Paar: am
+     * 2026-07-24 stieg die Run-Rate dadurch von ~15/h auf 55–76/h.
+     *
+     * <p>In-Memory wie {@link #lastMacroEmittedAt}: nach einem Neustart ist die
+     * Map leer und der Schaden auf einen Extra-Run pro Paar begrenzt, weil der
+     * nächste Poll den Guard sofort wieder setzt.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, Instant> lastEmittedAt =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private final PriceVolumeDetector priceVolume = new PriceVolumeDetector();
     private final InsiderSellDetector insiderSell = new InsiderSellDetector();
@@ -97,7 +120,8 @@ public class DaywalkerEventEngine {
             @Value("${dracul.daywalker.macro-cooldown:28800}") long macroCooldownSeconds,
             @Value("${dracul.daywalker.poll-budget-ms:60000}") long pollBudgetMs,
             @Value("${dracul.position.connection:depot-1}") String connection,
-            @Value("${dracul.daywalker.watchlist-enabled:false}") String watchlistEnabledRaw) {
+            @Value("${dracul.daywalker.watchlist-enabled:false}") String watchlistEnabledRaw,
+            @Value("${dracul.daywalker.attempt-cooldown:600}") long attemptCooldownSeconds) {
         this.heldPositions = heldPositions;
         this.watchlist = watchlist;
         this.intraday = intraday;
@@ -111,6 +135,7 @@ public class DaywalkerEventEngine {
         this.cooldownSeconds = cooldownSeconds;
         this.macroCooldownSeconds = macroCooldownSeconds;
         this.pollBudgetMs = pollBudgetMs;
+        this.attemptCooldownSeconds = attemptCooldownSeconds;
         this.connection = connection;
         this.watchlistEnabled = parseWatchlistEnabled(watchlistEnabledRaw);
         log.info("daywalker intraday universe: {}",
@@ -253,12 +278,18 @@ public class DaywalkerEventEngine {
         HeldPosition rep = plan.repBySymbol().get(item.ticker());
         var out = new ArrayList<TriggerEvent>();
         for (TriggerEvent base : candidates) {
-            if (!inCooldown(item.ticker(), base.triggerType(), now)) {
-                if (rep != null) {
-                    out.add(enrich(base, rep, plan.weights().get(item.ticker()), sector));
-                } else {
-                    out.add(withDetailSector(base, sector));
-                }
+            if (inCooldown(item.ticker(), base.triggerType(), now)) continue;
+            // Der Guard wird HIER gesetzt, also bevor feststeht, ob das Event den Poll
+            // überlebt: läuft das Poll-Budget ab und wird dieses Future abgebrochen, ist
+            // das Paar bis zu attempt-cooldown stumm, ohne dass ein Run lief. Bewusst in
+            // Kauf genommen — der Fall tritt nur bei einem ohnehin degradierten Poll auf,
+            // kostet höchstens einen Zyklus, und die Alternative (Setzen nach der
+            // Budget-Schleife) gäbe die Atomarität auf. Nicht "reparieren".
+            if (!claimEmission(item.ticker(), base.triggerType(), now)) continue;
+            if (rep != null) {
+                out.add(enrich(base, rep, plan.weights().get(item.ticker()), sector));
+            } else {
+                out.add(withDetailSector(base, sector));
             }
         }
         return new SymbolScan(out, newsScan.macroOnly());
@@ -313,6 +344,37 @@ public class DaywalkerEventEngine {
         return alerts.lastAlertAtAnyOwner(symbol, type.name())
                 .map(last -> last.isAfter(now.minusSeconds(cooldownSeconds)))
                 .orElse(false);
+    }
+
+    /**
+     * Atomares Prüfen-und-Setzen des Emissions-Guards. Gibt {@code true} zurück,
+     * wenn emittiert werden darf (und markiert das Paar dann sofort).
+     *
+     * <p>{@code compute} statt get/put, weil {@code detectSymbol} pro Symbol auf
+     * einem eigenen Virtual Thread läuft und ein Poll theoretisch in den nächsten
+     * hineinlaufen kann (Budget 60 s, Intervall 300 s). Verschiedene Symbole
+     * kollidieren nie auf demselben Schlüssel — derselbe Schlüssel aus zwei
+     * überlappenden Polls schon.
+     *
+     * <p>{@code attemptCooldownSeconds <= 0} schaltet den Guard ab (Notausstieg
+     * ohne Rebuild).
+     */
+    private boolean claimEmission(String symbol, TriggerType type, Instant now) {
+        if (attemptCooldownSeconds <= 0) return true;
+        String key = symbol + "|" + type.name();
+        var claimed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        lastEmittedAt.compute(key, (k, last) -> {
+            if (last != null && last.isAfter(now.minusSeconds(attemptCooldownSeconds))) {
+                return last;   // Guard greift — Eintrag unverändert lassen
+            }
+            claimed.set(true);
+            return now;
+        });
+        if (!claimed.get()) {
+            log.debug("daywalker: emission guard suppressed {} {} (attempt-cooldown {}s)",
+                    symbol, type, attemptCooldownSeconds);
+        }
+        return claimed.get();
     }
 
     /** C1: one MACRO_PORTFOLIO trigger per non-empty deduped bucket, gated by the DUAL cooldown
