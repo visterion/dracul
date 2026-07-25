@@ -89,11 +89,15 @@ public class ExecutorWebhookController {
     private final PatternRepository patternRepo;
 
     /**
-     * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
-     * {@code place_bracket} requires a take-profit leg, so a target must always be present or the
-     * order is rejected with {@code missing required argument: takeProfitLimit}. The strategy's
-     * real exits are the trailing chandelier / giveback stops, not a fixed target — so this 3R
-     * default is intentionally wide and rarely fills; it exists only to make the bracket valid.
+     * Wide default take-profit distance, in R (risk units = |entry - stop|). Used by the ENTRY
+     * path only: when the LLM omits {@code take_profit} we still attach a target so the entry
+     * bracket carries one. The strategy's real exits are the trailing chandelier / giveback
+     * stops, not a fixed target — so this 3R default is intentionally wide and rarely fills.
+     *
+     * <p>Deliberately NOT used for tranche-2 adds: there the same 3R synthesis produced targets
+     * far enough from the order price for Saxo to reject the whole bracket with
+     * {@code TooFarFromEntryOrder}. Agora's {@code place_bracket} accepts a bracket without a
+     * take-profit leg (entry + stop only).
      */
     private static final BigDecimal DEFAULT_TARGET_R = new BigDecimal("3.0");
 
@@ -1230,25 +1234,19 @@ public class ExecutorWebhookController {
         BigDecimal orderPrice = ctx.price();
         BigDecimal stopPrice = position.activeStop();
 
-        // Guarantee a take-profit leg, same 3R-from-order-price synthesis as place-entry.
-        BigDecimal takeProfit = null;
-        if (orderPrice != null && stopPrice != null) {
-            BigDecimal r = orderPrice.subtract(stopPrice).abs();
-            if (r.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
-                BigDecimal target = "SELL".equals(position.side())
-                        ? orderPrice.subtract(offset)
-                        : orderPrice.add(offset);
-                takeProfit = target.setScale(2, RoundingMode.HALF_UP);
-            }
-        }
-
+        // Tranche 2 bekommt bewusst KEINEN eigenen Take-Profit. Der bis 2026-07-25 hier
+        // synthetisierte 3R-Zielkurs lag bei +28 % vom Entry und wurde von Saxo mit
+        // TooFarFromEntryOrder abgelehnt — der Per-Leg-Body benannte genau dieses Leg.
+        // Die daraus folgende Kette (Fallback → 429 → Retry → 409) verdeckte den Grund
+        // und verhinderte die Tranche seit dem 2026-07-20 in jedem Nachtlauf.
+        // Der Ausstieg der Gesamtposition wird ohnehin vom Exit-Lifecycle gesteuert,
+        // nicht von einem Zielkurs an der zweiten Tranche.
         PlacedBracket placed;
         try {
             String clientRef = "t2-" + (position.sourceSignalId() != null
                     ? position.sourceSignalId() : "pos-" + position.id());
             BracketRequest req = new BracketRequest(symbol, position.side(), sizing.qty(), orderPrice,
-                    stopPrice, takeProfit, clientRef, null);
+                    stopPrice, null, clientRef, null);
             placed = gateway.placeBracket(connection, req);
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
