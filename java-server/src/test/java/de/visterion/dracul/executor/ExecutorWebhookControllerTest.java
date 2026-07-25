@@ -2410,6 +2410,54 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void tranche2IsPlacedWithoutATakeProfit() {
+        // Der synthetische 3R-Take-Profit (+28 % vom Entry) war der Auslöser der
+        // Saxo-Fehlkette: TooFarFromEntryOrder → Fallback → 429 → Retry → 409.
+        // Tranche 2 braucht keinen eigenen Zielkurs — der Exit-Lifecycle steuert den
+        // Ausstieg der Gesamtposition.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        controller.addTranche(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        // The old 3R synthesis would have produced 100 + 3*(100-95) = 115 here.
+        assertThat(req.takeProfitLimit()).isNull();
+        // ...but the stop leg is untouched: a tranche must never be unguarded.
+        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+    }
+
+    @Test
+    void theEntryPathStillSynthesizesItsTarget() {
+        // DEFAULT_TARGET_R bleibt — der Entry-Pfad nutzt sie weiter.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        // BUY, order price 100, stop 95 -> R=5 -> 100 + 3*5 = 115.
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("115");
+    }
+
+    @Test
     void addTranche_dbFailureAfterPlacedBracket_escalatesOrphanedOrder() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
@@ -2616,6 +2664,104 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo).insert(decisionCaptor.capture());
         assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("DATA_UNAVAILABLE");
+    }
+
+    // -------------------------------------------------------------------
+    // add-tranche: idempotent retry after a prior BROKER_ERROR + attempt cap.
+    // Mirrors the place-entry guard at the top of this file — since Agora randomises
+    // X-Request-ID per attempt, the broker no longer dedupes for us.
+    // -------------------------------------------------------------------
+
+    @Test
+    void tranche2AdoptsAnExistingOrderAfterAPriorBrokerError() {
+        // Szenario: der vorige Versuch erreichte den Broker (Order liegt), wurde aber als
+        // unavailable gemeldet. Ohne Guard entstünde eine ZWEITE Tranche-Order — und seit
+        // Agora die X-Request-ID pro Versuch würfelt, fängt der Broker das nicht mehr ab.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-existing", "t2-sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        // the adopted order's own qty is booked, not the freshly re-computed sizer qty (10)
+        assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("7");
+
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<BigDecimal> qtyCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> entryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateTranche2(eq(7L), qtyCaptor.capture(), entryCaptor.capture(),
+                eq("brk-existing"), isNull());
+        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("17");
+        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100.000000");
+
+        verify(decisionRepo).insert(argThat(d -> d != null && !d.accepted()
+                && "DUPLICATE".equals(d.rejectReason())
+                && "brk-existing".equals(d.brokerOrderId())));
+        verify(decisionRepo).insert(argThat(d -> d != null && d.accepted()
+                && "brk-existing".equals(d.brokerOrderId())));
+    }
+
+    @Test
+    void tranche2PlacesNormallyWithoutPriorBrokerErrors() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(0);
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(gateway, never()).orderByRef(any(), any());
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
+    }
+
+    @Test
+    void tranche2GoesTerminalAfterMaxBrokerAttempts() {
+        // maxBrokerAttempts = 3 in this fixture; no live order exists under the tranche ref,
+        // so there is nothing to adopt and no further placement may be attempted.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("MAX_BROKER_ATTEMPTS");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).updateTranche2(anyLong(), any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("MAX_BROKER_ATTEMPTS");
     }
 
     @Test

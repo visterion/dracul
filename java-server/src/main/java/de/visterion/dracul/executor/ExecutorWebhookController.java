@@ -89,11 +89,15 @@ public class ExecutorWebhookController {
     private final PatternRepository patternRepo;
 
     /**
-     * Wide default take-profit distance, in R (risk units = |entry - stop|). Agora's
-     * {@code place_bracket} requires a take-profit leg, so a target must always be present or the
-     * order is rejected with {@code missing required argument: takeProfitLimit}. The strategy's
-     * real exits are the trailing chandelier / giveback stops, not a fixed target — so this 3R
-     * default is intentionally wide and rarely fills; it exists only to make the bracket valid.
+     * Wide default take-profit distance, in R (risk units = |entry - stop|). Used by the ENTRY
+     * path only: when the LLM omits {@code take_profit} we still attach a target so the entry
+     * bracket carries one. The strategy's real exits are the trailing chandelier / giveback
+     * stops, not a fixed target — so this 3R default is intentionally wide and rarely fills.
+     *
+     * <p>Deliberately NOT used for tranche-2 adds: there the same 3R synthesis produced targets
+     * far enough from the order price for Saxo to reject the whole bracket with
+     * {@code TooFarFromEntryOrder}. Agora's {@code place_bracket} accepts a bracket without a
+     * take-profit leg (entry + stop only).
      */
     private static final BigDecimal DEFAULT_TARGET_R = new BigDecimal("3.0");
 
@@ -1230,26 +1234,73 @@ public class ExecutorWebhookController {
         BigDecimal orderPrice = ctx.price();
         BigDecimal stopPrice = position.activeStop();
 
-        // Guarantee a take-profit leg, same 3R-from-order-price synthesis as place-entry.
-        BigDecimal takeProfit = null;
-        if (orderPrice != null && stopPrice != null) {
-            BigDecimal r = orderPrice.subtract(stopPrice).abs();
-            if (r.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
-                BigDecimal target = "SELL".equals(position.side())
-                        ? orderPrice.subtract(offset)
-                        : orderPrice.add(offset);
-                takeProfit = target.setScale(2, RoundingMode.HALF_UP);
-            }
-        }
+        // Tranche 2 bekommt bewusst KEINEN eigenen Take-Profit. Der bis 2026-07-25 hier
+        // synthetisierte 3R-Zielkurs lag bei +28 % vom Entry und wurde von Saxo mit
+        // TooFarFromEntryOrder abgelehnt — der Per-Leg-Body benannte genau dieses Leg.
+        // Die daraus folgende Kette (Fallback → 429 → Retry → 409) verdeckte den Grund
+        // und verhinderte die Tranche seit dem 2026-07-20 in jedem Nachtlauf.
+        // Der Ausstieg der Gesamtposition wird ohnehin vom Exit-Lifecycle gesteuert,
+        // nicht von einem Zielkurs an der zweiten Tranche.
+        String signalId = position.sourceSignalId();
+        String clientRef = "t2-" + (signalId != null ? signalId : "pos-" + position.id());
 
+        // Idempotency guard + attempt cap — the exact mirror of place-entry's guard above, on the
+        // tranche clientRef ("t2-…", distinct from the entry ref, so the two adoptions can never
+        // collide). It became mandatory when Agora switched X-Request-ID to a fresh random value
+        // per attempt: Saxo's request-id dedupe used to swallow a re-sent tranche order, and no
+        // longer does. Without this, a retry after a "committed but reported unavailable" attempt
+        // would open a SECOND tranche-2 order.
+        //
+        // Accepted imprecision: countByReason(signalId, "BROKER_ERROR") counts entry AND tranche
+        // broker errors of the same signal on one axis. That is deliberate — both mean "this
+        // broker is currently unhealthy for this signal", and a second counting axis would be
+        // more state for little gain. Do NOT "fix" this later as a bug.
+        //
+        // A position without a sourceSignalId (manual/imported) has no counting axis at all, so it
+        // keeps the pre-guard behaviour of placing unconditionally.
+        BigDecimal trancheQty = sizing.qty();
         PlacedBracket placed;
         try {
-            String clientRef = "t2-" + (position.sourceSignalId() != null
-                    ? position.sourceSignalId() : "pos-" + position.id());
-            BracketRequest req = new BracketRequest(symbol, position.side(), sizing.qty(), orderPrice,
-                    stopPrice, takeProfit, clientRef, null);
-            placed = gateway.placeBracket(connection, req);
+            int priorBrokerErrors = signalId != null
+                    ? decisionRepo.countByReason(signalId, "BROKER_ERROR")
+                    : 0;
+            Optional<BrokerOrder> existing = priorBrokerErrors > 0
+                    ? gateway.orderByRef(connection, clientRef)
+                    : Optional.empty();
+            boolean adoptable = existing.isPresent() && isLiveOrder(existing.get().status());
+            if (adoptable) {
+                BrokerOrder eo = existing.get();
+                // Book the live order's actual qty, not the freshly re-computed sizer qty — a
+                // later-run retry can produce a different qty from the sizer, which would diverge
+                // the DB position from the real broker order.
+                if (eo.qty() != null) {
+                    trancheQty = eo.qty();
+                }
+                // Saxo/live brackets expose no leg ids — null is expected and matches a fresh
+                // placement.
+                placed = new PlacedBracket(eo.orderId(), null, null, eo.clientRef(), eo.status());
+                decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
+                        "DUPLICATE", List.of(),
+                        "idempotent retry: existing broker order " + eo.orderId()
+                                + " for clientRef " + clientRef + " adopted, not re-placed",
+                        eo.orderId(), runId, null));
+            } else if (priorBrokerErrors >= maxBrokerAttempts) {
+                // Same terminal intent as place-entry's cap: after maxBrokerAttempts broker errors
+                // stop attempting. place-entry expresses "terminal" by flipping its signal to
+                // REJECTED; a tranche has no own signal status (the source signal is long
+                // ACCEPTED), so the terminal outcome here is simply "no further placement" plus an
+                // auditable decision row.
+                decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
+                        "MAX_BROKER_ATTEMPTS", List.of(),
+                        "broker attempt cap reached: " + priorBrokerErrors + "/" + maxBrokerAttempts,
+                        null, runId, null));
+                return ResponseEntity.ok(Map.of("output",
+                        Map.of("placed", false, "reason", "MAX_BROKER_ATTEMPTS")));
+            } else {
+                BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, orderPrice,
+                        stopPrice, null, clientRef, null);
+                placed = gateway.placeBracket(connection, req);
+            }
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
                     "BROKER_ERROR", List.of(), "broker call failed: " + e.getMessage(), null, runId, null));
@@ -1260,13 +1311,13 @@ public class ExecutorWebhookController {
         String brokerOrderId = placed.bracketId();
 
         try {
-            BigDecimal newQty = position.qty().add(sizing.qty());
+            BigDecimal newQty = position.qty().add(trancheQty);
             // Weighted recompute from submitted (limit) prices — intentionally not broker-basis
             // yet. ReconcileService.updateMaintenance() converges entry_price to the broker's
             // real post-add average open price on the next reconcile run, so any tranche-2
             // slippage self-corrects without special-casing it here.
             BigDecimal newEntry = position.qty().multiply(position.entryPrice())
-                    .add(sizing.qty().multiply(orderPrice))
+                    .add(trancheQty.multiply(orderPrice))
                     .divide(newQty, 6, RoundingMode.HALF_UP);
 
             positionRepo.updateTranche2(position.id(), newQty, newEntry, brokerOrderId, placed.stopLegId());
@@ -1283,12 +1334,12 @@ public class ExecutorWebhookController {
                         position.sourceSignalId(), position.id(), brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyTranche2(position, sizing.qty(), orderPrice, newQty, newEntry,
+            executorNotifier.notifyTranche2(position, trancheQty, orderPrice, newQty, newEntry,
                     t2.reason(), connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,
-                    "qty", sizing.qty(),
+                    "qty", trancheQty,
                     "reason", t2.reason())));
         } catch (RuntimeException e) {
             // Broker holds a LIVE tranche-2 order but the book write failed. Alert FIRST — the
