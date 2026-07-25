@@ -2410,6 +2410,54 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void tranche2IsPlacedWithoutATakeProfit() {
+        // Der synthetische 3R-Take-Profit (+28 % vom Entry) war der Auslöser der
+        // Saxo-Fehlkette: TooFarFromEntryOrder → Fallback → 429 → Retry → 409.
+        // Tranche 2 braucht keinen eigenen Zielkurs — der Exit-Lifecycle steuert den
+        // Ausstieg der Gesamtposition.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        controller.addTranche(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        // The old 3R synthesis would have produced 100 + 3*(100-95) = 115 here.
+        assertThat(req.takeProfitLimit()).isNull();
+        // ...but the stop leg is untouched: a tranche must never be unguarded.
+        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+    }
+
+    @Test
+    void theEntryPathStillSynthesizesItsTarget() {
+        // DEFAULT_TARGET_R bleibt — der Entry-Pfad nutzt sie weiter.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        // BUY, order price 100, stop 95 -> R=5 -> 100 + 3*5 = 115.
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("115");
+    }
+
+    @Test
     void addTranche_dbFailureAfterPlacedBracket_escalatesOrphanedOrder() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
