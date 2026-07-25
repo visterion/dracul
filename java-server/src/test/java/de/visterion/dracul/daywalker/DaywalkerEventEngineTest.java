@@ -156,6 +156,23 @@ class DaywalkerEventEngineTest {
         assertThat(engine.detect(null, now.plusSeconds(1))).hasSize(1);
     }
 
+    @Test
+    void expiredGuardEntriesAreEvicted() {
+        var m = guardMocks();
+        var engine = engineWithGuard(m.hp(), m.wl(), m.in(), m.cd(), m.fi(), m.al(), 600);
+        var now = Instant.parse("2026-07-24T12:00:00Z");
+
+        engine.detect(null, now);
+        assertThat(engine.emissionGuardSize()).isEqualTo(1);
+
+        // A poll far past expiry in which NOTHING triggers any more (flat candles → no spike):
+        // the stale entry must still go, otherwise the map only ever grows.
+        when(m.in().candles("ACME")).thenReturn(new IntradayCandles(closes(100, 100), List.of()));
+        engine.detect(null, now.plusSeconds(4000));
+
+        assertThat(engine.emissionGuardSize()).isZero();
+    }
+
     /** A headline the NewsEventTagger tags as EARNINGS_MISS — a SPECIFIC (non-MACRO) tag, so
      *  NewsDetector fires a per-symbol NEGATIVE_NEWS trigger instead of a macro bucket entry. */
     private static NewsHeadline earningsMissHeadline(Instant at) {
