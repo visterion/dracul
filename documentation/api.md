@@ -1900,10 +1900,12 @@ mirrored on the upside. A `stop_price` outside the window fails as `NO_STOP`
 regardless of what the LLM proposed; the LLM is expected to choose *inside*
 the window (typically 2.5–3× ATR, or the recent swing low), never at its
 edges. `take_profit` is genuinely optional to the LLM: if omitted, the
-controller synthesizes a wide 3R target from `stop_price`/order price so
-the bracket is always valid (Agora's `place_bracket` requires a take-profit
-leg) — the strategy's real exits are the trailing chandelier / giveback
-stops, not this fixed target, so it is intentionally wide and rarely fills.
+controller synthesizes a wide 3R target from `stop_price`/order price — the
+strategy's real exits are the trailing chandelier / giveback stops, not this
+fixed target, so it is intentionally wide and rarely fills. The synthesis is
+the **entry path only**: `add-tranche` deliberately places without a
+take-profit leg (see below), and Agora's `place_bracket` accepts a bracket of
+entry + stop alone.
 
 The **order-price basis** used throughout (sizing, stop-window check,
 take-profit synthesis, position booking) is a single value: `limit_price`
@@ -2165,7 +2167,8 @@ caller-supplied `reason`) → `PositionSizer.size` (reusing the position's
 **existing active stop**, not a freshly recomputed one — the ATR/swing
 levels have moved since tranche 1, but the stop is a single, per-position
 line the ratchet already tracks) → heat check (mirrors `HEAT_LIMIT`) →
-budget check (mirrors `BUDGET`) → `AgoraTrading`. On success, the bracket
+budget check (mirrors `BUDGET`) → idempotency guard / attempt cap (see below)
+→ `AgoraTrading`. On success, the bracket
 reuses the active stop, and the position row is updated in place
 (`tranche=2`, quantity summed, entry price re-weighted to the
 qty-weighted average of both tranches, `tranche2_order_id`/
@@ -2188,9 +2191,28 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | `HEAT_LIMIT` | Adding this tranche's risk would exceed the heat cap |
 | `BUDGET` | Remaining cash or budget headroom can't cover the tranche |
 | `BROKER_ERROR` | The Agora trading webhook call failed |
+| `MAX_BROKER_ATTEMPTS` | The signal already has `dracul.executor.max-broker-attempts` (default 3) `BROKER_ERROR` decisions — no further tranche is placed |
 
 Every outcome writes one `executor_decision` audit row (no `submit-decision`
 call needed for tranche-2 adds).
+
+**The tranche bracket carries no take-profit leg** — entry + stop only. A
+synthesized 3R target (as on `place-entry`) sits far enough from the order
+price that Saxo rejects the whole bracket with `TooFarFromEntryOrder`; the
+position's exit is owned by the exit lifecycle, not by a target on the second
+tranche.
+
+**Idempotency guard and attempt cap**, mirroring `place-entry` on the
+tranche's own client ref `t2-<signal_id>` (distinct from the entry ref, so the
+two adoptions can never collide): if the signal has prior `BROKER_ERROR`
+decisions, the controller first asks the broker for an order under that ref.
+A live one is **adopted** — booked with the broker's own quantity, so
+`updateTranche2` (summed qty, re-weighted entry price, Telegram push,
+response) cannot diverge from the real order — and audited as a `DUPLICATE`
+decision row rather than reported as a rejection. Past
+`max-broker-attempts`, nothing is placed at all and the call answers
+`MAX_BROKER_ATTEMPTS`. A position without a `source_signal_id`
+(manual/imported) has no counting axis and places unconditionally.
 
 ### `POST /api/executor/complete`
 
