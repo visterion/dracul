@@ -66,7 +66,7 @@ class StopRatchetServiceTest {
     }
 
     @Test
-    void raisesStopToChandelier() {
+    void usesBracketIdNotStopLegId() {
         ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
@@ -74,7 +74,10 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).hasSize(1);
         FakeExecutionGateway.ModifyCall call = gateway.modifyCalls.get(0);
-        assertThat(call.orderId()).isEqualTo("stop-1");
+        // Agora's modifyBracket resolves legs FROM the bracket id; handing it a leg id fails in
+        // both lifecycle phases. The fixture sets brokerOrderId="brk-1" and stopOrderId="stop-1"
+        // deliberately different, so this assertion is a real probe.
+        assertThat(call.orderId()).isEqualTo("brk-1");
         assertThat(call.symbol()).isEqualTo("ACME");
         assertThat(call.stop()).isEqualByComparingTo("104");
         assertThat(call.target()).isNull();

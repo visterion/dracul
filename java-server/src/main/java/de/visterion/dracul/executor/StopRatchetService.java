@@ -90,9 +90,15 @@ public class StopRatchetService {
 
             BigDecimal oldStop = p.activeStop();
 
-            String primaryOrderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
+            // Agora resolves the stop leg FROM the bracket id — pre-fill through the parent's
+            // embedded RelatedOpenOrders, post-fill through the by-Uic symbol fallback. Handing it
+            // the stop LEG id instead fails in both phases: pre-fill the leg isn't a top-level
+            // order at all, post-fill it is found but its Oco sibling is the take-profit, so Agora
+            // reports "no stop-loss leg". That is why the ratchet never moved a single stop between
+            // 2026-07-19 and 2026-07-26. Do NOT "restore" stopOrderId here.
+            String bracketId = p.brokerOrderId();
             try {
-                gateway.modifyBracket(p.connection(), primaryOrderId, p.symbol(), chandelier, null);
+                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null);
             } catch (BrokerUnavailableException e) {
                 escalate(p, runId, "BROKER_UNAVAILABLE",
                         "broker unavailable during stop-ratchet modify: " + e.getMessage());
