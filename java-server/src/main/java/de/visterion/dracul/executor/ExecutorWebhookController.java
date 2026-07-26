@@ -110,6 +110,10 @@ public class ExecutorWebhookController {
     private final int maxTranche;
     private final int entryGtdDays;
     private final int maxBrokerAttempts;
+    /** Length of the rolling window over which failed runs are counted for the attempt cap. */
+    private final int brokerAttemptWindowHours;
+    /** Broker calls per signal allowed inside a single run before the throttle bites. */
+    private final int maxBrokerCallsPerRun;
 
     @Autowired
     public ExecutorWebhookController(
@@ -154,13 +158,16 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-tranche:2}") int maxTranche,
             @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays,
             @Value("${dracul.executor.max-broker-attempts:3}") int maxBrokerAttempts,
+            @Value("${dracul.executor.broker-attempt-window-hours:72}") int brokerAttemptWindowHours,
+            @Value("${dracul.executor.max-broker-calls-per-run:2}") int maxBrokerCallsPerRun,
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
-                entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
+                entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
+                driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
                 Clock.systemUTC());
     }
 
@@ -206,6 +213,8 @@ public class ExecutorWebhookController {
             int maxTranche,
             int entryGtdDays,
             int maxBrokerAttempts,
+            int brokerAttemptWindowHours,
+            int maxBrokerCallsPerRun,
             double driftAnchorAtrMult,
             double valueAnchorAtrMult,
             String instrumentCurrency,
@@ -233,6 +242,8 @@ public class ExecutorWebhookController {
         this.maxTranche = maxTranche;
         this.entryGtdDays = entryGtdDays;
         this.maxBrokerAttempts = maxBrokerAttempts;
+        this.brokerAttemptWindowHours = brokerAttemptWindowHours;
+        this.maxBrokerCallsPerRun = maxBrokerCallsPerRun;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
