@@ -148,6 +148,8 @@ class StopRatchetServiceTest {
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
         assertThat(log.symbol()).isEqualTo("ACME");
+        assertThat(log.orderJson()).isNotNull();
+        assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(4L);
 
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
         // No "stop raised" push may go out when the stop did not move.
@@ -172,6 +174,8 @@ class StopRatchetServiceTest {
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
         assertThat(log.symbol()).isEqualTo("ACME");
+        assertThat(log.orderJson()).isNotNull();
+        assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(5L);
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
@@ -188,6 +192,8 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        assertThat(logCaptor.getValue().orderJson()).isNotNull();
+        assertThat(logCaptor.getValue().orderJson().get("position_id").asLong()).isEqualTo(6L);
     }
 
     @Test
@@ -203,6 +209,8 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        assertThat(logCaptor.getValue().orderJson()).isNotNull();
+        assertThat(logCaptor.getValue().orderJson().get("position_id").asLong()).isEqualTo(7L);
     }
 
     @Test
@@ -233,6 +241,8 @@ class StopRatchetServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("NO_BRACKET_ID");
+        assertThat(log.orderJson()).isNotNull();
+        assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(9L);
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
         // No "stop raised" push may go out when the stop did not move.
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());

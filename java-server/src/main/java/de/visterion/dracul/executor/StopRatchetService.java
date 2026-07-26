@@ -176,11 +176,17 @@ public class StopRatchetService {
      * One non-throwing escalation row. Carries the signal and agent attribution the position knows,
      * matching {@link EntryExpiryService}'s idiom — an operator triaging {@code decision_log} needs
      * to know which signal and which agent put this position on the book.
+     *
+     * <p>{@code decision_log} has no position column, so the position id goes into
+     * {@code order_json} — the same idiom as {@link ReconcileService}'s {@code PENDING_EXIT_STALE}.
+     * The decision-log alarm keys on it; without it a row cannot be attributed to a position.
      */
     private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
+        ObjectNode order = mapper.createObjectNode();
+        order.put("position_id", p.id());
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
-                "ESCALATE", reasonCode, null, reasoning,
+                "ESCALATE", reasonCode, order, reasoning,
                 null, null, null));
     }
 }
