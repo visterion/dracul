@@ -40,15 +40,28 @@ class StopRatchetServiceTest {
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
             BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount) {
-        return openPosition(id, symbol, side, highestPrice, activeStop, mfeR, softConfirmCount, null);
+        return openPosition(id, symbol, side, highestPrice, activeStop, mfeR, softConfirmCount,
+                "brk-1", 1, null, null);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
             BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount, String tranche2StopOrderId) {
+        return openPosition(id, symbol, side, highestPrice, activeStop, mfeR, softConfirmCount,
+                "brk-1", 1, null, tranche2StopOrderId);
+    }
+
+    /**
+     * Full fixture. {@code brokerOrderId} and {@code stopOrderId} are deliberately DIFFERENT
+     * ("brk-1" vs "stop-1") — that difference is what makes the bracket-id assertions a real
+     * mutation probe rather than a tautology.
+     */
+    private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
+            BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount,
+            String brokerOrderId, int tranche, String tranche2OrderId, String tranche2StopOrderId) {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, new BigDecimal("100"),
-                new BigDecimal("90"), activeStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01",
-                null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null, null, null, null,
-                "stop-1", null, null, null, tranche2StopOrderId, 0, null, null,
+                new BigDecimal("90"), activeStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01",
+                null, "OPEN", brokerOrderId, highestPrice, mfeR, softConfirmCount, null, null, null, null,
+                "stop-1", null, null, tranche2OrderId, tranche2StopOrderId, 0, null, null,
                 null, null, null, null);
     }
 
