@@ -19,15 +19,36 @@ import java.util.Map;
  * is the single choke point enforcing that — this service must never call the gateway or update
  * the position book when the guard denies the move.
  *
+ * <p><b>The gateway takes the BRACKET id, not a leg id.</b> Agora resolves the stop leg from the
+ * bracket: pre-fill through the parent's embedded {@code RelatedOpenOrders}, post-fill through a
+ * by-Uic symbol fallback. Passing {@code stopOrderId} instead made every modify fail from
+ * 2026-07-19 to 2026-07-26 — no stop was ever ratcheted in that window. {@code stopOrderId} stays
+ * on the record because {@link ReconcileService} matches fills with it; it is simply not an
+ * address here.
+ *
+ * <p>Beyond the two trivial skips for missing inputs (no {@code highestPrice} recorded yet, no ATR
+ * for the symbol), four conditions stop a position short of the broker, in this order and each
+ * with {@code continue} so one position never aborts the rest of the book:
+ * <ul>
+ *   <li>the guard denies a non-improving move — silent, the normal case;</li>
+ *   <li>the rounded chandelier is on the wrong side of the last close (or no close is known) —
+ *       silent, a regular "not yet" state owned by the soft trigger;</li>
+ *   <li>a tranche 2 is open — {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}, because two stop
+ *       legs cannot be addressed unambiguously through {@code modifyBracket} and a silent partial
+ *       ratchet would leave the book claiming a stop half the position does not have;</li>
+ *   <li>{@code brokerOrderId} is null — {@code ESCALATE / NO_BRACKET_ID}.</li>
+ * </ul>
+ *
+ * <p>Both escalations sit AFTER the guard and after the market-side check, so they repeat on every
+ * maintenance run for as long as the condition holds AND a better stop is actually available —
+ * the active stop is deliberately left untouched. That is intended: a position that can never be
+ * ratcheted must stay loudly visible. Do not "fix" it by moving a check ahead of the guard.
+ *
  * <p>On {@link BrokerUnavailableException} during {@code modifyBracket}, this escalates via the
  * decision log and leaves the old stop in place — mirrors {@link ReconcileService} and
- * {@link HardTriggerService}'s idiom.
- *
- * <p>When a position has added a second tranche ({@link ExecutorPosition#tranche2StopOrderId()}
- * non-null), the same chandelier level is sent to <em>both</em> stop legs — they share one
- * position and must ratchet in lockstep. If the second leg's {@code modifyBracket} call throws
- * mid-loop after the first leg already succeeded at the broker, this still escalates and skips
- * persisting the new stop for this pass; the next maintenance run will retry both legs.
+ * {@link HardTriggerService}'s idiom. Every escalation row carries the position id in
+ * {@code order_json} (since {@code decision_log} has no position column) plus the position's
+ * signal and agent attribution.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
