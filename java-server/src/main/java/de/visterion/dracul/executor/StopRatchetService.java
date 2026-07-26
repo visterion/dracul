@@ -79,9 +79,11 @@ public class StopRatchetService {
                 // sitting on the old stop. A silent partial success is worse than a loud failure, so
                 // this escalates and leaves the stop where it is.
                 //
-                // The marker is `tranche`, NOT `tranche2StopOrderId`: Saxo returns no leg ids, so
-                // that field is null by design (ExecutorWebhookController:1306) and a gate keyed on
-                // it would never fire — precisely on the broker this matters for.
+                // `tranche` is the RELIABLE marker: Saxo returns no leg ids, so tranche2StopOrderId
+                // is null by design there (see the "Saxo/live brackets expose no leg ids" comment in
+                // ExecutorWebhookController's adoption branch) and a gate keyed on the leg id alone
+                // would never fire — precisely on the broker this matters for. The two id fields
+                // stand alongside as belt-and-braces, for brokers that do report them.
                 escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
                         "stop ratchet unsupported while a tranche 2 is open: two stop legs cannot be "
                                 + "addressed unambiguously through modifyBracket");
@@ -144,10 +146,14 @@ public class StopRatchetService {
                 "MODIFY_STOP", null, order, null, null, null, null));
     }
 
-    /** One non-throwing escalation row. Carries no position id yet — Task 7 adds it. */
+    /**
+     * One non-throwing escalation row. Carries the signal and agent attribution the position knows,
+     * matching {@link EntryExpiryService}'s idiom — an operator triaging {@code decision_log} needs
+     * to know which signal and which agent put this position on the book.
+     */
     private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                "MAINTENANCE", null, null, null, p.symbol(), null, null,
+                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
                 "ESCALATE", reasonCode, null, reasoning,
                 null, null, null));
     }

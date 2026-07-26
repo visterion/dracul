@@ -126,6 +126,8 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).isEmpty();
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        // A symbol missing from the ATR map is a routine condition, not a fault: never escalate.
+        verify(decisionRepo, never()).insert(any());
     }
 
     @Test
@@ -144,6 +146,8 @@ class StopRatchetServiceTest {
         assertThat(log.symbol()).isEqualTo("ACME");
 
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        // No "stop raised" push may go out when the stop did not move.
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
     @Test
@@ -221,5 +225,7 @@ class StopRatchetServiceTest {
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("NO_BRACKET_ID");
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        // No "stop raised" push may go out when the stop did not move.
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 }
