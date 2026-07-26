@@ -97,7 +97,13 @@ class MaintenancePipelineTest {
         order.verify(reconcile).reconcile("c", "r1");
         order.verify(entryExpiry).expire("c", "r1");
         order.verify(hardTrigger).apply(any(), any(), eq("r1"));
-        order.verify(ratchet).ratchet(any(), any(), any(), eq("r1"));
+        // The two maps are adjacent same-typed parameters, so a swap compiles silently. Swapped,
+        // every BUY chandelier (~104) would be compared against an ATR (~2.0), safeSide would be
+        // false and the ratchet would skip forever without writing a single escalation row. Pin
+        // the content, not just the arity.
+        order.verify(ratchet).ratchet(any(),
+                eq(Map.of("BBB", new BigDecimal("2.0"))),
+                eq(Map.of("BBB", new BigDecimal("108"))), eq("r1"));
 
         verify(positionRepo).updateMaintenance(eq(1L), eq(new BigDecimal("110")),
                 eq(new BigDecimal("1.6")), eq(0), eq(new BigDecimal("104")), eq(null));

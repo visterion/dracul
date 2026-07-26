@@ -334,4 +334,39 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).isEmpty();
         verify(decisionRepo, never()).insert(any());
     }
+
+    @Test
+    void sellChandelierBelowMarket_isSkippedSilently() {
+        // Mirror of chandelierAboveMarket_isSkippedSilently for a short. Same fixture as
+        // chandelierRounded_sellUp — chandelier = 90 + 3.0*2.001 = 96.003 -> CEILING -> 96.01,
+        // which the guard PERMITS because it sits below the active stop of 100 for a short. So only
+        // the market-side check can bite here: at a price of 100 that buy-stop would sit BELOW the
+        // market, filling immediately and closing the short, bypassing the soft-confirm design.
+        //
+        // This test is the only thing standing between the code and a degenerate SELL branch such
+        // as `"SELL".equals(side) || chandelier < price`, which every other test still passes.
+        ExecutorPosition p = openPosition(16L, "ACME", "SELL", new BigDecimal("90"),
+                new BigDecimal("100"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
+                Map.of("ACME", new BigDecimal("100")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(decisionRepo, never()).insert(any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void chandelierEqualToMarket_isSkipped() {
+        // Both comparisons are strict, so equality skips. A stop exactly at the last close is not
+        // the safe side — it is a coin flip on the next tick.
+        ExecutorPosition p = openPosition(17L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("104")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(decisionRepo, never()).insert(any());
+    }
 }
