@@ -11,6 +11,9 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 /** Persists the executor decision audit trail (one row per signal verdict). */
@@ -56,6 +59,51 @@ public class ExecutorDecisionRepository {
                 """)
                 .param("signalId", signalId)
                 .param("reason", rejectReason)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
+     * Broker errors of this signal inside ONE run — the short-term throttle axis.
+     *
+     * <p>Distinct from {@link #countDistinctRunsByReasonSince}: that one answers "on how many
+     * nights did this signal fail?", this one answers "how often did we already call the broker
+     * for it tonight?".
+     */
+    public int countByReasonInRun(String signalId, String rejectReason, String runId) {
+        return jdbc.sql("""
+                SELECT count(*) FROM executor_decision
+                WHERE signal_id = :signalId AND reject_reason = :reason AND run_id = :runId
+                """)
+                .param("signalId", signalId)
+                .param("reason", rejectReason)
+                .param("runId", runId)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
+     * Number of DISTINCT runs in which this signal hit {@code rejectReason} after {@code since}.
+     *
+     * <p>Counting runs rather than rows is the whole point: the agent may call the broker several
+     * times within one run, and a retry storm (429 → duplicate → 429) used to write three rows in
+     * a single night. With {@code count(*)} that exhausted a lifetime cap of 3 immediately —
+     * STT was locked out of tranche 2 from 2026-07-22 onward by exactly this.
+     *
+     * <p>Rows with a NULL {@code run_id} drop out of {@code count(DISTINCT run_id)} by definition,
+     * which is intended: without a run there is no attempt axis, so such a row must not count as
+     * an attempt.
+     *
+     * <p>The window bound is strict ({@code >}), so a row exactly on {@code since} is outside.
+     */
+    public int countDistinctRunsByReasonSince(String signalId, String rejectReason, Instant since) {
+        return jdbc.sql("""
+                SELECT count(DISTINCT run_id) FROM executor_decision
+                WHERE signal_id = :signalId AND reject_reason = :reason AND created_at > :since
+                """)
+                .param("signalId", signalId)
+                .param("reason", rejectReason)
+                .param("since", OffsetDateTime.ofInstant(since, ZoneOffset.UTC))
                 .query(Integer.class)
                 .single();
     }

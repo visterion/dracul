@@ -207,6 +207,9 @@ dracul:
     value-anchor-atr-mult: ${DRACUL_EXECUTOR_VALUE_ANCHOR_ATR_MULT:3.0}
     pace-per-week: ${DRACUL_EXECUTOR_PACE_PER_WEEK:2}
     max-tranche: ${DRACUL_EXECUTOR_MAX_TRANCHE:2}
+    max-broker-attempts: ${DRACUL_EXECUTOR_MAX_BROKER_ATTEMPTS:3}
+    broker-attempt-window-hours: ${DRACUL_EXECUTOR_BROKER_ATTEMPT_WINDOW_HOURS:72}
+    max-broker-calls-per-run: ${DRACUL_EXECUTOR_MAX_BROKER_CALLS_PER_RUN:2}
     notify-enabled: ${DRACUL_EXECUTOR_NOTIFY_ENABLED:true}
   depots:
     agora-base-url: ${DRACUL_DEPOTS_AGORA_BASE_URL:http://agora:8080}

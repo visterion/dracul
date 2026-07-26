@@ -96,7 +96,7 @@ class ExecutorWebhookControllerTest {
                 assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 0.0, 3.0, "USD", fixedClock);
+                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
     }
 
     // -------------------------------------------------------------------
@@ -245,7 +245,7 @@ class ExecutorWebhookControllerTest {
                 assembler, customSizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 0.0, 3.0, "USD", fixedClock);
+                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
     }
 
     @SuppressWarnings("unchecked")
@@ -1150,7 +1150,9 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenThrow(new BrokerUnavailableException("agora order rejected: market closed"));
-        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        // Attempt cap = failed RUNS in the window, not rows over all time.
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(1);
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -1175,7 +1177,9 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenThrow(new BrokerUnavailableException("agora order rejected: market closed"));
-        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
+        // Attempt cap = failed RUNS in the window, not rows over all time.
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(3);
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -1188,6 +1192,147 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
 
         verify(signalRepo).markStatus("sig-1", "REJECTED");
+    }
+
+    @Test
+    void placeEntry_threeBrokerErrorsInOneRunDoNotTripTheCap() {
+        // The STT regression: three tool calls in ONE night are one failed attempt, not three.
+        // Before 2026-07-26 this flipped the signal to REJECTED after the third call.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenThrow(new BrokerUnavailableException("agora order rejected: 429"));
+        // The exact STT shape: three BROKER_ERROR rows over the signal's lifetime, but only ONE
+        // failed run. A row-counting cap trips here; a run-counting cap must not.
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(1);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(0);
+        // Lifetime count > 0 sends the adoption guard to the broker; nothing to adopt.
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.empty());
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+    }
+
+    @Test
+    void placeEntry_threeFailedRunsInsideTheWindowTripTheCap() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenThrow(new BrokerUnavailableException("agora order rejected: 429"));
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(3);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(0);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+    }
+
+    @Test
+    void placeEntry_throttleBlocksTheThirdBrokerCallOfTheSameRun() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(2);
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.empty());
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_RETRY_EXHAUSTED");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("BROKER_RETRY_EXHAUSTED");
+    }
+
+    @Test
+    void placeEntry_adoptionGuardUsesTheLifetimeCountNotTheWindow() {
+        // The duplicate guard must still fire for an error older than the window — otherwise a
+        // still-open order from four days ago goes unnoticed and a SECOND order is placed.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(0);
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-existing");
+
+        verify(gateway).orderByRef("depot-1", "sig-1");
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+    }
+
+    @Test
+    void placeEntry_anAdoptableOrderIsTakenEvenWhenTheRunBudgetIsExhausted() {
+        // Ordering invariant: adoption runs BEFORE the throttle. Reversed, an order that is
+        // already live at the broker would be left without a DB counterpart forever.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(2);
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("reason")).isNotEqualTo("BROKER_RETRY_EXHAUSTED");
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-existing");
+
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+        assertThat(decCaptor.getAllValues())
+                .noneMatch(d -> "BROKER_RETRY_EXHAUSTED".equals(d.rejectReason()));
     }
 
     @Test
@@ -2742,7 +2887,10 @@ class ExecutorWebhookControllerTest {
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        // Lifetime count only drives the adoption lookup; the cap reads the windowed run count.
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(3);
         when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
 
         JsonNode body = json("""
@@ -2762,6 +2910,178 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo).insert(decCaptor.capture());
         assertThat(decCaptor.getValue().accepted()).isFalse();
         assertThat(decCaptor.getValue().rejectReason()).isEqualTo("MAX_BROKER_ATTEMPTS");
+    }
+
+    @Test
+    void addTranche_threeBrokerErrorsInOneRunDoNotTripTheCap() {
+        // Exactly the STT shape: 8 BROKER_ERROR rows over the lifetime, but spread over only a
+        // handful of runs — two of them inside the window. A row-counting cap trips here; a
+        // run-counting cap must not.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(2);
+        // Lifetime count > 0 sends the adoption guard to the broker; nothing to adopt.
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(8);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(0);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        assertThat(outputOf(resp).get("reason")).isNotEqualTo("MAX_BROKER_ATTEMPTS");
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
+    }
+
+    @Test
+    void addTranche_threeFailedRunsInsideTheWindowTripTheCap() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(3);
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(0);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("MAX_BROKER_ATTEMPTS");
+
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    @Test
+    void addTranche_capHealsOnceFailedRunsFallOutOfTheWindow() {
+        // Four failed runs in total, but only two inside the window -> placement resumes. This is
+        // what un-blocks a signal like STT without rewriting its audit trail.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(8);
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(2);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(0);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
+    }
+
+    @Test
+    void addTranche_throttleBlocksTheThirdBrokerCallOfTheSameRun() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(2);
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
+        when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
+                .thenReturn(1);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_RETRY_EXHAUSTED");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).updateTranche2(anyLong(), any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("BROKER_RETRY_EXHAUSTED");
+    }
+
+    @Test
+    void addTranche_anAdoptableOrderIsTakenEvenWhenTheRunBudgetIsExhausted() {
+        // Ordering invariant, mirrored from the entry path: adoption runs BEFORE the throttle.
+        // Reversed, an order that is already live at the broker would stay without a DB
+        // counterpart forever.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(2);
+        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-existing", "t2-sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("reason")).isNotEqualTo("BROKER_RETRY_EXHAUSTED");
+
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+        assertThat(decCaptor.getAllValues())
+                .noneMatch(d -> "BROKER_RETRY_EXHAUSTED".equals(d.rejectReason()));
+    }
+
+    @Test
+    void addTranche_positionWithoutSourceSignalStillPlacesUnconditionally() {
+        // A manual/imported position has no counting axis at all — neither the throttle nor the
+        // cap may fire, and neither count may even be queried.
+        ExecutorPosition open = new ExecutorPosition(42L, "depot-1", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
+                null, null, null, null, null, null, null, null, null, 0, null, null,
+                null, null, null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-42", "stop-42", null, "t2-pos-42", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
+        verify(decisionRepo, never()).countByReasonInRun(any(), any(), any());
+        verify(decisionRepo, never()).countDistinctRunsByReasonSince(any(), any(), any());
     }
 
     @Test

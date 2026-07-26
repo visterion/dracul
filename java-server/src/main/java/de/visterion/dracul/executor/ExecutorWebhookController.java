@@ -110,6 +110,10 @@ public class ExecutorWebhookController {
     private final int maxTranche;
     private final int entryGtdDays;
     private final int maxBrokerAttempts;
+    /** Length of the rolling window over which failed runs are counted for the attempt cap. */
+    private final int brokerAttemptWindowHours;
+    /** Broker calls per signal allowed inside a single run before the throttle bites. */
+    private final int maxBrokerCallsPerRun;
 
     @Autowired
     public ExecutorWebhookController(
@@ -154,13 +158,16 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-tranche:2}") int maxTranche,
             @Value("${dracul.executor.entry-gtd-days:2}") int entryGtdDays,
             @Value("${dracul.executor.max-broker-attempts:3}") int maxBrokerAttempts,
+            @Value("${dracul.executor.broker-attempt-window-hours:72}") int brokerAttemptWindowHours,
+            @Value("${dracul.executor.max-broker-calls-per-run:2}") int maxBrokerCallsPerRun,
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
         this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
-                entryGtdDays, maxBrokerAttempts, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
+                entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
+                driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
                 Clock.systemUTC());
     }
 
@@ -206,6 +213,8 @@ public class ExecutorWebhookController {
             int maxTranche,
             int entryGtdDays,
             int maxBrokerAttempts,
+            int brokerAttemptWindowHours,
+            int maxBrokerCallsPerRun,
             double driftAnchorAtrMult,
             double valueAnchorAtrMult,
             String instrumentCurrency,
@@ -233,6 +242,8 @@ public class ExecutorWebhookController {
         this.maxTranche = maxTranche;
         this.entryGtdDays = entryGtdDays;
         this.maxBrokerAttempts = maxBrokerAttempts;
+        this.brokerAttemptWindowHours = brokerAttemptWindowHours;
+        this.maxBrokerCallsPerRun = maxBrokerCallsPerRun;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
@@ -675,6 +686,28 @@ public class ExecutorWebhookController {
                         "idempotent retry: existing broker order " + eo.orderId()
                                 + " for clientRef " + signalId + " adopted, not re-placed",
                         eo.orderId(), runId, null));
+            } else if (decisionRepo.countByReasonInRun(signalId, "BROKER_ERROR", runId)
+                    >= maxBrokerCallsPerRun) {
+                // In-run throttle. Without it a retry storm inside one night (429 → duplicate →
+                // 429) hammers the broker AND — before 2026-07-26, when the cap still counted
+                // rows — burned the signal's entire lifetime attempt budget in a single run.
+                //
+                // Deliberately NOT reason "BROKER_ERROR": this row must not feed the attempt cap,
+                // or the throttle would inflate the very counter it exists to protect.
+                // Non-terminal — the next run starts with a fresh per-run budget.
+                //
+                // Order matters: adoption is checked FIRST. An already-existing broker order must
+                // be adopted even when the call budget is spent, or it stays open without a DB
+                // counterpart.
+                decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                        "BROKER_RETRY_EXHAUSTED", vetoTrace,
+                        "broker retry budget for this run exhausted: " + maxBrokerCallsPerRun
+                                + "/" + maxBrokerCallsPerRun,
+                        null, runId, null));
+                logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT",
+                        "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant());
+                return ResponseEntity.ok(Map.of("output",
+                        Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
             } else {
                 BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPrice,
                         stopPrice, takeProfit, signalId, null);
@@ -684,8 +717,14 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     "BROKER_ERROR", vetoTrace, "broker call failed: " + e.getMessage(),
                     null, runId, null));
-            int brokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
-            if (brokerErrors >= maxBrokerAttempts) {
+            // Count failed RUNS in a rolling window, not rows over all time. Rows counted every
+            // retry of one night as a separate attempt; the window lets an already-fixed defect
+            // heal instead of scarring the signal forever. The row inserted just above is part of
+            // the count, so the current run is already included: failedRuns == maxBrokerAttempts
+            // means this run was the maxBrokerAttempts-th failed one.
+            int failedRuns = decisionRepo.countDistinctRunsByReasonSince(signalId, "BROKER_ERROR",
+                    clock.instant().minus(Duration.ofHours(brokerAttemptWindowHours)));
+            if (failedRuns >= maxBrokerAttempts) {
                 signalRepo.markStatus(signalId, "REJECTED");
             }
             // else: leave PENDING so a corrected retry (this run or a later run) can succeed
@@ -1256,11 +1295,16 @@ public class ExecutorWebhookController {
         // broker is currently unhealthy for this signal", and a second counting axis would be
         // more state for little gain. Do NOT "fix" this later as a bug.
         //
+        // Since 2026-07-26 the cap counts distinct RUNS inside a rolling window, not rows over all
+        // time; the duplicate guard above keeps the unwindowed lifetime count on purpose.
+        //
         // A position without a sourceSignalId (manual/imported) has no counting axis at all, so it
         // keeps the pre-guard behaviour of placing unconditionally.
         BigDecimal trancheQty = sizing.qty();
         PlacedBracket placed;
         try {
+            // Lifetime count — the DUPLICATE-protection axis. Deliberately NOT windowed: a still
+            // open order from four days ago must still be found, or a second one lands next to it.
             int priorBrokerErrors = signalId != null
                     ? decisionRepo.countByReason(signalId, "BROKER_ERROR")
                     : 0;
@@ -1284,19 +1328,44 @@ public class ExecutorWebhookController {
                         "idempotent retry: existing broker order " + eo.orderId()
                                 + " for clientRef " + clientRef + " adopted, not re-placed",
                         eo.orderId(), runId, null));
-            } else if (priorBrokerErrors >= maxBrokerAttempts) {
-                // Same terminal intent as place-entry's cap: after maxBrokerAttempts broker errors
-                // stop attempting. place-entry expresses "terminal" by flipping its signal to
-                // REJECTED; a tranche has no own signal status (the source signal is long
-                // ACCEPTED), so the terminal outcome here is simply "no further placement" plus an
-                // auditable decision row.
-                decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
-                        "MAX_BROKER_ATTEMPTS", List.of(),
-                        "broker attempt cap reached: " + priorBrokerErrors + "/" + maxBrokerAttempts,
-                        null, runId, null));
-                return ResponseEntity.ok(Map.of("output",
-                        Map.of("placed", false, "reason", "MAX_BROKER_ATTEMPTS")));
             } else {
+                // Both counting queries live inside this branch on purpose: an adoptable order is
+                // taken regardless of any budget (see the ordering invariant on the entry path),
+                // so the adoption case must not pay for two extra DB round-trips.
+                int callsThisRun = signalId != null
+                        ? decisionRepo.countByReasonInRun(signalId, "BROKER_ERROR", runId)
+                        : 0;
+                if (signalId != null && callsThisRun >= maxBrokerCallsPerRun) {
+                    // In-run throttle — see the identical guard on the entry path. Not terminal,
+                    // and deliberately not reason "BROKER_ERROR" so it cannot inflate the cap.
+                    decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
+                            "BROKER_RETRY_EXHAUSTED", List.of(),
+                            "broker retry budget for this run exhausted: " + maxBrokerCallsPerRun
+                                    + "/" + maxBrokerCallsPerRun,
+                            null, runId, null));
+                    return ResponseEntity.ok(Map.of("output",
+                            Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
+                }
+                // Failed RUNS inside the window — the attempt-cap axis, separate from the
+                // lifetime count above. Rows counted every retry of one night as its own attempt,
+                // which burned the whole budget in a single run.
+                int failedRuns = signalId != null
+                        ? decisionRepo.countDistinctRunsByReasonSince(signalId, "BROKER_ERROR",
+                                clock.instant().minus(Duration.ofHours(brokerAttemptWindowHours)))
+                        : 0;
+                if (signalId != null && failedRuns >= maxBrokerAttempts) {
+                    // Same terminal intent as place-entry's cap: after maxBrokerAttempts failed
+                    // RUNS stop attempting. place-entry expresses "terminal" by flipping its
+                    // signal to REJECTED; a tranche has no own signal status (the source signal is
+                    // long ACCEPTED), so the terminal outcome here is simply "no further
+                    // placement" plus an auditable decision row.
+                    decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
+                            "MAX_BROKER_ATTEMPTS", List.of(),
+                            "broker attempt cap reached: " + failedRuns + "/" + maxBrokerAttempts,
+                            null, runId, null));
+                    return ResponseEntity.ok(Map.of("output",
+                            Map.of("placed", false, "reason", "MAX_BROKER_ATTEMPTS")));
+                }
                 BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, orderPrice,
                         stopPrice, null, clientRef, null);
                 placed = gateway.placeBracket(connection, req);
