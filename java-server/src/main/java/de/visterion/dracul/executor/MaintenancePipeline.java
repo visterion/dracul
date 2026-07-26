@@ -129,7 +129,7 @@ public class MaintenancePipeline {
                 .toList();
 
         List<ExecutorPosition> afterHard = hardTrigger.apply(filledSurvivors, closeBySymbol, runId);
-        ratchet.ratchet(afterHard, atrBySymbol, runId);
+        ratchet.ratchet(afterHard, atrBySymbol, closeBySymbol, runId);
 
         Set<Long> keepIds = new HashSet<>();
         for (ExecutorPosition p : afterHard) keepIds.add(p.id());

@@ -9,6 +9,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.Map;
 
@@ -18,15 +19,33 @@ import java.util.Map;
  * is the single choke point enforcing that — this service must never call the gateway or update
  * the position book when the guard denies the move.
  *
+ * <p><b>The gateway takes the BRACKET id, not a leg id</b> — passing {@code stopOrderId} instead
+ * meant the ratchet never moved a single stop until this was fixed on 2026-07-26; see the comment
+ * at the {@code modifyBracket} call site below for the full account before editing that call.
+ *
+ * <p>Beyond the two trivial skips for missing inputs (no {@code highestPrice} recorded yet, no ATR
+ * for the symbol), four conditions stop a position short of the broker, in this order and each
+ * with {@code continue} so one position never aborts the rest of the book:
+ * <ul>
+ *   <li>the guard denies a non-improving move — silent, the normal case;</li>
+ *   <li>the rounded chandelier is on the wrong side of the last close (or no close is known) —
+ *       silent, a regular "not yet" state owned by the soft trigger;</li>
+ *   <li>a tranche 2 is open — {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}, because two stop
+ *       legs cannot be addressed unambiguously through {@code modifyBracket} and a silent partial
+ *       ratchet would leave the book claiming a stop half the position does not have;</li>
+ *   <li>{@code brokerOrderId} is null — {@code ESCALATE / NO_BRACKET_ID}.</li>
+ * </ul>
+ *
+ * <p>Both escalations sit AFTER the guard and after the market-side check, so they repeat on every
+ * maintenance run for as long as the condition holds AND a better stop is actually available —
+ * the active stop is deliberately left untouched. That is intended: a position that can never be
+ * ratcheted must stay loudly visible. Do not "fix" it by moving a check ahead of the guard.
+ *
  * <p>On {@link BrokerUnavailableException} during {@code modifyBracket}, this escalates via the
  * decision log and leaves the old stop in place — mirrors {@link ReconcileService} and
- * {@link HardTriggerService}'s idiom.
- *
- * <p>When a position has added a second tranche ({@link ExecutorPosition#tranche2StopOrderId()}
- * non-null), the same chandelier level is sent to <em>both</em> stop legs — they share one
- * position and must ratchet in lockstep. If the second leg's {@code modifyBracket} call throws
- * mid-loop after the first leg already succeeded at the broker, this still escalates and skips
- * persisting the new stop for this pass; the next maintenance run will retry both legs.
+ * {@link HardTriggerService}'s idiom. Every escalation row carries the position id in
+ * {@code order_json} (since {@code decision_log} has no position column) plus the position's
+ * signal and agent attribution.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -61,7 +80,7 @@ public class StopRatchetService {
     }
 
     public void ratchet(List<ExecutorPosition> openPositions, Map<String, BigDecimal> atrBySymbol,
-            String runId) {
+            Map<String, BigDecimal> closeBySymbol, String runId) {
         for (ExecutorPosition p : openPositions) {
             if (p.highestPrice() == null) continue;
             BigDecimal atr = atrBySymbol.get(p.symbol());
@@ -70,22 +89,61 @@ public class StopRatchetService {
             BigDecimal chandelier = computeChandelier(p, atr);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
 
+            // The guard only compares against the OLD stop, never against the market. If the price
+            // fell more than chandelier-mult x ATR off the high while staying above the hard stop,
+            // the chandelier sits on the wrong side of the market. Skip silently — the soft trigger
+            // owns that state. The reference is a bar close, not a live quote, so this reduces the
+            // risk rather than eliminating it; the executor runs after the US close, so the gap is
+            // small. Placed BEFORE the escalations below: only what was actually sendable escalates.
+            BigDecimal price = closeBySymbol.get(p.symbol());
+            if (price == null) continue;
+            boolean safeSide = "SELL".equals(p.side())
+                    ? chandelier.compareTo(price) > 0
+                    : chandelier.compareTo(price) < 0;
+            if (!safeSide) continue;
+
+            if (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null) {
+                // A tranche-2 position holds TWO stop legs at the broker. Post-fill both entry ids
+                // are gone, so both modify calls would land in Agora's symbol fallback, which keeps
+                // only the LAST stop leg it finds on the Uic — one leg patched twice, the other
+                // never, while modifyBracket still reports accepted. Dracul would then write the new
+                // stop into the book and stopguard would trust it, with half the position actually
+                // sitting on the old stop. A silent partial success is worse than a loud failure, so
+                // this escalates and leaves the stop where it is.
+                //
+                // `tranche` is the RELIABLE marker: Saxo returns no leg ids, so tranche2StopOrderId
+                // is null by design there (see the "Saxo/live brackets expose no leg ids" comment in
+                // ExecutorWebhookController's adoption branch) and a gate keyed on the leg id alone
+                // would never fire — precisely on the broker this matters for. The two id fields
+                // stand alongside as belt-and-braces, for brokers that do report them.
+                escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
+                        "stop ratchet unsupported while a tranche 2 is open: two stop legs cannot be "
+                                + "addressed unambiguously through modifyBracket");
+                continue;
+            }
+
             BigDecimal oldStop = p.activeStop();
 
-            String primaryOrderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
-            List<String> orderIds = p.tranche2StopOrderId() != null
-                    ? List.of(primaryOrderId, p.tranche2StopOrderId())
-                    : List.of(primaryOrderId);
+            // Agora resolves the stop leg FROM the bracket id — pre-fill through the parent's
+            // embedded RelatedOpenOrders, post-fill through the by-Uic symbol fallback. Handing it
+            // the stop LEG id instead fails in both phases: pre-fill the leg isn't a top-level
+            // order at all, post-fill it is found but its Oco sibling is the take-profit, so Agora
+            // reports "no stop-loss leg". That is why the ratchet never moved a single stop: across
+            // every position ever held, active_stop still equalled initial_stop, with recorded
+            // BROKER_UNAVAILABLE escalations from 2026-07-13 onward, until this was fixed on
+            // 2026-07-26. stopOrderId stays on the record because ReconcileService matches fills
+            // with it — it is simply not an address here. Do NOT "restore" stopOrderId.
+            String bracketId = p.brokerOrderId();
+            if (bracketId == null) {
+                escalate(p, runId, "NO_BRACKET_ID",
+                        "stop ratchet cannot address the bracket: broker_order_id is null");
+                continue;
+            }
             try {
-                for (String orderId : orderIds) {
-                    gateway.modifyBracket(p.connection(), orderId, p.symbol(), chandelier, null);
-                }
+                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null);
             } catch (BrokerUnavailableException e) {
-                decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                        "MAINTENANCE", null, null, null, p.symbol(), null, null,
-                        "ESCALATE", "BROKER_UNAVAILABLE", null,
-                        "broker unavailable during stop-ratchet modify: " + e.getMessage(),
-                        null, null, null));
+                escalate(p, runId, "BROKER_UNAVAILABLE",
+                        "broker unavailable during stop-ratchet modify: " + e.getMessage());
                 continue;
             }
 
@@ -98,11 +156,30 @@ public class StopRatchetService {
         }
     }
 
+    /**
+     * Chandelier level, rounded to two decimals toward the SAFE side: FLOOR for a long (the stop is
+     * never raised beyond the computed level), CEILING for a short.
+     *
+     * <p>Deliberately FLOOR/CEILING and not DOWN/UP — the latter round toward and away from zero,
+     * which inverts the intent for a negative level (a huge ATR on a cheap instrument). The guard
+     * would reject such a value anyway; this simply says what is meant.
+     *
+     * <p>Rounding happens HERE, before {@link StopRatchetGuard#permit}, so the value checked, the
+     * value sent to the broker and the value written to the book are one and the same — and so a
+     * sub-cent improvement is denied instead of producing an empty modify every run.
+     *
+     * <p><b>{@code highestPrice} is side-aware</b>: it holds the position's <em>favorable</em>
+     * price extreme — the highest close for a long, the LOWEST close for a short, which
+     * {@link ReconcileService} accumulates with {@code min} on SELL and {@code max} on BUY. That is
+     * why the SELL branch below <em>adds</em> the offset and still yields a lowest-low chandelier,
+     * matching the {@code "lowestLow + "} basis label in {@link #recordRatchet}. The {@code add} on
+     * SELL is correct — do not "fix" it into a subtraction.
+     */
     private BigDecimal computeChandelier(ExecutorPosition p, BigDecimal atr) {
         BigDecimal offset = atr.multiply(BigDecimal.valueOf(chandelierMult));
         return "SELL".equals(p.side())
-                ? p.highestPrice().add(offset)
-                : p.highestPrice().subtract(offset);
+                ? p.highestPrice().add(offset).setScale(2, RoundingMode.CEILING)
+                : p.highestPrice().subtract(offset).setScale(2, RoundingMode.FLOOR);
     }
 
     private void recordRatchet(ExecutorPosition p, BigDecimal atr, BigDecimal chandelier, String runId) {
@@ -121,5 +198,23 @@ public class StopRatchetService {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
                 "MODIFY_STOP", null, order, null, null, null, null));
+    }
+
+    /**
+     * One non-throwing escalation row. Carries the signal and agent attribution the position knows,
+     * matching {@link EntryExpiryService}'s idiom — an operator triaging {@code decision_log} needs
+     * to know which signal and which agent put this position on the book.
+     *
+     * <p>{@code decision_log} has no position column, so the position id goes into
+     * {@code order_json} — the same idiom as {@link ReconcileService}'s {@code PENDING_EXIT_STALE}.
+     * The decision-log alarm keys on it; without it a row cannot be attributed to a position.
+     */
+    private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
+        ObjectNode order = mapper.createObjectNode();
+        order.put("position_id", p.id());
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
+                "ESCALATE", reasonCode, order, reasoning,
+                null, null, null));
     }
 }
