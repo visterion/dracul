@@ -1479,7 +1479,7 @@ class ExecutorWebhookControllerTest {
 
     // -------------------------------------------------------------------
     // place-entry: order-price basis (limit price or fresh close) drives sizing,
-    // guard, take-profit synthesis, and booking -- never the stale signal reference
+    // guard, and booking -- never the stale signal reference
     // -------------------------------------------------------------------
 
     @Test

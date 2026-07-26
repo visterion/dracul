@@ -1899,19 +1899,17 @@ window before the order reaches `OrderGuard` — BUY: between
 mirrored on the upside. A `stop_price` outside the window fails as `NO_STOP`
 regardless of what the LLM proposed; the LLM is expected to choose *inside*
 the window (typically 2.5–3× ATR, or the recent swing low), never at its
-edges. `take_profit` is genuinely optional to the LLM: if omitted, the
-controller synthesizes a wide 3R target from `stop_price`/order price — the
-strategy's real exits are the trailing chandelier / giveback stops, not this
-fixed target, so it is intentionally wide and rarely fills. The synthesis is
-the **entry path only**: `add-tranche` deliberately places without a
-take-profit leg (see below), and Agora's `place_bracket` accepts a bracket of
-entry + stop alone.
+edges. `take_profit` is optional and **never invented**: neither
+`place-entry` nor `add-tranche` synthesizes a target, so the bracket is
+entry + stop unless the LLM supplies a `take_profit` itself — in which case
+it is passed through unchanged. Agora's `place_bracket` accepts a bracket of
+entry + stop alone. The strategy's real exits are the trailing chandelier /
+giveback stops, not a fixed target.
 
 The **order-price basis** used throughout (sizing, stop-window check,
-take-profit synthesis, position booking) is a single value: `limit_price`
-when the LLM supplies one, otherwise the freshly assembled current close
-(`EntryContext.price()`) — never the signal's original, potentially stale,
-`reference_price`.
+position booking) is a single value: `limit_price` when the LLM supplies one,
+otherwise the freshly assembled current close (`EntryContext.price()`) — never
+the signal's original, potentially stale, `reference_price`.
 
 Pipeline: signal lookup → `EntryContextAssembler` (single I/O layer: Agora
 indicators/company-profile, FX, account, repos) → `VetoService` (15-veto
@@ -2196,11 +2194,11 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 Every outcome writes one `executor_decision` audit row (no `submit-decision`
 call needed for tranche-2 adds).
 
-**The tranche bracket carries no take-profit leg** — entry + stop only. A
-synthesized 3R target (as on `place-entry`) sits far enough from the order
-price that Saxo rejects the whole bracket with `TooFarFromEntryOrder`; the
-position's exit is owned by the exit lifecycle, not by a target on the second
-tranche.
+**The tranche bracket carries no take-profit leg** — entry + stop only, as on
+`place-entry`. A wide target sits far enough from the order price that Saxo
+rejects the whole bracket with `TooFarFromEntryOrder` — protective stop
+included; the position's exit is owned by the exit lifecycle, not by a target
+on the second tranche.
 
 **Idempotency guard and attempt cap**, mirroring `place-entry` on the
 tranche's own client ref `t2-<signal_id>` (distinct from the entry ref, so the
