@@ -70,22 +70,32 @@ public class StopRatchetService {
             BigDecimal chandelier = computeChandelier(p, atr);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
 
+            if (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null) {
+                // A tranche-2 position holds TWO stop legs at the broker. Post-fill both entry ids
+                // are gone, so both modify calls would land in Agora's symbol fallback, which keeps
+                // only the LAST stop leg it finds on the Uic — one leg patched twice, the other
+                // never, while modifyBracket still reports accepted. Dracul would then write the new
+                // stop into the book and stopguard would trust it, with half the position actually
+                // sitting on the old stop. A silent partial success is worse than a loud failure, so
+                // this escalates and leaves the stop where it is.
+                //
+                // The marker is `tranche`, NOT `tranche2StopOrderId`: Saxo returns no leg ids, so
+                // that field is null by design (ExecutorWebhookController:1306) and a gate keyed on
+                // it would never fire — precisely on the broker this matters for.
+                escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
+                        "stop ratchet unsupported while a tranche 2 is open: two stop legs cannot be "
+                                + "addressed unambiguously through modifyBracket");
+                continue;
+            }
+
             BigDecimal oldStop = p.activeStop();
 
             String primaryOrderId = p.stopOrderId() != null ? p.stopOrderId() : p.brokerOrderId();
-            List<String> orderIds = p.tranche2StopOrderId() != null
-                    ? List.of(primaryOrderId, p.tranche2StopOrderId())
-                    : List.of(primaryOrderId);
             try {
-                for (String orderId : orderIds) {
-                    gateway.modifyBracket(p.connection(), orderId, p.symbol(), chandelier, null);
-                }
+                gateway.modifyBracket(p.connection(), primaryOrderId, p.symbol(), chandelier, null);
             } catch (BrokerUnavailableException e) {
-                decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                        "MAINTENANCE", null, null, null, p.symbol(), null, null,
-                        "ESCALATE", "BROKER_UNAVAILABLE", null,
-                        "broker unavailable during stop-ratchet modify: " + e.getMessage(),
-                        null, null, null));
+                escalate(p, runId, "BROKER_UNAVAILABLE",
+                        "broker unavailable during stop-ratchet modify: " + e.getMessage());
                 continue;
             }
 
@@ -121,5 +131,13 @@ public class StopRatchetService {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
                 "MODIFY_STOP", null, order, null, null, null, null));
+    }
+
+    /** One non-throwing escalation row. Carries no position id yet — Task 7 adds it. */
+    private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), null, null,
+                "ESCALATE", reasonCode, null, reasoning,
+                null, null, null));
     }
 }

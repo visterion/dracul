@@ -144,27 +144,63 @@ class StopRatchetServiceTest {
     }
 
     @Test
-    void tranche2StopOrderId_movesBothLegs() {
+    void tranche2_nullLegId_stillEscalates() {
+        // THE case that matters: on Saxo, tranche2StopOrderId is null BY DESIGN (the broker
+        // returns no leg ids), so a gate keyed on that field would never fire. tranche is the
+        // reliable marker.
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("110"),
-                new BigDecimal("95"), new BigDecimal("1.0"), 0, "s2");
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), "run1");
 
-        assertThat(gateway.modifyCalls).hasSize(2);
-        assertThat(gateway.modifyCalls.stream().map(FakeExecutionGateway.ModifyCall::orderId))
-                .containsExactlyInAnyOrder("stop-1", "s2");
-        gateway.modifyCalls.forEach(call -> {
-            assertThat(call.symbol()).isEqualTo("ACME");
-            assertThat(call.stop()).isEqualByComparingTo("104");
-        });
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        assertThat(log.symbol()).isEqualTo("ACME");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
 
-        ArgumentCaptor<BigDecimal> newStopCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(5L),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("110")),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("1.0")),
-                org.mockito.ArgumentMatchers.eq(0),
-                newStopCaptor.capture(), org.mockito.ArgumentMatchers.isNull());
-        assertThat(newStopCaptor.getValue()).isEqualByComparingTo("104");
-        verify(decisionRepo).insert(any());
+    @Test
+    void tranche2_withLegId_escalates() {
+        ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+    }
+
+    @Test
+    void tranche2OrderIdAlone_escalates() {
+        // Belt-and-braces disjunct: tranche still 1, but a tranche-2 entry id is present.
+        ExecutorPosition p = openPosition(7L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, "t2-1", null);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+    }
+
+    @Test
+    void guardDenied_tranche2_writesNothing() {
+        // Proves the gate sits AFTER guard.permit: chandelier 110 - 3*5.33 = 94.01 < stop 95,
+        // so the guard denies first and no escalation row is written at all.
+        ExecutorPosition p = openPosition(8L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("5.33")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(decisionRepo, never()).insert(any());
     }
 }
