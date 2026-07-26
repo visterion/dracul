@@ -1201,9 +1201,14 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenThrow(new BrokerUnavailableException("agora order rejected: 429"));
+        // The exact STT shape: three BROKER_ERROR rows over the signal's lifetime, but only ONE
+        // failed run. A row-counting cap trips here; a run-counting cap must not.
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
         when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
                 .thenReturn(1);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(0);
+        // Lifetime count > 0 sends the adoption guard to the broker; nothing to adopt.
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.empty());
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -1296,6 +1301,38 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
         assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+    }
+
+    @Test
+    void placeEntry_anAdoptableOrderIsTakenEvenWhenTheRunBudgetIsExhausted() {
+        // Ordering invariant: adoption runs BEFORE the throttle. Reversed, an order that is
+        // already live at the broker would be left without a DB counterpart forever.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
+        when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(2);
+        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
+                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("reason")).isNotEqualTo("BROKER_RETRY_EXHAUSTED");
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-existing");
+
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+        assertThat(decCaptor.getAllValues())
+                .noneMatch(d -> "BROKER_RETRY_EXHAUSTED".equals(d.rejectReason()));
     }
 
     @Test
