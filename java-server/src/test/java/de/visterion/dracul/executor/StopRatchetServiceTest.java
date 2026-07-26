@@ -379,4 +379,43 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).isEmpty();
         verify(decisionRepo, never()).insert(any());
     }
+
+    @Test
+    void highestPriceNull_skips() {
+        // A position that never got a highest price recorded (no maintenance run yet) has no
+        // chandelier basis at all: skip silently, never escalate and never send a null level.
+        ExecutorPosition p = openPosition(18L, "ACME", "BUY", null,
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(decisionRepo, never()).insert(any());
+    }
+
+    @Test
+    void escalatingPositionDoesNotAbortOthers() {
+        // Every skip/escalation path uses `continue`, never a return: one bad position must not
+        // cost the whole book its ratchet.
+        ExecutorPosition tranche2 = openPosition(19L, "AAA", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
+        ExecutorPosition noBracket = openPosition(20L, "BBB", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, null, 1, null, null);
+        ExecutorPosition healthy = openPosition(21L, "CCC", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(tranche2, noBracket, healthy),
+                Map.of("AAA", new BigDecimal("2.0"), "BBB", new BigDecimal("2.0"),
+                        "CCC", new BigDecimal("2.0")),
+                Map.of("AAA", new BigDecimal("110"), "BBB", new BigDecimal("110"),
+                        "CCC", new BigDecimal("110")),
+                "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).symbol()).isEqualTo("CCC");
+        assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("brk-1");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(21L),
+                any(), any(), any(Integer.class), any(), any());
+    }
 }
