@@ -19,12 +19,9 @@ import java.util.Map;
  * is the single choke point enforcing that — this service must never call the gateway or update
  * the position book when the guard denies the move.
  *
- * <p><b>The gateway takes the BRACKET id, not a leg id.</b> Agora resolves the stop leg from the
- * bracket: pre-fill through the parent's embedded {@code RelatedOpenOrders}, post-fill through a
- * by-Uic symbol fallback. Passing {@code stopOrderId} instead made every modify fail from
- * 2026-07-19 to 2026-07-26 — no stop was ever ratcheted in that window. {@code stopOrderId} stays
- * on the record because {@link ReconcileService} matches fills with it; it is simply not an
- * address here.
+ * <p><b>The gateway takes the BRACKET id, not a leg id</b> — passing {@code stopOrderId} instead
+ * meant the ratchet never moved a single stop until this was fixed on 2026-07-26; see the comment
+ * at the {@code modifyBracket} call site below for the full account before editing that call.
  *
  * <p>Beyond the two trivial skips for missing inputs (no {@code highestPrice} recorded yet, no ATR
  * for the symbol), four conditions stop a position short of the broker, in this order and each
@@ -131,8 +128,11 @@ public class StopRatchetService {
             // embedded RelatedOpenOrders, post-fill through the by-Uic symbol fallback. Handing it
             // the stop LEG id instead fails in both phases: pre-fill the leg isn't a top-level
             // order at all, post-fill it is found but its Oco sibling is the take-profit, so Agora
-            // reports "no stop-loss leg". That is why the ratchet never moved a single stop between
-            // 2026-07-19 and 2026-07-26. Do NOT "restore" stopOrderId here.
+            // reports "no stop-loss leg". That is why the ratchet never moved a single stop: across
+            // every position ever held, active_stop still equalled initial_stop, with recorded
+            // BROKER_UNAVAILABLE escalations from 2026-07-13 onward, until this was fixed on
+            // 2026-07-26. stopOrderId stays on the record because ReconcileService matches fills
+            // with it — it is simply not an address here. Do NOT "restore" stopOrderId.
             String bracketId = p.brokerOrderId();
             if (bracketId == null) {
                 escalate(p, runId, "NO_BRACKET_ID",
@@ -167,6 +167,13 @@ public class StopRatchetService {
      * <p>Rounding happens HERE, before {@link StopRatchetGuard#permit}, so the value checked, the
      * value sent to the broker and the value written to the book are one and the same — and so a
      * sub-cent improvement is denied instead of producing an empty modify every run.
+     *
+     * <p><b>{@code highestPrice} is side-aware</b>: it holds the position's <em>favorable</em>
+     * price extreme — the highest close for a long, the LOWEST close for a short, which
+     * {@link ReconcileService} accumulates with {@code min} on SELL and {@code max} on BUY. That is
+     * why the SELL branch below <em>adds</em> the offset and still yields a lowest-low chandelier,
+     * matching the {@code "lowestLow + "} basis label in {@link #recordRatchet}. The {@code add} on
+     * SELL is correct — do not "fix" it into a subtraction.
      */
     private BigDecimal computeChandelier(ExecutorPosition p, BigDecimal atr) {
         BigDecimal offset = atr.multiply(BigDecimal.valueOf(chandelierMult));

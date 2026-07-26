@@ -44,12 +44,6 @@ class StopRatchetServiceTest {
                 "brk-1", 1, null, null);
     }
 
-    private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
-            BigDecimal activeStop, BigDecimal mfeR, int softConfirmCount, String tranche2StopOrderId) {
-        return openPosition(id, symbol, side, highestPrice, activeStop, mfeR, softConfirmCount,
-                "brk-1", 1, null, tranche2StopOrderId);
-    }
-
     /**
      * Full fixture. {@code brokerOrderId} and {@code stopOrderId} are deliberately DIFFERENT
      * ("brk-1" vs "stop-1") — that difference is what makes the bracket-id assertions a real
@@ -211,6 +205,24 @@ class StopRatchetServiceTest {
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
         assertThat(logCaptor.getValue().orderJson()).isNotNull();
         assertThat(logCaptor.getValue().orderJson().get("position_id").asLong()).isEqualTo(7L);
+    }
+
+    @Test
+    void tranche2StopOrderIdAlone_escalates() {
+        // The third disjunct, for brokers that DO report leg ids: tranche still 1, no tranche-2
+        // entry id, but a second stop leg is on record. Without this test an implementation that
+        // drops `|| p.tranche2StopOrderId() != null` passes the whole suite.
+        ExecutorPosition p = openPosition(22L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, null, "s2");
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        assertThat(logCaptor.getValue().orderJson().get("position_id").asLong()).isEqualTo(22L);
     }
 
     @Test
