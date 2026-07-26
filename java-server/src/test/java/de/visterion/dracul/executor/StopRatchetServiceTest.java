@@ -206,4 +206,20 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).isEmpty();
         verify(decisionRepo, never()).insert(any());
     }
+
+    @Test
+    void nullBrokerOrderId_escalatesNoBracketId() {
+        ExecutorPosition p = openPosition(9L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, null, 1, null, null);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("NO_BRACKET_ID");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
 }

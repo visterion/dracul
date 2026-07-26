@@ -97,6 +97,11 @@ public class StopRatchetService {
             // reports "no stop-loss leg". That is why the ratchet never moved a single stop between
             // 2026-07-19 and 2026-07-26. Do NOT "restore" stopOrderId here.
             String bracketId = p.brokerOrderId();
+            if (bracketId == null) {
+                escalate(p, runId, "NO_BRACKET_ID",
+                        "stop ratchet cannot address the bracket: broker_order_id is null");
+                continue;
+            }
             try {
                 gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null);
             } catch (BrokerUnavailableException e) {
