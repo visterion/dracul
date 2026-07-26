@@ -88,19 +88,6 @@ public class ExecutorWebhookController {
     private final PositionContextRepository positionContextRepo;
     private final PatternRepository patternRepo;
 
-    /**
-     * Wide default take-profit distance, in R (risk units = |entry - stop|). Used by the ENTRY
-     * path only: when the LLM omits {@code take_profit} we still attach a target so the entry
-     * bracket carries one. The strategy's real exits are the trailing chandelier / giveback
-     * stops, not a fixed target — so this 3R default is intentionally wide and rarely fills.
-     *
-     * <p>Deliberately NOT used for tranche-2 adds: there the same 3R synthesis produced targets
-     * far enough from the order price for Saxo to reject the whole bracket with
-     * {@code TooFarFromEntryOrder}. Agora's {@code place_bracket} accepts a bracket without a
-     * take-profit leg (entry + stop only).
-     */
-    private static final BigDecimal DEFAULT_TARGET_R = new BigDecimal("3.0");
-
     private final String connection;
     private final double minConfidence;
     private final int maxPositions;
@@ -639,21 +626,17 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", reason)));
         }
 
-        // Guarantee a take-profit leg. Agora's place_bracket rejects any bracket without one, but
-        // this strategy exits via the trailing chandelier, not a fixed target — so when the LLM
-        // omits take_profit we synthesize a wide DEFAULT_TARGET_R (3R) target that rarely fills. An
-        // explicit LLM take_profit always wins (only fill when null). If we can't compute R (no
-        // order price or stop price) leave it null and let the existing broker-error path handle it.
-        if (takeProfit == null && orderPrice != null && stopPrice != null) {
-            BigDecimal r = orderPrice.subtract(stopPrice).abs();
-            if (r.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal offset = DEFAULT_TARGET_R.multiply(r);
-                BigDecimal target = "SELL".equals(side)
-                        ? orderPrice.subtract(offset)
-                        : orderPrice.add(offset);
-                takeProfit = target.setScale(2, RoundingMode.HALF_UP);
-            }
-        }
+        // No synthetic take-profit. Until 2026-07-26 a missing take_profit was filled with a wide
+        // 3R target, because Agora's place_bracket used to require one. It no longer does
+        // (PlaceBracketTool: "takeProfitLimit is optional (since 2026-07-25): null means entry +
+        // stop"), and the synthesis was actively harmful: the three entries ever placed carried
+        // targets at +23.8 / +23.9 / +24.3 %, and Saxo rejected the tranche's equivalent target at
+        // +28 % with TooFarFromEntryOrder — taking the whole bracket down, PROTECTIVE STOP
+        // INCLUDED. The entry path was one wide initial stop away from the same failure.
+        //
+        // This strategy exits via the trailing chandelier / giveback stops, never via a fixed
+        // target, so nothing is lost. An explicit take_profit from the LLM is still honoured and
+        // passed through unchanged — only the invention is gone. Do NOT reintroduce a default.
 
         // Idempotency guard: only relevant on a retry after a prior broker error. If the previous
         // attempt actually reached the broker (committed but reported unavailable), an order
