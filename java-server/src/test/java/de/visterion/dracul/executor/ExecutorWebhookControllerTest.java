@@ -938,8 +938,9 @@ class ExecutorWebhookControllerTest {
         assertThat(req.qty()).isEqualByComparingTo("10");
         assertThat(req.stopLossStop()).isEqualByComparingTo("95");
         assertThat(req.limitPrice()).isEqualByComparingTo("100");
-        // take-profit is now guaranteed: reference=100, stop=95 → R=5 → 100 + 3*5 = 115
-        assertThat(req.takeProfitLimit()).isEqualByComparingTo("115");
+        // No take-profit leg: the LLM supplied none and Dracul no longer invents one. A synthetic
+        // target is exactly what Saxo rejected with TooFarFromEntryOrder, taking the stop with it.
+        assertThat(req.takeProfitLimit()).isNull();
         assertThat(req.clientRef()).isEqualTo("sig-1");
 
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
@@ -1043,7 +1044,8 @@ class ExecutorWebhookControllerTest {
         // the raw (absent) LLM limit_price -- this is the same fix as the BracketRequest below.
         assertThat(order.path("limit_price").asDouble()).isEqualTo(100.0);
         assertThat(order.path("stop_price").asDouble()).isEqualTo(95.0);
-        assertThat(order.path("take_profit").asDouble()).isEqualTo(115.0);
+        // The LLM supplied no take_profit and none is invented, so the audit row records it as null.
+        assertThat(order.path("take_profit").isNull()).isTrue();
         assertThat(order.path("stop_basis").asString()).contains("ATR");
         assertThat(order.path("r_per_share").asDouble()).isEqualTo(5.0);
         assertThat(order.path("position_risk").asDouble()).isEqualTo(50.0);
@@ -1477,7 +1479,7 @@ class ExecutorWebhookControllerTest {
 
     // -------------------------------------------------------------------
     // place-entry: order-price basis (limit price or fresh close) drives sizing,
-    // guard, take-profit synthesis, and booking -- never the stale signal reference
+    // guard, and booking -- never the stale signal reference
     // -------------------------------------------------------------------
 
     @Test
@@ -1548,17 +1550,17 @@ class ExecutorWebhookControllerTest {
     }
 
     // -------------------------------------------------------------------
-    // place-entry: guaranteed take-profit leg (Agora requires one)
+    // place-entry: no synthetic take-profit leg (Agora accepts entry + stop only)
     // -------------------------------------------------------------------
 
     @Test
-    void placeEntry_noTakeProfit_synthesizesWide3RTarget_buy() {
+    void placeEntry_noTakeProfit_placesWithoutATargetLeg_buy() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
 
-        // BUY, reference=100, stop=95 → R=5 → target = 100 + 3*5 = 115, no take_profit supplied
+        // BUY, no take_profit supplied → the bracket goes out as entry + stop, no target invented.
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
                  "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","stop_price":95}}
@@ -1568,18 +1570,17 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
-        assertThat(reqCaptor.getValue().takeProfitLimit()).isNotNull();
-        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("115");
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isNull();
     }
 
     @Test
-    void placeEntry_noTakeProfit_synthesizesWide3RTarget_sell() {
+    void placeEntry_noTakeProfit_placesWithoutATargetLeg_sell() {
         when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(1L);
 
-        // SELL, reference=100, stop=105 → R=5 → target = 100 - 3*5 = 85 (below entry)
+        // SELL side too: no target is invented in either direction.
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
                  "input":{"signal_id":"s1","symbol":"ACME","side":"SELL","stop_price":105}}
@@ -1589,8 +1590,53 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
-        assertThat(reqCaptor.getValue().takeProfitLimit()).isNotNull();
-        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("85");
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isNull();
+    }
+
+    @Test
+    void placeEntry_withoutTakeProfitTheBracketStillCarriesItsStop() {
+        // The whole point of dropping the synthetic target: a rejected target used to take the
+        // STOP leg down with it. Entry + stop must survive on their own.
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", null, "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","stop_price":95}}
+                """);
+
+        controller.placeEntry(BEARER, "r1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        assertThat(req.takeProfitLimit()).isNull();
+        // The protective leg is untouched.
+        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+    }
+
+    @Test
+    void placeEntry_orderJsonRecordsTheAbsentTarget() {
+        // The audit row must state truthfully what was placed: the key stays, the value is null.
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", null, "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        JsonNode body = json("""
+                {"run_id":"r1","tool_name":"place_entry",
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","stop_price":95}}
+                """);
+
+        controller.placeEntry(BEARER, "r1", body);
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.has("take_profit")).isTrue();
+        assertThat(order.path("take_profit").isNull()).isTrue();
     }
 
     @Test
@@ -2583,8 +2629,10 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
-    void theEntryPathStillSynthesizesItsTarget() {
-        // DEFAULT_TARGET_R bleibt — der Entry-Pfad nutzt sie weiter.
+    void theEntryPathAlsoPlacesWithoutATarget() {
+        // Der Entry-Pfad erfindet seit 2026-07-26 ebenfalls keinen Zielkurs mehr — dieselbe
+        // Saxo-Ablehnung (TooFarFromEntryOrder) hätte sonst auch hier das Bracket samt Stop
+        // gerissen. Nur ein explizit gelieferter take_profit wird noch durchgereicht.
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
@@ -2598,8 +2646,7 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
-        // BUY, order price 100, stop 95 -> R=5 -> 100 + 3*5 = 115.
-        assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("115");
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isNull();
     }
 
     @Test
