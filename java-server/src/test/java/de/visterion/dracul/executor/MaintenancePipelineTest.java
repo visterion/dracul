@@ -97,7 +97,7 @@ class MaintenancePipelineTest {
         order.verify(reconcile).reconcile("c", "r1");
         order.verify(entryExpiry).expire("c", "r1");
         order.verify(hardTrigger).apply(any(), any(), eq("r1"));
-        order.verify(ratchet).ratchet(any(), any(), eq("r1"));
+        order.verify(ratchet).ratchet(any(), any(), any(), eq("r1"));
 
         verify(positionRepo).updateMaintenance(eq(1L), eq(new BigDecimal("110")),
                 eq(new BigDecimal("1.6")), eq(0), eq(new BigDecimal("104")), eq(null));
@@ -257,7 +257,7 @@ class MaintenancePipelineTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ExecutorPosition>> ratchetArg =
                 ArgumentCaptor.forClass((Class) List.class);
-        verify(ratchet).ratchet(ratchetArg.capture(), any(), eq("r1"));
+        verify(ratchet).ratchet(ratchetArg.capture(), any(), any(), eq("r1"));
         assertThat(ratchetArg.getValue()).extracting(ExecutorPosition::id).containsExactly(1L);
 
         assertThat(result).extracting(EnrichedPosition::symbol)

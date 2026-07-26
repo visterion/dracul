@@ -62,7 +62,7 @@ public class StopRatchetService {
     }
 
     public void ratchet(List<ExecutorPosition> openPositions, Map<String, BigDecimal> atrBySymbol,
-            String runId) {
+            Map<String, BigDecimal> closeBySymbol, String runId) {
         for (ExecutorPosition p : openPositions) {
             if (p.highestPrice() == null) continue;
             BigDecimal atr = atrBySymbol.get(p.symbol());
@@ -70,6 +70,19 @@ public class StopRatchetService {
 
             BigDecimal chandelier = computeChandelier(p, atr);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
+
+            // The guard only compares against the OLD stop, never against the market. If the price
+            // fell more than chandelier-mult x ATR off the high while staying above the hard stop,
+            // the chandelier sits on the wrong side of the market. Skip silently — the soft trigger
+            // owns that state. The reference is a bar close, not a live quote, so this reduces the
+            // risk rather than eliminating it; the executor runs after the US close, so the gap is
+            // small. Placed BEFORE the escalations below: only what was actually sendable escalates.
+            BigDecimal price = closeBySymbol.get(p.symbol());
+            if (price == null) continue;
+            boolean safeSide = "SELL".equals(p.side())
+                    ? chandelier.compareTo(price) > 0
+                    : chandelier.compareTo(price) < 0;
+            if (!safeSide) continue;
 
             if (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null) {
                 // A tranche-2 position holds TWO stop legs at the broker. Post-fill both entry ids
