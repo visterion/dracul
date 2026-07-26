@@ -228,4 +228,51 @@ class StopRatchetServiceTest {
         // No "stop raised" push may go out when the stop did not move.
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
+
+    @Test
+    void chandelierRounded_buyDown() {
+        // 110 - 3.0*2.001 = 103.997 -> FLOOR at 2dp -> 103.99 (never above the computed level).
+        ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("103.99");
+
+        ArgumentCaptor<BigDecimal> newStopCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(10L),
+                any(), any(), any(Integer.class), newStopCaptor.capture(), any());
+        // Sent == persisted. The book must never claim a stop the broker didn't get.
+        assertThat(newStopCaptor.getValue()).isEqualByComparingTo("103.99");
+    }
+
+    @Test
+    void chandelierRounded_sellUp() {
+        // SELL: 90 + 3.0*2.001 = 96.003 -> CEILING at 2dp -> 96.01. Guard permits because the
+        // proposed stop (96.01) is below the active stop (100) for a short.
+        ExecutorPosition p = openPosition(11L, "ACME", "SELL", new BigDecimal("90"),
+                new BigDecimal("100"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("brk-1");
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("96.01");
+    }
+
+    @Test
+    void subCentImprovement_isDeniedAfterRounding() {
+        // Unrounded 110.004 - 6 = 104.004 would beat the active stop of 104.00 and trigger a
+        // pointless modify + Telegram push every single run. Rounded first, it is 104.00 and the
+        // guard denies it. This pins that rounding happens BEFORE guard.permit.
+        ExecutorPosition p = openPosition(12L, "ACME", "BUY", new BigDecimal("110.004"),
+                new BigDecimal("104.00"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        verify(decisionRepo, never()).insert(any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
 }

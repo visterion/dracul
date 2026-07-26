@@ -9,6 +9,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.Map;
 
@@ -121,11 +122,23 @@ public class StopRatchetService {
         }
     }
 
+    /**
+     * Chandelier level, rounded to two decimals toward the SAFE side: FLOOR for a long (the stop is
+     * never raised beyond the computed level), CEILING for a short.
+     *
+     * <p>Deliberately FLOOR/CEILING and not DOWN/UP — the latter round toward and away from zero,
+     * which inverts the intent for a negative level (a huge ATR on a cheap instrument). The guard
+     * would reject such a value anyway; this simply says what is meant.
+     *
+     * <p>Rounding happens HERE, before {@link StopRatchetGuard#permit}, so the value checked, the
+     * value sent to the broker and the value written to the book are one and the same — and so a
+     * sub-cent improvement is denied instead of producing an empty modify every run.
+     */
     private BigDecimal computeChandelier(ExecutorPosition p, BigDecimal atr) {
         BigDecimal offset = atr.multiply(BigDecimal.valueOf(chandelierMult));
         return "SELL".equals(p.side())
-                ? p.highestPrice().add(offset)
-                : p.highestPrice().subtract(offset);
+                ? p.highestPrice().add(offset).setScale(2, RoundingMode.CEILING)
+                : p.highestPrice().subtract(offset).setScale(2, RoundingMode.FLOOR);
     }
 
     private void recordRatchet(ExecutorPosition p, BigDecimal atr, BigDecimal chandelier, String runId) {
