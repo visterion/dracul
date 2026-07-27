@@ -75,9 +75,15 @@ public abstract class HuntController {
         return def;
     }
 
+    /** Token-Prüfung für Subklassen, die einen ZWEITEN Tool-Endpoint anbieten
+     *  (z.B. strigoi-echos fetch-news). {@code verifier} bleibt privat. */
+    protected boolean authorized(String auth) {
+        return verifier.verify(auth);
+    }
+
     /** Subclasses call this from their own @PostMapping("/tools/...") method. */
     protected ResponseEntity<Map<String, Object>> handleFetch(String auth, Map<String, Object> body) {
-        if (!verifier.verify(auth)) return ResponseEntity.status(401).build();
+        if (!authorized(auth)) return ResponseEntity.status(401).build();
         String paramsKey = "default";
         if (body != null && body.get("input") instanceof Map<?, ?> in && in.get("lookback_days") != null) {
             paramsKey = String.valueOf(in.get("lookback_days"));
@@ -116,6 +122,19 @@ public abstract class HuntController {
         Object health = o.get("data_source_health");
         if (!(health instanceof Map<?, ?> hm)) return true;
         return "healthy".equals(hm.get("status"));
+    }
+
+    /** Health-Map für Subklassen mit eigenem Tool-Endpoint. */
+    protected static Map<String, Object> healthOf(de.visterion.dracul.hunting.DataSourceHealth h) {
+        return healthMap(h);
+    }
+
+    /** Cache-Zugriff für Subklassen mit eigenem Tool-Endpoint. */
+    protected ToolFetchCache cache() { return cache; }
+
+    /** Cache-Prädikat für Subklassen: unavailable-Payloads werden nicht festgehalten. */
+    protected static boolean healthyPayload(Map<String, Object> payload) {
+        return isHealthyPayload(payload);
     }
 
     @PostMapping("/complete")
