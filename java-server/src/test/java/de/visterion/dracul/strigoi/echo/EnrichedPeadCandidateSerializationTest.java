@@ -17,7 +17,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Serialized-key snapshot (T1.5 spec §7, "no-logic-change regression"): pins the exact field
  * set the {@code fetch-candidates} tool output carries for one {@link EnrichedPeadCandidate},
  * so a future change to this record must deliberately update this test — proving today's change
- * added ONLY {@code recentNews} and touched no pre-existing field name.
+ * added ONLY {@code recentNews} and {@code newsCount} and touched no pre-existing field name.
+ * Since 2026-07-27 {@code recentNews} entries carry no {@code summary} (payload-budget cut,
+ * Spec 2026-07-27); the full text now lives behind {@code fetch_candidate_news}.
  */
 class EnrichedPeadCandidateSerializationTest {
 
@@ -46,23 +48,27 @@ class EnrichedPeadCandidateSerializationTest {
                 2_500_000.0, 1.1, "Technology", true,
                 new BigDecimal("0.040000"), true, 5, "up", true,
                 LocalDate.now().plusDays(40), 40, 12, true,
-                List.of(new EchoNewsItem("Acme beats and raises", "solid quarter", "src", 0.8, Instant.now())));
+                List.of(new EchoNewsIndexItem("Acme beats and raises", "src", 0.8, Instant.now())), 1);
 
         JsonNode node = new ObjectMapper().valueToTree(candidate);
         List<String> actualKeys = new ArrayList<>(node.propertyNames());
 
         assertThat(actualKeys).containsAll(PRE_EXISTING_KEYS);
         assertThat(actualKeys)
-                .as("only recentNews may be a NEW key beyond the pre-existing field set")
+                .as("only recentNews and newsCount may be NEW keys beyond the pre-existing field set")
                 .containsExactlyInAnyOrderElementsOf(
-                        java.util.stream.Stream.concat(PRE_EXISTING_KEYS.stream(), java.util.stream.Stream.of("recentNews"))
+                        java.util.stream.Stream.concat(PRE_EXISTING_KEYS.stream(),
+                                        java.util.stream.Stream.of("recentNews", "newsCount"))
                                 .toList());
 
         JsonNode recentNews = node.path("recentNews").get(0);
         assertThat(recentNews.path("headline").asText()).isEqualTo("Acme beats and raises");
-        assertThat(recentNews.path("summary").asText()).isEqualTo("solid quarter");
+        assertThat(recentNews.has("summary"))
+                .as("the index item must carry no summary — that's the whole point of the cut")
+                .isFalse();
         assertThat(recentNews.path("source").asText()).isEqualTo("src");
         assertThat(recentNews.path("credibility").asDouble()).isEqualTo(0.8);
         assertThat(recentNews.has("datetime")).isTrue();
+        assertThat(node.path("newsCount").asInt()).isEqualTo(1);
     }
 }

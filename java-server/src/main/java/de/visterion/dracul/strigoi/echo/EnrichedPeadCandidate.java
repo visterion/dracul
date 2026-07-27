@@ -44,5 +44,8 @@ public record EnrichedPeadCandidate(
         Integer analystCoverage,
         boolean coverageAvailable,
         // T1.5: post-report headlines surfaced for LLM sentiment scoring (never re-gated on).
-        List<EchoNewsItem> recentNews
+        // Seit 2026-07-27 ein schlanker Index ohne summary; newsCount nennt die UNGEKAPPTE
+        // Gesamtzahl, damit der Agent sieht, wann sich fetch_candidate_news lohnt.
+        List<EchoNewsIndexItem> recentNews,
+        int newsCount
 ) {}

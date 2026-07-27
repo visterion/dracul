@@ -222,7 +222,7 @@ class EchoEnrichmentServiceTest {
 
         var out = svc.enrich(List.of(cand("MANY", 1.80)));
         assertThat(out).hasSize(1);
-        List<EchoNewsItem> recentNews = out.get(0).recentNews();
+        List<EchoNewsIndexItem> recentNews = out.get(0).recentNews();
         assertThat(recentNews).hasSize(10);
         assertThat(recentNews.get(0).headline()).isEqualTo("Acme headline #0");
         assertThat(recentNews.get(9).headline()).isEqualTo("Acme headline #9");

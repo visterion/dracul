@@ -29,9 +29,13 @@ import java.util.Optional;
  *
  *  <p>T1.5: also fetches company news ONCE per candidate (single {@link AgoraCompanyData#news}
  *  round-trip — that call is uncached) and reuses it for both the {@link ConfounderScreen} flags
- *  feeding the deterministic gate AND the {@code recentNews} surfaced to the Echo LLM for
- *  sentiment scoring. {@code recentNews} is sorted newest-first and capped at
- *  {@link #recentNewsCap}; the confounder screen always sees the FULL, uncapped fetch. */
+ *  feeding the deterministic gate AND the {@code recentNews} INDEX surfaced to the Echo LLM.
+ *  The index is sorted newest-first and capped at {@link #recentNewsCap}; the confounder screen
+ *  always sees the FULL, uncapped fetch, and {@code newsCount} reports its true size.
+ *
+ *  <p>2026-07-27: der Single-Fetch-Invariant gilt nur noch INNERHALB dieser Klasse. Das Tool
+ *  {@code fetch_candidate_news} holt die News für nachgezogene Symbole ein zweites Mal von
+ *  Agora (abgefedert durch den ToolFetchCache). Bewusst in Kauf genommen, siehe Spec §6.1. */
 @Component
 public class EchoEnrichmentService {
 
@@ -145,7 +149,7 @@ public class EchoEnrichmentService {
             List<RecommendationTrend> recTrend = safeRecommendations(c.symbol());
             EarningsRevisions rev = revisions.revisions(recTrend);
             AnalystCoverage cov = AnalystCoverage.of(recTrend);
-            List<EchoNewsItem> recentNews = scan.recentNews();
+            List<EchoNewsIndexItem> recentNews = scan.recentNews();
 
             out.add(new EnrichedPeadCandidate(
                     c.symbol(), c.companyName(), c.reportDate(),
@@ -159,7 +163,7 @@ public class EchoEnrichmentService {
                     accr.accrualRatio(), accr.available(),
                     rev.netProxy(), rev.direction(), rev.available(),
                     nextEarn.orElse(null), daysToNext,
-                    cov.coverage(), cov.available(), recentNews));
+                    cov.coverage(), cov.available(), recentNews, scan.newsCount()));
         }
         return out;
     }
@@ -208,18 +212,19 @@ public class EchoEnrichmentService {
     /** Newest-first, capped at {@link #recentNewsCap}. The cap applies ONLY here — the
      *  confounder scan above always sees the full, uncapped {@code news} list. A negative
      *  configured cap is clamped to zero rather than propagating an {@link
-     *  IllegalArgumentException} out of {@link java.util.stream.Stream#limit}. */
-    private List<EchoNewsItem> recentNews(List<NewsHeadline> news) {
+     *  IllegalArgumentException} out of {@link java.util.stream.Stream#limit}. {@code summary}
+     *  wird bewusst NICHT übernommen (Payload-Budget, Spec 2026-07-27). */
+    private List<EchoNewsIndexItem> recentNews(List<NewsHeadline> news) {
         return news.stream()
                 .sorted(Comparator.comparing(NewsHeadline::datetime).reversed())
                 .limit(Math.max(0, recentNewsCap))
-                .map(h -> new EchoNewsItem(h.headline(), h.summary(), h.source(), h.credibility(), h.datetime()))
+                .map(h -> new EchoNewsIndexItem(h.headline(), h.source(), h.credibility(), h.datetime()))
                 .toList();
     }
 
-    /** Combined confounder-flags + recentNews result for one candidate's news scan. */
-    private record NewsScan(List<String> confounders, List<EchoNewsItem> recentNews) {
-        static NewsScan empty() { return new NewsScan(List.of(), List.of()); }
+    /** Combined confounder-flags + recentNews-Index + ungekappte Gesamtzahl für einen Kandidaten. */
+    private record NewsScan(List<String> confounders, List<EchoNewsIndexItem> recentNews, int newsCount) {
+        static NewsScan empty() { return new NewsScan(List.of(), List.of(), 0); }
     }
 
     /** Runs the confounder scan and the recentNews shaping over one candidate's already-fetched
@@ -233,7 +238,7 @@ public class EchoEnrichmentService {
      *  the old {@code safeConfounders} behaved. */
     private NewsScan safeNewsScan(String symbol, List<NewsHeadline> news) {
         try {
-            return new NewsScan(eventScreen.confounders(news), recentNews(news));
+            return new NewsScan(eventScreen.confounders(news), recentNews(news), news.size());
         } catch (Exception e) {
             log.warn("echo: news scan failed for {}, degrading to empty confounders/recentNews: {}",
                     symbol, e.getMessage());
