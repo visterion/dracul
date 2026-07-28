@@ -53,18 +53,19 @@ class AgentRegistrationParityTest {
     @Autowired GenericAgentRegistrar registrar;
     @Autowired ObjectMapper mapper;
 
-    // The 8 memory-reading agents (T1.6): each carries exactly [fetch_..., search] in that order.
-    // daywalker/renfield/voievod-outcome are untouched by T1.6 and keep their pre-existing tool
-    // lists, so they're excluded from this check.
-    private static final java.util.Map<String, String> FETCH_TOOL_BY_AGENT = java.util.Map.of(
-            "strigoi-echo", "fetch_recent_pead_candidates",
-            "strigoi-lazarus", "fetch_quality_at_low_candidates",
-            "strigoi-insider", "fetch_recent_clusters",
-            "strigoi-index", "fetch_index_reconstitution_events",
-            "strigoi-merger", "fetch_recent_merger_candidates",
-            "strigoi-spin", "fetch_recent_spinoff_candidates",
-            "gropar", "fetch_held_positions",
-            "voievod", "fetch_consensus_clusters"
+    // Die 8 memory-lesenden Agenten (T1.6): je [fetch_..., search] in dieser Reihenfolge.
+    // AUSNAHME strigoi-echo: seit 2026-07-27 zusätzlich das Detail-Tool fetch_candidate_news
+    // zwischen fetch und search (Spec „echo news index + detail call").
+    private static final java.util.Map<String, java.util.List<String>> TOOLS_BY_AGENT = java.util.Map.of(
+            "strigoi-echo", java.util.List.of(
+                    "fetch_recent_pead_candidates", "fetch_candidate_news", "search"),
+            "strigoi-lazarus", java.util.List.of("fetch_quality_at_low_candidates", "search"),
+            "strigoi-insider", java.util.List.of("fetch_recent_clusters", "search"),
+            "strigoi-index", java.util.List.of("fetch_index_reconstitution_events", "search"),
+            "strigoi-merger", java.util.List.of("fetch_recent_merger_candidates", "search"),
+            "strigoi-spin", java.util.List.of("fetch_recent_spinoff_candidates", "search"),
+            "gropar", java.util.List.of("fetch_held_positions", "search"),
+            "voievod", java.util.List.of("fetch_consensus_clusters", "search")
     );
 
     @Test
@@ -77,11 +78,11 @@ class AgentRegistrationParityTest {
         // order. Runs in BOTH normal and golden.write mode, so a stale/incomplete ToolBinding on
         // any *Defaults bean fails loudly instead of silently baking into a regenerated fixture.
         for (var def : defs) {
-            var fetchTool = FETCH_TOOL_BY_AGENT.get(def.name());
-            if (fetchTool != null) {
+            var expected = TOOLS_BY_AGENT.get(def.name());
+            if (expected != null) {
                 assertThat(def.tools()).extracting(ToolBinding::toolName)
-                        .as("agent %s must carry exactly [fetch, search] in that order", def.name())
-                        .containsExactly(fetchTool, "search");
+                        .as("agent %s must carry exactly %s in that order", def.name(), expected)
+                        .containsExactlyElementsOf(expected);
             }
         }
 

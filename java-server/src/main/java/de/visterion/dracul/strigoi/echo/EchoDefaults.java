@@ -16,6 +16,7 @@ class EchoDefaults {
 
     private static final String NAME = "strigoi-echo";
     private static final String FETCH = "fetch_recent_pead_candidates";
+    private static final String NEWS = "fetch_candidate_news";
 
     @Bean
     AgentDefaultProvider echoDefaultProvider(
@@ -27,6 +28,13 @@ class EchoDefaults {
         var entry = new ToolCatalogEntry(FETCH,
                 "Returns positive-surprise PEAD candidates detected in the last N days.",
                 input, "/api/strigoi-echo/tools/fetch-candidates", 30);
+        JsonNode newsInput = AgentResources.parseJson(mapper,
+                "{\"type\":\"object\",\"required\":[\"symbol\"],\"properties\":{"
+                + "\"symbol\":{\"type\":\"string\"},"
+                + "\"since\":{\"type\":\"string\",\"description\":\"ISO date, pass the candidate's reportDate\"}}}");
+        var newsEntry = new ToolCatalogEntry(NEWS,
+                "Returns the full post-report news for ONE symbol, including summaries.",
+                newsInput, "/api/strigoi-echo/tools/fetch-news", 30);
         return new AgentDefaultProvider() {
             @Override
             public AgentDefinition defaultDefinition() {
@@ -37,12 +45,13 @@ class EchoDefaults {
                         "/api/strigoi-echo/complete",
                         null, null, null, true,
                         List.of(new ToolBinding(FETCH, null, null, 0),
-                                new ToolBinding("search", null, null, 1)));
+                                new ToolBinding(NEWS, null, null, 1),
+                                new ToolBinding("search", null, null, 2)));
             }
 
             @Override
             public List<ToolCatalogEntry> catalogEntries() {
-                return List.of(entry);
+                return List.of(entry, newsEntry);
             }
         };
     }

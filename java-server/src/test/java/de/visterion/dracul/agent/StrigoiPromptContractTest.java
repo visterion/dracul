@@ -97,4 +97,18 @@ class StrigoiPromptContractTest {
                 .as("the stale 'you will not see those' framing must be gone now that recentNews is surfaced")
                 .doesNotContain("you will not see those");
     }
+
+    @Test
+    void echoPromptDocumentsTheNewsIndexAndDetailTool() {
+        String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
+        assertThat(prompt)
+                .as("echo prompt must document newsCount so the agent sees the cap")
+                .contains("newsCount");
+        assertThat(prompt)
+                .as("echo prompt must document the detail tool")
+                .contains("fetch_candidate_news");
+        assertThat(prompt)
+                .as("echo prompt must not promise a summary in the candidate payload")
+                .doesNotContain("{headline, summary, source, credibility, datetime}");
+    }
 }

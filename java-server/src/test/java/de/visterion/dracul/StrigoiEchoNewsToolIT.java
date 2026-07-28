@@ -138,13 +138,11 @@ class StrigoiEchoNewsToolIT {
 
     /** An unavailable result must not be cached, so the very next call retries against
      *  Agora instead of replaying the stale outage.
-     *  Caveat: {@code fetch_candidate_news} is not yet registered in {@code AgentToolCatalog}
-     *  (Task 3), so {@code ToolFetchCache.resolveTtlNanos} currently returns 0 for it and
-     *  NOTHING is cached regardless of health. This test therefore only proves the
-     *  end-to-end behaviour — an unavailable call followed by a fresh call sees fresh data —
-     *  not that the {@code healthyPayload} predicate is the reason. Once the tool is
-     *  registered as cacheable, this should be re-checked to confirm it still passes when
-     *  caching is actually live. */
+     *  {@code fetch_candidate_news} is registered in {@code AgentToolCatalog} (Task 3) as
+     *  cacheable at the global default TTL, so {@code ToolFetchCache.resolveTtlNanos} now
+     *  resolves to a real, non-zero TTL for it and caching is genuinely live here. This test
+     *  therefore does prove what its name claims: the {@code shouldCache} predicate — not an
+     *  inert TTL — is what keeps the outage result from being cached. */
     @Test
     void unavailableResultIsNotCached() {
         when(companyData.newsResult(any(), any(), any()))
