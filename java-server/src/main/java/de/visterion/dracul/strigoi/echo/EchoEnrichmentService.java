@@ -72,7 +72,7 @@ public class EchoEnrichmentService {
             AgoraEarnings earnings,
             ConfounderScreen eventScreen,
             EchoDeterministicGate gate,
-            @Value("${dracul.strigoi.echo.recent-news-cap:10}") int recentNewsCap) {
+            @Value("${dracul.strigoi.echo.recent-news-cap:5}") int recentNewsCap) {
         this.sueEngine = sueEngine;
         this.filings = filings;
         this.epsShaper = epsShaper;
