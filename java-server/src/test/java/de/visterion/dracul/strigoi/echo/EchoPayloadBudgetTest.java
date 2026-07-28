@@ -30,31 +30,40 @@ import static org.assertj.core.api.Assertions.assertThat;
  *  Earnings-Woche, 11–14 sonst). {@code WORST_CASE_CANDIDATES = 45} ist das 1,55-fache dieses
  *  beobachteten Maximums — ein Sicherheitsaufschlag, keine Kapazitätsgrenze. Der reale
  *  Pro-Kandidat-Preis aus einem tatsächlichen Prod-Payload liegt bei ~875 B Metriken + 5
- *  Index-Items × ~165 B ≈ 1,7 kB/Kandidat; damit liegt die strukturelle Decke bei ~55
- *  Kandidaten gegen das ~95-kB-Bridge-Limit. {@code BUDGET_BYTES = 80_000} liegt komfortabel
- *  unter dieser 95-kB-Decke und deutlich über einem realistischen 45-Kandidaten-Payload — wer
- *  hier reißt, hat entweder ein Feld angebaut oder den Cap erhöht: beides ist eine bewusste
- *  Entscheidung, kein Versehen.
+ *  Index-Items × ~165 B ≈ 1,7 kB/Kandidat; damit liegt die strukturelle Decke bei ~56
+ *  Kandidaten gegen das ~95-kB-Bridge-Limit. {@code BUDGET_BYTES = 80_000} liegt unter dieser
+ *  95-kB-Decke und nur KNAPP über einem realistischen 45-Kandidaten-Payload (Stand 2026-07-28:
+ *  ca. 4 % Marge) — diese Enge ist bewusst, nicht großzügig: wer hier reißt, hat entweder ein
+ *  Feld angebaut oder den Cap erhöht, und soll das sofort merken statt erst nach Wochen
+ *  komfortabler Marge.
  *
- *  <p><b>Gemessene Baseline: 2026-07-28, 76 232 Bytes, 4,7 % unter dem Budget</b> (Fix-Runde 1:
- *  UTF-8-Bytes + reale Envelope). Der jeweils aktuelle Messwert inklusive Abstand zum Budget in
- *  Prozent steht außerdem live im Assertion-Failure, sobald der Test reißt — so sieht eine
- *  spätere Wartungsperson sofort, ob noch 5 % oder 40 % Marge übrig sind, ohne diese Javadoc-
- *  Zahl nachpflegen zu müssen, um zu wissen ob sie gerade knapp oder deutlich gerissen hat.
+ *  <p><b>Gemessene Baseline: 2026-07-28, siehe Assertion-Failure für den aktuellen Wert.</b>
+ *  Dieser Kommentar nennt bewusst KEINE feste Zahl mehr (frühere Fassungen liefen der
+ *  tatsächlichen Messung nach jeder Fixture-Änderung hinterher) — der Messwert inklusive
+ *  Overshoot in Prozent steht live im Assertion-Failure, sobald der Test reißt. Auf dem
+ *  Grün-Pfad wird die Marge NICHT ausgegeben (die {@code .as(...)}-Beschreibung rendert nur bei
+ *  einem fehlgeschlagenen Assert); wer die aktuelle Marge auf dem Grün-Pfad braucht, muss
+ *  {@code BUDGET_BYTES} kurzzeitig senken und den Overshoot ablesen (siehe Report,
+ *  "RED/GREEN-Nachweis").
  *
  *  <p><b>{@code INDEX_ITEMS_PER_CANDIDATE} ist an den YAML-DEFAULT gebunden</b>, nicht hart
  *  verdrahtet: der Wert wird zur Testlaufzeit aus dem Default von
  *  {@code dracul.strigoi.echo.recent-news-cap} in {@code application.yaml} gelesen, sodass eine
  *  Cap-Erhöhung IM YAML-DEFAULT automatisch auch den hier geprüften Worst Case anhebt — vorher
  *  war das ein zahnloses Duplikat, das bei einer Cap-Erhöhung in der Yaml stillschweigend falsch
- *  geworden wäre. <b>Diese Bindung deckt NICHT den Weg ab, über den der Cap in Produktion
- *  tatsächlich verändert wird:</b> Prod-Tunables werden per Umgebungsvariable im Deploy-Compose
- *  gesetzt, niemals im Repo. Eine {@code ECHO_RECENT_NEWS_CAP}-Env-Var, die den Yaml-Default zur
- *  Laufzeit überschreibt, umgeht diesen Test vollständig — der Build bleibt grün, obwohl der
- *  reale Cap gestiegen ist. Das ist genau der Mechanismus, der den Ausfall vom 2026-07-22
- *  verursacht hat, und dieser Test kann ihn strukturell nicht sehen (kein Zugriff auf die
- *  Deploy-Umgebung zur Testzeit). Diese Bindung schützt ausschließlich vor Drift zwischen
- *  Repo-Test und Repo-Default — nicht vor einem Prod-Override.
+ *  geworden wäre. <b>Diese Bindung deckt NICHT den Weg ab, über den Prod-Tunables normalerweise
+ *  gesetzt werden:</b> per Umgebungsvariable im Deploy-Compose, niemals im Repo. Eine {@code
+ *  ECHO_RECENT_NEWS_CAP}-Env-Var, die den Yaml-Default zur Laufzeit überschreibt, umgeht diesen
+ *  Test vollständig — der Build bliebe grün, obwohl der reale Cap gestiegen wäre. Das ist eine
+ *  dokumentierte strukturelle Lücke (kein Zugriff auf die Deploy-Umgebung zur Testzeit), aber
+ *  NICHT die Ursache des Ausfalls vom 2026-07-22: der wurde durch Commit {@code 5b86dba1}
+ *  ("feat(sentiment): surface capped recentNews to echo", 2026-07-19) verursacht, der den
+ *  Pro-Kandidat-News-Block (damals inklusive Summary) und einen REPO-COMMITTETEN Yaml-Default
+ *  von 10 einführte — beides Änderungen, die dieses Feld-Messverfahren und diese Yaml-Bindung
+ *  tatsächlich abdecken. Es gibt keinen Beleg, dass {@code ECHO_RECENT_NEWS_CAP} je in einer
+ *  Deploy-Umgebung gesetzt war. Diese Bindung schützt ausschließlich vor Drift zwischen
+ *  Repo-Test und Repo-Default — nicht vor einem Prod-Override, der (Stand heute) nicht die
+ *  reale Ursache war.
  *
  *  <p><b>Was NICHT gemessen wird — {@code active_patterns}:</b> die reale Bridge-Antwort ist
  *  nicht die nackte Kandidatenliste, sondern die Envelope aus
@@ -64,23 +73,27 @@ import static org.assertj.core.api.Assertions.assertThat;
  *  (aus {@code PatternRepository.findAcceptedByStrigoi}) ist dagegen eine UNGEDECKELTE Liste
  *  von TEXT-Statements (~200 B je Eintrag laut Seed-Daten, 135–235 Zeichen), die mit jedem vom
  *  Lernloop akzeptierten Pattern monotonisch wächst UND absichtlich mit {@code 'all'}-Mustern
- *  aller Hunter geteilt wird. Dieser Test bildet sie bewusst LEER nach (Baseline-Realität: kaum
- *  akzeptierte Patterns) — ihr Wachstum ist NICHT budgetiert und NICHT von diesem Test
- *  abgedeckt. Bei ~200 B/Pattern verbraucht ein Bestand von etwa 90–95 akzeptierten,
- *  echo-relevanten Patterns bereits die gesamte verbleibende Marge zwischen der gemessenen
- *  Baseline und dem realen ~95-kB-Bridge-Limit — unabhängig vom Kandidaten-Budget hier. Ein
- *  wachsender Pattern-Bestand braucht eine EIGENE Absicherung (z.B. einen Cap in
+ *  aller Hunter geteilt wird. {@code V2__seed.sql} liefert bereits auf einer frischen Datenbank
+ *  DREI ACTIVE {@code strigoi-echo}-Patterns (~460 Zeichen zusammen) — das ist die reale
+ *  Baseline, NICHT null. Die Fixture unten bildet diese drei Seed-Patterns mit synthetischen
+ *  Platzhaltern gleicher Größenordnung nach, damit die gemessene Baseline diesen bereits
+ *  verbrauchten Anteil der Marge enthält. NICHT nachgebildet wird das WEITERE Wachstum über
+ *  diese drei Seed-Patterns hinaus — das bleibt absichtlich außerhalb dieses Budgets. Bei
+ *  ~200 B/zusätzlichem Pattern verbraucht ein Zuwachs von etwa 90 weiteren, echo-relevanten
+ *  Patterns bereits die gesamte verbleibende Marge zwischen der gemessenen Baseline und dem
+ *  realen ~95-kB-Bridge-Limit — unabhängig vom Kandidaten-Budget hier. Weiteres
+ *  Pattern-Wachstum braucht eine EIGENE Absicherung (z.B. einen Cap in
  *  {@code findAcceptedByStrigoi} oder einen eigenen Regressionstest); dieser Test hier deckt
- *  ausschließlich den Kandidaten-Teil ab.
+ *  ausschließlich den Kandidaten-Teil plus die drei Seed-Patterns als Baseline ab.
  *
  *  <p><b>Bekannte, akzeptierte Lücke:</b> dieser Test deckt Kandidatenzahlen bis 45 ab — ab 46
  *  Kandidaten prüft er nichts mehr. Der reale strukturelle Schaden (Bridge-Limit gerissen)
- *  setzt aber erst deutlich später ein, ungefähr ab ~56 Kandidaten. Der Bereich 46–55 ist also
- *  ungetestet, aber (Stand heute) noch nicht schädlich — das ist eine dokumentierte, bewusst
- *  akzeptierte Lücke, kein Versehen, und KEINE Aussage, dass dieser Test bis 55 abdeckt.
- *  Sollte die reale Kandidatenzahl je in die Nähe von ~55 wachsen, muss dieser Test neu
- *  kalibriert werden (Kandidatenzahl serverseitig deckeln, recent-news-cap senken, oder ein
- *  Feld aus dem Index in {@code fetch_candidate_news} verschieben).
+ *  setzt aber erst deutlich später ein, ungefähr ab ~56 Kandidaten (siehe Kalibrierung oben).
+ *  Der Bereich 46–55 ist also ungetestet, aber (Stand heute) noch nicht schädlich — das ist
+ *  eine dokumentierte, bewusst akzeptierte Lücke, kein Versehen, und KEINE Aussage, dass dieser
+ *  Test bis 55 abdeckt. Sollte die reale Kandidatenzahl je in die Nähe von ~56 wachsen, muss
+ *  dieser Test neu kalibriert werden (Kandidatenzahl serverseitig deckeln, recent-news-cap
+ *  senken, oder ein Feld aus dem Index in {@code fetch_candidate_news} verschieben).
  *
  *  <p>Alle Werte sind SYNTHETISCH und an der Ø realer Prod-Werte kalibriert (Headline ~69
  *  Zeichen, {@code example.com} als offensichtlich synthetische Quelle nach RFC 2606). Nichts
@@ -174,10 +187,25 @@ class EchoPayloadBudgetTest {
                 index, 14);
     }
 
+    /** Stand-ins for the 3 ACTIVE {@code strigoi-echo} patterns {@code V2__seed.sql} ships on a
+     *  fresh database (~462 real characters total) — SYNTHETIC text of equivalent length, not
+     *  the seeded statements themselves. This is the real baseline
+     *  {@code PatternRepository.findAcceptedByStrigoi("strigoi-echo")} returns on day one, not
+     *  an empty list; growth BEYOND these three stays deliberately out of this budget (see the
+     *  class javadoc). */
+    private static final List<String> SEED_BASELINE_ACTIVE_PATTERNS = List.of(
+            "SYNTHETIC placeholder pattern: signals arriving near a defined calendar boundary "
+                    + "show reduced follow-through in the synthetic backtest data set used for fixtures.",
+            "SYNTHETIC placeholder pattern: effect strength scales with a secondary synthetic "
+                    + "covariate observed across multiple fixture-only backtest scenarios and windows.",
+            "SYNTHETIC placeholder pattern: effect is most pronounced within a synthetic "
+                    + "capitalization band where fixture coverage density is deliberately lower than average.");
+
     /** Mirrors the real envelope built by {@code HuntController.handleFetch}: {@code
      *  {"output":{"candidates":[…],"data_source_health":{…},"active_patterns":[…]}}}. {@code
-     *  active_patterns} is modelled EMPTY here — see the class javadoc for why that list is
-     *  deliberately excluded from this budget rather than silently ignored. */
+     *  active_patterns} is modelled with {@link #SEED_BASELINE_ACTIVE_PATTERNS} — the real
+     *  fresh-database baseline, not an empty list — see the class javadoc for why growth beyond
+     *  that baseline is deliberately excluded from this budget rather than silently ignored. */
     private static Map<String, Object> syntheticEnvelope(List<EnrichedPeadCandidate> candidates) {
         Map<String, Object> health = new LinkedHashMap<>();
         health.put("status", "healthy");
@@ -188,7 +216,7 @@ class EchoPayloadBudgetTest {
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("candidates", candidates);
         output.put("data_source_health", health);
-        output.put("active_patterns", List.of());
+        output.put("active_patterns", SEED_BASELINE_ACTIVE_PATTERNS);
 
         return Map.of("output", output);
     }
