@@ -1,5 +1,6 @@
 package de.visterion.dracul;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,7 +64,8 @@ class StrigoiEchoNewsToolIT {
                 "SYNTHETIC beat headline", "SYNTHETIC summary with the numbers",
                 "synthetic-source", "rss", Instant.parse("2026-01-02T00:00:00Z"),
                 "https://example.com/1", "example.com", 0.7);
-        when(companyData.news(any(), any(), any())).thenReturn(List.of(item));
+        when(companyData.newsResult(any(), any(), any()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(item)));
     }
 
     private JsonNode call(Map<String, Object> input) {
@@ -98,18 +100,58 @@ class StrigoiEchoNewsToolIT {
     void missingSinceFallsBackToThirtyDays() {
         call(Map.of("symbol", "AAPL"));
         org.mockito.Mockito.verify(companyData)
-                .news(eq("AAPL"), eq(LocalDate.now().minusDays(30)), eq(LocalDate.now()));
+                .newsResult(eq("AAPL"), eq(LocalDate.now().minusDays(30)), eq(LocalDate.now()));
     }
 
+    /** Real failure mode: {@link AgoraCompanyData#newsResult} reports an outage via
+     *  {@code DataSourceResult.unavailable(...)} — its documented contract, unlike
+     *  {@link AgoraCompanyData#news}, which never throws and swallows an outage into an
+     *  empty list. Mocking a throw from {@code news()} would test a behaviour the real
+     *  method cannot exhibit; this mocks the health-aware method returning exactly the
+     *  outage shape it is specified to return. */
     @Test
     void agoraFailureDegradesToEmptyListNotAnError() {
-        when(companyData.news(any(), any(), any())).thenThrow(new RuntimeException("agora down"));
+        when(companyData.newsResult(any(), any(), any()))
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: boom"));
 
         JsonNode resp = call(Map.of("symbol", "AAPL"));
 
         assertThat(resp.path("output").path("news")).isEmpty();
         assertThat(resp.path("output").path("data_source_health").path("status").asText())
                 .isEqualTo("unavailable");
+    }
+
+    /** The whole point of the health-aware variant: a genuinely newsless-but-healthy symbol
+     *  must NOT be confused with an outage — both look like "empty list" at the {@code news}
+     *  level, but only one of them is {@code status = "healthy"}. */
+    @Test
+    void newslessSymbolStaysHealthy() {
+        when(companyData.newsResult(any(), any(), any()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of()));
+
+        JsonNode resp = call(Map.of("symbol", "QUIET"));
+
+        assertThat(resp.path("output").path("news")).isEmpty();
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("healthy");
+    }
+
+    /** An unavailable result must not be cached, so the very next call retries against
+     *  Agora instead of replaying the stale outage. */
+    @Test
+    void unavailableResultIsNotCached() {
+        when(companyData.newsResult(any(), any(), any()))
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: boom"));
+        call(Map.of("symbol", "AAPL"));
+
+        when(companyData.newsResult(any(), any(), any()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        JsonNode resp = call(Map.of("symbol", "AAPL"));
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("healthy");
+        org.mockito.Mockito.verify(companyData, org.mockito.Mockito.times(2))
+                .newsResult(eq("AAPL"), any(), any());
     }
 
     @Test

@@ -25,8 +25,8 @@ import java.util.List;
  * get_fundamentals / get_company_profile over MCP). fundamentals/profile are returned as the
  * RAW provider blobs (opaque JsonNode) — key extraction is a consumer-side concern. Never
  * throws: Agora failure degrades to an empty list / null (the replaced adapters' contracts) —
- * except the health-aware variants ({@link #fundamentalsResult} and
- * {@link #recommendationsStrict}), which exist precisely so guard-carrying callers can tell
+ * except the health-aware variants ({@link #fundamentalsResult}, {@link #recommendationsStrict}
+ * and {@link #newsResult}), which exist precisely so guard-carrying callers can tell
  * an Agora outage apart from "no data for this symbol".
  */
 @Component
@@ -69,15 +69,44 @@ public class AgoraCompanyData {
     public List<NewsHeadline> news(String symbol, LocalDate from, LocalDate to) {
         JsonNode res;
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol).put("from", from.toString()).put("to", to.toString());
-            if (!includeSocial) {
-                args.putArray("sourceTypes").add("news");
-            }
-            res = agora.callTool("get_company_news", args);
+            res = agora.callTool("get_company_news", newsArgs(symbol, from, to));
         } catch (AgoraUnavailableException e) {
             return List.of();
         }
+        return parseNews(res, symbol);
+    }
+
+    /**
+     * Health-aware variant of {@link #news(String, LocalDate, LocalDate)}: tells "Agora is
+     * unreachable" apart from "no news for this symbol in this window", which the raw method
+     * collapses to an empty list either way. Added for the echo detail tool
+     * ({@code /tools/fetch-news}), which must surface a genuine outage as
+     * {@code data_source_health.status = "unavailable"} rather than silently reporting zero
+     * items as if the symbol simply had none — {@link #news(String, LocalDate, LocalDate)}
+     * keeps its existing empty-list-on-any-failure contract for its other callers (echo
+     * enrichment, confounder screen, renfield, daywalker), which never inspect health here.
+     * Shares request-building ({@link #newsArgs}) and row-parsing ({@link #parseNews}) with
+     * {@link #news(String, LocalDate, LocalDate)} so the two variants cannot silently diverge.
+     */
+    public DataSourceResult<NewsHeadline> newsResult(String symbol, LocalDate from, LocalDate to) {
+        try {
+            JsonNode res = agora.callTool("get_company_news", newsArgs(symbol, from, to));
+            return DataSourceResult.healthy("agora", parseNews(res, symbol));
+        } catch (AgoraUnavailableException e) {
+            return DataSourceResult.unavailable("agora", "agora: " + e.getMessage());
+        }
+    }
+
+    private ObjectNode newsArgs(String symbol, LocalDate from, LocalDate to) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol).put("from", from.toString()).put("to", to.toString());
+        if (!includeSocial) {
+            args.putArray("sourceTypes").add("news");
+        }
+        return args;
+    }
+
+    private List<NewsHeadline> parseNews(JsonNode res, String symbol) {
         List<NewsHeadline> out = new ArrayList<>();
         int droppedDateless = 0;
         int filteredSocial = 0;

@@ -2,7 +2,6 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
-import de.visterion.dracul.hunting.DataSourceHealth;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
@@ -69,9 +68,15 @@ public class StrigoiEchoWebhookController extends HuntController {
     /** Detail-Tool: die vollen News EINES Symbols inkl. {@code summary}. Der Kandidaten-Payload
      *  trägt nur einen summary-losen Index (Spec 2026-07-27, §3.2); wer den Volltext braucht,
      *  zieht ihn hier nach. Läuft über denselben ToolFetchCache wie fetch-candidates, mit dem
-     *  Symbol als paramsKey — wiederholte Calls fürs selbe Symbol kosten keinen zweiten
-     *  Agora-Fetch. Ein Agora-Ausfall degradiert fail-soft zu einer leeren Liste mit
-     *  {@code data_source_health.status = "unavailable"}, damit der Cache ihn nicht festhält. */
+     *  Symbol als paramsKey — SOBALD {@code fetch_candidate_news} als cacheable in den
+     *  AgentToolCatalog eingetragen ist (Task 3), kosten wiederholte Calls fürs selbe Symbol
+     *  keinen zweiten Agora-Fetch mehr; bis dahin ist der Tool-Name im Catalog nicht registriert,
+     *  {@link de.visterion.dracul.agent.ToolFetchCache} liefert also TTL 0 und jeder Call
+     *  fetcht neu. Health kommt aus {@link AgoraCompanyData#newsResult}, NICHT aus einem
+     *  try/catch um {@link AgoraCompanyData#news} — {@code news()} verschluckt einen
+     *  Agora-Ausfall selbst zu einer leeren Liste und würde ihn nie sichtbar machen. Ein
+     *  {@code unavailable}-Ergebnis wird über {@link #healthyPayload} nicht gecacht, damit der
+     *  nächste Call retried. */
     @PostMapping("/tools/fetch-news")
     public ResponseEntity<Map<String, Object>> fetchNews(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
@@ -96,15 +101,10 @@ public class StrigoiEchoWebhookController extends HuntController {
 
         Map<String, Object> out = cache().get("fetch_candidate_news", sym + ":" + from,
                 () -> {
+                    var result = companyData.newsResult(sym, from, LocalDate.now());
                     Map<String, Object> output = new HashMap<>();
-                    try {
-                        output.put("news", companyData.news(sym, from, LocalDate.now()));
-                        output.put("data_source_health", healthOf(DataSourceHealth.healthy("agora")));
-                    } catch (Exception e) {
-                        output.put("news", java.util.List.of());
-                        output.put("data_source_health",
-                                healthOf(DataSourceHealth.unavailable("agora", e.getMessage())));
-                    }
+                    output.put("news", result.items());
+                    output.put("data_source_health", healthOf(result.health()));
                     return Map.of("output", output);
                 },
                 StrigoiEchoWebhookController::healthyPayload);
