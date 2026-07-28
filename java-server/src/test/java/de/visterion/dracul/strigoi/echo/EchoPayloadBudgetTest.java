@@ -36,17 +36,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  *  hier reißt, hat entweder ein Feld angebaut oder den Cap erhöht: beides ist eine bewusste
  *  Entscheidung, kein Versehen.
  *
- *  <p><b>Gemessene Baseline (2026-07-28, Fix-Runde 1: UTF-8-Bytes + reale Envelope):</b> der
- *  aktuelle Messwert steht im Report ({@code task-4-report.md}, Abschnitt "Fix round 1") und
- *  im Assertion-Failure, sobald der Test reißt — inklusive Abstand zum Budget in Prozent, damit
- *  eine spätere Wartungsperson sofort sieht, ob noch 5 % oder 40 % Marge übrig sind.
+ *  <p><b>Gemessene Baseline: 2026-07-28, 76 232 Bytes, 4,7 % unter dem Budget</b> (Fix-Runde 1:
+ *  UTF-8-Bytes + reale Envelope). Der jeweils aktuelle Messwert inklusive Abstand zum Budget in
+ *  Prozent steht außerdem live im Assertion-Failure, sobald der Test reißt — so sieht eine
+ *  spätere Wartungsperson sofort, ob noch 5 % oder 40 % Marge übrig sind, ohne diese Javadoc-
+ *  Zahl nachpflegen zu müssen, um zu wissen ob sie gerade knapp oder deutlich gerissen hat.
  *
- *  <p><b>{@code INDEX_ITEMS_PER_CANDIDATE} ist AN {@code application.yaml} gebunden</b>, nicht
- *  hart verdrahtet: der Wert wird zur Testlaufzeit aus dem Default von
- *  {@code dracul.strigoi.echo.recent-news-cap} in {@code application.yaml} gelesen. Damit kann
- *  der Cap nicht am Test vorbei erhöht werden, ohne dass sich auch der Worst Case verschiebt —
- *  vorher war das ein zahnloses Duplikat, das bei einer Cap-Erhöhung in der Yaml stillschweigend
- *  falsch geworden wäre (genau die Art von Drift, die den Bug vom 2026-07-22 verursacht hat).
+ *  <p><b>{@code INDEX_ITEMS_PER_CANDIDATE} ist an den YAML-DEFAULT gebunden</b>, nicht hart
+ *  verdrahtet: der Wert wird zur Testlaufzeit aus dem Default von
+ *  {@code dracul.strigoi.echo.recent-news-cap} in {@code application.yaml} gelesen, sodass eine
+ *  Cap-Erhöhung IM YAML-DEFAULT automatisch auch den hier geprüften Worst Case anhebt — vorher
+ *  war das ein zahnloses Duplikat, das bei einer Cap-Erhöhung in der Yaml stillschweigend falsch
+ *  geworden wäre. <b>Diese Bindung deckt NICHT den Weg ab, über den der Cap in Produktion
+ *  tatsächlich verändert wird:</b> Prod-Tunables werden per Umgebungsvariable im Deploy-Compose
+ *  gesetzt, niemals im Repo. Eine {@code ECHO_RECENT_NEWS_CAP}-Env-Var, die den Yaml-Default zur
+ *  Laufzeit überschreibt, umgeht diesen Test vollständig — der Build bleibt grün, obwohl der
+ *  reale Cap gestiegen ist. Das ist genau der Mechanismus, der den Ausfall vom 2026-07-22
+ *  verursacht hat, und dieser Test kann ihn strukturell nicht sehen (kein Zugriff auf die
+ *  Deploy-Umgebung zur Testzeit). Diese Bindung schützt ausschließlich vor Drift zwischen
+ *  Repo-Test und Repo-Default — nicht vor einem Prod-Override.
  *
  *  <p><b>Was NICHT gemessen wird — {@code active_patterns}:</b> die reale Bridge-Antwort ist
  *  nicht die nackte Kandidatenliste, sondern die Envelope aus
@@ -87,12 +95,19 @@ class EchoPayloadBudgetTest {
      *  green — it must actually be measuring a realistic worst-case payload. */
     private static final int MINIMUM_PLAUSIBLE_BYTES = 50_000;
 
-    /** Reads the recent-news-cap default straight out of {@code application.yaml} instead of
-     *  hardcoding a duplicate constant. This is the fix for the finding that raising the cap
-     *  in the yaml previously did NOT move this test's worst case — the test constant and the
-     *  yaml default could drift apart silently, which is exactly the failure mode this whole
-     *  test exists to catch. If this regex ever stops matching (the yaml key is renamed or
-     *  restructured), the test fails loudly here instead of silently measuring a stale cap. */
+    /** Reads the recent-news-cap default straight out of the {@code dracul.strigoi.echo}
+     *  section of {@code application.yaml} instead of hardcoding a duplicate constant. This is
+     *  the fix for the finding that raising the cap in the yaml previously did NOT move this
+     *  test's worst case — the test constant and the yaml default could drift apart silently,
+     *  which is exactly the failure mode this whole test exists to catch (see the class
+     *  javadoc for the one path this binding still cannot see: an {@code
+     *  ECHO_RECENT_NEWS_CAP} override at deploy time). The lookup is anchored to the {@code
+     *  echo:} block specifically (not a bare, unanchored "recent-news-cap:" search) so a future
+     *  hunter reusing the same YAML key name cannot make this silently bind to the wrong
+     *  section; it also fails loudly if it finds anything other than exactly one match, instead
+     *  of silently taking the first one. If this regex ever stops matching (the yaml key or
+     *  section is renamed or restructured), the test fails loudly here instead of silently
+     *  measuring a stale cap. */
     private static int recentNewsCapDefaultFromYaml() {
         try (InputStream in = EchoPayloadBudgetTest.class.getClassLoader()
                 .getResourceAsStream("application.yaml")) {
@@ -102,16 +117,34 @@ class EchoPayloadBudgetTest {
                                 + "INDEX_ITEMS_PER_CANDIDATE to dracul.strigoi.echo.recent-news-cap");
             }
             String yaml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            Matcher m = Pattern.compile("recent-news-cap:\\s*\\$\\{ECHO_RECENT_NEWS_CAP:(\\d+)}")
+
+            Matcher section = Pattern.compile("(?m)^    echo:\\n(.*?)(?=^    \\S)", Pattern.DOTALL)
                     .matcher(yaml);
+            if (!section.find()) {
+                throw new IllegalStateException(
+                        "could not locate the 'dracul.strigoi.echo:' section in application.yaml "
+                                + "(expected a 4-space-indented 'echo:' key under 'strigoi:') — "
+                                + "update this anchor in the same change that restructures the yaml");
+            }
+            String echoBlock = section.group(1);
+
+            Matcher m = Pattern.compile("recent-news-cap:\\s*\\$\\{ECHO_RECENT_NEWS_CAP:(\\d+)}")
+                    .matcher(echoBlock);
             if (!m.find()) {
                 throw new IllegalStateException(
-                        "could not find dracul.strigoi.echo.recent-news-cap's default in "
-                                + "application.yaml — this test's worst case and the yaml default "
-                                + "must move together; update this regex in the same change that "
-                                + "changes the yaml key");
+                        "could not find dracul.strigoi.echo.recent-news-cap's default inside the "
+                                + "echo: section of application.yaml — this test's worst case and "
+                                + "the yaml default must move together; update this regex in the "
+                                + "same change that changes the yaml key");
             }
-            return Integer.parseInt(m.group(1));
+            int cap = Integer.parseInt(m.group(1));
+            if (m.find()) {
+                throw new IllegalStateException(
+                        "found more than one recent-news-cap match inside the echo: section of "
+                                + "application.yaml — ambiguous binding, fix this regex before "
+                                + "trusting the derived worst case");
+            }
+            return cap;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -167,17 +200,21 @@ class EchoPayloadBudgetTest {
 
         String json = JsonMapper.builder().build().writeValueAsString(syntheticEnvelope(candidates));
         int measuredBytes = json.getBytes(StandardCharsets.UTF_8).length;
+        double marginPercent = (BUDGET_BYTES - measuredBytes) * 100.0 / BUDGET_BYTES;
 
         assertThat(measuredBytes)
                 .as("""
-                    Echo-Payload-Budget gerissen (%d Kandidaten × %d Index-Items = %d Bytes).
+                    Echo-Payload-Budget gerissen (%d Kandidaten × %d Index-Items = %d Bytes,
+                    Budget %d Bytes, Marge %.1f %%).
                     Oberhalb von ~95 kB lagert die Claude-Max-Bridge das Tool-Ergebnis in eine
                     Datei aus, die der Agent nicht lesen kann — Echo liefert dann still leeres
                     Prey. Entweder ein Feld zurücknehmen, den recent-news-cap in application.yaml
                     senken, oder das Feld in das Detail-Tool fetch_candidate_news verschieben.
-                    (INDEX_ITEMS_PER_CANDIDATE ist an application.yaml gebunden — ein gesenkter
-                    Cap dort senkt automatisch auch den hier geprüften Worst Case.)""",
-                    WORST_CASE_CANDIDATES, INDEX_ITEMS_PER_CANDIDATE, measuredBytes)
+                    (INDEX_ITEMS_PER_CANDIDATE ist an den Yaml-Default gebunden — ein gesenkter
+                    Cap dort senkt automatisch auch den hier geprüften Worst Case; ein
+                    ECHO_RECENT_NEWS_CAP-Override in der Deploy-Umgebung umgeht diesen Test.)""",
+                    WORST_CASE_CANDIDATES, INDEX_ITEMS_PER_CANDIDATE, measuredBytes,
+                    BUDGET_BYTES, marginPercent)
                 .isLessThan(BUDGET_BYTES);
 
         assertThat(measuredBytes)
