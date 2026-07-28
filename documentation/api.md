@@ -1311,7 +1311,8 @@ cap only shapes what is handed to the LLM.
 Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher, when it needs the
 full news (including summaries) for one candidate it is seriously considering. Companion to
 `fetch-candidates` above: that endpoint returns only a summary-less news index per candidate;
-this endpoint returns the full, uncapped detail for a single symbol on demand.
+this endpoint returns the full detail (including `summary`) for a single symbol on demand,
+newest first, capped at 40 items.
 
 Request body:
 ```json
@@ -1347,8 +1348,11 @@ Response:
 }
 ```
 
-Unlike `fetch-candidates`, this response is **uncapped** and each item carries the full
-`summary`. `data_source_health.status` becomes `"unavailable"` on an Agora outage (via
+Unlike `fetch-candidates`, each item here carries the full `summary`. The list is capped at
+40 items, newest first — a safety bound against a heavily-covered symbol's 30-day window
+reproducing the same tool-result-size overflow that motivated the summary-less index above,
+not a curation step (40 is far above the typical per-symbol news count).
+`data_source_health.status` becomes `"unavailable"` on an Agora outage (via
 `AgoraCompanyData#newsResult`, the health-aware variant of `AgoraCompanyData#news`) rather
 than silently returning an empty `news` list, so an outage is distinguishable from "this
 symbol genuinely has no news".

@@ -38,8 +38,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *  komfortabler Marge.
  *
  *  <p><b>Gemessene Baseline: 2026-07-28, siehe Assertion-Failure für den aktuellen Wert.</b>
- *  Dieser Kommentar nennt bewusst KEINE feste Zahl mehr (frühere Fassungen liefen der
- *  tatsächlichen Messung nach jeder Fixture-Änderung hinterher) — der Messwert inklusive
+ *  Dieser Kommentar nennt bewusst KEINEN festen BYTE-Wert mehr (frühere Fassungen liefen der
+ *  tatsächlichen Messung nach jeder Fixture-Änderung hinterher) — nur die knapp 4 % Marge oben
+ *  sind als Prozentwert genannt. Der Messwert inklusive
  *  Overshoot in Prozent steht live im Assertion-Failure, sobald der Test reißt. Auf dem
  *  Grün-Pfad wird die Marge NICHT ausgegeben (die {@code .as(...)}-Beschreibung rendert nur bei
  *  einem fehlgeschlagenen Assert); wer die aktuelle Marge auf dem Grün-Pfad braucht, muss

@@ -210,8 +210,10 @@ class EchoEnrichmentServiceTest {
     }
 
     @Test
-    void recentNewsIsCappedAtTenMostRecentDescending() {
-        // 13 distinct-datetime clean headlines; only the 10 most recent survive, newest first.
+    void recentNewsIsCappedAtTheConfiguredCapMostRecentDescending() {
+        // 13 distinct-datetime clean headlines; only the configured cap (10, via the
+        // `service()` helper — the prod default is 5, but this test pins the cap explicitly
+        // rather than relying on whatever the yaml default happens to be) survive, newest first.
         Instant newest = REPORT.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
         List<NewsHeadline> news = new ArrayList<>();
         for (int i = 0; i < 13; i++) {
@@ -229,6 +231,10 @@ class EchoEnrichmentServiceTest {
         for (int i = 0; i < recentNews.size() - 1; i++) {
             assertThat(recentNews.get(i).datetime()).isAfter(recentNews.get(i + 1).datetime());
         }
+        // FIX 2: newsCount must report the true, UNCAPPED count (13), not the capped index
+        // size (10) — this is the behavioural assertion that a regression collapsing
+        // newsCount to recentNews.size() would actually catch.
+        assertThat(out.get(0).newsCount()).isEqualTo(13);
     }
 
     @Test

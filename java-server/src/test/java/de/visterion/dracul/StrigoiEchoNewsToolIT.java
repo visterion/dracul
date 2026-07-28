@@ -86,6 +86,34 @@ class StrigoiEchoNewsToolIT {
         assertThat(n0.path("source").asText()).isEqualTo("synthetic-source");
         assertThat(n0.path("credibility").asDouble()).isEqualTo(0.7);
         assertThat(n0.has("datetime")).isTrue();
+        // The slim EchoNewsItem shape: no sourceType/url/domain noise from NewsHeadline.
+        assertThat(n0.has("sourceType")).isFalse();
+        assertThat(n0.has("url")).isFalse();
+        assertThat(n0.has("domain")).isFalse();
+    }
+
+    /** FIX 1(b): an uncapped 30-day window for a heavily-covered symbol reproduces the exact
+     *  overflow class the index/detail split was built to escape — the detail tool must cap
+     *  at 40 items, newest first, even though the underlying Agora fetch found more. */
+    @Test
+    void cappedAtFortyMostRecentItems() {
+        java.util.List<NewsHeadline> sixty = new java.util.ArrayList<>();
+        for (int i = 0; i < 60; i++) {
+            sixty.add(new NewsHeadline(
+                    "SYNTHETIC headline " + i, "SYNTHETIC summary " + i,
+                    "synthetic-source", "rss",
+                    Instant.parse("2026-01-01T00:00:00Z").plusSeconds(i * 3600L),
+                    "https://example.com/" + i, "example.com", 0.6));
+        }
+        when(companyData.newsResult(any(), any(), any()))
+                .thenReturn(DataSourceResult.healthy("agora", sixty));
+
+        JsonNode news = call(Map.of("symbol", "AAPL", "since", "2026-01-01")).path("output").path("news");
+
+        assertThat(news).hasSize(40);
+        // Newest first: item 59 (latest timestamp) comes first, item 20 is the 40th-newest.
+        assertThat(news.path(0).path("headline").asText()).isEqualTo("SYNTHETIC headline 59");
+        assertThat(news.path(39).path("headline").asText()).isEqualTo("SYNTHETIC headline 20");
     }
 
     @Test

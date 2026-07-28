@@ -5,6 +5,7 @@ import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
+import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
 import de.visterion.dracul.webhook.HuntController;
@@ -15,7 +16,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -27,6 +30,16 @@ public class StrigoiEchoWebhookController extends HuntController {
     private final EchoPeadScreener screener;
     private final EchoEnrichmentService enrichment;
     private final AgoraCompanyData companyData;
+
+    /** Safety bound on {@code fetch_candidate_news}, NOT a curation step. An uncapped 30-day
+     *  news window for a heavily-covered symbol (150-300 items, ~350-450 B each ≈ 60-120 kB
+     *  serialized) reproduces the exact overflow class this branch was built to escape: past
+     *  ~95 kB the Claude-Max bridge offloads the tool result to a file the agent cannot read,
+     *  and the agent silently sees nothing for that symbol. 40 is far above the ~7.7
+     *  items/symbol average observed across candidates, so it does not restore the
+     *  pre-selection the index/detail split deliberately removed — it only stops a single
+     *  pathological symbol from blowing the bridge limit. */
+    private static final int MAX_DETAIL_NEWS_ITEMS = 40;
 
     public StrigoiEchoWebhookController(
             @Value("${dracul.strigoi.echo.webhook-token}") String token,
@@ -65,7 +78,11 @@ public class StrigoiEchoWebhookController extends HuntController {
         return handleFetch(auth, body);
     }
 
-    /** Detail-Tool: die vollen News EINES Symbols inkl. {@code summary}. Der Kandidaten-Payload
+    /** Detail-Tool: die News EINES Symbols inkl. {@code summary}, gemappt auf {@link
+     *  EchoNewsItem} (5 Felder, ohne {@code sourceType}/{@code url}/{@code domain}) und
+     *  newest-first auf {@link #MAX_DETAIL_NEWS_ITEMS} gedeckelt (siehe dort) — beides nötig,
+     *  damit dieser Endpoint nicht dieselbe Overflow-Klasse reproduziert, die der
+     *  Index/Detail-Split eigentlich beheben sollte. Der Kandidaten-Payload
      *  trägt nur einen summary-losen Index (Spec 2026-07-27, §3.2); wer den Volltext braucht,
      *  zieht ihn hier nach. Läuft über denselben ToolFetchCache wie fetch-candidates, mit dem
      *  Symbol als paramsKey — SOBALD {@code fetch_candidate_news} als cacheable in den
@@ -91,6 +108,8 @@ public class StrigoiEchoWebhookController extends HuntController {
         }
         if (symbol == null || symbol.isBlank()) return ResponseEntity.badRequest().build();
 
+        // 30 days is the widest window this tool ever reads — the widest `since` an agent can
+        // omit and still get a bounded fetch.
         LocalDate since = LocalDate.now().minusDays(30);
         if (sinceRaw != null && !sinceRaw.isBlank()) {
             try { since = LocalDate.parse(sinceRaw); }
@@ -102,8 +121,14 @@ public class StrigoiEchoWebhookController extends HuntController {
         Map<String, Object> out = cache().get("fetch_candidate_news", sym + ":" + from,
                 () -> {
                     var result = companyData.newsResult(sym, from, LocalDate.now());
+                    List<EchoNewsItem> items = result.items().stream()
+                            .sorted(Comparator.comparing(NewsHeadline::datetime).reversed())
+                            .limit(MAX_DETAIL_NEWS_ITEMS)
+                            .map(h -> new EchoNewsItem(h.headline(), h.summary(), h.source(),
+                                    h.credibility(), h.datetime()))
+                            .toList();
                     Map<String, Object> output = new HashMap<>();
-                    output.put("news", result.items());
+                    output.put("news", items);
                     output.put("data_source_health", healthOf(result.health()));
                     return Map.of("output", output);
                 },

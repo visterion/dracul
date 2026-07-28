@@ -77,7 +77,7 @@ public abstract class HuntController {
 
     /** Token-Prüfung für Subklassen, die einen ZWEITEN Tool-Endpoint anbieten
      *  (z.B. strigoi-echos fetch-news). {@code verifier} bleibt privat. */
-    protected boolean authorized(String auth) {
+    protected final boolean authorized(String auth) {
         return verifier.verify(auth);
     }
 
