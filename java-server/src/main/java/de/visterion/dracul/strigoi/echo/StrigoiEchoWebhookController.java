@@ -85,11 +85,12 @@ public class StrigoiEchoWebhookController extends HuntController {
      *  Index/Detail-Split eigentlich beheben sollte. Der Kandidaten-Payload
      *  trägt nur einen summary-losen Index (Spec 2026-07-27, §3.2); wer den Volltext braucht,
      *  zieht ihn hier nach. Läuft über denselben ToolFetchCache wie fetch-candidates, mit dem
-     *  Symbol als paramsKey — SOBALD {@code fetch_candidate_news} als cacheable in den
-     *  AgentToolCatalog eingetragen ist (Task 3), kosten wiederholte Calls fürs selbe Symbol
-     *  keinen zweiten Agora-Fetch mehr; bis dahin ist der Tool-Name im Catalog nicht registriert,
-     *  {@link de.visterion.dracul.agent.ToolFetchCache} liefert also TTL 0 und jeder Call
-     *  fetcht neu. Health kommt aus {@link AgoraCompanyData#newsResult}, NICHT aus einem
+     *  Symbol als paramsKey. {@code fetch_candidate_news} ist in {@link EchoDefaults} über den
+     *  5-Parameter-{@code ToolCatalogEntry}-Konstruktor registriert, der {@code cacheable=true}
+     *  bei der globalen Default-TTL setzt (siehe {@link de.visterion.dracul.agent.ToolCatalogEntry}) —
+     *  {@link de.visterion.dracul.agent.ToolFetchCache} liefert also eine echte, von 0
+     *  verschiedene TTL, und wiederholte Calls fürs selbe Symbol (gleicher {@code paramsKey})
+     *  kosten innerhalb der TTL keinen zweiten Agora-Fetch. Health kommt aus {@link AgoraCompanyData#newsResult}, NICHT aus einem
      *  try/catch um {@link AgoraCompanyData#news} — {@code news()} verschluckt einen
      *  Agora-Ausfall selbst zu einer leeren Liste und würde ihn nie sichtbar machen. Ein
      *  {@code unavailable}-Ergebnis wird über {@link #healthyPayload} nicht gecacht, damit der

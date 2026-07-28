@@ -90,9 +90,10 @@ The fix is a two-step, index-then-detail flow:
 2. For a candidate it is seriously considering — or whose headlines are ambiguous, or
    whose `newsCount` is much larger than the index it received — the LLM calls the new
    `fetch_candidate_news` tool (`POST /api/strigoi-echo/tools/fetch-news`, see
-   `documentation/api.md`) with `{symbol, since}`. That call returns the full, uncapped
-   news for that one symbol, each item including `summary`. The prompt explicitly scopes
-   this to the shortlist, not every candidate, to respect the run's 25-turn budget.
+   `documentation/api.md`) with `{symbol, since}`. That call returns the news for that one
+   symbol, each item including `summary`, capped at 40 items newest-first — a safety bound
+   against the same bridge tool-result limit, not a curation step. The prompt explicitly
+   scopes this to the shortlist, not every candidate, to respect the run's 25-turn budget.
 
 The deterministic confounder gate (SP3, above) is **unaffected by this cap**. It runs
 during `fetch_recent_pead_candidates` enrichment, over the same single, uncapped
