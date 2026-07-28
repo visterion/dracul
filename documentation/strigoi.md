@@ -69,6 +69,45 @@ trend) and `coverageAvailable`. Low coverage marks an under-followed name where 
 tends to be stronger and persist longer — the prompt treats it as a mild neglect-premium
 up-weight (high coverage is a mild dampener); it is advisory only, the LLM decides.
 
+### Strigoi-Echo: news index/detail split
+
+**Three tools (added 2026-07-28), in order: `fetch_recent_pead_candidates`,
+`fetch_candidate_news`, `search`.** Echo used to carry the full per-candidate news
+(headline + summary) in the `fetch_recent_pead_candidates` response. That summary text
+alone accounted for ~44% of a candidate's payload and, on a batch with several
+newsy candidates, pushed the tool-call result past Vistierie's ~95 kB bridge limit — the
+bridge silently offloaded the oversized result to a file the agent cannot read, and Echo
+returned nothing for seven days without any error surfacing.
+
+The fix is a two-step, index-then-detail flow:
+
+1. `fetch_recent_pead_candidates` now returns `recentNews` as a lean, summary-less
+   **index** per candidate — newest-first, each item `{headline, source, credibility,
+   datetime}` — capped at `dracul.strigoi.echo.recent-news-cap` (default 5, env
+   `ECHO_RECENT_NEWS_CAP`; see `documentation/configuration.md`). Each candidate also
+   carries `newsCount`, the true uncapped headline count, so the LLM can tell when it is
+   only seeing a slice.
+2. For a candidate it is seriously considering — or whose headlines are ambiguous, or
+   whose `newsCount` is much larger than the index it received — the LLM calls the new
+   `fetch_candidate_news` tool (`POST /api/strigoi-echo/tools/fetch-news`, see
+   `documentation/api.md`) with `{symbol, since}`. That call returns the full, uncapped
+   news for that one symbol, each item including `summary`. The prompt explicitly scopes
+   this to the shortlist, not every candidate, to respect the run's 25-turn budget.
+
+The deterministic confounder gate (SP3, above) is **unaffected by this cap**. It runs
+during `fetch_recent_pead_candidates` enrichment, over the same single, uncapped
+per-candidate news fetch that also feeds `recentNews` — the cap is applied only when
+shaping `recentNews` from that fetch, after the gate has already run. A hard-drop for a
+disqualifying news event (M&A, restatement, guidance cut, dilution, investigation) behaves
+exactly as before; only the amount of news text handed to the LLM changed. `fetch_candidate_news`
+is a separate, on-demand detail fetch for the shortlist and plays no role in the gate.
+
+`AgoraCompanyData` gained a health-aware `newsResult(symbol, from, to)` variant for the
+detail tool: an Agora outage now surfaces as `data_source_health.status: "unavailable"`
+instead of masquerading as "this symbol has no news", which is what the pre-existing
+`news(...)` method (still used internally for the index + confounder scan) does on
+failure.
+
 ### Strigoi-Spin: lifecycle persistence
 
 **Full lifecycle persistence (added 2026-07-12).** A spin-off's key evidence —

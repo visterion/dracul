@@ -1295,6 +1295,59 @@ Response:
 Each candidate also carries `analystCoverage` (integer, nullable — analyst count from the
 latest recommendation trend) and `coverageAvailable` (boolean).
 
+Each candidate also carries `recentNews` — a newest-first **index** of the candidate's
+post-report headlines, capped at `dracul.strigoi.echo.recent-news-cap` (default 5, env
+`ECHO_RECENT_NEWS_CAP`), each item `{ "headline": "...", "source": "...", "credibility": 0.8,
+"datetime": "..." }`. This index deliberately carries **no `summary`** — a full,
+summary-carrying news list once pushed a candidate's tool-result payload past Vistierie's
+~95 kB bridge limit, causing the bridge to offload the result to a file the agent cannot
+read. `newsCount` (integer) reports the true, uncapped number of headlines found, so the
+agent can tell when `recentNews` is only a slice. The deterministic confounder gate that
+drops candidates with a disqualifying news event (M&A, restatement, guidance cut, dilution,
+investigation) always scans the full, uncapped headline list — it runs before this cap is
+applied and is unaffected by it.
+
+### `POST /api/strigoi-echo/tools/fetch-news`
+
+Tool webhook — invoked mid-run by the LLM via Vistierie's tool dispatcher, when it needs the
+full news (including summaries) for one candidate it is seriously considering. Companion to
+`fetch-candidates` above: that endpoint returns only a summary-less news index per candidate;
+this endpoint returns the full, uncapped detail for a single symbol on demand.
+
+Request body:
+```json
+{
+  "run_id": "...",
+  "tool_name": "fetch_candidate_news",
+  "input": { "symbol": "AAPL", "since": "2026-05-20" }
+}
+```
+
+`symbol` is required; a missing or blank `symbol` returns `400`. `since` is optional (ISO
+date) — when omitted it defaults to 30 days before today. Missing/invalid bearer token
+returns `401`, same as every other Strigoi-Echo tool webhook.
+
+Response:
+```json
+{
+  "output": {
+    "news": [
+      {
+        "headline": "...", "summary": "...", "source": "...",
+        "credibility": 0.8, "datetime": "..."
+      }
+    ],
+    "data_source_health": { "status": "ok" }
+  }
+}
+```
+
+Unlike `fetch-candidates`, this response is **uncapped** and each item carries the full
+`summary`. `data_source_health.status` becomes `"unavailable"` on an Agora outage (via
+`AgoraCompanyData#newsResult`, the health-aware variant of `AgoraCompanyData#news`) rather
+than silently returning an empty `news` list, so an outage is distinguishable from "this
+symbol genuinely has no news".
+
 ### `POST /api/strigoi-echo/complete`
 
 Completion webhook — invoked by Vistierie's `CompletionWebhookDispatcher` when the agent run finishes. Persists Prey when the run succeeded.
