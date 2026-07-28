@@ -1260,7 +1260,7 @@ Returns 204 on success. If `status != "succeeded"` or no `output.prey` array, th
 
 ## Strigoi-Echo Webhooks
 
-These endpoints are called by Vistierie during a `strigoi-echo` agent run (Post-Earnings-Announcement-Drift). Both require `Authorization: Bearer <STRIGOI_ECHO_TOKEN>`. They are only registered when `STRIGOI_ECHO_ENABLED=true`.
+These endpoints are called by Vistierie during a `strigoi-echo` agent run (Post-Earnings-Announcement-Drift). All three require `Authorization: Bearer <STRIGOI_ECHO_TOKEN>`. They are only registered when `STRIGOI_ECHO_ENABLED=true`.
 
 ### `POST /api/strigoi-echo/tools/fetch-candidates`
 
@@ -1293,19 +1293,18 @@ Response:
 ```
 
 Each candidate also carries `analystCoverage` (integer, nullable — analyst count from the
-latest recommendation trend) and `coverageAvailable` (boolean).
-
-Each candidate also carries `recentNews` — a newest-first **index** of the candidate's
-post-report headlines, capped at `dracul.strigoi.echo.recent-news-cap` (default 5, env
-`ECHO_RECENT_NEWS_CAP`), each item `{ "headline": "...", "source": "...", "credibility": 0.8,
-"datetime": "..." }`. This index deliberately carries **no `summary`** — a full,
-summary-carrying news list once pushed a candidate's tool-result payload past Vistierie's
-~95 kB bridge limit, causing the bridge to offload the result to a file the agent cannot
-read. `newsCount` (integer) reports the true, uncapped number of headlines found, so the
-agent can tell when `recentNews` is only a slice. The deterministic confounder gate that
-drops candidates with a disqualifying news event (M&A, restatement, guidance cut, dilution,
-investigation) always scans the full, uncapped headline list — it runs before this cap is
-applied and is unaffected by it.
+latest recommendation trend) and `coverageAvailable` (boolean), plus `recentNews` — a
+newest-first **index** of the candidate's post-report headlines, capped at
+`dracul.strigoi.echo.recent-news-cap` (default 5, env `ECHO_RECENT_NEWS_CAP`), each item
+`{ "headline": "...", "source": "...", "credibility": 0.8, "datetime": "..." }`. This index
+deliberately carries **no `summary`** — a full, summary-carrying news list once pushed a
+candidate's tool-result payload past Vistierie's ~95 kB bridge limit, causing the bridge to
+offload the result to a file the agent cannot read. `newsCount` (integer) reports the true,
+uncapped number of headlines found, so the agent can tell when `recentNews` is only a slice.
+The deterministic confounder gate that drops candidates with a disqualifying news event
+(M&A, restatement, guidance cut, dilution, investigation) always scans the full, uncapped
+headline list — the gate and the `recentNews` shaping read from the same uncapped fetch, the
+cap only shapes what is handed to the LLM.
 
 ### `POST /api/strigoi-echo/tools/fetch-news`
 
@@ -1324,8 +1323,9 @@ Request body:
 ```
 
 `symbol` is required; a missing or blank `symbol` returns `400`. `since` is optional (ISO
-date) — when omitted it defaults to 30 days before today. Missing/invalid bearer token
-returns `401`, same as every other Strigoi-Echo tool webhook.
+date) — when omitted, or when it fails to parse, it silently falls back to 30 days before
+today rather than returning a validation error. Missing/invalid bearer token returns `401`,
+same as every other Strigoi-Echo tool webhook.
 
 Response:
 ```json
@@ -1337,7 +1337,12 @@ Response:
         "credibility": 0.8, "datetime": "..."
       }
     ],
-    "data_source_health": { "status": "ok" }
+    "data_source_health": {
+      "status": "healthy",
+      "source": "agora",
+      "detail": null,
+      "checked_at": "2026-07-28T02:14:07Z"
+    }
   }
 }
 ```

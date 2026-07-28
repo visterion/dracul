@@ -29,8 +29,8 @@ Dracul's `HttpVistierieClient` sends the tenant token on tenant calls and the ad
 
 | Tier | Use for | Agents |
 |---|---|---|
-| `reasoning` | Dense filings, multi-factor judgement | strigoi-spin, strigoi-lazarus, strigoi-merger, Voievod |
-| `routine` | Pattern-matching, simple classification | strigoi-insider, strigoi-echo, strigoi-index |
+| `reasoning` | Dense filings, multi-factor judgement | strigoi-spin, strigoi-lazarus, strigoi-merger, strigoi-insider, strigoi-echo, Voievod |
+| `routine` | Pattern-matching, simple classification | strigoi-index |
 | `reasoning` | Daywalker per-event assessment (v1: single Sonnet) | daywalker |
 
 ## Bee lifecycle types
