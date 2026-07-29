@@ -2,7 +2,6 @@ package de.visterion.dracul;
 
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.strigoi.echo.EchoEnrichmentService;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -100,12 +99,10 @@ class ToolEndpointBodyBindingIT {
         assertThat(bodyOf(r).path("error").asText()).isEqualTo("VALIDATION_ERROR");
     }
 
-    /** {@code outputKeyFor} still returns the controller default ("candidates") for fetchNews
-     *  until Task 4 overrides it for echo's second tool endpoint. Disabled — not deleted — so
-     *  Task 4 can re-enable it as the regression anchor for that override, per the task-3
-     *  brief's explicit instruction to write this case now rather than leave it unwritten. */
+    /** Regression anchor for {@code StrigoiEchoWebhookController#outputKeyFor}: a truncated body
+     *  on echo's second tool endpoint must key its failure envelope "news", not the controller
+     *  default "candidates". */
     @Test
-    @Disabled("enabled by Task 4, which overrides outputKeyFor for StrigoiEchoWebhookController#fetchNews")
     void fetchNewsWithTruncatedBodyUsesTheNewsKey() throws Exception {
         var r = post("/api/strigoi-echo/tools/fetch-news", "Bearer test-echo-token", "{\"a\":");
 

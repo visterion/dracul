@@ -35,7 +35,10 @@ import java.util.Map;
  *  and delegate to {@link #handleFetch}. The /complete endpoint is uniform and owned here. */
 public abstract class HuntController {
 
-    private final Logger log = LoggerFactory.getLogger(getClass());
+    /** Bound to {@code getClass()}, so a subclass logs under its own name. Protected because a
+     *  subclass with its own tool endpoint must be able to log a degraded fetch: a degradation
+     *  nobody logs is invisible, which is the diagnostic gap this hardening exists to avoid. */
+    protected final Logger log = LoggerFactory.getLogger(getClass());
     private final BearerTokenVerifier verifier;
     private final PreyRepository preyRepo;
     private final PreyMapper preyMapper = new PreyMapper();

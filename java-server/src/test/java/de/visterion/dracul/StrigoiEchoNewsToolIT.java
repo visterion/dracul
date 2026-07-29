@@ -188,9 +188,11 @@ class StrigoiEchoNewsToolIT {
     }
 
     @Test
-    void blankSymbolIsRejectedWith400() {
-        assertThatThrownBy(() -> call(Map.of("symbol", "  ")))
-                .isInstanceOf(HttpClientErrorException.BadRequest.class);
+    void blankSymbolReturnsUnavailable() {
+        JsonNode out = call(Map.of("symbol", "   ")).path("output");
+        assertThat(out.path("news").isArray()).isTrue();
+        assertThat(out.path("news")).isEmpty();
+        assertThat(out.path("data_source_health").path("status").asString("")).isEqualTo("unavailable");
     }
 
     @Test
