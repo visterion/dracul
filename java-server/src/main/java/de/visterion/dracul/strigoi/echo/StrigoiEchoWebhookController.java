@@ -141,9 +141,10 @@ public class StrigoiEchoWebhookController extends HuntController {
                     StrigoiEchoWebhookController::healthyPayload);
             return ResponseEntity.ok(out);
         } catch (RuntimeException e) {
-            // Same contract as HuntController#handleFetch: the catch sits outside cache.get so
-            // a throw stores nothing, and a failing fetch degrades to "unavailable" instead of
-            // a run-killing 4xx.
+            // Same contract as HuntController#handleFetch: the catch sits outside cache.get so a
+            // throw stores nothing, and a failing fetch degrades to "unavailable". Uncaught this
+            // would be a 500 — Vistierie retries a 5xx once and then kills the run, so the prey
+            // are lost either way; only the number of attempts differs from the 4xx case.
             log.warn("{} tool fetch_candidate_news failed for {} — answering unavailable instead of 4xx: {}",
                     agentName(), sym, e.toString(), e);
             return ok(unavailable(Map.of("news", List.of()), agentName(), GUARD_MARKER + e));
