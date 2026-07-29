@@ -1161,6 +1161,70 @@ All endpoints are read-only (GET). No authentication in Stufe 3.
 
 CORS: `http://localhost:5173` allowed on all `/api/*` paths.
 
+## Hunter tool endpoint response contract
+
+**Rule: every `/api/strigoi-*/tools/**` endpoint (all six hunters — insider, echo's two
+tools, lazarus, index, merger, spin) answers `200` or `401`, and nothing else.** No other
+4xx, no 5xx.
+
+This exists because a 4xx from a tool endpoint is fatal to the whole agent run, not just
+that one tool call: Vistierie's `ToolDispatcher` treats any 4xx as a terminal error with no
+retry, `AgentRunner` then marks the run `failed`, the `/complete` webhook never fires, and
+**every prey the agent had already produced in that run is discarded** — not just the
+candidate the failing tool call was about. A 5xx is retried once by Vistierie and then does
+the same thing. Both outcomes are silent from Dracul's side: no `tool_error` row, no
+exception surfacing anywhere a human would see it, just a run that quietly produced nothing.
+
+A failure that would previously have escaped as a 4xx (a thrown exception inside `hunt()`,
+an unreadable request body, or — for echo's `fetch-news` — a blank symbol) is now caught and
+turned into a normal `200` response instead. The tool's own result field (e.g. `candidates`,
+`clusters`, `news`) comes back empty, and `data_source_health` reports the failure:
+
+```json
+{
+  "output": {
+    "candidates": [],
+    "data_source_health": {
+      "status": "unavailable",
+      "source": "strigoi-echo",
+      "detail": "tool-guard: java.lang.RuntimeException: ...",
+      "checked_at": "2026-07-29T02:14:07Z"
+    }
+  }
+}
+```
+
+All six hunter prompts already know how to handle `data_source_health.status ==
+"unavailable"` — it is the same shape a genuine upstream outage (e.g. Agora down) already
+produced, and every prompt's empty-result clause tells the agent to answer `{"prey": []}`
+rather than retry or fail. No prompt changes were needed for this (echo's prompt got an
+unrelated wording fix — see `documentation/strigoi.md`).
+
+**The `detail` field always starts with the prefix `tool-guard: `** when the failure was
+manufactured by this contract rather than by the underlying data source. This is the only
+way to tell the two apart — a source-driven `unavailable` (e.g. `AgoraEarnings` on an Agora
+outage) carries the exact same `status` value, and without the prefix there would be no way
+to count "how often did the guard have to intervene" separately from "how often is the data
+source down". `detail` is truncated to 500 characters so a large upstream error body cannot
+run into the agent's context.
+
+### What this rule does NOT cover
+
+This is deliberately scoped to `/api/strigoi-*/tools/**` only. Reading the rule as covering
+more than that would be wrong:
+
+- **The same six hunters' `/complete` endpoints are NOT covered.** `HuntController.complete`
+  still answers `400` on a malformed completion payload, exactly as before. This is a known,
+  named gap, not an oversight: `/complete` fires once, after the LLM has already finished and
+  handed back its `output.prey`, so a `400` there still discards every prey from that run —
+  the same failure mode this contract exists to prevent, just on the delivery side instead of
+  the tool-call side. It stays uncovered because a silent `200` on a truncated completion
+  payload would be worse: Vistierie would record the completion as accepted and never retry
+  it, turning a loud, visible delivery failure into an invisible one.
+- **Gropar, Voievod (including Voievod-Outcome), and the Executor's nine webhook endpoints
+  are NOT covered.** They carry the same run-killing 4xx risk in principle, but hardening
+  them is out of scope for this change and left for a later, separate delivery.
+
 ## Strigoi-Insider Webhooks
 
 These endpoints are called by Vistierie during a `strigoi-insider` agent run. Both require `Authorization: Bearer <STRIGOI_INSIDER_TOKEN>`. They are only registered when `STRIGOI_INSIDER_ENABLED=true`.
@@ -1323,10 +1387,12 @@ Request body:
 }
 ```
 
-`symbol` is required; a missing or blank `symbol` returns `400`. `since` is optional (ISO
-date) — when omitted, or when it fails to parse, it silently falls back to 30 days before
-today rather than returning a validation error. Missing/invalid bearer token returns `401`,
-same as every other Strigoi-Echo tool webhook.
+`symbol` is required; a missing or blank `symbol` degrades to `200` with `news: []` and
+`data_source_health.status = "unavailable"` (`detail` prefixed `tool-guard: `), per the
+hunter tool endpoint response contract above — it no longer returns `400`. `since` is
+optional (ISO date) — when omitted, or when it fails to parse, it silently falls back to 30
+days before today rather than returning a validation error. Missing/invalid bearer token
+returns `401`, same as every other Strigoi-Echo tool webhook.
 
 Response:
 ```json
