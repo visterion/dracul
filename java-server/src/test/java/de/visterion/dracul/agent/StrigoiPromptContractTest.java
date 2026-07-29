@@ -99,6 +99,28 @@ class StrigoiPromptContractTest {
     }
 
     @Test
+    void echoScopesTheEmptyClauseToTheScreeningTool() {
+        String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
+        assertThat(prompt).contains("fetch_recent_pead_candidates returns no candidates");
+        assertThat(prompt).doesNotContain("If the tool returns no candidates");
+    }
+
+    @Test
+    void echoTellsTheAgentWhatToDoWhenTheDetailToolFails() {
+        assertThat(AgentResources.classpath("prompts/strigoi-echo.md"))
+                .contains("judge that candidate from `recentNews` alone");
+    }
+
+    @Test
+    void theOtherFiveStillScopeTheClauseToTheScreeningTool() {
+        for (String name : List.of("merger", "spin", "index", "insider", "lazarus")) {
+            assertThat(AgentResources.classpath("prompts/strigoi-" + name + ".md"))
+                    .as("%s must keep the screening-tool wording", name)
+                    .contains("If the screening tool returns no candidates");
+        }
+    }
+
+    @Test
     void echoPromptDocumentsTheNewsIndexAndDetailTool() {
         String prompt = AgentResources.classpath("prompts/strigoi-echo.md");
         assertThat(prompt)
