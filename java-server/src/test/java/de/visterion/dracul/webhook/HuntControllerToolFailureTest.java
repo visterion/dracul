@@ -34,4 +34,19 @@ class HuntControllerToolFailureTest {
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).containsOnlyKeys("output");
     }
+
+    /** Direct coverage of {@link HuntController#healthyPayload}, the cache admission
+     *  predicate. Both negative branches must return {@code false} — a payload without an
+     *  {@code output} key, or with {@code output} but no {@code data_source_health} block, is
+     *  NOT provably healthy and must never be cached. A positive control confirms the
+     *  predicate still admits a genuinely healthy payload. */
+    @Test
+    void healthyPayloadRejectsPayloadsMissingOutputOrHealthBlock() {
+        assertThat(HuntController.healthyPayload(Map.of())).isFalse();
+        assertThat(HuntController.healthyPayload(
+                Map.of("output", Map.of("candidates", List.of())))).isFalse();
+        assertThat(HuntController.healthyPayload(
+                Map.of("output", Map.of("data_source_health", Map.of("status", "healthy")))))
+                .isTrue();
+    }
 }

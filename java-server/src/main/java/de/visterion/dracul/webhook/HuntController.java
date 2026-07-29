@@ -89,13 +89,14 @@ public abstract class HuntController {
      *  legitimate source-driven unavailable (e.g. AgoraEarnings on an Agora outage, which
      *  writes the same status). Rollout verification counts responses carrying this prefix;
      *  without it the two are indistinguishable. See spec §6.1. */
-    public static final String GUARD_MARKER = "tool-guard: ";
+    protected static final String GUARD_MARKER = "tool-guard: ";
 
     private static final int MAX_DETAIL_CHARS = 500;
 
     /** Envelope for a tool endpoint's FAILURE responses. The success paths still build their
-     *  own envelope (line ~103 here and StrigoiEchoWebhookController#fetchNews) because the
-     *  cache stores the already-wrapped payload; unifying them is cleanup for a later change. */
+     *  own envelope ({@link #handleFetch} and StrigoiEchoWebhookController#fetchNews) because
+     *  the cache stores the already-wrapped payload; unifying them is cleanup for a later
+     *  change. */
     protected static ResponseEntity<Map<String, Object>> ok(Map<String, Object> output) {
         return ResponseEntity.ok(Map.of("output", output));
     }
@@ -159,11 +160,11 @@ public abstract class HuntController {
     /** Cache admission predicate: only a payload provably healthy may be cached. Both early
      *  returns are {@code false} — a missing {@code output} or {@code data_source_health}
      *  block is NOT treated as healthy. Unreachable today: both current callers
-     *  (line ~96 here and StrigoiEchoWebhookController#fetchNews) always set the health
-     *  block, and the §3.2 failure envelope is built outside {@code cache.get}, so it never
-     *  reaches this predicate either. Kept as a guard for a later change that routes failure
-     *  envelopes through the cache, where a health-less payload would otherwise be cached for
-     *  the full TTL. */
+     *  ({@link #handleFetch} and StrigoiEchoWebhookController#fetchNews) always set the
+     *  health block, and the §3.2 failure envelope is built outside {@code cache.get}, so it
+     *  never reaches this predicate either. Kept as a guard for a later change that routes
+     *  failure envelopes through the cache, where a health-less payload would otherwise be
+     *  cached for the full TTL. */
     @SuppressWarnings("unchecked")
     private static boolean isHealthyPayload(Map<String, Object> payload) {
         Object output = payload.get("output");
