@@ -126,6 +126,7 @@ class ToolEndpointResponseRuleIT {
     @Autowired JsonMapper objectMapper;
     @Autowired RequestMappingHandlerMapping handlerMapping;
     @Autowired JdbcClient jdbc;
+    @Autowired de.visterion.dracul.agent.ToolFetchCache toolFetchCache;
 
     @MockitoBean AgoraEarnings earnings;                    // echo
     @MockitoBean EchoEnrichmentService echoEnrichment;       // echo
@@ -144,6 +145,12 @@ class ToolEndpointResponseRuleIT {
 
     @BeforeEach
     void setUp() {
+        // ToolFetchCache is a singleton shared across test methods, and the cacheable hunter tools
+        // key both the benign and the absent-body calls to the same paramsKey ("default"). Without
+        // this, one test method is served the payload another cached and stops exercising hunt()
+        // at all — and which method wins depends on JUnit's method order, so adding or renaming a
+        // test silently changes what is covered. Ten sibling ITs clear it for the same reason.
+        toolFetchCache.clear();
         // ContainerConfig reuses the Postgres testcontainer across IT classes (withReuse(true)) —
         // other classes' index_event/spin_candidate rows would otherwise leak into this class's
         // lifecycle hunts and could route ENRICH through the (deliberately unstubbed) snapshotters.
