@@ -126,26 +126,41 @@ public abstract class HuntController {
     /** Subclasses call this from their own @PostMapping("/tools/...") method. */
     protected ResponseEntity<Map<String, Object>> handleFetch(String auth, Map<String, Object> body) {
         if (!authorized(auth)) return ResponseEntity.status(401).build();
+        // Normalised once, here — not scattered into the six controllers' hunt() bodies. A
+        // forgotten site would be invisible: the catch below would turn the resulting NPE into
+        // a green 200, which is exactly the regression this substitution must prevent.
+        final Map<String, Object> effectiveBody = body == null ? Map.of() : body;
         String paramsKey = "default";
-        if (body != null && body.get("input") instanceof Map<?, ?> in && in.get("lookback_days") != null) {
+        if (effectiveBody.get("input") instanceof Map<?, ?> in && in.get("lookback_days") != null) {
             paramsKey = String.valueOf(in.get("lookback_days"));
         }
-        Map<String, Object> out = cache.get(toolName(), paramsKey,
-                () -> {
-                    de.visterion.dracul.hunting.DataSourceResult<?> r = hunt(body);
-                    Map<String, Object> output = new java.util.HashMap<>();
-                    output.put(fetchOutputKey(), r.items());
-                    output.put("data_source_health", healthMap(r.health()));
-                    // Learning-loop feedback: user-accepted patterns relevant to this hunter.
-                    // Rides the ToolFetchCache above, so a pattern approved/rejected after
-                    // this tool was last invoked only becomes visible once the cache entry
-                    // expires (see ToolFetchCache TTL) — acceptable for v1.
-                    patternRepo.ifAvailable(repo ->
-                            output.put("active_patterns", repo.findAcceptedByStrigoi(agentName())));
-                    return Map.of("output", output);
-                },
-                HuntController::isHealthyPayload);
-        return ResponseEntity.ok(out);
+        try {
+            Map<String, Object> out = cache.get(toolName(), paramsKey,
+                    () -> {
+                        de.visterion.dracul.hunting.DataSourceResult<?> r = hunt(effectiveBody);
+                        Map<String, Object> output = new java.util.HashMap<>();
+                        output.put(fetchOutputKey(), r.items());
+                        output.put("data_source_health", healthMap(r.health()));
+                        // Learning-loop feedback: user-accepted patterns relevant to this hunter.
+                        // Rides the ToolFetchCache above, so a pattern approved/rejected after
+                        // this tool was last invoked only becomes visible once the cache entry
+                        // expires (see ToolFetchCache TTL) — acceptable for v1.
+                        patternRepo.ifAvailable(repo ->
+                                output.put("active_patterns", repo.findAcceptedByStrigoi(agentName())));
+                        return Map.of("output", output);
+                    },
+                    HuntController::isHealthyPayload);
+            return ResponseEntity.ok(out);
+        } catch (RuntimeException e) {
+            // A 4xx from a tool endpoint makes Vistierie terminate the whole agent run and
+            // discard every prey it already produced — so a failing hunt() degrades to an
+            // "unavailable" 200 instead. The catch sits outside cache.get so a throw stores
+            // nothing. RuntimeException, not Throwable: an Error must not be swallowed.
+            log.warn("{} tool {} failed — answering unavailable instead of 4xx: {}",
+                    agentName(), toolName(), e.toString(), e);
+            return ok(unavailable(Map.of(fetchOutputKey(), List.of()),
+                    agentName(), GUARD_MARKER + e));
+        }
     }
 
     private static Map<String, Object> healthMap(de.visterion.dracul.hunting.DataSourceHealth h) {

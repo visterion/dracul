@@ -56,7 +56,7 @@ public class StrigoiInsiderWebhookController extends HuntController {
     @PostMapping("/tools/fetch-clusters")
     public ResponseEntity<Map<String, Object>> fetchClusters(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody(required = false) Map<String, Object> body) {
         return handleFetch(auth, body);
     }
 }
