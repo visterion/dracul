@@ -18,6 +18,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import tools.jackson.databind.JsonNode;
 
+import org.springframework.web.method.HandlerMethod;
+
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -81,6 +85,43 @@ public abstract class HuntController {
         return verifier.verify(auth);
     }
 
+    /** Marks a failure envelope produced by this controller's own guard, as opposed to a
+     *  legitimate source-driven unavailable (e.g. AgoraEarnings on an Agora outage, which
+     *  writes the same status). Rollout verification counts responses carrying this prefix;
+     *  without it the two are indistinguishable. See spec §6.1. */
+    public static final String GUARD_MARKER = "tool-guard: ";
+
+    private static final int MAX_DETAIL_CHARS = 500;
+
+    /** Envelope for a tool endpoint's FAILURE responses. The success paths still build their
+     *  own envelope (line ~103 here and StrigoiEchoWebhookController#fetchNews) because the
+     *  cache stores the already-wrapped payload; unifying them is cleanup for a later change. */
+    protected static ResponseEntity<Map<String, Object>> ok(Map<String, Object> output) {
+        return ResponseEntity.ok(Map.of("output", output));
+    }
+
+    /** Failure body: the tool's own result fields, empty, plus an unavailable health block.
+     *  {@code emptyResult} supplies the result key so this works for insider's "clusters" and
+     *  echo's "news" alike — the key is never hard-coded. {@code detail} is truncated because
+     *  it rides into the agent's context window. */
+    protected static Map<String, Object> unavailable(Map<String, Object> emptyResult,
+                                                     String source, String detail) {
+        Map<String, Object> out = new HashMap<>(emptyResult);
+        Map<String, Object> health = new HashMap<>();
+        health.put("status", "unavailable");
+        health.put("source", source);
+        health.put("detail", detail == null ? null
+                : detail.substring(0, Math.min(detail.length(), MAX_DETAIL_CHARS)));
+        health.put("checked_at", Instant.now().toString());
+        out.put("data_source_health", health);
+        return out;
+    }
+
+    /** Result key of the FAILING method. Not {@link #fetchOutputKey()} alone: that is one value
+     *  per controller, but echo has TWO tool endpoints with different keys ("candidates" and
+     *  "news"). Default is the candidate key; echo overrides it for fetchNews. */
+    protected String outputKeyFor(HandlerMethod method) { return fetchOutputKey(); }
+
     /** Subclasses call this from their own @PostMapping("/tools/...") method. */
     protected ResponseEntity<Map<String, Object>> handleFetch(String auth, Map<String, Object> body) {
         if (!authorized(auth)) return ResponseEntity.status(401).build();
@@ -115,12 +156,20 @@ public abstract class HuntController {
         return m;
     }
 
+    /** Cache admission predicate: only a payload provably healthy may be cached. Both early
+     *  returns are {@code false} — a missing {@code output} or {@code data_source_health}
+     *  block is NOT treated as healthy. Unreachable today: both current callers
+     *  (line ~96 here and StrigoiEchoWebhookController#fetchNews) always set the health
+     *  block, and the §3.2 failure envelope is built outside {@code cache.get}, so it never
+     *  reaches this predicate either. Kept as a guard for a later change that routes failure
+     *  envelopes through the cache, where a health-less payload would otherwise be cached for
+     *  the full TTL. */
     @SuppressWarnings("unchecked")
     private static boolean isHealthyPayload(Map<String, Object> payload) {
         Object output = payload.get("output");
-        if (!(output instanceof Map<?, ?> o)) return true;
+        if (!(output instanceof Map<?, ?> o)) return false;
         Object health = o.get("data_source_health");
-        if (!(health instanceof Map<?, ?> hm)) return true;
+        if (!(health instanceof Map<?, ?> hm)) return false;
         return "healthy".equals(hm.get("status"));
     }
 

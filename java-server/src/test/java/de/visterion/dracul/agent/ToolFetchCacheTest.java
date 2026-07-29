@@ -132,4 +132,51 @@ class ToolFetchCacheTest {
 
         assertThat(calls.get()).isEqualTo(1);   // cached → computed once
     }
+
+    /** Mirrors the tightened {@code HuntController#isHealthyPayload} (§3.5): a payload missing
+     *  {@code data_source_health} is NOT provably healthy and must not be cached. Uses a real
+     *  {@code cacheable = true} catalog entry — {@code new AgentToolCatalog(List.of())} would
+     *  make {@code resolveTtlNanos} return 0, so nothing would ever be cached and the
+     *  assertion would be vacuous regardless of the predicate. */
+    @Test
+    void payloadWithoutHealthBlockIsNotCached() {
+        var cache = new ToolFetchCache(catalogWith(entry("t", true, null)), 300);
+        var calls = new AtomicInteger();
+        java.util.function.Supplier<Map<String, Object>> compute = () -> {
+            calls.incrementAndGet();
+            return Map.of("output", Map.of("candidates", List.of()));
+        };
+        java.util.function.Predicate<Map<String, Object>> cacheable = p -> {
+            if (!(p.get("output") instanceof Map<?, ?> o)) return false;
+            return o.get("data_source_health") instanceof Map<?, ?> hm
+                    && "healthy".equals(hm.get("status"));
+        };
+
+        cache.get("t", "k", compute, cacheable);
+        cache.get("t", "k", compute, cacheable);
+
+        assertThat(calls.get()).isEqualTo(2);   // not cached → recomputed
+    }
+
+    /** Same as above for the other tightened branch: a payload missing {@code output}
+     *  altogether is NOT provably healthy and must not be cached. */
+    @Test
+    void payloadWithoutOutputIsNotCached() {
+        var cache = new ToolFetchCache(catalogWith(entry("t", true, null)), 300);
+        var calls = new AtomicInteger();
+        java.util.function.Supplier<Map<String, Object>> compute = () -> {
+            calls.incrementAndGet();
+            return Map.of("unexpected", "shape");
+        };
+        java.util.function.Predicate<Map<String, Object>> cacheable = p -> {
+            if (!(p.get("output") instanceof Map<?, ?> o)) return false;
+            return o.get("data_source_health") instanceof Map<?, ?> hm
+                    && "healthy".equals(hm.get("status"));
+        };
+
+        cache.get("t", "k", compute, cacheable);
+        cache.get("t", "k", compute, cacheable);
+
+        assertThat(calls.get()).isEqualTo(2);   // not cached → recomputed
+    }
 }
