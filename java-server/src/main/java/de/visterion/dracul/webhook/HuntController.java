@@ -1,18 +1,23 @@
 package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.error.ErrorResponse;
 import de.visterion.dracul.executor.PreySignalEmitter;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -200,6 +205,41 @@ public abstract class HuntController {
     /** Cache-Prädikat für Subklassen: unavailable-Payloads werden nicht festgehalten. */
     protected static boolean healthyPayload(Map<String, Object> payload) {
         return isHealthyPayload(payload);
+    }
+
+    /** A body that fails to bind throws during argument resolution, before any handler method
+     *  runs — so neither the 401 check nor the guard in {@link #handleFetch} can see it. This
+     *  handler is the only place that can, and being declared here it is inherited by all six
+     *  hunters and takes precedence over {@code GlobalExceptionHandler}.
+     *
+     *  <p>It must discriminate three things a naive version gets wrong:
+     *  (1) {@link #complete} lives on this same class and is deliberately NOT part of the rule
+     *      — without the exemption a truncated completion payload would answer 200 from a
+     *      method typed {@code ResponseEntity<Void>}, and Vistierie would record the completion
+     *      as accepted and never retry it;
+     *  (2) the token check never ran, so it is repeated here — otherwise an unauthenticated
+     *      call with broken JSON gets a clean 200;
+     *  (3) the result key follows the failing METHOD, not the controller (echo has two).
+     *
+     *  <p>It never throws: a throwing {@code @ExceptionHandler} makes the resolver return null,
+     *  {@code GlobalExceptionHandler} is NOT consulted again, and the response would come from
+     *  {@code DefaultHandlerExceptionResolver} with a different body than today. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Object> unreadableBody(HttpMessageNotReadableException e,
+                                                 HandlerMethod method,
+                                                 HttpServletRequest request) {
+        if ("complete".equals(method.getMethod().getName())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ErrorResponse.of("VALIDATION_ERROR", "Malformed JSON"));
+        }
+        if (!authorized(request.getHeader(HttpHeaders.AUTHORIZATION))) {
+            return ResponseEntity.status(401).build();
+        }
+        log.warn("{} received an unreadable tool body on {}: {}",
+                agentName(), method.getMethod().getName(), e.toString());
+        return ResponseEntity.ok(Map.of("output",
+                unavailable(Map.of(outputKeyFor(method), List.of()),
+                        agentName(), GUARD_MARKER + "unreadable request body")));
     }
 
     @PostMapping("/complete")
