@@ -109,7 +109,11 @@ public class StrigoiEchoWebhookController extends HuntController {
             if (in.get("since") != null) sinceRaw = String.valueOf(in.get("since")).trim();
         }
         if (symbol == null || symbol.isBlank()) {
-            return ok(unavailable(Map.of("news", List.of()), "agora",
+            // source is agentName(), not "agora": this rejection happens before Agora is consulted
+            // at all. source is a diagnostic field, so naming the provider here would send whoever
+            // debugs it next to the wrong system — and it would contradict the catch below, which
+            // reports agentName() for the same endpoint.
+            return ok(unavailable(Map.of("news", List.of()), agentName(),
                     GUARD_MARKER + "blank symbol in tool input"));
         }
 

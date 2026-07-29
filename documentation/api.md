@@ -1167,6 +1167,17 @@ CORS: `http://localhost:5173` allowed on all `/api/*` paths.
 tools, lazarus, index, merger, spin) answers `200` or `401`, and nothing else.** No other
 4xx, no 5xx.
 
+The rule covers everything the endpoint itself decides: a missing, blank, wrongly-typed or
+unparsable input, a lookup that finds nothing, an upstream outage, and any unexpected
+exception from the hunt. It does **not** override Spring's own request dispatch, which
+rejects a request before the endpoint is ever reached: a `POST` without
+`Content-Type: application/json` still yields `415`, a wrong HTTP method `405`, an unknown
+sub-path `404`, and an `Accept` header that excludes JSON `406`. Those are malformed
+*requests* rather than failing *calls*, and none of them is reachable from Vistierie, whose
+dispatcher hardcodes the content type, always sends a non-empty JSON object, sets no
+`Accept`, and POSTs the registered URL. Read the rule as: for a caller that speaks the
+registered contract, the only statuses are `200` and `401`.
+
 This exists because a 4xx from a tool endpoint is fatal to the whole agent run, not just
 that one tool call: Vistierie's `ToolDispatcher` treats any 4xx as a terminal error with no
 retry, `AgentRunner` then marks the run `failed`, the `/complete` webhook never fires, and

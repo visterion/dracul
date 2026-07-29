@@ -306,6 +306,28 @@ class ToolEndpointResponseRuleIT {
         assertThat(out.statusCode()).as("path=%s", path).isEqualTo(401);
     }
 
+    /** Pins the ONE assumption the rule rests on that Dracul does not control. Every request in
+     *  this class sends {@code Content-Type: application/json}, because Vistierie's ToolDispatcher
+     *  hardcodes it. Without that header Spring rejects the request during dispatch — before the
+     *  endpoint, and therefore before either guard — and answers 415, which Vistierie treats as a
+     *  terminal 4xx that kills the whole run. So the guarantee is real for the actual caller but
+     *  not unconditional, and this test records where the boundary sits: if it ever starts failing
+     *  because 415 became 200, the guard grew to cover the media type and documentation/api.md
+     *  needs its caveat removed. If Vistierie ever stops sending the header, this test is the note
+     *  explaining why every hunter suddenly dies. */
+    @Test
+    void aRequestWithoutJsonContentTypeIsRejectedByDispatchBeforeTheGuards() throws Exception {
+        var builder = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/api/strigoi-echo/tools/fetch-candidates"))
+                .header("Authorization", TOKEN)
+                .POST(HttpRequest.BodyPublishers.ofString("{}"));   // deliberately no Content-Type
+        var out = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+
+        assertThat(out.statusCode())
+                .as("no Content-Type is a malformed REQUEST, rejected before the endpoint runs")
+                .isEqualTo(415);
+    }
+
     /** Ledger follow-up (not in the original brief pseudocode, cheap to add here): the catch in
      *  {@code HuntController#handleFetch} sits OUTSIDE {@code cache.get} so a throw stores
      *  nothing — proven, not just read. A genuine {@code RuntimeException} from {@code hunt()}
