@@ -74,7 +74,7 @@ public class StrigoiEchoWebhookController extends HuntController {
     @PostMapping("/tools/fetch-candidates")
     public ResponseEntity<Map<String, Object>> fetchCandidates(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody(required = false) Map<String, Object> body) {
         return handleFetch(auth, body);
     }
 
@@ -98,16 +98,24 @@ public class StrigoiEchoWebhookController extends HuntController {
     @PostMapping("/tools/fetch-news")
     public ResponseEntity<Map<String, Object>> fetchNews(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody(required = false) Map<String, Object> body) {
         if (!authorized(auth)) return ResponseEntity.status(401).build();
+        final Map<String, Object> effectiveBody = body == null ? Map.of() : body;
 
         String symbol = null;
         String sinceRaw = null;
-        if (body != null && body.get("input") instanceof Map<?, ?> in) {
+        if (effectiveBody.get("input") instanceof Map<?, ?> in) {
             if (in.get("symbol") != null) symbol = String.valueOf(in.get("symbol")).trim();
             if (in.get("since") != null) sinceRaw = String.valueOf(in.get("since")).trim();
         }
-        if (symbol == null || symbol.isBlank()) return ResponseEntity.badRequest().build();
+        if (symbol == null || symbol.isBlank()) {
+            // source is agentName(), not "agora": this rejection happens before Agora is consulted
+            // at all. source is a diagnostic field, so naming the provider here would send whoever
+            // debugs it next to the wrong system — and it would contradict the catch below, which
+            // reports agentName() for the same endpoint.
+            return ok(unavailable(Map.of("news", List.of()), agentName(),
+                    GUARD_MARKER + "blank symbol in tool input"));
+        }
 
         // 30 days is the widest window this tool ever reads — the widest `since` an agent can
         // omit and still get a bounded fetch.
@@ -119,21 +127,36 @@ public class StrigoiEchoWebhookController extends HuntController {
         final String sym = symbol;
         final LocalDate from = since;
 
-        Map<String, Object> out = cache().get("fetch_candidate_news", sym + ":" + from,
-                () -> {
-                    var result = companyData.newsResult(sym, from, LocalDate.now());
-                    List<EchoNewsItem> items = result.items().stream()
-                            .sorted(Comparator.comparing(NewsHeadline::datetime).reversed())
-                            .limit(MAX_DETAIL_NEWS_ITEMS)
-                            .map(h -> new EchoNewsItem(h.headline(), h.summary(), h.source(),
-                                    h.credibility(), h.datetime()))
-                            .toList();
-                    Map<String, Object> output = new HashMap<>();
-                    output.put("news", items);
-                    output.put("data_source_health", healthOf(result.health()));
-                    return Map.of("output", output);
-                },
-                StrigoiEchoWebhookController::healthyPayload);
-        return ResponseEntity.ok(out);
+        try {
+            Map<String, Object> out = cache().get("fetch_candidate_news", sym + ":" + from,
+                    () -> {
+                        var result = companyData.newsResult(sym, from, LocalDate.now());
+                        List<EchoNewsItem> items = result.items().stream()
+                                .sorted(Comparator.comparing(NewsHeadline::datetime).reversed())
+                                .limit(MAX_DETAIL_NEWS_ITEMS)
+                                .map(h -> new EchoNewsItem(h.headline(), h.summary(), h.source(),
+                                        h.credibility(), h.datetime()))
+                                .toList();
+                        Map<String, Object> output = new HashMap<>();
+                        output.put("news", items);
+                        output.put("data_source_health", healthOf(result.health()));
+                        return Map.of("output", output);
+                    },
+                    StrigoiEchoWebhookController::healthyPayload);
+            return ResponseEntity.ok(out);
+        } catch (RuntimeException e) {
+            // Same contract as HuntController#handleFetch: the catch sits outside cache.get so a
+            // throw stores nothing, and a failing fetch degrades to "unavailable". Uncaught this
+            // would be a 500 — Vistierie retries a 5xx once and then kills the run, so the prey
+            // are lost either way; only the number of attempts differs from the 4xx case.
+            log.warn("{} tool fetch_candidate_news failed for {} — answering unavailable instead of 4xx: {}",
+                    agentName(), sym, e.toString(), e);
+            return ok(unavailable(Map.of("news", List.of()), agentName(), GUARD_MARKER + e));
+        }
+    }
+
+    @Override
+    protected String outputKeyFor(org.springframework.web.method.HandlerMethod method) {
+        return "fetchNews".equals(method.getMethod().getName()) ? "news" : super.outputKeyFor(method);
     }
 }

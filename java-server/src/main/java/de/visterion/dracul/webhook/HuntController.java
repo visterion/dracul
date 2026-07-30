@@ -1,23 +1,32 @@
 package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.agent.ToolFetchCache;
+import de.visterion.dracul.error.ErrorResponse;
 import de.visterion.dracul.executor.PreySignalEmitter;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import tools.jackson.databind.JsonNode;
 
+import org.springframework.web.method.HandlerMethod;
+
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,7 +35,10 @@ import java.util.Map;
  *  and delegate to {@link #handleFetch}. The /complete endpoint is uniform and owned here. */
 public abstract class HuntController {
 
-    private final Logger log = LoggerFactory.getLogger(getClass());
+    /** Bound to {@code getClass()}, so a subclass logs under its own name. Protected because a
+     *  subclass with its own tool endpoint must be able to log a degraded fetch: a degradation
+     *  nobody logs is invisible, which is the diagnostic gap this hardening exists to avoid. */
+    protected final Logger log = LoggerFactory.getLogger(getClass());
     private final BearerTokenVerifier verifier;
     private final PreyRepository preyRepo;
     private final PreyMapper preyMapper = new PreyMapper();
@@ -81,29 +93,82 @@ public abstract class HuntController {
         return verifier.verify(auth);
     }
 
+    /** Marks a failure envelope produced by this controller's own guard, as opposed to a
+     *  legitimate source-driven unavailable (e.g. AgoraEarnings on an Agora outage, which
+     *  writes the same status). Rollout verification counts responses carrying this prefix;
+     *  without it the two are indistinguishable. See spec §6.1. */
+    protected static final String GUARD_MARKER = "tool-guard: ";
+
+    private static final int MAX_DETAIL_CHARS = 500;
+
+    /** Envelope for a tool endpoint's FAILURE responses. The success paths still build their
+     *  own envelope ({@link #handleFetch} and StrigoiEchoWebhookController#fetchNews) because
+     *  the cache stores the already-wrapped payload; unifying them is cleanup for a later
+     *  change. */
+    protected static ResponseEntity<Map<String, Object>> ok(Map<String, Object> output) {
+        return ResponseEntity.ok(Map.of("output", output));
+    }
+
+    /** Failure body: the tool's own result fields, empty, plus an unavailable health block.
+     *  {@code emptyResult} supplies the result key so this works for insider's "clusters" and
+     *  echo's "news" alike — the key is never hard-coded. {@code detail} is truncated because
+     *  it rides into the agent's context window. */
+    protected static Map<String, Object> unavailable(Map<String, Object> emptyResult,
+                                                     String source, String detail) {
+        Map<String, Object> out = new HashMap<>(emptyResult);
+        Map<String, Object> health = new HashMap<>();
+        health.put("status", "unavailable");
+        health.put("source", source);
+        health.put("detail", detail == null ? null
+                : detail.substring(0, Math.min(detail.length(), MAX_DETAIL_CHARS)));
+        health.put("checked_at", Instant.now().toString());
+        out.put("data_source_health", health);
+        return out;
+    }
+
+    /** Result key of the FAILING method. Not {@link #fetchOutputKey()} alone: that is one value
+     *  per controller, but echo has TWO tool endpoints with different keys ("candidates" and
+     *  "news"). Default is the candidate key; echo overrides it for fetchNews. */
+    protected String outputKeyFor(HandlerMethod method) { return fetchOutputKey(); }
+
     /** Subclasses call this from their own @PostMapping("/tools/...") method. */
     protected ResponseEntity<Map<String, Object>> handleFetch(String auth, Map<String, Object> body) {
         if (!authorized(auth)) return ResponseEntity.status(401).build();
+        // Normalised once, here — not scattered into the six controllers' hunt() bodies. A
+        // forgotten site would be invisible: the catch below would turn the resulting NPE into
+        // a green 200, which is exactly the regression this substitution must prevent.
+        final Map<String, Object> effectiveBody = body == null ? Map.of() : body;
         String paramsKey = "default";
-        if (body != null && body.get("input") instanceof Map<?, ?> in && in.get("lookback_days") != null) {
+        if (effectiveBody.get("input") instanceof Map<?, ?> in && in.get("lookback_days") != null) {
             paramsKey = String.valueOf(in.get("lookback_days"));
         }
-        Map<String, Object> out = cache.get(toolName(), paramsKey,
-                () -> {
-                    de.visterion.dracul.hunting.DataSourceResult<?> r = hunt(body);
-                    Map<String, Object> output = new java.util.HashMap<>();
-                    output.put(fetchOutputKey(), r.items());
-                    output.put("data_source_health", healthMap(r.health()));
-                    // Learning-loop feedback: user-accepted patterns relevant to this hunter.
-                    // Rides the ToolFetchCache above, so a pattern approved/rejected after
-                    // this tool was last invoked only becomes visible once the cache entry
-                    // expires (see ToolFetchCache TTL) — acceptable for v1.
-                    patternRepo.ifAvailable(repo ->
-                            output.put("active_patterns", repo.findAcceptedByStrigoi(agentName())));
-                    return Map.of("output", output);
-                },
-                HuntController::isHealthyPayload);
-        return ResponseEntity.ok(out);
+        try {
+            Map<String, Object> out = cache.get(toolName(), paramsKey,
+                    () -> {
+                        de.visterion.dracul.hunting.DataSourceResult<?> r = hunt(effectiveBody);
+                        Map<String, Object> output = new java.util.HashMap<>();
+                        output.put(fetchOutputKey(), r.items());
+                        output.put("data_source_health", healthMap(r.health()));
+                        // Learning-loop feedback: user-accepted patterns relevant to this hunter.
+                        // Rides the ToolFetchCache above, so a pattern approved/rejected after
+                        // this tool was last invoked only becomes visible once the cache entry
+                        // expires (see ToolFetchCache TTL) — acceptable for v1.
+                        patternRepo.ifAvailable(repo ->
+                                output.put("active_patterns", repo.findAcceptedByStrigoi(agentName())));
+                        return Map.of("output", output);
+                    },
+                    HuntController::isHealthyPayload);
+            return ResponseEntity.ok(out);
+        } catch (RuntimeException e) {
+            // A 4xx from a tool endpoint makes Vistierie terminate the whole agent run and
+            // discard every prey it already produced — so a failing hunt() degrades to an
+            // "unavailable" 200 instead. The catch sits outside cache.get so a throw stores
+            // nothing. RuntimeException, not Throwable: an Error must not be swallowed.
+            log.warn("{} tool {} failed — answering unavailable instead of 4xx: {}",
+                    agentName(), toolName(), e.toString(), e);
+            return ok(unavailable(Map.of(fetchOutputKey(), List.of()),
+                    agentName(), GUARD_MARKER + e));
+        }
     }
 
     private static Map<String, Object> healthMap(de.visterion.dracul.hunting.DataSourceHealth h) {
@@ -115,12 +180,20 @@ public abstract class HuntController {
         return m;
     }
 
+    /** Cache admission predicate: only a payload provably healthy may be cached. Both early
+     *  returns are {@code false} — a missing {@code output} or {@code data_source_health}
+     *  block is NOT treated as healthy. Unreachable today: both current callers
+     *  ({@link #handleFetch} and StrigoiEchoWebhookController#fetchNews) always set the
+     *  health block, and the §3.2 failure envelope is built outside {@code cache.get}, so it
+     *  never reaches this predicate either. Kept as a guard for a later change that routes
+     *  failure envelopes through the cache, where a health-less payload would otherwise be
+     *  cached for the full TTL. */
     @SuppressWarnings("unchecked")
     private static boolean isHealthyPayload(Map<String, Object> payload) {
         Object output = payload.get("output");
-        if (!(output instanceof Map<?, ?> o)) return true;
+        if (!(output instanceof Map<?, ?> o)) return false;
         Object health = o.get("data_source_health");
-        if (!(health instanceof Map<?, ?> hm)) return true;
+        if (!(health instanceof Map<?, ?> hm)) return false;
         return "healthy".equals(hm.get("status"));
     }
 
@@ -135,6 +208,41 @@ public abstract class HuntController {
     /** Cache-Prädikat für Subklassen: unavailable-Payloads werden nicht festgehalten. */
     protected static boolean healthyPayload(Map<String, Object> payload) {
         return isHealthyPayload(payload);
+    }
+
+    /** A body that fails to bind throws during argument resolution, before any handler method
+     *  runs — so neither the 401 check nor the guard in {@link #handleFetch} can see it. This
+     *  handler is the only place that can, and being declared here it is inherited by all six
+     *  hunters and takes precedence over {@code GlobalExceptionHandler}.
+     *
+     *  <p>It must discriminate three things a naive version gets wrong:
+     *  (1) {@link #complete} lives on this same class and is deliberately NOT part of the rule
+     *      — without the exemption a truncated completion payload would answer 200 from a
+     *      method typed {@code ResponseEntity<Void>}, and Vistierie would record the completion
+     *      as accepted and never retry it;
+     *  (2) the token check never ran, so it is repeated here — otherwise an unauthenticated
+     *      call with broken JSON gets a clean 200;
+     *  (3) the result key follows the failing METHOD, not the controller (echo has two).
+     *
+     *  <p>It never throws: a throwing {@code @ExceptionHandler} makes the resolver return null,
+     *  {@code GlobalExceptionHandler} is NOT consulted again, and the response would come from
+     *  {@code DefaultHandlerExceptionResolver} with a different body than today. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Object> unreadableBody(HttpMessageNotReadableException e,
+                                                 HandlerMethod method,
+                                                 HttpServletRequest request) {
+        if ("complete".equals(method.getMethod().getName())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ErrorResponse.of("VALIDATION_ERROR", "Malformed JSON"));
+        }
+        if (!authorized(request.getHeader(HttpHeaders.AUTHORIZATION))) {
+            return ResponseEntity.status(401).build();
+        }
+        log.warn("{} received an unreadable tool body on {}: {}",
+                agentName(), method.getMethod().getName(), e.toString());
+        return ResponseEntity.ok(Map.of("output",
+                unavailable(Map.of(outputKeyFor(method), List.of()),
+                        agentName(), GUARD_MARKER + "unreadable request body")));
     }
 
     @PostMapping("/complete")

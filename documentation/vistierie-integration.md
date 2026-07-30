@@ -86,6 +86,24 @@ from inside the tool-dispatch loop. The shared secret is per-Strigoi; the
 Strigoi-Insider uses `STRIGOI_INSIDER_TOKEN` (set both as Dracul's inbound
 verifier and registered with Vistierie as the tool + completion webhook token).
 
+**A 4xx from a tool webhook is terminal; a 5xx is retried once and then terminal too.**
+Vistierie's `ToolDispatcher` treats any 4xx client-error status as an immediate,
+non-retryable failure of the tool call. A 5xx is wrapped as a transient error and retried
+exactly once; if the retry also fails, the outcome is the same as a 4xx. Either way,
+`AgentRunner` marks the whole run `failed` — the completion webhook above never fires, and
+every prey the agent had already produced in that run is lost, not just the one tool call
+that failed.
+
+The practical consequence for anything Dracul exposes as a tool webhook: **a business-level
+failure (an unhealthy data source, a candidate that can't be enriched, a malformed but
+otherwise-recoverable input) must never be represented as a non-2xx response.** It has to be
+encoded inside a `200` body instead — Dracul's six hunter tool endpoints do this via a
+`data_source_health.status = "unavailable"` envelope (see `documentation/api.md`, "Hunter
+tool endpoint response contract"). Only `401` (bad/missing bearer token — a configuration
+error a run should not survive) is treated as an acceptable non-2xx on those six endpoints;
+the same discipline has not yet been applied to gropar, voievod, or the executor's webhook
+endpoints, which can still fail a run the same way.
+
 ## Completion webhook
 
 When a ScheduledBee run finishes, Vistierie POSTs the validated agent

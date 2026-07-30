@@ -114,6 +114,31 @@ instead of masquerading as "this symbol has no news", which is what the pre-exis
 `news(...)` method (still used internally for the index + confounder scan) does on
 failure.
 
+**Prompt correction, 1.7.1 → 1.7.2 (2026-07-29).** Echo is the only hunter with two tools,
+and its old "Empty results are valid" clause was unscoped: "If the tool returns no
+candidates — or its `data_source_health.status` is `unavailable` — return exactly
+`{"prey": []}`". Read literally, that sentence also fired when `fetch_candidate_news` — the
+per-symbol **detail** tool above, not the screener — answered `unavailable`. A single
+candidate's news lookup failing (e.g. an Agora hiccup on that one symbol) was enough to
+instruct the model to discard every candidate in the run, even ones the screening tool
+(`fetch_recent_pead_candidates`) had already returned successfully. The fix is two sentences
+in `prompts/strigoi-echo.md`:
+
+1. The empty-result clause is now scoped by name: "If the **screening tool
+   `fetch_recent_pead_candidates`** returns no candidates — or its
+   `data_source_health.status` is `unavailable` — return exactly `{"prey": []}`."
+2. A new instruction next to `fetch_candidate_news`'s description: if that tool answers
+   `unavailable` for a symbol, judge that one candidate from `recentNews` alone — do not
+   retry it, and do not drop the other candidates.
+
+Covered by `StrigoiPromptContractTest#echoScopesTheEmptyClauseToTheScreeningTool`,
+`#echoTellsTheAgentWhatToDoWhenTheDetailToolFails`, and
+`#theOtherFiveStillScopeTheClauseToTheScreeningTool` (the last one pins that the other five
+hunters keep the "screening tool" wording, so the fix can't quietly regress). Version bump
+`1.7.1` → `1.7.2`, new `body_hash` in `prompt_registry.json`, and the usual
+`agent_definition` reset (see `documentation/vistierie-integration.md`, "Agent budgets and
+definition updates").
+
 ### Strigoi-Spin: lifecycle persistence
 
 **Full lifecycle persistence (added 2026-07-12).** A spin-off's key evidence —

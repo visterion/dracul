@@ -187,10 +187,33 @@ class StrigoiEchoNewsToolIT {
                 .newsResult(eq("AAPL"), any(), any());
     }
 
+    /** The catch in {@code fetchNews} — distinct from {@link #agoraFailureDegradesToEmptyListNotAnError},
+     *  which mocks {@code newsResult} RETURNING an outage shape and therefore never enters the catch.
+     *  Here the collaborator throws, which is what an unforeseen fault inside the fetch looks like
+     *  (a malformed Agora response tripping a NullPointerException, say). Uncaught it would be a 500,
+     *  and Vistierie kills the run after its one retry — every prey of that run discarded. The
+     *  {@code news} key must survive, because that is what the endpoint's contract promises. */
     @Test
-    void blankSymbolIsRejectedWith400() {
-        assertThatThrownBy(() -> call(Map.of("symbol", "  ")))
-                .isInstanceOf(HttpClientErrorException.BadRequest.class);
+    void aThrowingFetchDegradesInsteadOfFailingTheRun() {
+        when(companyData.newsResult(any(), any(), any()))
+                .thenThrow(new IllegalStateException("SYNTHETIC malformed provider response"));
+
+        JsonNode out = call(Map.of("symbol", "AAPL")).path("output");
+
+        assertThat(out.path("news").isArray()).isTrue();
+        assertThat(out.path("news")).isEmpty();
+        assertThat(out.path("data_source_health").path("status").asString(""))
+                .isEqualTo("unavailable");
+        assertThat(out.path("data_source_health").path("detail").asString(""))
+                .startsWith("tool-guard: ");
+    }
+
+    @Test
+    void blankSymbolReturnsUnavailable() {
+        JsonNode out = call(Map.of("symbol", "   ")).path("output");
+        assertThat(out.path("news").isArray()).isTrue();
+        assertThat(out.path("news")).isEmpty();
+        assertThat(out.path("data_source_health").path("status").asString("")).isEqualTo("unavailable");
     }
 
     @Test

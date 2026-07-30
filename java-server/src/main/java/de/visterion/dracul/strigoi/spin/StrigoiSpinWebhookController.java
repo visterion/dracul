@@ -100,7 +100,7 @@ public class StrigoiSpinWebhookController extends HuntController {
     @PostMapping("/tools/fetch-candidates")
     public ResponseEntity<Map<String, Object>> fetchCandidates(
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody(required = false) Map<String, Object> body) {
         return handleFetch(auth, body);
     }
 
