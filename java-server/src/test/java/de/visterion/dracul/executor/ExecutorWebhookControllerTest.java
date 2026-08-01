@@ -294,6 +294,49 @@ class ExecutorWebhookControllerTest {
                 2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
     }
 
+    /** Builds a controller identical to {@link #controller} but wired with the REAL
+     *  {@link Tranche2Detector} instead of the mock — needed to exercise the actual
+     *  {@code entryDayHigh} comparison (the field-level mock always returns whatever the test
+     *  stubs, which cannot prove the controller passes the RAW price into it). */
+    private ExecutorWebhookController controllerWithRealTranche2Detector() {
+        return new ExecutorWebhookController(
+                signalRepo, positionRepo, decisionRepo,
+                new VetoService(), new OrderGuard(), gateway, executorIndicators,
+                pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
+                assembler, sizer, ranker, new Tranche2Detector(), telegram, executorNotifier, positionContextRepo, patternRepo,
+                "tkn", "depot-1", 0.6, 3, 22, 20, 10,
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
+                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+    }
+
+    /** Builds a controller identical to {@link #controller} but with a caller-supplied
+     *  {@code heatPct}, so a HEAT_LIMIT boundary can be placed exactly between the raw and the
+     *  tick-rounded {@code newRiskAccountCcy} for a given price/stop pair. */
+    private ExecutorWebhookController controllerWithHeatPct(double heatPct) {
+        return new ExecutorWebhookController(
+                signalRepo, positionRepo, decisionRepo,
+                new VetoService(), new OrderGuard(), gateway, executorIndicators,
+                pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
+                assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
+                "tkn", "depot-1", 0.6, 3, 22, 20, 10,
+                new BigDecimal("10000"), 10, heatPct, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
+                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+    }
+
+    /** Full-field {@link ExecutorPosition} builder for tests that need {@code entryDayHigh} and/or
+     *  an {@code activeStop} that diverges from {@code initialStop} — {@link #openPosition} always
+     *  nulls {@code entryDayHigh} and pins {@code activeStop == initialStop}. */
+    private ExecutorPosition positionWithEntryDayHighAndActiveStop(long id, String symbol, String side,
+            BigDecimal entry, BigDecimal initialStop, BigDecimal activeStop, BigDecimal entryDayHigh) {
+        return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
+                entry, initialStop, activeStop, 1, null, List.of("X"), "sig-1", "hunter",
+                "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null,
+                /* stopOrderId */ null, /* sector */ null, entryDayHigh,
+                /* tranche2OrderId */ null, /* tranche2StopOrderId */ null, /* trimCount */ 0,
+                /* lowestPrice */ null, /* entryExpiresAt */ null, /* submittedLimitPrice */ null,
+                /* pendingExitReason */ null, /* exitOrderId */ null, /* pendingExitFillPrice */ null);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> outputOf(ResponseEntity<?> resp) {
         return (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
@@ -3406,6 +3449,157 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo).insert(decisionCaptor.capture());
         assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("DATA_UNAVAILABLE");
+    }
+
+    // -------------------------------------------------------------------
+    // add-tranche: tick rounding — decision raw, mechanics rounded (Task 4)
+    // -------------------------------------------------------------------
+
+    @Test
+    void addTranche_eligibilityUsesRawPrice_brokerGetsRoundedPrice() {
+        // entryDayHigh=70.50, ctx.price()=70.504: the REAL Tranche2Detector's strict
+        // compareTo(entryDayHigh) > 0 only fires on the raw price (70.504 > 70.50). If the
+        // controller rounded ctx.price() before calling detect(), the comparison would become
+        // 70.50 > 70.50 = false and the add-on would be silently dropped -- this is the gate for
+        // constraint 1 in the task brief. entryPrice/initialStop are chosen so R_CONFIRMED (which
+        // is checked before NEW_HIGH and would otherwise mask the entryDayHigh path) does NOT
+        // fire: rMultiple = (70.504-68)/(68-65) = 0.835 < 1.
+        ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
+                new BigDecimal("68"), new BigDecimal("65"), new BigDecimal("65"),
+                new BigDecimal("70.50"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(assembler.assembleForSymbol(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("70.504"), new BigDecimal("2")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-7", "stop-7", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controllerWithRealTranche2Detector().addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("reason")).isEqualTo(Tranche2Detector.NEW_HIGH);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("70.50");
+    }
+
+    @Test
+    void addTranche_priceRoundsDownForBuyAt70505() {
+        // R_CONFIRMED so eligibility fires independent of entryDayHigh/detector wiring; the mock
+        // detector is fine here since this test is only about the rounding of ctx.price() itself.
+        ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
+                new BigDecimal("60"), new BigDecimal("55"), new BigDecimal("55"), null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(assembler.assembleForSymbol(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("70.505"), new BigDecimal("2")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-7", "stop-7", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        controller.addTranche(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        // BUY rounds the order price away from the fill -> floor.
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("70.50");
+    }
+
+    @Test
+    void addTranche_priceRoundsUpForSellAt70505() {
+        ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "SELL",
+                new BigDecimal("80"), new BigDecimal("85"), new BigDecimal("85"), null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(assembler.assembleForSymbol(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("70.505"), new BigDecimal("2")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-7", "stop-7", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        controller.addTranche(BEARER, "run-1", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        // SELL rounds the order price away from the fill -> ceiling.
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("70.51");
+    }
+
+    @Test
+    void addTranche_collapse_noPlaceBracket_singleNoStopDecision() {
+        // Raw the pair is valid (70.504 > 70.498), but rounded independently both land on 70.50 --
+        // there is no OrderGuard on this path to catch that, so the controller must reject
+        // explicitly with NO_STOP rather than send a zero-width bracket.
+        ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
+                new BigDecimal("60"), new BigDecimal("55"), new BigDecimal("70.498"), null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(assembler.assembleForSymbol(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("70.504"), new BigDecimal("2")));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("NO_STOP");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).updateTranche2(anyLong(), any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, times(1)).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getValue().accepted()).isFalse();
+        assertThat(decisionCaptor.getValue().rejectReason()).isEqualTo("NO_STOP");
+    }
+
+    @Test
+    void addTranche_roundedStopShrinksRPerShare_heatLimitNowPasses() {
+        // Raw rPerShare = 50.009 - 44.991 = 5.018; qty=100 -> raw risk 501.8. Rounded
+        // rPerShare = floor(50.009)=50.00 minus ceil(44.991)=45.00 = 5.00; rounded risk 500.0.
+        // heatPct is tuned so the heat ceiling (501.0) sits strictly between the two: sizing off
+        // the raw pair would breach it, sizing off the rounded pair (what the controller actually
+        // does) passes. Direction: rounding SHRINKS risk here (BUY: entry rounds down toward the
+        // stop, stop rounds up toward the entry -- both directions narrow the window), so
+        // HEAT_LIMIT/BUDGET become easier to pass, never harder, from tick rounding alone.
+        ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
+                new BigDecimal("45"), new BigDecimal("40"), new BigDecimal("44.991"), null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(assembler.assembleForSymbol(any())).thenReturn(withTrancheAmount(
+                withPriceAndAtr(happyContext(), new BigDecimal("50.009"), new BigDecimal("2")),
+                new BigDecimal("5005")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-7", "stop-7", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controllerWithHeatPct(0.0501).addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("100");
+        verify(gateway).placeBracket(eq("depot-1"), any());
     }
 
     // -------------------------------------------------------------------

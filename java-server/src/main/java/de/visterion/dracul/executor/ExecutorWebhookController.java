@@ -1259,6 +1259,12 @@ public class ExecutorWebhookController {
         }
 
         String positionMechanism = resolvePositionMechanism(position.sourceSignalId());
+        // Rounding boundary: detect() gets the RAW ctx.price() — it decides ELIGIBILITY with a
+        // strict compareTo against entryDayHigh (Tranche2Detector.java:72-73), and ctx.price() is
+        // a market close, not an order price. Rounding it here could turn a today-eligible add
+        // (e.g. entryDayHigh 70.50, price 70.504) ineligible (70.50 > 70.50 is false). Same split
+        // as the entry path: decision raw, mechanics rounded. Everything from here down is
+        // mechanics and works on the rounded price/stop.
         Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(position, ctx.price(),
                 ctx.pendingSignals(), positionMechanism);
         if (!t2.eligible()) {
@@ -1268,12 +1274,39 @@ public class ExecutorWebhookController {
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
 
+        // Tick-round the order price (away from the fill, same as the entry path) and the
+        // position's existing active stop (toward the entry) onto the grid. StopWindowRounding is
+        // NOT reused here: that class clamps a freshly PROPOSED stop into a window derived from
+        // the rounded price, degeneracy-checked before the clamp -- none of which applies to a
+        // tranche-2 add, which sizes against the position's EXISTING active stop (never re-derived
+        // from current ATR/swing levels, see below) rather than a new proposal to be windowed.
+        // A plain TickSize.roundEntry/roundStop pair is the whole sequence this path needs.
+        BigDecimal orderPrice = TickSize.roundEntry(position.side(), ctx.price());
+        BigDecimal stopPrice = TickSize.roundStop(position.side(), position.activeStop());
+
+        // No OrderGuard runs on this path (none of :1180-:1360 calls orderGuard.check), so the
+        // collapse case OrderGuard would normally catch must be checked explicitly here: rounding
+        // the price and the stop independently can collapse a raw-valid pair onto the same tick
+        // (e.g. price 70.504 / stop 70.498 -> both 70.50). Reject with NO_STOP rather than send a
+        // zero-width (or inverted) bracket; a tranche has no signal status of its own to flip.
+        boolean stopValid = "BUY".equals(position.side())
+                ? stopPrice.compareTo(orderPrice) < 0
+                : stopPrice.compareTo(orderPrice) > 0;
+        if (!stopValid) {
+            String reason = RejectReason.NO_STOP.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
         // Tranche-2 sizing reuses the position's EXISTING active stop — it predates this add and
         // is never re-derived from the *current* ATR/swing levels, so PositionSizer.stopInWindow()
         // (which validates freshness against those current levels) is deliberately ignored here;
-        // only qty/risk outputs are used.
-        Sizing sizing = sizer.size(position.side(), ctx.price(), ctx.atr(), ctx.swingLow(),
-                position.activeStop(), ctx.trancheAmount(), ctx.fxToAccount());
+        // only qty/risk outputs are used. Sized from the ROUNDED price/stop, not the raw ones, so
+        // HEAT_LIMIT/BUDGET below see the same (possibly smaller) rPerShare the broker will
+        // actually work with.
+        Sizing sizing = sizer.size(position.side(), orderPrice, ctx.atr(), ctx.swingLow(),
+                stopPrice, ctx.trancheAmount(), ctx.fxToAccount());
 
         if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
             String reason = RejectReason.TRANCHE_TOO_SMALL.name();
@@ -1302,9 +1335,6 @@ public class ExecutorWebhookController {
                     reason, List.of(), "rejected: " + reason, null, runId, null));
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
-
-        BigDecimal orderPrice = ctx.price();
-        BigDecimal stopPrice = position.activeStop();
 
         // Tranche 2 bekommt bewusst KEINEN eigenen Take-Profit. Der bis 2026-07-25 hier
         // synthetisierte 3R-Zielkurs lag bei +28 % vom Entry und wurde von Saxo mit
