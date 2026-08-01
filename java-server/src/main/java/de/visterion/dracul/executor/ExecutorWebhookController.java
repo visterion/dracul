@@ -537,6 +537,11 @@ public class ExecutorWebhookController {
         // always recomputes its own RAW window internally with no way to inject rounded bounds.
         BigDecimal roundedStopMin = null;
         BigDecimal roundedStopMax = null;
+        // Audit trail for a take-profit that tick-rounding collapses onto/through the entry (see
+        // below): the raw LLM value is preserved here even after `takeProfit` is nulled out, so
+        // decision_log can distinguish "the LLM sent none" from "one was sent and dropped".
+        BigDecimal proposedTakeProfit = takeProfit;
+        boolean takeProfitDropped = false;
         if (ctx.missing() == null || ctx.missing().isEmpty()) {
             // Risk layer is authoritative over the stop. Compute the sizer's stop window (pure fn
             // of side/price/ATR/swing-low, independent of the proposed stop) from the ROUNDED
@@ -544,25 +549,24 @@ public class ExecutorWebhookController {
             // 2) — round the proposed stop and the window bounds to the tick grid, clamp, then
             // size from the result. NO_STOP can no longer fire on LLM input; it remains only as
             // OrderGuard's defensive guard against a broken (null) server window.
-            //
-            // stopRounded is only used to decide stopClamped below (whether the FINAL stop
-            // differs from a plain tick-rounding of the LLM's proposal, i.e. whether a window
-            // bound actually bound) — the authoritative stop-to-send comes from
-            // StopWindowRounding, which re-derives its own rounded value internally.
-            BigDecimal stopRounded = TickSize.roundStop(side, stopPrice);
-
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
             orderPriceRounded = TickSize.roundEntry(side, orderPrice);
 
             window = sizer.stopWindow(side, orderPriceRounded, ctx.atr(), ctx.swingLow());
 
+            // orderPriceRounded, not orderPrice: StopWindowRounding rule 2 requires the window to
+            // come from the SAME price size() below is called with. This call site is the only
+            // remaining place that rule can still be broken (StopWindowRounding itself cannot mix
+            // prices — it only ever takes one). See
+            // placeEntry_stopWindowRule2Regression_buy/_sell in the controller test suite, which
+            // fails under a mutation back to `orderPrice` here even though the whole rest of the
+            // suite stays green.
             StopWindowRounding.Result stopResult = StopWindowRounding.compute(
                     side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice, sizer);
             stopPrice = stopResult.stop();          // authoritative stop used by guard, booking, take-profit
             roundedStopMin = stopResult.stopMin();
             roundedStopMax = stopResult.stopMax();
-            stopClamped = (stopRounded == null) || (stopPrice == null)
-                    || stopPrice.compareTo(stopRounded) != 0;
+            stopClamped = stopResult.clamped();
 
             sizing = sizer.size(side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice,
                     ctx.trancheAmount(), ctx.fxToAccount());
@@ -580,6 +584,7 @@ public class ExecutorWebhookController {
                         : takeProfit.compareTo(orderPriceRounded) >= 0;
                 if (collapsed) {
                     takeProfit = null;
+                    takeProfitDropped = true;
                 }
             }
         } else {
@@ -784,8 +789,18 @@ public class ExecutorWebhookController {
                 orderJson.put("gtd_days", entryGtdDays);
                 orderJson.put("stop_clamped", stopClamped);
                 orderJson.put("proposed_stop", proposedStop);
+                // Raw window (the risk layer's un-rounded stop anchor/floor) — kept for
+                // continuity with the pre-tick-rounding audit trail.
                 orderJson.put("stop_min", window != null ? window.stopMin() : null);
                 orderJson.put("stop_max", window != null ? window.stopMax() : null);
+                // The bounds OrderGuard actually enforced (tick-rounded; equal to the raw window
+                // above only in the degenerate branch, where rounding is skipped entirely).
+                // Without this pair the audit trail cannot show why a stop next to a bound was
+                // accepted or rejected.
+                orderJson.put("stop_min_rounded", roundedStopMin);
+                orderJson.put("stop_max_rounded", roundedStopMax);
+                orderJson.put("proposed_take_profit", proposedTakeProfit);
+                orderJson.put("take_profit_dropped", takeProfitDropped);
                 logEntryDecision(runId, signal, ctx, orderPrice, veto, "ENTER", null, orderJson,
                         confidence, clock.instant());
             } catch (RuntimeException e) {

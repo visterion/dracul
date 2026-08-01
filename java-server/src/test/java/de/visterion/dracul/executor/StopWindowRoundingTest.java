@@ -80,12 +80,56 @@ class StopWindowRoundingTest {
                 "BUY", orderPriceRounded, atr, swingLow, bd("1.00"), sizer);
 
         assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_BUY);
+        assertThat(result.clamped()).isTrue(); // the far-outside proposal genuinely got clamped
 
         Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, swingLow, result.stop(), bd("1000"), BigDecimal.ONE);
         OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, result.stop(),
                 result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
         assertThat(guard.reason()).isNull(); // must not be NO_STOP from a rounding artifact
+    }
+
+    // ---- The degenerate branch skips tick-rounding entirely (rule 3), so "clamped" there must
+    // be measured against the RAW proposal, not a rounded one that was never computed. A proposal
+    // already inside the RAW window (unlike the two tests above, which use far-outside proposals)
+    // must report clamped=false: nothing bound it, the fallback is a straight pass-through.
+    @Test
+    void degenerateWindowInWindowProposalIsNotReportedAsClamped() {
+        BigDecimal price = bd("1.50");
+        BigDecimal atr = bd("0.03");
+        BigDecimal swingLow = bd("1.399");
+        BigDecimal orderPriceRounded = TickSize.roundEntry("BUY", price);
+        BigDecimal proposalInsideRawWindow = bd("1.395"); // inside [1.3915, 1.399]
+
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "BUY", orderPriceRounded, atr, swingLow, proposalInsideRawWindow, sizer);
+
+        assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(proposalInsideRawWindow);
+        assertThat(result.clamped()).isFalse();
+    }
+
+    // ---- The null-window branch (defensive; the real PositionSizer never returns one) never
+    // clamps — there is no bound to clamp against — regardless of whether the proposal itself is
+    // null. Pins the fix for the bug where a null proposal + null window used to report
+    // clamped=true (comparing against a rounded value that, for a null input, is also null and so
+    // always "differs").
+    @Test
+    void nullWindowNeverReportsClamped() {
+        PositionSizer brokenSizer = org.mockito.Mockito.mock(PositionSizer.class);
+        org.mockito.Mockito.when(brokenSizer.stopWindow(
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new StopWindow(null, null, "broken"));
+
+        StopWindowRounding.Result withNullProposal = StopWindowRounding.compute(
+                "BUY", bd("100"), bd("2"), null, null, brokenSizer);
+        assertThat(withNullProposal.stop()).isNull();
+        assertThat(withNullProposal.clamped()).isFalse();
+
+        StopWindowRounding.Result withNonNullProposal = StopWindowRounding.compute(
+                "BUY", bd("100"), bd("2"), null, bd("94.005"), brokenSizer);
+        assertThat(withNonNullProposal.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(bd("94.01"));
+        assertThat(withNonNullProposal.clamped()).isFalse();
     }
 
     @Test
@@ -105,6 +149,7 @@ class StopWindowRoundingTest {
                 "SELL", orderPriceRounded, atr, swingHigh, bd("2.00"), sizer);
 
         assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_SELL);
+        assertThat(result.clamped()).isTrue();
 
         Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, swingHigh, result.stop(), bd("1000"), BigDecimal.ONE);
         OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), orderPriceRounded, result.stop(),
@@ -337,11 +382,21 @@ class StopWindowRoundingTest {
     // demonstrates what happened when the two-different-prices mistake was present (before
     // StopWindowRounding existed) — it deliberately reconstructs that OLD bug manually, since
     // StopWindowRounding itself structurally cannot make this mistake (it only ever takes ONE
-    // price and derives the window from it). The actual enforcement against reintroducing this
-    // mistake is `roundStopTowardTightBoundStaysInsideTheWindowOrderGuardChecks_buy` above,
-    // whose assertion (guard.ok() == TRUE) is what would fire if StopWindowRounding regressed to
-    // ever mixing prices. This test is kept anyway, as a side-by-side comparison that makes the
-    // contrast legible for a human reading both tests together — not a safety net on its own.
+    // price and derives the window from it).
+    //
+    // `roundStopTowardTightBoundStaysInsideTheWindowOrderGuardChecks_buy` above does NOT enforce
+    // this either, despite an earlier version of this comment claiming it did: it is a pure
+    // StopWindowRounding-level test and, like the helper itself, passes a single price by
+    // construction — it cannot regress to mixing prices because it never has two to mix. The
+    // helper closing this hazard does not close it at the only place it can still reopen:
+    // ExecutorWebhookController decides which price (orderPrice vs orderPriceRounded) to hand
+    // the helper, and nothing at this level can see that decision. The actual enforcement is the
+    // controller-slice mutation test
+    // ExecutorWebhookControllerTest#placeEntry_stopWindowRule2Regression_buy/_sell, which fails
+    // if the controller call site regresses to passing the raw price into
+    // StopWindowRounding.compute. This test is kept anyway, as a side-by-side comparison that
+    // makes the contrast legible for a human reading both tests together — not a safety net on
+    // its own.
 
     @Test
     void mixingRawAndRoundedPricesIsRejectedToday_documentation() {

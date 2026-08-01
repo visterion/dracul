@@ -44,8 +44,15 @@ public final class StopWindowRounding {
      *        has no bounds to check against
      * @param stopMax the window upper bound actually used to arrive at {@code stop}; {@code null}
      *        under the same condition as {@code stopMin}
+     * @param clamped whether a window bound actually bound {@code stop} — i.e. {@code stop}
+     *        differs from a plain tick-rounding (or, in the degenerate branch, from the raw
+     *        proposal itself) because a bound moved it there. {@code false} when {@code stop}
+     *        only differs from the proposal by tick-rounding, or not at all. This is NOT simply
+     *        "stop != raw proposal": rounding alone also changes that comparison and must not be
+     *        reported as a clamp (audit field {@code stop_clamped} must mean "the risk layer
+     *        overrode the proposal", not "the tick grid nudged it").
      */
-    public record Result(BigDecimal stop, BigDecimal stopMin, BigDecimal stopMax) { }
+    public record Result(BigDecimal stop, BigDecimal stopMin, BigDecimal stopMax, boolean clamped) { }
 
     /**
      * @param side "BUY" or "SELL"
@@ -64,7 +71,9 @@ public final class StopWindowRounding {
 
         if (window.stopMin() == null || window.stopMax() == null) {
             // No window to check degeneracy or clamp against; round the proposal on its own.
-            return new Result(TickSize.roundStop(side, rawProposedStop), null, null);
+            // Never "clamped" -- there is no bound to have been clamped against, matching the
+            // pre-rounding behavior of skipping the whole clamp step when the window is null.
+            return new Result(TickSize.roundStop(side, rawProposedStop), null, null, false);
         }
 
         BigDecimal roundedMin = window.stopMin().setScale(2, RoundingMode.CEILING);
@@ -73,14 +82,20 @@ public final class StopWindowRounding {
         if (roundedMin.compareTo(roundedMax) > 0) {
             // Degenerate: rounding inward inverted the window, so there is no valid rounded
             // clamp target. Stop rounding is omitted entirely; fall back to the raw clamp
-            // against the raw window, exactly as before tick rounding existed.
+            // against the raw window, exactly as before tick rounding existed. "Clamped" is
+            // measured against the RAW proposal here (no rounding happened in this branch at
+            // all), not against a tick-rounded value that was never computed.
             BigDecimal fallback = clamp(rawProposedStop, window.stopMin(), window.stopMax());
-            return new Result(fallback, window.stopMin(), window.stopMax());
+            boolean clamped = (rawProposedStop == null) || fallback.compareTo(rawProposedStop) != 0;
+            return new Result(fallback, window.stopMin(), window.stopMax(), clamped);
         }
 
         BigDecimal roundedStop = TickSize.roundStop(side, rawProposedStop);
-        BigDecimal clamped = clamp(roundedStop, roundedMin, roundedMax);
-        return new Result(clamped, roundedMin, roundedMax);
+        BigDecimal clampedStop = clamp(roundedStop, roundedMin, roundedMax);
+        // "Clamped" is measured against the ROUNDED proposal: a bound only actually bound the
+        // stop if clamp() moved it away from where plain tick-rounding alone would have put it.
+        boolean clamped = (roundedStop == null) || clampedStop.compareTo(roundedStop) != 0;
+        return new Result(clampedStop, roundedMin, roundedMax, clamped);
     }
 
     private static BigDecimal clamp(BigDecimal proposed, BigDecimal min, BigDecimal max) {
