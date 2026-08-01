@@ -1281,8 +1281,8 @@ public class ExecutorWebhookController {
         // tranche-2 add, which sizes against the position's EXISTING active stop (never re-derived
         // from current ATR/swing levels, see below) rather than a new proposal to be windowed.
         // A plain TickSize.roundEntry/roundStop pair is the whole sequence this path needs.
-        BigDecimal orderPrice = TickSize.roundEntry(position.side(), ctx.price());
-        BigDecimal stopPrice = TickSize.roundStop(position.side(), position.activeStop());
+        BigDecimal pxRounded = TickSize.roundEntry(position.side(), ctx.price());
+        BigDecimal stopRounded = TickSize.roundStop(position.side(), position.activeStop());
 
         // No OrderGuard runs on this path (none of :1180-:1360 calls orderGuard.check), so the
         // collapse case OrderGuard would normally catch must be checked explicitly here: rounding
@@ -1290,8 +1290,8 @@ public class ExecutorWebhookController {
         // (e.g. price 70.504 / stop 70.498 -> both 70.50). Reject with NO_STOP rather than send a
         // zero-width (or inverted) bracket; a tranche has no signal status of its own to flip.
         boolean stopValid = "BUY".equals(position.side())
-                ? stopPrice.compareTo(orderPrice) < 0
-                : stopPrice.compareTo(orderPrice) > 0;
+                ? stopRounded.compareTo(pxRounded) < 0
+                : stopRounded.compareTo(pxRounded) > 0;
         if (!stopValid) {
             String reason = RejectReason.NO_STOP.name();
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
@@ -1305,8 +1305,8 @@ public class ExecutorWebhookController {
         // only qty/risk outputs are used. Sized from the ROUNDED price/stop, not the raw ones, so
         // HEAT_LIMIT/BUDGET below see the same (possibly smaller) rPerShare the broker will
         // actually work with.
-        Sizing sizing = sizer.size(position.side(), orderPrice, ctx.atr(), ctx.swingLow(),
-                stopPrice, ctx.trancheAmount(), ctx.fxToAccount());
+        Sizing sizing = sizer.size(position.side(), pxRounded, ctx.atr(), ctx.swingLow(),
+                stopRounded, ctx.trancheAmount(), ctx.fxToAccount());
 
         if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
             String reason = RejectReason.TRANCHE_TOO_SMALL.name();
@@ -1429,8 +1429,8 @@ public class ExecutorWebhookController {
                     return ResponseEntity.ok(Map.of("output",
                             Map.of("placed", false, "reason", "MAX_BROKER_ATTEMPTS")));
                 }
-                BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, orderPrice,
-                        stopPrice, null, clientRef, null);
+                BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, pxRounded,
+                        stopRounded, null, clientRef, null);
                 placed = gateway.placeBracket(connection, req);
             }
         } catch (BrokerUnavailableException e) {
@@ -1449,7 +1449,7 @@ public class ExecutorWebhookController {
             // real post-add average open price on the next reconcile run, so any tranche-2
             // slippage self-corrects without special-casing it here.
             BigDecimal newEntry = position.qty().multiply(position.entryPrice())
-                    .add(trancheQty.multiply(orderPrice))
+                    .add(trancheQty.multiply(pxRounded))
                     .divide(newQty, 6, RoundingMode.HALF_UP);
 
             positionRepo.updateTranche2(position.id(), newQty, newEntry, brokerOrderId, placed.stopLegId());
@@ -1466,7 +1466,7 @@ public class ExecutorWebhookController {
                         position.sourceSignalId(), position.id(), brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyTranche2(position, trancheQty, orderPrice, newQty, newEntry,
+            executorNotifier.notifyTranche2(position, trancheQty, pxRounded, newQty, newEntry,
                     t2.reason(), connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(

@@ -2153,10 +2153,53 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
         JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.hasNonNull("stop_min")).isTrue();
+        assertThat(order.hasNonNull("stop_max")).isTrue();
+        assertThat(order.hasNonNull("stop_min_rounded")).isTrue();
+        assertThat(order.hasNonNull("stop_max_rounded")).isTrue();
         assertThat(order.path("stop_min").asDouble()).isEqualTo(93.5);
         assertThat(order.path("stop_max").asDouble()).isEqualTo(95.0);
         assertThat(order.path("stop_min_rounded").asDouble()).isEqualTo(93.5);
         assertThat(order.path("stop_max_rounded").asDouble()).isEqualTo(95.0);
+    }
+
+    @Test
+    void placeEntry_orderJsonRecordsRoundedStopBounds_offTick() {
+        // Off-tick variant of the test above: happyContext's on-tick fixture (price=100, atr=2)
+        // produces raw == rounded bounds, so a mutation that logs the RAW window
+        // (window.stopMin()/stopMax()) into stop_min_rounded/stop_max_rounded instead of the
+        // actually-rounded pair would still pass there. price=100.017, atr=2.006 (the same
+        // fixture used by placeEntry_stopWindowRule2Regression_buy) straddles a tick boundary on
+        // both bounds, so raw and rounded genuinely differ here:
+        //   orderPriceRounded = floor(100.017, 2) = 100.01
+        //   raw:     stop_max (anchor) = 100.01 - 2.5*2.006  = 94.9950
+        //            stop_min (floor)  = 100.01 - 3.25*2.006 = 93.4905
+        //   rounded: stop_max_rounded  = FLOOR(94.9950, 2)   = 94.99
+        //            stop_min_rounded  = CEILING(93.4905, 2) = 93.50
+        when(signalRepo.findById("s1")).thenReturn(signal("s1", 0.9, new BigDecimal("100.017")));
+        when(assembler.assemble(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("100.017"), new BigDecimal("2.006")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(1L);
+
+        JsonNode body = json("""
+                {"signal_id":"s1","symbol":"ACME","side":"BUY","limit_price":100.017,"stop_price":94}
+                """);
+
+        controller.placeEntry(BEARER, "run-bounds-off-tick", body);
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.hasNonNull("stop_min")).isTrue();
+        assertThat(order.hasNonNull("stop_max")).isTrue();
+        assertThat(order.hasNonNull("stop_min_rounded")).isTrue();
+        assertThat(order.hasNonNull("stop_max_rounded")).isTrue();
+        assertThat(order.path("stop_min").asDouble()).isEqualTo(93.4905);
+        assertThat(order.path("stop_max").asDouble()).isEqualTo(94.995);
+        assertThat(order.path("stop_min_rounded").asDouble()).isEqualTo(93.50);
+        assertThat(order.path("stop_max_rounded").asDouble()).isEqualTo(94.99);
     }
 
     @Test
