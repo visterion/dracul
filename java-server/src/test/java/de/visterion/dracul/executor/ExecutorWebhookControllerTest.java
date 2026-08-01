@@ -3492,8 +3492,12 @@ class ExecutorWebhookControllerTest {
     void addTranche_priceRoundsDownForBuyAt70505() {
         // R_CONFIRMED so eligibility fires independent of entryDayHigh/detector wiring; the mock
         // detector is fine here since this test is only about the rounding of ctx.price() itself.
+        // activeStop is intentionally NOT a round tick (55.004): a round stop makes
+        // stopLossStop() inert to a mutation that swaps the rounded stop for the raw one, or that
+        // rounds it in the wrong direction (roundStop -> roundTarget) -- both would be silently
+        // unasserted. BUY rounds the stop CEILING (toward the entry): 55.004 -> 55.01.
         ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
-                new BigDecimal("60"), new BigDecimal("55"), new BigDecimal("55"), null);
+                new BigDecimal("60"), new BigDecimal("55"), new BigDecimal("55.004"), null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
@@ -3512,12 +3516,18 @@ class ExecutorWebhookControllerTest {
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
         // BUY rounds the order price away from the fill -> floor.
         assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("70.50");
+        // BUY rounds the stop toward the entry -> ceiling. A live protective-stop leg: if this
+        // ever regresses to the raw activeStop, or to the wrong rounding direction, Saxo's
+        // per-leg rejection could leave the entry filled and the position unprotected.
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("55.01");
     }
 
     @Test
     void addTranche_priceRoundsUpForSellAt70505() {
+        // activeStop 85.006 is intentionally NOT a round tick, for the same reason as the BUY
+        // case above. SELL rounds the stop FLOOR (toward the entry): 85.006 -> 85.00.
         ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "SELL",
-                new BigDecimal("80"), new BigDecimal("85"), new BigDecimal("85"), null);
+                new BigDecimal("80"), new BigDecimal("85"), new BigDecimal("85.006"), null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
@@ -3536,6 +3546,9 @@ class ExecutorWebhookControllerTest {
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
         // SELL rounds the order price away from the fill -> ceiling.
         assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("70.51");
+        // SELL rounds the stop toward the entry -> floor. Same live-protective-stop rationale as
+        // the BUY case above.
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("85.00");
     }
 
     @Test
@@ -3550,6 +3563,13 @@ class ExecutorWebhookControllerTest {
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
         when(assembler.assembleForSymbol(any()))
                 .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("70.504"), new BigDecimal("2")));
+        // Stubbed even though a correct implementation never calls it: without this stub, a
+        // mutant that removes the collapse guard dies on an unrelated NPE (placeBracket()
+        // returning null) INSIDE the try block, before the never()-verification below ever runs
+        // -- a false diagnostic that happens to kill the mutant for the wrong reason. With the
+        // stub, a broken guard reaches the real assertion and fails on it directly.
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-x", "stop-x", null, "t2-sig-1", OrderStatus.WORKING));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"tranche-2 add"}
@@ -3576,9 +3596,15 @@ class ExecutorWebhookControllerTest {
         // rPerShare = floor(50.009)=50.00 minus ceil(44.991)=45.00 = 5.00; rounded risk 500.0.
         // heatPct is tuned so the heat ceiling (501.0) sits strictly between the two: sizing off
         // the raw pair would breach it, sizing off the rounded pair (what the controller actually
-        // does) passes. Direction: rounding SHRINKS risk here (BUY: entry rounds down toward the
-        // stop, stop rounds up toward the entry -- both directions narrow the window), so
-        // HEAT_LIMIT/BUDGET become easier to pass, never harder, from tick rounding alone.
+        // does) passes. Direction, precisely: PER-SHARE risk (rPerShare) never grows from tick
+        // rounding alone -- BUY rounds the entry down toward the stop and the stop up toward the
+        // entry, both narrowing the window. TOTAL risk (rPerShare * qty) is a different claim: it
+        // CAN grow, because qty = floor(trancheAmount / price) and a BUY entry that rounds down
+        // can push qty up by one whole share (see
+        // addTranche_qtyCanGrowByOneShare_whenRoundedEntryCrossesAFloorBoundary below, same
+        // price/trancheAmount deliberately reused to make the two tests' relationship visible).
+        // This test's trancheAmount (5005) is chosen so qty is unaffected by that effect (qty=100
+        // both raw and rounded) -- it isolates the per-share claim only.
         ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
                 new BigDecimal("45"), new BigDecimal("40"), new BigDecimal("44.991"), null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
@@ -3600,6 +3626,37 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(true);
         assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("100");
         verify(gateway).placeBracket(eq("depot-1"), any());
+    }
+
+    @Test
+    void addTranche_qtyCanGrowByOneShare_whenRoundedEntryCrossesAFloorBoundary() {
+        // trancheAmount=5000, price=50.009: raw qty = floor(5000/50.009) = floor(99.982) = 99.
+        // The BUY entry rounds DOWN (away from the fill, per TickSize.roundEntry) to 50.00, and
+        // floor(5000/50.00) = 100 -- rounding the entry price can push qty across a whole-share
+        // boundary and INCREASE total risk (99*5.018=496.78 raw vs 100*5.00=500.00 rounded), even
+        // though per-share risk (rPerShare) never grows. Default heatPct (0.06 -> ceiling 600)
+        // keeps this well clear of HEAT_LIMIT so the qty jump itself is what's under test.
+        ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
+                new BigDecimal("45"), new BigDecimal("40"), new BigDecimal("44.991"), null);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(assembler.assembleForSymbol(any())).thenReturn(withTrancheAmount(
+                withPriceAndAtr(happyContext(), new BigDecimal("50.009"), new BigDecimal("2")),
+                new BigDecimal("5000")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-7", "stop-7", null, "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        // Would be 99 if sized off the raw (unrounded) price.
+        assertThat(((BigDecimal) output.get("qty"))).isEqualByComparingTo("100");
     }
 
     // -------------------------------------------------------------------

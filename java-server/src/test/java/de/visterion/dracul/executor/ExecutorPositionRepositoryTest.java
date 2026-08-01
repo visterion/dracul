@@ -116,6 +116,7 @@ class ExecutorPositionRepositoryTest {
         assertThat(p.sector()).isEqualTo("Technology");
         assertThat(p.entryDayHigh()).isEqualByComparingTo("105.5");
         assertThat(p.tranche2OrderId()).isNull();
+        BigDecimal activeStopBefore = p.activeStop();
 
         repo.updateTranche2(id, new BigDecimal("20"), new BigDecimal("101.25"), "ord-2", "stop-2");
         ExecutorPosition after = repo.findById(id);
@@ -124,6 +125,12 @@ class ExecutorPositionRepositoryTest {
         assertThat(after.entryPrice()).isEqualByComparingTo("101.25");
         assertThat(after.tranche2OrderId()).isEqualTo("ord-2");
         assertThat(after.tranche2StopOrderId()).isEqualTo("stop-2");
+        // active_stop is deliberately NOT touched by updateTranche2 (see ExecutorWebhookController
+        // Task 4 notes): tranche 1 keeps its own leg at the old stop, tranche 2 gets a NEW leg at
+        // the rounded stop, and StopRatchetService skips tranche()>=2 positions, so nothing ever
+        // reconciles them. Writing here would make active_stop wrong for the LARGER (tranche-1)
+        // leg instead of the smaller one.
+        assertThat(after.activeStop()).isEqualByComparingTo(activeStopBefore);
     }
 
     @Test
