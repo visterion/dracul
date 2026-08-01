@@ -400,7 +400,7 @@ public class ExecutorWebhookController {
      * "unparseable" sentinel to decide null vs. a real value — never fabricated.
      */
     private ObjectNode inputsSnapshotNode(ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
-            VetoService.Outcome veto) {
+            BigDecimal orderPriceRounded, VetoService.Outcome veto) {
         ObjectNode n = mapper.createObjectNode();
         n.put("signal_confidence", signal.confidence());
         n.put("signal_mechanism", signal.mechanism());
@@ -408,6 +408,12 @@ public class ExecutorWebhookController {
         if (ageDays < 0) n.putNull("signal_age_trading_days");
         else n.put("signal_age_trading_days", ageDays);
         n.put("order_price", orderPrice);
+        // Tick-rounded price actually submitted (or that would have been submitted) to the
+        // broker — distinct from the raw order_price above, which stays the veto/calibration
+        // input. Both are needed on reject rows so an analyst can see the raw veto input AND
+        // the rounded price side by side (see the BROKER_ERROR/BELOW_ANCHOR production case
+        // that motivated this field).
+        n.put("submitted_price", orderPriceRounded);
         n.put("atr", ctx.atr());
         n.put("book_positions_count", ctx.openPositions() == null ? 0 : ctx.openPositions().size());
 
@@ -451,11 +457,12 @@ public class ExecutorWebhookController {
      *  {@code confidence} is the LLM's own decision confidence (0..1, optional tool argument),
      *  persisted as {@code confidence_in_decision} — the executor-side Brier/calibration input. */
     private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
-            BigDecimal orderPrice, VetoService.Outcome veto, String action, String reasonCode,
-            ObjectNode orderJson, Double confidence, Instant now) {
+            BigDecimal orderPrice, BigDecimal orderPriceRounded, VetoService.Outcome veto, String action,
+            String reasonCode, ObjectNode orderJson, Double confidence, Instant now) {
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
                 signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
-                inputsSnapshotNode(signal, ctx, orderPrice, veto), vetoResultsNode(veto.results()),
+                inputsSnapshotNode(signal, ctx, orderPrice, orderPriceRounded, veto),
+                vetoResultsNode(veto.results()),
                 action, reasonCode, orderJson, null, confidence,
                 latencyNode(signal.createdAt(), now), null));
     }
@@ -527,29 +534,69 @@ public class ExecutorWebhookController {
         // ctx.price() (only guaranteed non-null when ctx.missing() is empty) or calling the sizer
         // (which has no null guards) with absent inputs.
         BigDecimal orderPrice;
+        BigDecimal orderPriceRounded;
         Sizing sizing;
         StopWindow window = null;
         BigDecimal proposedStop = stopPrice;
         boolean stopClamped = false;
+        // The bounds StopWindowRounding actually used to arrive at the (possibly rounded) stop
+        // below — OrderGuard.check must be given THESE, not sizing.stopMin()/stopMax(): sizing
+        // always recomputes its own RAW window internally with no way to inject rounded bounds.
+        BigDecimal roundedStopMin = null;
+        BigDecimal roundedStopMax = null;
+        // Audit trail for a take-profit that tick-rounding collapses onto/through the entry (see
+        // below): the raw LLM value is preserved here even after `takeProfit` is nulled out, so
+        // decision_log can distinguish "the LLM sent none" from "one was sent and dropped".
+        BigDecimal proposedTakeProfit = takeProfit;
+        boolean takeProfitDropped = false;
         if (ctx.missing() == null || ctx.missing().isEmpty()) {
             // Risk layer is authoritative over the stop. Compute the sizer's stop window (pure fn
-            // of side/price/ATR/swing-low, independent of the proposed stop), clamp the LLM's
-            // proposed stop into it, then size from the clamped stop. NO_STOP can no longer fire
-            // on LLM input; it remains only as OrderGuard's defensive guard against a broken
-            // (null) server window.
+            // of side/price/ATR/swing-low, independent of the proposed stop) from the ROUNDED
+            // order price — the same price size() below is called with (StopWindowRounding rule
+            // 2) — round the proposed stop and the window bounds to the tick grid, clamp, then
+            // size from the result. NO_STOP can no longer fire on LLM input; it remains only as
+            // OrderGuard's defensive guard against a broken (null) server window.
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
-            window = sizer.stopWindow(side, orderPrice, ctx.atr(), ctx.swingLow());
-            if (window.stopMin() != null && window.stopMax() != null) {
-                BigDecimal clamped = stopPrice;
-                if (clamped == null || clamped.compareTo(window.stopMin()) < 0) clamped = window.stopMin();
-                else if (clamped.compareTo(window.stopMax()) > 0) clamped = window.stopMax();
-                stopClamped = (stopPrice == null) || clamped.compareTo(stopPrice) != 0;
-                stopPrice = clamped;               // authoritative stop used by guard, booking, take-profit
-            }
-            sizing = sizer.size(side, orderPrice, ctx.atr(), ctx.swingLow(), stopPrice,
+            orderPriceRounded = TickSize.roundEntry(side, orderPrice);
+
+            window = sizer.stopWindow(side, orderPriceRounded, ctx.atr(), ctx.swingLow());
+
+            // orderPriceRounded, not orderPrice: StopWindowRounding rule 2 requires the window to
+            // come from the SAME price size() below is called with. This call site is the only
+            // remaining place that rule can still be broken (StopWindowRounding itself cannot mix
+            // prices — it only ever takes one). See
+            // placeEntry_stopWindowRule2Regression_buy/_sell in the controller test suite, which
+            // fails under a mutation back to `orderPrice` here even though the whole rest of the
+            // suite stays green.
+            StopWindowRounding.Result stopResult = StopWindowRounding.compute(
+                    side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice, sizer);
+            stopPrice = stopResult.stop();          // authoritative stop used by guard, booking, take-profit
+            roundedStopMin = stopResult.stopMin();
+            roundedStopMax = stopResult.stopMax();
+            stopClamped = stopResult.clamped();
+
+            sizing = sizer.size(side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice,
                     ctx.trancheAmount(), ctx.fxToAccount());
+            if (takeProfit != null) {
+                takeProfit = TickSize.roundTarget(side, takeProfit);
+                // Rounding moves the target toward the entry (roundTarget: BUY floors, SELL
+                // ceilings); on a target already close to the entry this can collapse it onto or
+                // through orderPriceRounded (e.g. BUY entry 96.41, target 96.418 -> 96.41). A
+                // target at or past the entry is not a valid bracket leg — omit it rather than
+                // send a degenerate/invalid target (mirrors the "No synthetic take-profit"
+                // philosophy documented below at the guard/booking step: better absent than
+                // broken).
+                boolean collapsed = "BUY".equals(side)
+                        ? takeProfit.compareTo(orderPriceRounded) <= 0
+                        : takeProfit.compareTo(orderPriceRounded) >= 0;
+                if (collapsed) {
+                    takeProfit = null;
+                    takeProfitDropped = true;
+                }
+            }
         } else {
             orderPrice = null;
+            orderPriceRounded = null;
             sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false, null);
         }
 
@@ -568,7 +615,7 @@ public class ExecutorWebhookController {
             // Transiente Raten-/Kapazitätsdeckel disqualifizieren das Signal nicht -> PENDING
             // lassen, damit der nächste Executor-Lauf es erneut prüft (Obergrenze: SIGNAL_EXPIRED).
             signalRepo.markStatus(signalId, firstFailure.isTransient() ? "PENDING" : "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
                     clock.instant());
 
             // A detected contradiction co-rejects the pending peer — but only when the entering
@@ -597,7 +644,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
                     clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
@@ -610,8 +657,8 @@ public class ExecutorWebhookController {
         // through this controller today. Primary live-trading safety is the non-live Agora
         // trading token (saxo-live is physically unreachable). The guard's connection arm
         // becomes load-bearing only if per-request connection routing is added in a later slice.
-        OrderGuard.Result guard = orderGuard.check(side, qty, orderPrice, stopPrice,
-                sizing.stopMin(), sizing.stopMax(), connection, connection);
+        OrderGuard.Result guard = orderGuard.check(side, qty, orderPriceRounded, stopPrice,
+                roundedStopMin, roundedStopMax, connection, connection);
 
         if (!guard.ok()) {
             String reason = guard.reason().name();
@@ -620,7 +667,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
                     clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
@@ -687,12 +734,12 @@ public class ExecutorWebhookController {
                         "broker retry budget for this run exhausted: " + maxBrokerCallsPerRun
                                 + "/" + maxBrokerCallsPerRun,
                         null, runId, null));
-                logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT",
+                logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
                         "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant());
                 return ResponseEntity.ok(Map.of("output",
                         Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
             } else {
-                BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPrice,
+                BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPriceRounded,
                         stopPrice, takeProfit, signalId, null);
                 placed = gateway.placeBracket(connection, req);
             }
@@ -711,7 +758,7 @@ public class ExecutorWebhookController {
                 signalRepo.markStatus(signalId, "REJECTED");
             }
             // else: leave PENDING so a corrected retry (this run or a later run) can succeed
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", "BROKER_ERROR", null,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", "BROKER_ERROR", null,
                     confidence, clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
@@ -722,12 +769,12 @@ public class ExecutorWebhookController {
 
         try {
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
-                    signal.symbol(), side, qty, orderPrice, stopPrice, stopPrice, 1,
+                    signal.symbol(), side, qty, orderPriceRounded, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
-                    orderPrice, null, 0, null, null, null, null, stopOrderId,
+                    orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    orderPrice, null, null, null));
+                    orderPriceRounded, null, null, null));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 
@@ -740,7 +787,7 @@ public class ExecutorWebhookController {
                 ObjectNode orderJson = mapper.createObjectNode();
                 orderJson.put("type", "limit_bracket");
                 orderJson.put("qty", qty);
-                orderJson.put("limit_price", orderPrice);
+                orderJson.put("limit_price", orderPriceRounded);
                 orderJson.put("stop_price", stopPrice);
                 orderJson.put("take_profit", takeProfit);
                 orderJson.put("stop_basis", sizing.stopBasis());
@@ -749,9 +796,27 @@ public class ExecutorWebhookController {
                 orderJson.put("gtd_days", entryGtdDays);
                 orderJson.put("stop_clamped", stopClamped);
                 orderJson.put("proposed_stop", proposedStop);
+                // Raw window (the risk layer's un-tick-rounded stop anchor/floor), computed from
+                // orderPriceRounded — NOT a pre-branch/pre-tick-rounding value (there was no
+                // tick-rounding before this branch, so nothing here is "continuity" with it).
+                //
+                // Naming deviation from spec (deliberate, kept as-is): the spec's
+                // Audit-Konsistenz section wants the ENFORCED bounds in stop_min/stop_max and the
+                // raw ones in stop_min_raw/stop_max_raw. This code ships the opposite — raw in
+                // stop_min/stop_max, enforced in stop_min_rounded/stop_max_rounded below — to
+                // preserve the existing stop_min/stop_max key for dashboards/queries already
+                // reading it, avoiding a breaking rename. Do not "fix" this into a rename.
                 orderJson.put("stop_min", window != null ? window.stopMin() : null);
                 orderJson.put("stop_max", window != null ? window.stopMax() : null);
-                logEntryDecision(runId, signal, ctx, orderPrice, veto, "ENTER", null, orderJson,
+                // The bounds OrderGuard actually enforced (tick-rounded; equal to the raw window
+                // above only in the degenerate branch, where rounding is skipped entirely).
+                // Without this pair the audit trail cannot show why a stop next to a bound was
+                // accepted or rejected.
+                orderJson.put("stop_min_rounded", roundedStopMin);
+                orderJson.put("stop_max_rounded", roundedStopMax);
+                orderJson.put("proposed_take_profit", proposedTakeProfit);
+                orderJson.put("take_profit_dropped", takeProfitDropped);
+                logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
                         confidence, clock.instant());
             } catch (RuntimeException e) {
                 // Position and signal status are durably persisted — the order is managed.
@@ -762,7 +827,7 @@ public class ExecutorWebhookController {
                         signalId, positionId, brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyEntryPlaced(signal, side, qty, orderPrice, stopPrice, connection);
+            executorNotifier.notifyEntryPlaced(signal, side, qty, orderPriceRounded, stopPrice, connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,
@@ -1209,6 +1274,12 @@ public class ExecutorWebhookController {
         }
 
         String positionMechanism = resolvePositionMechanism(position.sourceSignalId());
+        // Rounding boundary: detect() gets the RAW ctx.price() — it decides ELIGIBILITY with a
+        // strict compareTo against entryDayHigh (Tranche2Detector.java:72-73), and ctx.price() is
+        // a market close, not an order price. Rounding it here could turn a today-eligible add
+        // (e.g. entryDayHigh 70.50, price 70.504) ineligible (70.50 > 70.50 is false). Same split
+        // as the entry path: decision raw, mechanics rounded. Everything from here down is
+        // mechanics and works on the rounded price/stop.
         Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(position, ctx.price(),
                 ctx.pendingSignals(), positionMechanism);
         if (!t2.eligible()) {
@@ -1218,12 +1289,39 @@ public class ExecutorWebhookController {
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
 
+        // Tick-round the order price (away from the fill, same as the entry path) and the
+        // position's existing active stop (toward the entry) onto the grid. StopWindowRounding is
+        // NOT reused here: that class clamps a freshly PROPOSED stop into a window derived from
+        // the rounded price, degeneracy-checked before the clamp -- none of which applies to a
+        // tranche-2 add, which sizes against the position's EXISTING active stop (never re-derived
+        // from current ATR/swing levels, see below) rather than a new proposal to be windowed.
+        // A plain TickSize.roundEntry/roundStop pair is the whole sequence this path needs.
+        BigDecimal pxRounded = TickSize.roundEntry(position.side(), ctx.price());
+        BigDecimal stopRounded = TickSize.roundStop(position.side(), position.activeStop());
+
+        // No OrderGuard runs on this path (none of :1180-:1360 calls orderGuard.check), so the
+        // collapse case OrderGuard would normally catch must be checked explicitly here: rounding
+        // the price and the stop independently can collapse a raw-valid pair onto the same tick
+        // (e.g. price 70.504 / stop 70.498 -> both 70.50). Reject with NO_STOP rather than send a
+        // zero-width (or inverted) bracket; a tranche has no signal status of its own to flip.
+        boolean stopValid = "BUY".equals(position.side())
+                ? stopRounded.compareTo(pxRounded) < 0
+                : stopRounded.compareTo(pxRounded) > 0;
+        if (!stopValid) {
+            String reason = RejectReason.NO_STOP.name();
+            decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
+                    reason, List.of(), "rejected: " + reason, null, runId, null));
+            return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
+        }
+
         // Tranche-2 sizing reuses the position's EXISTING active stop — it predates this add and
         // is never re-derived from the *current* ATR/swing levels, so PositionSizer.stopInWindow()
         // (which validates freshness against those current levels) is deliberately ignored here;
-        // only qty/risk outputs are used.
-        Sizing sizing = sizer.size(position.side(), ctx.price(), ctx.atr(), ctx.swingLow(),
-                position.activeStop(), ctx.trancheAmount(), ctx.fxToAccount());
+        // only qty/risk outputs are used. Sized from the ROUNDED price/stop, not the raw ones, so
+        // HEAT_LIMIT/BUDGET below see the same (possibly smaller) rPerShare the broker will
+        // actually work with.
+        Sizing sizing = sizer.size(position.side(), pxRounded, ctx.atr(), ctx.swingLow(),
+                stopRounded, ctx.trancheAmount(), ctx.fxToAccount());
 
         if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
             String reason = RejectReason.TRANCHE_TOO_SMALL.name();
@@ -1252,9 +1350,6 @@ public class ExecutorWebhookController {
                     reason, List.of(), "rejected: " + reason, null, runId, null));
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
         }
-
-        BigDecimal orderPrice = ctx.price();
-        BigDecimal stopPrice = position.activeStop();
 
         // Tranche 2 bekommt bewusst KEINEN eigenen Take-Profit. Der bis 2026-07-25 hier
         // synthetisierte 3R-Zielkurs lag bei +28 % vom Entry und wurde von Saxo mit
@@ -1349,8 +1444,8 @@ public class ExecutorWebhookController {
                     return ResponseEntity.ok(Map.of("output",
                             Map.of("placed", false, "reason", "MAX_BROKER_ATTEMPTS")));
                 }
-                BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, orderPrice,
-                        stopPrice, null, clientRef, null);
+                BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, pxRounded,
+                        stopRounded, null, clientRef, null);
                 placed = gateway.placeBracket(connection, req);
             }
         } catch (BrokerUnavailableException e) {
@@ -1369,7 +1464,7 @@ public class ExecutorWebhookController {
             // real post-add average open price on the next reconcile run, so any tranche-2
             // slippage self-corrects without special-casing it here.
             BigDecimal newEntry = position.qty().multiply(position.entryPrice())
-                    .add(trancheQty.multiply(orderPrice))
+                    .add(trancheQty.multiply(pxRounded))
                     .divide(newQty, 6, RoundingMode.HALF_UP);
 
             positionRepo.updateTranche2(position.id(), newQty, newEntry, brokerOrderId, placed.stopLegId());
@@ -1386,7 +1481,7 @@ public class ExecutorWebhookController {
                         position.sourceSignalId(), position.id(), brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyTranche2(position, trancheQty, orderPrice, newQty, newEntry,
+            executorNotifier.notifyTranche2(position, trancheQty, pxRounded, newQty, newEntry,
                     t2.reason(), connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
