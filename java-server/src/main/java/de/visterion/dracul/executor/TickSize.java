@@ -26,7 +26,13 @@ public final class TickSize {
         return price == null ? null : TICK;
     }
 
-    /** Entry: BUY ab-, SELL aufrunden — weg vom Fill. */
+    /**
+     * Entry: BUY ab-, SELL aufrunden — weg vom Fill.
+     *
+     * <p>Rounding never turns a positive price into a non-positive one. If the input is
+     * already zero or negative, it passes through unchanged; callers must veto non-positive
+     * prices before sizing (e.g., in {@code PositionSizer.java:35}).
+     */
     public static BigDecimal roundEntry(String side, BigDecimal price) {
         BigDecimal r = round(side, price, RoundingMode.FLOOR, RoundingMode.CEILING);
         // Nie 0 liefern: PositionSizer:35 teilt ohne Positivitaets-Guard durch den Preis.
@@ -35,7 +41,11 @@ public final class TickSize {
         return r;
     }
 
-    /** Stop: BUY auf-, SELL abrunden — hin zum Entry. */
+    /**
+     * Stop: BUY auf-, SELL abrunden — hin zum Entry. For initial protective stops only;
+     * trailing stops in {@code StopRatchetService} use the opposite direction (away from
+     * entry) intentionally to avoid premature stop-outs.
+     */
     public static BigDecimal roundStop(String side, BigDecimal price) {
         return round(side, price, RoundingMode.CEILING, RoundingMode.FLOOR);
     }
@@ -50,8 +60,8 @@ public final class TickSize {
         if (price == null) return null;
         String s = side == null ? "" : side.toUpperCase(Locale.ROOT);
         return switch (s) {
-            case "BUY"  -> price.setScale(2, buyMode);
-            case "SELL" -> price.setScale(2, sellMode);
+            case "BUY"  -> price.setScale(TICK.scale(), buyMode);
+            case "SELL" -> price.setScale(TICK.scale(), sellMode);
             default -> throw new IllegalArgumentException("unknown side: " + side);
         };
     }

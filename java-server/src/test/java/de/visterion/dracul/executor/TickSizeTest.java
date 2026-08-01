@@ -64,10 +64,19 @@ class TickSizeTest {
     // ArithmeticException und damit in einen HTTP-500 OHNE decision_log-Zeile — heute
     // laeuft derselbe Fall sauber ins LIQUIDITY-Veto.
     @Test
-    void roundEntry_neverReturnsZeroOrNegative() {
+    void roundEntry_doesNotRoundASubCentPriceDownToZero() {
         assertThat(TickSize.roundEntry("BUY", bd("0.004"))).usingComparator(BigDecimal::compareTo)
                 .isEqualTo(bd("0.004"));
         assertThat(TickSize.roundEntry("BUY", bd("0.004"))).isGreaterThan(BigDecimal.ZERO);
+    }
+
+    // Non-positive input passes through unchanged; callers must veto such prices before sizing.
+    @Test
+    void roundEntry_passesNonPositivePricesThrough() {
+        assertThat(TickSize.roundEntry("BUY", BigDecimal.ZERO)).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(BigDecimal.ZERO);
+        assertThat(TickSize.roundEntry("BUY", bd("-5.00"))).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(bd("-5.00"));
     }
 
     @Test
@@ -93,5 +102,20 @@ class TickSizeTest {
     void unknownSideIsRejected() {
         assertThatThrownBy(() -> TickSize.roundEntry("HOLD", bd("10.00")))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> TickSize.roundEntry(null, bd("10.00")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // toUpperCase allows lowercase sides.
+    @ParameterizedTest
+    @CsvSource({
+            "buy,  96.415,  96.41",
+            "sell, 96.415,  96.42",
+            "Buy,  151.345, 151.34",
+            "SELL, 151.345, 151.35",
+    })
+    void roundEntry_acceptsLowercaseAndMixedCaseSides(String side, String in, String want) {
+        assertThat(TickSize.roundEntry(side, bd(in))).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(bd(want));
     }
 }
