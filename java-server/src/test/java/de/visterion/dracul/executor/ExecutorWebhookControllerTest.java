@@ -173,8 +173,39 @@ class ExecutorWebhookControllerTest {
                 c.missing(), c.quoteCurrency());
     }
 
+    private static EntryContext withTrancheAmount(EntryContext c, BigDecimal trancheAmount) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), trancheAmount,
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing(), c.quoteCurrency());
+    }
+
+    /** Also raises adv20Notional to keep the LIQUIDITY veto's adv-multiple check satisfied
+     *  (adv20Notional must be >= trancheAmount * advMultiple, advMultiple=200 in this test's
+     *  controller wiring) — a fixture that only bumps trancheAmount without this would trip
+     *  LIQUIDITY for an unrelated reason. */
+    private static EntryContext withTrancheAmountAndAdv(EntryContext c, BigDecimal trancheAmount) {
+        EntryContext withTranche = withTrancheAmount(c, trancheAmount);
+        return new EntryContext(withTranche.account(), withTranche.price(), withTranche.atr(),
+                withTranche.swingLow(), trancheAmount.multiply(BigDecimal.valueOf(200 * 2L)),
+                withTranche.dayHigh(), withTranche.candidateSector(), withTranche.openPositions(),
+                withTranche.activeCooldowns(), withTranche.pendingSignals(), withTranche.entriesThisWeek(),
+                withTranche.signalAgeTradingDays(), withTranche.trancheAmount(), withTranche.totalBudget(),
+                withTranche.openExposure(), withTranche.openHeat(), withTranche.openMechanisms(),
+                withTranche.fxToAccount(), withTranche.missing(), withTranche.quoteCurrency());
+    }
+
     private static EntryContext withPrice(EntryContext c, BigDecimal price) {
         return new EntryContext(c.account(), price, c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing(), c.quoteCurrency());
+    }
+
+    private static EntryContext withPriceAndAtr(EntryContext c, BigDecimal price, BigDecimal atr) {
+        return new EntryContext(c.account(), price, atr, c.swingLow(), c.adv20Notional(),
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
@@ -1521,8 +1552,9 @@ class ExecutorWebhookControllerTest {
     @Test
     void placeEntry_limitPriceWinsAsBasis() {
         // An LLM-supplied limit_price=99 must win over ctx.price()=100 as the single order-price
-        // basis for sizing and booking (BracketRequest.limitPrice itself is untouched -- it always
-        // carries the LLM's raw argument, null or not).
+        // basis for sizing and booking. BracketRequest.limitPrice carries the tick-rounded order
+        // price (orderPriceRounded), not the LLM's raw argument -- here they happen to coincide
+        // because 99 already sits on the 0.01 grid.
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
@@ -1657,6 +1689,333 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway, times(1)).placeBracket(eq("depot-1"), reqCaptor.capture());
         assertThat(reqCaptor.getValue().takeProfitLimit()).isEqualByComparingTo("108");
+    }
+
+    // -------------------------------------------------------------------
+    // place-entry: tick-grid rounding (StopWindowRounding + orderPriceRounded split)
+    //
+    // Table this section pins: veto/log inputs get the RAW orderPrice; everything that reaches
+    // the broker or the book (BracketRequest, ExecutorPosition, order_json) gets
+    // orderPriceRounded / the StopWindowRounding-derived stop. See ExecutorWebhookController
+    // :529-598 and StopWindowRounding.
+    // -------------------------------------------------------------------
+
+    @Test
+    void placeEntry_belowAnchorRegressionGate_rawPriceFedToVeto_roundedPriceInBracket() {
+        // Reproduces the HAS/KALU/GSHD production loss: BELOW_ANCHOR compares the effective entry
+        // price against referencePrice with a ZERO-width band for drift-anchor mechanisms (PEAD),
+        // i.e. it demands eff >= referencePrice exactly. referencePrice == limit_price == 96.415
+        // (not on the 0.01 grid). If orderPrice were rounded DOWN to 96.41 before reaching the
+        // veto (the bug this task closes), eff(96.41) < referencePrice(96.415) and BELOW_ANCHOR
+        // would wrongly reject a signal that is exactly at its anchor. The veto must see the RAW
+        // 96.415; only the broker-bound BracketRequest may see the rounded 96.41.
+        ExecutorSignal sig = signal("sig-1", 0.9, new BigDecimal("96.415"), "PENDING", "PEAD");
+        when(signalRepo.findById("sig-1")).thenReturn(sig);
+        // Market price close enough to the reference that CHASED_AWAY (chaseAtrMult=1.0xATR=2)
+        // does not also fire and mask which veto this test is actually pinning.
+        when(assembler.assemble(any())).thenReturn(withPrice(happyContext(), new BigDecimal("97")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":96.415}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(decisionRepo, never()).insert(argThat(d -> "BELOW_ANCHOR".equals(d.rejectReason())));
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("96.41");
+    }
+
+    @Test
+    void placeEntry_rawOrderPriceInAuditSnapshot_neverRounded() {
+        // BELOW_ANCHOR and PATTERN_GATE (VetoService.java:359, :266) both read the same
+        // `orderPrice` argument passed into vetoService.evaluate(...) — there is exactly one
+        // raw-price channel into the whole veto catalog, and this pins that it is never
+        // reassigned to the rounded value. The decision_log audit snapshot is fed from the
+        // identical variable (:578-ish `logEntryDecision(..., orderPrice, ...)`), so asserting it
+        // here is equivalent to asserting it for every veto that reads orderPrice, not just
+        // BELOW_ANCHOR.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.017,"stop_price":94}
+                """);
+
+        controller.placeEntry(BEARER, "run-audit", body);
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().inputsSnapshot().path("order_price").asDouble())
+                .isEqualTo(100.017);
+
+        // Meanwhile the broker/book-bound price is rounded.
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("100.01");
+    }
+
+    @Test
+    void placeEntry_subCentPrices_reachTheBrokerOnTick() {
+        // Representative sub-cent fixtures in the shape of the three signals actually lost in
+        // production (HAS/KALU/GSHD: a limit_price and/or stop_price carrying more than 2 decimal
+        // places, since the LLM proposes prices with no tick-grid awareness) — not the literal
+        // production values (not available in this environment), but constructed to exercise the
+        // same rounding path. Every price field that reaches the broker must land exactly on the
+        // 0.01 grid.
+        BigDecimal tick = new BigDecimal("0.01");
+
+        record Fixture(String signalId, String side, BigDecimal limitPrice, BigDecimal atr, BigDecimal stopPrice) {}
+        // ATR scaled to each fixture's own price (happyContext's default ATR=2 is unrealistic
+        // against a single-digit stock and blows the 6% HEAT_LIMIT veto for kalu-1) so all three
+        // reach the broker and this test is actually about on-tick delivery, not risk sizing.
+        List<Fixture> fixtures = List.of(
+                new Fixture("has-1", "BUY", new BigDecimal("18.4137"), new BigDecimal("1.0"), new BigDecimal("17.229")),
+                new Fixture("kalu-1", "BUY", new BigDecimal("6.0053"), new BigDecimal("0.3"), new BigDecimal("5.512")),
+                new Fixture("gshd-1", "SELL", new BigDecimal("42.996"), new BigDecimal("1.5"), new BigDecimal("45.204")));
+
+        for (Fixture f : fixtures) {
+            reset(gateway, positionRepo);
+            ExecutorSignal sig = "SELL".equals(f.side())
+                    ? new ExecutorSignal(f.signalId(), "hunter", "v1", "ACME", "SELL",
+                            0.9, "mechanism", List.of("X"), "3m", f.limitPrice(), "PENDING",
+                            "2026-07-01T00:00:00Z")
+                    : signal(f.signalId(), 0.9, f.limitPrice());
+            when(signalRepo.findById(f.signalId())).thenReturn(sig);
+            // Market price pinned to the fixture's own limit_price (drift 0) so CHASED_AWAY /
+            // BELOW_ANCHOR never fire for an unrelated reason -- this test is about on-tick
+            // delivery, not veto thresholds.
+            when(assembler.assemble(any())).thenReturn(withPriceAndAtr(happyContext(), f.limitPrice(), f.atr()));
+            when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                    .thenReturn(new PlacedBracket("brk-" + f.signalId(), "stop-" + f.signalId(),
+                            null, f.signalId(), OrderStatus.WORKING));
+            when(positionRepo.insert(any())).thenReturn(1L);
+
+            JsonNode body = json(String.format(java.util.Locale.ROOT,
+                    "{\"signal_id\":\"%s\",\"symbol\":\"ACME\",\"side\":\"%s\",\"limit_price\":%s,\"stop_price\":%s}",
+                    f.signalId(), f.side(), f.limitPrice(), f.stopPrice()));
+
+            controller.placeEntry(BEARER, null, body);
+
+            ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+            verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+            BracketRequest req = reqCaptor.getValue();
+            assertThat(req.limitPrice().remainder(tick).signum())
+                    .as(f.signalId() + " limit_price on-tick").isZero();
+            assertThat(req.stopLossStop().remainder(tick).signum())
+                    .as(f.signalId() + " stop_price on-tick").isZero();
+        }
+    }
+
+    @Test
+    void placeEntry_dbBrokerAndAuditPriceFieldsAgree_allFiveFields() {
+        // DB <-> broker <-> order_json must be byte-identical (via compareTo) across all five
+        // tick-rounded price fields, using a fixture where BOTH the entry and the stop are
+        // sub-cent so rounding actually moves both.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.017,"stop_price":94.005}
+                """);
+
+        controller.placeEntry(BEARER, "run-5fields", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        assertThat(req.limitPrice()).isEqualByComparingTo("100.01");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("94.01");
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        ExecutorPosition pos = posCaptor.getValue();
+        assertThat(pos.entryPrice()).usingComparator(BigDecimal::compareTo).isEqualTo(req.limitPrice());
+        assertThat(pos.initialStop()).usingComparator(BigDecimal::compareTo).isEqualTo(req.stopLossStop());
+        assertThat(pos.activeStop()).usingComparator(BigDecimal::compareTo).isEqualTo(req.stopLossStop());
+        assertThat(pos.highestPrice()).usingComparator(BigDecimal::compareTo).isEqualTo(req.limitPrice());
+        assertThat(pos.submittedLimitPrice()).usingComparator(BigDecimal::compareTo).isEqualTo(req.limitPrice());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(new BigDecimal(order.path("limit_price").asString()))
+                .usingComparator(BigDecimal::compareTo).isEqualTo(req.limitPrice());
+        assertThat(new BigDecimal(order.path("stop_price").asString()))
+                .usingComparator(BigDecimal::compareTo).isEqualTo(req.stopLossStop());
+    }
+
+    @Test
+    void placeEntry_sizingUsesTheRoundedPrice_notionalStaysWithinTranche() {
+        // trancheAmount=10000, limit_price=100.005 (rounds DOWN to 100.00 for BUY) -> sizing off
+        // the SAME rounded price the broker will actually fill at: qty=floor(10000/100.00)=100,
+        // notional=100*100.00=10000.00, exactly at (never over) the tranche budget. Sizing off the
+        // raw 100.005 would floor to qty=99, understating what the sizer itself will size once
+        // rule 2 (window/size share the rounded price) is honoured everywhere.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(withTrancheAmountAndAdv(happyContext(), new BigDecimal("10000")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.005,"stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, null, body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        BracketRequest req = reqCaptor.getValue();
+        assertThat(req.limitPrice()).isEqualByComparingTo("100.00");
+        assertThat(req.qty()).isEqualByComparingTo("100");
+        BigDecimal notional = req.qty().multiply(req.limitPrice());
+        assertThat(notional).isEqualByComparingTo("10000.00");
+        assertThat(notional.compareTo(new BigDecimal("10000"))).isLessThanOrEqualTo(0);
+    }
+
+    @Test
+    void placeEntry_serverWindowNull_stopStillTickRounded() {
+        // Even with a defensive null window (real PositionSizer never returns one; only a mock
+        // simulates a broken server window), StopWindowRounding still tick-rounds the proposed
+        // stop on its own -- there is just no bound to clamp it into.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        PositionSizer brokenSizer = mock(PositionSizer.class);
+        when(brokenSizer.stopWindow(any(), any(), any(), any()))
+                .thenReturn(new StopWindow(null, null, "broken"));
+        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new Sizing(new BigDecimal("10"), new BigDecimal("6"),
+                        new BigDecimal("60"), null, null, true, "broken"));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        // 94.005 is not on the 0.01 grid; BUY rounds a stop CEILING -> 94.01.
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":94.005}
+                """);
+
+        ResponseEntity<?> resp = controllerWithSizer(brokenSizer).placeEntry(BEARER, null, body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("94.01");
+    }
+
+    @Test
+    void placeEntry_missingData_takeProfitPresentInBody_noNpe() {
+        // ctx.missing() non-empty -> orderPrice/orderPriceRounded stay null and the takeProfit
+        // rounding block (guarded by the same branch) must never execute -- touching it in the
+        // else-branch would NPE on the null orderPriceRounded. This is the concrete regression a
+        // careless placement of the take-profit-rounding code would trip.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(unavailableContext());
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95,"take_profit":108}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("DATA_UNAVAILABLE");
+        verifyNoInteractions(gateway);
+    }
+
+    @Test
+    void placeEntry_takeProfitCollapsesOntoRoundedEntry_becomesNull_bracketStillPlaced() {
+        // BUY entry 96.41 (already on-tick), take_profit 96.418 -> roundTarget floors it to 96.41,
+        // exactly the entry: not a valid target for a long (must be strictly above entry). The
+        // rounded target is dropped (null) rather than sent as a degenerate/rejected leg; the
+        // bracket still goes out with its stop.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("96.41")));
+        when(assembler.assemble(any())).thenReturn(withPrice(happyContext(), new BigDecimal("96.41")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", null, "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":96.41,"stop_price":90,"take_profit":96.418}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-tp-collapse", body);
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().takeProfitLimit()).isNull();
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("96.41");
+    }
+
+    @Test
+    void placeEntry_proposedStopAuditsRawValue_stopClampedFalseWhenOnlyRounded() {
+        // proposed_stop must carry the raw LLM value verbatim (never rounded/clamped), and
+        // stop_clamped must be FALSE when the final stop differs from the proposal only because
+        // it was tick-rounded, not because a window bound actually bound it.
+        // happyContext: price=100, atr=2, no swingLow -> BUY window [93.5, 95]. A proposal of 94.6
+        // is inside that window; TickSize.roundStop("BUY", 94.6) = CEILING = 94.6 already on-tick
+        // -> no visible change at all here, so pick a genuinely sub-cent in-window proposal.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        // 94.006 is inside [93.5, 95] and rounds (CEILING) to 94.01, still comfortably inside the
+        // window -- so the final stop differs from the proposal by rounding only, not clamping.
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":94.006}
+                """);
+
+        controller.placeEntry(BEARER, "run-proposed-stop", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("94.01");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("proposed_stop").asDouble()).isEqualTo(94.006);
+        assertThat(order.path("stop_clamped").asBoolean()).isFalse();
+    }
+
+    @Test
+    void placeEntry_stopActuallyClampedByWindow_stopClampedTrue() {
+        // Mirror of the test above: a proposal outside the window is genuinely clamped, and
+        // stop_clamped must stay TRUE (unchanged behavior, not weakened by the new rounding step).
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":98.5}
+                """);
+
+        controller.placeEntry(BEARER, "run-clamped", body);
+
+        ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
+        assertThat(reqCaptor.getValue().stopLossStop()).isEqualByComparingTo("95");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode order = logCaptor.getValue().orderJson();
+        assertThat(order.path("proposed_stop").asDouble()).isEqualTo(98.5);
+        assertThat(order.path("stop_clamped").asBoolean()).isTrue();
     }
 
     // -------------------------------------------------------------------

@@ -527,29 +527,64 @@ public class ExecutorWebhookController {
         // ctx.price() (only guaranteed non-null when ctx.missing() is empty) or calling the sizer
         // (which has no null guards) with absent inputs.
         BigDecimal orderPrice;
+        BigDecimal orderPriceRounded;
         Sizing sizing;
         StopWindow window = null;
         BigDecimal proposedStop = stopPrice;
         boolean stopClamped = false;
+        // The bounds StopWindowRounding actually used to arrive at the (possibly rounded) stop
+        // below — OrderGuard.check must be given THESE, not sizing.stopMin()/stopMax(): sizing
+        // always recomputes its own RAW window internally with no way to inject rounded bounds.
+        BigDecimal roundedStopMin = null;
+        BigDecimal roundedStopMax = null;
         if (ctx.missing() == null || ctx.missing().isEmpty()) {
             // Risk layer is authoritative over the stop. Compute the sizer's stop window (pure fn
-            // of side/price/ATR/swing-low, independent of the proposed stop), clamp the LLM's
-            // proposed stop into it, then size from the clamped stop. NO_STOP can no longer fire
-            // on LLM input; it remains only as OrderGuard's defensive guard against a broken
-            // (null) server window.
+            // of side/price/ATR/swing-low, independent of the proposed stop) from the ROUNDED
+            // order price — the same price size() below is called with (StopWindowRounding rule
+            // 2) — round the proposed stop and the window bounds to the tick grid, clamp, then
+            // size from the result. NO_STOP can no longer fire on LLM input; it remains only as
+            // OrderGuard's defensive guard against a broken (null) server window.
+            //
+            // stopRounded is only used to decide stopClamped below (whether the FINAL stop
+            // differs from a plain tick-rounding of the LLM's proposal, i.e. whether a window
+            // bound actually bound) — the authoritative stop-to-send comes from
+            // StopWindowRounding, which re-derives its own rounded value internally.
+            BigDecimal stopRounded = TickSize.roundStop(side, stopPrice);
+
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
-            window = sizer.stopWindow(side, orderPrice, ctx.atr(), ctx.swingLow());
-            if (window.stopMin() != null && window.stopMax() != null) {
-                BigDecimal clamped = stopPrice;
-                if (clamped == null || clamped.compareTo(window.stopMin()) < 0) clamped = window.stopMin();
-                else if (clamped.compareTo(window.stopMax()) > 0) clamped = window.stopMax();
-                stopClamped = (stopPrice == null) || clamped.compareTo(stopPrice) != 0;
-                stopPrice = clamped;               // authoritative stop used by guard, booking, take-profit
-            }
-            sizing = sizer.size(side, orderPrice, ctx.atr(), ctx.swingLow(), stopPrice,
+            orderPriceRounded = TickSize.roundEntry(side, orderPrice);
+
+            window = sizer.stopWindow(side, orderPriceRounded, ctx.atr(), ctx.swingLow());
+
+            StopWindowRounding.Result stopResult = StopWindowRounding.compute(
+                    side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice, sizer);
+            stopPrice = stopResult.stop();          // authoritative stop used by guard, booking, take-profit
+            roundedStopMin = stopResult.stopMin();
+            roundedStopMax = stopResult.stopMax();
+            stopClamped = (stopRounded == null) || (stopPrice == null)
+                    || stopPrice.compareTo(stopRounded) != 0;
+
+            sizing = sizer.size(side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice,
                     ctx.trancheAmount(), ctx.fxToAccount());
+            if (takeProfit != null) {
+                takeProfit = TickSize.roundTarget(side, takeProfit);
+                // Rounding moves the target toward the entry (roundTarget: BUY floors, SELL
+                // ceilings); on a target already close to the entry this can collapse it onto or
+                // through orderPriceRounded (e.g. BUY entry 96.41, target 96.418 -> 96.41). A
+                // target at or past the entry is not a valid bracket leg — omit it rather than
+                // send a degenerate/invalid target (mirrors the "No synthetic take-profit"
+                // philosophy documented below at the guard/booking step: better absent than
+                // broken).
+                boolean collapsed = "BUY".equals(side)
+                        ? takeProfit.compareTo(orderPriceRounded) <= 0
+                        : takeProfit.compareTo(orderPriceRounded) >= 0;
+                if (collapsed) {
+                    takeProfit = null;
+                }
+            }
         } else {
             orderPrice = null;
+            orderPriceRounded = null;
             sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false, null);
         }
 
@@ -610,8 +645,8 @@ public class ExecutorWebhookController {
         // through this controller today. Primary live-trading safety is the non-live Agora
         // trading token (saxo-live is physically unreachable). The guard's connection arm
         // becomes load-bearing only if per-request connection routing is added in a later slice.
-        OrderGuard.Result guard = orderGuard.check(side, qty, orderPrice, stopPrice,
-                sizing.stopMin(), sizing.stopMax(), connection, connection);
+        OrderGuard.Result guard = orderGuard.check(side, qty, orderPriceRounded, stopPrice,
+                roundedStopMin, roundedStopMax, connection, connection);
 
         if (!guard.ok()) {
             String reason = guard.reason().name();
@@ -692,7 +727,7 @@ public class ExecutorWebhookController {
                 return ResponseEntity.ok(Map.of("output",
                         Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
             } else {
-                BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPrice,
+                BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPriceRounded,
                         stopPrice, takeProfit, signalId, null);
                 placed = gateway.placeBracket(connection, req);
             }
@@ -722,12 +757,12 @@ public class ExecutorWebhookController {
 
         try {
             long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
-                    signal.symbol(), side, qty, orderPrice, stopPrice, stopPrice, 1,
+                    signal.symbol(), side, qty, orderPriceRounded, stopPrice, stopPrice, 1,
                     null, signal.killCriteria(), signalId, signal.source(), null, null,
                     "OPEN", brokerOrderId,
-                    orderPrice, null, 0, null, null, null, null, stopOrderId,
+                    orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    orderPrice, null, null, null));
+                    orderPriceRounded, null, null, null));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 
@@ -740,7 +775,7 @@ public class ExecutorWebhookController {
                 ObjectNode orderJson = mapper.createObjectNode();
                 orderJson.put("type", "limit_bracket");
                 orderJson.put("qty", qty);
-                orderJson.put("limit_price", orderPrice);
+                orderJson.put("limit_price", orderPriceRounded);
                 orderJson.put("stop_price", stopPrice);
                 orderJson.put("take_profit", takeProfit);
                 orderJson.put("stop_basis", sizing.stopBasis());
@@ -762,7 +797,7 @@ public class ExecutorWebhookController {
                         signalId, positionId, brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyEntryPlaced(signal, side, qty, orderPrice, stopPrice, connection);
+            executorNotifier.notifyEntryPlaced(signal, side, qty, orderPriceRounded, stopPrice, connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,

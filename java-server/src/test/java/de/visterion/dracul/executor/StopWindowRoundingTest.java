@@ -8,17 +8,11 @@ import java.math.RoundingMode;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Pins the stop-window tick-rounding invariants that the entry-path rework (next task) must
- * produce. {@link PositionSizer} and {@link OrderGuard} are unmodified by this task — these
- * tests assemble the future entry-path pipeline (round entry / round window bounds via
- * {@link TickSize}, clamp, then call the existing pure {@code sizer.size}/{@code orderGuard.check})
- * the same way {@code ExecutorWebhookController} does today at lines 540-550 and 613-614, except
- * with {@link TickSize} rounding inserted. Several assertions are RED on purpose: they fail
- * against the naive (rounding, then reusing the existing unmodified clamp/size/guard calls
- * as-is) pipeline, which is exactly the gap the next task has to close.
- *
- * <p>Deliberately not testing "no rounding at all" (that already passes trivially, since neither
- * PositionSizer nor OrderGuard perform any rounding) — that would prove nothing.
+ * Pins the stop-window tick-rounding invariants of {@link StopWindowRounding}, the pure helper
+ * that {@code ExecutorWebhookController} calls on the entry path (formerly lines 540-550 and
+ * 613-614). {@link PositionSizer} and {@link OrderGuard} are unmodified — these tests exercise
+ * the helper directly, plus the primitives it is built from, so every assertion binds to
+ * production code.
  */
 class StopWindowRoundingTest {
 
@@ -27,7 +21,9 @@ class StopWindowRoundingTest {
 
     private static BigDecimal bd(String s) { return new BigDecimal(s); }
 
-    /** Mirrors the clamp in ExecutorWebhookController.java:542-547. */
+    /** Mirrors the clamp inside {@link StopWindowRounding} / (formerly) ExecutorWebhookController
+     *  at :542-547 — used here only where a test needs to reconstruct the OLD (pre-helper)
+     *  behavior for comparison. */
     private static BigDecimal clamp(BigDecimal proposed, BigDecimal min, BigDecimal max) {
         BigDecimal clamped = proposed;
         if (clamped == null || clamped.compareTo(min) < 0) {
@@ -44,6 +40,8 @@ class StopWindowRoundingTest {
      * move toward the window's interior, which guarantees {@code [rounded] subset of [raw]}.
      * {@link TickSize#roundStop} is deliberately NOT used here: it only knows one direction per
      * side (toward the entry), so applying it to both bounds necessarily widens one of them.
+     * Mirrors {@link StopWindowRounding}'s private rounding of the bounds so tests can predict
+     * its output without depending on its internals.
      */
     private static BigDecimal roundBoundMinInward(BigDecimal stopMin) {
         return stopMin.setScale(2, RoundingMode.CEILING);
@@ -68,29 +66,26 @@ class StopWindowRoundingTest {
         BigDecimal price = bd("1.50");
         BigDecimal atr = bd("0.03");
         BigDecimal swingLow = bd("1.399");
+        BigDecimal orderPriceRounded = TickSize.roundEntry("BUY", price);
 
-        StopWindow rawWindow = sizer.stopWindow("BUY", price, atr, swingLow);
+        StopWindow rawWindow = sizer.stopWindow("BUY", orderPriceRounded, atr, swingLow);
         assertThat(rawWindow.stopMax().subtract(rawWindow.stopMin()))
                 .isLessThan(TickSize.tickFor(price)); // window narrower than one tick
-
-        BigDecimal roundedEntry = TickSize.roundEntry("BUY", price);
-        BigDecimal roundedMin = roundBoundMinInward(rawWindow.stopMin());
-        BigDecimal roundedMax = roundBoundMaxInward(rawWindow.stopMax());
-        // Correct inward rounding of a sub-tick window inverts it: no valid clamp target exists.
-        // This is the real degeneracy, independent of which rounding tool is used for the bounds
-        // — it is why the degeneracy check must run BEFORE the clamp.
-        assertThat(roundedMin).isGreaterThan(roundedMax);
+        assertThat(roundBoundMinInward(rawWindow.stopMin()))
+                .isGreaterThan(roundBoundMaxInward(rawWindow.stopMax())); // inward rounding inverts it
 
         // Proposal far outside the window on the low side, exactly as an LLM proposal that
         // ignores the risk layer would look.
-        BigDecimal clamped = clamp(bd("1.00"), roundedMin, roundedMax);
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "BUY", orderPriceRounded, atr, swingLow, bd("1.00"), sizer);
 
-        Sizing sizing = sizer.size("BUY", roundedEntry, atr, swingLow, clamped, bd("1000"), BigDecimal.ONE);
-        OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), roundedEntry, clamped,
-                sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
+        assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_BUY);
+
+        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, swingLow, result.stop(), bd("1000"), BigDecimal.ONE);
+        OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, result.stop(),
+                result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
         assertThat(guard.reason()).isNull(); // must not be NO_STOP from a rounding artifact
-        assertThat(clamped).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_BUY);
     }
 
     @Test
@@ -98,24 +93,24 @@ class StopWindowRoundingTest {
         BigDecimal price = bd("1.50");
         BigDecimal atr = bd("0.03");
         BigDecimal swingHigh = bd("1.601");
+        BigDecimal orderPriceRounded = TickSize.roundEntry("SELL", price);
 
-        StopWindow rawWindow = sizer.stopWindow("SELL", price, atr, swingHigh);
+        StopWindow rawWindow = sizer.stopWindow("SELL", orderPriceRounded, atr, swingHigh);
         assertThat(rawWindow.stopMax().subtract(rawWindow.stopMin()))
                 .isLessThan(TickSize.tickFor(price));
+        assertThat(roundBoundMinInward(rawWindow.stopMin()))
+                .isGreaterThan(roundBoundMaxInward(rawWindow.stopMax())); // inverted, same as the BUY mirror
 
-        BigDecimal roundedEntry = TickSize.roundEntry("SELL", price);
-        BigDecimal roundedMin = roundBoundMinInward(rawWindow.stopMin());
-        BigDecimal roundedMax = roundBoundMaxInward(rawWindow.stopMax());
-        assertThat(roundedMin).isGreaterThan(roundedMax); // inverted, same as the BUY mirror
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "SELL", orderPriceRounded, atr, swingHigh, bd("2.00"), sizer);
 
-        BigDecimal clamped = clamp(bd("2.00"), roundedMin, roundedMax);
+        assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_SELL);
 
-        Sizing sizing = sizer.size("SELL", roundedEntry, atr, swingHigh, clamped, bd("1000"), BigDecimal.ONE);
-        OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), roundedEntry, clamped,
-                sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
+        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, swingHigh, result.stop(), bd("1000"), BigDecimal.ONE);
+        OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), orderPriceRounded, result.stop(),
+                result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
         assertThat(guard.reason()).isNull();
-        assertThat(clamped).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_SELL);
     }
 
     // ---- P1: risk-per-share bound. The old claim "only SELL is affected" was wrong: for BUY,
@@ -125,10 +120,9 @@ class StopWindowRoundingTest {
     // neither the anchor nor the entry lands on a tick), proposal far tighter than the anchor so
     // the clamp binds at the tight bound on both sides.
     //
-    // The ROUNDED-side window is derived from roundedEntry (the same price passed to size()
-    // below) — not from the raw price. Deriving it from the raw price would be exactly the
-    // two-price mistake :262/:315 exist to rule out; these two tests must not model it, or an
-    // implementer reading them as exemplars would build the wrong pipeline.
+    // The ROUNDED-side window is derived (inside StopWindowRounding) from roundedEntry (the same
+    // price passed to size() below) — not from the raw price. Deriving it from the raw price
+    // would be exactly the two-price mistake StopWindowRounding exists to rule out.
 
     @Test
     void riskPerShareChangesByAtMostOneTick_buyBindingAtStopMax() {
@@ -141,22 +135,21 @@ class StopWindowRoundingTest {
         Sizing rawSizing = sizer.size("BUY", price, atr, null, clampedRaw, bd("1000"), BigDecimal.ONE);
 
         BigDecimal roundedEntry = TickSize.roundEntry("BUY", price);
-        StopWindow roundedWindow = sizer.stopWindow("BUY", roundedEntry, atr, null); // same price as size() below
-        BigDecimal roundedMin = roundBoundMinInward(roundedWindow.stopMin());
-        BigDecimal roundedMax = roundBoundMaxInward(roundedWindow.stopMax());
-        BigDecimal clampedRounded = clamp(proposed, roundedMin, roundedMax);
-        Sizing roundedSizing = sizer.size("BUY", roundedEntry, atr, null, clampedRounded, bd("1000"), BigDecimal.ONE);
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "BUY", roundedEntry, atr, null, proposed, sizer);
+        Sizing roundedSizing = sizer.size("BUY", roundedEntry, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
 
         BigDecimal delta = roundedSizing.rPerShare().subtract(rawSizing.rPerShare()).abs();
         assertThat(delta).isLessThanOrEqualTo(TickSize.tickFor(price));
     }
 
-    // Not vacuous: unlike the BUY twin above, the ≤1-tick envelope alone survives EITHER
+    // Not vacuous: unlike the BUY twin above, the <=1-tick envelope alone survives EITHER
     // direction of a stopMin bound-rounding mutation here (delta stays 0.005 whether stopMin
     // rounds CEILING or FLOOR for this fixture), so it would not catch a regression. Asserting
-    // the exact rPerShare values closes that gap: mutating roundBoundMinInward from CEILING to
-    // FLOOR changes the rounded stop from 108.35 to 108.34, which the exact-value assertion below
-    // catches (rPerShare 8.32 instead of 8.33) even though the envelope check would still pass.
+    // the exact rPerShare values closes that gap: mutating the inward bound rounding from
+    // CEILING to FLOOR changes the rounded stop from 108.35 to 108.34, which the exact-value
+    // assertion below catches (rPerShare 8.32 instead of 8.33) even though the envelope check
+    // would still pass.
     @Test
     void riskPerShareChangesByAtMostOneTick_sellBindingAtStopMin() {
         BigDecimal price = bd("100.017");
@@ -169,11 +162,9 @@ class StopWindowRoundingTest {
         assertThat(rawSizing.rPerShare()).usingComparator(BigDecimal::compareTo).isEqualTo(bd("8.325"));
 
         BigDecimal roundedEntry = TickSize.roundEntry("SELL", price);
-        StopWindow roundedWindow = sizer.stopWindow("SELL", roundedEntry, atr, null); // same price as size() below
-        BigDecimal roundedMin = roundBoundMinInward(roundedWindow.stopMin());
-        BigDecimal roundedMax = roundBoundMaxInward(roundedWindow.stopMax());
-        BigDecimal clampedRounded = clamp(proposed, roundedMin, roundedMax);
-        Sizing roundedSizing = sizer.size("SELL", roundedEntry, atr, null, clampedRounded, bd("1000"), BigDecimal.ONE);
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "SELL", roundedEntry, atr, null, proposed, sizer);
+        Sizing roundedSizing = sizer.size("SELL", roundedEntry, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
         assertThat(roundedSizing.rPerShare()).usingComparator(BigDecimal::compareTo).isEqualTo(bd("8.33"));
 
         BigDecimal delta = roundedSizing.rPerShare().subtract(rawSizing.rPerShare()).abs();
@@ -197,26 +188,35 @@ class StopWindowRoundingTest {
 
     // ---- Rounding must never widen the window. Strengthened beyond a tautology about
     // RoundingMode semantics: each test also computes the bounds with the plausible WRONG tool
-    // (TickSize.roundStop, my original bug from the first fix round) and asserts THAT violates
+    // (TickSize.roundStop, the original bug from the first fix round) and asserts THAT violates
     // the subset property. That makes the property nontrivial — there is a real, easy-to-reach
     // wrong implementation this test would catch — rather than merely re-deriving what CEILING/
-    // FLOOR already guarantee by definition.
+    // FLOOR already guarantee by definition. Uses a proposal inside the raw window so
+    // StopWindowRounding takes the non-degenerate path and its returned bounds are the rounded
+    // ones under test.
 
     @Test
     void roundedWindowIsSubsetOfRawWindow_buy() {
         BigDecimal price = bd("100.017");
         BigDecimal atr = bd("3.33");
+        BigDecimal roundedEntry = TickSize.roundEntry("BUY", price);
 
-        StopWindow rawWindow = sizer.stopWindow("BUY", price, atr, null);
-        BigDecimal roundedMin = roundBoundMinInward(rawWindow.stopMin());
-        BigDecimal roundedMax = roundBoundMaxInward(rawWindow.stopMax());
+        StopWindow rawWindow = sizer.stopWindow("BUY", roundedEntry, atr, null);
+        BigDecimal proposalInsideWindow = rawWindow.stopMax(); // anchor itself, well inside the raw window
 
-        assertThat(roundedMin).isGreaterThanOrEqualTo(rawWindow.stopMin());
-        assertThat(roundedMax).isLessThanOrEqualTo(rawWindow.stopMax());
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "BUY", roundedEntry, atr, null, proposalInsideWindow, sizer);
 
-        // The plausible wrong implementation (TickSize.roundStop applied to both bounds, my
-        // original bug) widens stopMax for BUY because it always rounds toward the entry
-        // (CEILING for BUY), not toward the window's interior.
+        assertThat(result.stopMin()).isGreaterThanOrEqualTo(rawWindow.stopMin());
+        assertThat(result.stopMax()).isLessThanOrEqualTo(rawWindow.stopMax());
+        assertThat(result.stopMin()).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(roundBoundMinInward(rawWindow.stopMin()));
+        assertThat(result.stopMax()).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(roundBoundMaxInward(rawWindow.stopMax()));
+
+        // The plausible wrong implementation (TickSize.roundStop applied to both bounds) widens
+        // stopMax for BUY because it always rounds toward the entry (CEILING for BUY), not
+        // toward the window's interior.
         BigDecimal wrongMax = TickSize.roundStop("BUY", rawWindow.stopMax());
         assertThat(wrongMax).isGreaterThan(rawWindow.stopMax());
     }
@@ -225,13 +225,20 @@ class StopWindowRoundingTest {
     void roundedWindowIsSubsetOfRawWindow_sell() {
         BigDecimal price = bd("100.017");
         BigDecimal atr = bd("3.33");
+        BigDecimal roundedEntry = TickSize.roundEntry("SELL", price);
 
-        StopWindow rawWindow = sizer.stopWindow("SELL", price, atr, null);
-        BigDecimal roundedMin = roundBoundMinInward(rawWindow.stopMin());
-        BigDecimal roundedMax = roundBoundMaxInward(rawWindow.stopMax());
+        StopWindow rawWindow = sizer.stopWindow("SELL", roundedEntry, atr, null);
+        BigDecimal proposalInsideWindow = rawWindow.stopMin(); // anchor itself, well inside the raw window
 
-        assertThat(roundedMin).isGreaterThanOrEqualTo(rawWindow.stopMin());
-        assertThat(roundedMax).isLessThanOrEqualTo(rawWindow.stopMax());
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "SELL", roundedEntry, atr, null, proposalInsideWindow, sizer);
+
+        assertThat(result.stopMin()).isGreaterThanOrEqualTo(rawWindow.stopMin());
+        assertThat(result.stopMax()).isLessThanOrEqualTo(rawWindow.stopMax());
+        assertThat(result.stopMin()).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(roundBoundMinInward(rawWindow.stopMin()));
+        assertThat(result.stopMax()).usingComparator(BigDecimal::compareTo)
+                .isEqualTo(roundBoundMaxInward(rawWindow.stopMax()));
 
         // Mirror: TickSize.roundStop for SELL always rounds FLOOR (toward the entry), which
         // widens stopMin (the near/tight bound for SELL) instead of narrowing it.
@@ -248,6 +255,10 @@ class StopWindowRoundingTest {
     // prove which check fired). The second assertion below, with stopMin/stopMax forced to null
     // so the window check is structurally skipped (OrderGuard.java:56-59), is what actually pins
     // that the side check (OrderGuard.java:48-49) fires on its own.
+    //
+    // Independent of StopWindowRounding on purpose: it demonstrates that even a
+    // correctly-tick-rounded entry/stop pair, considered in isolation from the window/clamp
+    // pipeline, can still invert — the reason OrderGuard's own side check remains load-bearing.
 
     @Test
     void entryAndStopConvergeToInvertedOrder_buy() {
@@ -274,16 +285,13 @@ class StopWindowRoundingTest {
         assertThat(guardWithNullWindow.reason()).isEqualTo(RejectReason.NO_STOP);
     }
 
-    // ---- Hazard 2 (Task-1 review): roundStop pushes a proposed stop toward the TIGHT window
+    // ---- Hazard 2 (Task-1 review): rounding pushes a proposed stop toward the TIGHT window
     // bound (BUY: stopMax = anchor). "Round the stop, round the bounds, THEN clamp" protects the
     // final stop ONLY if the window bounds are derived from the SAME (rounded) entry price that
-    // is about to be passed to sizer.size(...) — this is the fix from the second review round:
-    // deriving the bounds from the RAW price while size() is called with the ROUNDED price
-    // produces two different windows (a rounding-delta-times-2.5 gap, since the anchor is
-    // price ± 2.5*ATR), and the clamped stop can fall in the gap between them.
-    //
-    // orderPriceRounded = TickSize.roundEntry(side, price) is used for BOTH the window and the
-    // size() call below — that is the normative rule.
+    // is about to be passed to sizer.size(...) — this is exactly what StopWindowRounding
+    // encapsulates: deriving the bounds from the RAW price while size() is called with the
+    // ROUNDED price would produce two different windows (a rounding-delta-times-2.5 gap, since
+    // the anchor is price +/- 2.5*ATR), and the clamped stop could fall in the gap between them.
 
     @Test
     void roundStopTowardTightBoundStaysInsideTheWindowOrderGuardChecks_buy() {
@@ -291,18 +299,13 @@ class StopWindowRoundingTest {
         BigDecimal atr = bd("3.33");
         BigDecimal orderPriceRounded = TickSize.roundEntry("BUY", price);
 
-        // Window derived from the SAME price that size() below is called with.
-        StopWindow window = sizer.stopWindow("BUY", orderPriceRounded, atr, null);
-
         BigDecimal proposedNearAnchor = bd("91.691"); // inside the raw (100.017-based) window
-        BigDecimal roundedProposed = TickSize.roundStop("BUY", proposedNearAnchor);
-        BigDecimal roundedBoundMin = roundBoundMinInward(window.stopMin());
-        BigDecimal roundedBoundMax = roundBoundMaxInward(window.stopMax());
-        BigDecimal clamped = clamp(roundedProposed, roundedBoundMin, roundedBoundMax);
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "BUY", orderPriceRounded, atr, null, proposedNearAnchor, sizer);
 
-        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, null, clamped, bd("1000"), BigDecimal.ONE);
-        OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, clamped,
-                sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
+        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
+        OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, result.stop(),
+                result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
         // With the window and size() sharing the same price, the hazard is closed by the
         // ordering itself — no separate mechanism is needed.
@@ -319,31 +322,26 @@ class StopWindowRoundingTest {
         BigDecimal atr = bd("3.33");
         BigDecimal orderPriceRounded = TickSize.roundEntry("SELL", price);
 
-        StopWindow window = sizer.stopWindow("SELL", orderPriceRounded, atr, null);
-
         BigDecimal proposedNearAnchor = bd("108.343"); // inside the raw (100.017-based) window, close to the anchor
-        BigDecimal roundedProposed = TickSize.roundStop("SELL", proposedNearAnchor);
-        BigDecimal roundedBoundMin = roundBoundMinInward(window.stopMin());
-        BigDecimal roundedBoundMax = roundBoundMaxInward(window.stopMax());
-        BigDecimal clamped = clamp(roundedProposed, roundedBoundMin, roundedBoundMax);
+        StopWindowRounding.Result result = StopWindowRounding.compute(
+                "SELL", orderPriceRounded, atr, null, proposedNearAnchor, sizer);
 
-        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, null, clamped, bd("1000"), BigDecimal.ONE);
-        OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), orderPriceRounded, clamped,
-                sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
+        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
+        OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), orderPriceRounded, result.stop(),
+                result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
         assertThat(guard.ok()).isTrue();
     }
 
     // ---- Documentation, not enforcement. This test asserts guard.ok() == FALSE, i.e. it
-    // demonstrates today's behavior when the two-different-prices mistake is deliberately
-    // reintroduced — it can never catch Task 3 mixing prices, because if Task 3 does that, this
-    // test simply stays green (its assertion already expects rejection). The actual enforcement
-    // against that mistake is `roundStopTowardTightBoundStaysInsideTheWindowOrderGuardChecks_buy`
-    // (:262+), whose assertion (guard.ok() == TRUE) is what fires if someone reintroduces the
-    // raw/rounded price mix. This test is kept anyway, renamed to say what it actually is: a
-    // side-by-side comparison with :262 (same fixture, only the window's price source differs)
-    // that makes the contrast legible for a human reading both tests together — not a safety net
-    // on its own.
+    // demonstrates what happened when the two-different-prices mistake was present (before
+    // StopWindowRounding existed) — it deliberately reconstructs that OLD bug manually, since
+    // StopWindowRounding itself structurally cannot make this mistake (it only ever takes ONE
+    // price and derives the window from it). The actual enforcement against reintroducing this
+    // mistake is `roundStopTowardTightBoundStaysInsideTheWindowOrderGuardChecks_buy` above,
+    // whose assertion (guard.ok() == TRUE) is what would fire if StopWindowRounding regressed to
+    // ever mixing prices. This test is kept anyway, as a side-by-side comparison that makes the
+    // contrast legible for a human reading both tests together — not a safety net on its own.
 
     @Test
     void mixingRawAndRoundedPricesIsRejectedToday_documentation() {
@@ -371,46 +369,20 @@ class StopWindowRoundingTest {
         assertThat(guard.reason()).isEqualTo(RejectReason.NO_STOP);
     }
 
-    // ---- Pins recommendation (i): PositionSizer.size() always recomputes its window from raw
-    // ATR/swing-low (see PositionSizer.java:51-52) and therefore always returns RAW
-    // stopMin()/stopMax() — there is no way to inject pre-rounded bounds into it. The controller
-    // must therefore pass ITS OWN rounded bounds (roundBoundMinInward/roundBoundMaxInward on the
-    // window from sizer.stopWindow(...)) to OrderGuard.check at :613, never sizing.stopMin()/
-    // stopMax(). This fixture is constructed so the two disagree: the clamped stop is valid
-    // against the rounded bounds but NOT against sizing's raw ones, so a controller that
-    // (incorrectly) reused sizing.stopMin()/stopMax() would reject a stop that should be
-    // accepted.
-
-    @Test
-    void orderGuardMustUseTheControllersRoundedBounds_notSizingsRawOnes() {
-        BigDecimal price = bd("100.017");
-        BigDecimal atr = bd("3.33");
-        StopWindow rawWindow = sizer.stopWindow("BUY", price, atr, null);
-        BigDecimal roundedBoundMin = roundBoundMinInward(rawWindow.stopMin());
-        BigDecimal roundedBoundMax = roundBoundMaxInward(rawWindow.stopMax());
-
-        BigDecimal roundedEntry = TickSize.roundEntry("BUY", price);
-        // Tight proposal clamps to the rounded stopMax (the tight/anchor bound for BUY).
-        BigDecimal clamped = clamp(bd("99"), roundedBoundMin, roundedBoundMax);
-
-        Sizing sizing = sizer.size("BUY", roundedEntry, atr, null, clamped, bd("1000"), BigDecimal.ONE);
-        // Precondition: raw (sizing) bounds and the controller's rounded bounds genuinely
-        // differ for this fixture — otherwise the test would prove nothing.
-        assertThat(sizing.stopMax()).usingComparator(BigDecimal::compareTo).isNotEqualTo(roundedBoundMax);
-
-        // The clamp target is only valid against the controller's OWN rounded bounds.
-        OrderGuard.Result guardWithRoundedBounds = orderGuard.check("BUY", sizing.qty(), roundedEntry, clamped,
-                roundedBoundMin, roundedBoundMax, "depot-1", "depot-1");
-        assertThat(guardWithRoundedBounds.ok()).isTrue();
-
-        // Pin: passing sizing.stopMin()/stopMax() instead (the mistake this test guards against)
-        // must not silently start passing too — that would mean the two windows collapsed back
-        // together and this fixture stopped being a valid trap. Today it correctly demonstrates
-        // the discrepancy the next task must not reintroduce: sizing's raw bounds reject the
-        // very stop the controller's rounded bounds just accepted.
-        OrderGuard.Result guardWithSizingBounds = orderGuard.check("BUY", sizing.qty(), roundedEntry, clamped,
-                sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
-        assertThat(guardWithSizingBounds.ok()).isFalse();
-        assertThat(guardWithSizingBounds.reason()).isEqualTo(RejectReason.NO_STOP);
-    }
+    // ---- Note on "helper bounds vs sizing bounds": an earlier version of this suite pinned a
+    // fixture where OrderGuard.check accepted StopWindowRounding's rounded bounds but rejected
+    // sizing.stopMin()/stopMax(). That fixture only worked by deriving the window from a
+    // DIFFERENT (raw) price than sizer.size() used — i.e. it relied on the very two-price bug
+    // this task closes. Once both are derived from the identical rounded price (rule 2, enforced
+    // structurally by StopWindowRounding), sizing.stopMin()/stopMax() IS the raw window
+    // (`sizingStopMinEqualsStopWindowStopMin` above), and the rounded bounds are always a subset
+    // of it (`roundedWindowIsSubsetOfRawWindow_*` above) — so a stop valid against the rounded
+    // bounds is now provably always valid against sizing's raw bounds too, and no fixture can
+    // demonstrate the opposite without reintroducing the two-price mistake. The controller must
+    // still pass StopWindowRounding's own bounds to OrderGuard.check, not sizing's — not because
+    // today's fixtures can catch a swap, but because sizing's bounds are undefined/inconsistent
+    // in the degenerate-window branch (StopWindowRounding.compute returns the RAW window there,
+    // which does equal sizing's, but only by that branch's construction) and because relying on
+    // an accidental equality instead of the documented contract is exactly the kind of coupling
+    // that broke before.
 }
