@@ -400,7 +400,7 @@ public class ExecutorWebhookController {
      * "unparseable" sentinel to decide null vs. a real value — never fabricated.
      */
     private ObjectNode inputsSnapshotNode(ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
-            VetoService.Outcome veto) {
+            BigDecimal orderPriceRounded, VetoService.Outcome veto) {
         ObjectNode n = mapper.createObjectNode();
         n.put("signal_confidence", signal.confidence());
         n.put("signal_mechanism", signal.mechanism());
@@ -408,6 +408,12 @@ public class ExecutorWebhookController {
         if (ageDays < 0) n.putNull("signal_age_trading_days");
         else n.put("signal_age_trading_days", ageDays);
         n.put("order_price", orderPrice);
+        // Tick-rounded price actually submitted (or that would have been submitted) to the
+        // broker — distinct from the raw order_price above, which stays the veto/calibration
+        // input. Both are needed on reject rows so an analyst can see the raw veto input AND
+        // the rounded price side by side (see the BROKER_ERROR/BELOW_ANCHOR production case
+        // that motivated this field).
+        n.put("submitted_price", orderPriceRounded);
         n.put("atr", ctx.atr());
         n.put("book_positions_count", ctx.openPositions() == null ? 0 : ctx.openPositions().size());
 
@@ -451,11 +457,12 @@ public class ExecutorWebhookController {
      *  {@code confidence} is the LLM's own decision confidence (0..1, optional tool argument),
      *  persisted as {@code confidence_in_decision} — the executor-side Brier/calibration input. */
     private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
-            BigDecimal orderPrice, VetoService.Outcome veto, String action, String reasonCode,
-            ObjectNode orderJson, Double confidence, Instant now) {
+            BigDecimal orderPrice, BigDecimal orderPriceRounded, VetoService.Outcome veto, String action,
+            String reasonCode, ObjectNode orderJson, Double confidence, Instant now) {
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
                 signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
-                inputsSnapshotNode(signal, ctx, orderPrice, veto), vetoResultsNode(veto.results()),
+                inputsSnapshotNode(signal, ctx, orderPrice, orderPriceRounded, veto),
+                vetoResultsNode(veto.results()),
                 action, reasonCode, orderJson, null, confidence,
                 latencyNode(signal.createdAt(), now), null));
     }
@@ -608,7 +615,7 @@ public class ExecutorWebhookController {
             // Transiente Raten-/Kapazitätsdeckel disqualifizieren das Signal nicht -> PENDING
             // lassen, damit der nächste Executor-Lauf es erneut prüft (Obergrenze: SIGNAL_EXPIRED).
             signalRepo.markStatus(signalId, firstFailure.isTransient() ? "PENDING" : "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
                     clock.instant());
 
             // A detected contradiction co-rejects the pending peer — but only when the entering
@@ -637,7 +644,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
                     clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
@@ -660,7 +667,7 @@ public class ExecutorWebhookController {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", reason, null, confidence,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
                     clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
@@ -727,7 +734,7 @@ public class ExecutorWebhookController {
                         "broker retry budget for this run exhausted: " + maxBrokerCallsPerRun
                                 + "/" + maxBrokerCallsPerRun,
                         null, runId, null));
-                logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT",
+                logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
                         "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant());
                 return ResponseEntity.ok(Map.of("output",
                         Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
@@ -751,7 +758,7 @@ public class ExecutorWebhookController {
                 signalRepo.markStatus(signalId, "REJECTED");
             }
             // else: leave PENDING so a corrected retry (this run or a later run) can succeed
-            logEntryDecision(runId, signal, ctx, orderPrice, veto, "REJECT", "BROKER_ERROR", null,
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", "BROKER_ERROR", null,
                     confidence, clock.instant());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
@@ -789,8 +796,16 @@ public class ExecutorWebhookController {
                 orderJson.put("gtd_days", entryGtdDays);
                 orderJson.put("stop_clamped", stopClamped);
                 orderJson.put("proposed_stop", proposedStop);
-                // Raw window (the risk layer's un-rounded stop anchor/floor) — kept for
-                // continuity with the pre-tick-rounding audit trail.
+                // Raw window (the risk layer's un-tick-rounded stop anchor/floor), computed from
+                // orderPriceRounded — NOT a pre-branch/pre-tick-rounding value (there was no
+                // tick-rounding before this branch, so nothing here is "continuity" with it).
+                //
+                // Naming deviation from spec (deliberate, kept as-is): the spec's
+                // Audit-Konsistenz section wants the ENFORCED bounds in stop_min/stop_max and the
+                // raw ones in stop_min_raw/stop_max_raw. This code ships the opposite — raw in
+                // stop_min/stop_max, enforced in stop_min_rounded/stop_max_rounded below — to
+                // preserve the existing stop_min/stop_max key for dashboards/queries already
+                // reading it, avoiding a breaking rename. Do not "fix" this into a rename.
                 orderJson.put("stop_min", window != null ? window.stopMin() : null);
                 orderJson.put("stop_max", window != null ? window.stopMax() : null);
                 // The bounds OrderGuard actually enforced (tick-rounded; equal to the raw window
@@ -801,7 +816,7 @@ public class ExecutorWebhookController {
                 orderJson.put("stop_max_rounded", roundedStopMax);
                 orderJson.put("proposed_take_profit", proposedTakeProfit);
                 orderJson.put("take_profit_dropped", takeProfitDropped);
-                logEntryDecision(runId, signal, ctx, orderPrice, veto, "ENTER", null, orderJson,
+                logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
                         confidence, clock.instant());
             } catch (RuntimeException e) {
                 // Position and signal status are durably persisted — the order is managed.

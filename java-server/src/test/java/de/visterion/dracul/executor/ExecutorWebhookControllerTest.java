@@ -459,6 +459,36 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_lowConfidence_rejectLogCarriesRawAndRoundedPrice() {
+        // Production values (TickSizeTest.java:17-22): BUY raw 96.415 tick-rounds to 96.41.
+        // A reject row must carry BOTH — order_price (raw, the veto/calibration input) and
+        // submitted_price (rounded, what would actually go to the broker) — so an analyst can
+        // see the same discrepancy that diagnosed the branch (BROKER_ERROR order_price 96.415
+        // followed by BELOW_ANCHOR order_price 96.41 for the same signal_id).
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.4, new BigDecimal("96.415")));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":96.415,"stop_price":95}
+                """);
+
+        controller.placeEntry(BEARER, "run-7", body);
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.action()).isEqualTo("REJECT");
+        assertThat(log.reasonCode()).isEqualTo("LOW_CONFIDENCE");
+
+        JsonNode inputs = log.inputsSnapshot();
+        assertThat(inputs).isNotNull();
+        assertThat(inputs.path("order_price").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("96.415"));
+        assertThat(inputs.path("submitted_price").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("96.41"));
+    }
+
+    @Test
     void placeEntry_maxPositions_noBrokerCall() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         List<ExecutorPosition> threeOpen = List.of(
