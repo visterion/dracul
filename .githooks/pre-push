@@ -64,17 +64,29 @@ REMOTE_NAME=$(resolve_remote_name "$REMOTE_ARG") || REMOTE_NAME=""
 # a silent leak, which is strictly worse in a guard whose entire purpose is
 # failing closed.
 #
-# Fall back to the unnamed `--not --remotes` instead: it excludes every
-# remote-tracking ref from every configured remote (never refs/heads/*, so it
-# can never exclude the branch actually being pushed), and degrades
-# gracefully to a full-history scan — noisy, but still a hard block — when
-# there is no tracking data left to narrow against. A truthful noisy BLOCK on
-# content that may already be public is acceptable here; a silent PASS is not.
+# The unnamed `--not --remotes` is ALSO wrong: it excludes remote-tracking
+# refs of EVERY configured remote, not just the one being pushed to. If the
+# target remote has no tracking data (the exact condition that triggers this
+# fallback: URL push, never fetched, or pruned) while a DIFFERENT remote's
+# tracking refs already contain the forbidden commit (e.g. a private mirror
+# that was fetched, alongside a public origin that wasn't), that commit gets
+# excluded from the scan by the OTHER remote's ref and the push silently
+# succeeds — the same fail-open class as `--all`, just with a narrower
+# precondition.
+#
+# There is no ref-set that reliably means "already known to be published on
+# THIS remote" once its own tracking data is unusable. So exclude nothing:
+# EXCLUDE="" turns `git log "$local_sha" --not $EXCLUDE` into
+# `git log "$local_sha" --not` (a trailing --not with nothing after it is a
+# no-op to git, not an error), which is a full-history scan of the branch
+# being pushed. Noisy — it may BLOCK on content already public on this exact
+# remote — but never silently blind to a leak. The BLOCKED message below
+# says so honestly when this path is taken.
 if [ -n "$REMOTE_NAME" ] && [ -n "$(git for-each-ref "refs/remotes/$REMOTE_NAME")" ]; then
   EXCLUDE="--remotes=$REMOTE_NAME"
   NARROWED=1
 else
-  EXCLUDE="--remotes"
+  EXCLUDE=""
   NARROWED=0
 fi
 

@@ -17,7 +17,7 @@ setup() {
   # "fatal: Unable to read current working directory" from every git
   # invocation until the next `cd`.
   cd "$WORK" || exit 1
-  rm -rf "$WORK/bare" "$WORK/wc" "$WORK/wc2" "$WORK/other-bare"
+  rm -rf "$WORK/bare" "$WORK/wc" "$WORK/wc2" "$WORK/other-bare" "$WORK/public-bare"
   git init -q --bare "$WORK/bare"
   # Bare repos default HEAD to refs/heads/master (or init.defaultBranch)
   # regardless of which branch is actually pushed later. Left unfixed, a
@@ -254,6 +254,24 @@ printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
 git commit -qm "feat: leak with pruned tracking ref"
 check "pruned refs/remotes/origin with a leak blocks" 1 origin feature-pruned
+
+# 17. Cross-remote coverage: a forbidden commit fetched via ONE remote's
+#     tracking refs ("private") must not hide the same commit when pushed to
+#     a DIFFERENT remote ("public") that has no tracking data of its own
+#     (never fetched). The unnamed `--not --remotes` fallback excluded every
+#     configured remote's tracking refs, so the leak — visible only via
+#     private/main — was invisible when finally pushed to public. The fix is
+#     EXCLUDE="" (exclude nothing) in the no-tracking-data fallback; this
+#     case must still block.
+setup
+git remote rename origin private
+git init -q --bare "$WORK/public-bare"
+git remote add public "$WORK/public-bare"
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: leak fetched via private remote"
+git push -q --no-verify private main
+check "leak visible only via a different remote's tracking refs still blocks" 1 public main
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
