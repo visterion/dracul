@@ -25,14 +25,81 @@ FORBIDDEN='(^|/)(CLAUDE\.md|AGENTS\.md|\.claude/)|^docs/'
 # committed Vite .env.development / .env.production are legitimate here.
 ENV_HARD='(^|/)\.env$|(^|/)\.env\.local$|(^|/)\.env\..+\.local$'
 
-STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+# Scratch files for the staged-path and staged-content captures below. Created
+# up front with the same fail-closed discipline as .githooks/pre-push: if
+# mktemp is unavailable the variable stays empty, the guarded git call further
+# down fails, and the hook BLOCKS instead of silently seeing nothing.
+TMPF=$(mktemp 2>/dev/null) || TMPF=""
+SCANF=$(mktemp 2>/dev/null) || SCANF=""
+SCANF_EXCL=$(mktemp 2>/dev/null) || SCANF_EXCL=""
+trap 'rm -f "$TMPF" "$SCANF" "$SCANF_EXCL"' EXIT HUP INT TERM
+
+# Staged paths: NUL-delimited via a temp FILE, not a command substitution (that
+# silently DROPS NUL bytes and glues every path into one blob) and not a pipe
+# straight into tr (that would replace git's own exit status with tr's,
+# hiding a failed `git diff` behind an empty-and-therefore-"clean" result).
+# git's exit status is checked explicitly here and a failure fails CLOSED —
+# same shape as pre-push's TMPF capture.
+#
+# -c core.quotePath=false: with the (default-on) core.quotePath, git renders a
+#     non-ASCII path as a quoted, octal-escaped string, e.g.
+#     "docs/pr\303\274fung.md". The leading quote defeats the `^`/`(^|/)`
+#     anchors in FORBIDDEN/ENV_HARD below and the path slips through.
+# -z: emit paths VERBATIM, NUL-separated. core.quotePath=false only stops
+#     quoting of high-bit bytes; a path containing a newline, a double quote, a
+#     backslash or a control character is ALWAYS C-quoted regardless, and the
+#     leading `"` again defeats the anchors. With -z there is no quoting at
+#     all — a NUL-separated path is emitted byte-for-byte.
+# --diff-filter=d (not ACMR): ACMR silently drops T (type change) — a
+#     forbidden path already committed as a harmless SYMLINK (AGENTS.md points
+#     at CLAUDE.md in exactly this repo) replaced by a real file full of
+#     private operating detail is a pure T and was invisible to ACMR. An
+#     exclude-list also fails closed against any diff status git may add in
+#     future; deletions stay excluded on purpose — removing docs/x.md is
+#     exactly the change this guard wants to allow.
+if [ -z "$TMPF" ] || ! git -c core.quotePath=false diff --cached --name-only -z --diff-filter=d > "$TMPF"; then
+  echo "BLOCKED: could not inspect staged paths — 'git diff' failed."
+  echo "  Refusing to let an unreadable diff pass as 'nothing to see'."
+  echo "  If you have confirmed the staged changes are clean, override with: git commit --no-verify"
+  exit 1
+fi
+STAGED=$(tr '\0' '\n' < "$TMPF" | LC_ALL=C sort -u)
 [ -z "$STAGED" ] && exit 0
-ADDED=$(git diff --cached -U0 --diff-filter=ACMR | grep '^+' | grep -v '^+++' || true)
+
+# Staged content, added lines only — unexcluded, feeds the INFRA/MAILS/
+# STRUCTURAL checks below.
+# --text: without it, a file git classifies as binary (a NUL in its first
+#     ~8000 bytes, or a `-diff` gitattribute) gets "Binary files a/x and b/x
+#     differ" instead of a patch, and anything inside is never scanned at all.
+# Same fail-closed discipline as the path capture above: git's exit status is
+# checked, not discarded by a bare command substitution.
+if [ -z "$SCANF" ] || ! git diff --cached -U0 --diff-filter=d --text > "$SCANF"; then
+  echo "BLOCKED: could not inspect staged content — 'git diff' failed."
+  echo "  Refusing to let an unreadable diff pass as 'nothing to see'."
+  echo "  If you have confirmed the staged changes are clean, override with: git commit --no-verify"
+  exit 1
+fi
+# grep -a: without it, a single NUL byte ANYWHERE in the captured diff — not
+#     necessarily in the leaking file itself — makes grep classify the WHOLE
+#     stream as binary, print "binary file matches" to stderr, and emit NO
+#     lines. That silently disables every check reading $ADDED at once, not
+#     just the one for the NUL-bearing file.
+# LC_ALL=C: an invalid UTF-8 byte has the identical "whole stream looks binary
+#     to grep" effect in a UTF-8 locale (the hook inherits the committer's
+#     LANG); the C locale treats bytes as bytes, so nothing is "binary".
+ADDED=$(LC_ALL=C grep -a '^+' "$SCANF" | LC_ALL=C grep -a -v '^+++' || true)
+
 # The hook itself legitimately contains credential *patterns*. Scanning it for
 # credential content would make it block its own commit, so exclude .githooks/
-# from the content checks only — path-based rules still apply everywhere.
-ADDED_SCAN=$(git diff --cached -U0 --diff-filter=ACMR -- . ':(exclude).githooks/' \
-  | grep '^+' | grep -v '^+++' || true)
+# from the content checks only — path-based rules still apply everywhere, and
+# ADDED above (INFRA/MAILS/STRUCTURAL) is unaffected by this exclusion.
+if [ -z "$SCANF_EXCL" ] || ! git diff --cached -U0 --diff-filter=d --text -- . ':(exclude).githooks/' > "$SCANF_EXCL"; then
+  echo "BLOCKED: could not inspect staged content — 'git diff' failed."
+  echo "  Refusing to let an unreadable diff pass as 'nothing to see'."
+  echo "  If you have confirmed the staged changes are clean, override with: git commit --no-verify"
+  exit 1
+fi
+ADDED_SCAN=$(LC_ALL=C grep -a '^+' "$SCANF_EXCL" | LC_ALL=C grep -a -v '^+++' || true)
 
 fail=0
 
@@ -56,7 +123,7 @@ fi
 # ---------------------------------------------------------------- HARD BLOCK 2
 # Real credential prefixes in ADDED lines only. Deliberately narrow — no
 # generic 'password=' / 'secret' patterns, those hit legitimate config work.
-CRED=$(printf '%s\n' "$ADDED_SCAN" | grep -E \
+CRED=$(printf '%s\n' "$ADDED_SCAN" | LC_ALL=C grep -aE \
   'sk-ant-|sk-proj-|ghp_|gho_|ghs_|github_pat_|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-|hf_[A-Za-z0-9]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(postgres|postgresql|mysql|mongodb\+srv|redis|amqp)://[^/: ]+:[^@ ]+@' \
   || true)
 if [ -n "$CRED" ]; then
@@ -68,7 +135,7 @@ fi
 
 # ------------------------------------------------------------------ WARN ONLY
 # Internal infrastructure. Sometimes legitimate in docs, so never a block.
-INFRA=$(printf '%s\n' "$ADDED" | grep -E \
+INFRA=$(printf '%s\n' "$ADDED" | LC_ALL=C grep -aE \
   '192\.168\.|10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.|\.fritz\.box|\bpve\b|(CT|LXC) ?1[0-9][0-9]\b' \
   || true)
 if [ -n "$INFRA" ]; then
@@ -78,8 +145,8 @@ fi
 
 # Non-example email addresses.
 MAILS=$(printf '%s\n' "$ADDED" \
-  | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
-  | grep -vE '@(example\.(com|org|net)|users\.noreply\.github\.com)$' || true)
+  | LC_ALL=C grep -aoE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
+  | LC_ALL=C grep -avE '@(example\.(com|org|net)|users\.noreply\.github\.com)$' || true)
 if [ -n "$MAILS" ]; then
   echo "WARN: staged content contains non-example email addresses:"
   printf '%s\n' "$MAILS" | sort -u | sed 's/^/      /'
@@ -87,8 +154,8 @@ if [ -n "$MAILS" ]; then
 fi
 
 # CLAUDE.md freshness (original behaviour, preserved).
-STRUCTURAL=$(printf '%s\n' "$STAGED" | grep -E '(pom\.xml|package\.json|Dockerfile|\.ya?ml)' || true)
-SRCCHG=$(printf '%s\n' "$STAGED" | grep -E '\.(java|ts|tsx|js|vue|py)$' || true)
+STRUCTURAL=$(printf '%s\n' "$STAGED" | LC_ALL=C grep -aE '(pom\.xml|package\.json|Dockerfile|\.ya?ml)' || true)
+SRCCHG=$(printf '%s\n' "$STAGED" | LC_ALL=C grep -aE '\.(java|ts|tsx|js|vue|py)$' || true)
 if [ -n "$STRUCTURAL" ] || [ -n "$SRCCHG" ]; then
   if [ -f CLAUDE.md ] && [ -n "$(find . -maxdepth 3 \( -name '*.java' -o -name '*.ts' -o -name '*.vue' -o -name '*.py' \) -newer CLAUDE.md 2>/dev/null | head -1)" ]; then
     echo "WARN: structure changed but local CLAUDE.md looks stale."

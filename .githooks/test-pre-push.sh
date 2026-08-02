@@ -36,6 +36,30 @@ LANG=$LC_ALL
 export LC_ALL LANG
 unset LC_CTYPE LC_COLLATE LC_MESSAGES 2>/dev/null || true
 
+# code-review-graph is invoked once per fixture commit by pre-commit itself
+# (~80 commits in this suite) and, unlike everything else pinned above, its
+# behaviour/timing is NOT controlled by GIT_CONFIG_GLOBAL/SYSTEM or LC_ALL —
+# it is an unpinned external process that adds ~35s to a run that otherwise
+# takes ~8s and whose presence/absence on a given machine's PATH is not part
+# of what this suite is meant to prove. Strip its directory from PATH for
+# this suite's own process tree only: the invocation stays in pre-commit
+# itself (still wanted for real commits made outside this harness), it just
+# resolves to nothing here, the same as on a machine that never installed it.
+CRG_PATH=$(command -v code-review-graph 2>/dev/null) || CRG_PATH=""
+if [ -n "$CRG_PATH" ]; then
+  CRG_DIR=$(dirname "$CRG_PATH")
+  NEWPATH=""
+  OLDIFS=$IFS
+  IFS=:
+  for d in $PATH; do
+    [ "$d" = "$CRG_DIR" ] && continue
+    NEWPATH="$NEWPATH:$d"
+  done
+  IFS=$OLDIFS
+  PATH=${NEWPATH#:}
+  export PATH
+fi
+
 HOOK_SRC=$(cd "$(dirname "$0")" && pwd)/pre-push
 PRECOMMIT_SRC=$(cd "$(dirname "$0")" && pwd)/pre-commit
 WORK=$(mktemp -d)
@@ -415,11 +439,16 @@ assert_content_absent() {
 #     "binary file matches" to stderr and emits NO lines, so HITS came back
 #     empty for the WHOLE range — one such filename disabled every rule at
 #     once. The file reached the remote at exit 0. Must block.
+#     --no-verify: pre-commit now carries the identical core.quotePath=false/-z
+#     fix and would otherwise block this commit itself — this case exists to
+#     exercise the PUSH-time guard specifically, so the commit is forced
+#     through the same way every other "already-committed leak" fixture in
+#     this suite forces it through.
 setup
 mkdir -p docs
 printf 'synthetic notes\n' > "$(printf 'docs/le\377ak.md')"
 git add -f docs
-git commit -qm "add path with an invalid utf-8 byte"
+git commit -q --no-verify -m "add path with an invalid utf-8 byte"
 check "invalid-UTF-8 byte in a path blocks" 1 origin main
 assert_absent "invalid-UTF-8 path never reached the remote tree" "$WORK/bare" main "ak.md"
 
@@ -427,21 +456,23 @@ assert_absent "invalid-UTF-8 path never reached the remote tree" "$WORK/bare" ma
 #     of high-bit bytes; newlines, quotes, backslashes and control characters
 #     are ALWAYS C-quoted, and the leading `"` defeats the ^ anchor. Pushed at
 #     exit 0 and landed in the remote tree. Must block.
+#     --no-verify: see case 20 — pre-commit now blocks this at commit time too.
 setup
 mkdir -p docs
 printf 'synthetic notes\n' > "$(printf 'docs/leak\ntwo.md')"
 git add -f docs
-git commit -qm "add path with an embedded newline"
+git commit -q --no-verify -m "add path with an embedded newline"
 check "newline in a path blocks" 1 origin main
 assert_absent "newline path never reached the remote tree" "$WORK/bare" main "two.md"
 
 # 22. A path containing a DOUBLE QUOTE — same C-quoting bypass as case 21, via
 #     a different trigger character.
+#     --no-verify: see case 20 — pre-commit now blocks this at commit time too.
 setup
 mkdir -p docs
 printf 'synthetic notes\n' > 'docs/qu"ote.md'
 git add -f 'docs/qu"ote.md'
-git commit -qm "add path with a double quote"
+git commit -q --no-verify -m "add path with a double quote"
 check "double quote in a path blocks" 1 origin main
 assert_absent "double-quote path never reached the remote tree" "$WORK/bare" main 'qu"ote.md'
 
@@ -596,12 +627,16 @@ assert_content_absent "type-change credential never reached the remote tree" "$W
 #     window, so git itself diffs it as text; without `grep -a` a bare NUL in
 #     that text still makes grep declare the WHOLE captured stream binary and
 #     emit nothing, disabling HARD BLOCK 2 for config.txt's credential too.
+#     --no-verify: pre-commit now carries the identical --text/-a fix and
+#     would otherwise (non-deterministically, depending on pipe buffering —
+#     see case 86 below) block this at commit time too; this case exists to
+#     exercise the PUSH-time guard specifically.
 setup
 awk 'BEGIN{for(i=0;i<8500;i++) printf "a"}' > asset.dat
 printf '\0' >> asset.dat
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
 git add asset.dat config.txt
-git commit -qm "add a large NUL-suffixed asset alongside a credential"
+git commit -q --no-verify -m "add a large NUL-suffixed asset alongside a credential"
 check "NUL byte elsewhere in the range does not blind the credential scan" 1 origin main
 assert_absent "credential alongside a large NUL-suffixed asset never reached the remote tree" "$WORK/bare" main "config.txt"
 
@@ -609,22 +644,24 @@ assert_absent "credential alongside a large NUL-suffixed asset never reached the
 #     within the first ~8000 bytes) must still be content-scanned — without
 #     `--text`, git emits "Binary files ... differ" instead of a patch and any
 #     credential inside is invisible.
+#     --no-verify: see case 35 — pre-commit now blocks this at commit time too.
 setup
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.bin
 printf '\0' >> config.bin
 git add -f config.bin
-git commit -qm "add a git-classified-binary credential file"
+git commit -q --no-verify -m "add a git-classified-binary credential file"
 check "credential in a git-classified-binary file blocks" 1 origin main
 assert_absent "binary-classified credential file never reached the remote tree" "$WORK/bare" main "config.bin"
 
 # 37. Fix-round-1 IMPORTANT 4b: a `-diff` gitattribute forces git to treat an
 #     otherwise plain-text file as binary regardless of content — a one-line,
 #     entirely plausible way to deliberately defeat the guard without `--text`.
+#     --no-verify: see case 35 — pre-commit now blocks this at commit time too.
 setup
 printf 'secret.conf -diff\n' > .gitattributes
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > secret.conf
 git add .gitattributes secret.conf
-git commit -qm "add gitattributes-forced-binary credential file"
+git commit -q --no-verify -m "add gitattributes-forced-binary credential file"
 check "credential in a -diff gitattributes file blocks" 1 origin main
 assert_absent "gitattributes-forced-binary credential file never reached the remote tree" "$WORK/bare" main "secret.conf"
 
@@ -1177,6 +1214,25 @@ printf 'private runbook\n' > Docs/y.md
 git add -f Docs/y.md
 check_commit_blocked "pre-commit: Docs/y.md blocks at commit time" "add capitalized docs runbook"
 
+# 72a. Type change (git diff status T): a forbidden path already committed as
+#      a harmless SYMLINK (AGENTS.md -> CLAUDE.md is exactly this repo's
+#      layout) replaced by a real file carrying private operating detail must
+#      still block at commit time — --diff-filter=ACMR silently drops T
+#      (type change), which is why pre-commit uses the exclude-list spelling
+#      --diff-filter=d instead (same reasoning as pre-push case 19).
+#      --no-verify on the setup commit only: adding the symlink AGENTS.md is
+#      itself a forbidden-path ADD (caught by HARD BLOCK 1 regardless of
+#      diff-filter), so it must be forced through to get the pre-existing
+#      symlink in place before the type-change commit under test.
+setup
+ln -s README.md AGENTS.md
+git add -f AGENTS.md
+git commit -q --no-verify -m "add agents symlink"
+rm AGENTS.md
+printf 'synthetic operating notes\n' > AGENTS.md
+git add AGENTS.md
+check_commit_blocked "pre-commit: symlink-to-file type change on a forbidden path blocks at commit time" "replace symlink with a real file"
+
 # 73. An ordinary file commits cleanly.
 setup
 printf 'hello again\n' >> README.md
@@ -1233,7 +1289,92 @@ printf '# matches ghp_ and sk-ant- deliberately\n' >> .githooks/pre-push
 git add .githooks/pre-push
 check_commit_allowed "pre-commit: credential pattern inside .githooks/ commits cleanly" "chore: hook comment"
 
-# 81. THE POINT OF THIS WHOLE SUITE: pre-commit and pre-push must never drift
+# ------------------------------------------------------- pre-commit plumbing
+# The six bypasses a review proved by execution: pre-commit applied the same
+# FORBIDDEN/ENV_HARD/credential patterns as pre-push, but with the WRONG
+# PLUMBING to read them — no core.quotePath=false/-z on the path list, no
+# --text on the content diffs, no -a on the greps. Each of these commits
+# SUCCEEDED against the pre-fix hook; they must all BLOCK now.
+
+# 81. A non-ASCII forbidden path must not slip through core.quotePath's
+#     quoted, octal-escaped rendering of the path — same defeat as pre-push
+#     case 13, but at commit time.
+setup
+mkdir -p docs
+printf 'private runbook\n' > 'docs/prüfung.md'
+git add -f 'docs/prüfung.md'
+check_commit_blocked "pre-commit: non-ASCII path blocks at commit time" "add non-ascii runbook"
+
+# 82. A path containing an INVALID UTF-8 byte. GNU grep in a UTF-8 locale
+#     treats such input as binary and emits NO lines without LC_ALL=C, so
+#     'git diff --cached --name-only' output for the WHOLE commit came back
+#     unmatched — same defeat as pre-push case 20, but at commit time.
+setup
+mkdir -p docs
+printf 'synthetic notes\n' > "$(printf 'docs/a\377b.md')"
+git add -f docs
+check_commit_blocked "pre-commit: invalid-UTF-8 byte in a path blocks at commit time" "add path with an invalid utf-8 byte"
+
+# 83. A path containing a NEWLINE. core.quotePath=false only suppresses
+#     quoting of high-bit bytes; a newline is ALWAYS C-quoted, and the leading
+#     `"` defeats the `^` anchor without -z — same defeat as pre-push case 21,
+#     but at commit time.
+setup
+mkdir -p docs
+printf 'synthetic notes\n' > "$(printf 'docs/new\nline.md')"
+git add -f docs
+check_commit_blocked "pre-commit: newline in a path blocks at commit time" "add path with an embedded newline"
+
+# 84. A CLAUDE.md variant carrying an embedded newline in its own name. Same
+#     quoting defeat as case 83, pinned specifically against the FORBIDDEN
+#     pattern's own primary target rather than a generic docs/ path.
+setup
+printf 'local operating notes\n' > "$(printf 'CLAUDE.md\nx')"
+git add -f "$(printf 'CLAUDE.md\nx')"
+check_commit_blocked "pre-commit: CLAUDE.md-with-newline variant blocks at commit time" "add claude md with embedded newline"
+
+# 85. A credential inside a file containing a NUL byte. Without --text on the
+#     'git diff --cached' calls that feed ADDED/ADDED_SCAN, git gives such a
+#     file "Binary files ... differ" instead of a patch, and the credential
+#     inside is never scanned at all.
+setup
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > cred-nul.bin
+printf '\0' >> cred-nul.bin
+git add -f cred-nul.bin
+check_commit_blocked "pre-commit: credential inside a NUL-containing file blocks at commit time" "add nul-containing credential file"
+
+# 86. THE SERIOUS ONE: a plain-text credential file staged ALONGSIDE an
+#     unrelated binary-ish file in the same commit. Without `-a` on the greps
+#     that read the staged diff, a NUL byte ANYWHERE in the captured stream —
+#     not necessarily in the credential-bearing file itself — makes GNU grep
+#     classify the WHOLE diff as binary and emit no lines, silencing the
+#     credential scan for the entire commit. noise.bin's NUL sits past git's
+#     own ~8000-byte binary-sniff window (same construction as pre-push case
+#     35's asset.dat), so git includes its raw content in the diff instead of
+#     collapsing it to "Binary files ... differ" — reproduced against the
+#     pre-fix hook: exit 0, credential committed. A real screenshot (this repo
+#     has docs/ux-audit-screenshots/ and ux-verify-screenshots/) is large
+#     enough to hit this same shape in practice. Control: cred.txt alone
+#     already blocks (case 79); this proves the binary neighbour cannot
+#     launder it through.
+setup
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > cred.txt
+awk 'BEGIN{for(i=0;i<8500;i++) printf "a"}' > noise.bin
+printf '\0' >> noise.bin
+git add cred.txt noise.bin
+check_commit_blocked "pre-commit: credential + unrelated binary file in the same commit still blocks" "add config and screenshot"
+
+# 87. Positive control: an ORDINARY binary file that git itself classifies as
+#     binary (a NUL within the first ~8000 bytes — the common case for a real
+#     screenshot), with no credential and nothing else in the commit, must
+#     still commit cleanly — the fix must not turn every screenshot commit
+#     into a block.
+setup
+printf '\0\1\2\3\4\5' > noise.bin
+git add noise.bin
+check_commit_allowed "pre-commit: an ordinary binary file alone commits cleanly" "chore: add binary asset"
+
+# 88. THE POINT OF THIS WHOLE SUITE: pre-commit and pre-push must never drift
 #     on FORBIDDEN/ENV_HARD. Yesterday's review aligned them by hand; nothing
 #     stops a future edit to just one file from reopening the exact gap that
 #     fix closed (git add -f docs/run.md .env && git commit succeeding
