@@ -54,15 +54,28 @@ resolve_remote_name() {
 REMOTE_NAME=$(resolve_remote_name "$REMOTE_ARG") || REMOTE_NAME=""
 
 # Even with the right name, refs/remotes/<name>/* only reflects the last
-# fetch — if it is empty (never fetched, or the tracking ref was pruned or
-# deleted) excluding by it removes nothing, and the same false-positive BLOCK
-# happens again. Fall back to excluding everything reachable from ANY local
-# ref rather than trusting a remote-tracking namespace that may be stale or
-# absent.
+# fetch — if it is empty (never fetched, pruned, or manually deleted)
+# excluding by it removes nothing and a brand-new branch's full history gets
+# scanned again. The tempting fallback, `--not --all`, is actually WORSE: for
+# an ordinary push `--all` includes refs/heads/<branch-being-pushed> itself,
+# so `git log "$local_sha" --not --all` is *always* empty regardless of
+# content — FILES comes back empty, `continue` fires below, and the push
+# proceeds completely unchecked. That turns a noisy false-positive BLOCK into
+# a silent leak, which is strictly worse in a guard whose entire purpose is
+# failing closed.
+#
+# Fall back to the unnamed `--not --remotes` instead: it excludes every
+# remote-tracking ref from every configured remote (never refs/heads/*, so it
+# can never exclude the branch actually being pushed), and degrades
+# gracefully to a full-history scan — noisy, but still a hard block — when
+# there is no tracking data left to narrow against. A truthful noisy BLOCK on
+# content that may already be public is acceptable here; a silent PASS is not.
 if [ -n "$REMOTE_NAME" ] && [ -n "$(git for-each-ref "refs/remotes/$REMOTE_NAME")" ]; then
   EXCLUDE="--remotes=$REMOTE_NAME"
+  NARROWED=1
 else
-  EXCLUDE="--all"
+  EXCLUDE="--remotes"
+  NARROWED=0
 fi
 
 # Read git's ref lines DIRECTLY from stdin. Piping into this loop would run the
@@ -113,11 +126,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   HITS=$(printf '%s\n' "$FILES" | grep -E "$FORBIDDEN" || true)
   ENVHITS=$(printf '%s\n' "$FILES" | grep -E "$ENV_HARD" || true)
   if [ -n "$HITS" ] || [ -n "$ENVHITS" ]; then
-    echo "BLOCKED: this push would publish local-only files ($local_ref):"
+    if [ "$use_full_range" -eq 1 ] && [ "$NARROWED" -eq 0 ]; then
+      # We could not narrow the scan against the remote (no usable tracking
+      # data for it), so this is a full-history scan, not a diff of what's
+      # actually new. Say so honestly rather than implying certainty we don't
+      # have.
+      echo "BLOCKED ($local_ref): could not narrow this push's range against the remote (no usable tracking data) — the following paths MAY already be published, but are flagged to be safe:"
+    else
+      echo "BLOCKED: this push would publish local-only files ($local_ref):"
+    fi
     [ -n "$HITS" ] && printf '  %s\n' $HITS
     [ -n "$ENVHITS" ] && printf '  %s\n' $ENVHITS
     echo "  These hold operating detail — prod hosts, container IDs, deploy notes."
-    echo "  Remove them from the outgoing commits, or: git push --no-verify"
+    echo "  If you have confirmed they are already public, override with: git push --no-verify"
     fail=1
   fi
 done

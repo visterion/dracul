@@ -12,8 +12,21 @@ failures=0
 
 # Fresh bare remote + working clone with the hook installed, one pushed commit.
 setup() {
-  rm -rf "$WORK/bare" "$WORK/wc"
+  # cd out of any previous case's working directory before removing it —
+  # rm -rf-ing the shell's own cwd out from under it produces spurious
+  # "fatal: Unable to read current working directory" from every git
+  # invocation until the next `cd`.
+  cd "$WORK" || exit 1
+  rm -rf "$WORK/bare" "$WORK/wc" "$WORK/wc2" "$WORK/other-bare"
   git init -q --bare "$WORK/bare"
+  # Bare repos default HEAD to refs/heads/master (or init.defaultBranch)
+  # regardless of which branch is actually pushed later. Left unfixed, a
+  # `git clone` of this bare repo (see case 12) points HEAD at a branch that
+  # never exists, git cannot check anything out ("remote HEAD refers to
+  # nonexistent ref"), the clone is left on an unborn "master" with no
+  # working tree, and any commit made there lands on "master" instead of
+  # "main" — silently invalidating whatever that clone was meant to exercise.
+  git --git-dir="$WORK/bare" symbolic-ref HEAD refs/heads/main
   git init -q -b main "$WORK/wc"
   cd "$WORK/wc" || exit 1
   git config user.email dev@example.com
@@ -215,6 +228,32 @@ printf 'API_TOKEN=whatever\n' > .env.production.local
 git add -f .env.local .env.production.local
 git commit -qm "add local env files"
 check ".env.local and .env.production.local block" 1 origin main
+
+# 15. Finding 4 coverage: pushing by an entirely unconfigured URL (no remote
+#     in this repo points at it) carrying a forbidden file must still block.
+#     resolve_remote_name() cannot resolve this URL to a configured remote,
+#     so EXCLUDE falls back to the bare, unnamed --remotes form — it must
+#     still find and flag the leak rather than silently passing it through.
+setup
+git init -q --bare "$WORK/other-bare"
+git checkout -qb urlbranch
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: leak via unconfigured url push"
+check "push by unconfigured URL with a leak blocks" 1 "$WORK/other-bare" urlbranch
+
+# 16. Finding 5 coverage: an emptied/pruned refs/remotes/origin (never
+#     fetched, or manually deleted) carrying a forbidden file on the branch
+#     being pushed must still block. REMOTE_NAME resolves to "origin" fine,
+#     but there is no tracking data left to narrow against, so EXCLUDE falls
+#     back to the bare --remotes form and must still catch the leak.
+setup
+git update-ref -d refs/remotes/origin/main
+git checkout -qb feature-pruned
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: leak with pruned tracking ref"
+check "pruned refs/remotes/origin with a leak blocks" 1 origin feature-pruned
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
