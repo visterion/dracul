@@ -59,6 +59,14 @@ SCANF=$(mktemp 2>/dev/null) || SCANF=""
 # could not run, instead of silently producing an empty (and therefore
 # falsely clean-looking) result.
 TREEF=$(mktemp 2>/dev/null) || TREEF=""
+# Created here, BEFORE the trap is installed, not after: the trap's action is
+# a single-quoted string re-evaluated at signal time, so it already sees
+# whatever ALLOWF holds when it fires — but under `set -u` a signal landing
+# in the gap between `trap` and the assignment would dereference an unset
+# $ALLOWF and abort with "unbound variable" instead of running the cleanup.
+# Seeding it (even before the real mktemp below overwrites it) closes that
+# gap.
+ALLOWF=""
 trap 'rm -f "$TMPF" "$ADDEDF" "$SCANF" "$TREEF" "$ALLOWF"' EXIT HUP INT TERM
 
 # ---------------------------------------------------------- optional allow-list
@@ -86,6 +94,24 @@ trap 'rm -f "$TMPF" "$ADDEDF" "$SCANF" "$TREEF" "$ALLOWF"' EXIT HUP INT TERM
 # warning still fires. A read failure must never be the thing that silences a
 # warning — "warns one time too many" is the safe direction for a file that,
 # by construction, is never itself checked in or reviewed.
+#
+# Guarantee actually enforced at the point of use, below: a MALFORMED line in
+# this file (a bare regex metacharacter like `[`, or one so long it blows the
+# argv/exec size limit) must never silence the MAILS warning for the WHOLE
+# push. Reproduced against GNU grep 3.12: matching addresses one line at a
+# time with `grep -vix "$line"` treats that line as a REGEX and as an argv
+# element — a single `[` line makes grep exit 2 with no output, and a
+# ~200000-byte line trips E2BIG, and in both cases the old `|| true` swallowed
+# the failure and assigned grep's empty stdout back over $MAILS, blanking the
+# warning for every real address in the range. The fix used below is
+# `grep -Fvix -f "$ALLOWF"`: `-F` makes every line a literal string, not a
+# regex (this also closes IMPORTANT 1: an allow-listed address containing a
+# literal dot no longer wildcard-matches a DIFFERENT address that merely
+# has some other character in that position via the unescaped `.`),
+# `-f` reads the pattern list from a FILE so there is no argv/exec limit to
+# exceed, and the exit status is inspected (0/1 = ran fine, keep the filtered
+# result; anything else = grep itself failed, keep $MAILS UNFILTERED so the
+# warning still fires rather than being silently blanked).
 ALLOWLIST_FILE="$(git rev-parse --git-common-dir 2>/dev/null)/allowed-emails"
 ALLOWF=$(mktemp 2>/dev/null) || ALLOWF=""
 if [ -n "$ALLOWF" ] && [ -r "$ALLOWLIST_FILE" ]; then
@@ -380,11 +406,24 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # ALLOWF (mktemp failure, no ALLOWLIST_FILE, or a read that fell through to
   # the `: > "$ALLOWF"` fallback above) leaves it empty, so this branch is
   # skipped and MAILS is reported exactly as if no allow-list existed at all.
+  #
+  # -F: match every allow-list line as a LITERAL string, not a regex — a bare
+  #     `[` no longer makes grep exit 2, and a `.` in an address no longer
+  #     wildcards onto a different local-part that merely has some other
+  #     character where the allow-listed address had a dot.
+  # -f "$ALLOWF": read the whole pattern list from a FILE in one grep call,
+  #     not one call per line — no argv/exec length limit to blow on an
+  #     over-long line, and no per-line `|| true` to swallow a per-call
+  #     failure and quietly blank $MAILS.
+  # rc guard: 0 = matches found and filtered, 1 = ran fine with nothing left
+  #     (both mean FILTERED is trustworthy); anything else means grep itself
+  #     failed and FILTERED is not a filtered result, it is garbage — keep the
+  #     original, unfiltered $MAILS so the warning still fires rather than
+  #     silently disappearing.
   if [ -n "$MAILS" ] && [ -s "$ALLOWF" ]; then
-    while IFS= read -r allowed_addr; do
-      [ -n "$allowed_addr" ] || continue
-      MAILS=$(printf '%s\n' "$MAILS" | LC_ALL=C grep -vix "$allowed_addr" || true)
-    done < "$ALLOWF"
+    FILTERED=$(printf '%s\n' "$MAILS" | LC_ALL=C grep -Fvix -f "$ALLOWF")
+    rc=$?
+    [ "$rc" -le 1 ] && MAILS=$FILTERED
   fi
   if [ -n "$MAILS" ]; then
     echo "WARN: outgoing commits contain non-example email addresses:"
@@ -418,28 +457,26 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
   fi
 
-  # ------------------------------------------------ WARN: CLAUDE.md freshness
-  NEWEST=$(git log --format=%ct -1 --diff-filter=ACMR "$@" \
-    -- '*.java' '*.ts' '*.tsx' '*.js' '*.vue' '*.py' || true)
-  if [ -n "$NEWEST" ] && [ -f CLAUDE.md ]; then
-    MDTIME=$(git log --format=%ct -1 -- CLAUDE.md 2>/dev/null || true)
-    [ -n "$MDTIME" ] || MDTIME=0
-    if [ "$NEWEST" -gt "$MDTIME" ]; then
-      echo "WARN: source changed in this push but CLAUDE.md looks stale."
-      echo "      Its index and rules are loaded into every session — keep them true."
+  # ------------------------------------------------------- WARN: CLAUDE.md size
+  # Budget recorded as a hard rule inside CLAUDE.md ("Documentation
+  # maintenance"). Deliberately inside the ref loop, guarded by having reached
+  # this point at all: the loop's own ZERO check above already skips branch
+  # deletions (local_sha all-zero) with a bare `continue`, and that path is
+  # documented to behave exactly like no hook installed — a size WARN firing
+  # on `git push origin :branch` would be a signal appearing on a push that
+  # published nothing, which is the opposite of what a WARN is for. 20480 (20
+  # KB), not the original 12288 (12 KB): CLAUDE.md sits at ~19.5 KB in normal
+  # operation, so the old budget fired on every single push and trained
+  # exactly the --no-verify reflex this hook's own doctrine warns against; 20
+  # KB leaves room to breathe while still catching real, further growth.
+  if [ -f CLAUDE.md ]; then
+    SIZE=$(wc -c < CLAUDE.md)
+    if [ "$SIZE" -gt 20480 ]; then
+      echo "WARN: CLAUDE.md is ${SIZE} bytes, over the 20 KB budget."
+      echo "      Compress prose or move an over-long index entry into the file it points at."
     fi
   fi
 done
-
-# ------------------------------------------------------ WARN: CLAUDE.md size
-# Budget recorded as a hard rule inside CLAUDE.md ("Documentation maintenance").
-if [ -f CLAUDE.md ]; then
-  SIZE=$(wc -c < CLAUDE.md)
-  if [ "$SIZE" -gt 12288 ]; then
-    echo "WARN: CLAUDE.md is ${SIZE} bytes, over the 12 KB budget."
-    echo "      Compress prose or move an over-long index entry into the file it points at."
-  fi
-fi
 
 [ "$fail" -eq 0 ] || exit 1
 exit 0

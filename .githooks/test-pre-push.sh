@@ -586,27 +586,40 @@ check_warns "pre-existing tree leak warns only" "WARN: local-only paths are alre
 # 39. An oversized CLAUDE.md warns but does not block. Written into the
 #     working tree WITHOUT staging it — CLAUDE.md is gitignored and the hook
 #     reads it from disk, so it must never be committed by this test either.
+#     21000 bytes, comfortably over the 20 KB (20480-byte) budget.
 setup
-awk 'BEGIN { for (i = 0; i < 13000; i++) printf "x" }' > CLAUDE.md
+awk 'BEGIN { for (i = 0; i < 21000; i++) printf "x" }' > CLAUDE.md
 printf 'unrelated change\n' >> README.md
 git add README.md
 git commit -qm "docs: unrelated"
 check_warns "oversized CLAUDE.md warns only" "WARN: CLAUDE.md is" origin main
 rm -f CLAUDE.md
 
-# 40. Source changing without a matching CLAUDE.md change warns. CLAUDE.md is
-#     gitignored but still present on disk in the real repo (Claude Code reads
-#     it locally); the warning only evaluates when [ -f CLAUDE.md ], so this
-#     test writes one into the working tree WITHOUT staging it — same as case
-#     39. git log -- CLAUDE.md is then empty (never committed), MDTIME stays
-#     0, so the warning fires whenever tracked source ships.
+# 40. Fix-round-2 MINOR 3: a branch DELETION (local_sha all-zero) must not
+#     trigger the CLAUDE.md size WARN even with an oversized CLAUDE.md present
+#     in the working tree — that path is documented (see the ZERO check near
+#     the top of the loop) to behave exactly like no hook installed at all;
+#     the size check must live inside the ref loop, past that `continue`, not
+#     after `done` where it would run unconditionally once per hook
+#     invocation regardless of what (if anything) was actually pushed.
 setup
-printf 'local operating notes\n' > CLAUDE.md
-mkdir -p java-server/src/main/java/de/example
-printf 'class Example {}\n' > java-server/src/main/java/de/example/Example.java
-git add java-server/src/main/java/de/example/Example.java
-git commit -qm "feat: add java source"
-check_warns "CLAUDE.md freshness warns when source changes" "WARN: source changed in this push but CLAUDE.md looks stale." origin main
+awk 'BEGIN { for (i = 0; i < 21000; i++) printf "x" }' > CLAUDE.md
+git checkout -qb doomed-size
+printf 'x\n' >> README.md
+git add README.md
+git commit -qm "feat: doomed"
+git push -q origin doomed-size
+git checkout -q main
+out=$(git push origin --delete doomed-size 2>&1)
+got=$?
+if [ "$got" -eq 0 ] && ! printf '%s\n' "$out" | grep -q "WARN: CLAUDE.md is"; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "branch deletion does not trigger the CLAUDE.md size WARN"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s (exit %s)\n' "branch deletion does not trigger the CLAUDE.md size WARN" "$got"
+  printf '%s\n' "$out" | sed 's/^/      /'
+fi
 rm -f CLAUDE.md
 
 # --- optional local email allow-list: all four states ---
@@ -630,21 +643,28 @@ check_warns "allow-list without the address: personal email still warns" "jane.d
 
 # 43. State 3/4: allow-list file present WITH the address (case-insensitive,
 #     plus comment/blank-line/whitespace noise to exercise the parsing rules)
-#     — the MAILS warning must be suppressed entirely.
+#     — that address's warning is suppressed, but a SECOND, non-allow-listed
+#     address in the SAME push still warns. Fix-round-2 MINOR 1: the previous
+#     version of this case only asserted the allow-listed address's absence,
+#     which "no output at all" (e.g. a no-op hook) satisfies vacuously; a
+#     second address that must actually be printed is what makes this
+#     discriminate.
 setup
 printf '# personal allow-list, local only\n\n  Jane.Doe@PersonalMail.invalid  \n' \
   > "$(git rev-parse --git-common-dir)/allowed-emails"
-printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+printf 'contact: jane.doe@personalmail.invalid\nother: other.person@personalmail.invalid\n' > contact.txt
 git add contact.txt
 git commit -qm "chore: contact"
 out=$(git push origin main 2>&1)
 got=$?
-if [ "$got" -eq 0 ] && ! printf '%s\n' "$out" | grep -qF "jane.doe@personalmail.invalid"; then
+if [ "$got" -eq 0 ] \
+   && ! printf '%s\n' "$out" | grep -qF "jane.doe@personalmail.invalid" \
+   && printf '%s\n' "$out" | grep -qF "other.person@personalmail.invalid"; then
   passes=$((passes + 1))
-  printf 'PASS  %s\n' "allow-listed address suppresses the MAILS warning"
+  printf 'PASS  %s\n' "allow-listed address suppressed, a different address in the same push still warns"
 else
   failures=$((failures + 1))
-  printf 'FAIL  %s (exit %s)\n' "allow-listed address suppresses the MAILS warning" "$got"
+  printf 'FAIL  %s (exit %s)\n' "allow-listed address suppressed, a different address in the same push still warns" "$got"
   printf '%s\n' "$out" | sed 's/^/      /'
 fi
 
@@ -660,7 +680,42 @@ git add contact.txt
 git commit -qm "chore: contact"
 check_warns "unreadable allow-list (directory in the way): personal email still warns" "jane.doe@personalmail.invalid" origin main
 
-# 45. The allow-list must never suppress a HARD BLOCK — only the MAILS
+# 45. Fix-round-2 CRITICAL 1a: a malformed allow-list line (a bare regex
+#     metacharacter) must not silence the MAILS warning for the WHOLE push.
+#     Reproduced pre-fix against GNU grep 3.12: matching one allow-list line
+#     at a time via `grep -vix "$line"` made `[` trip "Invalid regular
+#     expression" (exit 2, no output), and the old `|| true` swallowed that
+#     and assigned the empty output back over $MAILS — blanking the warning
+#     for every address in the range, not just the malformed line's own.
+setup
+printf '[\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "malformed allow-list line ([) does not silence the MAILS warning" "jane.doe@personalmail.invalid" origin main
+
+# 46. Fix-round-2 CRITICAL 1b: an over-long allow-list line (~200000 bytes)
+#     must not silence the MAILS warning either — the old per-line
+#     `grep -vix "$line"` passed the line as an argv element and could trip
+#     E2BIG, with the same swallow-and-blank consequence as case 45.
+setup
+awk 'BEGIN { for (i = 0; i < 200000; i++) printf "x" }' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "over-long allow-list line does not silence the MAILS warning" "jane.doe@personalmail.invalid" origin main
+
+# 47. Fix-round-2 IMPORTANT 1: a `.` in an allow-listed address must not act
+#     as a regex wildcard onto a DIFFERENT address — allow-listing
+#     jane.doe@corp.invalid must not also suppress jane-doe@corp.invalid.
+setup
+printf 'jane.doe@corp.invalid\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'contact: jane-doe@corp.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "dot in an allow-listed address is literal, not a wildcard" "jane-doe@corp.invalid" origin main
+
+# 48. The allow-list must never suppress a HARD BLOCK — only the MAILS
 #     warning. Same push carries an allow-listed address AND a credential;
 #     the credential must still block.
 setup
@@ -669,6 +724,25 @@ printf 'contact: jane.doe@personalmail.invalid\ntoken = "ghp_0000000000000000000
 git add contact.txt
 git commit -qm "chore: contact with credential"
 check "allow-listed email cannot suppress the credential hard block" 1 origin main
+
+# 49. The allow-list must never suppress HARD BLOCK 1 (forbidden path), even
+#     with a deliberately hostile list naming the exact forbidden file.
+setup
+printf 'CLAUDE.md\nAGENTS.md\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "add claude md despite hostile allow-list"
+check "hostile allow-list cannot suppress the forbidden-path hard block" 1 origin main
+rm -f CLAUDE.md
+
+# 50. The allow-list must never suppress the INFRA warning, even with a
+#     deliberately hostile list naming the exact infrastructure string.
+setup
+printf '192.168.1.10\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'host: 192.168.1.10\n' > notes.txt
+git add notes.txt
+git commit -qm "chore: notes"
+check_warns "hostile allow-list cannot suppress the INFRA warning" "WARN: outgoing commits mention internal infrastructure." origin main
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
