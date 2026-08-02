@@ -37,6 +37,7 @@ export LC_ALL LANG
 unset LC_CTYPE LC_COLLATE LC_MESSAGES 2>/dev/null || true
 
 HOOK_SRC=$(cd "$(dirname "$0")" && pwd)/pre-push
+PRECOMMIT_SRC=$(cd "$(dirname "$0")" && pwd)/pre-commit
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -68,6 +69,8 @@ setup() {
   mkdir -p .githooks
   cp "$HOOK_SRC" .githooks/pre-push
   chmod +x .githooks/pre-push
+  cp "$PRECOMMIT_SRC" .githooks/pre-commit
+  chmod +x .githooks/pre-commit
   git config core.hooksPath .githooks
   printf 'hello\n' > README.md
   git add README.md .githooks/pre-push
@@ -127,7 +130,7 @@ check_silent "clean push passes with no output" origin main
 setup
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "add claude md"
+git commit -q --no-verify -m "add claude md"
 check "force-added CLAUDE.md blocks" 1 origin main
 
 # 3. A file under docs/ must block.
@@ -135,7 +138,7 @@ setup
 mkdir -p docs
 printf 'private runbook\n' > docs/runbook.md
 git add -f docs/runbook.md
-git commit -qm "add runbook"
+git commit -q --no-verify -m "add runbook"
 check "docs/ blocks" 1 origin main
 
 # 4. A change under .claude/ must block, even for an already-tracked path.
@@ -143,11 +146,11 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 git push -q --no-verify origin main
 printf '{"hooks":{}}\n' > .claude/settings.json
 git add .claude/settings.json
-git commit -qm "modify settings"
+git commit -q --no-verify -m "modify settings"
 check "modifying a tracked .claude/ file blocks" 1 origin main
 
 # 5. .env.example and .env.development must NOT block.
@@ -162,7 +165,7 @@ check ".env.example and .env.development pass" 0 origin main
 setup
 printf 'API_TOKEN=whatever\n' > .env
 git add -f .env
-git commit -qm "add env"
+git commit -q --no-verify -m "add env"
 check "bare .env blocks" 1 origin main
 
 # 7. First push of a NEW branch must exclude commits already published on the
@@ -203,7 +206,7 @@ setup
 git checkout -qb feature
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: work with leak"
+git commit -q --no-verify -m "feat: work with leak"
 check "new branch carrying a leak blocks" 1 origin feature
 
 # 10. A single push touching multiple refs, where only the SECOND ref line
@@ -220,7 +223,7 @@ git checkout -q main
 git checkout -qb leaky-branch
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: leaky work"
+git commit -q --no-verify -m "feat: leaky work"
 git checkout -q main
 check "multi-ref push blocks when only the second ref leaks" 1 origin clean-branch leaky-branch
 
@@ -241,7 +244,7 @@ git merge --no-commit --no-ff side >/dev/null 2>&1
 mkdir -p docs
 printf 'private runbook\n' > docs/secret.md
 git add -f docs/secret.md
-git commit -qm "merge: resolve and add secret"
+git commit -q --no-verify -m "merge: resolve and add secret"
 check "forbidden file introduced only in a merge commit blocks" 1 origin main
 
 # 12. An unresolvable remote_sha (force-push from a stale clone that never
@@ -263,7 +266,7 @@ git push -q origin main
 cd "$WORK/wc2" || exit 1
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: leak from stale clone"
+git commit -q --no-verify -m "feat: leak from stale clone"
 check "unresolvable remote_sha fails closed and blocks" 1 --force origin main
 cd "$WORK/wc" || exit 1
 
@@ -273,7 +276,7 @@ setup
 mkdir -p docs
 printf 'private runbook\n' > 'docs/prüfung.md'
 git add -f 'docs/prüfung.md'
-git commit -qm "add non-ascii runbook"
+git commit -q --no-verify -m "add non-ascii runbook"
 check "non-ASCII forbidden path blocks" 1 origin main
 
 # 14. .env.local and .env.production.local must hard-block too — case 6 only
@@ -282,7 +285,7 @@ setup
 printf 'API_TOKEN=whatever\n' > .env.local
 printf 'API_TOKEN=whatever\n' > .env.production.local
 git add -f .env.local .env.production.local
-git commit -qm "add local env files"
+git commit -q --no-verify -m "add local env files"
 check ".env.local and .env.production.local block" 1 origin main
 
 # 15. Finding 4 coverage: pushing by an entirely unconfigured URL (no remote
@@ -295,7 +298,7 @@ git init -q --bare "$WORK/other-bare"
 git checkout -qb urlbranch
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: leak via unconfigured url push"
+git commit -q --no-verify -m "feat: leak via unconfigured url push"
 check "push by unconfigured URL with a leak blocks" 1 "$WORK/other-bare" urlbranch
 
 # 16. Finding 5 coverage: an emptied/pruned refs/remotes/origin (never
@@ -308,7 +311,7 @@ git update-ref -d refs/remotes/origin/main
 git checkout -qb feature-pruned
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: leak with pruned tracking ref"
+git commit -q --no-verify -m "feat: leak with pruned tracking ref"
 check "pruned refs/remotes/origin with a leak blocks" 1 origin feature-pruned
 
 # 17. Cross-remote coverage: a forbidden commit fetched via ONE remote's
@@ -325,7 +328,7 @@ git init -q --bare "$WORK/public-bare"
 git remote add public "$WORK/public-bare"
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: leak fetched via private remote"
+git commit -q --no-verify -m "feat: leak fetched via private remote"
 git push -q --no-verify private main
 check "leak visible only via a different remote's tracking refs still blocks" 1 public main
 
@@ -342,7 +345,7 @@ setup
 git init -q --bare "$WORK/public-bare"
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "feat: leak published on the private fetch remote"
+git commit -q --no-verify -m "feat: leak published on the private fetch remote"
 git push -q --no-verify origin main
 git fetch -q origin
 git config remote.origin.pushurl "$WORK/public-bare"
@@ -369,12 +372,12 @@ git config --unset remote.origin.pushurl
 setup
 ln -s README.md AGENTS.md
 git add -f AGENTS.md
-git commit -qm "add agents symlink"
+git commit -q --no-verify -m "add agents symlink"
 git push -q --no-verify origin main
 rm AGENTS.md
 printf 'synthetic operating notes\n' > AGENTS.md
 git add AGENTS.md
-git commit -qm "replace symlink with a real file"
+git commit -q --no-verify -m "replace symlink with a real file"
 check "symlink-to-file type change on a forbidden path blocks" 1 origin main
 
 # assert_absent <name> <git-dir> <ref> <fixed-string>
@@ -447,7 +450,7 @@ setup
 mkdir -p java-server
 printf 'synthetic module notes\n' > java-server/CLAUDE.md
 git add -f java-server/CLAUDE.md
-git commit -qm "add nested claude md"
+git commit -q --no-verify -m "add nested claude md"
 check "nested CLAUDE.md blocks" 1 origin main
 
 # 24. Owner ruling: a nested .claude/ directory is local-only too.
@@ -455,7 +458,7 @@ setup
 mkdir -p chronicle/.claude
 printf '{}\n' > chronicle/.claude/settings.json
 git add -f chronicle/.claude/settings.json
-git commit -qm "add nested claude dir"
+git commit -q --no-verify -m "add nested claude dir"
 check "nested .claude/ file blocks" 1 origin main
 
 # 25. The deliberate asymmetry: docs/ stays ROOT-anchored. A vendored docs/
@@ -491,7 +494,7 @@ check_warns() {
 setup
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
 git add config.txt
-git commit -qm "chore: config"
+git commit -q --no-verify -m "chore: config"
 check "credential pattern blocks" 1 origin main
 assert_absent "credential-bearing config.txt never reached the remote tree" "$WORK/bare" main "config.txt"
 
@@ -522,7 +525,7 @@ check_warns "personal email warns only" "jane.doe@personalmail.invalid" origin m
 setup
 printf 'local operating notes\n' > claude.md
 git add -f claude.md
-git commit -qm "add lowercase claude md"
+git commit -q --no-verify -m "add lowercase claude md"
 check "lowercase claude.md blocks" 1 origin main
 assert_absent "lowercase claude.md never reached the remote tree" "$WORK/bare" main "claude.md"
 
@@ -533,7 +536,7 @@ setup
 mkdir -p Docs
 printf 'private runbook\n' > Docs/runbook.md
 git add -f Docs/runbook.md
-git commit -qm "add capitalized docs runbook"
+git commit -q --no-verify -m "add capitalized docs runbook"
 check "Docs/runbook.md blocks" 1 origin main
 assert_absent "Docs/runbook.md never reached the remote tree" "$WORK/bare" main "Docs/runbook.md"
 
@@ -565,7 +568,7 @@ git commit -qm "feat: main change"
 git merge --no-commit --no-ff side >/dev/null 2>&1
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
 git add config.txt
-git commit -qm "merge: resolve and add a credential"
+git commit -q --no-verify -m "merge: resolve and add a credential"
 check "credential introduced only in a merge commit blocks" 1 origin main
 assert_absent "merge-introduced credential never reached the remote tree" "$WORK/bare" main "config.txt"
 
@@ -580,7 +583,7 @@ git push -q --no-verify origin main
 rm config.txt
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
 git add config.txt
-git commit -qm "replace symlink with a credential-bearing file"
+git commit -q --no-verify -m "replace symlink with a credential-bearing file"
 check "credential via symlink-to-file type change blocks" 1 origin main
 # config.txt as a PATH is already legitimately in the remote tree (published
 # earlier as the harmless symlink) — assert_absent would pass vacuously.
@@ -632,7 +635,7 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 git push -q --no-verify origin main
 printf 'unrelated change\n' >> README.md
 git add README.md
@@ -778,7 +781,7 @@ setup
 printf 'jane.doe@personalmail.invalid\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
 printf 'contact: jane.doe@personalmail.invalid\ntoken = "ghp_0000000000000000000000000000000000"\n' > contact.txt
 git add contact.txt
-git commit -qm "chore: contact with credential"
+git commit -q --no-verify -m "chore: contact with credential"
 check "allow-listed email cannot suppress the credential hard block" 1 origin main
 
 # 49. The allow-list must never suppress HARD BLOCK 1 (forbidden path), even
@@ -787,7 +790,7 @@ setup
 printf 'CLAUDE.md\nAGENTS.md\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
 printf 'local operating notes\n' > CLAUDE.md
 git add -f CLAUDE.md
-git commit -qm "add claude md despite hostile allow-list"
+git commit -q --no-verify -m "add claude md despite hostile allow-list"
 check "hostile allow-list cannot suppress the forbidden-path hard block" 1 origin main
 rm -f CLAUDE.md
 
@@ -841,7 +844,7 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 check_absent "blocked path is not also reported as already published" 1 "ALREADY published" origin main
 
 # 53. I1: with no usable $remote_sha (brand-new branch) there is no baseline of
@@ -851,7 +854,7 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 git push -q --no-verify origin main
 git checkout -qb fresh
 printf 'feature work\n' >> README.md
@@ -865,7 +868,7 @@ check_silent "new branch with no remote baseline skips the tree audit" origin fr
 setup
 printf 'API_TOKEN=whatever\n' > .env
 git add -f .env
-git commit -qm "add env"
+git commit -q --no-verify -m "add env"
 git push -q --no-verify origin main
 printf 'unrelated change\n' >> README.md
 git add README.md
@@ -882,7 +885,7 @@ mkdir -p docs
 printf 'decoy\n' > bogus.md
 printf 'private runbook\n' > 'docs/a b*.md'
 git add -f 'docs/a b*.md'
-git commit -qm "add runbook with a space and a glob char"
+git commit -q --no-verify -m "add runbook with a space and a glob char"
 out=$(git push origin main 2>&1)
 got=$?
 if [ "$got" -eq 1 ] \
@@ -904,7 +907,7 @@ setup
 mkdir -p docs
 printf 'private runbook\n' > docs/runbook.md
 git add -f docs/runbook.md
-git commit -qm "add runbook"
+git commit -q --no-verify -m "add runbook"
 check_absent "no merge in range: the -m caveat is not printed" 1 "git log -m diffs merges" origin main
 
 # 57. M5, other half: on a range that DOES contain a merge the caveat must still
@@ -922,7 +925,7 @@ git merge --no-commit --no-ff side >/dev/null 2>&1
 mkdir -p docs
 printf 'private runbook\n' > docs/secret.md
 git add -f docs/secret.md
-git commit -qm "merge: resolve and add secret"
+git commit -q --no-verify -m "merge: resolve and add secret"
 out=$(git push origin main 2>&1)
 got=$?
 if [ "$got" -eq 1 ] && printf '%s\n' "$out" | grep -qF "git log -m diffs merges"; then
@@ -944,7 +947,7 @@ mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 printf 'doomed\n' > todelete.txt
 git add -f .claude/settings.json todelete.txt
-git commit -qm "add settings and a file"
+git commit -q --no-verify -m "add settings and a file"
 git push -q --no-verify origin main
 git rm -q todelete.txt
 git commit -qm "chore: remove a file"
@@ -992,7 +995,7 @@ mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 printf 'local operating notes\n' > CLAUDE.md
 git add -f .claude/settings.json CLAUDE.md
-git commit -qm "add settings and claude md"
+git commit -q --no-verify -m "add settings and claude md"
 git push -q --no-verify origin main
 rm -f CLAUDE.md
 printf '.claude/settings.json\n' > "$(git rev-parse --git-common-dir)/acknowledged-leaks"
@@ -1019,12 +1022,12 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 git push -q --no-verify origin main
 printf '.claude/settings.json\nCLAUDE.md\ndocs/\n' > "$(git rev-parse --git-common-dir)/acknowledged-leaks"
 printf '{"hooks":{}}\n' > .claude/settings.json
 git add .claude/settings.json
-git commit -qm "modify settings"
+git commit -q --no-verify -m "modify settings"
 check "acknowledgement list cannot suppress the forbidden-path hard block" 1 origin main
 
 # 62. A malformed / hostile acknowledgement list must not silence the audit
@@ -1035,7 +1038,7 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 git push -q --no-verify origin main
 printf '[\n.*\n.claude/\n' > "$(git rev-parse --git-common-dir)/acknowledged-leaks"
 printf 'unrelated change\n' >> README.md
@@ -1050,13 +1053,240 @@ setup
 mkdir -p .claude
 printf '{}\n' > .claude/settings.json
 git add -f .claude/settings.json
-git commit -qm "add settings"
+git commit -q --no-verify -m "add settings"
 git push -q --no-verify origin main
 mkdir -p "$(git rev-parse --git-common-dir)/acknowledged-leaks"
 printf 'unrelated change\n' >> README.md
 git add README.md
 git commit -qm "docs: unrelated"
 check_warns "unreadable acknowledgement list still warns" ".claude/settings.json" origin main
+
+# ================================================================= pre-commit
+# Everything above exercises .githooks/pre-push, installed by setup() and
+# invoked only via `git push`. setup() ALSO installs .githooks/pre-commit
+# (see PRECOMMIT_SRC / the cp above) but until now not one case actually
+# triggered it — a plain `git commit` runs it implicitly on every commit made
+# by every case above, but nothing asserted anything about ITS behaviour. A
+# hook that only worked when invoked directly (`sh .githooks/pre-commit`) and
+# silently did nothing under git's own invocation would have shipped
+# undetected. These cases go through the exact code path git actually takes:
+# `git commit`, never the script called directly.
+
+# check_commit_blocked <name> <commit message>
+# Stages the fixture that the caller already prepared, then commits WITHOUT
+# --no-verify. An exit code alone does not prove the commit never happened —
+# HEAD is compared before/after too, because that is the only way to know a
+# commit object was not created.
+check_commit_blocked() {
+  name=$1
+  msg=$2
+  before=$(git rev-parse HEAD)
+  out=$(git commit -qm "$msg" 2>&1)
+  got=$?
+  after=$(git rev-parse HEAD)
+  if [ "$got" -ne 0 ] && [ "$before" = "$after" ]; then
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$name"
+  else
+    failures=$((failures + 1))
+    printf 'FAIL  %s (exit %s, HEAD before=%s after=%s)\n' "$name" "$got" "$before" "$after"
+    printf '%s\n' "$out" | sed 's/^/      /'
+  fi
+}
+
+# check_commit_allowed <name> <commit message>
+# The mirror image: the commit must succeed AND HEAD must actually advance —
+# exit 0 alone would also be satisfied by a hook that silently no-op'd and
+# left the working tree uncommitted through some other code path.
+check_commit_allowed() {
+  name=$1
+  msg=$2
+  before=$(git rev-parse HEAD)
+  out=$(git commit -qm "$msg" 2>&1)
+  got=$?
+  after=$(git rev-parse HEAD)
+  if [ "$got" -eq 0 ] && [ "$before" != "$after" ]; then
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$name"
+  else
+    failures=$((failures + 1))
+    printf 'FAIL  %s (exit %s, HEAD before=%s after=%s)\n' "$name" "$got" "$before" "$after"
+    printf '%s\n' "$out" | sed 's/^/      /'
+  fi
+}
+
+# 64. docs/x.md blocks at commit time.
+setup
+mkdir -p docs
+printf 'private runbook\n' > docs/x.md
+git add -f docs/x.md
+check_commit_blocked "pre-commit: docs/x.md blocks at commit time" "add docs/x.md"
+
+# 65. A bare .env blocks at commit time.
+setup
+printf 'API_TOKEN=whatever\n' > .env
+git add -f .env
+check_commit_blocked "pre-commit: .env blocks at commit time" "add env"
+
+# 66. .env.local blocks at commit time.
+setup
+printf 'API_TOKEN=whatever\n' > .env.local
+git add -f .env.local
+check_commit_blocked "pre-commit: .env.local blocks at commit time" "add env.local"
+
+# 67. .env.prod.local blocks at commit time (the '.env.<anything>.local' arm
+#     of ENV_HARD, not just the two literal names cases 65/66 cover).
+setup
+printf 'API_TOKEN=whatever\n' > .env.prod.local
+git add -f .env.prod.local
+check_commit_blocked "pre-commit: .env.prod.local blocks at commit time" "add env.prod.local"
+
+# 68. A nested java-server/CLAUDE.md blocks at commit time — CLAUDE.md is
+#     local-only at any depth, not just at the root.
+setup
+mkdir -p java-server
+printf 'synthetic module notes\n' > java-server/CLAUDE.md
+git add -f java-server/CLAUDE.md
+check_commit_blocked "pre-commit: nested java-server/CLAUDE.md blocks at commit time" "add nested claude md"
+
+# 69. A lowercase claude.md blocks at commit time — FORBIDDEN matches
+#     case-insensitively.
+setup
+printf 'local operating notes\n' > claude.md
+git add -f claude.md
+check_commit_blocked "pre-commit: lowercase claude.md blocks at commit time" "add lowercase claude md"
+
+# 70. AGENTS.md blocks at commit time.
+setup
+printf 'local operating notes\n' > AGENTS.md
+git add -f AGENTS.md
+check_commit_blocked "pre-commit: AGENTS.md blocks at commit time" "add agents md"
+
+# 71. A nested chronicle/.claude/settings.json blocks at commit time.
+setup
+mkdir -p chronicle/.claude
+printf '{}\n' > chronicle/.claude/settings.json
+git add -f chronicle/.claude/settings.json
+check_commit_blocked "pre-commit: nested chronicle/.claude/settings.json blocks at commit time" "add nested claude dir"
+
+# 72. A differently-cased root Docs/ blocks at commit time — same
+#     case-insensitive match as claude.md above.
+setup
+mkdir -p Docs
+printf 'private runbook\n' > Docs/y.md
+git add -f Docs/y.md
+check_commit_blocked "pre-commit: Docs/y.md blocks at commit time" "add capitalized docs runbook"
+
+# 73. An ordinary file commits cleanly.
+setup
+printf 'hello again\n' >> README.md
+git add README.md
+check_commit_allowed "pre-commit: an ordinary file commits cleanly" "docs: ordinary change"
+
+# 74. .env.example is legitimate and commits cleanly.
+setup
+printf 'API_TOKEN=your-token-here\n' > .env.example
+git add .env.example
+check_commit_allowed "pre-commit: .env.example commits cleanly" "chore: env example"
+
+# 75. The committed Vite chronicle/.env.development is legitimate.
+setup
+mkdir -p chronicle
+printf 'VITE_MOCK=false\n' > chronicle/.env.development
+git add chronicle/.env.development
+check_commit_allowed "pre-commit: chronicle/.env.development commits cleanly" "chore: env development"
+
+# 76. The committed Vite chronicle/.env.production is legitimate.
+setup
+mkdir -p chronicle
+printf 'VITE_MOCK=false\n' > chronicle/.env.production
+git add chronicle/.env.production
+check_commit_allowed "pre-commit: chronicle/.env.production commits cleanly" "chore: env production"
+
+# 77. The deliberate nested-docs asymmetry: some-module/docs/x.md is
+#     legitimate vendored content and commits cleanly — docs/ stays
+#     ROOT-anchored.
+setup
+mkdir -p some-module/docs
+printf 'public module docs\n' > some-module/docs/x.md
+git add some-module/docs/x.md
+check_commit_allowed "pre-commit: nested some-module/docs/x.md commits cleanly" "docs: module documentation"
+
+# 78. Same asymmetry, differently-cased nested dir: case-insensitivity must
+#     not widen the ROOT-anchored docs/ prefix onto a nested Docs/ too.
+setup
+mkdir -p some-module/Docs
+printf 'public module docs\n' > some-module/Docs/x.md
+git add some-module/Docs/x.md
+check_commit_allowed "pre-commit: nested some-module/Docs/x.md commits cleanly" "docs: module documentation, capitalized dir"
+
+# 79. A staged credential blocks at commit time.
+setup
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
+git add config.txt
+check_commit_blocked "pre-commit: staged credential blocks at commit time" "chore: config"
+
+# 80. A credential PATTERN inside .githooks/ (the hook's own regex, in a
+#     comment) must not block its own commit.
+setup
+printf '# matches ghp_ and sk-ant- deliberately\n' >> .githooks/pre-push
+git add .githooks/pre-push
+check_commit_allowed "pre-commit: credential pattern inside .githooks/ commits cleanly" "chore: hook comment"
+
+# 81. THE POINT OF THIS WHOLE SUITE: pre-commit and pre-push must never drift
+#     on FORBIDDEN/ENV_HARD. Yesterday's review aligned them by hand; nothing
+#     stops a future edit to just one file from reopening the exact gap that
+#     fix closed (git add -f docs/run.md .env && git commit succeeding
+#     silently, only to blow up at push time). Anchored on the variable name
+#     at the START of the line (^FORBIDDEN=/^ENV_HARD=), not a bare grep for
+#     the word, so a comment mentioning it or a later use in an expression is
+#     never mistaken for the assignment itself. A MISSING assignment (e.g. a
+#     future rename to FORBIDDEN_PATHS in only one file) must fail loudly too
+#     — silently reading "no difference" because both sides came back empty
+#     would defeat the entire point of this case.
+extract_assignment() {
+  # $1 = file, $2 = variable name. head -1: if a future edit ever introduces
+  # a second assignment, comparing only the first would hide real drift in
+  # the second — but grep -c below (before this) would need to also confirm
+  # there is exactly one, which is out of scope for what this hook currently
+  # does. Documented, not silently assumed away.
+  grep -E "^${2}=" "$1" | head -1
+}
+PP_FORBIDDEN=$(extract_assignment "$HOOK_SRC" "FORBIDDEN")
+PC_FORBIDDEN=$(extract_assignment "$PRECOMMIT_SRC" "FORBIDDEN")
+PP_ENV_HARD=$(extract_assignment "$HOOK_SRC" "ENV_HARD")
+PC_ENV_HARD=$(extract_assignment "$PRECOMMIT_SRC" "ENV_HARD")
+
+drift_ok=1
+if [ -z "$PP_FORBIDDEN" ] || [ -z "$PC_FORBIDDEN" ]; then
+  drift_ok=0
+  echo "DRIFT: FORBIDDEN assignment missing in $HOOK_SRC or $PRECOMMIT_SRC."
+  echo "  $HOOK_SRC: ${PP_FORBIDDEN:-<missing>}"
+  echo "  $PRECOMMIT_SRC: ${PC_FORBIDDEN:-<missing>}"
+elif [ "$PP_FORBIDDEN" != "$PC_FORBIDDEN" ]; then
+  drift_ok=0
+  echo "DRIFT: FORBIDDEN differs between $HOOK_SRC and $PRECOMMIT_SRC."
+  echo "  $HOOK_SRC: $PP_FORBIDDEN"
+  echo "  $PRECOMMIT_SRC: $PC_FORBIDDEN"
+fi
+if [ -z "$PP_ENV_HARD" ] || [ -z "$PC_ENV_HARD" ]; then
+  drift_ok=0
+  echo "DRIFT: ENV_HARD assignment missing in $HOOK_SRC or $PRECOMMIT_SRC."
+  echo "  $HOOK_SRC: ${PP_ENV_HARD:-<missing>}"
+  echo "  $PRECOMMIT_SRC: ${PC_ENV_HARD:-<missing>}"
+elif [ "$PP_ENV_HARD" != "$PC_ENV_HARD" ]; then
+  drift_ok=0
+  echo "DRIFT: ENV_HARD differs between $HOOK_SRC and $PRECOMMIT_SRC."
+  echo "  $HOOK_SRC: $PP_ENV_HARD"
+  echo "  $PRECOMMIT_SRC: $PC_ENV_HARD"
+fi
+if [ "$drift_ok" -eq 1 ]; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "pre-commit and pre-push FORBIDDEN/ENV_HARD stay byte-identical"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s\n' "pre-commit and pre-push FORBIDDEN/ENV_HARD stay byte-identical"
+fi
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
