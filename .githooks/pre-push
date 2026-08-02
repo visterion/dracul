@@ -37,6 +37,8 @@ FORBIDDEN='(^|/)(CLAUDE\.md|AGENTS\.md|\.claude/)|^docs/'
 ENV_HARD='(^|/)\.env$|(^|/)\.env\.local$|(^|/)\.env\..+\.local$'
 
 fail=0
+# One-shot latch for the CLAUDE.md size WARN at the end of the ref loop.
+SIZE_WARNED=0
 
 # git log's path list is captured through a FILE, not a pipeline into a command
 # substitution: --name-only -z separates paths with NUL and a command
@@ -45,20 +47,21 @@ fail=0
 # fail-open closed earlier. If mktemp is unavailable TMPF stays empty, the
 # redirection below fails, and the hook blocks — fail closed.
 TMPF=$(mktemp 2>/dev/null) || TMPF=""
-# Two more scratch files for the added-lines (content, not paths) extraction
-# added in HARD BLOCK 2 / the warnings below. Created once, up front, and
-# overwritten per ref-line inside the loop — same fail-closed discipline as
-# TMPF: if mktemp is unavailable the variable stays empty, the redirection
-# below fails, and the corresponding check blocks instead of silently seeing
-# nothing.
-ADDEDF=$(mktemp 2>/dev/null) || ADDEDF=""
+# Scratch file for the added-lines (content, not paths) extraction used by
+# HARD BLOCK 2 and the warnings below. Created once, up front, and overwritten
+# per ref-line inside the loop — same fail-closed discipline as TMPF: if mktemp
+# is unavailable the variable stays empty, the redirection below fails, and the
+# corresponding check blocks instead of silently seeing nothing.
 SCANF=$(mktemp 2>/dev/null) || SCANF=""
-# Scratch file for the tree audit (WARN 3, below) — overwritten per ref-line
-# inside the loop, same fail-closed discipline as TMPF/ADDEDF/SCANF: if mktemp
-# is unavailable the variable stays empty and the audit prints a WARN that it
-# could not run, instead of silently producing an empty (and therefore
-# falsely clean-looking) result.
+# Scratch files for the tree audit (WARN 3, below) — overwritten per ref-line
+# inside the loop, same fail-closed discipline as TMPF/SCANF: if mktemp is
+# unavailable the variable stays empty and the audit prints a WARN that it
+# could not run, instead of silently producing an empty (and therefore falsely
+# clean-looking) result. SUBF holds the paths this push is already BLOCKING, so
+# the audit can subtract them and never describe a just-blocked path as
+# "already published".
 TREEF=$(mktemp 2>/dev/null) || TREEF=""
+SUBF=$(mktemp 2>/dev/null) || SUBF=""
 # Created here, BEFORE the trap is installed, not after: the trap's action is
 # a single-quoted string re-evaluated at signal time, so it already sees
 # whatever ALLOWF holds when it fires — but under `set -u` a signal landing
@@ -67,7 +70,7 @@ TREEF=$(mktemp 2>/dev/null) || TREEF=""
 # Seeding it (even before the real mktemp below overwrites it) closes that
 # gap.
 ALLOWF=""
-trap 'rm -f "$TMPF" "$ADDEDF" "$SCANF" "$TREEF" "$ALLOWF"' EXIT HUP INT TERM
+trap 'rm -f "$TMPF" "$SCANF" "$TREEF" "$SUBF" "$ALLOWF"' EXIT HUP INT TERM
 
 # ---------------------------------------------------------- optional allow-list
 # Real email addresses have no rotation path (see CLAUDE.md's "never commit
@@ -145,51 +148,27 @@ resolve_remote_name() {
 
 REMOTE_NAME=$(resolve_remote_name "$REMOTE_ARG") || REMOTE_NAME=""
 
-# Even with the right name, refs/remotes/<name>/* only reflects the last
-# fetch — if it is empty (never fetched, pruned, or manually deleted)
-# excluding by it removes nothing and a brand-new branch's full history gets
-# scanned again. The tempting fallback, `--not --all`, is actually WORSE: for
-# an ordinary push `--all` includes refs/heads/<branch-being-pushed> itself,
-# so `git log "$local_sha" --not --all` is *always* empty regardless of
-# content — FILES comes back empty, `continue` fires below, and the push
-# proceeds completely unchecked. That turns a noisy false-positive BLOCK into
-# a silent leak, which is strictly worse in a guard whose entire purpose is
-# failing closed.
+# Narrowing is only safe when refs/remotes/<name>/* really describes THIS
+# push's target, which needs two things beyond a resolvable name:
+#   - non-empty tracking data (never fetched / pruned / manually deleted means
+#     it proves nothing), and
+#   - push URL == fetch URL. Tracking refs are populated by FETCHES; with
+#     `remote.<name>.pushurl` or `url.<x>.pushInsteadOf` they describe a
+#     DIFFERENT repository than the push delivers to, so excluding by them
+#     means "already published over there". `git remote get-url --push`
+#     resolves both mechanisms (verified on git 2.53) and $2 is git's own
+#     report of the target; both are compared against the fetch URL and both
+#     must agree. Several push URLs (multi-line) also count as divergence.
 #
-# The unnamed `--not --remotes` is ALSO wrong: it excludes remote-tracking
-# refs of EVERY configured remote, not just the one being pushed to. If the
-# target remote has no tracking data (the exact condition that triggers this
-# fallback: URL push, never fetched, or pruned) while a DIFFERENT remote's
-# tracking refs already contain the forbidden commit (e.g. a private mirror
-# that was fetched, alongside a public origin that wasn't), that commit gets
-# excluded from the scan by the OTHER remote's ref and the push silently
-# succeeds — the same fail-open class as `--all`, just with a narrower
-# precondition.
-#
-# There is no ref-set that reliably means "already known to be published on
-# THIS remote" once its own tracking data is unusable. So exclude nothing:
-# EXCLUDE="" turns `git log "$local_sha" --not $EXCLUDE` into
-# `git log "$local_sha" --not` (a trailing --not with nothing after it is a
-# no-op to git, not an error), which is a full-history scan of the branch
-# being pushed. Noisy — it may BLOCK on content already public on this exact
-# remote — but never silently blind to a leak. The BLOCKED message below
-# says so honestly when this path is taken.
-# Even the NAME being right is not enough. refs/remotes/<name>/* is populated
-# by FETCHES from that remote's fetch URL. A remote can push somewhere else
-# entirely — `remote.<name>.pushurl`, or `url.<x>.pushInsteadOf` — in which
-# case those tracking refs describe a DIFFERENT repository than the one this
-# push delivers to. Excluding by them then means "already published over
-# there", not "already published here": content long since public on the fetch
-# remote is dropped from the scan and sails through to the push target, which
-# may be the public repo this guard exists to protect. Same failure class as
-# the `--all` and cross-remote holes above.
-#
-# So narrow only when the push target really is that remote's fetch source.
-# `git remote get-url --push` resolves pushurl AND pushInsteadOf (verified on
-# git 2.53), and $2 is git's own report of the target, so both are compared
-# against the fetch URL and both must agree. Divergence — or several push URLs
-# (multi-line output) — de-narrows to the EXCLUDE="" full-history fallback,
-# which is noisy but fails closed and says so in its message.
+# When narrowing is unsafe, exclude NOTHING (EXCLUDE=""). Every tempting
+# fallback fails OPEN: `--not --all` includes the branch being pushed, so the
+# range is always empty and the push goes unchecked entirely; the unnamed
+# `--not --remotes` excludes EVERY remote's tracking refs, so a leak visible
+# only via a private mirror is invisible when pushed to the public remote.
+# `git log "$local_sha" --not` (trailing --not, a no-op to git) is a
+# full-history scan instead: noisy — it may BLOCK on content already public on
+# this exact remote — but never blind. The BLOCKED message says so honestly
+# when this path is taken.
 FETCH_URL=$(git remote get-url "$REMOTE_NAME" 2>/dev/null) || FETCH_URL=""
 PUSH_URL=$(git remote get-url --push "$REMOTE_NAME" 2>/dev/null) || PUSH_URL=""
 same_target=0
@@ -280,7 +259,17 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
   FILES=$(tr '\0' '\n' < "$TMPF" | LC_ALL=C sort -u)
-  [ -n "$FILES" ] || continue
+  # No `[ -n "$FILES" ] || continue` here. It read as a harmless fast path but
+  # also skipped the whole-tree checks BELOW the range scans: --diff-filter=d
+  # excludes deletions, so a deletion-only commit produces an empty FILES and
+  # silently disabled both the tree audit and the CLAUDE.md size WARN —
+  # reproduced. The range greps below are no-ops on an empty FILES anyway.
+
+  # Whether this range contains a merge commit at all. The four-line "-m can
+  # resurface already-public content" caveat attached to the blocks below is
+  # only true for merges, and printing it on every single block is exactly the
+  # kind of unconditional noise that trains the operator into --no-verify.
+  HAS_MERGE=$(git rev-list --merges --max-count=1 "$@" 2>/dev/null) || HAS_MERGE=""
 
   # ------------------------------------------------------------- HARD BLOCK 1
   # LC_ALL=C on every grep that reads path data. In a UTF-8 locale (the hook
@@ -307,12 +296,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     else
       echo "BLOCKED: this push would publish local-only files ($local_ref):"
     fi
-    [ -n "$HITS" ] && printf '  %s\n' $HITS
-    [ -n "$ENVHITS" ] && printf '  %s\n' $ENVHITS
+    # Quoted, one path per line via sed — NOT `printf '  %s\n' $HITS`. Unquoted
+    # word-splitting broke `docs/a b.md` into two lines and, worse, subjected
+    # every path to pathname expansion: `docs/a b*.md` was reported as whatever
+    # happened to match in the CWD, i.e. the block named files that do not
+    # exist. Reproduced.
+    [ -n "$HITS" ] && printf '%s\n' "$HITS" | sed 's/^/  /'
+    [ -n "$ENVHITS" ] && printf '%s\n' "$ENVHITS" | sed 's/^/  /'
     echo "  These hold operating detail — prod hosts, container IDs, deploy notes."
-    echo "  Note: on a merge, a listed path can already be published via the other"
-    echo "  parent (git log -m diffs merges against EACH parent independently, so"
-    echo "  conflict resolution can resurface already-public content as 'added')."
+    if [ -n "$HAS_MERGE" ]; then
+      echo "  Note: on a merge, a listed path can already be published via the other"
+      echo "  parent (git log -m diffs merges against EACH parent independently, so"
+      echo "  conflict resolution can resurface already-public content as 'added')."
+    fi
     echo "  If you have confirmed they are already public, override with: git push --no-verify"
     fail=1
   fi
@@ -320,21 +316,22 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # Added lines of this range — content, not paths, so newline-delimiting is
   # fine, but git log's exit status still must not be discarded (the same
   # fail-open shape as the path scan above: a failed `git log` behind a bare
-  # command substitution would leave ADDED/ADDED_SCAN empty and silently
-  # disable both HARD BLOCK 2 and the warnings). Same flags as the path scan
-  # above, and for the same reasons:
+  # command substitution would leave ADDED_SCAN empty and silently disable
+  # HARD BLOCK 2 and the warnings alike). Same flags as the path scan above,
+  # and for the same reasons:
   #   -m: a credential introduced only by a MERGE commit (added during
   #       conflict resolution, present on neither parent) gets no diff at all
   #       without it — the identical defect documented above, reproduced here
   #       too: it silenced both HARD BLOCK 2 and the WARNs for the whole
-  #       merge-introduced range. Trade-off recorded here because both BLOCKED
-  #       messages below refer back to it: -m diffs a merge against EACH
+  #       merge-introduced range. Trade-off recorded here because the BLOCKED
+  #       message below refers back to it: -m diffs a merge against EACH
   #       parent independently, so content already committed (and already
   #       public) via one parent can appear as "added" relative to the OTHER
   #       parent when conflict resolution keeps it. A block or warning below
-  #       may therefore name content that is already on the remote — every
-  #       such message says so explicitly, so an operator who has actually
-  #       checked isn't driven to --no-verify by what looks like a false leak.
+  #       may therefore name content that is already on the remote — the
+  #       message says so explicitly (only when the range actually contains a
+  #       merge), so an operator who has actually checked isn't driven to
+  #       --no-verify by what looks like a false leak.
   #   --diff-filter=d (not ACMR): ACMR silently drops T (type change) — a
   #       credential-bearing SYMLINK replaced by a real file carrying the
   #       token is a pure T and was invisible to ACMR, reaching the remote at
@@ -343,8 +340,24 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #       first ~8000 bytes, or a `-diff` gitattribute) gets
   #       "Binary files a/x and b/x differ" instead of a patch, and any
   #       credential inside is never scanned at all.
-  if [ -z "$ADDEDF" ] || ! git log --format= -U0 --diff-filter=d -m --text -p "$@" > "$ADDEDF"; then
-    echo "BLOCKED ($local_ref): could not inspect this push's added content (content scan) — 'git log' failed."
+  #
+  # ':(exclude).githooks/' — this hook legitimately contains credential
+  # *patterns* (the regex below) and would otherwise block its own push. There
+  # used to be a SECOND, unexcluded `git log -p` pass feeding the INFRA/MAILS
+  # warnings, which meant this repo's own hook TEST FIXTURES (a synthetic
+  # 192.168.x address, a synthetic .invalid mailbox) warned on every push that
+  # touched .githooks/ — unavoidable, unsuppressable noise, i.e. exactly the
+  # --no-verify training this hook's doctrine exists to avoid. The warnings now
+  # read this same excluded stream. Accepted trade-off, decided by the owner: a
+  # real address pasted into a hook COMMENT no longer warns at push time —
+  # pre-commit still catches it at commit time, and the same exclusion already
+  # applied to credentials. Dropping the second pass also removes a full
+  # duplicate `git log -p` (tens of MB of patch on the full-history fallback)
+  # per pushed ref.
+  # PATH rules (HARD BLOCK 1 and the tree audit) are NOT narrowed — they still
+  # apply to .githooks/ like anywhere else.
+  if [ -z "$SCANF" ] || ! git log --format= -U0 --diff-filter=d -m --text -p "$@" -- . ':(exclude).githooks/' > "$SCANF"; then
+    echo "BLOCKED ($local_ref): could not inspect this push's added content — 'git log' failed."
     echo "  Refusing to let an unreadable range pass as 'nothing to see'."
     echo "  If you have confirmed the outgoing commits are clean, override with: git push --no-verify"
     fail=1
@@ -356,22 +369,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # silently disables every content check for the whole ref, the identical
   # "one bad byte blanks every rule at once" shape LC_ALL=C fixes for invalid
   # UTF-8 above — but LC_ALL=C does NOT cover a literal NUL byte, only -a
-  # does. -a and \b below are GNU grep extensions; this hook assumes GNU
-  # grep (the push host is Linux) — a future BSD/macOS port must re-check
-  # both.
-  ADDED=$(LC_ALL=C grep -a '^+' "$ADDEDF" | LC_ALL=C grep -a -v '^+++' || true)
-
-  # A second pass over the same range, excluding .githooks/ — this hook
-  # legitimately contains credential *patterns* (the regex below) and would
-  # otherwise block its own push. Path rules above still apply everywhere;
-  # only the credential-content scan is narrowed.
-  if [ -z "$SCANF" ] || ! git log --format= -U0 --diff-filter=d -m --text -p "$@" -- . ':(exclude).githooks/' > "$SCANF"; then
-    echo "BLOCKED ($local_ref): could not inspect this push's added content (credential scan) — 'git log' failed."
-    echo "  Refusing to let an unreadable range pass as 'nothing to see'."
-    echo "  If you have confirmed the outgoing commits are clean, override with: git push --no-verify"
-    fail=1
-    continue
-  fi
+  # does. -a is a GNU grep extension; this hook assumes GNU grep (the push
+  # host is Linux) — a future BSD/macOS port must re-check it.
   ADDED_SCAN=$(LC_ALL=C grep -a '^+' "$SCANF" | LC_ALL=C grep -a -v '^+++' || true)
 
   # ------------------------------------------------------------- HARD BLOCK 2
@@ -384,13 +383,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "BLOCKED: outgoing commits contain what looks like a real credential ($local_ref)."
     echo "  Rotate it FIRST — a history rewrite does NOT delete it from GitHub."
     echo "  Move the value to an env var with an EMPTY default."
-    echo "  Note: on a merge, this text can already be published via the other"
-    echo "  parent (git log -m diffs merges against EACH parent independently)."
+    if [ -n "$HAS_MERGE" ]; then
+      echo "  Note: on a merge, this text can already be published via the other"
+      echo "  parent (git log -m diffs merges against EACH parent independently)."
+    fi
     fail=1
   fi
 
   # ---------------------------------------------------------------- WARN ONLY
-  INFRA=$(printf '%s\n' "$ADDED" | LC_ALL=C grep -E \
+  INFRA=$(printf '%s\n' "$ADDED_SCAN" | LC_ALL=C grep -E \
     '192\.168\.|10\.[0-9]+\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.|\.fritz\.box|\bpve\b|(CT|LXC) ?1[0-9][0-9]\b' \
     || true)
   if [ -n "$INFRA" ]; then
@@ -398,7 +399,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "      Prefer 192.0.2.x / example.com / \"the container\"."
   fi
 
-  MAILS=$(printf '%s\n' "$ADDED" \
+  MAILS=$(printf '%s\n' "$ADDED_SCAN" \
     | LC_ALL=C grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
     | LC_ALL=C grep -vE '@(example\.(com|org|net)|users\.noreply\.github\.com)$' || true)
   # Optional local allow-list (see ALLOWF above): suppresses ONLY this warning,
@@ -439,39 +440,82 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # range and every scan above — all of which read a RANGE, not the tree — is
   # structurally blind to it. Warning, never a block: a pre-existing state
   # must not permanently prevent pushing anything new.
-  # This reads the full tree at $local_sha, not a diff, so -m (merge-vs-parent
-  # diffing) does not apply here — a path introduced only by a historical
-  # merge is still an ordinary entry of the tree and is seen like any other.
-  if [ -z "$TREEF" ] || ! git -c core.quotePath=false ls-tree -r -z --name-only "$local_sha" > "$TREEF"; then
-    echo "WARN: could not audit the tracked tree for pre-existing local-only paths ($local_ref) — 'git ls-tree' failed."
-  else
-    # LC_ALL=C, -i: same invalid-UTF-8-blanks-the-whole-scan and
-    # case-insensitive-filesystem reasons as HITS/ENVHITS above. No -a: these
-    # are NUL-split PATHS (tr already turned the NUL separators into
-    # newlines), not diff content, so no embedded NUL can appear mid-record.
-    TREE=$(tr '\0' '\n' < "$TREEF" | LC_ALL=C grep -Ei "$FORBIDDEN" || true)
-    if [ -n "$TREE" ]; then
-      echo "WARN: local-only paths are already tracked in this branch's tree:"
-      printf '%s\n' "$TREE" | head -20 | sed 's/^/      /'
-      echo "      Not blocking (they are already published), but they should not grow."
+  #
+  # It reads the tree at $remote_sha — what the remote ALREADY has — not at
+  # $local_sha. $local_sha's tree includes the commits being pushed right now,
+  # so on a blocked push this audit printed "already published, not blocking"
+  # about the very path the block above had just refused to publish: untrue,
+  # and it directly undercuts the block. Reading $remote_sha means "leaks that
+  # already exist on the remote", which is what the check is for, and it is
+  # silent unless such a leak GREW.
+  # Belt and braces on top of that: subtract the paths this push is blocking
+  # ($HITS/$ENVHITS), so even a path that is BOTH pre-existing and re-touched
+  # by this push is never described as merely published.
+  # When there is no usable $remote_sha (new branch, or a remote_sha this clone
+  # does not have — the use_full_range path) the audit is SKIPPED. Falling back
+  # to $local_sha is what produced the untrue message; having no baseline means
+  # there is nothing meaningful to report, not a licence to report the wrong
+  # thing.
+  # This reads a full tree, not a diff, so -m (merge-vs-parent diffing) does
+  # not apply here — a path introduced only by a historical merge is still an
+  # ordinary entry of the tree and is seen like any other.
+  if [ "$use_full_range" -eq 0 ]; then
+    if [ -z "$TREEF" ] || ! git -c core.quotePath=false ls-tree -r -z --name-only "$remote_sha" > "$TREEF"; then
+      echo "WARN: could not audit the remote's tracked tree for pre-existing local-only paths ($local_ref) — 'git ls-tree' failed."
+    else
+      # LC_ALL=C, -i: same invalid-UTF-8-blanks-the-whole-scan and
+      # case-insensitive-filesystem reasons as HITS/ENVHITS above. Both
+      # FORBIDDEN and ENV_HARD: applying only FORBIDDEN meant a pre-existing
+      # tracked .env — the single worst thing to find already published — was
+      # the one class this audit never surfaced. No -a: these are NUL-split
+      # PATHS (tr already turned the NUL separators into newlines), not diff
+      # content, so no embedded NUL can appear mid-record.
+      TREE=$(tr '\0' '\n' < "$TREEF" | LC_ALL=C grep -Ei "$FORBIDDEN|$ENV_HARD" || true)
+      # Subtract the paths already reported by HARD BLOCK 1. -F -x: exact,
+      # literal whole-line match — these are byte-identical path strings from
+      # the same repository, never patterns. rc guard as in the MAILS
+      # allow-list: 0/1 mean the filter ran, anything else means grep itself
+      # failed and its output is garbage, so keep the UNFILTERED list (warning
+      # one time too many is the safe direction).
+      if [ -n "$TREE" ] && [ -n "$SUBF" ] && { [ -n "$HITS" ] || [ -n "$ENVHITS" ]; }; then
+        printf '%s\n%s\n' "$HITS" "$ENVHITS" | LC_ALL=C grep -v '^$' > "$SUBF" || : > "$SUBF"
+        if [ -s "$SUBF" ]; then
+          FILTERED=$(printf '%s\n' "$TREE" | LC_ALL=C grep -Fvx -f "$SUBF")
+          rc=$?
+          [ "$rc" -le 1 ] && TREE=$FILTERED
+        fi
+      fi
+      if [ -n "$TREE" ]; then
+        echo "WARN: local-only paths are ALREADY published on the remote ($remote_ref):"
+        printf '%s\n' "$TREE" | head -20 | sed 's/^/      /'
+        echo "      This push does not add them and is not blocked — but they must not grow,"
+        echo "      and removing them from the remote needs more than a history rewrite."
+      fi
     fi
   fi
 
   # ------------------------------------------------------- WARN: CLAUDE.md size
   # Budget recorded as a hard rule inside CLAUDE.md ("Documentation
-  # maintenance"). Deliberately inside the ref loop, guarded by having reached
-  # this point at all: the loop's own ZERO check above already skips branch
-  # deletions (local_sha all-zero) with a bare `continue`, and that path is
-  # documented to behave exactly like no hook installed — a size WARN firing
-  # on `git push origin :branch` would be a signal appearing on a push that
-  # published nothing, which is the opposite of what a WARN is for. 20480 (20
-  # KB), not the original 12288 (12 KB): CLAUDE.md sits at ~19.5 KB in normal
-  # operation, so the old budget fired on every single push and trained
-  # exactly the --no-verify reflex this hook's own doctrine warns against; 20
-  # KB leaves room to breathe while still catching real, further growth.
-  if [ -f CLAUDE.md ]; then
+  # maintenance"): 20480 bytes (20 KB). Not the original 12 KB — CLAUDE.md sits
+  # near 20 KB in normal operation, so that budget fired on every single push
+  # and trained exactly the --no-verify reflex this hook's own doctrine warns
+  # against.
+  #
+  # It lives INSIDE the ref loop, not after `done`, only so that it is reached
+  # exactly when something is actually being published: the loop's ZERO check
+  # skips branch deletions with a bare `continue`, and that path is documented
+  # to behave exactly like no hook installed — a size WARN on
+  # `git push origin :branch` would be a signal about a push that published
+  # nothing. The other `continue`s above (a failed `git log`) skip it too, but
+  # those already printed a BLOCKED line, so a suppressed WARN is not the
+  # notable thing about that push.
+  # SIZE_WARNED makes it fire at most ONCE per hook invocation: the file on
+  # disk is the same file for every ref line, so a push of three refs printed
+  # the identical two lines three times.
+  if [ "$SIZE_WARNED" -eq 0 ] && [ -f CLAUDE.md ]; then
     SIZE=$(wc -c < CLAUDE.md)
     if [ "$SIZE" -gt 20480 ]; then
+      SIZE_WARNED=1
       echo "WARN: CLAUDE.md is ${SIZE} bytes, over the 20 KB budget."
       echo "      Compress prose or move an over-long index entry into the file it points at."
     fi

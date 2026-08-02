@@ -3,6 +3,39 @@
 # No network, no contact with origin. Run: sh .githooks/test-pre-push.sh
 set -u
 
+# ------------------------------------------------------------------ hermetic
+# setup() pins user.email/user.name/commit.gpgsign per repo, but that only
+# covers three keys of ONE config level. Everything else was inherited from the
+# contributor's ~/.gitconfig and environment, so a green 62/62 was not proof:
+# core.quotePath, core.autocrlf, diff.*.textconv, merge.ff or init.defaultBranch
+# set globally all change what the hook sees, and cases 13, 20-22 and 35-37
+# exist precisely because this behaviour is config-sensitive. Neutralise the
+# ambient state instead of hoping it is empty.
+GIT_CONFIG_GLOBAL=/dev/null
+GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
+# GIT_DIR/GIT_WORK_TREE would point every git call in this script at the
+# INVOKING repository instead of the throwaway fixture — e.g. when the suite is
+# run from a hook or a wrapper that exports them.
+unset GIT_DIR GIT_WORK_TREE
+
+# Pin the locale — but to a UTF-8 one where possible, NOT to C. The
+# invalid-UTF-8 (case 20) and non-ASCII (case 13) path cases only discriminate
+# when the hook INHERITS a UTF-8 locale, because that is the condition under
+# which GNU grep declares such input binary and emits nothing; running the
+# whole suite under LC_ALL=C would make those cases pass against a hook that
+# had lost its own LC_ALL=C guards.
+if locale -a 2>/dev/null | grep -qix 'C\.utf-\?8'; then
+  LC_ALL=$(locale -a 2>/dev/null | grep -ix 'C\.utf-\?8' | head -1)
+elif locale -a 2>/dev/null | grep -qix 'en_US\.utf-\?8'; then
+  LC_ALL=$(locale -a 2>/dev/null | grep -ix 'en_US\.utf-\?8' | head -1)
+else
+  LC_ALL=C
+fi
+LANG=$LC_ALL
+export LC_ALL LANG
+unset LC_CTYPE LC_COLLATE LC_MESSAGES 2>/dev/null || true
+
 HOOK_SRC=$(cd "$(dirname "$0")" && pwd)/pre-push
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -60,12 +93,35 @@ check() {
   fi
 }
 
-# 1. A clean push must succeed.
+# check_silent <name> <push-args...>
+# Stronger than check(<name> 0 ...): a clean push must exit 0 AND print
+# NOTHING. Exit 0 alone is what let the hook ship while it warned about its own
+# test fixtures on every push that touched .githooks/ — unavoidable,
+# unsuppressable noise trains the operator into --no-verify, which is the one
+# failure mode that turns the entire guard off. `git push -q` silences git's
+# own progress/summary lines; anything left on stdout or stderr came from the
+# hook.
+check_silent() {
+  name=$1
+  shift
+  out=$(git push -q "$@" 2>&1)
+  got=$?
+  if [ "$got" -eq 0 ] && [ -z "$out" ]; then
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$name"
+  else
+    failures=$((failures + 1))
+    printf 'FAIL  %s (exit %s, wanted 0 with no output)\n' "$name" "$got"
+    printf '%s\n' "$out" | sed 's/^/      /'
+  fi
+}
+
+# 1. A clean push must succeed — silently.
 setup
 printf 'ordinary change\n' >> README.md
 git add README.md
 git commit -qm "docs: ordinary change"
-check "clean push passes" 0 origin main
+check_silent "clean push passes with no output" origin main
 
 # 2. A force-added CLAUDE.md must block.
 setup
@@ -569,8 +625,8 @@ git commit -qm "add gitattributes-forced-binary credential file"
 check "credential in a -diff gitattributes file blocks" 1 origin main
 assert_absent "gitattributes-forced-binary credential file never reached the remote tree" "$WORK/bare" main "secret.conf"
 
-# 38. A forbidden path already in the tree but NOT in the pushed range warns
-#     only — this is the one check that can surface a leak already on the
+# 38. A forbidden path already in the REMOTE's tree but NOT in the pushed range
+#     warns only — this is the one check that can surface a leak already on the
 #     remote, since it reads the tree, not a commit range.
 setup
 mkdir -p .claude
@@ -581,7 +637,7 @@ git push -q --no-verify origin main
 printf 'unrelated change\n' >> README.md
 git add README.md
 git commit -qm "docs: unrelated"
-check_warns "pre-existing tree leak warns only" "WARN: local-only paths are already tracked in this branch's tree:" origin main
+check_warns "pre-existing tree leak warns only" "WARN: local-only paths are ALREADY published on the remote" origin main
 
 # 39. An oversized CLAUDE.md warns but does not block. Written into the
 #     working tree WITHOUT staging it — CLAUDE.md is gitignored and the hook
@@ -743,6 +799,183 @@ printf 'host: 192.168.1.10\n' > notes.txt
 git add notes.txt
 git commit -qm "chore: notes"
 check_warns "hostile allow-list cannot suppress the INFRA warning" "WARN: outgoing commits mention internal infrastructure." origin main
+
+# check_absent <name> <expected-exit> <forbidden-substring> <push-args...>
+# For assertions about what the hook must NOT say. Pins the exit code too, so
+# "no output at all" cannot satisfy it vacuously.
+check_absent() {
+  name=$1
+  want=$2
+  substr=$3
+  shift 3
+  out=$(git push "$@" 2>&1)
+  got=$?
+  if [ "$got" -eq "$want" ] && ! printf '%s\n' "$out" | grep -qF "$substr"; then
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$name"
+  else
+    failures=$((failures + 1))
+    printf 'FAIL  %s (exit %s, wanted %s without %s)\n' "$name" "$got" "$want" "$substr"
+    printf '%s\n' "$out" | sed 's/^/      /'
+  fi
+}
+
+# 51. I3: this repo's own hook fixtures must not warn on this repo's own push.
+#     The INFRA and MAILS warnings used to read an UNEXCLUDED `git log -p` pass,
+#     so the synthetic 192.168.x address and .invalid mailbox that the cases
+#     above deliberately contain fired on every push touching .githooks/ —
+#     permanent, unsuppressable noise. Both warnings now read the
+#     ':(exclude).githooks/' stream that the credential scan already used.
+setup
+printf '# fixture: host 192.168.1.10, contact jane.doe@personalmail.invalid\n' >> .githooks/test-pre-push.sh
+git add .githooks/test-pre-push.sh
+git commit -qm "test: hook fixtures"
+check_silent "infra/email fixtures inside .githooks/ produce no warning" origin main
+
+# 52. I1: the tree audit must never describe a path this very push is BLOCKING
+#     as "already published". It read the tree at $local_sha, which contains
+#     the unpushed commits, so a blocked .claude/ push printed the block AND a
+#     warning claiming the same path was already public and not being blocked —
+#     untrue, and it undercuts the block that sits four lines above it.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+git add -f .claude/settings.json
+git commit -qm "add settings"
+check_absent "blocked path is not also reported as already published" 1 "ALREADY published" origin main
+
+# 53. I1: with no usable $remote_sha (brand-new branch) there is no baseline of
+#     what the remote already has, so the audit is SKIPPED rather than falling
+#     back to $local_sha. Must be completely silent.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+git add -f .claude/settings.json
+git commit -qm "add settings"
+git push -q --no-verify origin main
+git checkout -qb fresh
+printf 'feature work\n' >> README.md
+git add README.md
+git commit -qm "feat: work"
+check_silent "new branch with no remote baseline skips the tree audit" origin fresh
+
+# 54. M2: the tree audit applied FORBIDDEN but not ENV_HARD, so a pre-existing
+#     tracked .env — the single worst thing to find already published — was the
+#     one class it never surfaced.
+setup
+printf 'API_TOKEN=whatever\n' > .env
+git add -f .env
+git commit -qm "add env"
+git push -q --no-verify origin main
+printf 'unrelated change\n' >> README.md
+git add README.md
+git commit -qm "docs: unrelated"
+check_warns "pre-existing tracked .env is surfaced by the tree audit" "WARN: local-only paths are ALREADY published on the remote" origin main
+
+# 55. M3: the blocked-path list was printed via unquoted `printf '  %s\n' $HITS`,
+#     so a path with a space split across two lines AND every path underwent
+#     pathname expansion — `docs/a b*.md` was reported as whatever `b*.md`
+#     happened to match in the working directory, i.e. the block named files
+#     that do not exist. bogus.md below is that decoy.
+setup
+mkdir -p docs
+printf 'decoy\n' > bogus.md
+printf 'private runbook\n' > 'docs/a b*.md'
+git add -f 'docs/a b*.md'
+git commit -qm "add runbook with a space and a glob char"
+out=$(git push origin main 2>&1)
+got=$?
+if [ "$got" -eq 1 ] \
+   && printf '%s\n' "$out" | grep -qF 'docs/a b*.md' \
+   && ! printf '%s\n' "$out" | grep -qF 'bogus.md'; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "space/glob path is listed verbatim, not word-split or glob-expanded"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s (exit %s)\n' "space/glob path is listed verbatim, not word-split or glob-expanded" "$got"
+  printf '%s\n' "$out" | sed 's/^/      /'
+fi
+rm -f bogus.md
+
+# 56. M5: the four-line "-m can resurface already-public content" caveat is only
+#     true for a merge, and printed on EVERY block. On a range with no merge
+#     commit at all it must not appear.
+setup
+mkdir -p docs
+printf 'private runbook\n' > docs/runbook.md
+git add -f docs/runbook.md
+git commit -qm "add runbook"
+check_absent "no merge in range: the -m caveat is not printed" 1 "git log -m diffs merges" origin main
+
+# 57. M5, other half: on a range that DOES contain a merge the caveat must still
+#     print — gating it must not delete it.
+setup
+git checkout -qb side
+printf 'side change\n' > side.txt
+git add side.txt
+git commit -qm "feat: side change"
+git checkout -q main
+printf 'main change\n' >> README.md
+git add README.md
+git commit -qm "feat: main change"
+git merge --no-commit --no-ff side >/dev/null 2>&1
+mkdir -p docs
+printf 'private runbook\n' > docs/secret.md
+git add -f docs/secret.md
+git commit -qm "merge: resolve and add secret"
+out=$(git push origin main 2>&1)
+got=$?
+if [ "$got" -eq 1 ] && printf '%s\n' "$out" | grep -qF "git log -m diffs merges"; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "merge in range: the -m caveat is still printed"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s (exit %s)\n' "merge in range: the -m caveat is still printed" "$got"
+  printf '%s\n' "$out" | sed 's/^/      /'
+fi
+
+# 58. M1: `[ -n "$FILES" ] || continue` also skipped the whole-tree checks below
+#     it. --diff-filter=d excludes deletions, so a DELETION-ONLY commit yields
+#     an empty FILES and silently disabled the tree audit and the size WARN.
+#     Here the remote already carries .claude/settings.json, so the audit must
+#     still speak up on a push whose only change is a removal.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+printf 'doomed\n' > todelete.txt
+git add -f .claude/settings.json todelete.txt
+git commit -qm "add settings and a file"
+git push -q --no-verify origin main
+git rm -q todelete.txt
+git commit -qm "chore: remove a file"
+check_warns "deletion-only commit still runs the tree audit" "WARN: local-only paths are ALREADY published on the remote" origin main
+
+# 59. M4: the size WARN read one file on disk but printed once per pushed REF,
+#     so a two-ref push emitted the identical two lines twice.
+setup
+awk 'BEGIN { for (i = 0; i < 21000; i++) printf "x" }' > CLAUDE.md
+git checkout -qb b1
+printf 'one\n' >> README.md
+git add README.md
+git commit -qm "feat: one"
+git checkout -q main
+git checkout -qb b2
+printf 'two\n' >> README.md
+git add README.md
+git commit -qm "feat: two"
+git checkout -q main
+out=$(git push origin b1 b2 2>&1)
+got=$?
+n=$(printf '%s\n' "$out" | grep -cF "WARN: CLAUDE.md is")
+if [ "$got" -eq 0 ] && [ "$n" -eq 1 ]; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "size WARN prints once for a two-ref push"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s (exit %s, %s size warnings, wanted 1)\n' "size WARN prints once for a two-ref push" "$got" "$n"
+  printf '%s\n' "$out" | sed 's/^/      /'
+fi
+rm -f CLAUDE.md
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
