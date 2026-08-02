@@ -569,6 +569,107 @@ git commit -qm "add gitattributes-forced-binary credential file"
 check "credential in a -diff gitattributes file blocks" 1 origin main
 assert_absent "gitattributes-forced-binary credential file never reached the remote tree" "$WORK/bare" main "secret.conf"
 
+# 38. A forbidden path already in the tree but NOT in the pushed range warns
+#     only — this is the one check that can surface a leak already on the
+#     remote, since it reads the tree, not a commit range.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+git add -f .claude/settings.json
+git commit -qm "add settings"
+git push -q --no-verify origin main
+printf 'unrelated change\n' >> README.md
+git add README.md
+git commit -qm "docs: unrelated"
+check_warns "pre-existing tree leak warns only" "WARN: local-only paths are already tracked in this branch's tree:" origin main
+
+# 39. An oversized CLAUDE.md warns but does not block. Written into the
+#     working tree WITHOUT staging it — CLAUDE.md is gitignored and the hook
+#     reads it from disk, so it must never be committed by this test either.
+setup
+awk 'BEGIN { for (i = 0; i < 13000; i++) printf "x" }' > CLAUDE.md
+printf 'unrelated change\n' >> README.md
+git add README.md
+git commit -qm "docs: unrelated"
+check_warns "oversized CLAUDE.md warns only" "WARN: CLAUDE.md is" origin main
+rm -f CLAUDE.md
+
+# 40. Source changing without a matching CLAUDE.md change warns. CLAUDE.md is
+#     gitignored but still present on disk in the real repo (Claude Code reads
+#     it locally); the warning only evaluates when [ -f CLAUDE.md ], so this
+#     test writes one into the working tree WITHOUT staging it — same as case
+#     39. git log -- CLAUDE.md is then empty (never committed), MDTIME stays
+#     0, so the warning fires whenever tracked source ships.
+setup
+printf 'local operating notes\n' > CLAUDE.md
+mkdir -p java-server/src/main/java/de/example
+printf 'class Example {}\n' > java-server/src/main/java/de/example/Example.java
+git add java-server/src/main/java/de/example/Example.java
+git commit -qm "feat: add java source"
+check_warns "CLAUDE.md freshness warns when source changes" "WARN: source changed in this push but CLAUDE.md looks stale." origin main
+rm -f CLAUDE.md
+
+# --- optional local email allow-list: all four states ---
+# allowed-emails lives at --git-common-dir, never staged/committed by design.
+
+# 41. State 1/4: no allow-list file at all — behaves exactly as before.
+setup
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "no allow-list file: personal email still warns" "jane.doe@personalmail.invalid" origin main
+
+# 42. State 2/4: allow-list file present but does NOT contain the address —
+#     still warns.
+setup
+printf 'other.person@example.invalid\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "allow-list without the address: personal email still warns" "jane.doe@personalmail.invalid" origin main
+
+# 43. State 3/4: allow-list file present WITH the address (case-insensitive,
+#     plus comment/blank-line/whitespace noise to exercise the parsing rules)
+#     — the MAILS warning must be suppressed entirely.
+setup
+printf '# personal allow-list, local only\n\n  Jane.Doe@PersonalMail.invalid  \n' \
+  > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+out=$(git push origin main 2>&1)
+got=$?
+if [ "$got" -eq 0 ] && ! printf '%s\n' "$out" | grep -qF "jane.doe@personalmail.invalid"; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "allow-listed address suppresses the MAILS warning"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s (exit %s)\n' "allow-listed address suppresses the MAILS warning" "$got"
+  printf '%s\n' "$out" | sed 's/^/      /'
+fi
+
+# 44. State 4/4: allow-list path exists but is unreadable as a file (here: a
+#     directory sits at that path — reproducible under any uid, including
+#     root, unlike a permission bit) — behaves exactly like absent, still
+#     warns.
+setup
+allowpath="$(git rev-parse --git-common-dir)/allowed-emails"
+mkdir -p "$allowpath"
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "unreadable allow-list (directory in the way): personal email still warns" "jane.doe@personalmail.invalid" origin main
+
+# 45. The allow-list must never suppress a HARD BLOCK — only the MAILS
+#     warning. Same push carries an allow-listed address AND a credential;
+#     the credential must still block.
+setup
+printf 'jane.doe@personalmail.invalid\n' > "$(git rev-parse --git-common-dir)/allowed-emails"
+printf 'contact: jane.doe@personalmail.invalid\ntoken = "ghp_0000000000000000000000000000000000"\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact with credential"
+check "allow-listed email cannot suppress the credential hard block" 1 origin main
+
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 exit 0

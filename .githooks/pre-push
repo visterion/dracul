@@ -53,7 +53,45 @@ TMPF=$(mktemp 2>/dev/null) || TMPF=""
 # nothing.
 ADDEDF=$(mktemp 2>/dev/null) || ADDEDF=""
 SCANF=$(mktemp 2>/dev/null) || SCANF=""
-trap 'rm -f "$TMPF" "$ADDEDF" "$SCANF"' EXIT HUP INT TERM
+# Scratch file for the tree audit (WARN 3, below) — overwritten per ref-line
+# inside the loop, same fail-closed discipline as TMPF/ADDEDF/SCANF: if mktemp
+# is unavailable the variable stays empty and the audit prints a WARN that it
+# could not run, instead of silently producing an empty (and therefore
+# falsely clean-looking) result.
+TREEF=$(mktemp 2>/dev/null) || TREEF=""
+trap 'rm -f "$TMPF" "$ADDEDF" "$SCANF" "$TREEF" "$ALLOWF"' EXIT HUP INT TERM
+
+# ---------------------------------------------------------- optional allow-list
+# Real email addresses have no rotation path (see CLAUDE.md's "never commit
+# personal data") and must live neither in this committed, shared hook nor
+# anywhere else in the repo — this repo already leaked a real address once as
+# a config default (the DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS incident). So an
+# operator who wants to silence the MAILS warning below for their own
+# known-safe address needs somewhere local, uncommittable, to put it.
+#
+# --git-common-dir, NOT --git-dir: in a git WORKTREE, .git is a FILE pointing
+# at that worktree's private git-dir; --git-dir would then resolve to a
+# per-worktree path, giving every worktree its own, different allow-list. This
+# repo runs two worktrees today, so that is not a theoretical distinction.
+# --git-common-dir always resolves to the one shared .git directory, so one
+# file backs every worktree of this clone. The hook itself is committed and
+# shared; this file is local-only and is never staged, added or pushed by
+# anything in this repo.
+#
+# Suppresses ONLY the MAILS warning further below — never HARD BLOCK 1, never
+# HARD BLOCK 2, never the INFRA warning. It must not become a general
+# skeleton key.
+#
+# Missing, empty or unreadable: behaves exactly as if empty, i.e. the MAILS
+# warning still fires. A read failure must never be the thing that silences a
+# warning — "warns one time too many" is the safe direction for a file that,
+# by construction, is never itself checked in or reviewed.
+ALLOWLIST_FILE="$(git rev-parse --git-common-dir 2>/dev/null)/allowed-emails"
+ALLOWF=$(mktemp 2>/dev/null) || ALLOWF=""
+if [ -n "$ALLOWF" ] && [ -r "$ALLOWLIST_FILE" ]; then
+  LC_ALL=C sed -e 's/#.*//' -e 's/^[ 	]*//' -e 's/[ 	]*$//' "$ALLOWLIST_FILE" 2>/dev/null \
+    | LC_ALL=C grep -v '^$' > "$ALLOWF" || : > "$ALLOWF"
+fi
 
 # git invokes this hook with $1 = the remote's configured NAME ("origin"),
 # EXCEPT for `git push <url> <branch>`, where there is no name and $1 is the
@@ -246,6 +284,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "$HITS" ] && printf '  %s\n' $HITS
     [ -n "$ENVHITS" ] && printf '  %s\n' $ENVHITS
     echo "  These hold operating detail — prod hosts, container IDs, deploy notes."
+    echo "  Note: on a merge, a listed path can already be published via the other"
+    echo "  parent (git log -m diffs merges against EACH parent independently, so"
+    echo "  conflict resolution can resurface already-public content as 'added')."
     echo "  If you have confirmed they are already public, override with: git push --no-verify"
     fail=1
   fi
@@ -260,7 +301,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #       conflict resolution, present on neither parent) gets no diff at all
   #       without it — the identical defect documented above, reproduced here
   #       too: it silenced both HARD BLOCK 2 and the WARNs for the whole
-  #       merge-introduced range.
+  #       merge-introduced range. Trade-off recorded here because both BLOCKED
+  #       messages below refer back to it: -m diffs a merge against EACH
+  #       parent independently, so content already committed (and already
+  #       public) via one parent can appear as "added" relative to the OTHER
+  #       parent when conflict resolution keeps it. A block or warning below
+  #       may therefore name content that is already on the remote — every
+  #       such message says so explicitly, so an operator who has actually
+  #       checked isn't driven to --no-verify by what looks like a false leak.
   #   --diff-filter=d (not ACMR): ACMR silently drops T (type change) — a
   #       credential-bearing SYMLINK replaced by a real file carrying the
   #       token is a pure T and was invisible to ACMR, reaching the remote at
@@ -310,6 +358,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "BLOCKED: outgoing commits contain what looks like a real credential ($local_ref)."
     echo "  Rotate it FIRST — a history rewrite does NOT delete it from GitHub."
     echo "  Move the value to an env var with an EMPTY default."
+    echo "  Note: on a merge, this text can already be published via the other"
+    echo "  parent (git log -m diffs merges against EACH parent independently)."
     fail=1
   fi
 
@@ -325,12 +375,71 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   MAILS=$(printf '%s\n' "$ADDED" \
     | LC_ALL=C grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
     | LC_ALL=C grep -vE '@(example\.(com|org|net)|users\.noreply\.github\.com)$' || true)
+  # Optional local allow-list (see ALLOWF above): suppresses ONLY this warning,
+  # never HARD BLOCK 1/2, never INFRA. -s: an absent, empty or unreadable
+  # ALLOWF (mktemp failure, no ALLOWLIST_FILE, or a read that fell through to
+  # the `: > "$ALLOWF"` fallback above) leaves it empty, so this branch is
+  # skipped and MAILS is reported exactly as if no allow-list existed at all.
+  if [ -n "$MAILS" ] && [ -s "$ALLOWF" ]; then
+    while IFS= read -r allowed_addr; do
+      [ -n "$allowed_addr" ] || continue
+      MAILS=$(printf '%s\n' "$MAILS" | LC_ALL=C grep -vix "$allowed_addr" || true)
+    done < "$ALLOWF"
+  fi
   if [ -n "$MAILS" ]; then
     echo "WARN: outgoing commits contain non-example email addresses:"
     printf '%s\n' "$MAILS" | LC_ALL=C sort -u | sed 's/^/      /'
     echo "      Personal data has no rotation path. Use owner@example.com."
+    echo "      Suppress a known-safe address locally in"
+    echo "      $ALLOWLIST_FILE (one per line, never committed)."
+  fi
+
+  # ------------------------------------------------------- WARN: tree audit
+  # The only check that can surface leaks already on the remote: a
+  # pre-existing leak predates the hook, so it appears in no future commit
+  # range and every scan above — all of which read a RANGE, not the tree — is
+  # structurally blind to it. Warning, never a block: a pre-existing state
+  # must not permanently prevent pushing anything new.
+  # This reads the full tree at $local_sha, not a diff, so -m (merge-vs-parent
+  # diffing) does not apply here — a path introduced only by a historical
+  # merge is still an ordinary entry of the tree and is seen like any other.
+  if [ -z "$TREEF" ] || ! git -c core.quotePath=false ls-tree -r -z --name-only "$local_sha" > "$TREEF"; then
+    echo "WARN: could not audit the tracked tree for pre-existing local-only paths ($local_ref) — 'git ls-tree' failed."
+  else
+    # LC_ALL=C, -i: same invalid-UTF-8-blanks-the-whole-scan and
+    # case-insensitive-filesystem reasons as HITS/ENVHITS above. No -a: these
+    # are NUL-split PATHS (tr already turned the NUL separators into
+    # newlines), not diff content, so no embedded NUL can appear mid-record.
+    TREE=$(tr '\0' '\n' < "$TREEF" | LC_ALL=C grep -Ei "$FORBIDDEN" || true)
+    if [ -n "$TREE" ]; then
+      echo "WARN: local-only paths are already tracked in this branch's tree:"
+      printf '%s\n' "$TREE" | head -20 | sed 's/^/      /'
+      echo "      Not blocking (they are already published), but they should not grow."
+    fi
+  fi
+
+  # ------------------------------------------------ WARN: CLAUDE.md freshness
+  NEWEST=$(git log --format=%ct -1 --diff-filter=ACMR "$@" \
+    -- '*.java' '*.ts' '*.tsx' '*.js' '*.vue' '*.py' || true)
+  if [ -n "$NEWEST" ] && [ -f CLAUDE.md ]; then
+    MDTIME=$(git log --format=%ct -1 -- CLAUDE.md 2>/dev/null || true)
+    [ -n "$MDTIME" ] || MDTIME=0
+    if [ "$NEWEST" -gt "$MDTIME" ]; then
+      echo "WARN: source changed in this push but CLAUDE.md looks stale."
+      echo "      Its index and rules are loaded into every session — keep them true."
+    fi
   fi
 done
+
+# ------------------------------------------------------ WARN: CLAUDE.md size
+# Budget recorded as a hard rule inside CLAUDE.md ("Documentation maintenance").
+if [ -f CLAUDE.md ]; then
+  SIZE=$(wc -c < CLAUDE.md)
+  if [ "$SIZE" -gt 12288 ]; then
+    echo "WARN: CLAUDE.md is ${SIZE} bytes, over the 12 KB budget."
+    echo "      Compress prose or move an over-long index entry into the file it points at."
+  fi
+fi
 
 [ "$fail" -eq 0 ] || exit 1
 exit 0
