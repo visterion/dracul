@@ -1348,15 +1348,27 @@ check_commit_blocked "pre-commit: credential inside a NUL-containing file blocks
 #     that read the staged diff, a NUL byte ANYWHERE in the captured stream —
 #     not necessarily in the credential-bearing file itself — makes GNU grep
 #     classify the WHOLE diff as binary and emit no lines, silencing the
-#     credential scan for the entire commit. noise.bin's NUL sits past git's
-#     own ~8000-byte binary-sniff window (same construction as pre-push case
-#     35's asset.dat), so git includes its raw content in the diff instead of
-#     collapsing it to "Binary files ... differ" — reproduced against the
-#     pre-fix hook: exit 0, credential committed. A real screenshot (this repo
-#     has docs/ux-audit-screenshots/ and ux-verify-screenshots/) is large
-#     enough to hit this same shape in practice. Control: cred.txt alone
-#     already blocks (case 79); this proves the binary neighbour cannot
-#     launder it through.
+#     credential scan for the entire commit. That requires the NUL to actually
+#     reach the diff text, which needs a SPECIFIC shape: git's own binary
+#     sniff only looks at the first ~8000 bytes of a blob, so the trigger is a
+#     NUL-FREE first 8 KB followed by a NUL somewhere after it — noise.bin
+#     (8500 'a' bytes, NUL appended) is built exactly that way, matching
+#     pre-push case 35's asset.dat. Measured: a real screenshot does NOT hit
+#     this — a PNG typically has a NUL WITHIN the first ~8000 bytes, so git
+#     collapses it to "Binary files ... differ" and the credential is still
+#     caught (verified: a 52 KB repo PNG + credential, and a 60 KB
+#     /dev/urandom blob, both block 5/5 against the pre-fix hook). The realistic
+#     carriers are files that are NUL-free for their first 8 KB and only turn
+#     binary later — PDFs, tarballs, UTF-16 text, padded/aligned assets — NOT
+#     ordinary screenshots. DO NOT "simplify" this fixture to a real image file;
+#     that changes which branch of git's binary detection fires and silently
+#     turns this into a vacuous pass (it would block even against the pre-fix
+#     hook, no longer discriminating the regression). Reproduced against the
+#     pre-fix hook: exit 0, credential committed (non-deterministic, an OS
+#     pipe-buffering race — see the reversion notes in the SDD report; measured
+#     5/15 bypasses old hook, 12/12 blocked by the fixed hook). Control:
+#     cred.txt alone already blocks (case 79); this proves the binary
+#     neighbour cannot launder it through.
 setup
 printf 'token = "ghp_0000000000000000000000000000000000"\n' > cred.txt
 awk 'BEGIN{for(i=0;i<8500;i++) printf "a"}' > noise.bin
