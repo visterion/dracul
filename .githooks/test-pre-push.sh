@@ -397,6 +397,84 @@ git add some-module/docs/x.md
 git commit -qm "docs: module documentation"
 check "nested some-module/docs/ does NOT block" 0 origin main
 
+# check_warns <name> <expected-substring> <push-args...>
+# Same as check() but for exit-0 cases where a WARN: line must actually have
+# printed — an exit code alone cannot prove a warning ever fired.
+check_warns() {
+  name=$1
+  substr=$2
+  shift 2
+  out=$(git push "$@" 2>&1)
+  got=$?
+  if [ "$got" -eq 0 ] && printf '%s\n' "$out" | grep -qF "$substr"; then
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$name"
+  else
+    failures=$((failures + 1))
+    printf 'FAIL  %s (exit %s, wanted 0 with warning %s)\n' "$name" "$got" "$substr"
+    printf '%s\n' "$out" | sed 's/^/      /'
+  fi
+}
+
+# 26. A credential-shaped token in an added line must block.
+setup
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
+git add config.txt
+git commit -qm "chore: config"
+check "credential pattern blocks" 1 origin main
+assert_absent "credential-bearing config.txt never reached the remote tree" "$WORK/bare" main "config.txt"
+
+# 27. Credential patterns inside .githooks/ must NOT block (the hook itself
+#     legitimately contains them, to define the very regex above).
+setup
+printf '# matches ghp_ and sk-ant- deliberately\n' >> .githooks/pre-push
+git add .githooks/pre-push
+git commit -qm "chore: hook comment"
+check "credential patterns in .githooks/ pass" 0 origin main
+
+# 28. Internal infrastructure warns but does not block.
+setup
+printf 'host: 192.168.1.10\n' > notes.txt
+git add notes.txt
+git commit -qm "chore: notes"
+check_warns "internal infrastructure warns only" "WARN: outgoing commits mention internal infrastructure." origin main
+
+# 29. A non-example email address warns but does not block.
+setup
+printf 'contact: jane.doe@personalmail.invalid\n' > contact.txt
+git add contact.txt
+git commit -qm "chore: contact"
+check_warns "personal email warns only" "jane.doe@personalmail.invalid" origin main
+
+# 30. Owner ruling: FORBIDDEN/ENV_HARD match case-insensitively. `claude.md` IS
+#     `CLAUDE.md` on a case-insensitive filesystem (macOS) and must block too.
+setup
+printf 'local operating notes\n' > claude.md
+git add -f claude.md
+git commit -qm "add lowercase claude md"
+check "lowercase claude.md blocks" 1 origin main
+
+# 31. Owner ruling: a differently-cased root Docs/ must block under the same
+#     case-insensitive match — accepted trade-off, no such directory exists in
+#     this repo.
+setup
+mkdir -p Docs
+printf 'private runbook\n' > Docs/runbook.md
+git add -f Docs/runbook.md
+git commit -qm "add capitalized docs runbook"
+check "Docs/runbook.md blocks" 1 origin main
+
+# 32. The case-insensitive match must NOT widen the deliberate nested-docs
+#     asymmetry: some-module/docs/ (any case) still only blocks when the
+#     ROOT-anchored docs/ prefix matches, so a differently-cased nested docs
+#     dir must still pass.
+setup
+mkdir -p some-module/Docs
+printf 'public module docs\n' > some-module/Docs/x.md
+git add some-module/Docs/x.md
+git commit -qm "docs: module documentation, capitalized dir"
+check "nested some-module/Docs/ does NOT block" 0 origin main
+
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 exit 0
