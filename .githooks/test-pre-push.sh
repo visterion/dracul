@@ -321,6 +321,82 @@ git add AGENTS.md
 git commit -qm "replace symlink with a real file"
 check "symlink-to-file type change on a forbidden path blocks" 1 origin main
 
+# assert_absent <name> <git-dir> <ref> <fixed-string>
+# An exit code does not prove the file never landed: assert on the TARGET
+# repo's tree. Reads paths NUL-separated and matches in the C locale, because
+# the very paths under test are the ones that make a UTF-8 grep give up.
+assert_absent() {
+  if git --git-dir="$2" ls-tree -r --name-only -z "$3" 2>/dev/null \
+     | tr '\0' '\n' | LC_ALL=C grep -qF "$4"; then
+    failures=$((failures + 1))
+    printf 'FAIL  %s (found %s in the remote tree)\n' "$1" "$4"
+  else
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$1"
+  fi
+}
+
+# 20. A path containing an INVALID UTF-8 byte. GNU grep in a UTF-8 locale (the
+#     hook inherits the user's LANG) treats such input as binary: it prints
+#     "binary file matches" to stderr and emits NO lines, so HITS came back
+#     empty for the WHOLE range — one such filename disabled every rule at
+#     once. The file reached the remote at exit 0. Must block.
+setup
+mkdir -p docs
+printf 'synthetic notes\n' > "$(printf 'docs/le\377ak.md')"
+git add -f docs
+git commit -qm "add path with an invalid utf-8 byte"
+check "invalid-UTF-8 byte in a path blocks" 1 origin main
+assert_absent "invalid-UTF-8 path never reached the remote tree" "$WORK/bare" main "ak.md"
+
+# 21. A path containing a NEWLINE. core.quotePath=false only suppresses quoting
+#     of high-bit bytes; newlines, quotes, backslashes and control characters
+#     are ALWAYS C-quoted, and the leading `"` defeats the ^ anchor. Pushed at
+#     exit 0 and landed in the remote tree. Must block.
+setup
+mkdir -p docs
+printf 'synthetic notes\n' > "$(printf 'docs/leak\ntwo.md')"
+git add -f docs
+git commit -qm "add path with an embedded newline"
+check "newline in a path blocks" 1 origin main
+assert_absent "newline path never reached the remote tree" "$WORK/bare" main "two.md"
+
+# 22. A path containing a DOUBLE QUOTE — same C-quoting bypass as case 21, via
+#     a different trigger character.
+setup
+mkdir -p docs
+printf 'synthetic notes\n' > 'docs/qu"ote.md'
+git add -f 'docs/qu"ote.md'
+git commit -qm "add path with a double quote"
+check "double quote in a path blocks" 1 origin main
+assert_absent "double-quote path never reached the remote tree" "$WORK/bare" main 'qu"ote.md'
+
+# 23. Owner ruling: CLAUDE.md is local-only at ANY depth, not just at the root.
+setup
+mkdir -p java-server
+printf 'synthetic module notes\n' > java-server/CLAUDE.md
+git add -f java-server/CLAUDE.md
+git commit -qm "add nested claude md"
+check "nested CLAUDE.md blocks" 1 origin main
+
+# 24. Owner ruling: a nested .claude/ directory is local-only too.
+setup
+mkdir -p chronicle/.claude
+printf '{}\n' > chronicle/.claude/settings.json
+git add -f chronicle/.claude/settings.json
+git commit -qm "add nested claude dir"
+check "nested .claude/ file blocks" 1 origin main
+
+# 25. The deliberate asymmetry: docs/ stays ROOT-anchored. A vendored docs/
+#     tree inside a subproject is legitimate content and must NOT block — a
+#     hook that blocks legitimate work trains the operator into --no-verify.
+setup
+mkdir -p some-module/docs
+printf 'public module docs\n' > some-module/docs/x.md
+git add some-module/docs/x.md
+git commit -qm "docs: module documentation"
+check "nested some-module/docs/ does NOT block" 0 origin main
+
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 exit 0

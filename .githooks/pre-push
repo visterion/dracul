@@ -24,12 +24,28 @@ ZERO=0000000000000000000000000000000000000000
 # CLAUDE.md / AGENTS.md / .claude/ / docs/ are local-only operating docs. They
 # hold prod hosts, container IDs and deploy detail. AGENTS.md is a symlink to
 # CLAUDE.md, so publishing either publishes the same content.
-FORBIDDEN='^(CLAUDE\.md|AGENTS\.md|\.claude/|docs/)'
+#
+# CLAUDE.md / AGENTS.md / .claude/ match at ANY depth: Claude Code genuinely
+# reads per-directory CLAUDE.md and .claude/, so java-server/CLAUDE.md and
+# chronicle/.claude/settings.json are just as local-only as the root ones.
+# docs/ stays deliberately ROOT-anchored — a vendored docs/ tree inside a
+# subproject is legitimate content, and a hook that blocks legitimate work
+# trains the operator into --no-verify and then protects nothing.
+FORBIDDEN='(^|/)(CLAUDE\.md|AGENTS\.md|\.claude/)|^docs/'
 # Only the env files that by convention hold real secrets. .env.example and the
 # committed Vite .env.development / .env.production are legitimate here.
 ENV_HARD='(^|/)\.env$|(^|/)\.env\.local$|(^|/)\.env\..+\.local$'
 
 fail=0
+
+# git log's path list is captured through a FILE, not a pipeline into a command
+# substitution: --name-only -z separates paths with NUL and a command
+# substitution silently DROPS NUL bytes (gluing every path into one blob),
+# while a pipeline would replace git's exit status with tr's and re-open the
+# fail-open closed earlier. If mktemp is unavailable TMPF stays empty, the
+# redirection below fails, and the hook blocks — fail closed.
+TMPF=$(mktemp 2>/dev/null) || TMPF=""
+trap 'rm -f "$TMPF"' EXIT HUP INT TERM
 
 # git invokes this hook with $1 = the remote's configured NAME ("origin"),
 # EXCEPT for `git push <url> <branch>`, where there is no name and $1 is the
@@ -163,8 +179,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # A command substitution silently discards the exit status of what it runs.
   # If this `git log` ever fails, FILES comes back empty, the `continue` below
   # fires, and the push proceeds completely unchecked — the same fail-open
-  # shape as the unresolvable-remote_sha bug. Capture the status explicitly
-  # (of git log, not of `sort`, hence the temp-free two-step) and fail closed.
+  # shape as the unresolvable-remote_sha bug. Hence the redirect into $TMPF and
+  # the explicit `if ! git ...`: git's own status is tested, never tr's or
+  # sort's, and a failure fails closed.
   # --diff-filter=d selects every change EXCEPT deletions (lowercase excludes).
   #     The obvious allow-list spelling, ACMR, silently drops T (type change):
   #     replacing a committed AGENTS.md SYMLINK with a real file full of prod
@@ -173,19 +190,36 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #     fails closed against any diff status git may add in future, whereas an
   #     allow-list would silently ignore it. Deletions stay excluded on
   #     purpose: removing docs/x.md is exactly the push this guard wants.
-  LOGOUT=$(git -c core.quotePath=false log --format= --name-only --diff-filter=d -m "$@") || {
+  # -z: emit paths VERBATIM, NUL-separated. core.quotePath=false only stops git
+  #     from quoting high-bit bytes; a path containing a newline, a double
+  #     quote, a backslash or a control character is ALWAYS C-quoted, and the
+  #     leading `"` defeats the `^` in FORBIDDEN and the `(^|/)` in ENV_HARD.
+  #     `docs/leak<newline>two.md` and `docs/qu"ote.md` both pushed at exit 0
+  #     and landed in the remote tree — reproduced. With -z there is no quoting
+  #     at all. A path with an embedded newline still splits into two lines
+  #     after the tr below, but the fragment carrying the forbidden prefix is
+  #     the one that starts a record, so it still matches (and any extra
+  #     fragment can only cause an extra block — closed, not open).
+  if [ -z "$TMPF" ] || ! git -c core.quotePath=false log --format= --name-only --diff-filter=d -m -z "$@" > "$TMPF"; then
     echo "BLOCKED ($local_ref): could not inspect this push's commit range — 'git log' failed."
     echo "  Refusing to let an unreadable range pass as 'nothing to see'."
     echo "  If you have confirmed the outgoing commits are clean, override with: git push --no-verify"
     fail=1
     continue
-  }
-  FILES=$(printf '%s\n' "$LOGOUT" | sort -u)
+  fi
+  FILES=$(tr '\0' '\n' < "$TMPF" | LC_ALL=C sort -u)
   [ -n "$FILES" ] || continue
 
   # ------------------------------------------------------------- HARD BLOCK 1
-  HITS=$(printf '%s\n' "$FILES" | grep -E "$FORBIDDEN" || true)
-  ENVHITS=$(printf '%s\n' "$FILES" | grep -E "$ENV_HARD" || true)
+  # LC_ALL=C on every grep that reads path data. In a UTF-8 locale (the hook
+  # inherits the user's LANG) GNU grep classifies input containing an INVALID
+  # multibyte sequence as binary: it prints "binary file matches" to stderr and
+  # emits NO matching lines. One filename with a stray 0xFF byte therefore
+  # blanked HITS for the WHOLE range — disabling every rule at once, not just
+  # its own path — and `docs/le\377ak.md` reached the remote at exit 0.
+  # Reproduced. The C locale treats bytes as bytes, so nothing is "binary".
+  HITS=$(printf '%s\n' "$FILES" | LC_ALL=C grep -E "$FORBIDDEN" || true)
+  ENVHITS=$(printf '%s\n' "$FILES" | LC_ALL=C grep -E "$ENV_HARD" || true)
   if [ -n "$HITS" ] || [ -n "$ENVHITS" ]; then
     if [ "$use_full_range" -eq 1 ] && [ "$NARROWED" -eq 0 ]; then
       # We could not narrow the scan against the remote (no usable tracking
