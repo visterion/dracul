@@ -1,0 +1,63 @@
+#!/bin/sh
+# pre-push — last-moment leak guard for a PUBLIC repo.
+#
+# pre-commit sees only STAGED files of a SINGLE commit. It is blind to
+# --no-verify commits, commits predating the hook, commits from a clone where
+# core.hooksPath was never set, and content arriving through a merge. This hook
+# inspects what is actually being published.
+#
+# Same philosophy as pre-commit: hard blocks (exit 1) only where a false
+# positive is near-impossible; everything judgement-dependent is a warning,
+# because a hook that blocks legitimate work trains you into --no-verify and
+# then protects nothing.
+#
+# Deliberate bypass:  git push --no-verify
+set -u
+
+REMOTE=${1:-origin}
+ZERO=0000000000000000000000000000000000000000
+
+# CLAUDE.md / AGENTS.md / .claude/ / docs/ are local-only operating docs. They
+# hold prod hosts, container IDs and deploy detail. AGENTS.md is a symlink to
+# CLAUDE.md, so publishing either publishes the same content.
+FORBIDDEN='^(CLAUDE\.md|AGENTS\.md|\.claude/|docs/)'
+# Only the env files that by convention hold real secrets. .env.example and the
+# committed Vite .env.development / .env.production are legitimate here.
+ENV_HARD='(^|/)\.env$|(^|/)\.env\.local$|(^|/)\.env\..+\.local$'
+
+fail=0
+
+# Read git's ref lines DIRECTLY from stdin. Piping into this loop would run the
+# body in a subshell and every `fail=1` set below would be lost on exit,
+# silently turning each hard block into a no-op.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  # All-zero local sha = branch deletion. Nothing is published.
+  [ "$local_sha" = "$ZERO" ] && continue
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch: no comparison point. Exclude everything already on the remote,
+    # otherwise the first push of a feature branch scans the whole history.
+    set -- "$local_sha" --not --remotes="$REMOTE"
+  else
+    set -- "$remote_sha..$local_sha"
+  fi
+
+  FILES=$(git log --format= --name-only --diff-filter=ACMR "$@" | sort -u)
+  [ -n "$FILES" ] || continue
+
+  # ------------------------------------------------------------- HARD BLOCK 1
+  HITS=$(printf '%s\n' "$FILES" | grep -E "$FORBIDDEN" || true)
+  ENVHITS=$(printf '%s\n' "$FILES" | grep -E "$ENV_HARD" || true)
+  if [ -n "$HITS" ] || [ -n "$ENVHITS" ]; then
+    echo "BLOCKED: this push would publish local-only files ($local_ref):"
+    [ -n "$HITS" ] && printf '  %s\n' $HITS
+    [ -n "$ENVHITS" ] && printf '  %s\n' $ENVHITS
+    echo "  These hold operating detail — prod hosts, container IDs, deploy notes."
+    echo "  Remove them from the outgoing commits, or: git push --no-verify"
+    fail=1
+  fi
+done
+
+[ "$fail" -eq 0 ] || exit 1
+exit 0
