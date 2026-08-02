@@ -977,6 +977,87 @@ else
 fi
 rm -f CLAUDE.md
 
+# --- optional tree-audit acknowledgement list ---
+# acknowledged-leaks lives at --git-common-dir, never staged/committed by design.
+# It exists because a leak already on the remote is permanent (a history rewrite
+# does not remove it from GitHub), so an unsuppressable warning about one fires
+# on every push forever — the exact --no-verify training this hook must avoid.
+
+# 60. Acknowledging a path suppresses the tree audit for THAT path, while a
+#     second, unacknowledged local-only path in the same tree still warns. The
+#     second path is what makes this discriminate: "no output at all" (a no-op
+#     hook) would satisfy the suppression half vacuously.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+printf 'local operating notes\n' > CLAUDE.md
+git add -f .claude/settings.json CLAUDE.md
+git commit -qm "add settings and claude md"
+git push -q --no-verify origin main
+rm -f CLAUDE.md
+printf '.claude/settings.json\n' > "$(git rev-parse --git-common-dir)/acknowledged-leaks"
+printf 'unrelated change\n' >> README.md
+git add README.md
+git commit -qm "docs: unrelated"
+out=$(git push origin main 2>&1)
+got=$?
+if [ "$got" -eq 0 ] \
+   && ! printf '%s\n' "$out" | grep -qF ".claude/settings.json" \
+   && printf '%s\n' "$out" | grep -qF "CLAUDE.md"; then
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "acknowledged tree path suppressed, an unacknowledged one still warns"
+else
+  failures=$((failures + 1))
+  printf 'FAIL  %s (exit %s)\n' "acknowledged tree path suppressed, an unacknowledged one still warns" "$got"
+  printf '%s\n' "$out" | sed 's/^/      /'
+fi
+
+# 61. Acknowledging a path must NOT let a new commit touching it through —
+#     HARD BLOCK 1 is untouched by the acknowledgement list, which suppresses
+#     the tree audit and nothing else.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+git add -f .claude/settings.json
+git commit -qm "add settings"
+git push -q --no-verify origin main
+printf '.claude/settings.json\nCLAUDE.md\ndocs/\n' > "$(git rev-parse --git-common-dir)/acknowledged-leaks"
+printf '{"hooks":{}}\n' > .claude/settings.json
+git add .claude/settings.json
+git commit -qm "modify settings"
+check "acknowledgement list cannot suppress the forbidden-path hard block" 1 origin main
+
+# 62. A malformed / hostile acknowledgement list must not silence the audit
+#     wholesale: entries are literal whole-line paths, so a bare regex
+#     metacharacter matches nothing and `.claude/` (a prefix, not a full path)
+#     does not suppress `.claude/settings.json`.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+git add -f .claude/settings.json
+git commit -qm "add settings"
+git push -q --no-verify origin main
+printf '[\n.*\n.claude/\n' > "$(git rev-parse --git-common-dir)/acknowledged-leaks"
+printf 'unrelated change\n' >> README.md
+git add README.md
+git commit -qm "docs: unrelated"
+check_warns "hostile acknowledgement list does not silence the tree audit" ".claude/settings.json" origin main
+
+# 63. An unreadable acknowledgement list (a directory in the way) behaves
+#     exactly like absent — a read failure must never be the thing that
+#     silences a warning.
+setup
+mkdir -p .claude
+printf '{}\n' > .claude/settings.json
+git add -f .claude/settings.json
+git commit -qm "add settings"
+git push -q --no-verify origin main
+mkdir -p "$(git rev-parse --git-common-dir)/acknowledged-leaks"
+printf 'unrelated change\n' >> README.md
+git add README.md
+git commit -qm "docs: unrelated"
+check_warns "unreadable acknowledgement list still warns" ".claude/settings.json" origin main
+
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 exit 0
