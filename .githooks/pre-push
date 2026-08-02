@@ -254,29 +254,51 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # fine, but git log's exit status still must not be discarded (the same
   # fail-open shape as the path scan above: a failed `git log` behind a bare
   # command substitution would leave ADDED/ADDED_SCAN empty and silently
-  # disable both HARD BLOCK 2 and the warnings), and LC_ALL=C keeps grep from
-  # going blind on an invalid UTF-8 byte in the diff body.
-  if [ -z "$ADDEDF" ] || ! git log --format= -U0 --diff-filter=ACMR -p "$@" > "$ADDEDF"; then
-    echo "BLOCKED ($local_ref): could not inspect this push's added content — 'git log' failed."
+  # disable both HARD BLOCK 2 and the warnings). Same flags as the path scan
+  # above, and for the same reasons:
+  #   -m: a credential introduced only by a MERGE commit (added during
+  #       conflict resolution, present on neither parent) gets no diff at all
+  #       without it — the identical defect documented above, reproduced here
+  #       too: it silenced both HARD BLOCK 2 and the WARNs for the whole
+  #       merge-introduced range.
+  #   --diff-filter=d (not ACMR): ACMR silently drops T (type change) — a
+  #       credential-bearing SYMLINK replaced by a real file carrying the
+  #       token is a pure T and was invisible to ACMR, reaching the remote at
+  #       exit 0. Deletions stay excluded on purpose.
+  #   --text: without it, a file git classifies as binary (a NUL in its
+  #       first ~8000 bytes, or a `-diff` gitattribute) gets
+  #       "Binary files a/x and b/x differ" instead of a patch, and any
+  #       credential inside is never scanned at all.
+  if [ -z "$ADDEDF" ] || ! git log --format= -U0 --diff-filter=d -m --text -p "$@" > "$ADDEDF"; then
+    echo "BLOCKED ($local_ref): could not inspect this push's added content (content scan) — 'git log' failed."
     echo "  Refusing to let an unreadable range pass as 'nothing to see'."
     echo "  If you have confirmed the outgoing commits are clean, override with: git push --no-verify"
     fail=1
     continue
   fi
-  ADDED=$(LC_ALL=C grep '^+' "$ADDEDF" | LC_ALL=C grep -v '^+++' || true)
+  # grep -a: without it, a NUL byte ANYWHERE in the diff — not necessarily in
+  # the leaking file itself — makes grep classify the whole diff stream as
+  # binary, print "binary file matches" to stderr, and emit NO lines. That
+  # silently disables every content check for the whole ref, the identical
+  # "one bad byte blanks every rule at once" shape LC_ALL=C fixes for invalid
+  # UTF-8 above — but LC_ALL=C does NOT cover a literal NUL byte, only -a
+  # does. -a and \b below are GNU grep extensions; this hook assumes GNU
+  # grep (the push host is Linux) — a future BSD/macOS port must re-check
+  # both.
+  ADDED=$(LC_ALL=C grep -a '^+' "$ADDEDF" | LC_ALL=C grep -a -v '^+++' || true)
 
   # A second pass over the same range, excluding .githooks/ — this hook
   # legitimately contains credential *patterns* (the regex below) and would
   # otherwise block its own push. Path rules above still apply everywhere;
   # only the credential-content scan is narrowed.
-  if [ -z "$SCANF" ] || ! git log --format= -U0 --diff-filter=ACMR -p "$@" -- . ':(exclude).githooks/' > "$SCANF"; then
-    echo "BLOCKED ($local_ref): could not inspect this push's added content — 'git log' failed."
+  if [ -z "$SCANF" ] || ! git log --format= -U0 --diff-filter=d -m --text -p "$@" -- . ':(exclude).githooks/' > "$SCANF"; then
+    echo "BLOCKED ($local_ref): could not inspect this push's added content (credential scan) — 'git log' failed."
     echo "  Refusing to let an unreadable range pass as 'nothing to see'."
     echo "  If you have confirmed the outgoing commits are clean, override with: git push --no-verify"
     fail=1
     continue
   fi
-  ADDED_SCAN=$(LC_ALL=C grep '^+' "$SCANF" | LC_ALL=C grep -v '^+++' || true)
+  ADDED_SCAN=$(LC_ALL=C grep -a '^+' "$SCANF" | LC_ALL=C grep -a -v '^+++' || true)
 
   # ------------------------------------------------------------- HARD BLOCK 2
   # Deliberately narrow — no generic 'password=' / 'secret', those hit

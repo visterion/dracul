@@ -336,6 +336,21 @@ assert_absent() {
   fi
 }
 
+# assert_content_absent <name> <git-dir> <ref> <path> <fixed-string>
+# For cases where the PATH legitimately already exists in the remote tree
+# (e.g. published earlier as a harmless symlink) and a path-only check like
+# assert_absent would pass vacuously — the content at that path is what must
+# never carry the leaking string.
+assert_content_absent() {
+  if git --git-dir="$2" show "$3:$4" 2>/dev/null | LC_ALL=C grep -qF "$5"; then
+    failures=$((failures + 1))
+    printf 'FAIL  %s (found %s in %s at %s)\n' "$1" "$5" "$4" "$3"
+  else
+    passes=$((passes + 1))
+    printf 'PASS  %s\n' "$1"
+  fi
+}
+
 # 20. A path containing an INVALID UTF-8 byte. GNU grep in a UTF-8 locale (the
 #     hook inherits the user's LANG) treats such input as binary: it prints
 #     "binary file matches" to stderr and emits NO lines, so HITS came back
@@ -453,6 +468,7 @@ printf 'local operating notes\n' > claude.md
 git add -f claude.md
 git commit -qm "add lowercase claude md"
 check "lowercase claude.md blocks" 1 origin main
+assert_absent "lowercase claude.md never reached the remote tree" "$WORK/bare" main "claude.md"
 
 # 31. Owner ruling: a differently-cased root Docs/ must block under the same
 #     case-insensitive match — accepted trade-off, no such directory exists in
@@ -463,6 +479,7 @@ printf 'private runbook\n' > Docs/runbook.md
 git add -f Docs/runbook.md
 git commit -qm "add capitalized docs runbook"
 check "Docs/runbook.md blocks" 1 origin main
+assert_absent "Docs/runbook.md never reached the remote tree" "$WORK/bare" main "Docs/runbook.md"
 
 # 32. The case-insensitive match must NOT widen the deliberate nested-docs
 #     asymmetry: some-module/docs/ (any case) still only blocks when the
@@ -474,6 +491,83 @@ printf 'public module docs\n' > some-module/Docs/x.md
 git add some-module/Docs/x.md
 git commit -qm "docs: module documentation, capitalized dir"
 check "nested some-module/Docs/ does NOT block" 0 origin main
+
+# 33. Fix-round-1 CRITICAL 1: a credential introduced only by a MERGE commit
+#     (added during conflict resolution, present on neither parent) must
+#     still block the content scan — plain `git log -p` gives a merge commit
+#     no diff at all without `-m`, silencing HARD BLOCK 2 for the whole
+#     merge-introduced range.
+setup
+git checkout -qb side
+printf 'side change\n' > side.txt
+git add side.txt
+git commit -qm "feat: side change"
+git checkout -q main
+printf 'main change\n' >> README.md
+git add README.md
+git commit -qm "feat: main change"
+git merge --no-commit --no-ff side >/dev/null 2>&1
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
+git add config.txt
+git commit -qm "merge: resolve and add a credential"
+check "credential introduced only in a merge commit blocks" 1 origin main
+assert_absent "merge-introduced credential never reached the remote tree" "$WORK/bare" main "config.txt"
+
+# 34. Fix-round-1 CRITICAL 2: a credential arriving via a type change (a
+#     committed SYMLINK replaced by a real file) must still block —
+#     --diff-filter=ACMR silently drops T (type change).
+setup
+ln -s README.md config.txt
+git add -f config.txt
+git commit -qm "add config symlink"
+git push -q --no-verify origin main
+rm config.txt
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
+git add config.txt
+git commit -qm "replace symlink with a credential-bearing file"
+check "credential via symlink-to-file type change blocks" 1 origin main
+# config.txt as a PATH is already legitimately in the remote tree (published
+# earlier as the harmless symlink) — assert_absent would pass vacuously.
+# What must be absent is the credential CONTENT at that path.
+assert_content_absent "type-change credential never reached the remote tree" "$WORK/bare" main "config.txt" "ghp_0000000000000000000000000000000000"
+
+# 35. Fix-round-1 CRITICAL 3: a NUL byte ANYWHERE in the pushed range — not
+#     necessarily in the leaking file — must not blind the content scan for
+#     the whole ref. asset.dat's NUL sits past git's ~8000-byte binary-sniff
+#     window, so git itself diffs it as text; without `grep -a` a bare NUL in
+#     that text still makes grep declare the WHOLE captured stream binary and
+#     emit nothing, disabling HARD BLOCK 2 for config.txt's credential too.
+setup
+awk 'BEGIN{for(i=0;i<8500;i++) printf "a"}' > asset.dat
+printf '\0' >> asset.dat
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.txt
+git add asset.dat config.txt
+git commit -qm "add a large NUL-suffixed asset alongside a credential"
+check "NUL byte elsewhere in the range does not blind the credential scan" 1 origin main
+assert_absent "credential alongside a large NUL-suffixed asset never reached the remote tree" "$WORK/bare" main "config.txt"
+
+# 36. Fix-round-1 IMPORTANT 4a: a file git itself classifies as binary (a NUL
+#     within the first ~8000 bytes) must still be content-scanned — without
+#     `--text`, git emits "Binary files ... differ" instead of a patch and any
+#     credential inside is invisible.
+setup
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > config.bin
+printf '\0' >> config.bin
+git add -f config.bin
+git commit -qm "add a git-classified-binary credential file"
+check "credential in a git-classified-binary file blocks" 1 origin main
+assert_absent "binary-classified credential file never reached the remote tree" "$WORK/bare" main "config.bin"
+
+# 37. Fix-round-1 IMPORTANT 4b: a `-diff` gitattribute forces git to treat an
+#     otherwise plain-text file as binary regardless of content — a one-line,
+#     entirely plausible way to deliberately defeat the guard without `--text`.
+setup
+printf 'secret.conf -diff\n' > .gitattributes
+printf 'token = "ghp_0000000000000000000000000000000000"\n' > secret.conf
+git add .gitattributes secret.conf
+git commit -qm "add gitattributes-forced-binary credential file"
+check "credential in a -diff gitattributes file blocks" 1 origin main
+assert_absent "gitattributes-forced-binary credential file never reached the remote tree" "$WORK/bare" main "secret.conf"
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
