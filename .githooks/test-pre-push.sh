@@ -96,15 +96,29 @@ git add -f .env
 git commit -qm "add env"
 check "bare .env blocks" 1 origin main
 
-# 7. First push of a NEW branch inspects only that branch's commits.
+# 7. First push of a NEW branch must exclude commits already published on the
+#    remote, even if they happen to match FORBIDDEN — only unpublished
+#    commits are in scope. Discriminates a hook that forgot --not/--remotes
+#    (which would scan full history, find the already-public CLAUDE.md commit
+#    reachable from the new branch, and wrongly BLOCK) from one that excludes
+#    correctly (exit 0).
 setup
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "add claude md (already public)"
+git push -q --no-verify origin main
 git checkout -qb feature
 printf 'feature work\n' >> README.md
 git add README.md
 git commit -qm "feat: work"
-check "new branch pushes cleanly" 0 origin feature
+check "new branch pushes cleanly (forbidden content already public)" 0 origin feature
 
-# 8. Deleting a remote branch is skipped cleanly.
+# 8. Deleting a remote branch is skipped cleanly. NOTE: this case cannot be
+#    made to discriminate hook-vs-no-hook: local_sha is all-zero for a
+#    deletion, nothing is being published, and the hook is deliberately a
+#    no-op on this path (see the ZERO check in pre-push) — identical
+#    behaviour to no hook at all is the correct, intended outcome here, not a
+#    gap in coverage.
 setup
 git checkout -qb doomed
 printf 'x\n' >> README.md
@@ -113,6 +127,94 @@ git commit -qm "feat: doomed"
 git push -q origin doomed
 git checkout -q main
 check "branch deletion is skipped" 0 origin --delete doomed
+
+# 9. A new branch that itself CARRIES a leak must still block — exclusion of
+#    already-published content must not become exclusion of everything.
+setup
+git checkout -qb feature
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: work with leak"
+check "new branch carrying a leak blocks" 1 origin feature
+
+# 10. A single push touching multiple refs, where only the SECOND ref line
+#     carries the leak, must still block. Subshell regression detector: if
+#     the ref-line loop were fed via a pipe instead of reading stdin
+#     directly, the whole loop body (including this iteration's fail=1) would
+#     run in a subshell and be lost when that subshell exits.
+setup
+git checkout -qb clean-branch
+printf 'clean work\n' >> README.md
+git add README.md
+git commit -qm "feat: clean work"
+git checkout -q main
+git checkout -qb leaky-branch
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: leaky work"
+git checkout -q main
+check "multi-ref push blocks when only the second ref leaks" 1 origin clean-branch leaky-branch
+
+# 11. A file introduced only by a merge commit itself (present on neither
+#     parent — the classic "evil merge" / conflict-resolution path) must
+#     still block. Plain --name-only gives a merge commit no diff at all; the
+#     hook must pass -m to see it.
+setup
+git checkout -qb side
+printf 'side change\n' > side.txt
+git add side.txt
+git commit -qm "feat: side change"
+git checkout -q main
+printf 'main change\n' >> README.md
+git add README.md
+git commit -qm "feat: main change"
+git merge --no-commit --no-ff side >/dev/null 2>&1
+mkdir -p docs
+printf 'private runbook\n' > docs/secret.md
+git add -f docs/secret.md
+git commit -qm "merge: resolve and add secret"
+check "forbidden file introduced only in a merge commit blocks" 1 origin main
+
+# 12. An unresolvable remote_sha (force-push from a stale clone that never
+#     fetched the remote's current tip) must fail closed and still scan for
+#     forbidden content, not silently no-op via a discarded "fatal: Invalid
+#     revision range" from the range form.
+setup
+git clone -q "$WORK/bare" "$WORK/wc2"
+cd "$WORK/wc2" || exit 1
+git config user.email dev@example.com
+git config user.name "Test Dev"
+git config commit.gpgsign false
+git config core.hooksPath .githooks
+cd "$WORK/wc" || exit 1
+printf 'advance main\n' >> README.md
+git add README.md
+git commit -qm "docs: advance main"
+git push -q origin main
+cd "$WORK/wc2" || exit 1
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: leak from stale clone"
+check "unresolvable remote_sha fails closed and blocks" 1 --force origin main
+cd "$WORK/wc" || exit 1
+
+# 13. A non-ASCII forbidden path must not slip through core.quotePath's
+#     quoted, octal-escaped rendering of the path.
+setup
+mkdir -p docs
+printf 'private runbook\n' > 'docs/prüfung.md'
+git add -f 'docs/prüfung.md'
+git commit -qm "add non-ascii runbook"
+check "non-ASCII forbidden path blocks" 1 origin main
+
+# 14. .env.local and .env.production.local must hard-block too — case 6 only
+#     exercised bare .env, leaving two-thirds of ENV_HARD untested.
+setup
+printf 'API_TOKEN=whatever\n' > .env.local
+printf 'API_TOKEN=whatever\n' > .env.production.local
+git add -f .env.local .env.production.local
+git commit -qm "add local env files"
+check ".env.local and .env.production.local block" 1 origin main
 
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1

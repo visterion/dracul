@@ -14,7 +14,7 @@
 # Deliberate bypass:  git push --no-verify
 set -u
 
-REMOTE=${1:-origin}
+REMOTE_ARG=${1:-origin}
 ZERO=0000000000000000000000000000000000000000
 
 # CLAUDE.md / AGENTS.md / .claude/ / docs/ are local-only operating docs. They
@@ -27,23 +27,86 @@ ENV_HARD='(^|/)\.env$|(^|/)\.env\.local$|(^|/)\.env\..+\.local$'
 
 fail=0
 
+# git invokes this hook with $1 = the remote's configured NAME ("origin"),
+# EXCEPT for `git push <url> <branch>`, where there is no name and $1 is the
+# URL itself. --remotes=<name> below only matches refs under
+# refs/remotes/<name>/*, so a URL argument matches nothing, the "exclude
+# already-published commits" step below silently degrades to excluding
+# nothing, and a brand-new branch gets its full history scanned — a
+# false-positive BLOCK on content that is already public. Resolve the actual
+# configured remote name by matching $1 against every remote's URL.
+resolve_remote_name() {
+  arg=$1
+  if git remote get-url "$arg" >/dev/null 2>&1; then
+    printf '%s\n' "$arg"
+    return 0
+  fi
+  for r in $(git remote); do
+    url=$(git remote get-url "$r" 2>/dev/null) || continue
+    if [ "$url" = "$arg" ]; then
+      printf '%s\n' "$r"
+      return 0
+    fi
+  done
+  return 1
+}
+
+REMOTE_NAME=$(resolve_remote_name "$REMOTE_ARG") || REMOTE_NAME=""
+
+# Even with the right name, refs/remotes/<name>/* only reflects the last
+# fetch — if it is empty (never fetched, or the tracking ref was pruned or
+# deleted) excluding by it removes nothing, and the same false-positive BLOCK
+# happens again. Fall back to excluding everything reachable from ANY local
+# ref rather than trusting a remote-tracking namespace that may be stale or
+# absent.
+if [ -n "$REMOTE_NAME" ] && [ -n "$(git for-each-ref "refs/remotes/$REMOTE_NAME")" ]; then
+  EXCLUDE="--remotes=$REMOTE_NAME"
+else
+  EXCLUDE="--all"
+fi
+
 # Read git's ref lines DIRECTLY from stdin. Piping into this loop would run the
 # body in a subshell and every `fail=1` set below would be lost on exit,
 # silently turning each hard block into a no-op.
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
-  # All-zero local sha = branch deletion. Nothing is published.
+  # All-zero local sha = branch deletion. Nothing is published — this branch
+  # of the hook is intentionally a no-op and is expected to behave exactly
+  # like no hook being installed at all.
   [ "$local_sha" = "$ZERO" ] && continue
 
+  # Decide whether we can trust a precise remote_sha..local_sha range, or
+  # must fall back to scanning everything not already known to be published:
+  #   - remote_sha is all-zero: brand-new ref, no comparison point at all.
+  #   - remote_sha is non-zero but we don't have that commit locally (e.g. a
+  #     force-push over history this clone never fetched): `git log
+  #     remote_sha..local_sha` would die with "fatal: Invalid revision
+  #     range", its exit status would be silently discarded by the command
+  #     substitution below, FILES would come back empty, and the hard block
+  #     would become a no-op. Fail closed instead: fall back to the same
+  #     "not already published" scan used for new branches.
+  use_full_range=0
   if [ "$remote_sha" = "$ZERO" ]; then
-    # New branch: no comparison point. Exclude everything already on the remote,
-    # otherwise the first push of a feature branch scans the whole history.
-    set -- "$local_sha" --not --remotes="$REMOTE"
+    use_full_range=1
+  elif ! git rev-parse -q --verify "${remote_sha}^{commit}" >/dev/null 2>&1; then
+    use_full_range=1
+  fi
+
+  if [ "$use_full_range" -eq 1 ]; then
+    set -- "$local_sha" --not $EXCLUDE
   else
     set -- "$remote_sha..$local_sha"
   fi
 
-  FILES=$(git log --format= --name-only --diff-filter=ACMR "$@" | sort -u)
+  # -m: also diff merge commits against each parent. Plain --name-only gives
+  #     a merge commit no diff at all, so a file introduced only by the merge
+  #     itself (an "evil merge" / conflict-resolution addition present on
+  #     neither parent) would otherwise be completely invisible.
+  # -c core.quotePath=false: with the (default-on) core.quotePath, git prints
+  #     non-ASCII paths as a quoted, octal-escaped string, e.g.
+  #     "docs/pr\303\274fung.md". The leading quote defeats the `^`/`(^|/)`
+  #     anchors in FORBIDDEN/ENV_HARD below and the path slips through.
+  FILES=$(git -c core.quotePath=false log --format= --name-only --diff-filter=ACMR -m "$@" | sort -u)
   [ -n "$FILES" ] || continue
 
   # ------------------------------------------------------------- HARD BLOCK 1
