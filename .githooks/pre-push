@@ -15,6 +15,10 @@
 set -u
 
 REMOTE_ARG=${1:-origin}
+# $2 is the URL git is actually pushing to. With remote.<name>.pushurl or
+# url.<x>.pushInsteadOf configured it is NOT the remote's fetch URL — see the
+# pushurl divergence check below.
+PUSH_URL_ARG=${2:-}
 ZERO=0000000000000000000000000000000000000000
 
 # CLAUDE.md / AGENTS.md / .claude/ / docs/ are local-only operating docs. They
@@ -82,7 +86,32 @@ REMOTE_NAME=$(resolve_remote_name "$REMOTE_ARG") || REMOTE_NAME=""
 # being pushed. Noisy — it may BLOCK on content already public on this exact
 # remote — but never silently blind to a leak. The BLOCKED message below
 # says so honestly when this path is taken.
-if [ -n "$REMOTE_NAME" ] && [ -n "$(git for-each-ref "refs/remotes/$REMOTE_NAME")" ]; then
+# Even the NAME being right is not enough. refs/remotes/<name>/* is populated
+# by FETCHES from that remote's fetch URL. A remote can push somewhere else
+# entirely — `remote.<name>.pushurl`, or `url.<x>.pushInsteadOf` — in which
+# case those tracking refs describe a DIFFERENT repository than the one this
+# push delivers to. Excluding by them then means "already published over
+# there", not "already published here": content long since public on the fetch
+# remote is dropped from the scan and sails through to the push target, which
+# may be the public repo this guard exists to protect. Same failure class as
+# the `--all` and cross-remote holes above.
+#
+# So narrow only when the push target really is that remote's fetch source.
+# `git remote get-url --push` resolves pushurl AND pushInsteadOf (verified on
+# git 2.53), and $2 is git's own report of the target, so both are compared
+# against the fetch URL and both must agree. Divergence — or several push URLs
+# (multi-line output) — de-narrows to the EXCLUDE="" full-history fallback,
+# which is noisy but fails closed and says so in its message.
+FETCH_URL=$(git remote get-url "$REMOTE_NAME" 2>/dev/null) || FETCH_URL=""
+PUSH_URL=$(git remote get-url --push "$REMOTE_NAME" 2>/dev/null) || PUSH_URL=""
+same_target=0
+if [ -n "$FETCH_URL" ] && [ "$PUSH_URL" = "$FETCH_URL" ]; then
+  if [ -z "$PUSH_URL_ARG" ] || [ "$PUSH_URL_ARG" = "$FETCH_URL" ]; then
+    same_target=1
+  fi
+fi
+
+if [ -n "$REMOTE_NAME" ] && [ "$same_target" -eq 1 ] && [ -n "$(git for-each-ref "refs/remotes/$REMOTE_NAME")" ]; then
   EXCLUDE="--remotes=$REMOTE_NAME"
   NARROWED=1
 else
@@ -131,7 +160,27 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #     non-ASCII paths as a quoted, octal-escaped string, e.g.
   #     "docs/pr\303\274fung.md". The leading quote defeats the `^`/`(^|/)`
   #     anchors in FORBIDDEN/ENV_HARD below and the path slips through.
-  FILES=$(git -c core.quotePath=false log --format= --name-only --diff-filter=ACMR -m "$@" | sort -u)
+  # A command substitution silently discards the exit status of what it runs.
+  # If this `git log` ever fails, FILES comes back empty, the `continue` below
+  # fires, and the push proceeds completely unchecked — the same fail-open
+  # shape as the unresolvable-remote_sha bug. Capture the status explicitly
+  # (of git log, not of `sort`, hence the temp-free two-step) and fail closed.
+  # --diff-filter=d selects every change EXCEPT deletions (lowercase excludes).
+  #     The obvious allow-list spelling, ACMR, silently drops T (type change):
+  #     replacing a committed AGENTS.md SYMLINK with a real file full of prod
+  #     hosts and deploy detail is a pure T, was invisible to the scan, and
+  #     landed on the remote with exit 0 — reproduced. An exclude-list also
+  #     fails closed against any diff status git may add in future, whereas an
+  #     allow-list would silently ignore it. Deletions stay excluded on
+  #     purpose: removing docs/x.md is exactly the push this guard wants.
+  LOGOUT=$(git -c core.quotePath=false log --format= --name-only --diff-filter=d -m "$@") || {
+    echo "BLOCKED ($local_ref): could not inspect this push's commit range — 'git log' failed."
+    echo "  Refusing to let an unreadable range pass as 'nothing to see'."
+    echo "  If you have confirmed the outgoing commits are clean, override with: git push --no-verify"
+    fail=1
+    continue
+  }
+  FILES=$(printf '%s\n' "$LOGOUT" | sort -u)
   [ -n "$FILES" ] || continue
 
   # ------------------------------------------------------------- HARD BLOCK 1

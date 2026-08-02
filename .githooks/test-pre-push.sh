@@ -273,6 +273,54 @@ git commit -qm "feat: leak fetched via private remote"
 git push -q --no-verify private main
 check "leak visible only via a different remote's tracking refs still blocks" 1 public main
 
+# 18. pushurl divergence: refs/remotes/<name>/* reflect the FETCH url, so once
+#     remote.<name>.pushurl points somewhere else they say nothing about what
+#     the push TARGET already has. Here the leak is genuinely published on the
+#     private fetch remote (origin's tracking refs carry it), then origin's
+#     pushurl is repointed at a PUBLIC bare repo and a new branch is pushed:
+#     scoping the exclusion by remote NAME alone would drop the leaking commit
+#     as "already published" and let it land in the public repo with exit 0.
+#     The hook must notice push-url != fetch-url, de-narrow to the
+#     full-history fallback, and block.
+setup
+git init -q --bare "$WORK/public-bare"
+printf 'local operating notes\n' > CLAUDE.md
+git add -f CLAUDE.md
+git commit -qm "feat: leak published on the private fetch remote"
+git push -q --no-verify origin main
+git fetch -q origin
+git config remote.origin.pushurl "$WORK/public-bare"
+git checkout -qb feat-pushurl
+printf 'feature work\n' >> README.md
+git add README.md
+git commit -qm "feat: work"
+check "pushurl divergence to a different repo still blocks" 1 origin feat-pushurl
+# Prove the leak really would have landed: the public bare must NOT have it.
+if git --git-dir="$WORK/public-bare" ls-tree -r --name-only feat-pushurl 2>/dev/null | grep -q '^CLAUDE\.md$'; then
+  failures=$((failures + 1))
+  printf 'FAIL  %s\n' "pushurl divergence: CLAUDE.md reached the public bare repo"
+else
+  passes=$((passes + 1))
+  printf 'PASS  %s\n' "pushurl divergence: public bare repo has no CLAUDE.md"
+fi
+git config --unset remote.origin.pushurl
+
+# 19. Type change (git diff status T): a forbidden path already published as a
+#     harmless SYMLINK (AGENTS.md -> CLAUDE.md is exactly this repo's layout)
+#     replaced by a real file carrying the private operating detail. The change
+#     is neither an add nor a modify, so an ACMR allow-list never saw it and
+#     the content landed on the remote with exit 0. Must block.
+setup
+ln -s README.md AGENTS.md
+git add -f AGENTS.md
+git commit -qm "add agents symlink"
+git push -q --no-verify origin main
+rm AGENTS.md
+printf 'synthetic operating notes\n' > AGENTS.md
+git add AGENTS.md
+git commit -qm "replace symlink with a real file"
+check "symlink-to-file type change on a forbidden path blocks" 1 origin main
+
 printf '\n%s passed, %s failed\n' "$passes" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 exit 0
