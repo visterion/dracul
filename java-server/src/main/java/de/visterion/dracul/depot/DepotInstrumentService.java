@@ -102,9 +102,22 @@ public class DepotInstrumentService {
         try {
             return agora.callTool(tool, args);
         } catch (RuntimeException e) {
-            log.warn("Agora call {} failed for instrument bundle: {}", tool, e.toString());
+            log.warn("Agora call {} failed for instrument bundle: {}", tool, describe(e));
             return null;
         }
+    }
+
+    /** Exception class plus the ROOT cause's message, never the exception's own message. An
+     *  {@code AgoraUnavailableException} carries the literal text {@code "Agora unreachable for
+     *  <tool>"} in its message, and the daily analysis counts exactly that substring
+     *  ({@code _AGORA_FAIL_RE}); echoing it here would make one terminal outage count twice —
+     *  once from {@code AgoraClient}, once from this line. The root cause carries the same
+     *  underlying detail without the counted prefix, and the tool name is already in the line. */
+    private static String describe(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        String detail = root.getMessage();
+        return e.getClass().getSimpleName() + (detail == null ? "" : ": " + detail);
     }
 
     /**

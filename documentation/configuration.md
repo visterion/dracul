@@ -322,6 +322,7 @@ needed.
 | `DRACUL_ECHO_SCHEDULE` | `0 0 22 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 22:00 UTC weekdays, after US close. |
 | `ECHO_MIN_SURPRISE` | `5.0` | Minimum positive earnings-surprise percent for the pre-screen. |
 | `ECHO_MIN_PRICE` | `5.0` | Minimum current share price (USD) liquidity floor for the pre-screen. |
+| `ECHO_MAX_CANDIDATES` (`dracul.strigoi.echo.max-candidates`) | `40` | Ceiling on the candidate list handed to the agent. The pre-screen applies the EPS filters first, ranks the survivors by descending earnings surprise (symbol as tiebreak) and keeps the strongest `N` — so this is a payload bound, not a quality filter. At ~1.7 kB per serialized candidate the structural limit against the ~95 kB Vistierie bridge tool-result limit is ~56 candidates; the earnings window itself is now fetched with `limit=1000`, which without this cap would yield ~250–290 candidates. A cut is reported as `data_source_health.truncated: true` with the reason in `detail`, never silently. |
 | `ECHO_OHLC_HISTORY_DAYS` (`dracul.strigoi.echo.ohlc-history-days`) | `320` | Trading days of daily OHLC fetched per symbol/proxy for SP2 CAR, momentum and ADV. |
 | `ECHO_CAR_PROXY` (`dracul.strigoi.echo.car.market-proxy`) | `SPY` | Market proxy symbol used as the CAR market-adjustment benchmark. |
 | `dracul.strigoi.echo.gate.max-accrual-ratio` | `ECHO_MAX_ACCRUAL` | `0.10` | Sloan accrual ratio above which an earnings beat is treated as accrual-driven and the candidate is dropped. |

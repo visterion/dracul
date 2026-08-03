@@ -171,11 +171,36 @@ public abstract class HuntController {
             // discard every prey it already produced — so a failing hunt() degrades to an
             // "unavailable" 200 instead. The catch sits outside cache.get so a throw stores
             // nothing. RuntimeException, not Throwable: an Error must not be swallowed.
-            log.warn("{} tool {} failed — answering unavailable instead of 4xx: {}",
-                    agentName(), toolName(), e.toString(), e);
+            // An AgoraUnavailableException carries the literal text "Agora unreachable for
+            // <tool>" in its message, and AgoraClient has ALREADY logged that line (with the
+            // underlying detail) at the moment of failure. Repeating it here — once via
+            // e.toString(), once more in the rendered stack trace — would make the daily
+            // analysis (_AGORA_FAIL_RE) count one outage two or three times. So for that one
+            // exception class the line names only the type; every other failure keeps the full
+            // toString plus stack trace, where nothing is duplicated and the trace is the only
+            // diagnostic there is.
+            if (agoraUnavailable(e)) {
+                log.warn("{} tool {} failed — answering unavailable instead of 4xx: {} "
+                                + "(cause already logged by AgoraClient)",
+                        agentName(), toolName(), e.getClass().getSimpleName());
+            } else {
+                log.warn("{} tool {} failed — answering unavailable instead of 4xx: {}",
+                        agentName(), toolName(), e.toString(), e);
+            }
             return ok(unavailable(Map.of(fetchOutputKey(), List.of()),
                     agentName(), GUARD_MARKER + e));
         }
+    }
+
+    /** True if {@code e} is an {@link de.visterion.dracul.marketdata.AgoraUnavailableException}
+     *  anywhere in its cause chain — those already produced an "Agora unreachable for &lt;tool&gt;"
+     *  log line inside {@code AgoraClient}, and that substring must not be echoed a second time
+     *  (see the call site). */
+    private static boolean agoraUnavailable(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof de.visterion.dracul.marketdata.AgoraUnavailableException) return true;
+        }
+        return false;
     }
 
     private static Map<String, Object> healthMap(de.visterion.dracul.hunting.DataSourceHealth h) {

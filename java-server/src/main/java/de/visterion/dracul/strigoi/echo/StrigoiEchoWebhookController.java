@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
+import de.visterion.dracul.hunting.DataSourceHealth;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
@@ -67,9 +68,36 @@ public class StrigoiEchoWebhookController extends HuntController {
         int lookback = lookbackDays(body, 7, 1, 30);
         var to = LocalDate.now();
         var raw = earnings.recent(to.minusDays(lookback), to);
-        var enriched = enrichment.enrich(screener.screen(raw.items()));
-        return new DataSourceResult<>(enriched, raw.health());
+        var screened = screener.screen(raw.items());
+        var enriched = enrichment.enrich(screened.candidates());
+        return new DataSourceResult<>(enriched, mergeHealth(raw.health(), screened.truncated()));
     }
+
+    /**
+     * ORs the screener's own truncation into Agora's health. Two independent sources of
+     * incompleteness meet here — Agora may have returned a partial/truncated earnings window, and
+     * the screener may have cut the candidate list at its payload cap — and neither may overwrite
+     * the other, or the run looks clean while half its input is missing.
+     *
+     * <p>An {@code unavailable} status is passed through untouched: {@link
+     * DataSourceHealth#degraded} always yields {@code "healthy"}, so building a degraded health
+     * out of a real outage would upgrade a total failure into a usable one and defeat the
+     * "return exactly {@code {"prey": []}}" clause every hunter prompt carries.
+     */
+    static DataSourceHealth mergeHealth(DataSourceHealth agora, boolean screenTruncated) {
+        if (!agora.isHealthy()) return agora;
+        if (!screenTruncated) return agora;
+
+        String detail = agora.detail() == null || agora.detail().isBlank()
+                ? CANDIDATE_CAP_DETAIL
+                : agora.detail() + "; " + CANDIDATE_CAP_DETAIL;
+        return DataSourceHealth.degraded(agora.source(), detail,
+                agora.partial(), true);
+    }
+
+    private static final String CANDIDATE_CAP_DETAIL =
+            "candidate list capped at dracul.strigoi.echo.max-candidates "
+                    + "(strongest EPS surprises kept)";
 
     @PostMapping("/tools/fetch-candidates")
     public ResponseEntity<Map<String, Object>> fetchCandidates(

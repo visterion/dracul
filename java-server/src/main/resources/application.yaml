@@ -97,6 +97,10 @@ dracul:
       schedule: ${DRACUL_ECHO_SCHEDULE:0 0 22 * * 1-5}
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
+      # Payload-budget ceiling on the candidate list, NOT a curation step: at ~1.7 kB per
+      # serialized candidate the structural limit against the ~95-kB bridge tool-result limit is
+      # ~56 candidates. A cut is reported via data_source_health.truncated.
+      max-candidates: ${ECHO_MAX_CANDIDATES:40}
       ohlc-history-days: ${ECHO_OHLC_HISTORY_DAYS:320}
       recent-news-cap: ${ECHO_RECENT_NEWS_CAP:5}
       car:
