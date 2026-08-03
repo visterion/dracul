@@ -153,10 +153,15 @@ consumed through five neutral domain facades in
   so the outage guard keeps seeing every failure.
 - **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates, requesting
   `limit=1000` — market-wide, up to 1000 rows in the window, versus the earlier
-  implicit 100-row cut sorted ascending by date), `nextEarningsDate`. `recent`
-  reads Agora's `partial`/`truncated` flags off the tool response and carries
-  them into `DataSourceHealth` (see "Data-source health" below) while still
-  keeping the fetched items — a degraded fetch is never discarded.
+  implicit 100-row cut sorted ascending by date), `nextEarningsDate`. The raw 1000 rows
+  survive Agora's fetch intact; Echo's `EchoPeadScreener` then applies deterministic
+  filters (EPS beat ≥ threshold) and caps the survivors at `dracul.strigoi.echo.max-candidates`
+  (default 40, strongest-by-EPS-surprise-first) before resolving any prices — a structural
+  ceiling against the ~95-kB Claude-Max-bridge tool-result limit. When the pre-filter-qualified
+  count exceeds the cap, `DataSourceHealth.truncated` is set `true`. `recent` reads Agora's
+  `partial`/`truncated` flags off the tool response and carries them into `DataSourceHealth`
+  (see "Data-source health" below) while still keeping the fetched items — a degraded fetch
+  is never discarded.
 - **`AgoraReference`** — `indexChanges` (`get_index_constituent_changes` —
   announced index-constituent changes: an add/remove ticker with its announcement
   and effective dates and a `source` of `sp_press` or `russell_reconstitution`,
