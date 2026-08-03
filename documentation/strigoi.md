@@ -360,7 +360,13 @@ Every Strigoi follows the same three-step shape:
 
 1. **Pre-screen** (deterministic, no LLM) — pulls candidates from the
    appropriate hunting-ground adapter (EDGAR, prices, news, calendar)
-   and filters to the ones worth spending tokens on.
+   and filters to the ones worth spending tokens on. Every fetch-tool payload
+   carries a `data_source_health` object (see `hunting-grounds.md`, "Data-source
+   health"); it can additionally carry `partial: true` and/or `truncated: true`
+   when Agora reports a degraded-but-usable fetch (e.g. a market-wide window
+   that hit its row cap). `status` stays `healthy` in that case — the data is
+   usable, just demonstrably incomplete — and both fields are omitted entirely
+   when not set, never emitted as `false`.
 
 2. **LLM evaluation** via Vistierie — a Sonnet-tier (`reasoning`) or
    Haiku-tier (`routine`) call. The fetch-tool response includes `active_patterns`

@@ -151,8 +151,12 @@ consumed through five neutral domain facades in
   `InsiderEnrichmentService`/`LazarusEnrichmentService` rely on to detect an
   Agora outage and abort their batch — stays uncached and always hits Agora,
   so the outage guard keeps seeing every failure.
-- **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates),
-  `nextEarningsDate`.
+- **`AgoraEarnings`** — `recent` (earnings window for PEAD candidates, requesting
+  `limit=1000` — market-wide, up to 1000 rows in the window, versus the earlier
+  implicit 100-row cut sorted ascending by date), `nextEarningsDate`. `recent`
+  reads Agora's `partial`/`truncated` flags off the tool response and carries
+  them into `DataSourceHealth` (see "Data-source health" below) while still
+  keeping the fetched items — a degraded fetch is never discarded.
 - **`AgoraReference`** — `indexChanges` (`get_index_constituent_changes` —
   announced index-constituent changes: an add/remove ticker with its announcement
   and effective dates and a `source` of `sp_press` or `russell_reconstitution`,
@@ -228,6 +232,18 @@ envelope that includes a `data_source_health` object:
 | `source` | string | Logical source name (`agora` for all hunting-fetch facades) |
 | `detail` | string | Human-readable summary (count, error message, …) |
 | `checked_at` | ISO-8601 UTC | Timestamp of the check |
+| `partial` | boolean, omitted unless `true` | Agora reported the fetch itself as incomplete (e.g. one of several sources it fans out to failed) while still returning usable data. `status` stays `healthy`. |
+| `truncated` | boolean, omitted unless `true` | The result was cut off by a row/size cap before all matching rows were returned. `status` stays `healthy`. |
+
+**`partial`/`truncated` are deliberately flags, not a `status` value.** Every
+hunter prompt hard-aborts to `{"prey": []}` when `data_source_health.status ==
+"unavailable"` — flipping `status` on a degraded-but-usable fetch would have
+discarded every candidate on a day Agora only partially delivered, instead of
+letting the LLM judge the (smaller but real) usable set. `HuntController` only
+writes `partial`/`truncated` into the tool payload when the underlying value is
+`true`; a payload carrying either flag is also excluded from the tool-fetch
+cache, so a degraded response is never served stale from a cache entry that
+predates the degradation.
 
 ### Healthy vs unavailable
 

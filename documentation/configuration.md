@@ -85,14 +85,17 @@ Wikipedia) internally, so there is no Dracul-side adapter chain any more.
 |---|---|---|
 | `DRACUL_AGORA_BASE_URL` (`dracul.agora.base-url`) | `http://agora:8080` | Base URL of Agora's MCP front-door (in-cluster). |
 | `DRACUL_AGORA_TOKEN` (`dracul.agora.token`) | _(blank)_ | Bearer token sent on every Agora MCP request. |
-| `DRACUL_AGORA_TIMEOUT_MS` (`dracul.agora.timeout-ms`) | `8000` | Request timeout (ms) on the Agora MCP client. |
+| `DRACUL_AGORA_TIMEOUT_MS` (`dracul.agora.timeout-ms`) | `25000` | Request timeout (ms) on the Agora MCP client. |
+| `DRACUL_AGORA_CONNECT_TIMEOUT_MS` (`dracul.agora.connect-timeout-ms`) | `5000` | Connect timeout (ms) on the Agora MCP client, kept short so a dead Agora fails fast while a slow-but-alive one is waited out. |
 
 **Deploy-ordering prerequisite:** Agora must be up **before** Dracul so the
 first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
 `quotes(...)` returns an empty map (the watchlist keeps its stored prices) and
 `resolve` / `dailyOhlcHistory` throw `MarketDataException(UNAVAILABLE)` — the
 same degradation contract as the old adapter chain, so scheduled refreshes never
-crash.
+crash. `AgoraClient` reconnects once on a stale session before giving up; a
+terminal failure (reconnect also failed) logs one WARN line per tool,
+`Agora unreachable for <tool>`.
 
 ## News credibility scoring (T1.4)
 
