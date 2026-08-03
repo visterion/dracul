@@ -13,8 +13,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Pins the cross-repo timing contract from the T1.1 multi-source news ingest (R3-M7):
  * Agora's news-aggregator fan-out budget is 7000 ms and MUST stay strictly below Dracul's
- * MCP client timeout (dracul.agora.timeout-ms, used by {@link AgoraClient} for connect and
- * request timeouts). If the Dracul default is ever lowered to 7000 ms or less, a slow news
+ * MCP client request timeout (dracul.agora.timeout-ms, used by {@link AgoraClient}). Since
+ * the 2026-08-03 timeout split, connect and request are separate budgets
+ * (dracul.agora.connect-timeout-ms is its own, shorter property) — this test only pins the
+ * request-timeout side. If the Dracul default is ever lowered to 7000 ms or less, a slow news
  * feed turns Agora-side "partial results" into a total AgoraUnavailableException here —
  * this test makes that misconfiguration fail the build instead of failing in production.
  */
