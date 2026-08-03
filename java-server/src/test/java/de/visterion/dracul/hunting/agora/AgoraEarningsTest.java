@@ -109,4 +109,61 @@ class AgoraEarningsTest {
         when(down.callTool(eq("get_earnings_calendar"), any())).thenThrow(new AgoraUnavailableException("down"));
         assertThat(new AgoraEarnings(down).nextEarningsDate("AAPL")).isEmpty();
     }
+
+    @Test void recentFlagsPartialButKeepsItems() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_earnings_window"), any())).thenReturn(json(
+                "{\"partial\":true,\"earnings\":[" +
+                "{\"symbol\":\"AAPL\",\"date\":\"2026-06-30\"}," +
+                "{\"symbol\":\"MSFT\",\"date\":\"2026-06-29\"}," +
+                "{\"symbol\":\"NVDA\",\"date\":\"2026-06-28\"}]}"));
+
+        DataSourceResult<EarningsObservation> r = new AgoraEarnings(client)
+                .recent(LocalDate.parse("2026-06-23"), LocalDate.parse("2026-06-30"));
+
+        // status stays healthy on purpose — the prompts bail out on "unavailable"
+        assertThat(r.health().isHealthy()).isTrue();
+        assertThat(r.health().partial()).isTrue();
+        assertThat(r.health().truncated()).isFalse();
+        assertThat(r.health().detail()).isNotBlank();
+        assertThat(r.items()).hasSize(3);           // the whole point: items survive
+    }
+
+    @Test void recentFlagsTruncated() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_earnings_window"), any())).thenReturn(json(
+                "{\"truncated\":true,\"earnings\":[{\"symbol\":\"AAPL\",\"date\":\"2026-06-30\"}]}"));
+
+        DataSourceResult<EarningsObservation> r = new AgoraEarnings(client)
+                .recent(LocalDate.parse("2026-06-23"), LocalDate.parse("2026-06-30"));
+
+        assertThat(r.health().isHealthy()).isTrue();
+        assertThat(r.health().truncated()).isTrue();
+        assertThat(r.items()).hasSize(1);
+    }
+
+    @Test void recentStaysCleanWithoutFlags() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_earnings_window"), any())).thenReturn(json(
+                "{\"earnings\":[{\"symbol\":\"AAPL\",\"date\":\"2026-06-30\"}]}"));
+
+        DataSourceResult<EarningsObservation> r = new AgoraEarnings(client)
+                .recent(LocalDate.parse("2026-06-23"), LocalDate.parse("2026-06-30"));
+
+        assertThat(r.health().partial()).isFalse();
+        assertThat(r.health().truncated()).isFalse();
+    }
+
+    @Test void recentAsksForTheFullWindow() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_earnings_window"), any())).thenReturn(json("{\"earnings\":[]}"));
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+
+        new AgoraEarnings(client).recent(LocalDate.parse("2026-06-23"), LocalDate.parse("2026-06-30"));
+
+        Mockito.verify(client).callTool(eq("get_earnings_window"), args.capture());
+        // without an explicit limit Agora defaults to 100 rows, sorted date-ascending — a
+        // market-wide week would silently arrive as its oldest 100 events
+        assertThat(args.getValue().path("limit").asInt()).isEqualTo(1000);
+    }
 }
