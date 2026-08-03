@@ -31,14 +31,17 @@ public class AgoraClient {
     private final String baseUrl;
     private final String token;
     private final long timeoutMs;
+    private final long connectTimeoutMs;
     private volatile McpSyncClient client;
 
     public AgoraClient(@Value("${dracul.agora.base-url:http://agora:8080}") String baseUrl,
                        @Value("${dracul.agora.token:}") String token,
-                       @Value("${dracul.agora.timeout-ms:8000}") long timeoutMs) {
+                       @Value("${dracul.agora.timeout-ms:25000}") long timeoutMs,
+                       @Value("${dracul.agora.connect-timeout-ms:5000}") long connectTimeoutMs) {
         this.baseUrl = baseUrl;
         this.token = token;
         this.timeoutMs = timeoutMs;
+        this.connectTimeoutMs = connectTimeoutMs;
     }
 
     /** Call an Agora tool by name with JSON args; returns the tool's output JSON. Never returns null. */
@@ -47,6 +50,11 @@ public class AgoraClient {
         try {
             return attempt(name, argsMap);
         } catch (AgoraUnavailableException e) {
+            // Terminal without a retry (empty response / error envelope). Logged here because
+            // all 17 facade catch sites swallow this exception without a word — which is why
+            // "Agora unreachable" never appeared in a production log despite being the text
+            // that ends up in the tool payload.
+            log.warn("Agora unreachable for {}: {}", name, e.getMessage());
             throw e;
         } catch (RuntimeException e) {
             // session may be stale — drop the client, reconnect once, retry
@@ -55,6 +63,7 @@ public class AgoraClient {
             try {
                 return attempt(name, argsMap);
             } catch (RuntimeException e2) {
+                log.warn("Agora unreachable for {} after reconnect: {}", name, e2.toString());
                 throw new AgoraUnavailableException("Agora unreachable for " + name + ": " + e2.getMessage(), e2);
             }
         }
@@ -80,7 +89,10 @@ public class AgoraClient {
         if (local != null) return local;
         var transport = HttpClientStreamableHttpTransport.builder(baseUrl)
                 .endpoint("/mcp")
-                .connectTimeout(Duration.ofMillis(timeoutMs))
+                // Connect and request budgets are deliberately separate: a slow-but-alive Agora
+                // (get_form4_transactions walks ~150 EDGAR documents and needs ~19s) must be
+                // waited out, while a dead one must fail fast.
+                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .httpRequestCustomizer((b, method, uri, body, ctx) ->
                         b.setHeader("Authorization", "Bearer " + token))
                 .build();

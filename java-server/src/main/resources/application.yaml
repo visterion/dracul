@@ -21,7 +21,8 @@ dracul:
   agora:
     base-url: ${DRACUL_AGORA_BASE_URL:http://agora:8080}
     token: ${DRACUL_AGORA_TOKEN:}
-    timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:8000}
+    timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:25000}
+    connect-timeout-ms: ${DRACUL_AGORA_CONNECT_TIMEOUT_MS:5000}
   hivemem:
     base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}
     mcp-token: ${DRACUL_HIVEMEM_MCP_TOKEN:}

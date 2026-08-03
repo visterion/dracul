@@ -26,7 +26,7 @@ class AgoraClientReconnectTest {
         private final IntFunction<JsonNode> behaviour;
 
         StubClient(IntFunction<JsonNode> behaviour) {
-            super("http://unused", "", 8000);
+            super("http://unused", "", 8000, 5000);
             this.behaviour = behaviour;
         }
 
@@ -60,5 +60,56 @@ class AgoraClientReconnectTest {
         assertThatThrownBy(() -> client.callTool("get_quote", null))
                 .isInstanceOf(AgoraUnavailableException.class);
         assertThat(client.calls.get()).isEqualTo(2);
+    }
+
+    /** Regression guard: an earlier draft of this change proposed skipping the retry on timeout.
+     *  Prod logs (168h) showed 2 of 3 timeouts recovering through exactly this retry. */
+    @Test void retriesOnTimeoutCauseChain() {
+        JsonNode ok = MAPPER.readTree("{\"ok\":true}");
+        StubClient client = new StubClient(n -> {
+            if (n == 1) throw new RuntimeException("wrapped",
+                    new java.util.concurrent.TimeoutException("Did not observe any item"));
+            return ok;
+        });
+        assertThat(client.callTool("get_quote", null)).isSameAs(ok);
+        assertThat(client.calls.get()).isEqualTo(2);
+    }
+
+    @Test void logsTerminalFailureWithTheToolName() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraClient.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            StubClient client = new StubClient(n -> { throw new RuntimeException("stale"); });
+            assertThatThrownBy(() -> client.callTool("get_form4_transactions", null))
+                    .isInstanceOf(AgoraUnavailableException.class);
+            assertThat(appender.list)
+                    .anyMatch(e -> e.getFormattedMessage().contains("Agora unreachable for get_form4_transactions"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /** The other terminal path: attempt() itself throws AgoraUnavailableException (empty response
+     *  or an error envelope) and callTool rethrows it without a retry — that must log too. */
+    @Test void logsTerminalFailureOnPassThrough() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraClient.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            StubClient client = new StubClient(n -> { throw new AgoraUnavailableException("down"); });
+            assertThatThrownBy(() -> client.callTool("get_quote", null))
+                    .isInstanceOf(AgoraUnavailableException.class);
+            assertThat(appender.list)
+                    .anyMatch(e -> e.getFormattedMessage().contains("Agora unreachable for get_quote"));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 }
