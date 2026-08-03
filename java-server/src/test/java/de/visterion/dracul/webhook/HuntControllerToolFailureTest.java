@@ -161,6 +161,32 @@ class HuntControllerToolFailureTest {
         assertThat(health(response).get("status")).isEqualTo("healthy");
     }
 
+    /** {@link HuntController#handleFetch} is the one place all six hunters pass through, so the
+     *  item count and degradation flags are logged there instead of six easily-forgotten call
+     *  sites. Without this line, "0 candidates fetched" and "100 candidates fetched, all screened
+     *  out" are indistinguishable in the app log — the exact ambiguity that cost a full forensic
+     *  pass through Agora's logs and the Vistierie transcript on 2026-08-03. */
+    @Test
+    void logsItemCountAndDegradationPerFetch() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(TestController.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var controller = new TestController(() -> new DataSourceResult<>(List.of("a", "b"),
+                    de.visterion.dracul.hunting.DataSourceHealth.degraded(
+                            "strigoi-test", "window not fully covered", true, false)));
+            controller.callFetch("Bearer t", Map.of());
+            assertThat(appender.list).anyMatch(e ->
+                    e.getFormattedMessage().matches(
+                            ".*fetch: items=2 \\(partial=true truncated=false status=healthy\\).*"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
     // --- test doubles ------------------------------------------------------------------------
 
     private static TestController throwingController(RuntimeException toThrow) {

@@ -146,6 +146,13 @@ public abstract class HuntController {
             Map<String, Object> out = cache.get(toolName(), paramsKey,
                     () -> {
                         de.visterion.dracul.hunting.DataSourceResult<?> r = hunt(effectiveBody);
+                        // One line per fetch, in the one place all six hunters pass through.
+                        // Without it an empty candidate list is indistinguishable from a fetch
+                        // that never got data — the exact ambiguity that cost a full forensic
+                        // pass through Agora's logs on 2026-08-03.
+                        log.info("{} fetch: items={} (partial={} truncated={} status={})",
+                                agentName(), r.items().size(), r.health().partial(),
+                                r.health().truncated(), r.health().status());
                         Map<String, Object> output = new java.util.HashMap<>();
                         output.put(fetchOutputKey(), r.items());
                         output.put("data_source_health", healthMap(r.health()));
