@@ -177,6 +177,10 @@ public abstract class HuntController {
         m.put("source", h.source());
         m.put("detail", h.detail());          // nullable
         m.put("checked_at", h.checkedAt().toString());
+        // Only when set: a clean payload must look exactly as it did before this change, so no
+        // agent prompt has to learn a new field it will see on every healthy day.
+        if (h.partial()) m.put("partial", true);
+        if (h.truncated()) m.put("truncated", true);
         return m;
     }
 
@@ -194,7 +198,10 @@ public abstract class HuntController {
         if (!(output instanceof Map<?, ?> o)) return false;
         Object health = o.get("data_source_health");
         if (!(health instanceof Map<?, ?> hm)) return false;
-        return "healthy".equals(hm.get("status"));
+        if (!"healthy".equals(hm.get("status"))) return false;
+        // A known-incomplete answer must not be held for the full TTL — that would freeze the
+        // blind spot. Agora keeps its own partial answers for 600s for exactly this reason.
+        return !Boolean.TRUE.equals(hm.get("partial")) && !Boolean.TRUE.equals(hm.get("truncated"));
     }
 
     /** Health-Map für Subklassen mit eigenem Tool-Endpoint. */

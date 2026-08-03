@@ -60,6 +60,45 @@ class HuntControllerToolFailureTest {
                 .isTrue();
     }
 
+    // --- healthOf / healthyPayload degradation flags ------------------------------------------
+
+    @Test void healthMapOmitsDegradationFlagsWhenFalse() {
+        Map<String, Object> m = HuntController.healthOf(
+                de.visterion.dracul.hunting.DataSourceHealth.healthy("agora"));
+        assertThat(m).containsEntry("status", "healthy");
+        assertThat(m).doesNotContainKey("partial");
+        assertThat(m).doesNotContainKey("truncated");
+    }
+
+    @Test void healthMapCarriesDegradationFlagsWhenSet() {
+        Map<String, Object> m = HuntController.healthOf(
+                de.visterion.dracul.hunting.DataSourceHealth.degraded(
+                        "agora", "window not fully covered", true, true));
+        assertThat(m).containsEntry("status", "healthy");
+        assertThat(m).containsEntry("partial", true);
+        assertThat(m).containsEntry("truncated", true);
+        assertThat(m).containsEntry("detail", "window not fully covered");
+    }
+
+    /** A degraded payload must not be frozen for the full cache TTL: Agora itself keeps partial
+     *  earnings answers for only 600s, and caching one here would overrule that. */
+    @Test void degradedPayloadIsNotCacheable() {
+        Map<String, Object> payload = Map.of("output", Map.of(
+                "candidates", List.of(),
+                "data_source_health", HuntController.healthOf(
+                        de.visterion.dracul.hunting.DataSourceHealth.degraded(
+                                "agora", "partial", true, false))));
+        assertThat(HuntController.healthyPayload(payload)).isFalse();
+    }
+
+    @Test void cleanPayloadIsCacheable() {
+        Map<String, Object> payload = Map.of("output", Map.of(
+                "candidates", List.of(),
+                "data_source_health", HuntController.healthOf(
+                        de.visterion.dracul.hunting.DataSourceHealth.healthy("agora"))));
+        assertThat(HuntController.healthyPayload(payload)).isTrue();
+    }
+
     // --- handleFetch structural-catch coverage -----------------------------------------------
 
     private static final String TOKEN = "t";
