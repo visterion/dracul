@@ -3,8 +3,10 @@ package de.visterion.dracul.strigoi.index;
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
+import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraReference;
 import de.visterion.dracul.hunting.agora.IndexChangeEvent;
+import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.prey.Prey;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
@@ -20,7 +22,10 @@ import tools.jackson.databind.JsonNode;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @RestController
@@ -38,6 +43,7 @@ public class StrigoiIndexWebhookController extends HuntController {
     private static final String PRIMARY_INDEX = "sp500";
 
     private final AgoraReference reference;
+    private final AgoraIndexConstituents constituents;
     private final IndexEventRepository indexEventRepo;
     private final IndexLifecycleReconciler reconciler;
     private final IndexEventEnricher enricher;
@@ -52,6 +58,7 @@ public class StrigoiIndexWebhookController extends HuntController {
     public StrigoiIndexWebhookController(
             @Value("${dracul.strigoi.index.webhook-token}") String token,
             AgoraReference reference,
+            AgoraIndexConstituents constituents,
             IndexEventRepository indexEventRepo,
             IndexLifecycleReconciler reconciler,
             IndexEventEnricher enricher,
@@ -64,6 +71,7 @@ public class StrigoiIndexWebhookController extends HuntController {
             @Value("${dracul.strigoi.index.promotion-window-days-russell:20}") int promotionWindowDaysRussell) {
         super(token, preyRepo, cache, memory, memoryLinks);
         this.reference = reference;
+        this.constituents = constituents;
         this.indexEventRepo = indexEventRepo;
         this.reconciler = reconciler;
         this.enricher = enricher;
@@ -116,12 +124,18 @@ public class StrigoiIndexWebhookController extends HuntController {
      * and a change with no announcement is useless for the ANNOUNCED-window promotion the hunter
      * anchors on). Fail-soft per row so a single bad change never fails the hunt. Returns the
      * {@code sp500} fetch result so its health can ride the RESPOND envelope.
+     *
+     * <p>Before the upsert, rows the source could not name go through
+     * {@link #fillCompanyNames(String, List)}. A row that already exists keeps its stored name, so
+     * a name learned only later is written by {@link IndexEventRepository#fillMissingCompanyName}
+     * — without it, {@code ON CONFLICT DO NOTHING} would freeze a row nameless forever.
      */
     private DataSourceResult<IndexChangeEvent> ingestAnnounced(int lookback) {
         DataSourceResult<IndexChangeEvent> primary = null;
         for (String index : INGEST_INDICES) {
             DataSourceResult<IndexChangeEvent> res = reference.indexChanges(index, lookback);
-            for (IndexChangeEvent e : res.items()) {
+            List<IndexChangeEvent> named = fillCompanyNames(index, res.items());
+            for (IndexChangeEvent e : named) {
                 // Both dates back NOT NULL columns; skip visibly (WARN) rather than letting the
                 // insert throw a swallowed DataIntegrityViolationException and vanish silently.
                 if (e.effectiveDate() == null) {
@@ -135,7 +149,11 @@ public class StrigoiIndexWebhookController extends HuntController {
                     continue;
                 }
                 try {
-                    indexEventRepo.upsertAnnounced(e);
+                    if (!indexEventRepo.upsertAnnounced(e)) {
+                        // The row already exists and ingestion is ON CONFLICT DO NOTHING, so a
+                        // name learned only now would never land. Backfill it explicitly.
+                        indexEventRepo.fillMissingCompanyName(e);
+                    }
                 } catch (RuntimeException ex) {
                     log.warn("strigoi-index ingest skipped {} {} ({}): {}",
                             index, e.symbol(), e.action(), ex.getMessage());
@@ -145,6 +163,59 @@ public class StrigoiIndexWebhookController extends HuntController {
         }
         return primary; // sp500 is always in INGEST_INDICES, so this is non-null
     }
+
+    /**
+     * Resolves the issuer name for change rows the source could not name, from the index
+     * membership list ({@code get_index_constituents}).
+     *
+     * <p><b>The change feed wins.</b> Its name is the one printed alongside the change itself
+     * (S&amp;P press-release prose, FTSE Russell reconstitution list); the membership list is only
+     * consulted for rows that arrived without one.
+     *
+     * <p><b>Add vs remove is a timing fact, not a policy choice.</b> The list is a snapshot of who
+     * is a member <em>right now</em>, so before the effective date it can name the LEAVING side
+     * (still a member) but not the ENTERING one (not a member yet). Verified against prod on
+     * 2026-08-04 for the 2026-08-05 S&amp;P change: {@code get_index_constituents("sp500")} carried
+     * {@code EA -> "Electronic Arts"} (remove) and no {@code FERG} row at all (add). A row that
+     * resolves nowhere keeps a null name — the payload and the output schema both allow it, and a
+     * name guessed from the ticker would be worse than none.
+     *
+     * <p>Entirely fail-soft and lazy: the list is fetched at most once per index per hunt, and only
+     * when at least one row actually lacks a name; any failure leaves the names as they were.
+     */
+    private List<IndexChangeEvent> fillCompanyNames(String index, List<IndexChangeEvent> events) {
+        if (events.stream().noneMatch(e -> isBlank(e.companyName()))) return events;
+        Map<String, String> bySymbol;
+        try {
+            DataSourceResult<IndexConstituent> res = constituents.constituents(index);
+            if (!res.health().isHealthy()) {
+                log.debug("strigoi-index name fallback unavailable for {}: {}",
+                        index, res.health().detail());
+                return events;
+            }
+            bySymbol = new HashMap<>();
+            for (IndexConstituent c : res.items()) {
+                if (!isBlank(c.symbol()) && !isBlank(c.companyName())) {
+                    bySymbol.putIfAbsent(c.symbol().toUpperCase(Locale.ROOT), c.companyName());
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.debug("strigoi-index name fallback failed for {}: {}", index, ex.getMessage());
+            return events;
+        }
+        List<IndexChangeEvent> out = new ArrayList<>(events.size());
+        for (IndexChangeEvent e : events) {
+            String name = isBlank(e.companyName())
+                    ? bySymbol.get(e.symbol() == null ? "" : e.symbol().toUpperCase(Locale.ROOT))
+                    : e.companyName();
+            out.add(name == null || name.equals(e.companyName()) ? e
+                    : new IndexChangeEvent(e.symbol(), name, e.index(), e.action(),
+                            e.announcementDate(), e.effectiveDate(), e.source()));
+        }
+        return out;
+    }
+
+    private static boolean isBlank(String s) { return s == null || s.isBlank(); }
 
     @PostMapping("/tools/fetch-candidates")
     public ResponseEntity<Map<String, Object>> fetchCandidates(

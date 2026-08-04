@@ -41,6 +41,8 @@ class StrigoiIndexWebhookControllerIT {
     @Autowired org.springframework.jdbc.core.simple.JdbcClient jdbc;
     @Autowired de.visterion.dracul.agent.ToolFetchCache toolFetchCache;
     @MockitoBean AgoraReference reference;
+    // Index membership is the fallback source for an issuer name the change feed could not resolve.
+    @MockitoBean de.visterion.dracul.hunting.agora.AgoraIndexConstituents constituents;
     // The demand/drift snapshotters hit Agora; mock them so ENRICH is deterministic and offline
     // (parity with the spin IT). Defaults return empty snapshots; a test overrides per symbol.
     @MockitoBean de.visterion.dracul.strigoi.index.IndexDemandSnapshotter demandSnapshotter;
@@ -60,6 +62,10 @@ class StrigoiIndexWebhookControllerIT {
         when(reference.indexChanges(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        // Name-fallback default: no membership list available, so a test that does not care about
+        // names sees exactly the pre-fix behaviour (name stays null).
+        when(constituents.constituents(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(DataSourceResult.unavailable("agora", "not stubbed"));
         // ENRICH default: empty per-stage snapshots (all fields null) so RESPOND base identity is
         // unaffected; a test overrides the demand snapshot for the symbol it cares about.
         when(demandSnapshotter.snapshot(org.mockito.ArgumentMatchers.anyString(),
@@ -526,5 +532,119 @@ class StrigoiIndexWebhookControllerIT {
                 .param("id", id).query(String.class).single();
         assertThat(secondPromotedAt).as("promoted_at not re-stamped").isEqualTo(firstPromotedAt);
         assertThat(secondPreyId).as("prey id not re-linked").isEqualTo(firstPreyId);
+    }
+
+    private void runHunt(String runId) {
+        rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-index-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", runId, "tool_name", "fetch_index_reconstitution_events",
+                        "input", Map.of("lookback_days", 30)))
+                .retrieve().toBodilessEntity();
+        toolFetchCache.clear();
+    }
+
+    private String storedName(String symbol) {
+        return jdbc.sql("SELECT company_name FROM index_event WHERE symbol = :s")
+                .param("s", symbol).query(String.class).optional().orElse(null);
+    }
+
+    /**
+     * The add-vs-remove timing subtlety, pinned to the real prod state of 2026-08-04:
+     * the S&amp;P change feed announced FERG (add) replacing EA (remove) effective 2026-08-05, and
+     * {@code get_index_constituents("sp500")} at that moment listed EA ("Electronic Arts") but NOT
+     * FERG. So the membership list can only name the leaving side before the effective date; the
+     * entering side has to come from the change feed itself, and stays null when even that fails.
+     */
+    @Test
+    void ingestFillsMissingNameFromConstituentsForTheLeavingSideOnly() {
+        when(constituents.constituents(org.mockito.ArgumentMatchers.eq("sp500")))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.IndexConstituent(
+                                "EA", "Electronic Arts", "Communication Services"))));
+        when(reference.indexChanges(org.mockito.ArgumentMatchers.eq("sp500"),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.IndexChangeEvent(
+                                "EA", "", "sp500", "remove",
+                                LocalDate.now().minusDays(4), LocalDate.now().plusDays(1), "sp_press"),
+                        new de.visterion.dracul.hunting.agora.IndexChangeEvent(
+                                "FERG", "", "sp500", "add",
+                                LocalDate.now().minusDays(4), LocalDate.now().plusDays(1), "sp_press"))));
+
+        runHunt("run-namefill");
+
+        assertThat(storedName("EA"))
+                .as("still a member until the effective date -> name resolvable from the list")
+                .isEqualTo("Electronic Arts");
+        assertThat(storedName("FERG"))
+                .as("not a member yet -> honestly null, never guessed from the ticker")
+                .isNull();
+    }
+
+    @Test
+    void ingestPrefersTheFeedNameOverTheConstituentsList() {
+        when(constituents.constituents(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.IndexConstituent(
+                                "FEED", "Stale List Name", "Industrials"))));
+        when(reference.indexChanges(org.mockito.ArgumentMatchers.eq("sp500"),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.IndexChangeEvent(
+                                "FEED", "Feed Name Inc.", "sp500", "remove",
+                                LocalDate.now().minusDays(4), LocalDate.now().plusDays(1), "sp_press"))));
+
+        runHunt("run-feedname");
+
+        assertThat(storedName("FEED")).isEqualTo("Feed Name Inc.");
+    }
+
+    /**
+     * The two prod rows were ingested before any name was carried. Ingestion is
+     * {@code ON CONFLICT DO NOTHING}, so without an explicit backfill they would stay nameless
+     * forever even after the source learned the name.
+     */
+    @Test
+    void secondRunBackfillsTheNameOntoTheAlreadyIngestedRow() {
+        when(constituents.constituents(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(DataSourceResult.unavailable("agora", "down"));
+        var nameless = DataSourceResult.healthy("agora", List.of(
+                new de.visterion.dracul.hunting.agora.IndexChangeEvent(
+                        "BACK", "", "sp500", "remove",
+                        LocalDate.now().minusDays(4), LocalDate.now().plusDays(1), "sp_press")));
+        when(reference.indexChanges(org.mockito.ArgumentMatchers.eq("sp500"),
+                org.mockito.ArgumentMatchers.anyInt())).thenReturn(nameless);
+        runHunt("run-back-1");
+        assertThat(storedName("BACK")).isNull();
+
+        when(reference.indexChanges(org.mockito.ArgumentMatchers.eq("sp500"),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.IndexChangeEvent(
+                                "BACK", "Backfilled Corp", "sp500", "remove",
+                                LocalDate.now().minusDays(4), LocalDate.now().plusDays(1), "sp_press"))));
+        runHunt("run-back-2");
+
+        assertThat(storedName("BACK")).isEqualTo("Backfilled Corp");
+    }
+
+    @Test
+    void constituentsOutageNeverFailsTheHunt() {
+        when(constituents.constituents(org.mockito.ArgumentMatchers.anyString()))
+                .thenThrow(new RuntimeException("boom"));
+        when(reference.indexChanges(org.mockito.ArgumentMatchers.eq("sp500"),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new de.visterion.dracul.hunting.agora.IndexChangeEvent(
+                                "SOFT", "", "sp500", "remove",
+                                LocalDate.now().minusDays(4), LocalDate.now().plusDays(1), "sp_press"))));
+
+        runHunt("run-soft");
+
+        Integer rows = jdbc.sql("SELECT count(*) FROM index_event WHERE symbol = 'SOFT'")
+                .query(Integer.class).single();
+        assertThat(rows).as("ingest survives a constituents-lookup failure").isEqualTo(1);
+        assertThat(storedName("SOFT")).isNull();
     }
 }

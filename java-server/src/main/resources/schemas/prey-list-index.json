@@ -9,7 +9,7 @@
         "required": ["symbol", "companyName", "confidence", "thesis", "horizon", "kill_criteria"],
         "properties": {
           "symbol":      {"type": "string"},
-          "companyName": {"type": "string"},
+          "companyName": {"type": ["string", "null"]},
           "anomalyType": {"type": "string", "const": "INDEX_INCLUSION"},
           "confidence":  {"type": "number", "minimum": 0, "maximum": 1},
           "thesis":      {"type": "string"},

@@ -352,6 +352,35 @@ no new scheduler):
    both back NOT NULL columns, and a change with no announcement is useless for the
    ANNOUNCED-window anchor. The `sp500` fetch's data-source health rides the RESPOND
    envelope (parity with spin surfacing its single ingest search's health).
+
+   **Issuer name (2026-08-04).** Agora now carries `companyName` on each change — read
+   off the S&P press-release prose (`Ferguson Enterprises Inc. (NYSE: FERG) will replace
+   Electronic Arts Inc. (NASD: EA)`) and off the FTSE Russell reconstitution list, which
+   prints the name next to the ticker. It is **best effort and explicitly nullable**: a
+   release whose prose does not yield a name gives `null`, never a guess. For rows that
+   arrive nameless, INGEST falls back to the index membership list
+   (`AgoraIndexConstituents.constituents`, at most one call per index per hunt, only when
+   something is actually missing, fully fail-soft). That list is a snapshot of who is a
+   member **right now**, which decides the two directions:
+   - **`remove`** — still a member until the effective date, so the name resolves
+     (verified on prod 2026-08-04: `get_index_constituents("sp500")` carried
+     `EA → "Electronic Arts"`).
+   - **`add`** — not a member yet, so the list cannot name it; only the change feed can
+     (verified on the same call: no `FERG` row at all).
+
+   Whatever is left stays `null` all the way to the LLM — the prompt orders it copied
+   through verbatim and forbids inventing a name, and `prey-list-index.json` types
+   `companyName` as `["string","null"]` while keeping it **required**, so "unknown" and
+   "omitted" stay distinguishable. Because ingestion is `ON CONFLICT DO NOTHING`, a row
+   first seen without a name would otherwise stay nameless forever; a second run that
+   does know the name writes it via `IndexEventRepository.fillMissingCompanyName`
+   (guarded by `company_name IS NULL` — a stored name is never overwritten).
+
+   > **Why this matters.** Prod run `4ED119E68E1D48FEB3D23B3F652641D1` (2026-08-04)
+   > failed with `output_schema: /prey/0/companyName: null found, string expected`, and
+   > a schema violation is terminal — Vistierie discards the entire run output. The
+   > schema demanded a field the data could not supply. Same class as the executor
+   > `side` defect: prompt and schema must state the same contract.
 2. **RECONCILE** — `IndexLifecycleReconciler` recomputes the desired state from the
    persisted non-terminal rows and applies forward-only transitions via guarded
    compare-and-set. It is **pure calendar with ZERO Agora calls** — the effective

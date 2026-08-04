@@ -32,8 +32,10 @@ public class AgoraReference {
      * via Agora ({@code get_index_constituent_changes}). Rows without a symbol or without an
      * effectiveDate are skipped (the lifecycle natural key needs both, and the effective date
      * anchors every downstream transition). Symbols are upper-cased to match the persisted
-     * natural key. {@code companyName} is not carried by the tool (ticker-level changes only),
-     * so it is passed through empty. {@code announcementDate} is parsed leniently (null when
+     * natural key. {@code companyName} is carried by the tool but explicitly nullable (Agora
+     * cannot always read an issuer name off the source); an absent or null name maps to the empty
+     * string, the "unresolved" marker every consumer here already understands (the repository
+     * normalises it back to a NULL column). {@code announcementDate} is parsed leniently (null when
      * absent). Never throws: Agora failure degrades to an unavailable DataSourceResult.
      */
     public DataSourceResult<IndexChangeEvent> indexChanges(String index, int lookbackDays) {
@@ -58,7 +60,7 @@ public class AgoraReference {
                         ? null : LocalDate.parse(ann.asString());
                 out.add(new IndexChangeEvent(
                         symbol,
-                        c.path("companyName").asString(""),   // not carried by the Agora tool
+                        c.path("companyName").asString(""),   // nullable upstream -> "" = unresolved
                         c.path("index").asString(index),
                         c.path("action").asString(""),
                         announcement,

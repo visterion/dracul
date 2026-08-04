@@ -195,6 +195,38 @@ class IndexEventRepositoryIT {
         assertThat(row.postSnapshot()).isNull();
     }
 
+    /**
+     * The prod rows for EA/FERG were ingested with a NULL company_name and, because ingestion is
+     * {@code ON CONFLICT DO NOTHING}, a later run that DOES know the name would never have written
+     * it. The backfill closes exactly that hole — and it may only ever fill a hole, never
+     * overwrite a name that is already there.
+     */
+    @Test
+    void fillMissingCompanyNameBackfillsOnlyWhenTheNameIsStillNull() {
+        repo.upsertAnnounced(change("sp500", "EA", "remove", "2026-08-05"));
+        assertThat(repo.findById(idBySymbol("EA")).orElseThrow().companyName()).isNull();
+
+        IndexChangeEvent named = new IndexChangeEvent("EA", "Electronic Arts", "sp500", "remove",
+                LocalDate.parse("2026-06-18"), LocalDate.parse("2026-08-05"), "sp_press");
+        assertThat(repo.fillMissingCompanyName(named)).isTrue();
+        assertThat(repo.findById(idBySymbol("EA")).orElseThrow().companyName()).isEqualTo("Electronic Arts");
+
+        // second run with a different name -> no-op, the stored name wins
+        IndexChangeEvent renamed = new IndexChangeEvent("EA", "Something Else Inc.", "sp500", "remove",
+                LocalDate.parse("2026-06-18"), LocalDate.parse("2026-08-05"), "sp_press");
+        assertThat(repo.fillMissingCompanyName(renamed)).isFalse();
+        assertThat(repo.findById(idBySymbol("EA")).orElseThrow().companyName()).isEqualTo("Electronic Arts");
+    }
+
+    @Test
+    void fillMissingCompanyNameIsANoOpWithoutAName() {
+        repo.upsertAnnounced(change("sp500", "NON", "add", "2026-08-05"));
+        IndexChangeEvent blank = new IndexChangeEvent("NON", "  ", "sp500", "add",
+                LocalDate.parse("2026-06-18"), LocalDate.parse("2026-08-05"), "sp_press");
+        assertThat(repo.fillMissingCompanyName(blank)).isFalse();
+        assertThat(repo.findById(idBySymbol("NON")).orElseThrow().companyName()).isNull();
+    }
+
     @Test
     void touchLastCheckedBumpsWithoutStateChange() {
         repo.upsertAnnounced(change("sp500", "TCH", "add", "2026-06-24"));

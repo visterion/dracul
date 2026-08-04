@@ -80,6 +80,37 @@ public class IndexEventRepository {
     }
 
     /**
+     * Backfills {@code company_name} on an already-ingested row, and only there: the UPDATE is
+     * guarded by {@code company_name IS NULL}, so a stored name is never overwritten by a later,
+     * possibly worse resolution.
+     *
+     * <p>Ingestion is {@code ON CONFLICT DO NOTHING}, which means a row first seen while the
+     * source carried no issuer name would stay nameless forever — exactly the state the two prod
+     * rows (EA/FERG, announced 2026-07-31) were in. This is the only path that fills them.
+     *
+     * <p>Matches on the same natural key as the upsert. A blank/null name is a no-op. Returns
+     * whether a row was actually filled.
+     */
+    public boolean fillMissingCompanyName(IndexChangeEvent e) {
+        String name = emptyToNull(e.companyName());
+        if (name == null || e.effectiveDate() == null) return false;
+        return jdbc.sql("""
+                UPDATE index_event SET company_name = :companyName
+                 WHERE index_name = :indexName
+                   AND upper(symbol) = upper(:symbol)
+                   AND action = :action
+                   AND effective_date = :effectiveDate::date
+                   AND company_name IS NULL
+                """)
+                .param("companyName", name)
+                .param("indexName", e.index())
+                .param("symbol", e.symbol())
+                .param("action", e.action())
+                .param("effectiveDate", e.effectiveDate().toString())
+                .update() > 0;
+    }
+
+    /**
      * Guarded forward-only status transition (compare-and-set on the current status).
      * Bumps {@code last_checked_at}, and stamps the transition's audit timestamp
      * ({@code effective_at}/{@code closed_at}/{@code abandoned_at}) where the target stage

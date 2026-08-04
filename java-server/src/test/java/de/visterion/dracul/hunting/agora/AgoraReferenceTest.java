@@ -61,6 +61,29 @@ class AgoraReferenceTest {
         assertThat(args.getValue().path("lookback_days").asInt()).isEqualTo(30);
     }
 
+    @Test void indexChangesCarriesCompanyNameAndTreatsNullAsUnresolved() {
+        // Agora now emits the issuer name from the S&P press-release prose / the Russell recon
+        // list. It stays best-effort: an explicit JSON null (name not resolvable) and an absent
+        // field must both arrive as the "unresolved" empty marker, never as the string "null".
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_index_constituent_changes"), any())).thenReturn(json(
+                "{\"index\":\"sp500\",\"changes\":[" +
+                "{\"symbol\":\"FERG\",\"companyName\":\"Ferguson Enterprises Inc.\",\"action\":\"add\"," +
+                "  \"index\":\"sp500\",\"announcementDate\":\"2026-07-31\",\"effectiveDate\":\"2026-08-05\"," +
+                "  \"source\":\"sp_press\"}," +
+                "{\"symbol\":\"NONM\",\"companyName\":null,\"action\":\"remove\",\"index\":\"sp500\"," +
+                "  \"announcementDate\":\"2026-07-31\",\"effectiveDate\":\"2026-08-05\",\"source\":\"sp_press\"}," +
+                "{\"symbol\":\"NOFLD\",\"action\":\"remove\",\"index\":\"sp500\"," +
+                "  \"announcementDate\":\"2026-07-31\",\"effectiveDate\":\"2026-08-05\",\"source\":\"sp_press\"}]}"));
+
+        DataSourceResult<IndexChangeEvent> r = new AgoraReference(client).indexChanges("sp500", 30);
+        assertThat(r.items()).extracting(IndexChangeEvent::symbol, IndexChangeEvent::companyName)
+                .containsExactly(
+                        org.assertj.core.api.Assertions.tuple("FERG", "Ferguson Enterprises Inc."),
+                        org.assertj.core.api.Assertions.tuple("NONM", ""),
+                        org.assertj.core.api.Assertions.tuple("NOFLD", ""));
+    }
+
     @Test void indexChangesUnavailableOnAgoraFailure() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_index_constituent_changes"), any()))

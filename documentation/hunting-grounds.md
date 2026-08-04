@@ -196,14 +196,22 @@ consumed through five neutral domain facades in
   is never discarded.
 - **`AgoraReference`** — `indexChanges` (`get_index_constituent_changes` —
   announced index-constituent changes: an add/remove ticker with its announcement
-  and effective dates and a `source` of `sp_press` or `russell_reconstitution`,
-  normalised to `IndexChangeEvent`; rows without a symbol or effective date are
-  skipped, symbols upper-cased to the persisted natural key). The old
+  and effective dates, a best-effort `companyName` and a `source` of `sp_press` or
+  `russell_reconstitution`, normalised to `IndexChangeEvent`; rows without a symbol
+  or effective date are skipped, symbols upper-cased to the persisted natural key).
+  `companyName` is **explicitly nullable upstream** (Agora scrapes it from the S&P
+  release prose / the Russell recon list and emits `null` rather than guessing); an
+  absent or null name maps to the empty string here, the "unresolved" marker the
+  repository normalises back to a NULL column. The old
   `constituents` (`get_index_constituents`, S&P 500 membership) method was removed
   when strigoi-index flipped to the announcement-anchored `index_event` lifecycle
   (2026-07-12).
 - **`AgoraIndexConstituents`** (2026-08-04) — `constituents(index)`
-  (`get_index_constituents`), the market-wide universe strigoi-lazarus screens.
+  (`get_index_constituents`), the market-wide universe strigoi-lazarus screens —
+  and, since 2026-08-04, strigoi-index's issuer-name fallback for change rows the
+  feed could not name. Being a snapshot of current membership, it can only name the
+  **leaving** side of a pending change (still a member until the effective date),
+  never the **entering** one; see `strigoi.md`, INGEST.
   Rows without a symbol are skipped, symbols upper-cased. **An empty constituent
   list is `unavailable`, never a healthy empty universe** — that distinction is
   the whole point of the class (a healthy-looking empty universe is exactly how
