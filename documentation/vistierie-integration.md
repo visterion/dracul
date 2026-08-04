@@ -58,6 +58,46 @@ already-registered `executor` agent, a deploy that adds `add_tranche` does
 **not** propagate to Vistierie on its own — the same
 `POST /api/settings/agents/executor/definition/reset` step is required.
 
+### Which fields a redeploy propagates, and which need the reset
+
+The asymmetry is easy to get backwards, so state it explicitly. Dracul builds a
+tool catalog from code on every boot and registers it, and Vistierie's agent
+row is seeded with `insertIfAbsent`. The consequence:
+
+| Field | Source of truth | Reaches Vistierie on a plain redeploy? |
+|---|---|---|
+| tool `name`, `description`, `input_schema` | Dracul's code catalog | **yes** |
+| tool `webhook_url`, `webhook_timeout_seconds` | Dracul's code catalog | **yes** (but see below) |
+| adding or removing a tool *binding* on an agent | agent definition row | **no** — needs the reset |
+| `prompt_text` | agent definition row | **no** — needs the reset |
+| `output_schema` | agent definition row | **no** — needs the reset |
+| `max_run_seconds`, `schedule`, `max_turns` | agent definition row | **no** — needs the reset |
+
+> **`webhook_timeout_seconds` propagates but does nothing** (verified
+> 2026-08-04). Vistierie declares it on the tool definition and never applies
+> it, and the RestClient that calls the webhook uses
+> `SimpleClientHttpRequestFactory` with an **infinite** read timeout. Nothing
+> upstream cuts a long tool call short — treat the number as documentation of
+> the budget a tool needs, and never diagnose a stalled run as "the tool timed
+> out". Any ceiling a tool needs has to be enforced inside the handler.
+
+So editing a tool's input schema in Dracul's code does propagate; editing a
+prompt or an output schema does not, and a definition that already exists is
+never overwritten. Anything in the second group needs
+`POST /api/settings/agents/<name>/definition/reset` after the deploy — verify
+the *registered* definition, not the repo file.
+
+**An input schema is a description, not a contract.** Nothing validates a call's
+arguments against it: Vistierie checks `input_schema` only as a schema, at
+definition time, and its single `schemas.validate` call site validates an
+agent's *output*. The bridge appends the schema to the tool description, so its
+real effect is on the model — which is why registering `submit_decision` with
+the argument-less `{"type":"object","properties":{}}` schema made the agent call
+it with `{}` and record nothing, and why the *handler* must still cope with what
+actually arrives. The bridge stringifies tool arguments often enough that a
+declared array reaches the server as a JSON string; a handler that trusts the
+declared type answers "recorded 0" and loses the call.
+
 The `StreamingBee` pattern is a Vistierie extension introduced to support
 Dracul's Daywalker. If Vistierie does not yet expose this interface, it
 must be added upstream before the Daywalker can be implemented — never

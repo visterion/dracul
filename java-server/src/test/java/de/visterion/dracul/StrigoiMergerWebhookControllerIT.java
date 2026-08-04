@@ -5,6 +5,7 @@ import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.strigoi.merger.MergerEnrichmentService;
+import de.visterion.dracul.strigoi.merger.EnrichedMergerBatch;
 import de.visterion.dracul.strigoi.merger.EnrichedMergerCandidate;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,14 +56,14 @@ class StrigoiMergerWebhookControllerIT {
                 .build();
         when(filings.searchMergers(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
-        when(enrichment.enrich(any())).thenReturn(List.of(new EnrichedMergerCandidate(
+        when(enrichment.enrich(any())).thenReturn(new EnrichedMergerBatch(List.of(new EnrichedMergerCandidate(
                 "TGT", "Target Corp", "DEFM14A", "2026-05-20", "http://sec/u1",
                 "SUMMARY TERM SHEET: $52.00 in cash per share", true,
                 new BigDecimal("47.50"), true,
                 new BigDecimal("52.00"), "cash", null, null, new BigDecimal("9.47"),
                 LocalDate.of(2026, 3, 15), LocalDate.of(2026, 12, 31), null,
                 new BigDecimal("40.00"), true, 217,
-                new BigDecimal("15.90"), new BigDecimal("15.79"))));
+                new BigDecimal("15.90"), new BigDecimal("15.79"))), false, 0, 0));
     }
 
     @Test
@@ -78,7 +79,12 @@ class StrigoiMergerWebhookControllerIT {
         JsonNode tgt = null;
         for (JsonNode c : cands) if ("TGT".equals(c.path("symbol").asText())) tgt = c;
         assertThat(tgt).as("TGT candidate returned").isNotNull();
-        assertThat(tgt.path("termSheet").asText()).contains("$52.00");
+        // The wire field is termSheetDigest, not termSheet: the raw filing text is no longer
+        // shipped (see TermSheetDigest / MergerPayloadBudgetTest — 24 000 chars per candidate put
+        // the tool payload 3.3x over the bridge's truncation ceiling and the model saw none of it).
+        assertThat(tgt.path("termSheet").isMissingNode())
+                .as("the raw term sheet must not be back on the wire").isTrue();
+        assertThat(tgt.path("termSheetDigest").asText()).contains("$52.00");
         assertThat(tgt.path("termSheetAvailable").asBoolean()).isTrue();
         assertThat(new BigDecimal(tgt.path("lastPrice").asText())).isEqualByComparingTo("47.50");
         assertThat(tgt.path("priceAvailable").asBoolean()).isTrue();

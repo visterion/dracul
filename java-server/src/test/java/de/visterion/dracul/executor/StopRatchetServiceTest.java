@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,13 +30,35 @@ class StopRatchetServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final ExecutorNotifier executorNotifier = mock(ExecutorNotifier.class);
 
-    private StopRatchetService service;
+    private RecordingStopRatchetService service;
+
+    /** Captures the backoff seam so retry tests neither sleep nor guess at timing. */
+    private static class RecordingStopRatchetService extends StopRatchetService {
+        final List<Long> backoffs = new java.util.ArrayList<>();
+
+        RecordingStopRatchetService(FakeExecutionGateway gateway, ExecutorPositionRepository positionRepo,
+                DecisionLogRepository decisionRepo, RuleVersionProvider ruleVersions,
+                StopRatchetGuard guard, ObjectMapper mapper, ExecutorNotifier notifier,
+                double chandelierMult, int retryAttempts, long retryBackoffMs, long retryBudgetMs) {
+            super(gateway, positionRepo, decisionRepo, ruleVersions, guard, mapper, notifier,
+                    chandelierMult, retryAttempts, retryBackoffMs, retryBudgetMs);
+        }
+
+        @Override
+        protected void backoff(long millis) {
+            backoffs.add(millis);
+        }
+    }
 
     @BeforeEach
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
-        service = new StopRatchetService(gateway, positionRepo, decisionRepo, ruleVersions,
-                new StopRatchetGuard(), mapper, executorNotifier, 3.0);
+        service = newService(3, 500L, 10_000L);
+    }
+
+    private RecordingStopRatchetService newService(int attempts, long backoffMs, long budgetMs) {
+        return new RecordingStopRatchetService(gateway, positionRepo, decisionRepo, ruleVersions,
+                new StopRatchetGuard(), mapper, executorNotifier, 3.0, attempts, backoffMs, budgetMs);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
@@ -429,5 +452,193 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("brk-1");
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(21L),
                 any(), any(), any(Integer.class), any(), any());
+    }
+
+    // -------------------------------------------------------------------
+    // D10 — transient broker failures are retried inside the same run
+    // -------------------------------------------------------------------
+
+    /** Verbatim shape of the message Agora surfaced on the 429 that triggered this fix. */
+    private static final String RATE_LIMITED = "saxo rate limited (HTTP 429) — retry shortly";
+
+    @Test
+    void transientRateLimit_isRetriedAndSucceeds() {
+        // A rate limit is a "come back in a moment", not a defect: the identical PATCH succeeded
+        // on the next run 12 minutes later. Escalating immediately fired a HIGH alarm and left
+        // the ratchet unapplied for those 12 minutes.
+        ExecutorPosition p = openPosition(30L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 1;
+        gateway.modifyFailureMessage = RATE_LIMITED;
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(service.backoffs).containsExactly(500L);
+        // No escalation, and the book gets the new stop the broker confirmed on attempt 2.
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(30L),
+                any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void transientRateLimit_exhaustsAttemptsThenEscalates() {
+        ExecutorPosition p = openPosition(31L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 99;
+        gateway.modifyFailureMessage = RATE_LIMITED;
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(3);
+        assertThat(service.backoffs).containsExactly(500L, 1000L);   // exponential
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        assertThat(log.reasoning()).contains("3 attempt");
+        assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(31L);
+
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    /**
+     * D10 missed a whole class of REAL 429. {@code AgoraExecutionGateway.call} wraps every
+     * transport failure into the constant {@code "agora trading call failed: " + tool}, throwing
+     * the status away — while {@code HttpClientErrorException$TooManyRequests: 429 Too Many
+     * Requests} is live in this stack. The classifier only ever saw the message, never the cause
+     * chain, so the genuine rate limit escalated on the first attempt as though it were a
+     * structural defect.
+     */
+    @Test
+    void aRateLimitCarriedOnlyByTheCauseChain_isStillTransient() {
+        ExecutorPosition p = openPosition(35L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 1;
+        gateway.modifyFailureMessage = "agora trading call failed: modify_bracket";
+        gateway.modifyFailureCause = org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+                org.springframework.http.HttpHeaders.EMPTY, new byte[0], null);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(service.backoffs).containsExactly(500L);
+    }
+
+    /**
+     * The bare {@code contains("429")} it replaced could fire on any message that merely happens
+     * to contain those three digits — an Alpaca reject echoing a price near $429, a 10-digit
+     * order id, a quantity. Retrying a structural rejection wastes the stop-protection budget and
+     * delays the escalation; every real rate limit already says {@code HTTP 429} or names itself.
+     */
+    @Test
+    void aRejectionThatMerelyContainsTheDigits429_isNotTransient() {
+        for (String message : List.of(
+                "agora order rejected [PRICE_OUT_OF_RANGE]: limit 429.50 outside collar",
+                "agora order rejected [DUPLICATE]: order id 1004296318 already exists",
+                "agora order rejected [QTY]: 4290 exceeds position size")) {
+            gateway.modifyCalls.clear();
+            service.backoffs.clear();
+            gateway.modifyFailures = 99;
+            gateway.modifyFailureCause = null;
+            gateway.modifyFailureMessage = message;
+            ExecutorPosition p = openPosition(36L, "ACME", "BUY", new BigDecimal("110"),
+                    new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+            service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                    Map.of("ACME", new BigDecimal("110")), "run1");
+
+            assertThat(gateway.modifyCalls).as("message: %s", message).hasSize(1);
+            assertThat(service.backoffs).as("message: %s", message).isEmpty();
+        }
+    }
+
+    /** The real Agora wording must keep working — this is the shape that triggered D10. */
+    @Test
+    void theObservedAgoraRateLimitWording_isStillTransient() {
+        for (String message : List.of(
+                "saxo rate limited (HTTP 429) — retry shortly",
+                "alpaca rate limited (http 429)",
+                "429 Too Many Requests",
+                "provider returned status 429")) {
+            gateway.modifyCalls.clear();
+            service.backoffs.clear();
+            gateway.modifyFailures = 1;
+            gateway.modifyFailureCause = null;
+            gateway.modifyFailureMessage = message;
+            ExecutorPosition p = openPosition(37L, "ACME", "BUY", new BigDecimal("110"),
+                    new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+            service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                    Map.of("ACME", new BigDecimal("110")), "run1");
+
+            assertThat(gateway.modifyCalls).as("message: %s", message).hasSize(2);
+        }
+    }
+
+    @Test
+    void nonTransientRejection_escalatesOnTheFirstAttempt() {
+        // LEG_NOT_FOUND (seen 2026-07-26) is a structural rejection — retrying is pointless noise.
+        ExecutorPosition p = openPosition(32L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 99;
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no stop-loss leg";
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(service.backoffs).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        assertThat(logCaptor.getValue().reasoning()).contains("LEG_NOT_FOUND");
+    }
+
+    @Test
+    void retryBudget_isSharedAcrossTheWholeRatchetPass() {
+        // The whole ratchet runs inside the 30s fetch_open_positions tool call. The budget is a
+        // wall-clock ceiling over the ENTIRE pass, so a book full of rate-limited positions can
+        // never multiply the retries into a tool timeout. Budget 0 => not one retry anywhere.
+        service = newService(3, 500L, 0L);
+        ExecutorPosition a = openPosition(33L, "AAA", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        ExecutorPosition b = openPosition(34L, "BBB", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 99;
+        gateway.modifyFailureMessage = RATE_LIMITED;
+
+        service.ratchet(List.of(a, b),
+                Map.of("AAA", new BigDecimal("2.0"), "BBB", new BigDecimal("2.0")),
+                Map.of("AAA", new BigDecimal("110"), "BBB", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);   // one attempt each, no retries
+        assertThat(service.backoffs).isEmpty();
+        verify(decisionRepo, times(2)).insert(any());
+    }
+
+    @Test
+    void singleAttemptConfigured_neverRetries() {
+        service = newService(1, 500L, 10_000L);
+        ExecutorPosition p = openPosition(35L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 99;
+        gateway.modifyFailureMessage = RATE_LIMITED;
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(service.backoffs).isEmpty();
     }
 }

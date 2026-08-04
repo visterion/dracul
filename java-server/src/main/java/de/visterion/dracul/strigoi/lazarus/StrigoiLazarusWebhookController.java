@@ -2,7 +2,11 @@ package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
+import de.visterion.dracul.hunting.DataSourceHealth;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
+import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
@@ -17,29 +21,96 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+/**
+ * Quality-at-52-week-low hunter.
+ *
+ * <p><b>The universe is the market, not the watchlist (D7).</b> Until this fix the screened
+ * universe WAS {@code watchlist_items}, and every run returned {@code candidates: []} with
+ * {@code data_source_health.status = "healthy"}: a guaranteed no-op that read as a quiet market.
+ * The table was NOT empty — it holds 52 rows. Lazarus was reading the wrong OWNER (see
+ * {@link #owner}), which is a second, independent bug fixed alongside this one; taken together
+ * they meant the watchlist-only universe could never have produced a candidate whatever the
+ * table contained. The universe is now an index fetched from Agora
+ * ({@code dracul.strigoi.lazarus.universe-source}, default {@code sp500}), with the watchlist
+ * screened ON TOP of it, and an empty or unfetchable universe is reported as {@code unavailable}
+ * — never as healthy-with-zero-candidates.
+ *
+ * <p><b>Two stages, because the cheap data and the expensive data come from different providers.</b>
+ * {@code get_fundamentals} routes US symbols to Finnhub, throttled to 60 calls/minute across all
+ * of Agora — one call per S&amp;P 500 member would spend eight minutes inside that throttle and
+ * silently drop most of the universe. So {@link LazarusUniverseService} first narrows the index
+ * on ONE cheap Yahoo-routed 52-week-range call per symbol, and only the survivors (plus every
+ * watchlist name, unconditionally) cost a fundamentals call. Expected Agora calls per run:
+ * 1 index + ~N pre-filter (N = universe size, ~503 for the S&amp;P 500, Wikipedia-sourced and
+ * cached 24 h inside Agora) + at most {@code fundamentals-max} fundamentals calls.
+ *
+ * <p><b>Nothing is lost quietly.</b> Pre-filter probe failures, missing fundamentals, a missing
+ * 52-week low, enrichment drops, a spent pre-filter budget and both caps are counted and folded
+ * into {@code partial} / {@code truncated} via {@link DataSourceHealth#degradedWith}. The
+ * candidates that were found are always kept — the flags say "what you see is incomplete", not
+ * "you saw nothing".
+ *
+ * <p>The screen thresholds themselves ({@code max-above-low}, the solvency gate, the P/B-or-P/FCF
+ * cheapness gate in {@link LazarusScreener}) are UNCHANGED by this fix: they were never the bug.
+ */
 @RestController
 @ConditionalOnProperty(value = "dracul.strigoi.lazarus.enabled", havingValue = "true")
 @RequestMapping("/api/strigoi-lazarus")
 public class StrigoiLazarusWebhookController extends HuntController {
 
-    private static final String USER = "default";
+    private static final String SOURCE = "agora";
+    /** Universe-source value that turns the index off and restores the pre-D7 watchlist-only scope. */
+    private static final String WATCHLIST_ONLY = "watchlist";
 
     private final WatchlistRepository watchlist;
     private final AgoraCompanyData companyData;
     private final LazarusScreener screener;
     private final LazarusEnrichmentService enrichment;
     private final HeldPositionService heldPositionService;
+    private final AgoraIndexConstituents indexConstituents;
+    private final LazarusUniverseService universeService;
     private final String connection;
+    /**
+     * Owner whose watchlist is screened. NOT the literal {@code "default"} it used to be:
+     * {@code LegacyWatchlistOwnerMigration} runs
+     * {@code UPDATE watchlist_items SET user_id = :email WHERE user_id = 'default'} on every boot,
+     * so production holds 52 watchlist rows and ZERO of them under {@code default}. Lazarus was
+     * therefore screening an empty watchlist on every run — silently, which also made the
+     * documented {@code universe-source: watchlist} fallback a fallback to nothing. Every sibling
+     * (Renfield, gropar, daywalker, stopguard) already reads {@code dracul.primary-user-email};
+     * lazarus was simply never migrated with them.
+     */
+    private final String owner;
     private final double maxAboveLow;
     private final double maxDebtEquity;
     private final double maxPriceToBook;
     private final double maxPFcf;
     private final String probeSymbol;
+    private final String universeSource;
+    private final int universeMax;
+    private final double preFilterMargin;
+    private final long preFilterBudgetMs;
+    private final int maxConsecutiveFailures;
+    private final int fundamentalsMax;
+
+    /**
+     * Where the next pre-filter pass enters the universe. Advanced by however many symbols the
+     * previous pass managed, so a budget that keeps truncating still covers the whole index over
+     * successive runs instead of re-screening the same head of the alphabet forever. Deliberately
+     * in-memory: a restart resetting the rotation costs one repeated slice, which is not worth a
+     * table — and when the budget suffices (the normal case) the pass wraps the whole universe
+     * anyway and the offset is irrelevant.
+     */
+    private final AtomicInteger rotationOffset = new AtomicInteger();
 
     public StrigoiLazarusWebhookController(
             @Value("${dracul.strigoi.lazarus.webhook-token}") String token,
@@ -52,24 +123,42 @@ public class StrigoiLazarusWebhookController extends HuntController {
             HiveMemResearchService memory,
             ResearchMemoryLinkRepository memoryLinks,
             HeldPositionService heldPositionService,
+            AgoraIndexConstituents indexConstituents,
+            LazarusUniverseService universeService,
             @Value("${dracul.position.connection:depot-1}") String connection,
+            @Value("${dracul.primary-user-email:}") String primaryUser,
             @Value("${dracul.strigoi.lazarus.max-above-low:0.10}") double maxAboveLow,
             @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity,
             @Value("${dracul.strigoi.lazarus.max-price-to-book:2.0}") double maxPriceToBook,
             @Value("${dracul.strigoi.lazarus.max-p-fcf:20}") double maxPFcf,
-            @Value("${dracul.strigoi.lazarus.probe-symbol:AAPL}") String probeSymbol) {
+            @Value("${dracul.strigoi.lazarus.probe-symbol:AAPL}") String probeSymbol,
+            @Value("${dracul.strigoi.lazarus.universe-source:sp500}") String universeSource,
+            @Value("${dracul.strigoi.lazarus.universe-max:600}") int universeMax,
+            @Value("${dracul.strigoi.lazarus.pre-filter-margin:0.25}") double preFilterMargin,
+            @Value("${dracul.strigoi.lazarus.pre-filter-budget-ms:150000}") long preFilterBudgetMs,
+            @Value("${dracul.strigoi.lazarus.max-consecutive-failures:10}") int maxConsecutiveFailures,
+            @Value("${dracul.strigoi.lazarus.fundamentals-max:60}") int fundamentalsMax) {
         super(token, preyRepo, cache, memory, memoryLinks);
         this.watchlist = watchlist;
         this.companyData = companyData;
         this.screener = screener;
         this.enrichment = enrichment;
         this.heldPositionService = heldPositionService;
+        this.indexConstituents = indexConstituents;
+        this.universeService = universeService;
         this.connection = connection;
+        this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
         this.maxAboveLow = maxAboveLow;
         this.maxDebtEquity = maxDebtEquity;
         this.maxPriceToBook = maxPriceToBook;
         this.maxPFcf = maxPFcf;
         this.probeSymbol = probeSymbol;
+        this.universeSource = universeSource;
+        this.universeMax = universeMax;
+        this.preFilterMargin = preFilterMargin;
+        this.preFilterBudgetMs = preFilterBudgetMs;
+        this.maxConsecutiveFailures = maxConsecutiveFailures;
+        this.fundamentalsMax = fundamentalsMax;
     }
 
     @Override protected String agentName() { return "strigoi-lazarus"; }
@@ -79,46 +168,171 @@ public class StrigoiLazarusWebhookController extends HuntController {
     @Override protected String toolName() { return "fetch_quality_at_low_candidates"; }
 
     @Override
-    protected de.visterion.dracul.hunting.DataSourceResult<?> hunt(Map<String, Object> body) {
-        // Dedup against the live depot: a watchlist name already held is not a "new" quality-at-low
+    protected DataSourceResult<?> hunt(Map<String, Object> body) {
+        // Dedup against the live depot: a name already held is not a "new" quality-at-low
         // candidate — surfacing it again would just recommend buying what's already owned. Symbols
         // are the join key (the depot has no watchlist_item_id concept); a depot-down fetch yields an
         // empty set (HeldPositionService is fail-soft), so dedup excludes nothing rather than erroring.
         Set<String> heldSymbols = heldPositionService.openPositions(connection).stream()
                 .map(HeldPosition::symbol)
                 .collect(Collectors.toSet());
-        List<WatchlistItem> items = watchlist.findAllByUser(USER).stream()
+
+        // Watchlist names are ALWAYS screened, whatever the index says and without paying the
+        // pre-filter: a name the user tracks by hand is a stronger signal than any index membership.
+        List<WatchlistItem> watchItems = watchlist.findAllByUser(owner).stream()
                 .filter(item -> !heldSymbols.contains(item.ticker()))
                 .toList();
+        Set<String> watchSymbols = watchItems.stream()
+                .map(item -> item.ticker() == null ? "" : item.ticker().toUpperCase(Locale.ROOT))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        // Single upfront reachability check (mirrors the old configured()-key guard: one check per
-        // hunt, not per symbol). fundamentals() alone can't tell "Agora is down" apart from "no data
+        List<IndexConstituent> universe = List.of();
+        String indexDetail = null;
+        int universeCapDropped = 0;
+        boolean indexEnabled = !WATCHLIST_ONLY.equalsIgnoreCase(universeSource);
+        if (indexEnabled) {
+            var idx = indexConstituents.constituents(universeSource);
+            if (idx.health().isHealthy()) {
+                List<IndexConstituent> filtered = idx.items().stream()
+                        .filter(c -> !heldSymbols.contains(c.symbol()))
+                        .filter(c -> !watchSymbols.contains(c.symbol()))
+                        .toList();
+                if (filtered.size() > universeMax) {
+                    universeCapDropped = filtered.size() - universeMax;
+                    filtered = filtered.subList(0, universeMax);
+                }
+                universe = filtered;
+            } else {
+                indexDetail = idx.health().detail();
+            }
+        }
+
+        // An empty universe is an OUTAGE, never a quiet market. This is the exact line the
+        // production no-op was missing: with nothing to screen there is nothing to say about the
+        // market, and saying "healthy, zero candidates" actively misleads the reasoning agent.
+        if (universe.isEmpty() && watchItems.isEmpty()) {
+            return DataSourceResult.unavailable(SOURCE, indexDetail != null
+                    ? indexDetail + " and the watchlist is empty — no lazarus universe to screen"
+                    : "lazarus universe is empty (source=" + universeSource + ", watchlist empty)");
+        }
+
+        var scan = universeService.preScreen(universe, preFilterMargin, preFilterBudgetMs,
+                maxConsecutiveFailures, rotationOffset.get());
+        rotationOffset.addAndGet(Math.max(scan.screened(), 1));
+
+        // Watchlist names first (unconditional), then the index shortlist closest to its low —
+        // pctAboveLow ascending is the only meaningful priority available before any fundamentals
+        // have been fetched, and it is the same ordering the enrichment cap uses.
+        List<LazarusUniverseService.PreScreened> targets = new ArrayList<>();
+        for (WatchlistItem item : watchItems) {
+            targets.add(LazarusUniverseService.PreScreened.unconditional(
+                    item.ticker(), item.companyName(), item.currentPrice()));
+        }
+        List<LazarusUniverseService.PreScreened> ranked = scan.shortlist().stream()
+                .sorted(Comparator.comparingDouble(LazarusUniverseService.PreScreened::pctAboveLow))
+                .toList();
+        int room = Math.max(0, fundamentalsMax - targets.size());
+        List<LazarusUniverseService.PreScreened> taken = ranked.stream().limit(room).toList();
+        int fundamentalsCapDropped = ranked.size() - taken.size();
+        targets.addAll(taken);
+
+        // Single upfront reachability check (one per hunt, not per symbol), moved to just before
+        // the expensive stage. fundamentals() alone can't tell "Agora is down" apart from "no data
         // for this symbol" — it collapses both to null — so a total outage would otherwise report
-        // healthy with all-null financials.
-        //
-        // Probe a FIXED US canary (dracul.strigoi.lazarus.probe-symbol, default AAPL), NOT
-        // items.get(0): the watchlist is ordered added_at DESC, so a freshly-seeded non-US row can
-        // be items.get(0), and with the global-metrics flag OFF its get_fundamentals is unavailable
-        // — probing it would wrongly declare the whole hunt unavailable and kill the healthy US
-        // flow. Per-symbol no-data for real watchlist items is handled downstream (fundamentals()
-        // null → screener drops the row). The empty-watchlist short-circuit stays: no probe when
-        // there is nothing to hunt.
-        if (!items.isEmpty()) {
+        // healthy with all-null financials. Probes a FIXED US canary
+        // (dracul.strigoi.lazarus.probe-symbol, default AAPL), never targets.get(0): a non-US row
+        // whose get_fundamentals is unavailable with the global-metrics flag OFF would wrongly
+        // declare the whole hunt unavailable and kill the healthy US flow.
+        if (!targets.isEmpty()) {
             var probe = companyData.fundamentalsResult(probeSymbol);
             if (!probe.health().isHealthy()) {
-                return de.visterion.dracul.hunting.DataSourceResult.unavailable(
-                        "agora", probe.health().detail());
+                return DataSourceResult.unavailable(SOURCE, probe.health().detail());
             }
         }
 
         var raws = new ArrayList<LazarusRaw>();
-        for (WatchlistItem item : items) {
-            raws.add(new LazarusRaw(item.ticker(), item.companyName(), item.currentPrice(),
-                    BasicFinancialsExtractor.extract(companyData.fundamentals(item.ticker()))));
+        int fundamentalsMissing = 0;
+        int week52Missing = 0;
+        for (LazarusUniverseService.PreScreened p : targets) {
+            BasicFinancials f = BasicFinancialsExtractor.extract(companyData.fundamentals(p.symbol()));
+            if (f == null) {
+                fundamentalsMissing++;
+                continue;
+            }
+            if (f.week52Low() == null) {
+                week52Missing++;
+                continue;
+            }
+            raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
         }
         var screened = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
         var enriched = enrichment.enrich(screened);
-        return de.visterion.dracul.hunting.DataSourceResult.healthy("agora", enriched);
+        int enrichmentDropped = screened.size() - enriched.size();
+
+        log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
+                        + "watchlist={} fundamentals={} candidates={} (probeFailed={} noFundamentals={} "
+                        + "no52wLow={} enrichmentDropped={} unscreened={} sourceDown={})",
+                universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
+                watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
+                fundamentalsMissing, week52Missing, enrichmentDropped, scan.unscreened(),
+                scan.sourceDown());
+
+        return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,
+                fundamentalsCapDropped, fundamentalsMissing, week52Missing, enrichmentDropped));
+    }
+
+    /**
+     * Folds every counted loss into ONE health verdict via the shared
+     * {@link DataSourceHealth#degradedWith} helper. Status stays {@code healthy} throughout —
+     * every hunter prompt turns {@code unavailable} into "return exactly {@code {"prey": []}}",
+     * which would throw away the candidates we did find. {@code partial} marks data we tried to
+     * read and could not; {@code truncated} marks universe we deliberately did not read.
+     */
+    private DataSourceHealth health(String indexDetail, LazarusUniverseService.Scan scan,
+                                    int universeCapDropped, int fundamentalsCapDropped,
+                                    int fundamentalsMissing, int week52Missing, int enrichmentDropped) {
+        DataSourceHealth h = DataSourceHealth.healthy(SOURCE);
+        if (indexDetail != null) {
+            h = DataSourceHealth.degradedWith(h,
+                    "index universe unavailable (" + indexDetail + "), watchlist only", true, false);
+        }
+        if (scan.sourceDown()) {
+            h = DataSourceHealth.degradedWith(h,
+                    "pre-filter source down after " + scan.screened() + " of " + scan.considered()
+                            + " universe symbols", true, false);
+        }
+        if (scan.probeFailed() > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    scan.probeFailed() + " of " + scan.screened()
+                            + " universe symbols had no usable 52-week range (pre-filter)", true, false);
+        }
+        if (scan.unscreened() > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    scan.unscreened() + " of " + scan.considered()
+                            + " universe symbols left unscreened (budget)", false, true);
+        }
+        if (universeCapDropped > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    universeCapDropped + " universe symbols dropped by universe-max", false, true);
+        }
+        if (fundamentalsCapDropped > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    fundamentalsCapDropped + " pre-screened symbols dropped by the fundamentals budget",
+                    false, true);
+        }
+        if (fundamentalsMissing > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    fundamentalsMissing + " symbols dropped: no fundamentals", true, false);
+        }
+        if (week52Missing > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    week52Missing + " symbols dropped: no 52-week low in fundamentals", true, false);
+        }
+        if (enrichmentDropped > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    enrichmentDropped + " screened candidates dropped during enrichment", true, false);
+        }
+        return h;
     }
 
     @PostMapping("/tools/fetch-candidates")

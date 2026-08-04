@@ -90,6 +90,47 @@ class ExecutorDefaults {
                   "required": ["symbol"]
                 }
                 """);
+        // The `decisions` array is what /tools/submit-decision actually reads. This schema is a
+        // DESCRIPTION, not a contract: nothing validates a call's arguments against it. Vistierie
+        // checks `input_schema` only as a schema, at agent-definition time; the sole
+        // schemas.validate call site (OutputSchemaValidator:49) checks the agent's OUTPUT. Its
+        // real effect is on the model — the bridge appends the schema to the tool description, so
+        // it is a prompt, and it is why registering the shared argument-less `empty` schema made
+        // the model dutifully call submit_decision with `{}` while every SKIP signal stayed
+        // PENDING and was re-evaluated the next run.
+        //
+        // Because it is only a description, the HANDLER must not trust it. The bridge stringifies
+        // tool arguments, so `decisions` arrives as a JSON string often enough to be the normal
+        // case (prod, 2026-08-03 06:11:47) — see ExecutorWebhookController.coerceDecisions, which
+        // is where the actual enforcement lives.
+        //
+        // Item shape mirrors schemas/executor-decision.json (same four actions, same nullable
+        // `side`) so the tool input and the run output cannot drift apart.
+        var submitDecisionInput = AgentResources.parseJson(mapper, """
+                {
+                  "type": "object",
+                  "properties": {
+                    "decisions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "signal_id": {"type": "string"},
+                          "symbol": {"type": "string"},
+                          "action": {"type": "string", "enum": ["ENTER", "SKIP", "ADD_TRANCHE", "HOLD"]},
+                          "side": {"type": ["string", "null"], "enum": ["BUY", "SELL", null]},
+                          "limit_price": {"type": ["number", "null"]},
+                          "stop_price": {"type": ["number", "null"]},
+                          "take_profit": {"type": ["number", "null"]},
+                          "rationale": {"type": "string"}
+                        },
+                        "required": ["signal_id", "symbol", "action", "rationale"]
+                      }
+                    }
+                  },
+                  "required": ["decisions"]
+                }
+                """);
         var addTrancheInput = AgentResources.parseJson(mapper, """
                 {
                   "type": "object",
@@ -116,8 +157,10 @@ class ExecutorDefaults {
                                 + "qty is computed server-side (tranche sizing).",
                         placeEntryInput, "/api/executor/tools/place-entry", 60),
                 new ToolCatalogEntry("submit_decision",
-                        "Record the executor's ENTER/SKIP decisions for processed signals.",
-                        empty, "/api/executor/tools/submit-decision", 30),
+                        "Record the executor's decisions for this run: one entry per processed "
+                                + "signal (ENTER/SKIP) plus one per eligible tranche-2 position "
+                                + "(ADD_TRANCHE/HOLD). Call once, with the complete decisions array.",
+                        submitDecisionInput, "/api/executor/tools/submit-decision", 30),
                 new ToolCatalogEntry("fetch_open_positions",
                         "Return open positions enriched with price/ATR/chandelier/R/MFE and soft-trigger state (runs reconciliation, hard exits, and stop-ratchet server-side first).",
                         empty, "/api/executor/tools/fetch-open-positions", 30),

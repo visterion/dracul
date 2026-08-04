@@ -363,6 +363,60 @@ public class ExecutorWebhookController {
     }
 
     /**
+     * Recovers a decision LIST from whatever shape the bridge actually delivered.
+     *
+     * <p><b>The declared tool input schema is not enforced anywhere.</b> Vistierie validates
+     * {@code input_schema} as a schema when an agent definition is written; it never validates a
+     * call's arguments against it (the only {@code schemas.validate} call site is
+     * {@code OutputSchemaValidator:49}, which checks the agent's OUTPUT). So the shape that
+     * arrives is whatever the model and the bridge produced between them, and the bridge
+     * stringifies tool arguments — verified in production {@code run_tool_calls}, 2026-08-03
+     * 06:11:47:
+     * <pre>
+     *   jsonb_typeof(input_json->'decisions') = string  ->  {"recorded": 0}
+     *   {"decisions": "[{\"signal_id\":\"61bfad16-…\",\"action\":\"SKIP\",…}]"}
+     * </pre>
+     * The handler gated on {@code isArray()} and answered {@code recorded: 0} without a word, so
+     * every SKIP stayed PENDING and was re-evaluated the next run. The same stringification broke
+     * the HiveMem {@code where} filter, i.e. it is a property of the bridge rather than a one-off
+     * of this tool.
+     *
+     * @return the decisions as an array node; an EMPTY array when the argument was absent (that
+     *         is a model with nothing to record, not an error); {@code null} when the argument was
+     *         present but could not be read as a decision list — which the caller must report
+     *         loudly rather than swallow.
+     */
+    private JsonNode coerceDecisions(JsonNode decisions) {
+        if (decisions == null || decisions.isMissingNode() || decisions.isNull()) {
+            return mapper.createArrayNode();
+        }
+        if (decisions.isArray()) return decisions;
+        // A single decision object where an array was declared — the other shape the bridge
+        // produces. One decision is still a decision.
+        if (decisions.isObject()) return mapper.createArrayNode().add(decisions);
+        if (decisions.isTextual()) {
+            String text = decisions.stringValue().trim();
+            if (text.isEmpty()) return mapper.createArrayNode();
+            try {
+                // Recurse: double encoding ("\"[{…}]\"") has been observed, and one more pass
+                // costs nothing while a second stringification would otherwise lose the run's
+                // whole decision set.
+                return coerceDecisions(mapper.readTree(text));
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** Keeps an unusable argument out of the log at full length; it rides into an operator's
+     *  eyes, not the model's context. */
+    private static String abbreviate(String s) {
+        if (s == null) return "null";
+        return s.length() <= 300 ? s : s.substring(0, 300) + "…";
+    }
+
+    /**
      * Whether an existing broker order (found via orderByRef on a retry) represents a live order
      * that should be adopted instead of re-placed. A terminal order (CANCELLED/REJECTED) means no
      * real order exists under this clientRef, so it must fall through to normal placement instead
@@ -872,25 +926,71 @@ public class ExecutorWebhookController {
         if (body == null) body = mapper.createObjectNode();
 
         int recorded = 0;
-        JsonNode decisions = inputOf(body).path("decisions");
-        if (decisions.isArray()) {
+        int unknownActions = 0;
+        JsonNode rawDecisions = inputOf(body).path("decisions");
+        JsonNode decisions = coerceDecisions(rawDecisions);
+        if (decisions == null) {
+            // Present but unusable. Returning a bare recorded:0 is what let the stringified case
+            // run undetected for weeks — say so, to the agent AND to the log.
+            log.warn("submit-decision: run {} sent a 'decisions' argument that could not be read "
+                            + "as a decision list (node type {}); NOTHING was persisted: {}",
+                    runId, rawDecisions.getNodeType(), abbreviate(rawDecisions.toString()));
+            return ResponseEntity.ok(Map.of("output", Map.of(
+                    "recorded", 0,
+                    "unknown_actions", 0,
+                    "error", "the 'decisions' argument could not be read as a list of decision "
+                            + "objects — resend it as a JSON array of objects with signal_id, "
+                            + "symbol, action and rationale")));
+        }
+        if (!decisions.isEmpty()) {
             for (JsonNode d : decisions) {
                 String action = d.path("action").asString("");
-                if (!"SKIP".equals(action)) continue;
-
                 String signalId = d.path("signal_id").asString("");
                 // NOTE (slice-2): symbol is trusted from the request body and not cross-checked
                 // against the stored signal's actual symbol — deferred per final review item #5.
                 String symbol = d.path("symbol").asString("");
                 String rationale = d.path("rationale").asString(null);
 
+                // ENTER is written by /tools/place-entry (with the veto trace, the broker order id
+                // and the real ACCEPTED/REJECTED status transition), and ADD_TRANCHE is written by
+                // /tools/add-tranche (accepted=true, rationale "tranche 2 added: <reason>", plus
+                // the ORPHANED_ORDER / BROKER_ERROR rows on its failure paths). Re-recording either
+                // here would double-count that path in every audit query — and for ADD_TRANCHE the
+                // duplicate is worse than a double count: this row is written accepted=false, so a
+                // successfully placed tranche would be shadowed by a phantom refusal one row later.
+                // Skipped silently and by design, not for want of handling; the prompt is written
+                // to match (see prompts/executor.md).
+                if ("ENTER".equals(action) || "ADD_TRANCHE".equals(action)) continue;
+
+                // Signal-status side effects, per action:
+                //   SKIP        — the agent declined a PENDING signal; SKIPPED is its terminal
+                //                 verdict (unchanged behavior).
+                //   HOLD        — an observation about an OPEN position whose source signal is
+                //                 long ACCEPTED. Touching the status would overwrite the entry
+                //                 verdict and processed_at with a maintenance-time note.
+                // HOLD has no sensible transition in the existing vocabulary (PENDING / ACCEPTED /
+                // REJECTED / SKIPPED / EXPIRED), and inventing one would break
+                // RejectReason.isTransient()'s "PENDING means retry me" contract.
+                // So: persist the row, leave the status alone.
+                if (!"SKIP".equals(action) && !"HOLD".equals(action)) {
+                    // Never swallow a decision we cannot classify: it is a prompt/schema drift
+                    // signal, and a dropped row is an invisible hole in the audit trail.
+                    log.warn("submit-decision: unknown action '{}' for signal {} ({}) in run {} — "
+                                    + "decision NOT persisted", action, signalId, symbol, runId);
+                    unknownActions++;
+                    continue;
+                }
+
                 decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
-                        null, List.of(), rationale, null, runId, null));
-                signalRepo.markStatus(signalId, "SKIPPED");
+                        null, List.of(), rationale, null, runId, null, action));
+                if ("SKIP".equals(action)) {
+                    signalRepo.markStatus(signalId, "SKIPPED");
+                }
                 recorded++;
             }
         }
-        return ResponseEntity.ok(Map.of("output", Map.of("recorded", recorded)));
+        return ResponseEntity.ok(Map.of("output",
+                Map.of("recorded", recorded, "unknown_actions", unknownActions)));
     }
 
     // -------------------------------------------------------------------

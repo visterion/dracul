@@ -78,13 +78,94 @@ public abstract class HuntController {
     /** The fetch tool name (matches the *Defaults FETCH constant), used as the cache key. */
     protected abstract String toolName();
 
-    /** Clamp lookback_days from the tool input. */
+    /**
+     * Clamp {@code lookback_days} from the tool input.
+     *
+     * <p>A NUMERIC STRING counts as a number here. The Vistierie/MCP bridge stringifies tool
+     * arguments, so an agent that asked for a 20-day window sends {@code "20"}, not {@code 20} —
+     * and the previous {@code instanceof Number} test dropped it on the floor and returned the
+     * 45-day default. The agent had no way to notice: the response says nothing about which
+     * window it covers.
+     *
+     * <p>Genuinely invalid input (a word, a list, a boolean, a value at the wrong nesting level)
+     * still falls back to {@code def} — but never silently: anything that was supplied and could
+     * not be used is logged, because a silent fallback is the exact failure mode this method just
+     * spent a production run demonstrating.
+     *
+     * <p><b>The clamp runs BEFORE the narrowing to {@code int}, not after.</b> The other way round
+     * — which is what shipped — let {@code BigDecimal.intValue()} discard the high-order bits
+     * first: {@code "2147483648"} became {@code -2147483648} and then clamped UP to {@code min},
+     * so an absurdly LARGE window silently became the smallest one available. {@code "1e18"} and
+     * {@code Long.MAX_VALUE} did the same, and all of it was logged at INFO as an ordinary clamp.
+     * Comparing in {@link java.math.BigDecimal} keeps the magnitude intact, so an out-of-range
+     * value clamps to the bound it is actually near, and says so at WARN — a value that far out
+     * is a client bug of the same kind as {@code "twenty"}, and has to be as audible.
+     */
     protected int lookbackDays(Map<String, Object> body, int def, int min, int max) {
-        if (body.get("input") instanceof Map<?, ?> in
-                && in.get("lookback_days") instanceof Number n) {
-            return Math.max(min, Math.min(max, n.intValue()));
+        Object raw = body.get("input") instanceof Map<?, ?> in ? in.get("lookback_days") : null;
+        if (raw == null) {
+            // Not nested under "input" at all. An absent value is the normal case (use the
+            // default); a value sitting at the top level was MEANT to be honoured and is not.
+            if (body.get("lookback_days") != null) {
+                log.warn("{} tool {}: lookback_days={} was sent at the top level instead of under "
+                                + "\"input\" — using the {}-day default instead",
+                        agentName(), toolName(), body.get("lookback_days"), def);
+            }
+            return def;
         }
-        return def;
+        java.math.BigDecimal parsed = asDecimal(raw);
+        if (parsed == null) {
+            log.warn("{} tool {}: lookback_days={} ({}) is not a usable number — using the "
+                            + "{}-day default instead",
+                    agentName(), toolName(), raw, raw.getClass().getSimpleName(), def);
+            return def;
+        }
+        // Clamp in full precision, THEN narrow: the result is always inside [min, max], so the
+        // intValue() below can no longer overflow.
+        java.math.BigDecimal lo = java.math.BigDecimal.valueOf(min);
+        java.math.BigDecimal hi = java.math.BigDecimal.valueOf(max);
+        java.math.BigDecimal bounded = parsed.min(hi).max(lo);
+        int clamped = bounded.intValue();
+        if (bounded.compareTo(parsed) != 0) {
+            // An in-range-ish overshoot (500 -> 120) is routine tool behaviour and stays INFO.
+            // A value outside int range cannot have been meant at all — that is a malformed
+            // argument, and it gets the same volume as unparseable input.
+            boolean outOfIntRange = parsed.compareTo(java.math.BigDecimal.valueOf(Integer.MAX_VALUE)) > 0
+                    || parsed.compareTo(java.math.BigDecimal.valueOf(Integer.MIN_VALUE)) < 0;
+            if (outOfIntRange) {
+                log.warn("{} tool {}: lookback_days={} is far outside the allowed {}..{} range — "
+                                + "clamped to {}; a value this size is a malformed argument, not a "
+                                + "wide window",
+                        agentName(), toolName(), parsed.toPlainString(), min, max, clamped);
+            } else {
+                log.info("{} tool {}: lookback_days={} clamped to {} (allowed {}..{})",
+                        agentName(), toolName(), parsed.toPlainString(), clamped, min, max);
+            }
+        }
+        return clamped;
+    }
+
+    /** A JSON number, or a string holding one, at FULL precision — the narrowing to {@code int}
+     *  belongs after the clamp, not here. {@code BigDecimal} so "20", "20.9" and "2e1" all
+     *  truncate exactly the way {@code Number.intValue()} does; null when it is neither.
+     *  {@code stripTrailingZeros} is deliberately not applied: {@code intValue()} truncates
+     *  toward zero either way, and the raw scale renders more faithfully in the log. */
+    private static java.math.BigDecimal asDecimal(Object raw) {
+        if (raw instanceof java.math.BigDecimal bd) return bd;
+        if (raw instanceof java.math.BigInteger bi) return new java.math.BigDecimal(bi);
+        if (raw instanceof Double || raw instanceof Float) {
+            double d = ((Number) raw).doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) return null;
+            return java.math.BigDecimal.valueOf(d);
+        }
+        if (raw instanceof Number n) return java.math.BigDecimal.valueOf(n.longValue());
+        if (raw instanceof CharSequence cs) {
+            String s = cs.toString().trim();
+            if (s.isEmpty()) return null;
+            try { return new java.math.BigDecimal(s); }
+            catch (NumberFormatException e) { return null; }
+        }
+        return null;
     }
 
     /** Token-Prüfung für Subklassen, die einen ZWEITEN Tool-Endpoint anbieten
@@ -150,9 +231,28 @@ public abstract class HuntController {
                         // Without it an empty candidate list is indistinguishable from a fetch
                         // that never got data — the exact ambiguity that cost a full forensic
                         // pass through Agora's logs on 2026-08-03.
-                        log.info("{} fetch: items={} (partial={} truncated={} status={})",
-                                agentName(), r.items().size(), r.health().partial(),
-                                r.health().truncated(), r.health().status());
+                        //
+                        // The LEVEL carries the severity, because nothing else downstream does.
+                        // An "unavailable" source sets neither partial nor truncated (it is not
+                        // an incomplete answer, it is no answer), the run status stays "done",
+                        // and every hunter prompt turns it into {"prey": []} — so at INFO a dead
+                        // data source is byte-for-byte indistinguishable from a quiet market. It
+                        // is not raised to a health FLAG on purpose: that would fold the total
+                        // outage back into the same bucket as the milder degradation and keep
+                        // the severity inversion this fixes. The durable channel is
+                        // data_source_health in run_tool_calls, which the daily analysis reads
+                        // directly (_degraded_fetches); this line is the corroborating one.
+                        if (!r.health().isHealthy()) {
+                            log.warn("{} fetch: items={} (partial={} truncated={} status={}) — "
+                                            + "the data source is DOWN, an empty result here is "
+                                            + "not a quiet market: {}",
+                                    agentName(), r.items().size(), r.health().partial(),
+                                    r.health().truncated(), r.health().status(), r.health().detail());
+                        } else {
+                            log.info("{} fetch: items={} (partial={} truncated={} status={})",
+                                    agentName(), r.items().size(), r.health().partial(),
+                                    r.health().truncated(), r.health().status());
+                        }
                         Map<String, Object> output = new java.util.HashMap<>();
                         output.put(fetchOutputKey(), r.items());
                         output.put("data_source_health", healthMap(r.health()));

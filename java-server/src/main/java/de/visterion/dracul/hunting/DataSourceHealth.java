@@ -28,6 +28,31 @@ public record DataSourceHealth(String status, String source, String detail, Inst
         return new DataSourceHealth("healthy", source, detail, Instant.now(), partial, truncated);
     }
 
+    /**
+     * ORs a SECOND, Dracul-side degradation into a source's health, keeping both details.
+     *
+     * <p>Two independent sources of incompleteness meet at every hunter: the upstream fetch may
+     * have come back partial/truncated, and Dracul's own post-processing (a candidate cap, a
+     * per-candidate enrichment that failed) may have lost more on top. Neither may overwrite the
+     * other, or the run looks clean while half its input is missing.
+     *
+     * <p>An {@code unavailable} status is passed through UNTOUCHED — {@link #degraded} always
+     * yields {@code "healthy"}, so degrading a real outage would upgrade a total failure into a
+     * usable one and defeat the "return exactly {@code {"prey": []}}" clause every hunter prompt
+     * carries. A no-op call returns the very same instance, so a clean payload looks exactly as
+     * it did before.
+     */
+    public static DataSourceHealth degradedWith(DataSourceHealth base, String detail,
+                                                boolean partial, boolean truncated) {
+        if (!base.isHealthy()) return base;
+        if (!partial && !truncated) return base;
+        String merged = base.detail() == null || base.detail().isBlank()
+                ? detail
+                : base.detail() + "; " + detail;
+        return degraded(base.source(), merged,
+                base.partial() || partial, base.truncated() || truncated);
+    }
+
     public boolean isHealthy() {
         return "healthy".equals(status);
     }

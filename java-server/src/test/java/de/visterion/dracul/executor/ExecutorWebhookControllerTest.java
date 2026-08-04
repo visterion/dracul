@@ -2548,6 +2548,184 @@ class ExecutorWebhookControllerTest {
         verify(signalRepo, never()).markStatus(eq("sig-2"), any());
     }
 
+    /**
+     * D3 — HOLD records are part of the contract the prompt asks for but were never persisted.
+     * They must land in {@code executor_decision}.
+     *
+     * <p>The signal status must NOT move: HOLD refers to an OPEN position whose source signal is
+     * long {@code ACCEPTED}. Marking it SKIPPED/REJECTED would overwrite the entry verdict and
+     * {@code processed_at} with a maintenance-time observation.
+     */
+    @Test
+    void submitDecision_persistsHold_withoutTouchingSignalStatus() {
+        JsonNode body = json("""
+                {
+                  "decisions": [
+                    {"signal_id":"sig-1","symbol":"ACME","action":"SKIP","rationale":"thin"},
+                    {"signal_id":"sig-2","symbol":"BBB","action":"HOLD","rationale":"not yet"}
+                  ]
+                }
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        assertThat(outputOf(resp).get("recorded")).isEqualTo(2);
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, times(2)).insert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(ExecutorDecision::action)
+                .containsExactly("SKIP", "HOLD");
+        assertThat(captor.getAllValues()).extracting(ExecutorDecision::signalId)
+                .containsExactly("sig-1", "sig-2");
+        assertThat(captor.getAllValues()).allMatch(d -> !d.accepted());
+        assertThat(captor.getAllValues()).allMatch(d -> "r1".equals(d.runId()));
+
+        // Only the SKIP moves a signal status; HOLD leaves it alone.
+        verify(signalRepo).markStatus("sig-1", "SKIPPED");
+        verify(signalRepo, never()).markStatus(eq("sig-2"), any());
+    }
+
+    /** ENTER rows are written by place-entry; submit-decision must not duplicate them. */
+    @Test
+    void submitDecision_enterIsNotDuplicated() {
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-2","symbol":"BBB","action":"ENTER","rationale":"x"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, null, body);
+
+        assertThat(outputOf(resp).get("recorded")).isEqualTo(0);
+        verify(decisionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(any(), any());
+    }
+
+    /**
+     * BLOCKER 4 — {@code /tools/add-tranche} already inserts its own decision row
+     * ({@code accepted=true}, rationale {@code "tranche 2 added: <reason>"}; prod row
+     * {@code id=107 | IMAX | accepted=t}). Letting the model ALSO submit an {@code ADD_TRANCHE}
+     * record here produced two rows per event, the second a phantom {@code accepted=false} that
+     * contradicts the first — the same double-count the {@code ENTER} exclusion exists to
+     * prevent. Exclude it identically.
+     */
+    @Test
+    void submitDecision_addTrancheIsNotDuplicated() {
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-3","symbol":"CCC","action":"ADD_TRANCHE","rationale":"new high"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        assertThat(outputOf(resp).get("recorded")).isEqualTo(0);
+        // Not an unknown action either: it is a KNOWN action deliberately owned by another
+        // endpoint, exactly like ENTER. Counting it as unknown would fire a drift alarm on
+        // correct behaviour.
+        assertThat(outputOf(resp).get("unknown_actions")).isEqualTo(0);
+        verify(decisionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(any(), any());
+    }
+
+    /**
+     * BLOCKER 3 — the bridge stringifies tool arguments, so the model sends {@code decisions} as
+     * a JSON <em>string</em> rather than an array. Verified in production
+     * ({@code run_tool_calls}, 2026-08-03 06:11:47):
+     * <pre>
+     *   jsonb_typeof(input_json->'decisions') = string  ->  {"recorded": 0}
+     *   {"decisions": "[{\\"signal_id\\":\\"61bfad16-…\\",\\"action\\":\\"SKIP\\",…}]"}
+     * </pre>
+     * The handler gated on {@code decisions.isArray()} and fell through to {@code recorded: 0}
+     * silently — no {@code unknown_actions}, no log. Every SKIP stayed PENDING and was
+     * re-evaluated the next run. This is the same stringification that broke the HiveMem
+     * {@code where} filter, i.e. a systemic property of the bridge and not a one-off.
+     */
+    @Test
+    void submitDecision_acceptsAStringifiedDecisionsArray() {
+        JsonNode body = json("""
+                {"input":{"decisions":"[{\\"signal_id\\":\\"sig-1\\",\\"symbol\\":\\"ACME\\",\\"action\\":\\"SKIP\\",\\"rationale\\":\\"thin\\"}]"}}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        assertThat(outputOf(resp).get("recorded")).isEqualTo(1);
+        verify(decisionRepo, times(1)).insert(any());
+        verify(signalRepo).markStatus("sig-1", "SKIPPED");
+    }
+
+    /** A doubly-encoded array (string containing a string) is still recoverable and still real
+     *  bridge behaviour; recover it rather than dropping the run's whole decision set. */
+    @Test
+    void submitDecision_acceptsADoublyStringifiedDecisionsArray() {
+        JsonNode body = json("""
+                {"decisions":"\\"[{\\\\\\"signal_id\\\\\\":\\\\\\"sig-1\\\\\\",\\\\\\"symbol\\\\\\":\\\\\\"ACME\\\\\\",\\\\\\"action\\\\\\":\\\\\\"SKIP\\\\\\",\\\\\\"rationale\\\\\\":\\\\\\"thin\\\\\\"}]\\""}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        assertThat(outputOf(resp).get("recorded")).isEqualTo(1);
+    }
+
+    /** A single decision object sent where an array was declared is the other shape the bridge
+     *  produces; accept it rather than answering a silent {@code recorded: 0}. */
+    @Test
+    void submitDecision_acceptsASingleDecisionObject() {
+        JsonNode body = json("""
+                {"decisions":{"signal_id":"sig-1","symbol":"ACME","action":"SKIP","rationale":"thin"}}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        assertThat(outputOf(resp).get("recorded")).isEqualTo(1);
+    }
+
+    /**
+     * A {@code decisions} argument that genuinely cannot be read must be LOUD. Returning
+     * {@code recorded: 0} to the agent and writing nothing anywhere is what let the stringified
+     * case run undetected in production; an unusable argument has to be visible both to the agent
+     * (so it can retry with the right shape) and in the log (so the daily analysis sees it).
+     */
+    @Test
+    void submitDecision_unusableDecisionsArgumentIsReportedNotSwallowed() {
+        JsonNode body = json("""
+                {"decisions":"not json at all"}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(0);
+        assertThat(output.get("error")).asString()
+                .as("an unreadable decisions argument must name itself in the response")
+                .contains("decisions");
+        verify(decisionRepo, never()).insert(any());
+    }
+
+    /** An ABSENT {@code decisions} argument is a different thing from an unusable one: the model
+     *  had nothing to record. It must not raise the error channel. */
+    @Test
+    void submitDecision_absentDecisionsIsNotAnError() {
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", json("{}"));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(0);
+        assertThat(output).doesNotContainKey("error");
+    }
+
+    /** An action outside the four known ones must never be swallowed silently. */
+    @Test
+    void submitDecision_unknownAction_isNotPersistedAndNotSilent() {
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-9","symbol":"ZZZ","action":"FROLIC","rationale":"?"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(0);
+        // Visible to the agent as well as in the log — a dropped decision must be reported back.
+        assertThat(output.get("unknown_actions")).isEqualTo(1);
+        verify(decisionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(any(), any());
+    }
+
     @Test
     void submitDecision_nullBody_recordsZero() {
         ResponseEntity<?> resp = controller.submitDecision(BEARER, null, null);

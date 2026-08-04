@@ -1373,8 +1373,10 @@ newest-first **index** of the candidate's post-report headlines, capped at
 `dracul.strigoi.echo.recent-news-cap` (default 5, env `ECHO_RECENT_NEWS_CAP`), each item
 `{ "headline": "...", "source": "...", "credibility": 0.8, "datetime": "..." }`. This index
 deliberately carries **no `summary`** — a full, summary-carrying news list once pushed a
-candidate's tool-result payload past Vistierie's ~95 kB bridge limit, causing the bridge to
-offload the result to a file the agent cannot read. `newsCount` (integer) reports the true,
+candidate's tool-result payload past Vistierie's bridge tool-result limit (50 000 characters
+guaranteed-safe, 100 000 characters hard — see `documentation/strigoi.md`; the "~95 kB" once
+quoted here was folklore), causing the bridge to offload the result to a file the agent
+cannot read. `newsCount` (integer) reports the true,
 uncapped number of headlines found, so the agent can tell when `recentNews` is only a slice.
 The deterministic confounder gate that drops candidates with a disqualifying news event
 (M&A, restatement, guidance cut, dilution, investigation) always scans the full, uncapped
@@ -1614,7 +1616,7 @@ Response:
 { "output": { "candidates": [
   { "symbol": "TGT", "companyName": "Target Co Inc", "formType": "DEFM14A",
     "filingDate": "2026-05-28", "filingUrl": "https://www.sec.gov/Archives/...",
-    "termSheet": "...Agreement and Plan of Merger, dated as of March 15, 2026... each share of common stock will be converted into the right to receive $58.00 in cash... expected to close in the fourth quarter of 2026...",
+    "termSheetDigest": "Conditions to the Merger. Completion of the merger is subject to... Regulatory Approvals. The waiting period under the HSR Act... Termination Fees. A fee of $120 million is payable...",
     "termSheetAvailable": true, "lastPrice": 54.10, "priceAvailable": true,
     "offerPrice": 58.00, "considerationType": "cash", "exchangeRatio": null,
     "breakFee": "$120 million", "spreadPercent": 7.21,
@@ -1624,12 +1626,23 @@ Response:
 ] } }
 ```
 
-`termSheet` / `termSheetAvailable` and `lastPrice` / `priceAvailable` are
-advisory annotations — the cleaned summary-term-sheet text of the filing (via
-Agora's `get_filing_text`, fetched by `AgoraFilings.filingText(filingUrl)`)
-plus the current quote, for the LLM to interpret. `offerPrice` /
+`termSheetDigest` / `termSheetAvailable` and `lastPrice` / `priceAvailable` are
+advisory annotations. **`termSheetDigest` replaced `termSheet` on 2026-08-04 and
+is NOT the raw filing text.** The filing is still fetched in full via Agora's
+`get_filing_text` (`AgoraFilings.filingText(filingUrl)`) and parsed server-side,
+but only a bounded digest of the risk-bearing sections — closing conditions,
+regulatory approvals, termination fees, no-solicitation/go-shop, financing,
+shareholder vote, at most 240 characters each and at most
+`dracul.strigoi.merger.term-sheet-digest-chars` (default 700) in total, with a
+head excerpt as fallback when no section heading matches — is returned. Shipping
+the raw text (Agora caps it at 24 000 characters per filing) put one production
+tool result at 329 818 characters, over three times the bridge's 100 000-character
+truncation ceiling, so the model saw a list chopped mid-JSON and answered
+`{"prey": []}`. The candidate cap `dracul.strigoi.merger.max-candidates` was
+derived against the same limit and is 30. See `documentation/strigoi.md`,
+"Strigoi-Merger: term-sheet digest and the derived cap". `offerPrice` /
 `considerationType` (`cash`/`stock`/`mixed`) / `exchangeRatio` / `breakFee` are
-deterministically parsed from `termSheet` by `DealTermsParser` (fields are
+deterministically parsed from the full fetched text by `DealTermsParser` (fields are
 `null` when not found in the text); `spreadPercent` is server-computed from
 `offerPrice` and `lastPrice` when both are available (`(offerPrice - lastPrice)
 / lastPrice * 100`). `DealTermsParser` also extracts the deal time-axis dates —
@@ -1642,9 +1655,10 @@ per candidate; `false` both when no `agreementDate` was parsed and when the
 price is out of reach), `daysToClose` (today → `expectedCloseDate`),
 `annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, only when
 `daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice)
-/ lastPrice × 100`, the deal-break cliff). The LLM still extracts
-offer/consideration/conditions/termination-fee from `termSheet` itself as a
-fallback and interprets the spread; fail-soft (`*Available = false`, numeric
+/ lastPrice × 100`, the deal-break cliff). The LLM reads the qualitative closing
+risk (conditions, approvals, termination fees) out of `termSheetDigest` and
+interprets the spread; every quantitative field it used to mine from the prose is
+now a sibling field. Fail-soft (`*Available = false`, numeric
 fields `null`) on any Agora failure — no candidate is dropped for it.
 `output_schema` (the final verdict) is unchanged.
 
@@ -2098,19 +2112,54 @@ source signal `ACCEPTED` (rejections mark it `REJECTED`).
 
 ### `POST /api/executor/tools/submit-decision`
 
-Tool webhook. Records SKIP decisions the LLM made for signals it chose not
-to act on (ENTER decisions are recorded implicitly via `place-entry`).
-Input:
+Tool webhook. Records the decisions the LLM made this run for signals and
+tranche-2 positions it did not act on through another tool (`ENTER`
+decisions are recorded implicitly via `place-entry`). Input:
 
 ```json
 { "decisions": [
-  { "action": "SKIP", "signal_id": "...", "symbol": "ACME", "rationale": "..." }
+  { "action": "SKIP", "signal_id": "...", "symbol": "ACME", "rationale": "..." },
+  { "action": "HOLD", "signal_id": "...", "symbol": "BETA", "rationale": "..." },
+  { "action": "ADD_TRANCHE", "signal_id": "...", "symbol": "GAMMA", "rationale": "..." }
 ] }
 ```
 
-Non-`SKIP` actions in the array are ignored. Each recorded `SKIP` writes an
-`executor_decision` row (`accepted=false`, no `reject_reason`) and marks the
-signal `SKIPPED`. Response: `{ "output": { "recorded": <count> } }`.
+The `decisions` array is a **required, declared** argument of the tool. It
+used to be registered with the empty argument-less input schema, so the agent
+described to itself a tool that takes no arguments, called it with `{}`, and
+nothing was recorded at all — every SKIP signal stayed `PENDING` for
+re-evaluation on the following run. (A declared `input_schema` is *not*
+validated anywhere; it is a description for the model. Only the agent's
+**output** is schema-checked.)
+
+**Argument shapes accepted (2026-08-04).** The bridge stringifies tool
+arguments, so `decisions` arrives as a JSON *string* rather than an array —
+which the handler used to reject silently with `recorded: 0`. It now accepts a
+real array, a stringified array, a doubly-stringified one, and a single decision
+object where an array was declared. An **absent** argument yields an empty array
+(a model with nothing to record is not an error).
+
+| `action` | Persisted | Signal status |
+|---|---|---|
+| `SKIP` | `executor_decision` row (`accepted=false`, no `reject_reason`, `action='SKIP'`) | → `SKIPPED` |
+| `HOLD` | same, `action='HOLD'` | unchanged — the record concerns an OPEN position whose source signal is long `ACCEPTED` |
+| `ADD_TRANCHE` | **nothing here** — `add-tranche` already wrote its own row (`accepted=true`, plus the orphaned-order / broker-error rows on its failure paths). Recording it again would shadow a successfully placed tranche with an `accepted=false` phantom refusal one row later. Skipped by design, exactly like `ENTER`, and **not** counted as an unknown action | untouched here |
+| `ENTER` | nothing — `place-entry` already wrote the row, the veto trace and the status transition | untouched here |
+| anything else | nothing; logged at WARN and counted | untouched |
+
+Response: `{ "output": { "recorded": <count>, "unknown_actions": <count> } }`.
+A non-zero `unknown_actions` means the agent emitted an action verb outside
+the four above and those decisions were dropped — a prompt/schema drift
+signal, never silent.
+
+When `decisions` is **present but unreadable** as a list of decision objects,
+the response carries an additional `error` field and the call is logged at WARN
+instead of answering a bare `recorded: 0`:
+
+```json
+{ "output": { "recorded": 0, "unknown_actions": 0,
+  "error": "the 'decisions' argument could not be read as a list of decision objects — resend it as a JSON array of objects with signal_id, symbol, action and rationale" } }
+```
 
 ### `POST /api/executor/tools/fetch-open-positions`
 

@@ -1,5 +1,6 @@
 package de.visterion.dracul.hunting.agora;
 
+import de.visterion.dracul.hunting.DataSourceHealth;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
@@ -27,17 +28,33 @@ public class AgoraFilings {
 
     private static final String SOURCE = "agora";
 
+    /** {@code get_form4_transactions} and {@code search_filings} both default to 100 rows, and a
+     *  market-wide form/date window holds far more than that — several THOUSAND Form-4 filings per
+     *  day. Taking the default silently turns a market-wide scan into an arbitrary slice of itself:
+     *  a 20-day and a 90-day merger window returned the identical newest 25 candidates in
+     *  production. Ask for the tool's maximum instead (Agora {@code MAX_LIMIT} on both tools). */
+    private static final int WINDOW_LIMIT = 1000;
+
     private final AgoraClient agora;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public AgoraFilings(AgoraClient agora) { this.agora = agora; }
 
-    /** Market-wide Form-4 transactions in [from, to]; callers filter by ticker client-side. */
+    /**
+     * Market-wide Form-4 transactions in [from, to]; callers filter by ticker client-side.
+     *
+     * <p>Asking for {@link #WINDOW_LIMIT} raises the ceiling but does NOT make the answer complete:
+     * Agora's Form-4 path issues one EDGAR archive GET per hit behind a fair-use throttle and under
+     * its own aggregate deadline, so a market-wide window parses only a few hundred filings before
+     * the deadline fires — whatever limit is passed. That remaining bottleneck lives in Agora, not
+     * here; what changed is that the cut now arrives as {@code truncated=true} and is reported
+     * instead of being read as "nothing found".
+     */
     public DataSourceResult<Form4Filing> recentForm4(LocalDate from, LocalDate to) {
         JsonNode res;
         try {
             ObjectNode args = mapper.createObjectNode();
-            args.put("from", from.toString()).put("to", to.toString());
+            args.put("from", from.toString()).put("to", to.toString()).put("limit", WINDOW_LIMIT);
             res = agora.callTool("get_form4_transactions", args);
         } catch (AgoraUnavailableException e) {
             return DataSourceResult.unavailable(SOURCE, "agora: " + e.getMessage());
@@ -59,7 +76,7 @@ public class AgoraFilings {
                         t.path("code").asString("")));
             } catch (RuntimeException ignored) { /* skip malformed row */ }
         }
-        return DataSourceResult.healthy(SOURCE, out);
+        return reportingDegradation(res, out, "Form-4 transactions");
     }
 
     /** Spin-off registrations (forms=10-12B). Ticker may be empty on fresh registrations. */
@@ -85,7 +102,7 @@ public class AgoraFilings {
                         CikExtractor.fromFilingUrl(url)));   // spin-co registrant CIK; null if unparseable
             } catch (RuntimeException ignored) { /* skip malformed row */ }
         }
-        return DataSourceResult.healthy(SOURCE, out);
+        return reportingDegradation(res, out, "spin-off registrations");
     }
 
     /** Merger deal filings (forms=DEFM14A, SC TO-T). */
@@ -109,7 +126,25 @@ public class AgoraFilings {
                         f.path("url").asString("")));
             } catch (RuntimeException ignored) { /* skip malformed row */ }
         }
-        return DataSourceResult.healthy(SOURCE, out);
+        return reportingDegradation(res, out, "merger deal filings");
+    }
+
+    /**
+     * Wraps a mapped market-wide result in health that carries Agora's {@code partial} /
+     * {@code truncated} flags, mirroring {@code AgoraEarnings.recent}. The items are kept
+     * deliberately — {@link DataSourceResult#unavailable} would drop them, and a cut result is
+     * still worth screening. A clean response stays plain {@code healthy} with a null detail, so
+     * an untouched payload looks exactly as it did before.
+     */
+    private static <T> DataSourceResult<T> reportingDegradation(JsonNode res, List<T> out, String what) {
+        boolean partial = res.path("partial").asBoolean(false);
+        boolean truncated = res.path("truncated").asBoolean(false);
+        if (!partial && !truncated) return DataSourceResult.healthy(SOURCE, out);
+        return new DataSourceResult<>(out, DataSourceHealth.degraded(SOURCE,
+                (partial ? "partial: " + what + " window not fully covered" : "")
+                        + (partial && truncated ? "; " : "")
+                        + (truncated ? "truncated: more " + what + " exist than were returned" : ""),
+                partial, truncated));
     }
 
     /** XBRL concept datapoints (us-gaap tag) for a symbol; empty series on any failure. */
@@ -256,7 +291,11 @@ public class AgoraFilings {
     }
 
     /** Fetch a filing's summary/term-sheet text via Agora's get_filing_text. Fail-soft:
-     *  a blank url or any Agora failure yields {@link FilingText#unavailable()}. */
+     *  a blank url or any Agora failure yields a not-available {@link FilingText}. The failure
+     *  KIND is preserved: Agora refusing an oversized document ({@link
+     *  AgoraUnavailableException#filingTooLarge()}) becomes {@link FilingText#tooLarge()}, so the
+     *  merger enrichment can report "this one proxy is too big to parse" instead of blaming an
+     *  outage that did not happen. */
     public FilingText filingText(String url) {
         if (url == null || url.isBlank()) return FilingText.unavailable();
         try {
@@ -265,7 +304,7 @@ public class AgoraFilings {
             JsonNode res = agora.callTool("get_filing_text", args);
             return new FilingText(res.path("text").asString(""), true);
         } catch (AgoraUnavailableException e) {
-            return FilingText.unavailable();
+            return e.filingTooLarge() ? FilingText.tooLarge() : FilingText.unavailable();
         }
     }
 
@@ -318,7 +357,7 @@ public class AgoraFilings {
         ObjectNode args = mapper.createObjectNode();
         ArrayNode fa = args.putArray("forms");
         forms.forEach(fa::add);
-        args.put("from", from.toString()).put("to", to.toString());
+        args.put("from", from.toString()).put("to", to.toString()).put("limit", WINDOW_LIMIT);
         return args;
     }
 

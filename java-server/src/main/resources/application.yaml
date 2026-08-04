@@ -124,11 +124,62 @@ dracul:
       schedule: ${DRACUL_LAZARUS_SCHEDULE:0 0 6 * * 1-5}
       max-above-low: ${LAZARUS_MAX_ABOVE_LOW:0.10}
       max-debt-equity: ${LAZARUS_MAX_DEBT_EQUITY:3.0}
+      # --- universe (D7) -------------------------------------------------------------------
+      # The screened universe is an index fetched from Agora (get_index_constituents), NOT the
+      # manually maintained watchlist: an empty watchlist used to make every run a guaranteed
+      # no-op that reported itself healthy. Watchlist names are screened ON TOP of the index.
+      # Agora currently serves only "sp500"; the special value "watchlist" turns the index off
+      # and restores the pre-D7 watchlist-only scope as an operator fallback.
+      universe-source: ${LAZARUS_UNIVERSE_SOURCE:sp500}
+      # Hard ceiling on universe size (the S&P 500 delivers ~503 symbols incl. multi-class rows).
+      universe-max: ${LAZARUS_UNIVERSE_MAX:600}
+      # Cheap pre-filter (ONE Yahoo-routed get_indicators 52w_range call per universe symbol)
+      # keeps a symbol when it trades at most this fraction above its 52-week low. Deliberately
+      # WIDER than max-above-low: it reads Yahoo's 252-bar low while the authoritative screen
+      # reads the provider's own 52-week low, and a pre-filter cutting tighter than the screen
+      # would drop real candidates over a definitional difference. Never relaxes the screen.
+      pre-filter-margin: ${LAZARUS_PRE_FILTER_MARGIN:0.25}
+      # Wall-clock ceiling for the pre-filter pass. What it does not reach is reported as
+      # truncated, and the next run enters the universe where this one stopped.
+      pre-filter-budget-ms: ${LAZARUS_PRE_FILTER_BUDGET_MS:240000}
+      # Consecutive pre-filter failures before the source counts as down and the pass stops.
+      # Agora reports "no history for this symbol" through the same envelope as "Agora is
+      # unreachable", so one failure proves nothing — a run of them does.
+      max-consecutive-failures: ${LAZARUS_MAX_CONSECUTIVE_FAILURES:10}
+      # Ceiling on get_fundamentals calls per run. This is THE cost gate: get_fundamentals routes
+      # US symbols to Finnhub, throttled to 60 calls/minute across all of Agora (Agora config
+      # agora.data.finnhub.calls-per-minute), cached 6 h. Overrunning it produces 429s and
+      # silently dropped symbols — the failure mode this whole fix exists to end.
+      fundamentals-max: ${LAZARUS_FUNDAMENTALS_MAX:60}
+      # Webhook timeout Vistierie grants the fetch tool. Must cover 1 index call + up to
+      # universe-max pre-filter calls + fundamentals-max fundamentals calls + enrichment.
+      # NOTE: agent definitions are insertIfAbsent on prod — changing this needs the
+      # agent-definition reset from the operations runbook to take effect.
+      fetch-timeout-seconds: ${LAZARUS_FETCH_TIMEOUT_SECONDS:600}
     merger:
       enabled: ${STRIGOI_MERGER_ENABLED:false}
       webhook-token: ${STRIGOI_MERGER_TOKEN:dev-token-change-me}
       schedule: ${DRACUL_MERGER_SCHEDULE:0 0 5 * * 1-5}
       lookback-days: ${MERGER_LOOKBACK_DAYS:45}
+      # Payload ceiling on the enriched candidate list, NOT a curation step — and DERIVED from the
+      # bridge limit, not chosen. Every Vistierie tool reaches the model as an in-process SDK MCP
+      # tool, and the Claude Code CLI cuts an MCP result over MAX_MCP_OUTPUT_TOKENS (25 000, unset
+      # on the bridge) to 25 000 x 4 = 100 000 chars; below its 12 500-token pre-check estimate
+      # (50 000 chars) it is provably never touched. Against a 50 000-char budget, 5 000 reserved
+      # for the envelope, 645 chars of structured fields per candidate (measured over 200 prod
+      # records) and a term-sheet-digest-chars-sized digest, the arithmetic yields 30.
+      # 25 was provably binding (a 45-day and a 90-day window both returned exactly 25 rows); 40
+      # cannot fit under any budget (40 x 645 = 25 800 chars before a character of deal text).
+      # MergerPayloadBudgetTest holds the derivation and fails if these two knobs drift apart.
+      # A cut is reported via data_source_health.truncated.
+      max-candidates: ${MERGER_MAX_CANDIDATES:30}
+      # Per-candidate ceiling on the term-sheet digest. The RAW term sheet is never shipped: Agora
+      # caps it at 24 000 chars, 25 of those made a 329 818-char tool result on 2026-08-04, and
+      # the model saw none of it (five consecutive runs finished done with {"prey": []}).
+      # TermSheetDigest keeps the sections that price deal risk — closing conditions, regulatory
+      # approvals, termination fees, solicitation, financing, vote — because everything
+      # quantitative is already extracted server-side by DealTermsParser into its own fields.
+      term-sheet-digest-chars: ${MERGER_TERM_SHEET_DIGEST_CHARS:700}
     index:
       enabled: ${STRIGOI_INDEX_ENABLED:false}
       webhook-token: ${STRIGOI_INDEX_TOKEN:dev-token-change-me}
@@ -215,6 +266,9 @@ dracul:
     max-broker-attempts: ${DRACUL_EXECUTOR_MAX_BROKER_ATTEMPTS:3}
     broker-attempt-window-hours: ${DRACUL_EXECUTOR_BROKER_ATTEMPT_WINDOW_HOURS:72}
     max-broker-calls-per-run: ${DRACUL_EXECUTOR_MAX_BROKER_CALLS_PER_RUN:2}
+    ratchet-retry-attempts: ${DRACUL_EXECUTOR_RATCHET_RETRY_ATTEMPTS:3}
+    ratchet-retry-backoff-ms: ${DRACUL_EXECUTOR_RATCHET_RETRY_BACKOFF_MS:500}
+    ratchet-retry-budget-ms: ${DRACUL_EXECUTOR_RATCHET_RETRY_BUDGET_MS:5000}
     notify-enabled: ${DRACUL_EXECUTOR_NOTIFY_ENABLED:true}
   depots:
     agora-base-url: ${DRACUL_DEPOTS_AGORA_BASE_URL:http://agora:8080}

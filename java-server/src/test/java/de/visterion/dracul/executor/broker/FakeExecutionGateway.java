@@ -31,6 +31,17 @@ public class FakeExecutionGateway implements ExecutionGateway {
 
     public boolean unavailable = false;
 
+    /** When &gt; 0, that many upcoming {@link #modifyBracket} calls fail with
+     *  {@link #modifyFailureMessage} (one per call). The attempt is still recorded in
+     *  {@link #modifyCalls}, so a test can count retries. */
+    public int modifyFailures = 0;
+    public String modifyFailureMessage = "fake modify failure";
+    /** Optional cause attached to the injected {@link BrokerUnavailableException}. Real 429s
+     *  reach {@code isTransient} this way — {@code AgoraExecutionGateway.call} wraps the
+     *  underlying {@code HttpClientErrorException$TooManyRequests} rather than describing it,
+     *  so the status lives in the CAUSE and never in the top-level message. */
+    public Throwable modifyFailureCause = null;
+
     public void seedPosition(BrokerPosition position) {
         positionsBySymbol.put(position.symbol(), position);
     }
@@ -124,6 +135,12 @@ public class FakeExecutionGateway implements ExecutionGateway {
     public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target) {
         checkAvailable();
         modifyCalls.add(new ModifyCall(orderId, symbol, stop, target));
+        if (modifyFailures > 0) {
+            modifyFailures--;
+            throw modifyFailureCause == null
+                    ? new BrokerUnavailableException(modifyFailureMessage)
+                    : new BrokerUnavailableException(modifyFailureMessage, modifyFailureCause);
+        }
         return new ModifyResult(orderId, stop, target, true);
     }
 

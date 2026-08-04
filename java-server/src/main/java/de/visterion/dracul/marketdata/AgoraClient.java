@@ -54,7 +54,17 @@ public class AgoraClient {
             // all 17 facade catch sites swallow this exception without a word — which is why
             // "Agora unreachable" never appeared in a production log despite being the text
             // that ends up in the tool payload.
-            log.warn("Agora unreachable for {}: {}", name, e.getMessage());
+            //
+            // One error envelope is NOT an outage: Agora refusing a document that exceeds its
+            // filing-size cap says something about that one filing, and calling it "unreachable"
+            // both misleads whoever reads the log and inflates the daily analysis's outage count
+            // (_AGORA_FAIL_RE matches on that exact phrase). It still throws — the caller decides
+            // how to degrade — but it is named for what it is.
+            if (e.filingTooLarge()) {
+                log.warn("Agora refused an oversized document for {}: {}", name, e.getMessage());
+            } else {
+                log.warn("Agora unreachable for {}: {}", name, e.getMessage());
+            }
             throw e;
         } catch (RuntimeException e) {
             // session may be stale — drop the client, reconnect once, retry

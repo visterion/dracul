@@ -20,12 +20,18 @@ class LazarusDefaults {
     @Bean
     AgentDefaultProvider lazarusDefaultProvider(
             ObjectMapper mapper,
-            @Value("${dracul.strigoi.lazarus.schedule}") String schedule) {
+            @Value("${dracul.strigoi.lazarus.schedule}") String schedule,
+            @Value("${dracul.strigoi.lazarus.fetch-timeout-seconds:600}") int fetchTimeoutSeconds) {
         JsonNode schema = AgentResources.readSchema(mapper, "schemas/prey-list-lazarus.json");
         JsonNode input = AgentResources.parseJson(mapper, "{\"type\":\"object\",\"properties\":{}}");
+        // D7: the universe is market-wide (S&P 500 via Agora) plus the watchlist, so one fetch
+        // walks ~500 symbols through a cheap pre-filter before spending Finnhub-routed
+        // fundamentals calls on the survivors. The old 30 s webhook budget was sized for a
+        // handful of watchlist rows and cannot cover that.
         var entry = new ToolCatalogEntry(FETCH,
-                "Returns watchlist names currently trading near their 52-week low, with fundamentals.",
-                input, "/api/strigoi-lazarus/tools/fetch-candidates", 30);
+                "Returns names from the screened market universe (S&P 500 plus the watchlist) "
+                        + "currently trading near their 52-week low, with fundamentals.",
+                input, "/api/strigoi-lazarus/tools/fetch-candidates", fetchTimeoutSeconds);
         return new AgentDefaultProvider() {
             @Override
             public AgentDefinition defaultDefinition() {

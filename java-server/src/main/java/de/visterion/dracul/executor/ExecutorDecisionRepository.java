@@ -36,9 +36,9 @@ public class ExecutorDecisionRepository {
         jdbc.sql("""
                 INSERT INTO executor_decision
                   (signal_id, symbol, accepted, reject_reason, veto_trace, rationale,
-                   broker_order_id, run_id)
+                   broker_order_id, run_id, action)
                 VALUES (:signalId, :symbol, :accepted, :rejectReason, CAST(:vetoTrace AS jsonb), :rationale,
-                        :brokerOrderId, :runId)
+                        :brokerOrderId, :runId, :action)
                 """)
                 .param("signalId", d.signalId())
                 .param("symbol", d.symbol())
@@ -48,6 +48,7 @@ public class ExecutorDecisionRepository {
                 .param("rationale", d.rationale())
                 .param("brokerOrderId", d.brokerOrderId())
                 .param("runId", d.runId())
+                .param("action", d.action())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -130,7 +131,8 @@ public class ExecutorDecisionRepository {
                 rs.getString("rationale"),
                 rs.getString("broker_order_id"),
                 rs.getString("run_id"),
-                createdAtObj == null ? null : createdAtObj.toString());
+                createdAtObj == null ? null : createdAtObj.toString(),
+                rs.getString("action"));
     }
 
     private String writeJson(List<String> v) {

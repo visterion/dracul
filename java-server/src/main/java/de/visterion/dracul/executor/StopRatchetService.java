@@ -2,6 +2,8 @@ package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -11,6 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -41,15 +44,24 @@ import java.util.Map;
  * the active stop is deliberately left untouched. That is intended: a position that can never be
  * ratcheted must stay loudly visible. Do not "fix" it by moving a check ahead of the guard.
  *
- * <p>On {@link BrokerUnavailableException} during {@code modifyBracket}, this escalates via the
- * decision log and leaves the old stop in place — mirrors {@link ReconcileService} and
+ * <p>On {@link BrokerUnavailableException} during {@code modifyBracket}, a TRANSIENT failure
+ * (rate limit / HTTP 429) is retried inside the same run with an exponential backoff, bounded by
+ * {@code ratchet-retry-attempts} and a pass-wide wall-clock budget; anything else escalates on the
+ * first attempt. Once the attempts or the budget are spent, this escalates via the decision log
+ * and leaves the old stop in place — mirrors {@link ReconcileService} and
  * {@link HardTriggerService}'s idiom. Every escalation row carries the position id in
  * {@code order_json} (since {@code decision_log} has no position column) plus the position's
- * signal and agent attribution.
+ * signal and agent attribution. See {@link #modifyWithRetry} for why the retry exists and why it
+ * is an allow-list.
+ *
+ * <p><b>Broker first, book second.</b> {@code positionRepo.updateMaintenance} runs only after
+ * {@code modifyBracket} returned — the book never claims a stop the broker did not confirm.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class StopRatchetService {
+
+    private static final Logger log = LoggerFactory.getLogger(StopRatchetService.class);
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -59,6 +71,9 @@ public class StopRatchetService {
     private final ObjectMapper mapper;
     private final ExecutorNotifier executorNotifier;
     private final double chandelierMult;
+    private final int retryAttempts;
+    private final long retryBackoffMs;
+    private final long retryBudgetMs;
 
     public StopRatchetService(
             ExecutionGateway gateway,
@@ -68,7 +83,10 @@ public class StopRatchetService {
             StopRatchetGuard guard,
             ObjectMapper mapper,
             ExecutorNotifier executorNotifier,
-            @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult) {
+            @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
+            @Value("${dracul.executor.ratchet-retry-attempts:3}") int retryAttempts,
+            @Value("${dracul.executor.ratchet-retry-backoff-ms:500}") long retryBackoffMs,
+            @Value("${dracul.executor.ratchet-retry-budget-ms:5000}") long retryBudgetMs) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
         this.decisionRepo = decisionRepo;
@@ -77,10 +95,31 @@ public class StopRatchetService {
         this.mapper = mapper;
         this.executorNotifier = executorNotifier;
         this.chandelierMult = chandelierMult;
+        this.retryAttempts = Math.max(1, retryAttempts);
+        this.retryBackoffMs = Math.max(0, retryBackoffMs);
+        this.retryBudgetMs = Math.max(0, retryBudgetMs);
+    }
+
+    /** Backoff seam — overridden in tests so retry assertions neither sleep nor guess at timing. */
+    protected void backoff(long millis) {
+        if (millis <= 0) return;
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public void ratchet(List<ExecutorPosition> openPositions, Map<String, BigDecimal> atrBySymbol,
             Map<String, BigDecimal> closeBySymbol, String runId) {
+        // Wall-clock ceiling for ALL retrying in this pass, shared across every position. The
+        // whole ratchet runs inside the agent's 30s fetch_open_positions tool call, so a
+        // per-position budget would multiply with the size of the book into a tool timeout.
+        // It measures elapsed time in the pass, not time spent retrying, so a slow or hung broker
+        // spends the budget on its first attempt and is not retried, while a fast 429 (~1 ms in
+        // production) leaves ample room.
+        RetryBudget budget = new RetryBudget(retryBudgetMs);
+
         for (ExecutorPosition p : openPositions) {
             if (p.highestPrice() == null) continue;
             BigDecimal atr = atrBySymbol.get(p.symbol());
@@ -139,13 +178,7 @@ public class StopRatchetService {
                         "stop ratchet cannot address the bracket: broker_order_id is null");
                 continue;
             }
-            try {
-                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null);
-            } catch (BrokerUnavailableException e) {
-                escalate(p, runId, "BROKER_UNAVAILABLE",
-                        "broker unavailable during stop-ratchet modify: " + e.getMessage());
-                continue;
-            }
+            if (!modifyWithRetry(p, bracketId, chandelier, runId, budget)) continue;
 
             positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
                     chandelier, null);
@@ -153,6 +186,139 @@ public class StopRatchetService {
             recordRatchet(p, atr, chandelier, runId);
 
             executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
+        }
+    }
+
+    /**
+     * Sends the modify, retrying only genuinely TRANSIENT broker failures. Returns true when the
+     * broker accepted; false when the position was escalated and must be skipped.
+     *
+     * <p>Why retry at all: on 2026-08-03 a Saxo {@code RateLimitExceeded} (HTTP 429) on the stop
+     * PATCH escalated straight to a HIGH alarm, and the byte-identical PATCH succeeded on the next
+     * run 12 minutes later. The stop was never lost, but for 12 minutes the ratchet had simply not
+     * been applied. A rate limit says "come back in a moment"; treating it like a defect is what
+     * turned a 1 ms hiccup into a 12-minute gap.
+     *
+     * <p>Why only transient ones: a structural rejection such as {@code LEG_NOT_FOUND} (seen on
+     * 2026-07-26) fails identically on every attempt. Retrying it would delay the escalation that
+     * is the correct response, and hammer the broker while doing so — {@link #isTransient} is
+     * therefore an allow-list of rate-limit signatures, never a deny-list.
+     *
+     * <p>The book is written by the caller only AFTER this returns true — the broker confirms
+     * first, the DB follows. Do not reorder that: an active_stop written ahead of confirmation
+     * would make Dracul's book (and stopguard, which trusts it) claim a protection the broker does
+     * not have.
+     */
+    private boolean modifyWithRetry(ExecutorPosition p, String bracketId, BigDecimal chandelier,
+            String runId, RetryBudget budget) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null);
+                return true;
+            } catch (BrokerUnavailableException e) {
+                boolean mayRetry = attempt < retryAttempts && isTransient(e);
+                long wait = retryBackoffMs << Math.min(attempt - 1, 16);   // 500, 1000, 2000, …
+                if (mayRetry && budget.consume(wait)) {
+                    log.warn("stop-ratchet modify for {} (position {}) hit a transient broker "
+                                    + "failure on attempt {}/{}, retrying in {} ms: {}",
+                            p.symbol(), p.id(), attempt, retryAttempts, wait, e.getMessage());
+                    backoff(wait);
+                    continue;
+                }
+                escalate(p, runId, "BROKER_UNAVAILABLE",
+                        "broker unavailable during stop-ratchet modify after " + attempt
+                                + " attempt" + (attempt == 1 ? "" : "s") + ": " + e.getMessage());
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Transient = the broker asked us to slow down, nothing about this request is wrong.
+     *
+     * <p>Deliberately an ALLOW-list: anything unrecognised escalates on the first attempt, which
+     * is the safe default for a stop-protection path. Widen this only against a message or status
+     * actually observed in the Agora provider log.
+     *
+     * <p><b>The message is not the only signal, and treating it as one missed a whole class of
+     * real 429.</b> Agora surfaces its own rate limit as {@code available:false} with an
+     * {@code error} string ("… rate limited (HTTP 429) …") and its business rejections as
+     * {@code accepted:false} with a reject code — both of which arrive in the message. But a rate
+     * limit produced by the TRANSPORT arrives as {@code HttpClientErrorException$TooManyRequests}
+     * wrapped by {@code AgoraExecutionGateway.call}, and the status then lives only in the cause
+     * chain. So the chain is walked, and a {@code RestClientResponseException} carrying 429 counts
+     * regardless of what any message says.
+     *
+     * <p><b>Why not {@code contains("429")}.</b> Those three digits appear in things that are not
+     * statuses: a reject text echoing a price near $429, a 10-digit order id, a share quantity.
+     * Retrying a structural rejection burns the stop-protection budget and delays the escalation,
+     * and the estimated false-positive rate was ~0.8 % of reject messages. Every message that
+     * really is a rate limit says so — {@code HTTP 429}, {@code status 429}, a leading
+     * {@code 429 Too Many Requests}, or an explicit rate-limit phrase — so the digits are only
+     * accepted in one of those shapes.
+     */
+    private static boolean isTransient(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof org.springframework.web.client.RestClientResponseException r
+                    && r.getStatusCode().value() == 429) {
+                return true;
+            }
+            if (isTransientMessage(t.getMessage())) return true;
+        }
+        return false;
+    }
+
+    /** Package-private so the classification can be exercised directly; see {@link #isTransient}
+     *  for why a bare {@code "429"} substring is not enough. */
+    static boolean isTransientMessage(String message) {
+        if (message == null) return false;
+        String m = message.toLowerCase(Locale.ROOT);
+        if (m.contains("rate limit") || m.contains("ratelimit")
+                || m.contains("too many requests") || m.contains("slow down")) {
+            return true;
+        }
+        // 429 only where it is unambiguously a STATUS: after http/status/code, in parentheses or
+        // brackets, or at the very start of the message (the RestClient/HttpStatus rendering).
+        return RATE_LIMIT_STATUS.matcher(m).find();
+    }
+
+    private static final java.util.regex.Pattern RATE_LIMIT_STATUS = java.util.regex.Pattern.compile(
+            "(?:^|\\b(?:http|https|status|code|error)\\b[\\s:=/]*|[(\\[])429\\b");
+
+    /**
+     * Monotonic deadline for retrying, measured from where it is CONSTRUCTED — inside
+     * {@link #ratchet}, after reconcile, expiry, the indicator fetch and the hard triggers have
+     * already run. It therefore bounds the ratchet phase, not the enclosing tool call: whatever
+     * those earlier stages spent is invisible to it.
+     *
+     * <p><b>Two claims that used to stand here were false and are worth naming, because both were
+     * load-bearing.</b> It did not "measure total elapsed time in the pass" — see above. And there
+     * is <b>no 30 s tool timeout</b> to be bounded by: Vistierie declares
+     * {@code webhook_timeout_seconds} on the tool definition and never applies it, and the
+     * RestClient that calls the webhook uses {@code SimpleClientHttpRequestFactory} with an
+     * INFINITE read timeout. Nothing upstream will cut this call short.
+     *
+     * <p><b>Which is why the budget is kept, not dropped.</b> Its original justification — "a
+     * retry that ends in a tool timeout loses the whole maintenance pass" — was wrong, but the
+     * absence of that timeout makes a ceiling MORE necessary, not less: without one, a book full
+     * of rate-limited positions multiplies {@code retryAttempts} backoffs per position with
+     * nothing at all to stop the pass from running for minutes while the executor's run clock and
+     * the model's context both wait on it. The budget is now the only bound that exists. A book
+     * that already spent it on legitimate broker work gets no retries, which remains the right
+     * trade-off: an unratcheted stop escalates and is visible, an unbounded pass is neither.
+     */
+    private static final class RetryBudget {
+        private final long budgetMs;
+        private final long startNanos = System.nanoTime();
+
+        RetryBudget(long budgetMs) {
+            this.budgetMs = budgetMs;
+        }
+
+        /** True when {@code waitMs} of additional backoff still fits inside the budget. */
+        boolean consume(long waitMs) {
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+            return elapsedMs + waitMs <= budgetMs;
         }
     }
 

@@ -36,12 +36,12 @@ class MergerEnrichmentServiceTest {
         when(md.quotes(any())).thenReturn(Map.of("TGT", new Quote(new BigDecimal("47.50"), BigDecimal.ZERO)));
 
         List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT")));
+                .enrich(List.of(candidate("TGT"))).candidates();
 
         assertThat(out).hasSize(1);
         EnrichedMergerCandidate e = out.get(0);
         assertThat(e.symbol()).isEqualTo("TGT");
-        assertThat(e.termSheet()).contains("$52 cash");
+        assertThat(e.termSheetDigest()).contains("$52 cash");
         assertThat(e.termSheetAvailable()).isTrue();
         assertThat(e.lastPrice()).isEqualByComparingTo("47.50");
         assertThat(e.priceAvailable()).isTrue();
@@ -53,11 +53,11 @@ class MergerEnrichmentServiceTest {
         when(filings.filingText(any())).thenReturn(FilingText.unavailable());
         when(md.quotes(any())).thenReturn(Map.of());   // no price
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("ABC")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("ABC"))).candidates();
 
         EnrichedMergerCandidate e = out.get(0);
         assertThat(e.termSheetAvailable()).isFalse();
-        assertThat(e.termSheet()).isEmpty();
+        assertThat(e.termSheetDigest()).isEmpty();
         assertThat(e.lastPrice()).isNull();
         assertThat(e.priceAvailable()).isFalse();
     }
@@ -68,7 +68,7 @@ class MergerEnrichmentServiceTest {
         when(filings.filingText(any())).thenReturn(new FilingText("t", true));
         when(md.quotes(any())).thenThrow(new RuntimeException("boom"));
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("XYZ")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("XYZ"))).candidates();
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).priceAvailable()).isFalse();
@@ -81,7 +81,7 @@ class MergerEnrichmentServiceTest {
         // quotes() maps a missing/malformed price to BigDecimal.ZERO.
         when(md.quotes(any())).thenReturn(Map.of("ZRO", new Quote(BigDecimal.ZERO, BigDecimal.ZERO)));
 
-        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("ZRO")));
+        List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser()).enrich(List.of(candidate("ZRO"))).candidates();
 
         assertThat(out.get(0).lastPrice()).isNull();
         assertThat(out.get(0).priceAvailable()).isFalse();
@@ -95,7 +95,7 @@ class MergerEnrichmentServiceTest {
         when(md.quotes(any())).thenReturn(Map.of("TGT", new Quote(new BigDecimal("50.00"), BigDecimal.ZERO)));
 
         List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT")));
+                .enrich(List.of(candidate("TGT"))).candidates();
 
         EnrichedMergerCandidate e = out.get(0);
         assertThat(e.offerPrice()).isEqualByComparingTo("54.20");
@@ -127,7 +127,7 @@ class MergerEnrichmentServiceTest {
                 bar("2026-03-12", "40.00"), bar("2026-03-13", "41.90"), bar("2026-03-16", "55.00")));
 
         EnrichedMergerCandidate e = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT"))).get(0);
+                .enrich(List.of(candidate("TGT"))).candidates().get(0);
 
         assertThat(e.agreementDate()).isEqualTo(LocalDate.of(2026, 3, 15));
         assertThat(e.expectedCloseDate()).isEqualTo(LocalDate.of(2026, 12, 31));
@@ -145,7 +145,7 @@ class MergerEnrichmentServiceTest {
         when(md.dailyOhlcHistory(any(), anyInt())).thenReturn(List.of(bar("2026-03-13", "41.90")));
 
         EnrichedMergerCandidate e = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT"))).get(0);
+                .enrich(List.of(candidate("TGT"))).candidates().get(0);
 
         // spread = (60 − 54) / 54 × 100 = 11.11; recompute annualized off the result's own
         // daysToClose so the assertion is independent of the current date.
@@ -167,7 +167,7 @@ class MergerEnrichmentServiceTest {
         when(md.dailyOhlcHistory(any(), anyInt())).thenReturn(List.of());
 
         EnrichedMergerCandidate e = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT"))).get(0);
+                .enrich(List.of(candidate("TGT"))).candidates().get(0);
 
         assertThat(e.daysToClose()).isNotNull().isLessThan(1);
         assertThat(e.spreadPercent()).isNotNull();
@@ -183,7 +183,7 @@ class MergerEnrichmentServiceTest {
         when(md.quotes(any())).thenReturn(Map.of("TGT", new Quote(new BigDecimal("50.00"), BigDecimal.ZERO)));
 
         EnrichedMergerCandidate e = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT"))).get(0);
+                .enrich(List.of(candidate("TGT"))).candidates().get(0);
 
         assertThat(e.agreementDate()).isNull();
         assertThat(e.unaffectedPriceAvailable()).isFalse();
@@ -201,7 +201,7 @@ class MergerEnrichmentServiceTest {
         when(md.dailyOhlcHistory(any(), anyInt())).thenReturn(List.of(bar("2026-03-16", "55.00")));
 
         EnrichedMergerCandidate e = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT"))).get(0);
+                .enrich(List.of(candidate("TGT"))).candidates().get(0);
 
         assertThat(e.unaffectedPriceAvailable()).isFalse();
         assertThat(e.unaffectedPrice()).isNull();
@@ -220,12 +220,12 @@ class MergerEnrichmentServiceTest {
 
         MergerEnrichmentService svc = new MergerEnrichmentService(filings, md, new DealTermsParser());
 
-        svc.enrich(List.of(candidate("TGT"), candidate("ABC")));
+        svc.enrich(List.of(candidate("TGT"), candidate("ABC"))).candidates();
         // First candidate tripped the source-down guard → the second is skipped this batch.
         verify(md, times(1)).dailyOhlcHistory(any(), anyInt());
 
         // A fresh batch resets the per-run guard and retries OHLC.
-        svc.enrich(List.of(candidate("TGT")));
+        svc.enrich(List.of(candidate("TGT"))).candidates();
         verify(md, times(2)).dailyOhlcHistory(any(), anyInt());
     }
 
@@ -242,7 +242,7 @@ class MergerEnrichmentServiceTest {
         when(md.dailyOhlcHistory(eq("ABC"), anyInt())).thenReturn(List.of(bar("2026-03-13", "20.00")));
 
         List<EnrichedMergerCandidate> out = new MergerEnrichmentService(filings, md, new DealTermsParser())
-                .enrich(List.of(candidate("TGT"), candidate("ABC")));
+                .enrich(List.of(candidate("TGT"), candidate("ABC"))).candidates();
 
         // NOT_FOUND leaves the source up → ABC is still queried and anchored.
         verify(md, times(1)).dailyOhlcHistory(eq("ABC"), anyInt());

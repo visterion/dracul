@@ -5,6 +5,8 @@ import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
+import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
@@ -46,6 +48,8 @@ class StrigoiLazarusProbeTest {
         var screener = new LazarusScreener();
         var enrichment = mock(LazarusEnrichmentService.class);
         when(enrichment.enrich(any())).thenReturn(List.of());
+        var index = mock(AgoraIndexConstituents.class);
+        var priceRange = mock(AgoraPriceRange.class);
         var preyRepo = mock(PreyRepository.class);
         var cache = new ToolFetchCache(new AgentToolCatalog(List.of()), 0);
 
@@ -55,8 +59,9 @@ class StrigoiLazarusProbeTest {
         controller = new StrigoiLazarusWebhookController(
                 "tok", watchlist, companyData, screener, enrichment, preyRepo, cache,
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
-                heldPositionService, CONNECTION,
-                0.10, 3.0, 2.0, 20, CANARY);
+                heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
+                0.10, 3.0, 2.0, 20, CANARY,
+                "watchlist", 600, 0.25, 150_000L, 10, 60);
     }
 
     private WatchlistItem item(String ticker, String currency) {
@@ -81,13 +86,14 @@ class StrigoiLazarusProbeTest {
         verify(companyData, never()).fundamentalsResult("SAP.DE");
     }
 
+    /** No universe -> no probe, and (D7) no "healthy" either: an empty universe is unavailable. */
     @Test
-    void emptyWatchlist_noProbe() {
+    void emptyWatchlist_noProbe_andUnavailable() {
         when(watchlist.findAllByUser("default")).thenReturn(List.of());
 
         var result = controller.hunt(Map.of());
 
-        assertThat(result.health().isHealthy()).isTrue();
+        assertThat(result.health().isHealthy()).isFalse();
         verify(companyData, never()).fundamentalsResult(anyString());
     }
 

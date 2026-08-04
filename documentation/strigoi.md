@@ -23,9 +23,9 @@ logic and the hunt pattern.
 | strigoi-spin | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured distribution fields 2026-07-11; full lifecycle persistence 2026-07-12** — EDGAR Form-10-12B spin-off registrations (last 60 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; deterministic pre-screen surfaces recent spin-co registrations, the LLM assesses the Greenblatt forced-selling thesis (only tradeable tickers persisted). Each candidate carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`); the LLM extracts parent/ratio/record-date/size from it, fail-soft (conservative judgement) when unavailable. A deterministic `SpinTermsParser` regex-extracts `distributionRatio` / `recordDate` / `distributionDate` from `termSheet` server-side (and a best-effort `parentSymbol` from an exchange-qualified parenthetical); the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null`. **As of the 2026-07-12 lifecycle rebuild** the hunter is no longer single-shot/stateless: every 10-12B registration is persisted to `spin_candidate` (V26) and tracked through a REGISTERED → WHEN_ISSUED → DISTRIBUTED → SETTLED/ABANDONED state machine across hunts, with stage-appropriate enrichment (pre-distribution balance sheet, post-distribution size/forced-selling read, post-settlement valuation) and prey promotion gated to the DISTRIBUTED forced-selling window. Prompt bumped to `1.3.0` (new nullable stage fields, confidence rubric, 3m/6-12m horizon split). See "Strigoi-Spin: lifecycle persistence" below for the full flow |
 | strigoi-insider | **implemented 2026-05-25; context enrichment 2026-07-12** — Form-4 cluster screener, reasoning tier (model_purpose `reasoning`; moved off Haiku/`routine` after a JSON-key-drift bug (the model emitted German field names like `thesis_de` instead of the schema's English keys, so every prey was rejected)), agent registered with Vistierie on Dracul startup, deterministic pre-screen (≥3 distinct filers, 30-day window, total > $500k purchases). Each clustered filer now carries its free-text Form-4 officer `role` (empty for non-officers), so the LLM's CEO/CFO-diversity rubric can actually weigh it. `fetch_recent_clusters` also annotates each cluster with `netInsiderDollar` (purchases minus concurrent insider sales in the window) and `concurrentInsiderSells` (distinct selling insiders); this is advisory only — the LLM weighs it into confidence, no cluster is dropped for it. Each cluster is further enriched by `InsiderEnrichmentService` (added 2026-07-12, fail-soft with per-group availability flags, never gates): `marketCap` / `adv` + `metricsAvailable` (via `EquityMetricsExtractor` and Agora `get_ohlc`, 20-day average dollar volume — same mechanism as strigoi-index), `analystCoverage` + `coverageAvailable` (Finnhub recommendation-trend analyst count, semantics as in echo SP3, fetched via `AgoraCompanyData.recommendationsStrict` — the outage-propagating variant, so the source-down guard below is real for this source; the swallowing default `recommendations()` stays with echo), `ytdReturn` + `ytdReturnAvailable` (calendar-YTD fraction from Agora OHLC), and `nextEarningsDate` / `daysToEarnings` + `earningsDateAvailable` (Agora earnings calendar via `AgoraEarnings`, informational only — no hard gate, unlike echo). Latency guard: clusters are sorted by `totalDollarValue` descending before the 25-cluster cap (truncation is logged, the smallest are dropped); a source failing with an availability error (`AgoraUnavailableException` / `MarketDataException(UNAVAILABLE)`, as opposed to symbol-specific failures) is skipped for the rest of the batch, and with ≥2 sources down enrichment is skipped entirely for the remaining clusters — a dead Agora tool cannot blow the 30s webhook budget. The prompt's rubric (v2, `1.2.0`) up-weights small/mid-cap + low-coverage names (Lakonishok-Lee information asymmetry), dampens well-covered large caps, backs the value-trap risk with the `ytdReturn` number, adds a `daysToEarnings` < ~10 timing caveat to risks, and demotes CEO/CFO role diversity to a secondary refinement of the cluster/conviction picture. **Routine/opportunistic classification (added 2026-07-12, prompt `1.3.0`)**: each filer is classified `OPPORTUNISTIC` / `ROUTINE` / `UNKNOWN` (Cohen, Malloy & Pomorski 2012) from their multi-year Form-4 history fetched via `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`) — ONE call per cluster (the tool returns every reporting owner of the company at once), obeying the same availability source-down guard as the other enrichment sources. `RoutineClassifier` rule: ROUTINE when ≥2 distinct prior calendar years each carry an open-market purchase (code `P`) in the same month ±1 as the current buy (Dec/Jan wrap included; a positive cadence wins even on a `truncated` history); UNKNOWN when the history is `truncated` or carries fewer than 3 purchases (absence of a cadence is not trusted — never scored as opportunistic); OPPORTUNISTIC otherwise. The cluster carries `opportunisticShare` (opportunistic ÷ classifiable), `classifiedFilers`, `unknownFilers`, `classificationAvailable`; each filer also carries `sharesOwnedFollowing`, `purchaseAsPctOfHoldings` (relative conviction) and `planned10b5_1` (tri-state Rule 10b5-1(c) plan flag — derived from the same owner history, `null` = unknown ≠ false). 10b5-1-planned buys are **marked, not dropped** (aff10b5One is tri-state; `null` is not `false`, so a hard drop would silently discard unknown-plan buys). The `1.3.0` prompt makes `opportunisticShare` the PRIMARY criterion — a routine-dominated cluster is skipped/dampened regardless of dollar size or filer count — uses `purchaseAsPctOfHoldings` as an amplifier, dampens 10b5-1 buys, treats UNKNOWN/`classificationAvailable=false` conservatively (never as opportunistic), and reworks the confidence bands around the opportunistic read rather than raw filer-count + dollar. |
 | strigoi-echo | **implemented 2026-06-02; signal upgrade (v2 SP1) 2026-06-24; market-reaction signals (v2 SP2) 2026-06-27; kill-criteria polish 2026-07-13** — reasoning tier (model_purpose `reasoning`; moved off Haiku/`routine` after a JSON-key-drift bug (the model emitted German field names like `thesis_de` instead of the schema's English keys, so every prey was rejected)), agent registered with Vistierie on Dracul startup, deterministic long-only pre-screen (current price ≥ $5, capped at `dracul.strigoi.echo.max-candidates` strongest-by-EPS-surprise, default 40 — see "Strigoi-Echo: news index/detail split" below). Earnings announcements come from **Finnhub `/calendar/earnings`** (primary), with the Yahoo earnings calendar demoted to a config-selectable fallback. A deterministic enrichment layer replaces the old raw-5%-surprise signal with academic PEAD signals: **time-series SUE** (Foster seasonal-random-walk, from SEC EDGAR quarterly diluted-EPS history with date-based seasonal alignment) ranked cross-sectionally into **deciles** (z-band fallback for thin batches), **revenue-surprise / double-beat**, and **consecutive seasonal beats**. SP2 further enriches surviving candidates with market-reaction signals from daily OHLC and Finnhub metrics (see SP2 section below). The LLM applies a SUE-based confidence rubric (not a fixed 5% threshold); each emitted prey echoes its numeric **SUE + decile** in `signals`. Long-only. Prompt bumped to `1.2.0` (2026-07-13): the kill-criteria section now includes a worked, concrete price example (a close below `currentPrice` — the price at the time the thesis was flagged — stated as a dollar level, e.g. "dead if it closes below $54.20"), aligning it with the concrete-price-example style already used by strigoi-lazarus/merger/spin; no field renames, thesis unchanged. |
-| strigoi-lazarus | **implemented 2026-06-05; real Piotroski F-score (Slice 2b) 2026-07-07** — watchlist-scoped; screens watchlist names within ~10% of their 52-week low with a light solvency gate (positive ROA or free cash flow, modest leverage), plus a **cheapness (valuation) gate** (must be cheap by price-to-book or price/FCF-per-share) and a hard drop on high Sloan accruals — both deterministic and applied server-side. The F-Score is no longer judged qualitatively by the LLM: it is computed deterministically via Agora's `get_fundamental_score` tool (strict scoring + a `fScoreCriteriaAvailable` coverage count from SEC companyfacts) and attached to each surviving candidate. The reasoning-tier LLM then applies the ranking/confidence rubric — rank by `fScore`, skip below 6, dampen confidence when `fScoreCriteriaAvailable` is thin — and narrates the thesis, rather than scoring the F-Score itself, and emits `QUALITY_52W_LOW` Prey. Each enriched candidate also carries `cfoExceedsNetIncome` **plus `cfoExceedsNetIncomeAvailable`** (added 2026-07-12): because the accruals hard-drop already removes every candidate with an available-but-false signal server-side, a wire-level `false` only ever means "not computable" — the availability flag makes that explicit, and the prompt treats unavailable as unknown (mild confidence dampening), not as a quality warning. **Timing/stabilization signals (added 2026-07-12)**: each surviving candidate additionally carries three deterministic signals computed server-side from one Agora daily-OHLC query (~260 trading days) — `priceVs50dMa` (last close vs the 50-day MA, decimal fraction), `weeksSinceNewLow` (full weeks since the ~52-week closing low; 0 = fresh low), `momentum3m` (~63-bar price change, decimal fraction) — plus `timingAvailable` (false only when all three are null; individual fields may still be null on short history). The prompt uses them for a "no falling knife" rule: a fresh low (≤ ~2 weeks) with the price clearly below the 50-day MA means skip or dampen hard regardless of `fScore`; ≥ ~4 weeks since the low or price above the 50d MA reinforces the setup; `momentum3m` near zero after a decline reads as base building. Fail-soft per candidate; an availability-kind OHLC failure disables the OHLC source for the remaining candidates of the batch (symbol-specific NOT_FOUND does not). **Altman-Z distress screen (added 2026-07-12)**: each surviving candidate also carries `zScore` (classic Altman Z, 1968; scale 2) + `zScoreAvailable`, computed server-side by `AltmanZCalculator` from SEC XBRL concepts via Agora's `get_company_concept` (Assets, AssetsCurrent, LiabilitiesCurrent, Liabilities, RetainedEarningsAccumulatedDeficit as same-date balance-sheet instants; OperatingIncomeLoss as EBIT and Revenues — with the F-score's fallback tag chain — as latest-fiscal-year annual flows) plus the Finnhub market cap already fetched for the screen (USD millions, converted ×10⁶ to USD for X4). No partial Z: any missing input, date misalignment, or non-positive liabilities → `zScoreAvailable=false`, `zScore=null`. Z is only attempted when the candidate's F-score itself resolved (both read the same EDGAR companyfacts, so a resolved F-score proves the symbol is known to EDGAR); an Agora availability failure during the concept fetches then genuinely means "source down" and disables the Z enrichment for the remaining candidates of the batch. The prompt applies a distress VETO: Z < 1.8 → do not emit, regardless of `fScore`/timing; 1.8–3.0 → grey zone (dampened confidence, Z named in `risks`); > 3.0 → solid; `zScoreAvailable=false` → unknown, judge conservatively, never invent a Z. Caveat in the prompt: Z is calibrated on industrials and unreliable for financials (banks/insurers, recognized by `companyName` patterns since the payload has no sector field) — there it is ignored in either direction. **Batch cap + F-score guard (added 2026-07-12)**: the enrichment sorts candidates by `pctAboveLow` ascending (closest to the 52w low first — the only meaningful priority available before any enrichment data is fetched) and caps at 25 per batch (log line on truncation, mirroring the insider cap). The F-score fetch itself now uses the strict variant (`fundamentalScoreStrict`): an Agora availability failure disables the fetch for the remaining candidates of the batch (candidates ride through score-less/fail-soft, exactly as with an unavailable score). **Forward revisions + analyst coverage (added 2026-07-12)**: each surviving candidate also carries `netEstimateRevisionsProxy` / `netEstimateRevisionsDirection` (the echo SP3 recommendation-trend delta, reused via `RevisionsProxy` — latest-period net minus previous-period net of strongBuy+buy−sell−strongSell; `up`/`down`/`flat`) and `analystCoverage` (latest-period analyst count via `AnalystCoverage`, from the SAME `get_analyst_estimates` response — no extra call), plus ONE shared `revisionsAvailable` flag (echo's two flags are always equal by construction, so lazarus carries one; false ⇒ all three fields null). Costs one additional Agora call per candidate, fail-soft, with the same availability-kind source-down guard as the OHLC/concept fetches (symbol-specific failures do not disable the source) — fetched via `AgoraCompanyData.recommendationsStrict`, the outage-propagating variant (the default `recommendations()` swallows outages into an empty list, which would make the guard dead code and burn a dead ~16s call per remaining candidate). The prompt uses it as a forward-looking check on the backward-looking TTM fundamentals: a clearly negative revisions direction = value-trap warning → dampen confidence + name it in `risks` — explicitly a DAMPENER, not a veto (severity ladder: fScore<6 skip > Z<1.8 veto > falling-knife veto > revisions dampener); `up`/`flat` near the low = quiet reinforcer; low `analystCoverage` = mild advisory neglect up-weight, high = mild dampener; `revisionsAvailable` false = unknown/conservative, never invented. **Depot dedup (added 2026-07-13)**: the candidate universe (still the user's watchlist names) is filtered against the live depot-1 positions (`HeldPositionService.openPositions`, by symbol) before screening — a watchlist name already held is not a "new" quality-at-low candidate. A depot-down fetch (fail-soft, empty position list) excludes nothing rather than erroring. |
+| strigoi-lazarus | **implemented 2026-06-05; real Piotroski F-score (Slice 2b) 2026-07-07** — watchlist-scoped; screens watchlist names within ~10% of their 52-week low with a light solvency gate (positive ROA or free cash flow, modest leverage), plus a **cheapness (valuation) gate** (must be cheap by price-to-book or price/FCF-per-share) and a hard drop on high Sloan accruals — both deterministic and applied server-side. The F-Score is no longer judged qualitatively by the LLM: it is computed deterministically via Agora's `get_fundamental_score` tool (strict scoring + a `fScoreCriteriaAvailable` coverage count from SEC companyfacts) and attached to each surviving candidate. The reasoning-tier LLM then applies the ranking/confidence rubric — rank by `fScore`, skip below 6, dampen confidence when `fScoreCriteriaAvailable` is thin — and narrates the thesis, rather than scoring the F-Score itself, and emits `QUALITY_52W_LOW` Prey. Each enriched candidate also carries `cfoExceedsNetIncome` **plus `cfoExceedsNetIncomeAvailable`** (added 2026-07-12): because the accruals hard-drop already removes every candidate with an available-but-false signal server-side, a wire-level `false` only ever means "not computable" — the availability flag makes that explicit, and the prompt treats unavailable as unknown (mild confidence dampening), not as a quality warning. **Timing/stabilization signals (added 2026-07-12)**: each surviving candidate additionally carries three deterministic signals computed server-side from one Agora daily-OHLC query (~260 trading days) — `priceVs50dMa` (last close vs the 50-day MA, decimal fraction), `weeksSinceNewLow` (full weeks since the ~52-week closing low; 0 = fresh low), `momentum3m` (~63-bar price change, decimal fraction) — plus `timingAvailable` (false only when all three are null; individual fields may still be null on short history). The prompt uses them for a "no falling knife" rule: a fresh low (≤ ~2 weeks) with the price clearly below the 50-day MA means skip or dampen hard regardless of `fScore`; ≥ ~4 weeks since the low or price above the 50d MA reinforces the setup; `momentum3m` near zero after a decline reads as base building. Fail-soft per candidate; an availability-kind OHLC failure disables the OHLC source for the remaining candidates of the batch (symbol-specific NOT_FOUND does not). **Altman-Z distress screen (added 2026-07-12)**: each surviving candidate also carries `zScore` (classic Altman Z, 1968; scale 2) + `zScoreAvailable`, computed server-side by `AltmanZCalculator` from SEC XBRL concepts via Agora's `get_company_concept` (Assets, AssetsCurrent, LiabilitiesCurrent, Liabilities, RetainedEarningsAccumulatedDeficit as same-date balance-sheet instants; OperatingIncomeLoss as EBIT and Revenues — with the F-score's fallback tag chain — as latest-fiscal-year annual flows) plus the Finnhub market cap already fetched for the screen (USD millions, converted ×10⁶ to USD for X4). No partial Z: any missing input, date misalignment, or non-positive liabilities → `zScoreAvailable=false`, `zScore=null`. Z is only attempted when the candidate's F-score itself resolved (both read the same EDGAR companyfacts, so a resolved F-score proves the symbol is known to EDGAR); an Agora availability failure during the concept fetches then genuinely means "source down" and disables the Z enrichment for the remaining candidates of the batch. The prompt applies a distress VETO: Z < 1.8 → do not emit, regardless of `fScore`/timing; 1.8–3.0 → grey zone (dampened confidence, Z named in `risks`); > 3.0 → solid; `zScoreAvailable=false` → unknown, judge conservatively, never invent a Z. Caveat in the prompt: Z is calibrated on industrials and unreliable for financials (banks/insurers, recognized by `companyName` patterns since the payload has no sector field) — there it is ignored in either direction. **Batch cap + F-score guard (added 2026-07-12)**: the enrichment sorts candidates by `pctAboveLow` ascending (closest to the 52w low first — the only meaningful priority available before any enrichment data is fetched) and caps at 25 per batch (log line on truncation, mirroring the insider cap). The F-score fetch itself now uses the strict variant (`fundamentalScoreStrict`): an Agora availability failure disables the fetch for the remaining candidates of the batch (candidates ride through score-less/fail-soft, exactly as with an unavailable score). **Forward revisions + analyst coverage (added 2026-07-12)**: each surviving candidate also carries `netEstimateRevisionsProxy` / `netEstimateRevisionsDirection` (the echo SP3 recommendation-trend delta, reused via `RevisionsProxy` — latest-period net minus previous-period net of strongBuy+buy−sell−strongSell; `up`/`down`/`flat`) and `analystCoverage` (latest-period analyst count via `AnalystCoverage`, from the SAME `get_analyst_estimates` response — no extra call), plus ONE shared `revisionsAvailable` flag (echo's two flags are always equal by construction, so lazarus carries one; false ⇒ all three fields null). Costs one additional Agora call per candidate, fail-soft, with the same availability-kind source-down guard as the OHLC/concept fetches (symbol-specific failures do not disable the source) — fetched via `AgoraCompanyData.recommendationsStrict`, the outage-propagating variant (the default `recommendations()` swallows outages into an empty list, which would make the guard dead code and burn a dead ~16s call per remaining candidate). The prompt uses it as a forward-looking check on the backward-looking TTM fundamentals: a clearly negative revisions direction = value-trap warning → dampen confidence + name it in `risks` — explicitly a DAMPENER, not a veto (severity ladder: fScore<6 skip > Z<1.8 veto > falling-knife veto > revisions dampener); `up`/`flat` near the low = quiet reinforcer; low `analystCoverage` = mild advisory neglect up-weight, high = mild dampener; `revisionsAvailable` false = unknown/conservative, never invented. **Depot dedup (added 2026-07-13)**: the candidate universe (market-wide since 2026-08-04, see below; the user's watchlist names before that) is filtered against the live depot-1 positions (`HeldPositionService.openPositions`, by symbol) before screening — a watchlist name already held is not a "new" quality-at-low candidate. A depot-down fetch (fail-soft, empty position list) excludes nothing rather than erroring. **Market-wide universe (2026-08-04)**: the universe is now the S&P 500 via Agora `get_index_constituents` plus the watchlist, behind a cheap `get_indicators`/`52w_range` pre-filter, with every per-symbol and budget loss reported as `partial`/`truncated` and an empty universe reported as `unavailable` — see "Lazarus market-wide universe + honest health" below. |
 | strigoi-index | **implemented 2026-06-06; liquidity enrichment 2026-07-11; announcement-anchored lifecycle 2026-07-12** — routine tier (model_purpose `routine`), agent registered with Vistierie on startup. **As of the 2026-07-12 lifecycle rebuild** the hunter no longer reads the Wikipedia `Date added` column (effective-date-only, i.e. already too late). It ingests announced constituent changes from Agora's `get_index_constituent_changes` (S&P press-release RSS + Russell reconstitution — each change carrying both an **announcement date** and an **effective date**), persists every change to `index_event` (V27) and tracks it through an ANNOUNCED → EFFECTIVE → POST → CLOSED / ABANDONED state machine across hunts. The logic is flipped: the LLM judges whether the **today → `effectiveDate`** forced-buy window is still open (not whether an addition already happened) and emits `INDEX_INCLUSION` Prey **only** from ANNOUNCED rows; EFFECTIVE/POST rows are informational (run-up/reversal observation only). Prey promotion is hard-gated to the still-open ANNOUNCED window (source-aware: S&P 5 trading days, Russell 20). Prompt bumped to `2.0.0` (logic-flip). See "Strigoi-Index: announcement-anchored lifecycle" below for the full flow |
-| strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured deal terms + server-computed spread 2026-07-11; expected-value data (Mitchell & Pulvino) 2026-07-12** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate now carries `termSheet` / `termSheetAvailable` — the filing's cleaned summary-term-sheet text via Agora's `get_filing_text` tool (`AgoraFilings.filingText(filingUrl)`) — plus `lastPrice` / `priceAvailable`; the LLM extracts offer/consideration/conditions/termination-fee from the term sheet and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable. A deterministic `DealTermsParser` now regex-extracts `offerPrice` / `considerationType` (cash/stock/mixed) / `exchangeRatio` / `breakFee` from `termSheet` server-side, and `MergerEnrichmentService` computes `spreadPercent = (offerPrice − lastPrice) / lastPrice × 100` when both are available; the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheet` itself when any is `null`. `DealTermsParser` also extracts the deal time-axis dates — `agreementDate` (the announcement anchor; the feed's DEFM14A/SC TO-T land weeks/months after announcement, so `lastPrice` is already the arb price), `expectedCloseDate` (quarter/half estimates mapped conservatively to the period end), and a separate `outsideDate` (End Date, never used as the close estimate). `MergerEnrichmentService` then adds the Mitchell & Pulvino (2001) expected-value inputs: `unaffectedPrice` / `unaffectedPriceAvailable` (close of the last trading day before `agreementDate`, from ONE ~400-day Agora daily-OHLC query per candidate, same latency-guard/source-down short-circuit as Lazarus), `daysToClose`, `annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, guarded to `daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice) / lastPrice × 100`, the deal-break cliff). The prompt (v1.2.0) reframes the judgement around expected value — weigh `annualizedSpreadPercent` against `breakDownsidePercent`, don't chase wide spreads, dampen stock/mixed deals (unhedged acquirer risk), couple the horizon to `expectedCloseDate`/form type, and treat the payoff as negatively-skewed with an event-based (not trailing-stop) exit |
+| strigoi-merger | **implemented 2026-06-05; term-sheet enrichment 2026-07-08; structured deal terms + server-computed spread 2026-07-11; expected-value data (Mitchell & Pulvino) 2026-07-12** — EDGAR EFTS `forms=DEFM14A,SC TO-T` (definitive merger proxies + tender offers, last 45 days), reasoning tier (model_purpose `reasoning`), agent registered with Vistierie on startup; surfaces recent SEC deal filings (DEFM14A definitive merger proxies + SC TO-T tender offers); the reasoning-tier LLM judges the spread and closing probability and emits `MERGER_ARB` Prey. Each candidate carries `termSheetDigest` / `termSheetAvailable` — **a bounded digest of the filing's summary term sheet, no longer the raw text** (see "Strigoi-Merger: term-sheet digest and the derived cap" below) — plus `lastPrice` / `priceAvailable`; the LLM reads the closing-risk sections out of the digest and computes the spread vs `lastPrice`, fail-soft (conservative judgement) when unavailable. A deterministic `DealTermsParser` regex-extracts `offerPrice` / `considerationType` (cash/stock/mixed) / `exchangeRatio` / `breakFee` from the fetched filing text server-side, and `MergerEnrichmentService` computes `spreadPercent = (offerPrice − lastPrice) / lastPrice × 100` when both are available; the LLM prefers these server-extracted fields (verifying rather than recomputing) and falls back to reading `termSheetDigest` itself when any is `null`. `DealTermsParser` also extracts the deal time-axis dates — `agreementDate` (the announcement anchor; the feed's DEFM14A/SC TO-T land weeks/months after announcement, so `lastPrice` is already the arb price), `expectedCloseDate` (quarter/half estimates mapped conservatively to the period end), and a separate `outsideDate` (End Date, never used as the close estimate). `MergerEnrichmentService` then adds the Mitchell & Pulvino (2001) expected-value inputs: `unaffectedPrice` / `unaffectedPriceAvailable` (close of the last trading day before `agreementDate`, from ONE ~400-day Agora daily-OHLC query per candidate, same latency-guard/source-down short-circuit as Lazarus), `daysToClose`, `annualizedSpreadPercent` (`spreadPercent × 365 / daysToClose`, guarded to `daysToClose ≥ 1`), and `breakDownsidePercent` (`(lastPrice − unaffectedPrice) / lastPrice × 100`, the deal-break cliff). The prompt (v1.2.0) reframes the judgement around expected value — weigh `annualizedSpreadPercent` against `breakDownsidePercent`, don't chase wide spreads, dampen stock/mixed deals (unhedged acquirer risk), couple the horizon to `expectedCloseDate`/form type, and treat the payoff as negatively-skewed with an event-based (not trailing-stop) exit. **Degradation reporting (2026-08-04):** the enrichment returns `EnrichedMergerBatch` (candidates + `truncated` + `filingTextFailures` + `oversizedFilings`) instead of a bare list, so its own losses reach `data_source_health` — previously the health came exclusively from `searchMergers` and both losses were invisible. The candidate cap moved from a hard-coded 25 to `dracul.strigoi.merger.max-candidates` (**default 30**, derived from the bridge's tool-result cap — see below) and reports a cut as `truncated`; term sheets that could not be fetched report as `partial`, naming separately how many were Agora refusing an oversized document (not an outage, and it will fail again on retry). **Payload fix (2026-08-04):** the raw term sheet no longer rides the response at all — `termSheet` became `termSheetDigest`, a ≤ `dracul.strigoi.merger.term-sheet-digest-chars` (default 700) digest of the risk-bearing sections |
 
 ### Strigoi-Echo SP2: market-reaction signals
 
@@ -75,11 +75,21 @@ up-weight (high coverage is a mild dampener); it is advisory only, the LLM decid
 `fetch_candidate_news`, `search`.** Echo used to carry the full per-candidate news
 (headline + summary) in the `fetch_recent_pead_candidates` response. That summary text
 alone accounted for ~44% of a candidate's payload and, on a batch with several
-newsy candidates, pushed the tool-call result past Vistierie's ~95 kB bridge limit — the
+newsy candidates, pushed the tool-call result past Vistierie's bridge limit — the
 bridge silently offloaded the oversized result to a file the agent cannot read, and Echo
 returned nothing for seven days without any error surfacing.
 
-The fix combines two defenses: **a hard candidate cap** and a two-step, index-then-detail flow. The candidate-filtering pre-screen ranks all qualifying earnings observations by EPS-surprise strength and **caps at `dracul.strigoi.echo.max-candidates` (default 40)** before resolving any prices — a structural ceiling against the ~95-kB limit. At ~1.7 kB per serialized candidate, 40 leaves headroom below the ~56-candidate structural limit derived from the bridge; the surplus is dropped deterministically (strongest first) and reported via `data_source_health.truncated = true`.
+**What that limit actually is (measured 2026-08-04; the "~95 kB" quoted here before was
+folklore).** Every Vistierie tool reaches the model as an in-process SDK MCP tool, and the
+Claude Code CLI caps an MCP result at `MAX_MCP_OUTPUT_TOKENS` = 25 000 tokens (unset on the
+bridge container, so the compiled default applies). Enforcement has two stages: a cheap
+pre-check estimates tokens as `round(chars/4)` and skips truncation entirely at or below
+12 500 tokens — **50 000 characters is the guaranteed-safe zone** — while above it the real
+tokenizer runs and a result over 25 000 tokens is cut to `25 000 × 4` = **100 000
+characters**, the hard ceiling, with `[OUTPUT TRUNCATED - exceeded 25000 token limit]`
+appended.
+
+The fix combines two defenses: **a hard candidate cap** and a two-step, index-then-detail flow. The candidate-filtering pre-screen ranks all qualifying earnings observations by EPS-surprise strength and **caps at `dracul.strigoi.echo.max-candidates` (default 40)** before resolving any prices — a structural ceiling against that limit. At ~1.7 kB per serialized candidate the structural ceiling is ~29 candidates against the safe zone and ~58 against the hard ceiling; the surplus is dropped deterministically (strongest first) and reported via `data_source_health.truncated = true`.
 
 The two-step flow provides a second layer:
 
@@ -173,8 +183,21 @@ no new scheduler):
 4. **RESPOND** — the LLM payload (`EnrichedSpinCandidate` rows) is rebuilt from the
    persisted columns + snapshots of the **active, unpromoted** window {`REGISTERED`,
    `WHEN_ISSUED`, `DISTRIBUTED`}, newest-discovered first — not read straight from
-   the live search. The ingest search's data-source health rides the response as
-   before.
+   the live search — **and restricted to the hunt's requested window** (`filing_date`
+   OR `distribution_date` on/after `today − lookback_days`;
+   `SpinCandidateRepository.findActiveUnpromotedInWindow`). Before 2026-08-04 this
+   read the whole active table, so `lookback_days` reached the EDGAR ingest search
+   but never the answer: a 14-day and a 90-day request returned the identical rows.
+   The filing date is the primary clock because `lookback_days` is already an EDGAR
+   filing-date window on the ingest side; the distribution date is ORed in because a
+   spin-off's tradeable event lands weeks or months after the 10-12B and a
+   freshly-distributed spin-co must not drop out because its registration is old.
+   `discovered_at` is deliberately not the filter (it records when Dracul first saw
+   the row, not a market fact) — it stays the ordering. A row carrying neither date
+   is always returned rather than silently dropped. The response is capped at 50
+   rows; a full page is reported conservatively as
+   `data_source_health.truncated = true`. The ingest search's data-source health
+   rides the response, merged with that cap.
 
 **State transitions and their triggers** (all guarded CAS, `WHERE status = <from>`;
 never reversed):
@@ -242,6 +265,66 @@ persisted regardless.
 **Horizon.** The prompt (`1.3.0`) splits the thesis into a ~3-month
 forced-selling/index-drop compression window and a 6-12-month fundamental re-rating;
 the controller's default horizon is `6m`.
+
+## Strigoi-Merger: term-sheet digest and the derived cap
+
+**The hunter was blind and looked healthy (2026-08-04).** Agora caps
+`get_filing_text` at 24 000 characters per filing, and Dracul shipped that
+verbatim as the candidate field `termSheet`. One production run
+(`74754073068449F3BA047A2DC32CB22F`, 05:00) produced a **329 818-character** tool
+payload for 25 candidates; four further runs measured 305 587–353 968
+characters. All five finished `status=done` with a final `{"prey": []}` — the
+model received a candidate list chopped mid-JSON at the bridge's 100 000-character
+hard ceiling (see "Strigoi-Echo: news index/detail split" above for the limit and
+how it is enforced) and had nothing usable to reason over.
+
+**The payload is now bounded twice: a digest per candidate, and a derived
+candidate cap.**
+
+*The digest.* `termSheet` is gone; the field is `termSheetDigest`, produced by
+`TermSheetDigest.of(text, budgetChars)`. It keeps the sections that price deal
+risk, spent from the top of this priority order until the budget runs out:
+
+1. closing conditions, 2. regulatory approvals (antitrust / HSR / CFIUS),
+3. termination fees, 4. no-solicitation / go-shop, 5. financing,
+6. shareholder vote.
+
+Each slice starts **at** the heading (an unlabelled fragment is worse than none),
+runs at most 240 characters and is trimmed to a word boundary; the total never
+exceeds `dracul.strigoi.merger.term-sheet-digest-chars` (default 700). When no
+cue matches — a filing whose summary is written unconventionally — it falls back
+to a head excerpt of the same length rather than returning nothing.
+`termSheetAvailable` is unchanged.
+
+*Why a digest and not a truncation.* The head of a summary term sheet is its
+least useful part: page references, "The Parties to the Merger (page 19)", and
+paragraphs on where each entity is incorporated. A head excerpt would spend the
+whole budget before reaching a fact that moves a closing probability.
+
+*Why so little is enough.* Everything quantitative the prompt used to ask the
+model to mine out of that prose is already extracted server-side by
+`DealTermsParser` and rides the payload as its own field — offer price,
+consideration type, exchange ratio, break fee, agreement/expected-close/outside
+dates, plus the spread, annualized spread, unaffected price and break downside
+computed from them. What parsing cannot deliver is the *qualitative* closing
+risk, which is exactly what the cues select.
+
+*The cap.* `dracul.strigoi.merger.max-candidates` is **30**, derived rather than
+chosen: a 50 000-character budget (the bridge's guaranteed-safe zone) minus 5 000
+reserved for the envelope leaves 45 000 for candidates; per candidate 645
+characters of structured fields (measured worst case over 200 production records;
+the average is 623) + 20 characters of key overhead + a 700-character digest,
+× 1.05 for JSON escaping ≈ 1 400; `45 000 / 1 400 = 32.1` → 30. Worst case
+`30 × 1 400 + 5 000 = 47 000` characters — 6 % under the safe zone and 2.13× under
+the hard ceiling. It is deliberately not 25 (provably binding: a 45-day and a
+90-day window both returned exactly 25 rows) and cannot be 40 (40 × 645 = 25 800
+characters of structured fields before a single character of deal text).
+`MergerPayloadBudgetTest` holds the derivation and fails the build if the cap and
+the digest budget drift apart; `TermSheetDigestTest` covers the section selection
+and the fallback.
+
+The prompt stays at version `1.4.0` with a changed body (registry hash updated):
+it describes `termSheetDigest` instead of the raw term sheet.
 
 ## Strigoi-Index: announcement-anchored lifecycle
 
@@ -479,11 +562,102 @@ non-US candidate. Config: `dracul.strigoi.lazarus.probe-symbol` (health probe, d
 `AAPL`) and `dracul.fundamentals.non-us-suffixes` (the non-US venue whitelist) — see
 `documentation/configuration.md`.
 
+**Lazarus market-wide universe + honest health (2026-08-04).** The screened
+universe is no longer `watchlist_items`. It is now `LAZARUS_UNIVERSE_SOURCE`
+(default `sp500`, fetched via Agora `get_index_constituents` and its
+`AgoraIndexConstituents` facade) **plus** every watchlist entry, minus what
+depot-1 already holds. Watchlist names bypass the pre-filter and are always
+screened — a name the user tracks by hand is the stronger signal.
+
+*Why:* `StrigoiLazarusWebhookController` built an empty universe, skipped the
+health probe and returned `DataSourceResult.healthy("agora", [])`. **Correction
+(2026-08-04): the watchlist table itself was never empty** — the count that
+looked like proof (`watchlist_items` for user `default` → 0) was scoped to the
+wrong owner. The controller hard-coded `USER = "default"`, while
+`LegacyWatchlistOwnerMigration` rewrites every `user_id = 'default'` row to
+`dracul.primary-user-email` on each boot, so the rows exist and none of them
+carry `'default'`. Lazarus now takes
+`@Value("${dracul.primary-user-email:}")` and falls back to `"default"` only
+when it is blank — the same convention Renfield, gropar, daywalker and stopguard
+already used; lazarus was simply never migrated with them. The same bug made the
+documented `LAZARUS_UNIVERSE_SOURCE=watchlist` fallback a fallback to nothing.
+Every run was a guaranteed no-op reporting
+`data_source_health {"status":"healthy"}` — a
+quiet market that never existed (run `D91C16769F1B4C30879530B4B0A07A6A`,
+Dracul log `strigoi-lazarus fetch: items=0 (partial=false truncated=false
+status=healthy)`, with Agora logging `yahoo status=200` ×145 in the same window).
+
+*Two stages, because the cheap and the expensive data come from different
+providers.* `get_fundamentals` routes US symbols to Finnhub, throttled to 60
+calls/minute across all of Agora — one call per S&P 500 member would spend
+eight-plus minutes inside that throttle, collect 429s, and silently drop most of
+the universe, i.e. reproduce the bug with a bigger number. So
+`LazarusUniverseService` first narrows the index on ONE cheap Yahoo-routed
+`get_indicators` `52w_range` call per symbol (`AgoraPriceRange`, returns both the
+52-week low and the current close), keeping everything within
+`LAZARUS_PRE_FILTER_MARGIN` (default 0.25 — deliberately wider than the 0.10
+screen, since the two lows come from different definitions); only the survivors,
+capped by `LAZARUS_FUNDAMENTALS_MAX` (default 60) and ranked by `pctAboveLow`
+ascending, cost a fundamentals call. **Expected Agora calls per run:** 1 index
+(Wikipedia-sourced, cached 24 h inside Agora) + ~503 pre-filter + ≤ 60
+fundamentals + the unchanged enrichment (≤ 25 candidates). The value the fetch
+tool publishes as `webhook_timeout_seconds` was raised from 30 s to
+`LAZARUS_FETCH_TIMEOUT_SECONDS` (default 600) to describe that — but **no tool
+timeout is applied at all** (verified 2026-08-04): Vistierie declares
+`webhook_timeout_seconds` and never uses it, and the calling RestClient has an
+infinite read timeout. Treat the number as documentation of intent, not a
+ceiling. **Agent definitions are `insertIfAbsent` on prod, so a change here
+needs the agent-definition reset.**
+
+*Honest health.* Every way a symbol can be lost is now counted and folded into
+`data_source_health` through the shared `DataSourceHealth.degradedWith` helper:
+`partial` for data we tried to read and could not (pre-filter probe failures, a
+missing fundamentals blob, a missing 52-week low, enrichment drops, an
+unavailable index falling back to the watchlist), `truncated` for universe we
+deliberately did not read (`LAZARUS_UNIVERSE_MAX`, the fundamentals budget, a
+spent `LAZARUS_PRE_FILTER_BUDGET_MS`). Status stays `healthy` throughout so the
+candidates we did find survive the prompt's "if unavailable, return exactly
+`{"prey": []}`" clause. **The one thing it can no longer be is healthy with an
+empty universe:** an unfetchable or empty universe is `unavailable`. A run of
+`LAZARUS_MAX_CONSECUTIVE_FAILURES` pre-filter failures stops the pass rather than
+burning hundreds of dead calls, and the next run enters the universe where this
+one stopped (in-memory rotation), so a permanently tight budget still covers the
+whole index eventually. Screen thresholds are unchanged — they were never the bug.
+
 **Cache-expiry caveat:** `handleFetch` responses are served through
 `ToolFetchCache` (per-tool TTL). A pattern approved or rejected after a tool's
 cache entry was populated only becomes visible in `active_patterns` once that
 cache entry expires — acceptable for v1; there is no cache-invalidation hook
 on pattern-status changes.
+
+## Prior research memory (`search` tool)
+
+Eight agents — the six hunters plus `gropar` and `voievod` — carry a second tool,
+`search`, an mcp passthrough to HiveMem's research realm `dracul-research`. Dracul
+files every thesis and outcome cell under **the ticker as the cell `topic`**
+(`HiveMemResearchService`), so a per-symbol lookup is
+`{"where": {"realm": "dracul-research", "topic": "<TICKER>"}, "limit": 5}`.
+
+The supported `where` keys are exactly `realm`, `topic`, `tags`, `signal` and
+`status`; HiveMem rejects anything else with `Unknown where field`, and it rejects
+`where.query` for `search` specifically. There is **no `symbol` key** —
+`MemorySearchCatalogContributor` now declares the full typed `where` schema
+(`additionalProperties: false`) and the shared MEMORY-RUBRIC block in all eight
+prompts requires `where.topic` alongside `where.realm`.
+
+Why this is spelled out: while `where` was advertised as a bare untyped object, the
+model invented `where.symbol`. That is *not* an error path — a filter without
+`topic` browses the newest cells of the whole realm, so consecutive lookups for
+different tickers returned the identical unrelated cells and every agent was reading
+other companies' theses as its own symbol's history (observed in production 2026-08,
+`strigoi-index`). Prompts bumped: `strigoi-echo` 1.8.0, `strigoi-index` 2.2.0,
+`strigoi-insider` 1.6.0, `strigoi-lazarus` 1.5.0, `strigoi-merger` 1.4.0,
+`strigoi-spin` 1.5.0, `gropar` 1.2.0, `voievod` 1.3.0. (`strigoi-lazarus` moved on
+to 1.6.0 with the market-wide-universe change of 2026-08-04.)
+
+`daywalker` and `renfield` do not carry the tool: their memory context is pre-fetched
+server-side by `HiveMemResearchService.searchForInput`, which has always filtered on
+`topic`.
 
 ## Adding a new agent
 
@@ -911,7 +1085,11 @@ the LLM, which owns only the soft judgment call. Every call to
    stay surfaced via `kill_criteria_breached` for the LLM to judge.
 3. **`StopRatchetService`** — ratchets the active stop up to the chandelier
    level (`dracul.executor.chandelier-mult` × ATR below the highest price
-   reached), never down.
+   reached), never down. The broker confirms the modify before the book is
+   updated, never the other way round. A transient broker failure (rate
+   limit / HTTP 429) is retried inside the same run
+   (`dracul.executor.ratchet-retry-attempts`, backoff, pass-wide time
+   budget); any other failure escalates immediately.
 
 Only after that does the LLM see the (now current) open positions, each
 carrying a `soft_trigger` block (`chandelier_breach`, `ma_break`,

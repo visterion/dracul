@@ -23,7 +23,11 @@ public record EnrichedMergerCandidate(
         String formType,
         String filingDate,
         String filingUrl,
-        String termSheet,
+        /** Bounded digest of the summary term sheet's risk sections — NOT the raw text. See
+         *  {@link TermSheetDigest}: the raw 24 000-char filing put the tool payload 3.3x over the
+         *  bridge's truncation ceiling, so the model received none of it. Every quantitative field
+         *  that used to be mined out of this prose is now a sibling field on this record. */
+        String termSheetDigest,
         boolean termSheetAvailable,
         BigDecimal lastPrice,
         boolean priceAvailable,

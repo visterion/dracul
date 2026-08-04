@@ -328,8 +328,25 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                     .body(String.class);
             return mapper.readTree(body);
         } catch (RuntimeException e) {
-            throw new BrokerUnavailableException("agora trading call failed: " + tool, e);
+            // The message must NAME the failure, not just the tool. The constant it replaced
+            // ("agora trading call failed: " + tool) threw the HTTP status away, so a real
+            // HttpClientErrorException$TooManyRequests — live in this stack — reached the retry
+            // classifier looking exactly like a structural defect and escalated on the first
+            // attempt. The cause is attached too (and the classifier walks it), but a message
+            // that describes itself is what an operator reads in the escalation row.
+            throw new BrokerUnavailableException(
+                    "agora trading call failed: " + tool + " — " + describe(e), e);
         }
+    }
+
+    /** Status-first description of a transport failure: {@code "HTTP 429 Too Many Requests"} when
+     *  the exception carries a status code, otherwise the type and message. */
+    private static String describe(RuntimeException e) {
+        if (e instanceof org.springframework.web.client.RestClientResponseException r) {
+            return "HTTP " + r.getStatusCode().value() + " " + r.getStatusText();
+        }
+        String m = e.getMessage();
+        return e.getClass().getSimpleName() + (m == null || m.isBlank() ? "" : ": " + m);
     }
 
     private JsonNode unwrap(JsonNode envelope) {

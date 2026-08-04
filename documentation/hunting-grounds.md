@@ -48,9 +48,9 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 | strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B; the spin-co's registrant CIK is parsed from the filing URL via `CikExtractor.fromFilingUrl` and preserved on `SpinoffFiling.cik`) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet capture) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date / best-effort parent ticker). **Lifecycle enrichment (2026-07-12):** `AgoraMarketData.quotes` (batched distribution-detection price probe) + `AgoraFilings.conceptStrict` (`get_company_concept` **by CIK** — pre-distribution balance sheet + settlement `Assets`/`filed` probe + settled-stage valuation, a ticker not yet existing at 10-12B time) + `EquityMetricsExtractor` (Finnhub market caps for spin-co and parent → `sizeRatio`) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, post-spin open-market insider buying) + `AgoraCompanyData.fundamentals`/`profile` (settled-stage P/B, FCF yield, industry) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`, cluster screen) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, routine/opportunistic classification — one call per cluster) + `EquityMetricsExtractor` / `AgoraMarketData.dailyOhlcHistory` / `AgoraCompanyData.recommendationsStrict` / `AgoraEarnings` (context enrichment) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
-| strigoi-lazarus | watchlist (US + non-US: XETRA `.DE`, Tokyo `.T`, Hong Kong `.HK`) + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, US Altman-Z XBRL inputs) + `get_fundamental_concepts` (**non-US** Altman-Z inputs, Yahoo-backed) + Agora daily OHLC (timing signals) |
+| strigoi-lazarus | `AgoraIndexConstituents.constituents` (`get_index_constituents`, S&P 500 universe) + `AgoraPriceRange.range52w` (`get_indicators` `52w_range`, one cheap pre-filter call per universe symbol) + the watchlist (US + non-US: XETRA `.DE`, Tokyo `.T`, Hong Kong `.HK`, always screened on top) + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, US Altman-Z XBRL inputs) + `get_fundamental_concepts` (**non-US** Altman-Z inputs, Yahoo-backed) + Agora daily OHLC (timing signals) |
 | strigoi-index | `AgoraReference.indexChanges` (`get_index_constituent_changes` — announced S&P/Russell adds/removes with announcement + effective dates; called once per index) + `AgoraMarketData.dailyOhlcHistory` (`get_ohlc`, ADV/volume + idiosyncratic-vol residual + run-up/reversal enrichment) + `EquityMetricsExtractor` (market cap + beta + share-count enrichment) + `MarketSignalService.residualReturns` (idiosyncratic vol) + `ConfounderScreen` (overlapping-event screen). **The old `AgoraReference.constituents` / `get_index_constituents` route was removed** in the 2026-07-12 announcement-anchored lifecycle rebuild |
-| strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment) + `DealTermsParser` (regex-based offer price / consideration / exchange ratio / break-fee extraction) + `AgoraMarketData.quotes` (spread computation) |
+| strigoi-merger | `AgoraFilings.searchMergers` (`search_filings` DEFM14A,SC TO-T) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet enrichment — reduced to a bounded `termSheetDigest` before it reaches the model) + `DealTermsParser` (regex-based offer price / consideration / exchange ratio / break-fee extraction) + `AgoraMarketData.quotes` (spread computation) |
 | daywalker | `AgoraIntraday.candles` + `AgoraCompanyData.news`/`recommendations` + `AgoraFilings.recentForm4` |
 | gropar | Agora `get_ohlc` (daily OHLC history, for RiskMetrics + currentClose) + Agora `get_indicators` (bundled exit TA per position via `AgoraResearch`) — unchanged from pre-7c |
 
@@ -111,7 +111,20 @@ consumed through five neutral domain facades in
 `de.visterion.dracul.hunting.agora`:
 
 - **`AgoraFilings`** — `searchSpinoffs` (10-12B), `searchMergers` (DEFM14A,
-  SC TO-T), `recentForm4` (Form-4 insider transactions), `ownerHistoryStrict`
+  SC TO-T), `recentForm4` (Form-4 insider transactions). All three are
+  MARKET-WIDE fetches and all three request the tool maximum `limit=1000`
+  explicitly (Agora's `MAX_LIMIT` on `search_filings` and
+  `get_form4_transactions`; the tool DEFAULT stays 100). They also read Agora's
+  `partial`/`truncated` flags back off the response and carry them into
+  `DataSourceHealth` while keeping the fetched items, exactly like
+  `AgoraEarnings.recent`. Before 2026-08-04 they sent no `limit` and always
+  reported `healthy`: a market-wide Form-4 window silently arrived cut at 100
+  rows out of several thousand filings, and a 20-day and a 90-day merger window
+  returned an identical candidate list. **`recentForm4` is still bounded in
+  practice** — Agora fetches one EDGAR archive document per hit under a fair-use
+  throttle and its own aggregate deadline, so a market-wide window parses only a
+  few hundred filings whatever `limit` is passed. That cut now arrives as
+  `truncated: true` instead of as an empty result. Also `ownerHistoryStrict`
   (`get_form4_owner_history` — multi-year per-owner Form-4 history for the
   strigoi-insider routine/opportunistic classification; strict, propagates
   `AgoraUnavailableException` for the batch source-down guard), `concept` /
@@ -140,8 +153,25 @@ consumed through five neutral domain facades in
   `filingText`
   (`get_filing_text` — fetches a filing's primary document as cleaned
   summary-term-sheet text; consumed via `AgoraFilings.filingText(url)` →
-  `FilingText(text, available)` by strigoi-merger and strigoi-spin, fail-soft
-  to `available = false` on any Agora failure).
+  `FilingText(text, available, failure)` by strigoi-merger and strigoi-spin,
+  fail-soft to `available = false` on any Agora failure. `failure` distinguishes
+  `UNAVAILABLE` (outage) from `TOO_LARGE` — Agora refuses a document exceeding
+  `agora.data.edgar.max-filing-bytes` (32 MiB) with an error message opening on
+  the stable token `filing_too_large:`, which a genuine outage never carries.
+  Dracul branches on that token in one place
+  (`AgoraUnavailableException.filingTooLarge()`), used both by `AgoraClient` —
+  which logs `Agora refused an oversized document for <tool>` rather than
+  `Agora unreachable for <tool>`, so a too-big filing does not inflate the
+  outage count — and by the merger enrichment, which reports the two causes
+  separately in `data_source_health.detail`).
+  **Note for strigoi-merger (2026-08-04):** the fetched text is used server-side
+  (by `DealTermsParser`) but no longer travels to the model. `MergerEnrichmentService`
+  reduces it to `termSheetDigest` — at most
+  `dracul.strigoi.merger.term-sheet-digest-chars` (default 700) characters of the
+  risk-bearing sections — because 25 candidates × up to 24 000 raw characters put one
+  production tool result at 329 818 characters, over three times the bridge's hard
+  ceiling. See `documentation/strigoi.md`, "Strigoi-Merger: term-sheet digest and the
+  derived cap".
 - **`AgoraCompanyData`** — `news`, `recommendations`, `fundamentals`,
   `profile`. `recommendations(symbol)` (the swallowing entry point used by
   daywalker and `EchoEnrichmentService.safeRecommendations`) caches a
@@ -157,7 +187,9 @@ consumed through five neutral domain facades in
   survive Agora's fetch intact; Echo's `EchoPeadScreener` then applies deterministic
   filters (EPS beat ≥ threshold) and caps the survivors at `dracul.strigoi.echo.max-candidates`
   (default 40, strongest-by-EPS-surprise-first) before resolving any prices — a structural
-  ceiling against the ~95-kB Claude-Max-bridge tool-result limit. When the pre-filter-qualified
+  ceiling against the bridge's MCP tool-result cap (50 000 characters guaranteed-safe,
+  100 000 characters hard — see `documentation/strigoi.md`, "Strigoi-Echo: news index/detail
+  split"; the "~95 kB" stated here previously was folklore). When the pre-filter-qualified
   count exceeds the cap, `DataSourceHealth.truncated` is set `true`. `recent` reads Agora's
   `partial`/`truncated` flags off the tool response and carries them into `DataSourceHealth`
   (see "Data-source health" below) while still keeping the fetched items — a degraded fetch
@@ -170,12 +202,31 @@ consumed through five neutral domain facades in
   `constituents` (`get_index_constituents`, S&P 500 membership) method was removed
   when strigoi-index flipped to the announcement-anchored `index_event` lifecycle
   (2026-07-12).
+- **`AgoraIndexConstituents`** (2026-08-04) — `constituents(index)`
+  (`get_index_constituents`), the market-wide universe strigoi-lazarus screens.
+  Rows without a symbol are skipped, symbols upper-cased. **An empty constituent
+  list is `unavailable`, never a healthy empty universe** — that distinction is
+  the whole point of the class (a healthy-looking empty universe is exactly how
+  the lazarus no-op hid for weeks; Agora's own `WikipediaService` refuses to cache
+  a successful-but-empty index for the same reason). Only `sp500` is served
+  upstream; the index stays a parameter so an operator can switch without a code
+  change.
+- **`AgoraPriceRange`** (2026-08-04) — `range52w(symbol)`: ONE `get_indicators`
+  call with a single `52w_range` spec returns both the 52-week low/high and the
+  current close, from one daily-OHLC fetch inside Agora (Yahoo-routed). It exists
+  purely as a cost gate: `get_fundamentals` routes US symbols to Finnhub
+  (60 calls/minute Agora-wide), so spending one on each of ~500 index members
+  would rate-limit the run and silently drop most of the universe. Unlike the
+  other facades it deliberately **propagates** `AgoraUnavailableException` — the
+  caller walks hundreds of symbols and needs an outage to be loud enough to stop
+  on. Note that Agora reports "no history for this symbol" through the same
+  envelope, so only a *run* of failures means the source is down.
 - **`AgoraIntraday`** — `candles` (intraday closes/volumes for daywalker).
 
 Each facade normalises Agora's tool output straight into the retained Dracul
 domain records (`SpinoffFiling`, `MergerFiling`, `Form4Filing`, `NewsHeadline`,
-`RecommendationTrend`, `IndexChangeEvent`, `IntradayCandles`, `ConceptSeries`,
-`EarningsObservation`) and wraps the result in `DataSourceResult` with
+`RecommendationTrend`, `IndexChangeEvent`, `IndexConstituent`, `PriceRange`,
+`IntradayCandles`, `ConceptSeries`, `EarningsObservation`) and wraps the result in `DataSourceResult` with
 `source = "agora"`. **Graceful degradation:** any Agora failure surfaces as
 `DataSourceResult.unavailable("agora", …)` — callers treat that exactly like
 the old adapters' empty-list/null degradation; no Strigoi run dies on an
@@ -249,6 +300,19 @@ writes `partial`/`truncated` into the tool payload when the underlying value is
 `true`; a payload carrying either flag is also excluded from the tool-fetch
 cache, so a degraded response is never served stale from a cache entry that
 predates the degradation.
+
+**Both flags OR together across the whole hunt.** Incompleteness can enter at
+more than one point — Agora may have cut the fetch, and Dracul's own
+post-processing (a candidate cap, a per-candidate enrichment that failed, a
+response row cap) may lose more on top. Neither may overwrite the other, so the
+merge is a single shared helper, `DataSourceHealth.degradedWith(base, detail,
+partial, truncated)`: it ORs the flags, appends the second reason to `detail`,
+and passes an `unavailable` status through untouched (degrading a real outage
+would upgrade a total failure into a usable one). Current mergers:
+`StrigoiEchoWebhookController#mergeHealth` (screener candidate cap),
+`StrigoiMergerWebhookController#mergeHealth` (candidate cap → `truncated`,
+unfetchable term sheets → `partial`), `StrigoiSpinWebhookController#mergeHealth`
+(response row cap → `truncated`).
 
 ### Healthy vs unavailable
 

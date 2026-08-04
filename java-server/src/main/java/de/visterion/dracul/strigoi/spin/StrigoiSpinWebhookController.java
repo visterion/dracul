@@ -84,17 +84,33 @@ public class StrigoiSpinWebhookController extends HuntController {
     protected DataSourceResult<?> hunt(Map<String, Object> body) {
         int lookback = lookbackDays(body, defaultLookback, 1, 90);
         var to = LocalDate.now();
+        var since = to.minusDays(lookback);
 
         // INGEST
-        DataSourceResult<SpinoffFiling> raw = filings.searchSpinoffs(to.minusDays(lookback), to);
+        DataSourceResult<SpinoffFiling> raw = filings.searchSpinoffs(since, to);
         for (SpinCandidate c : screener.screen(raw.items())) spinRepo.upsertRegistered(c);
 
         // RECONCILE + ENRICH
         SpinLifecycleReconciler.ReconcileResult reconcile = reconciler.reconcile();
         enricher.enrich(reconcile);
 
-        // RESPOND
-        return new DataSourceResult<>(enricher.payload(), raw.health());
+        // RESPOND — the SAME window the ingest search used, so lookback_days actually reaches the
+        // answer. It previously reached only the search while the payload was read back from the
+        // whole active table, which made the parameter decorative.
+        SpinPayload payload = enricher.payload(since);
+        return new DataSourceResult<>(payload.candidates(), mergeHealth(raw.health(), payload));
+    }
+
+    /** ORs the response row cap into the ingest search's health. Two independent losses (Agora cut
+     *  the filing search; the DB page cut the answer) must not overwrite each other, and an
+     *  {@code unavailable} status passes through untouched — see
+     *  {@link de.visterion.dracul.hunting.DataSourceHealth#degradedWith}. */
+    static de.visterion.dracul.hunting.DataSourceHealth mergeHealth(
+            de.visterion.dracul.hunting.DataSourceHealth agora, SpinPayload payload) {
+        return de.visterion.dracul.hunting.DataSourceHealth.degradedWith(agora,
+                "candidate list capped at " + SpinCandidateEnricher.RESPONSE_LIMIT
+                        + " tracked rows for this window",
+                false, payload.truncated());
     }
 
     @PostMapping("/tools/fetch-candidates")
@@ -112,7 +128,7 @@ public class StrigoiSpinWebhookController extends HuntController {
      * <p><b>Role of this gate — idempotency marking, not the emit decision.</b> The LLM has already
      * decided what to emit from the RESPOND payload before this runs. What we do here is match each
      * emitted prey back to its tracked DISTRIBUTED candidate and mark it promoted, so it leaves
-     * {@link SpinCandidateRepository#findActiveUnpromoted} and can never be re-emitted on a later
+     * {@link SpinCandidateRepository#findActiveUnpromotedInWindow} and can never be re-emitted on a later
      * hunt (double-emission guard). Two layers make this exactly-once: the delivery-level filter in
      * {@code complete()} (only newly-inserted prey reach here, so a retried delivery marks nothing),
      * and the row-level {@code promoted_at IS NULL} CAS in {@link SpinCandidateRepository#markPromoted}.

@@ -10,6 +10,7 @@ import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.strigoi.echo.EchoEnrichmentService;
 import de.visterion.dracul.strigoi.index.IndexDemandSnapshotter;
 import de.visterion.dracul.strigoi.index.IndexDriftSnapshotter;
+import de.visterion.dracul.strigoi.merger.EnrichedMergerBatch;
 import de.visterion.dracul.strigoi.merger.MergerEnrichmentService;
 import de.visterion.dracul.strigoi.spin.SpinBalanceSheetSnapshotter;
 import de.visterion.dracul.strigoi.spin.SpinDistributionSnapshotter;
@@ -179,6 +180,11 @@ class ToolEndpointResponseRuleIT {
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(reference.indexChanges(anyString(), anyInt()))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        // The merger enrichment now reports its own degradations back to the controller, so it
+        // must be stubbed with a real (clean) batch — Mockito's default null would NPE the hunt
+        // and turn every merger row of this matrix into the guard envelope it is asserting against.
+        when(mergerEnrichment.enrich(any()))
+                .thenReturn(new EnrichedMergerBatch(List.of(), false, 0, 0));
     }
 
     private HttpResponse<String> post(String path, String bearer, String rawBody) throws Exception {

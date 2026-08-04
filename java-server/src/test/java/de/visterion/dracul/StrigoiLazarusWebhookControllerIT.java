@@ -4,6 +4,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
+import de.visterion.dracul.hunting.agora.AgoraPriceRange;
+import de.visterion.dracul.hunting.agora.IndexConstituent;
+import de.visterion.dracul.hunting.agora.PriceRange;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +45,8 @@ class StrigoiLazarusWebhookControllerIT {
     @Autowired JsonMapper objectMapper;
     @Autowired WatchlistRepository watchlist;
     @MockitoBean AgoraCompanyData companyData;
+    @MockitoBean AgoraIndexConstituents index;
+    @MockitoBean AgoraPriceRange priceRange;
 
     RestClient rest;
 
@@ -52,6 +58,11 @@ class StrigoiLazarusWebhookControllerIT {
                 .build();
         when(companyData.fundamentals(anyString())).thenReturn(null);
         when(companyData.fundamentalsResult(anyString())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        // The market universe is stubbed rather than fetched: this IT has no Agora, and an
+        // unreachable index would only exercise the watchlist fallback.
+        when(index.constituents(anyString())).thenReturn(DataSourceResult.healthy("agora",
+                List.of(new IndexConstituent("IDXCO", "Index Co", "Industrials"))));
+        when(priceRange.range52w(anyString())).thenReturn(null);
     }
 
     @Test
@@ -89,6 +100,52 @@ class StrigoiLazarusWebhookControllerIT {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("run_id", "r-unavail", "tool_name", "fetch_quality_at_low_candidates",
+                        "input", Map.of()))
+                .retrieve().body(JsonNode.class);
+
+        assertThat(resp.path("output").path("data_source_health").path("status").asText())
+                .isEqualTo("unavailable");
+    }
+
+    /** D7: the universe no longer depends on the watchlist — an index constituent near its
+     *  52-week low is surfaced without any watchlist row existing for it. */
+    @Test
+    void toolEndpointScreensTheMarketUniverse() {
+        when(priceRange.range52w("IDXCO")).thenReturn(new PriceRange("IDXCO",
+                new java.math.BigDecimal("10.50"), java.math.BigDecimal.TEN,
+                new java.math.BigDecimal("40")));
+        when(companyData.fundamentals("IDXCO")).thenReturn(objectMapper.readTree(
+                "{\"52WeekLow\":10.0,\"52WeekHigh\":40.0,\"roaTTM\":5.0,\"currentRatioQuarterly\":1.8," +
+                "\"totalDebt/totalEquityQuarterly\":0.4,\"grossMarginTTM\":35.0,\"netProfitMarginTTM\":8.0," +
+                "\"revenueGrowthTTMYoy\":4.0,\"epsGrowthTTMYoy\":3.0,\"pbAnnual\":1.2,\"peTTM\":11.0," +
+                "\"freeCashFlowPerShareTTM\":2.3}"));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-lazarus/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-idx", "tool_name", "fetch_quality_at_low_candidates",
+                        "input", Map.of()))
+                .retrieve().body(JsonNode.class);
+
+        boolean found = false;
+        for (JsonNode c : resp.path("output").path("candidates")) {
+            if ("IDXCO".equals(c.path("symbol").asText())) found = true;
+        }
+        assertThat(found).as("index constituent surfaced without any watchlist row").isTrue();
+    }
+
+    /** …and an empty universe (index unavailable + empty watchlist) is UNAVAILABLE, not a
+     *  healthy quiet market. */
+    @Test
+    void toolEndpointReportsAnEmptyUniverseAsUnavailable() {
+        when(index.constituents(anyString()))
+                .thenReturn(DataSourceResult.unavailable("agora", "agora: wikipedia unreachable"));
+        watchlist.findAllByUser("default").forEach(i -> watchlist.deleteById(i.id()));
+
+        JsonNode resp = rest.post().uri("/api/strigoi-lazarus/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-lazarus-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-empty", "tool_name", "fetch_quality_at_low_candidates",
                         "input", Map.of()))
                 .retrieve().body(JsonNode.class);
 

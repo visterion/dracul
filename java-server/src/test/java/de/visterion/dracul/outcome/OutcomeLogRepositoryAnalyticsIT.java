@@ -22,6 +22,18 @@ class OutcomeLogRepositoryAnalyticsIT {
 
     @Autowired OutcomeLogRepository repo;
     @Autowired CalibrationService calibration;
+    @Autowired org.springframework.jdbc.core.simple.JdbcClient jdbc;
+
+    /** "Empty DB" has to be MADE empty. {@code ContainerConfig} reuses one Postgres container
+     *  across IT classes, so a sibling that writes {@code outcome_log}/{@code decision_log}
+     *  (e.g. {@code VersionMetricsRepositoryIT}) leaves rows behind and every assertion here
+     *  fails — a latent order-dependence that only shows up once class ordering shifts. Ten
+     *  sibling ITs clear their tables for exactly this reason. */
+    @org.junit.jupiter.api.BeforeEach
+    void clean() {
+        jdbc.sql("DELETE FROM outcome_log").update();
+        jdbc.sql("DELETE FROM decision_log").update();
+    }
 
     @Test
     void emptyDbYieldsEmptyAggregatesNotErrors() {

@@ -173,18 +173,49 @@ public class SpinCandidateRepository {
     }
 
     /**
-     * Active, not-yet-promoted rows for the LLM response payload: the tracked window
-     * {REGISTERED, WHEN_ISSUED, DISTRIBUTED} with {@code promoted_at IS NULL}. Terminal rows
-     * (SETTLED/ABANDONED) and already-promoted rows are excluded — the hunter only reasons over
-     * candidates still worth a fresh look. Newest-discovered first so the freshest setups lead.
+     * Active, not-yet-promoted rows for the LLM response payload, restricted to the hunt's
+     * requested window: the tracked statuses {REGISTERED, WHEN_ISSUED, DISTRIBUTED} with
+     * {@code promoted_at IS NULL}. Terminal rows (SETTLED/ABANDONED) and already-promoted rows are
+     * excluded — the hunter only reasons over candidates still worth a fresh look.
+     * Newest-discovered first so the freshest setups lead.
+     *
+     * <p>There is deliberately NO window-blind variant of this query. The one that existed was the
+     * whole D11 bug: the hunt's {@code lookback_days} reached the EDGAR ingest search but not the
+     * response, so a 14-day and a 90-day request returned the identical rows.
+     *
+     * <p>Which date the window applies to. {@code lookback_days} is already an EDGAR FILING-DATE
+     * window on the ingest side ({@code searchSpinoffs(to.minusDays(lookback), to)}), so
+     * {@code filing_date} is the primary clock — one parameter must not mean two different things
+     * at the two ends of the same hunt. But a spin-off's tradeable event is the DISTRIBUTION,
+     * which lands weeks or months after the 10-12B registration; dropping a freshly-distributed
+     * spin-co because its registration is old would delete exactly the candidates this hunter
+     * exists for. A row is therefore in-window when EITHER date falls inside it.
+     *
+     * <p>{@code discovered_at} is deliberately NOT the filter: it records when Dracul's cron first
+     * saw the row, not when anything happened in the market — a backfill or a re-ingest would make
+     * every row look brand new. It stays the ORDER BY (freshest setups lead), as before.
+     *
+     * <p>{@code cik} is the TIEBREAKER, and it is not decoration: one ingest pass inserts its rows
+     * within ~25 ms of each other, well inside what {@code timestamptz} distinguishes for a shared
+     * batch, so {@code discovered_at DESC} alone left ties to whatever order the scan happened to
+     * produce. The {@code LIMIT} then cut a different, unpredictable subset from run to run and a
+     * candidate could appear and vanish with nothing having changed. {@code cik} is the natural
+     * key — unique, never null, and stable across re-ingests — so it makes the cut reproducible.
+     *
+     * <p>A row carrying NEITHER date is returned regardless. It cannot be judged by a date window,
+     * and dropping it would be a silent loss of exactly the kind this query exists to end.
      */
-    public List<SpinCandidateRow> findActiveUnpromoted(int limit) {
+    public List<SpinCandidateRow> findActiveUnpromotedInWindow(LocalDate since, int limit) {
         return jdbc.sql("SELECT " + COLS + """
                 FROM spin_candidate
                 WHERE status IN ('REGISTERED', 'WHEN_ISSUED', 'DISTRIBUTED') AND promoted_at IS NULL
-                ORDER BY discovered_at DESC
+                  AND (filing_date >= :since
+                       OR distribution_date >= :since
+                       OR (filing_date IS NULL AND distribution_date IS NULL))
+                ORDER BY discovered_at DESC, cik DESC
                 LIMIT :limit
                 """)
+                .param("since", since)
                 .param("limit", limit)
                 .query(this::mapRow)
                 .list();
@@ -260,7 +291,7 @@ public class SpinCandidateRepository {
      * while the row is still unpromoted ({@code promoted_at IS NULL}). The CAS guard makes this
      * idempotent — a retried webhook delivery, or a second prey matching the same candidate, is a
      * no-op and never re-stamps a different prey id. Once stamped, the row drops out of
-     * {@link #findActiveUnpromoted} and {@link #findPromotableBySymbol}, so the LLM never sees it
+     * {@link #findActiveUnpromotedInWindow} and {@link #findPromotableBySymbol}, so the LLM never sees it
      * again and cannot re-emit it. Returns whether the row moved this call.
      */
     public boolean markPromoted(long id, String preyId) {

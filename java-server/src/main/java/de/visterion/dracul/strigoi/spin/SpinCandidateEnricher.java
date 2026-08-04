@@ -61,9 +61,11 @@ import java.util.List;
  * threshold, here the whole strict-source set). Finnhub market caps / fundamentals / the term-sheet
  * text all go through swallowing facades and can never trip the guard.
  *
- * <p><b>RESPOND</b> ({@link #payload}) rebuilds {@link EnrichedSpinCandidate} rows from the persisted
- * columns + snapshots for the active, unpromoted window {REGISTERED, WHEN_ISSUED, DISTRIBUTED}. This
- * replaces the old "read straight from the live search" path.
+ * <p><b>RESPOND</b> ({@link #payload(LocalDate)}) rebuilds {@link EnrichedSpinCandidate} rows from the
+ * persisted columns + snapshots for the active, unpromoted statuses {REGISTERED, WHEN_ISSUED,
+ * DISTRIBUTED}, restricted to the hunt's requested date window. This replaces the old "read straight
+ * from the live search" path — and, since the window predicate was added, the equally wrong "read the
+ * whole active table regardless of what was asked for" path.
  */
 @Component
 public class SpinCandidateEnricher {
@@ -74,8 +76,9 @@ public class SpinCandidateEnricher {
     static final int MAX = 25;
     /** Non-terminal scan bound for the work queue (spin-offs are rare). */
     private static final int SCAN_LIMIT = 1000;
-    /** Rows returned to the LLM per fetch. */
-    private static final int RESPONSE_LIMIT = 50;
+    /** Rows returned to the LLM per fetch. A full page is reported as truncated (see
+     *  {@link #payload(LocalDate)}) — the cap must never look like "that was all there was". */
+    static final int RESPONSE_LIMIT = 50;
 
     private final SpinCandidateRepository repo;
     private final SpinLifecycleReconciler reconciler;
@@ -238,9 +241,28 @@ public class SpinCandidateEnricher {
         if (!touched) repo.touchLastChecked(row.id());
     }
 
-    /** Builds the LLM payload from the active, unpromoted rows + their persisted snapshots. */
-    public List<EnrichedSpinCandidate> payload() {
-        return repo.findActiveUnpromoted(RESPONSE_LIMIT).stream().map(this::toWire).toList();
+    /**
+     * Builds the LLM payload from the active, unpromoted rows IN THE REQUESTED WINDOW plus their
+     * persisted snapshots.
+     *
+     * <p>{@code since} is what makes the hunt's {@code lookback_days} reach the answer at all.
+     * Before this it reached only the EDGAR ingest search while the response was read back from
+     * the whole active table, so a 14-day request and a 90-day request produced the identical 8
+     * candidates — one of them a filing from ten weeks earlier. See
+     * {@link SpinCandidateRepository#findActiveUnpromotedInWindow} for which date the window
+     * applies to and why.
+     *
+     * <p>A FULL page is reported as truncated. That is deliberately the conservative reading: a
+     * result that exactly fills the cap may or may not have more behind it, and claiming
+     * completeness we cannot verify is the failure this whole change is about.
+     */
+    public SpinPayload payload(LocalDate since) {
+        List<SpinCandidateRow> rows = repo.findActiveUnpromotedInWindow(since, RESPONSE_LIMIT);
+        boolean truncated = rows.size() >= RESPONSE_LIMIT;
+        if (truncated) {
+            log.info("spin payload: response capped at {} rows since {}", RESPONSE_LIMIT, since);
+        }
+        return new SpinPayload(rows.stream().map(this::toWire).toList(), truncated);
     }
 
     private EnrichedSpinCandidate toWire(SpinCandidateRow row) {
