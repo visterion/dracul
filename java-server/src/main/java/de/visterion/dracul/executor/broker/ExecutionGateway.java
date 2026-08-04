@@ -17,7 +17,19 @@ public interface ExecutionGateway {
     CloseResult flatten(String connection, String symbol, BigDecimal fraction);
     /** null stop/target = leave that leg unchanged. {@code symbol} is required by Agora's
      *  modify_bracket contract (parent-lookup + symbol-fallback leg resolution). */
-    ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target);
+    default ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target) {
+        return modifyBracket(connection, orderId, symbol, stop, target, null, null);
+    }
+
+    /**
+     * Leg-aware variant: {@code stopOrderId}/{@code targetOrderId} name the exact broker order
+     * carrying each leg. Null (both) == the resolution Agora does on its own, which is only
+     * unambiguous while the symbol carries ONE bracket. A position built in two tranches has two
+     * protective stops working on the same instrument, and each one has to be addressed by name —
+     * see {@code StopRatchetService} for what happens when they are not.
+     */
+    ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target,
+            String stopOrderId, String targetOrderId);
     /** Cancels a still-working order (e.g. an unfilled GTD entry past expiry). Never re-prices —
      *  callers that want a different price must cancel then place a new order. */
     void cancelOrder(String connection, String orderId);

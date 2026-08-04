@@ -174,10 +174,10 @@ class StopRatchetServiceTest {
     }
 
     @Test
-    void tranche2_nullLegId_stillEscalates() {
-        // THE case that matters: on Saxo, tranche2StopOrderId is null BY DESIGN (the broker
-        // returns no leg ids), so a gate keyed on that field would never fire. tranche is the
-        // reliable marker.
+    void tranche2_missingSecondStopLegId_stillEscalates() {
+        // The one case that genuinely cannot be handled: the position is in two tranches but the
+        // book has no id for the second stop leg, so there is no way to name it. Guessing is what
+        // the whole leg-addressing contract exists to avoid — escalate and leave the stop alone.
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
 
@@ -190,6 +190,7 @@ class StopRatchetServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        assertThat(log.reasoning()).contains("tranche2_stop_order_id");
         assertThat(log.symbol()).isEqualTo("ACME");
         assertThat(log.orderJson()).isNotNull();
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(5L);
@@ -198,9 +199,13 @@ class StopRatchetServiceTest {
     }
 
     @Test
-    void tranche2_withLegId_escalates() {
-        ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("110"),
-                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+    void tranche2_missingFirstStopLegId_stillEscalates() {
+        ExecutorPosition p = new ExecutorPosition(23L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
+                new BigDecimal("1.0"), 0, null, null, null, null,
+                null /* stop_order_id missing */, null, null, "t2-1", "s2", 0, null, null,
+                null, null, null, null);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
@@ -209,13 +214,103 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
-        assertThat(logCaptor.getValue().orderJson()).isNotNull();
-        assertThat(logCaptor.getValue().orderJson().get("position_id").asLong()).isEqualTo(6L);
+        assertThat(logCaptor.getValue().reasoning()).contains("stop_order_id");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void tranche2_bothLegIds_ratchetsBothLegsToTheSameLevel() {
+        // A protective stop is a price level on the UNDERLYING, not a per-tranche quantity: the
+        // chandelier is derived from highestPrice and ATR, neither of which knows about entry
+        // prices. Both legs therefore move to the identical level, and active_stop — one column
+        // that stopguard reads for the whole position — is true of every share behind it.
+        ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        FakeExecutionGateway.ModifyCall first = gateway.modifyCalls.get(0);
+        assertThat(first.orderId()).isEqualTo("brk-1");
+        assertThat(first.stopOrderId()).isEqualTo("stop-1");
+        assertThat(first.stop()).isEqualByComparingTo("104");
+        assertThat(first.target()).isNull();
+        assertThat(first.targetOrderId()).isNull();
+
+        FakeExecutionGateway.ModifyCall second = gateway.modifyCalls.get(1);
+        assertThat(second.orderId()).isEqualTo("t2-1");
+        assertThat(second.stopOrderId()).isEqualTo("s2");
+        assertThat(second.stop()).isEqualByComparingTo("104");
+
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(6L),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("110")),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("1.0")),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("104")) == 0),
+                org.mockito.ArgumentMatchers.isNull());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void tranche2_secondLegFails_keepsTheOldStopAndReportsPartial() {
+        // Broker first, book second, and half a broker is not a book entry: leg 1 is already at
+        // 104 but leg 2 is still at 95, so active_stop must stay 95 — stopguard trusts it for the
+        // WHOLE position, and claiming 104 would be claiming protection 22 of 46 shares lack.
+        ExecutorPosition p = openPosition(9L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+        gateway.modifyFailures = 1;
+        gateway.failModifyForStopOrderId = "s2";
+        gateway.modifyFailureMessage = "boom";
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, times(2)).insert(logCaptor.capture());
+        List<DecisionLog> logs = logCaptor.getAllValues();
+        assertThat(logs.get(0).reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        assertThat(logs.get(1).action()).isEqualTo("ESCALATE");
+        assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
+        // A partial must be readable as a partial: which leg moved, which did not, and to what.
+        assertThat(logs.get(1).reasoning()).contains("stop-1").contains("s2").contains("104");
+        assertThat(logs.get(1).orderJson().get("position_id").asLong()).isEqualTo(9L);
+        assertThat(logs.get(1).orderJson().get("moved_stop_order_id").asString()).isEqualTo("stop-1");
+        assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("s2");
+    }
+
+    @Test
+    void tranche2_firstLegFails_touchesNothingElse() {
+        // Nothing moved at the broker, so this is an ordinary failed ratchet — one escalation, no
+        // second modify call, and emphatically not a "partial".
+        ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+        gateway.modifyFailures = 99;
+        gateway.failModifyForStopOrderId = "stop-1";
+        service = newService(1, 0L, 0L);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
     @Test
     void tranche2OrderIdAlone_escalates() {
-        // Belt-and-braces disjunct: tranche still 1, but a tranche-2 entry id is present.
+        // Belt-and-braces disjunct: tranche still 1, but a tranche-2 entry id is present and no
+        // second stop leg id — unaddressable, so still an escalation.
         ExecutorPosition p = openPosition(7L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, "t2-1", null);
 
@@ -231,21 +326,23 @@ class StopRatchetServiceTest {
     }
 
     @Test
-    void tranche2StopOrderIdAlone_escalates() {
-        // The third disjunct, for brokers that DO report leg ids: tranche still 1, no tranche-2
-        // entry id, but a second stop leg is on record. Without this test an implementation that
-        // drops `|| p.tranche2StopOrderId() != null` passes the whole suite.
+    void tranche2StopOrderIdAlone_ratchetsBothLegs() {
+        // The third disjunct, for a broker that DOES report leg ids (Saxo does — verified on the
+        // paper book 2026-08-04): tranche still 1 on the book, no tranche-2 entry id, but a second
+        // stop leg is on record. Both ids exist, so both legs are addressable and both move. The
+        // bracket id for the second leg falls back to broker_order_id — with an explicit leg id it
+        // is context, not an address.
         ExecutorPosition p = openPosition(22L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, null, "s2");
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
-        assertThat(gateway.modifyCalls).isEmpty();
-        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
-        verify(decisionRepo).insert(logCaptor.capture());
-        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
-        assertThat(logCaptor.getValue().orderJson().get("position_id").asLong()).isEqualTo(22L);
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isEqualTo("stop-1");
+        assertThat(gateway.modifyCalls.get(1).stopOrderId()).isEqualTo("s2");
+        assertThat(gateway.modifyCalls.get(1).orderId()).isEqualTo("brk-1");
+        verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
     }
 
     @Test

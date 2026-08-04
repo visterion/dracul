@@ -33,11 +33,17 @@ import java.util.Map;
  *   <li>the guard denies a non-improving move — silent, the normal case;</li>
  *   <li>the rounded chandelier is on the wrong side of the last close (or no close is known) —
  *       silent, a regular "not yet" state owned by the soft trigger;</li>
- *   <li>a tranche 2 is open — {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}, because two stop
- *       legs cannot be addressed unambiguously through {@code modifyBracket} and a silent partial
- *       ratchet would leave the book claiming a stop half the position does not have;</li>
+ *   <li>a tranche 2 is open but one of its two stop legs has no id on the record —
+ *       {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}. A leg that cannot be NAMED cannot be
+ *       moved without guessing, and a silent partial ratchet would leave the book claiming a stop
+ *       half the position does not have. With both ids present, both legs are ratcheted to the
+ *       same level instead — see {@link #ratchetTwoLegs};</li>
  *   <li>{@code brokerOrderId} is null — {@code ESCALATE / NO_BRACKET_ID}.</li>
  * </ul>
+ *
+ * <p>A two-leg ratchet whose FIRST leg moved and whose second did not escalates
+ * {@code PARTIAL_TRANCHE_RATCHET} and leaves {@code active_stop} at the OLD value — the only level
+ * that is true of the whole position. Never report a partial as a success.
  *
  * <p>Both escalations sit AFTER the guard and after the market-side check, so they repeat on every
  * maintenance run for as long as the condition holds AND a better stop is actually available —
@@ -141,27 +147,17 @@ public class StopRatchetService {
                     : chandelier.compareTo(price) < 0;
             if (!safeSide) continue;
 
+            BigDecimal oldStop = p.activeStop();
+
             if (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null) {
-                // A tranche-2 position holds TWO stop legs at the broker. Post-fill both entry ids
-                // are gone, so both modify calls would land in Agora's symbol fallback, which keeps
-                // only the LAST stop leg it finds on the Uic — one leg patched twice, the other
-                // never, while modifyBracket still reports accepted. Dracul would then write the new
-                // stop into the book and stopguard would trust it, with half the position actually
-                // sitting on the old stop. A silent partial success is worse than a loud failure, so
-                // this escalates and leaves the stop where it is.
-                //
-                // `tranche` is the RELIABLE marker: Saxo returns no leg ids, so tranche2StopOrderId
-                // is null by design there (see the "Saxo/live brackets expose no leg ids" comment in
-                // ExecutorWebhookController's adoption branch) and a gate keyed on the leg id alone
-                // would never fire — precisely on the broker this matters for. The two id fields
-                // stand alongside as belt-and-braces, for brokers that do report them.
-                escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
-                        "stop ratchet unsupported while a tranche 2 is open: two stop legs cannot be "
-                                + "addressed unambiguously through modifyBracket");
+                if (!ratchetTwoLegs(p, chandelier, runId, budget)) continue;
+
+                positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                        chandelier, null);
+                recordRatchet(p, atr, chandelier, runId);
+                executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
                 continue;
             }
-
-            BigDecimal oldStop = p.activeStop();
 
             // Agora resolves the stop leg FROM the bracket id — pre-fill through the parent's
             // embedded RelatedOpenOrders, post-fill through the by-Uic symbol fallback. Handing it
@@ -190,6 +186,80 @@ public class StopRatchetService {
     }
 
     /**
+     * Ratchets BOTH stop legs of a position that was built in two tranches. Returns true only when
+     * the broker accepted both; false when the position was escalated and the book must not move.
+     *
+     * <p><b>One level, not two.</b> A protective stop is a price level on the underlying, not a
+     * per-tranche quantity: {@link #computeChandelier} is a function of {@code highestPrice} and
+     * ATR and never reads {@code entryPrice}, so there is no per-tranche chandelier to compute in
+     * the first place. Both legs therefore go to the same price. That also keeps the book honest —
+     * {@code active_stop} is ONE column that {@code stopguard} reads for the whole position, and it
+     * can only be true of every share behind it if every share sits on the same level.
+     *
+     * <p><b>Both legs are addressed BY NAME.</b> Post-fill the entry ids are gone and Agora's
+     * by-symbol fallback keeps only the LAST stop leg it finds on the instrument, so two unnamed
+     * modifies would patch one leg twice and the other never — while still reporting accepted.
+     * That is exactly the silent partial this used to escalate rather than risk. Agora's
+     * {@code modify_bracket} now takes an explicit {@code stopOrderId}, and both ids are on the
+     * record: verified on the paper book 2026-08-04, where a 46-share two-tranche position held
+     * {@code stop_order_id} and {@code tranche2_stop_order_id} for two working 24- and 22-share
+     * stop orders on the same instrument. The older claim that "Saxo returns no leg ids" was wrong.
+     *
+     * <p><b>Without both ids there is still nothing to address</b>, and the old
+     * {@code TRANCHE_RATCHET_UNSUPPORTED} escalation stands unchanged — a broker that reports no
+     * leg id leaves no honest way to move the right stop.
+     *
+     * <p><b>One leg up, one leg not, is reported as PARTIAL — and the book keeps the OLD stop.</b>
+     * Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure the
+     * position really is half-protected at the new level and half at the old one, so the only
+     * value that is true of all of it is the old stop. Writing the new one would make stopguard
+     * trust a protection part of the position does not have; that is the bug class this escalates
+     * instead of hiding. The next maintenance pass re-sends both legs (the first is idempotent at
+     * the same price) and recovers on its own once the broker cooperates.
+     */
+    private boolean ratchetTwoLegs(ExecutorPosition p, BigDecimal chandelier, String runId, RetryBudget budget) {
+        String leg1 = p.stopOrderId();
+        String leg2 = p.tranche2StopOrderId();
+        if (leg1 == null || leg2 == null) {
+            escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
+                    "stop ratchet unsupported while a tranche 2 is open: both stop legs must be named "
+                            + "to be moved unambiguously, but stop_order_id=" + leg1
+                            + " and tranche2_stop_order_id=" + leg2);
+            return false;
+        }
+
+        // Bracket ids are context only once a leg id is given; the tranche-2 entry id may be gone
+        // (post-fill) or never recorded, so fall back to the position's own bracket id.
+        String bracket1 = p.brokerOrderId();
+        String bracket2 = p.tranche2OrderId() != null ? p.tranche2OrderId() : p.brokerOrderId();
+        if (bracket1 == null || bracket2 == null) {
+            escalate(p, runId, "NO_BRACKET_ID",
+                    "stop ratchet cannot address the bracket: broker_order_id is null");
+            return false;
+        }
+
+        if (!modifyWithRetry(p, bracket1, leg1, chandelier, runId, budget)) return false;
+        if (!modifyWithRetry(p, bracket2, leg2, chandelier, runId, budget)) {
+            ObjectNode order = mapper.createObjectNode();
+            order.put("position_id", p.id());
+            order.put("moved_stop_order_id", leg1);
+            order.put("unmoved_stop_order_id", leg2);
+            order.put("attempted_stop", chandelier);
+            order.put("active_stop", p.activeStop());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
+                    "ESCALATE", "PARTIAL_TRANCHE_RATCHET", order,
+                    "partial stop ratchet: leg " + leg1 + " moved to " + chandelier.toPlainString()
+                            + " but leg " + leg2 + " did not; active_stop stays at "
+                            + (p.activeStop() == null ? "null" : p.activeStop().toPlainString())
+                            + " because it must hold for the whole position",
+                    null, null, null));
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Sends the modify, retrying only genuinely TRANSIENT broker failures. Returns true when the
      * broker accepted; false when the position was escalated and must be skipped.
      *
@@ -211,9 +281,17 @@ public class StopRatchetService {
      */
     private boolean modifyWithRetry(ExecutorPosition p, String bracketId, BigDecimal chandelier,
             String runId, RetryBudget budget) {
+        return modifyWithRetry(p, bracketId, null, chandelier, runId, budget);
+    }
+
+    /** {@code stopOrderId} null = let Agora resolve the leg (single-tranche, unchanged behaviour);
+     *  non-null = address that exact stop leg (two-tranche, see {@link #ratchetTwoLegs}). */
+    private boolean modifyWithRetry(ExecutorPosition p, String bracketId, String stopOrderId,
+            BigDecimal chandelier, String runId, RetryBudget budget) {
         for (int attempt = 1; ; attempt++) {
             try {
-                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null);
+                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null,
+                        stopOrderId, null);
                 return true;
             } catch (BrokerUnavailableException e) {
                 boolean mayRetry = attempt < retryAttempts && isTransient(e);
@@ -226,7 +304,9 @@ public class StopRatchetService {
                     continue;
                 }
                 escalate(p, runId, "BROKER_UNAVAILABLE",
-                        "broker unavailable during stop-ratchet modify after " + attempt
+                        "broker unavailable during stop-ratchet modify"
+                                + (stopOrderId == null ? "" : " of stop leg " + stopOrderId)
+                                + " after " + attempt
                                 + " attempt" + (attempt == 1 ? "" : "s") + ": " + e.getMessage());
                 return false;
             }

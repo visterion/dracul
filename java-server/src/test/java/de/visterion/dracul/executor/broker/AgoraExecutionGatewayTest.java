@@ -269,6 +269,31 @@ class AgoraExecutionGatewayTest {
         assertThat(result.accepted()).isTrue();
     }
 
+    @Test void modifyBracketOmitsLegIdsWhenNotNamed() {
+        // The default path must stay byte-identical for existing callers: no stopOrderId key at
+        // all, not a null one — Agora reads "present" as "address this exact order".
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"orderId\":\"brk-1\",\"accepted\":true}}");
+
+        gw.modifyBracket("depot-1", "brk-1", "ACME", new BigDecimal("104"), null);
+
+        assertThat(gw.capturedArgs.has("stopOrderId")).isFalse();
+        assertThat(gw.capturedArgs.has("targetOrderId")).isFalse();
+    }
+
+    @Test void modifyBracketSendsTheNamedStopLeg() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"orderId\":\"brk-1\",\"newStop\":\"104\",\"accepted\":true}}");
+
+        ModifyResult result = gw.modifyBracket("depot-1", "brk-1", "ACME", new BigDecimal("104"), null,
+                "stop-t2", null);
+
+        assertThat(gw.capturedTool).isEqualTo("modify_bracket");
+        assertThat(gw.capturedArgs.path("stopOrderId").asString()).isEqualTo("stop-t2");
+        assertThat(gw.capturedArgs.has("targetOrderId")).isFalse();
+        assertThat(result.accepted()).isTrue();
+    }
+
     @Test void cancelOrderSendsConnectionAndOrderId() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":true,\"orderId\":\"brk-1\",\"status\":\"cancelled\"}}");

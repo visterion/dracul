@@ -12,7 +12,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *  tests drive it single-threaded. */
 public class FakeExecutionGateway implements ExecutionGateway {
 
-    public record ModifyCall(String orderId, String symbol, BigDecimal stop, BigDecimal target) {
+    public record ModifyCall(String orderId, String symbol, BigDecimal stop, BigDecimal target,
+            String stopOrderId, String targetOrderId) {
     }
 
     private final Map<String, BrokerPosition> positionsBySymbol = new LinkedHashMap<>();
@@ -41,6 +42,9 @@ public class FakeExecutionGateway implements ExecutionGateway {
      *  underlying {@code HttpClientErrorException$TooManyRequests} rather than describing it,
      *  so the status lives in the CAUSE and never in the top-level message. */
     public Throwable modifyFailureCause = null;
+    /** When set, only calls naming THIS stop leg consume a {@link #modifyFailures} budget — lets a
+     *  test fail exactly one leg of a two-leg (two-tranche) ratchet. Null = any call may fail. */
+    public String failModifyForStopOrderId = null;
 
     public void seedPosition(BrokerPosition position) {
         positionsBySymbol.put(position.symbol(), position);
@@ -132,10 +136,13 @@ public class FakeExecutionGateway implements ExecutionGateway {
     }
 
     @Override
-    public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target) {
+    public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target,
+            String stopOrderId, String targetOrderId) {
         checkAvailable();
-        modifyCalls.add(new ModifyCall(orderId, symbol, stop, target));
-        if (modifyFailures > 0) {
+        modifyCalls.add(new ModifyCall(orderId, symbol, stop, target, stopOrderId, targetOrderId));
+        boolean legSelected = failModifyForStopOrderId == null
+                || failModifyForStopOrderId.equals(stopOrderId);
+        if (modifyFailures > 0 && legSelected) {
             modifyFailures--;
             throw modifyFailureCause == null
                     ? new BrokerUnavailableException(modifyFailureMessage)

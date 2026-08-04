@@ -250,13 +250,18 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     }
 
     @Override
-    public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target) {
+    public ModifyResult modifyBracket(String connection, String orderId, String symbol, BigDecimal stop, BigDecimal target,
+            String stopOrderId, String targetOrderId) {
         ObjectNode args = mapper.createObjectNode();
         args.put("connection", connection);
         args.put("orderId", orderId);
         args.put("symbol", symbol);
         if (stop != null) args.put("stop", stop);
         if (target != null) args.put("target", target);
+        // Omitted, not sent as null: Agora's modify_bracket treats a present leg id as "address
+        // this exact order", and an explicit null would be indistinguishable from a blank id.
+        if (stopOrderId != null) args.put("stopOrderId", stopOrderId);
+        if (targetOrderId != null) args.put("targetOrderId", targetOrderId);
 
         JsonNode out = unwrap(call("modify_bracket", args));
         requireAccepted(out);
