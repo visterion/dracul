@@ -23,6 +23,24 @@ dracul:
     token: ${DRACUL_AGORA_TOKEN:}
     timeout-ms: ${DRACUL_AGORA_TIMEOUT_MS:25000}
     connect-timeout-ms: ${DRACUL_AGORA_CONNECT_TIMEOUT_MS:5000}
+    # Per-tool request budgets (MCP tool name -> ms). Anything not listed uses timeout-ms above.
+    # The keys MUST stay in bracket form: Spring's relaxed binding strips '_' out of a plain map
+    # key, so `get_form4_transactions:` would silently bind as `getform4transactions` and the
+    # override would be dead config (AgoraToolTimeoutsTest pins this).
+    tool-timeout-ms:
+      # Market-wide Form-4 scan. Derived, not guessed, from Agora's own worst case:
+      #   30 000 ms  EdgarSearchService.FORM4_DEADLINE_MS (aggregate archive-fetch deadline)
+      # +  7 900 ms  two EFTS searches x up to 10 pages of 100 (caller window + late-filing pad);
+      #              measured 3.7 s for one 10-page search on prod 2026-08-04 08:53:27-31
+      # +    190 ms  the one archive GET that may start just before the deadline (THROTTLE_MS 110
+      #              + ~80 ms fetch) — the deadline is checked before a fetch, not during it
+      # +  1 000 ms  MCP framing, JSON serialisation of the result set, transport
+      # = 39 090 ms worst case; 45 000 leaves ~15 % headroom.
+      # Measured end-to-end on prod 2026-08-04: 33.4 s (3.7 s paging + 29.9 s archive phase),
+      # against a 25 000 ms client budget — which is exactly why every insider run timed out.
+      # Enclosing limits, all larger: the insider fetch tool's webhook timeout (InsiderDefaults,
+      # 60 s) and Vistierie's max_run_seconds for strigoi-insider (1800 s).
+      "[get_form4_transactions]": ${DRACUL_AGORA_FORM4_TIMEOUT_MS:45000}
   hivemem:
     base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}
     mcp-token: ${DRACUL_HIVEMEM_MCP_TOKEN:}
@@ -97,12 +115,36 @@ dracul:
       schedule: ${DRACUL_ECHO_SCHEDULE:0 0 22 * * 1-5}
       min-surprise-percent: ${ECHO_MIN_SURPRISE:5.0}
       min-price: ${ECHO_MIN_PRICE:5.0}
-      # Payload-budget ceiling on the candidate list, NOT a curation step: at ~1.7 kB per
-      # serialized candidate the structural limit against the ~95-kB bridge tool-result limit is
-      # ~56 candidates. A cut is reported via data_source_health.truncated.
-      max-candidates: ${ECHO_MAX_CANDIDATES:40}
+      # Payload-budget ceiling on the candidate list, NOT a curation step. A cut is reported
+      # via data_source_health.truncated.
+      #
+      # Derived 2026-08-04 from the REAL bridge limit, not the old "~95 kB" folklore: the
+      # claude-bridge skips truncation entirely below 12 500 tokens = 50 000 characters
+      # (MAX_MCP_OUTPUT_TOKENS 25 000, pre-check at 50 %), and hard-cuts at 100 000. 50 000 is
+      # the only guaranteed-safe zone, so that is the budget.
+      # Measured cost per serialized candidate with a 3-item news index: ~1 365 B (production
+      # run 2026-08-04: 29 candidates = 45 106 B compact, of which recentNews was 21 427 B =
+      # 47.5 % at an average 4.5 items x 160 B; base cost ~835 B/candidate).
+      #   50 000  guaranteed-safe zone
+      # -  4 194  reserve for active_patterns growth (~200 B per accepted pattern => ~21 more;
+      #           the three V2__seed.sql echo patterns are already inside the measured figure)
+      # = 45 806  measured by EchoPayloadBudgetTest at 33 candidates x 3 index items
+      # i.e. 45 806 / 1 365 = 33 -> cap 33. Observed real candidate counts over 45 days peak at
+      # 29 (typical 27-29 in an earnings week, 11-14 otherwise), so 33 serves every observed
+      # day untruncated with four to spare.
+      #
+      # The lever was the per-candidate SIZE first, not the candidate count: cutting the news
+      # INDEX from 5 to 3 items is not a data loss, because `newsCount` still reports the true
+      # total and `fetch_candidate_news` returns up to 40 items WITH summaries for any symbol
+      # the agent wants to read properly (same index/detail split the merger term sheet uses).
+      # Keeping 5 index items would have forced the cap down to 28 — below the 29 candidates a
+      # real earnings day produced on 2026-08-04, i.e. actual feature reduction.
+      # EchoPayloadBudgetTest binds its worst case to BOTH defaults below.
+      max-candidates: ${ECHO_MAX_CANDIDATES:33}
       ohlc-history-days: ${ECHO_OHLC_HISTORY_DAYS:320}
-      recent-news-cap: ${ECHO_RECENT_NEWS_CAP:5}
+      # Size of the per-candidate news INDEX (headline/source/credibility/datetime, no summary).
+      # The full list stays reachable through fetch_candidate_news — see max-candidates above.
+      recent-news-cap: ${ECHO_RECENT_NEWS_CAP:3}
       car:
         market-proxy: ${ECHO_CAR_PROXY:SPY}
       gate:
@@ -133,9 +175,10 @@ dracul:
       universe-source: ${LAZARUS_UNIVERSE_SOURCE:sp500}
       # Hard ceiling on universe size (the S&P 500 delivers ~503 symbols incl. multi-class rows).
       universe-max: ${LAZARUS_UNIVERSE_MAX:600}
-      # Cheap pre-filter (ONE Yahoo-routed get_indicators 52w_range call per universe symbol)
+      # Cheap pre-filter (ONE get_indicators 52w_range call per universe symbol, served by
+      # Agora's OHLC provider chain — Alpaca first for US symbols, Yahoo only as last resort)
       # keeps a symbol when it trades at most this fraction above its 52-week low. Deliberately
-      # WIDER than max-above-low: it reads Yahoo's 252-bar low while the authoritative screen
+      # WIDER than max-above-low: it reads a 252-bar low while the authoritative screen
       # reads the provider's own 52-week low, and a pre-filter cutting tighter than the screen
       # would drop real candidates over a definitional difference. Never relaxes the screen.
       pre-filter-margin: ${LAZARUS_PRE_FILTER_MARGIN:0.25}

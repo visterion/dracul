@@ -17,6 +17,15 @@ class InsiderDefaults {
     private static final String NAME = "strigoi-insider";
     private static final String FETCH = "fetch_recent_clusters";
 
+    /**
+     * Webhook timeout for the fetch tool, in seconds. Must stay strictly larger than the Agora
+     * budget the same request spends inside itself
+     * (dracul.agora.tool-timeout-ms[get_form4_transactions], 45 s) — a market-wide Form-4 scan
+     * measured 33.4 s on prod 2026-08-04 and its worst case is ~39 s. Pinned by
+     * {@code InsiderToolTimeoutBudgetTest}. Changing it needs an agent-definition reset.
+     */
+    static final int FETCH_TIMEOUT_SECONDS = 60;
+
     @Bean
     AgentDefaultProvider insiderDefaultProvider(
             ObjectMapper mapper,
@@ -26,7 +35,7 @@ class InsiderDefaults {
                 "{\"type\":\"object\",\"properties\":{\"lookback_days\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":30}}}");
         var entry = new ToolCatalogEntry(FETCH,
                 "Returns insider buying clusters detected in the last N days.",
-                input, "/api/strigoi-insider/tools/fetch-clusters", 30);
+                input, "/api/strigoi-insider/tools/fetch-clusters", FETCH_TIMEOUT_SECONDS);
         return new AgentDefaultProvider() {
             @Override
             public AgentDefinition defaultDefinition() {

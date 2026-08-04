@@ -72,7 +72,7 @@ public class EchoEnrichmentService {
             AgoraEarnings earnings,
             ConfounderScreen eventScreen,
             EchoDeterministicGate gate,
-            @Value("${dracul.strigoi.echo.recent-news-cap:5}") int recentNewsCap) {
+            @Value("${dracul.strigoi.echo.recent-news-cap:3}") int recentNewsCap) {
         this.sueEngine = sueEngine;
         this.filings = filings;
         this.epsShaper = epsShaper;
@@ -209,8 +209,12 @@ public class EchoEnrichmentService {
         catch (Exception e) { log.debug("echo: next-earnings unavailable for {}: {}", symbol, e.getMessage()); return Optional.empty(); }
     }
 
-    /** Newest-first, capped at {@link #recentNewsCap}. The cap applies ONLY here — the
-     *  confounder scan above always sees the full, uncapped {@code news} list. A negative
+    /** Newest-first, capped at {@link #recentNewsCap} (default 3 since 2026-08-04, down from 5).
+     *  The cap applies ONLY here — the confounder scan above always sees the full, uncapped
+     *  {@code news} list, and {@code newsCount} still reports the true total while
+     *  {@code fetch_candidate_news} still serves up to 40 items WITH summaries on demand. This
+     *  index was 47.5 % of the whole candidate payload on a measured production run, which is
+     *  why shrinking it — rather than dropping candidates — is what buys the payload budget. A negative
      *  configured cap is clamped to zero rather than propagating an {@link
      *  IllegalArgumentException} out of {@link java.util.stream.Stream#limit}. {@code summary}
      *  wird bewusst NICHT übernommen (Payload-Budget, Spec 2026-07-27). */

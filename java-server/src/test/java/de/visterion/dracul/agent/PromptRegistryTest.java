@@ -55,6 +55,34 @@ class PromptRegistryTest {
         }
     }
 
+    /**
+     * The hardcoded {@link #AGENTS} list above cannot notice a prompt file that was ADDED without
+     * a registry entry — it would simply never be looked at, and {@link PromptRegistryValidator}
+     * would then log "no entry for enabled agent" once, in production, at boot. So the set is also
+     * derived from the shipped prompt directory and compared both ways.
+     */
+    @Test
+    void everyShippedPromptFileHasARegistryEntryAndViceVersa() throws java.io.IOException {
+        java.nio.file.Path dir = java.nio.file.Path.of("src/main/resources/prompts");
+        assertThat(dir).as("bundled prompt directory").exists();
+        Set<String> onDisk;
+        try (var files = java.nio.file.Files.list(dir)) {
+            onDisk = files.map(p -> p.getFileName().toString())
+                    .filter(n -> n.endsWith(".md"))
+                    .map(n -> n.substring(0, n.length() - 3))
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
+        assertThat(onDisk)
+                .as("prompts/*.md and the hardcoded agent list must not drift apart")
+                .isEqualTo(AGENTS);
+        for (String agent : onDisk) {
+            assertThat(registry.entry(agent))
+                    .as("prompts/%s.md ships without a prompt_registry.json entry — drift "
+                            + "detection would be off for it", agent)
+                    .isPresent();
+        }
+    }
+
     @Test
     void unknownAgentIsAbsent() {
         assertThat(registry.entry("ghost")).isEmpty();

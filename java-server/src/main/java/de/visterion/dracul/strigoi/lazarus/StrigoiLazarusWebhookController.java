@@ -48,7 +48,8 @@ import java.util.stream.Collectors;
  * {@code get_fundamentals} routes US symbols to Finnhub, throttled to 60 calls/minute across all
  * of Agora — one call per S&amp;P 500 member would spend eight minutes inside that throttle and
  * silently drop most of the universe. So {@link LazarusUniverseService} first narrows the index
- * on ONE cheap Yahoo-routed 52-week-range call per symbol, and only the survivors (plus every
+ * on ONE cheap 52-week-range call per symbol — served by Agora's OHLC provider chain, Alpaca
+ * first, which is a different and far less throttled source — and only the survivors (plus every
  * watchlist name, unconditionally) cost a fundamentals call. Expected Agora calls per run:
  * 1 index + ~N pre-filter (N = universe size, ~503 for the S&amp;P 500, Wikipedia-sourced and
  * cached 24 h inside Agora) + at most {@code fundamentals-max} fundamentals calls.

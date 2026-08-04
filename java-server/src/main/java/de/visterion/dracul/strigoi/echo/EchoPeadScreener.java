@@ -34,16 +34,19 @@ public class EchoPeadScreener {
     private final int maxCandidates;
 
     /**
-     * @param maxCandidates hard ceiling on the candidate list, default 40. This is a
-     *        payload-budget bound, not a curation step: at ~1,7 kB per serialized candidate the
-     *        structural ceiling against the ~95-kB Claude-Max bridge tool-result limit sits at
-     *        ~56 candidates (see {@code EchoPayloadBudgetTest}'s calibration, which uses 45 as
-     *        its worst case) — 40 leaves head-room. Past that limit the bridge offloads the tool
-     *        result into a file the agent cannot read and echo silently returns empty prey, the
-     *        exact 7-day outage of 2026-07-22.
+     * @param maxCandidates hard ceiling on the candidate list, default 33. This is a
+     *        payload-budget bound, not a curation step. Recalibrated 2026-08-04 against the REAL
+     *        bridge limit rather than the old "~95 kB" folklore: the claude-bridge skips
+     *        truncation only below 12 500 tokens = 50 000 characters, so that is the guaranteed
+     *        safe zone. At ~1 365 B per serialized candidate (measured on a production payload,
+     *        with the news index cut from 5 to 3 items) 33 candidates measure 45 806 B and leave
+     *        ~4 194 B for {@code active_patterns} growth — see {@code EchoPayloadBudgetTest},
+     *        which binds its worst case to this very yaml default. Past the limit the bridge
+     *        offloads the tool result into a file the agent cannot read and echo silently
+     *        returns empty prey, the exact 7-day outage of 2026-07-22.
      *        <p>Capping here is still a net GAIN in coverage: before this change echo asked Agora
      *        for an implicit 100 raw rows — cut by ascending date, i.e. the OLDEST ones — and
-     *        turned them into ~28 candidates. It now reads up to 1000 raw rows and shows the 40
+     *        turned them into ~28 candidates. It now reads up to 1000 raw rows and shows the
      *        STRONGEST of them, and the cut is reported via {@link ScreenResult#truncated()}
      *        instead of being silent.
      */

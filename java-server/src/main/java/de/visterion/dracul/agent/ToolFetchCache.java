@@ -10,7 +10,7 @@ import java.util.function.Supplier;
 
 /**
  * TTL cache for tool-fetch webhook results, keyed by {@code toolName + ":" + paramsKey}.
- * Avoids re-hitting upstream providers (EDGAR / Yahoo / market-data) on repeated tool
+ * Avoids re-hitting Agora (and through it EDGAR / the market-data provider chain) on repeated tool
  * calls within a run or quick re-triggers. Per-tool caching is controlled by the
  * {@link AgentToolCatalog} entry ({@code cacheable} / {@code cacheTtlSeconds}); the
  * global default TTL applies when a cacheable tool has no per-tool TTL.

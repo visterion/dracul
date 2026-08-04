@@ -1370,7 +1370,7 @@ Response:
 Each candidate also carries `analystCoverage` (integer, nullable — analyst count from the
 latest recommendation trend) and `coverageAvailable` (boolean), plus `recentNews` — a
 newest-first **index** of the candidate's post-report headlines, capped at
-`dracul.strigoi.echo.recent-news-cap` (default 5, env `ECHO_RECENT_NEWS_CAP`), each item
+`dracul.strigoi.echo.recent-news-cap` (default 3, env `ECHO_RECENT_NEWS_CAP`), each item
 `{ "headline": "...", "source": "...", "credibility": 0.8, "datetime": "..." }`. This index
 deliberately carries **no `summary`** — a full, summary-carrying news list once pushed a
 candidate's tool-result payload past Vistierie's bridge tool-result limit (50 000 characters

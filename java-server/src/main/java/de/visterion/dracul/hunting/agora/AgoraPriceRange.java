@@ -12,7 +12,10 @@ import java.math.BigDecimal;
 /**
  * The CHEAP half of the quality-at-52-week-low screen: one {@code get_indicators} call with a
  * single {@code 52w_range} spec returns both the 52-week low and the current close of a symbol,
- * from ONE daily-OHLC fetch inside Agora (Yahoo-routed).
+ * from ONE daily-OHLC fetch inside Agora, served by Agora's provider chain — Alpaca first for
+ * US symbols, then Saxo, TwelveData, Finnhub and Yahoo as the last-resort fallback. (Until
+ * 2026-08-04 this javadoc named Yahoo as the route; it never was one. Measured that day, 616 of
+ * the pre-filter's daily-bar fetches went to Alpaca.)
  *
  * <p>Why this exists at all: the authoritative screen reads its 52-week low out of
  * {@code get_fundamentals}, which routes US symbols to Finnhub — a source throttled to 60

@@ -85,8 +85,38 @@ Wikipedia) internally, so there is no Dracul-side adapter chain any more.
 |---|---|---|
 | `DRACUL_AGORA_BASE_URL` (`dracul.agora.base-url`) | `http://agora:8080` | Base URL of Agora's MCP front-door (in-cluster). |
 | `DRACUL_AGORA_TOKEN` (`dracul.agora.token`) | _(blank)_ | Bearer token sent on every Agora MCP request. |
-| `DRACUL_AGORA_TIMEOUT_MS` (`dracul.agora.timeout-ms`) | `25000` | Request timeout (ms) on the Agora MCP client. |
+| `DRACUL_AGORA_TIMEOUT_MS` (`dracul.agora.timeout-ms`) | `25000` | Request timeout (ms) on the Agora MCP client, for every tool without a per-tool override. |
 | `DRACUL_AGORA_CONNECT_TIMEOUT_MS` (`dracul.agora.connect-timeout-ms`) | `5000` | Connect timeout (ms) on the Agora MCP client, kept short so a dead Agora fails fast while a slow-but-alive one is waited out. |
+| `DRACUL_AGORA_FORM4_TIMEOUT_MS` (`dracul.agora.tool-timeout-ms["[get_form4_transactions]"]`) | `45000` | Per-tool request timeout (ms) for the market-wide Form-4 scan. See below. |
+
+**Per-tool request budgets.** `dracul.agora.tool-timeout-ms` is a map from MCP
+tool name to milliseconds; anything not listed uses `dracul.agora.timeout-ms`.
+Agora's tools are not one workload — most are a single upstream GET and should
+fail fast, while `get_form4_transactions` walks a market-wide EDGAR window under
+its own 30 s aggregate deadline. Raising the global timeout for everyone would
+license the same long hang on a quote lookup, so the slow tool gets its own
+budget.
+
+The Form-4 default is derived, not guessed. Agora's worst case is
+30 000 ms (`EdgarSearchService.FORM4_DEADLINE_MS`) + ~7 900 ms (two EFTS
+searches of up to ten 100-hit pages each: the caller's window and the
+late-filing pad) + ~190 ms (the one archive GET that may start just before the
+deadline check) + ~1 000 ms MCP framing and serialisation = **39 090 ms**;
+45 000 ms leaves ~15 % headroom. A market-wide 7-day scan measured **33.4 s**
+end-to-end on production on 2026-08-04, against the then-configured 25 000 ms —
+which is why every `strigoi-insider` run ended in a `TimeoutException` after the
+EDGAR forms token was corrected and the result set grew from 42 to 1 697 hits.
+`AgoraTimeoutBudgetTest` fails the build if the budget ever drops below Agora's
+own worst case.
+
+The enclosing limits, all larger: the `fetch_recent_clusters` webhook timeout
+(60 s, `InsiderDefaults.FETCH_TIMEOUT_SECONDS` — changing it requires an
+agent-definition reset) and Vistierie's `max_run_seconds` for `strigoi-insider`
+(1800 s).
+
+Map keys must be written in bracket form (`"[get_form4_transactions]"`): Spring's
+relaxed binding strips `_` out of a plain map key, so an unbracketed key would
+silently bind as `getform4transactions` and the override would be dead config.
 
 **Deploy-ordering prerequisite:** Agora must be up **before** Dracul so the
 first `get_quote` / `get_ohlc` calls resolve. If Agora is unreachable,
@@ -322,12 +352,12 @@ needed.
 | `DRACUL_ECHO_SCHEDULE` | `0 0 22 * * 1-5` | Spring cron (sec min hour dom month dow). Default: 22:00 UTC weekdays, after US close. |
 | `ECHO_MIN_SURPRISE` | `5.0` | Minimum positive earnings-surprise percent for the pre-screen. |
 | `ECHO_MIN_PRICE` | `5.0` | Minimum current share price (USD) liquidity floor for the pre-screen. |
-| `ECHO_MAX_CANDIDATES` (`dracul.strigoi.echo.max-candidates`) | `40` | Ceiling on the candidate list handed to the agent. The pre-screen applies the EPS filters first, ranks the survivors by descending earnings surprise (symbol as tiebreak) and keeps the strongest `N` — so this is a payload bound, not a quality filter. At ~1.7 kB per serialized candidate the structural limit against the bridge's tool-result cap is ~29 candidates for the guaranteed-safe zone (50 000 chars) and ~58 for the hard ceiling (100 000 chars) — see `MERGER_TERM_SHEET_DIGEST_CHARS` / `MERGER_MAX_CANDIDATES` under "Strigoi Merger" below for where those two numbers come from; the "~95 kB" quoted here previously was folklore. The earnings window itself is now fetched with `limit=1000`, which without this cap would yield ~250–290 candidates. A cut is reported as `data_source_health.truncated: true` with the reason in `detail`, never silently. |
+| `ECHO_MAX_CANDIDATES` (`dracul.strigoi.echo.max-candidates`) | `33` (lowered from `40` on 2026-08-04) | Ceiling on the candidate list handed to the agent. The pre-screen applies the EPS filters first, ranks the survivors by descending earnings surprise (symbol as tiebreak) and keeps the strongest `N` — so this is a payload bound, not a quality filter. **Derived, not chosen** (2026-08-04). Budget = the bridge's guaranteed-safe zone of 50 000 chars (see `MERGER_MAX_CANDIDATES` under "Strigoi Merger" below for where that number comes from; the "~95 kB" once quoted here was folklore). Measured on a production payload the same day: 29 candidates = 45 106 chars compact, of which `recentNews` was 21 427 chars — **47.5 %** — at an average 4.5 items × 160 chars, i.e. ~835 chars of base cost per candidate. The lever taken first was therefore the per-candidate SIZE, not the candidate count: `ECHO_RECENT_NEWS_CAP` went 5 → 3, bringing a candidate to ~1 365 chars. `50 000 − 4 194` (reserve for `active_patterns` growth, ~200 chars per accepted pattern ⇒ ~21 more) `= 45 806`, and `45 806 / 1 365 = 33`. Keeping a 5-item index would have forced the cap down to **28** — below the 29 candidates a real earnings day produced on 2026-08-04, i.e. actual feature reduction. Observed candidate counts over 45 days peak at 29 (typical 27–29 in an earnings week, 11–14 otherwise), so 33 serves every observed day untruncated with four to spare. `EchoPayloadBudgetTest` binds its worst case to BOTH yaml defaults and fails the build if either drifts out of the safe zone. The earnings window itself is now fetched with `limit=1000`, which without this cap would yield ~250–290 candidates. A cut is reported as `data_source_health.truncated: true` with the reason in `detail`, never silently. |
 | `ECHO_OHLC_HISTORY_DAYS` (`dracul.strigoi.echo.ohlc-history-days`) | `320` | Trading days of daily OHLC fetched per symbol/proxy for SP2 CAR, momentum and ADV. |
 | `ECHO_CAR_PROXY` (`dracul.strigoi.echo.car.market-proxy`) | `SPY` | Market proxy symbol used as the CAR market-adjustment benchmark. |
 | `dracul.strigoi.echo.gate.max-accrual-ratio` | `ECHO_MAX_ACCRUAL` | `0.10` | Sloan accrual ratio above which an earnings beat is treated as accrual-driven and the candidate is dropped. |
 | `dracul.strigoi.echo.gate.min-days-to-next-earnings` | `ECHO_MIN_DAYS_NEXT` | `10` | Drop a candidate whose next earnings report is fewer than this many days away. |
-| `ECHO_RECENT_NEWS_CAP` (`dracul.strigoi.echo.recent-news-cap`) | `5` (lowered from `10` on 2026-07-28) | Caps the newest-first, summary-less news **index** (`recentNews`, `{headline, source, credibility, datetime}`) carried in `fetch_recent_pead_candidates`. This is the single lever the candidate-payload byte budget depends on — raising it grows every candidate's payload back toward the Vistierie bridge's tool-result cap (50 000 chars safe / 100 000 chars hard — see `MERGER_MAX_CANDIDATES`) that a full, summary-carrying news list once exceeded. It caps only the index: the deterministic confounder gate always scans the full, uncapped news list (summaries included), and the `fetch_candidate_news` detail tool (see `documentation/api.md`) returns the list with summaries for one symbol on demand, capped separately at 40 items newest-first (its own safety bound against the same bridge limit). `newsCount` on each candidate reports the true, uncapped total regardless of this cap. |
+| `ECHO_RECENT_NEWS_CAP` (`dracul.strigoi.echo.recent-news-cap`) | `3` (lowered from `10` on 2026-07-28, then from `5` on 2026-08-04) | Caps the newest-first, summary-less news **index** (`recentNews`, `{headline, source, credibility, datetime}`) carried in `fetch_recent_pead_candidates`. This is the single lever the candidate-payload byte budget depends on — raising it grows every candidate's payload back toward the Vistierie bridge's tool-result cap (50 000 chars safe / 100 000 chars hard — see `MERGER_MAX_CANDIDATES`) that a full, summary-carrying news list once exceeded. It caps only the index: the deterministic confounder gate always scans the full, uncapped news list (summaries included), and the `fetch_candidate_news` detail tool (see `documentation/api.md`) returns the list with summaries for one symbol on demand, capped separately at 40 items newest-first (its own safety bound against the same bridge limit). `newsCount` on each candidate reports the true, uncapped total regardless of this cap. |
 
 Echo reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches via
 Agora (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); no direct provider key
@@ -367,7 +397,7 @@ SETTLED/ABANDONED lifecycle across hunts (see `documentation/strigoi.md` and
 | `dracul.strigoi.lazarus.probe-symbol` | `AAPL` | Symbol used once per batch to probe fundamentals-source health before the expensive stage (a liquid US name that is always resolvable); a probe failure makes the whole hunt `unavailable`. |
 | `LAZARUS_UNIVERSE_SOURCE` | `sp500` | Index whose constituents form the screened universe, fetched via Agora `get_index_constituents`. Agora currently serves only `sp500`. The special value `watchlist` turns the index off and restores the pre-2026-08-04 watchlist-only scope (operator fallback). Watchlist entries are always screened in addition to the index. |
 | `LAZARUS_UNIVERSE_MAX` | `600` | Hard ceiling on universe size after depot/watchlist de-duplication (the S&P 500 delivers ~503 symbols incl. multi-class rows). A cut is reported as `truncated`. |
-| `LAZARUS_PRE_FILTER_MARGIN` | `0.25` | The cheap pre-filter (one Agora `get_indicators` `52w_range` call per universe symbol) keeps a symbol trading at most this fraction above its 52-week low. Deliberately **wider** than `LAZARUS_MAX_ABOVE_LOW`: it reads Yahoo's 252-bar low while the authoritative screen reads the provider's own 52-week low, so a tighter pre-filter would drop real candidates over a definitional difference. It never relaxes the screen. |
+| `LAZARUS_PRE_FILTER_MARGIN` | `0.25` | The cheap pre-filter (one Agora `get_indicators` `52w_range` call per universe symbol) keeps a symbol trading at most this fraction above its 52-week low. Deliberately **wider** than `LAZARUS_MAX_ABOVE_LOW`: it reads a 252-bar low off Agora's OHLC provider chain (Alpaca first for US symbols, Yahoo only as last resort) while the authoritative screen reads the provider's own 52-week low, so a tighter pre-filter would drop real candidates over a definitional difference. It never relaxes the screen. |
 | `LAZARUS_PRE_FILTER_BUDGET_MS` | `240000` | Wall-clock ceiling for the pre-filter pass. Symbols it does not reach are reported as `truncated`, and the next run enters the universe where this one stopped (in-memory rotation). |
 | `LAZARUS_MAX_CONSECUTIVE_FAILURES` | `10` | Consecutive pre-filter failures before the source counts as down and the pass stops. Agora reports "no history for this symbol" through the same envelope as "Agora is unreachable", so one failure proves nothing — a run of them does. |
 | `LAZARUS_FUNDAMENTALS_MAX` | `60` | Ceiling on `get_fundamentals` calls per run — **the cost gate**. `get_fundamentals` routes US symbols to Finnhub, throttled to 60 calls/minute across all of Agora (`agora.data.finnhub.calls-per-minute`), cached 6 h. Overrunning it produces 429s and silently dropped symbols. Watchlist names are counted first, then the pre-screened index names closest to their low; the rest is reported as `truncated`. |

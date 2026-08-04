@@ -19,95 +19,81 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Regressionsanker für das Tool-Result-Limit der Claude-Max-Bridge (25 000 Tokens ≈ 95 kB).
- *  Am 2026-07-22 riss der Echo-Payload dieses Limit bei ~115 kB; die Bridge lagerte das
- *  Ergebnis in eine Datei aus, die der Agent nicht lesen kann, und Echo lieferte 7 Tage lang
- *  leeres Prey OHNE Fehler — kein Log, kein Alarm, nur ein leerer Ergebnisstrom. Dieser Test
- *  macht ein erneutes Überschreiten im Build sichtbar statt erst nach Tagen stiller Leere.
+/** Regressionsanker für das Tool-Result-Limit der Claude-Max-Bridge. Am 2026-07-22 riss der
+ *  Echo-Payload dieses Limit; die Bridge lagerte das Ergebnis in eine Datei aus, die der Agent
+ *  nicht lesen kann, und Echo lieferte 7 Tage lang leeres Prey OHNE Fehler — kein Log, kein
+ *  Alarm, nur ein leerer Ergebnisstrom. Dieser Test macht ein erneutes Überschreiten im Build
+ *  sichtbar statt erst nach Tagen stiller Leere.
  *
- *  <p><b>Kalibrierung (2026-07-28, mit dem Projektinhaber abgestimmt):</b> die beobachtete
- *  Kandidatenzahl der letzten 45 Tage lag bei maximal 29 (typisch 27–29 in einer
- *  Earnings-Woche, 11–14 sonst). {@code WORST_CASE_CANDIDATES = 45} ist das 1,55-fache dieses
- *  beobachteten Maximums — ein Sicherheitsaufschlag, keine Kapazitätsgrenze. Der reale
- *  Pro-Kandidat-Preis aus einem tatsächlichen Prod-Payload liegt bei ~875 B Metriken + 5
- *  Index-Items × ~165 B ≈ 1,7 kB/Kandidat; damit liegt die strukturelle Decke bei ~56
- *  Kandidaten gegen das ~95-kB-Bridge-Limit. {@code BUDGET_BYTES = 80_000} liegt unter dieser
- *  95-kB-Decke und nur KNAPP über einem realistischen 45-Kandidaten-Payload (Stand 2026-07-28:
- *  ca. 4 % Marge) — diese Enge ist bewusst, nicht großzügig: wer hier reißt, hat entweder ein
- *  Feld angebaut oder den Cap erhöht, und soll das sofort merken statt erst nach Wochen
- *  komfortabler Marge.
+ *  <p><b>Das Limit — die echten Zahlen (2026-08-04 nachgemessen, ersetzt die alte
+ *  „~95 kB"-Folklore):</b> die Bridge deckelt ein MCP-Tool-Ergebnis bei
+ *  {@code MAX_MCP_OUTPUT_TOKENS = 25 000} Token. Eine billige Vorprüfung (Token ≈
+ *  Zeichen/4) überspringt jede Kürzung, solange das Ergebnis ≤ 25 000 × 0,5 = 12 500 Token,
+ *  also <b>≤ 50 000 Zeichen</b> ist. Darüber läuft der echte Tokenizer, und > 25 000 Token
+ *  werden auf <b>100 000 Zeichen</b> hart geschnitten. 50 000 Zeichen sind damit die einzige
+ *  GARANTIERT sichere Zone — und deshalb {@code BUDGET_BYTES}. Die alten 80 000 lagen in dem
+ *  Bereich, in dem das Ergebnis vom echten Tokenizer abhängt, also im Unbekannten.
  *
- *  <p><b>Gemessene Baseline: 2026-07-28, siehe Assertion-Failure für den aktuellen Wert.</b>
- *  Dieser Kommentar nennt bewusst KEINEN festen BYTE-Wert mehr (frühere Fassungen liefen der
- *  tatsächlichen Messung nach jeder Fixture-Änderung hinterher) — nur die knapp 4 % Marge oben
- *  sind als Prozentwert genannt. Der Messwert inklusive
- *  Overshoot in Prozent steht live im Assertion-Failure, sobald der Test reißt. Auf dem
- *  Grün-Pfad wird die Marge NICHT ausgegeben (die {@code .as(...)}-Beschreibung rendert nur bei
- *  einem fehlgeschlagenen Assert); wer die aktuelle Marge auf dem Grün-Pfad braucht, muss
- *  {@code BUDGET_BYTES} kurzzeitig senken und den Overshoot ablesen (siehe Report,
- *  "RED/GREEN-Nachweis").
+ *  <p><b>Kalibrierung (2026-08-04, an einem echten Prod-Payload gemessen).</b> Produktionslauf
+ *  vom 2026-08-04, Tool {@code fetch_recent_pead_candidates}: 29 Kandidaten = 45 106 B kompakt,
+ *  davon {@code recentNews} <b>21 427 B = 47,5 %</b> (131 Items à 160 B, Ø 4,5 Items je
+ *  Kandidat); Grundkosten also ~835 B je Kandidat. Genau wie beim Merger-Term-Sheet war der
+ *  richtige Hebel die Größe PRO Kandidat, nicht die Kandidatenzahl: der News-INDEX wurde von 5
+ *  auf 3 Items gesenkt (kein Datenverlust — {@code newsCount} nennt weiterhin die echte
+ *  Gesamtzahl, und {@code fetch_candidate_news} liefert bis zu 40 Items MIT Summary für jedes
+ *  Symbol, das der Agent wirklich lesen will). Mit 5 Index-Items hätte der Cap auf 28 fallen
+ *  müssen — unter die 29 Kandidaten eines echten Earnings-Tages, also echte Feature-Reduktion.
+ *  Mit 3 Items trägt {@code max-candidates} = 33 (gemessen 45 806 B, Reserve 4 194 B ≈ 21
+ *  weitere akzeptierte Patterns).
  *
- *  <p><b>{@code INDEX_ITEMS_PER_CANDIDATE} ist an den YAML-DEFAULT gebunden</b>, nicht hart
- *  verdrahtet: der Wert wird zur Testlaufzeit aus dem Default von
- *  {@code dracul.strigoi.echo.recent-news-cap} in {@code application.yaml} gelesen, sodass eine
- *  Cap-Erhöhung IM YAML-DEFAULT automatisch auch den hier geprüften Worst Case anhebt — vorher
- *  war das ein zahnloses Duplikat, das bei einer Cap-Erhöhung in der Yaml stillschweigend falsch
- *  geworden wäre. <b>Diese Bindung deckt NICHT den Weg ab, über den Prod-Tunables normalerweise
- *  gesetzt werden:</b> per Umgebungsvariable im Deploy-Compose, niemals im Repo. Eine {@code
- *  ECHO_RECENT_NEWS_CAP}-Env-Var, die den Yaml-Default zur Laufzeit überschreibt, umgeht diesen
- *  Test vollständig — der Build bliebe grün, obwohl der reale Cap gestiegen wäre. Das ist eine
- *  dokumentierte strukturelle Lücke (kein Zugriff auf die Deploy-Umgebung zur Testzeit), aber
- *  NICHT die Ursache des Ausfalls vom 2026-07-22: der wurde durch Commit {@code 5b86dba1}
- *  ("feat(sentiment): surface capped recentNews to echo", 2026-07-19) verursacht, der den
- *  Pro-Kandidat-News-Block (damals inklusive Summary) und einen REPO-COMMITTETEN Yaml-Default
- *  von 10 einführte — beides Änderungen, die dieses Feld-Messverfahren und diese Yaml-Bindung
- *  tatsächlich abdecken. Es gibt keinen Beleg, dass {@code ECHO_RECENT_NEWS_CAP} je in einer
- *  Deploy-Umgebung gesetzt war. Diese Bindung schützt ausschließlich vor Drift zwischen
- *  Repo-Test und Repo-Default — nicht vor einem Prod-Override, der (Stand heute) nicht die
- *  reale Ursache war.
+ *  <p><b>{@code WORST_CASE_CANDIDATES} und {@code INDEX_ITEMS_PER_CANDIDATE} sind an die
+ *  YAML-DEFAULTS gebunden</b> ({@code dracul.strigoi.echo.max-candidates} bzw.
+ *  {@code recent-news-cap}), nicht hart verdrahtet. Der Test misst damit einen Payload, den der
+ *  Code tatsächlich erzeugen kann, und eine Cap-Erhöhung im Yaml bricht den Bau in dem Moment,
+ *  in dem sie die sichere Zone verlässt. <b>Diese Bindung deckt NICHT den Weg ab, über den
+ *  Prod-Tunables normalerweise gesetzt werden:</b> per Umgebungsvariable im Deploy-Compose,
+ *  niemals im Repo. Eine {@code ECHO_MAX_CANDIDATES}- oder {@code ECHO_RECENT_NEWS_CAP}-Env-Var
+ *  umgeht diesen Test vollständig — eine dokumentierte strukturelle Lücke (kein Zugriff auf die
+ *  Deploy-Umgebung zur Testzeit), aber NICHT die Ursache des Ausfalls vom 2026-07-22: der kam
+ *  aus Commit {@code 5b86dba1}, der einen REPO-COMMITTETEN Yaml-Default einführte — genau das,
+ *  was diese Bindung sieht.
  *
- *  <p><b>Was NICHT gemessen wird — {@code active_patterns}:</b> die reale Bridge-Antwort ist
- *  nicht die nackte Kandidatenliste, sondern die Envelope aus
- *  {@code HuntController.handleFetch}: {@code {"output":{"candidates":[…],
- *  "data_source_health":{…},"active_patterns":[…]}}}. Envelope + {@code data_source_health}
- *  sind mit ~200 B vernachlässigbar und werden unten nachgebildet. {@code active_patterns}
- *  (aus {@code PatternRepository.findAcceptedByStrigoi}) ist dagegen eine UNGEDECKELTE Liste
- *  von TEXT-Statements (~200 B je Eintrag laut Seed-Daten, 135–235 Zeichen), die mit jedem vom
- *  Lernloop akzeptierten Pattern monotonisch wächst UND absichtlich mit {@code 'all'}-Mustern
- *  aller Hunter geteilt wird. {@code V2__seed.sql} liefert bereits auf einer frischen Datenbank
- *  DREI ACTIVE {@code strigoi-echo}-Patterns (~460 Zeichen zusammen) — das ist die reale
- *  Baseline, NICHT null. Die Fixture unten bildet diese drei Seed-Patterns mit synthetischen
- *  Platzhaltern gleicher Größenordnung nach, damit die gemessene Baseline diesen bereits
- *  verbrauchten Anteil der Marge enthält. NICHT nachgebildet wird das WEITERE Wachstum über
- *  diese drei Seed-Patterns hinaus — das bleibt absichtlich außerhalb dieses Budgets. Bei
- *  ~200 B/zusätzlichem Pattern verbraucht ein Zuwachs von etwa 90 weiteren, echo-relevanten
- *  Patterns bereits die gesamte verbleibende Marge zwischen der gemessenen Baseline und dem
- *  realen ~95-kB-Bridge-Limit — unabhängig vom Kandidaten-Budget hier. Weiteres
- *  Pattern-Wachstum braucht eine EIGENE Absicherung (z.B. einen Cap in
- *  {@code findAcceptedByStrigoi} oder einen eigenen Regressionstest); dieser Test hier deckt
- *  ausschließlich den Kandidaten-Teil plus die drei Seed-Patterns als Baseline ab.
+ *  <p><b>Was NICHT gemessen wird — Wachstum von {@code active_patterns}:</b> die reale
+ *  Bridge-Antwort ist die Envelope aus {@code HuntController.handleFetch}:
+ *  {@code {"output":{"candidates":[…],"data_source_health":{…},"active_patterns":[…]}}}.
+ *  Envelope + {@code data_source_health} (~250 B) und die DREI ACTIVE
+ *  {@code strigoi-echo}-Patterns, die {@code V2__seed.sql} auf einer frischen Datenbank liefert
+ *  (~460 Zeichen; die reale Baseline, NICHT null), sind unten nachgebildet und stecken im
+ *  gemessenen Wert. {@code active_patterns} ist aber eine UNGEDECKELTE Liste, die mit jedem vom
+ *  Lernloop akzeptierten Pattern wächst (~200 B je Eintrag) und absichtlich über
+ *  {@code 'all'}-Muster mit anderen Huntern geteilt wird. Das Wachstum darüber hinaus bleibt
+ *  bewusst außerhalb dieses Budgets: die verbleibende Marge zwischen dem gemessenen Wert und
+ *  {@code BUDGET_BYTES} IST diese Reserve (Stand 2026-08-04: 4 194 B ≈ 21 weitere Patterns).
+ *  Weiteres Wachstum braucht eine EIGENE Absicherung (z. B. einen Cap in
+ *  {@code findAcceptedByStrigoi}).
  *
- *  <p><b>Bekannte, akzeptierte Lücke:</b> dieser Test deckt Kandidatenzahlen bis 45 ab — ab 46
- *  Kandidaten prüft er nichts mehr. Der reale strukturelle Schaden (Bridge-Limit gerissen)
- *  setzt aber erst deutlich später ein, ungefähr ab ~56 Kandidaten (siehe Kalibrierung oben).
- *  Der Bereich 46–55 ist also ungetestet, aber (Stand heute) noch nicht schädlich — das ist
- *  eine dokumentierte, bewusst akzeptierte Lücke, kein Versehen, und KEINE Aussage, dass dieser
- *  Test bis 55 abdeckt. Sollte die reale Kandidatenzahl je in die Nähe von ~56 wachsen, muss
- *  dieser Test neu kalibriert werden (Kandidatenzahl serverseitig deckeln, recent-news-cap
- *  senken, oder ein Feld aus dem Index in {@code fetch_candidate_news} verschieben).
- *
- *  <p>Alle Werte sind SYNTHETISCH und an der Ø realer Prod-Werte kalibriert (Headline ~69
- *  Zeichen, {@code example.com} als offensichtlich synthetische Quelle nach RFC 2606). Nichts
- *  stammt aus Produktionsdaten. */
+ *  <p>Alle Werte sind SYNTHETISCH und an der Ø realer Prod-Werte kalibriert
+ *  ({@code example.com} als offensichtlich synthetische Quelle nach RFC 2606). Nichts stammt
+ *  aus Produktionsdaten. */
 class EchoPayloadBudgetTest {
 
-    private static final int WORST_CASE_CANDIDATES = 45;
+    private static final int WORST_CASE_CANDIDATES = maxCandidatesDefaultFromYaml();
     private static final int INDEX_ITEMS_PER_CANDIDATE = recentNewsCapDefaultFromYaml();
-    private static final int BUDGET_BYTES = 80_000;
+    private static final int BUDGET_BYTES = 50_000;
     /** Floor so a fixture/DTO regression that silently stops serializing news (a {@code
      *  @JsonIgnore}, an accidental empty list, a DTO swap) cannot make this test vacuously
      *  green — it must actually be measuring a realistic worst-case payload. */
-    private static final int MINIMUM_PLAUSIBLE_BYTES = 50_000;
+    private static final int MINIMUM_PLAUSIBLE_BYTES = 30_000;
+
+    /** Reads the candidate cap default out of the same {@code echo:} block, by the same
+     *  anchored-and-unambiguous method as {@link #recentNewsCapDefaultFromYaml()}. Binding the
+     *  worst case to the CONFIGURED cap rather than to a hand-picked number is the whole point:
+     *  the test then measures a payload the code can actually produce, and raising the cap in
+     *  the yaml fails the build the moment it leaves the safe zone. */
+    private static int maxCandidatesDefaultFromYaml() {
+        return echoIntDefaultFromYaml(
+                "max-candidates:\\s*\\$\\{ECHO_MAX_CANDIDATES:(\\d+)}", "max-candidates");
+    }
 
     /** Reads the recent-news-cap default straight out of the {@code dracul.strigoi.echo}
      *  section of {@code application.yaml} instead of hardcoding a duplicate constant. This is
@@ -123,12 +109,22 @@ class EchoPayloadBudgetTest {
      *  section is renamed or restructured), the test fails loudly here instead of silently
      *  measuring a stale cap. */
     private static int recentNewsCapDefaultFromYaml() {
+        return echoIntDefaultFromYaml(
+                "recent-news-cap:\\s*\\$\\{ECHO_RECENT_NEWS_CAP:(\\d+)}", "recent-news-cap");
+    }
+
+    /** Shared, anchored lookup of an integer default inside the {@code dracul.strigoi.echo:}
+     *  block of {@code application.yaml}. Anchoring to the {@code echo:} section (rather than an
+     *  unanchored key search) stops a future hunter reusing the same key name from silently
+     *  rebinding this; more or fewer than exactly one match fails loudly instead of quietly
+     *  taking the first. */
+    private static int echoIntDefaultFromYaml(String keyRegex, String what) {
         try (InputStream in = EchoPayloadBudgetTest.class.getClassLoader()
                 .getResourceAsStream("application.yaml")) {
             if (in == null) {
                 throw new IllegalStateException(
-                        "application.yaml not found on the test classpath — cannot bind "
-                                + "INDEX_ITEMS_PER_CANDIDATE to dracul.strigoi.echo.recent-news-cap");
+                        "application.yaml not found on the test classpath — cannot bind the "
+                                + "worst case to dracul.strigoi.echo." + what);
             }
             String yaml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
 
@@ -142,23 +138,22 @@ class EchoPayloadBudgetTest {
             }
             String echoBlock = section.group(1);
 
-            Matcher m = Pattern.compile("recent-news-cap:\\s*\\$\\{ECHO_RECENT_NEWS_CAP:(\\d+)}")
-                    .matcher(echoBlock);
+            Matcher m = Pattern.compile(keyRegex).matcher(echoBlock);
             if (!m.find()) {
                 throw new IllegalStateException(
-                        "could not find dracul.strigoi.echo.recent-news-cap's default inside the "
+                        "could not find dracul.strigoi.echo." + what + "'s default inside the "
                                 + "echo: section of application.yaml — this test's worst case and "
                                 + "the yaml default must move together; update this regex in the "
                                 + "same change that changes the yaml key");
             }
-            int cap = Integer.parseInt(m.group(1));
+            int value = Integer.parseInt(m.group(1));
             if (m.find()) {
                 throw new IllegalStateException(
-                        "found more than one recent-news-cap match inside the echo: section of "
+                        "found more than one " + what + " match inside the echo: section of "
                                 + "application.yaml — ambiguous binding, fix this regex before "
                                 + "trusting the derived worst case");
             }
-            return cap;
+            return value;
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -235,13 +230,16 @@ class EchoPayloadBudgetTest {
                 .as("""
                     Echo-Payload-Budget gerissen (%d Kandidaten × %d Index-Items = %d Bytes,
                     Budget %d Bytes, Marge %.1f %%).
-                    Oberhalb von ~95 kB lagert die Claude-Max-Bridge das Tool-Ergebnis in eine
-                    Datei aus, die der Agent nicht lesen kann — Echo liefert dann still leeres
-                    Prey. Entweder ein Feld zurücknehmen, den recent-news-cap in application.yaml
-                    senken, oder das Feld in das Detail-Tool fetch_candidate_news verschieben.
-                    (INDEX_ITEMS_PER_CANDIDATE ist an den Yaml-Default gebunden — ein gesenkter
-                    Cap dort senkt automatisch auch den hier geprüften Worst Case; ein
-                    ECHO_RECENT_NEWS_CAP-Override in der Deploy-Umgebung umgeht diesen Test.)""",
+                    Oberhalb von 50 000 Zeichen entscheidet der echte Tokenizer der
+                    Claude-Max-Bridge, ob gekürzt wird (harte Decke 100 000); ein gekürztes
+                    Ergebnis landet in einer Datei, die der Agent nicht lesen kann — Echo
+                    liefert dann still leeres Prey. Reihenfolge der Hebel: ZUERST die Größe pro
+                    Kandidat senken (recent-news-cap, ein Feld in das Detail-Tool
+                    fetch_candidate_news verschieben), erst DANN max-candidates — ein kleinerer
+                    Cap ist Feature-Reduktion, ein schlankerer Index nicht.
+                    (Beide Werte sind an ihre Yaml-Defaults gebunden; ein ECHO_MAX_CANDIDATES-
+                    oder ECHO_RECENT_NEWS_CAP-Override in der Deploy-Umgebung umgeht diesen
+                    Test.)""",
                     WORST_CASE_CANDIDATES, INDEX_ITEMS_PER_CANDIDATE, measuredBytes,
                     BUDGET_BYTES, marginPercent)
                 .isLessThan(BUDGET_BYTES);

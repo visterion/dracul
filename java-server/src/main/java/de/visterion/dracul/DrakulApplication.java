@@ -1,13 +1,15 @@
 package de.visterion.dracul;
 
 import de.visterion.dracul.hunting.news.NewsCredibilityProperties;
+import de.visterion.dracul.marketdata.AgoraToolTimeouts;
 import de.visterion.dracul.vistierie.VistierieProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableConfigurationProperties({VistierieProperties.class, NewsCredibilityProperties.class})
+@EnableConfigurationProperties({VistierieProperties.class, NewsCredibilityProperties.class,
+        AgoraToolTimeouts.class})
 public class DrakulApplication {
     public static void main(String[] args) {
         SpringApplication.run(DrakulApplication.class, args);

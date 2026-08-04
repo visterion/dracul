@@ -16,7 +16,7 @@ import java.util.function.LongSupplier;
 /**
  * Stage 1 of the quality-at-52-week-low hunt: narrows a market-wide index universe (~500
  * symbols) down to the handful that are anywhere near their 52-week low, using ONE cheap
- * Yahoo-routed {@link AgoraPriceRange} call per symbol.
+ * {@link AgoraPriceRange} call per symbol (served by Agora's OHLC provider chain, Alpaca first).
  *
  * <p><b>Why a pre-filter is not optional.</b> The authoritative screen
  * ({@link LazarusScreener}) reads its 52-week low, solvency and valuation metrics out of
@@ -93,7 +93,8 @@ public class LazarusUniverseService {
      * @param universe                the symbols to consider (index constituents)
      * @param margin                  keep symbols at most this fraction above their 52-week low.
      *                                Deliberately WIDER than the authoritative screen threshold:
-     *                                this stage reads Yahoo's 252-bar low while the screen reads
+     *                                this stage reads a 252-bar low off the daily-OHLC provider
+     *                                chain (Alpaca first) while the screen reads
      *                                the provider's own 52-week low, and a pre-filter that cut
      *                                tighter than the screen would drop real candidates over a
      *                                definitional difference.

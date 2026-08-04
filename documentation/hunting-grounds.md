@@ -213,7 +213,8 @@ consumed through five neutral domain facades in
   change.
 - **`AgoraPriceRange`** (2026-08-04) — `range52w(symbol)`: ONE `get_indicators`
   call with a single `52w_range` spec returns both the 52-week low/high and the
-  current close, from one daily-OHLC fetch inside Agora (Yahoo-routed). It exists
+  current close, from one daily-OHLC fetch inside Agora, served by Agora's
+  OHLC provider chain (Alpaca → Saxo → TwelveData → Finnhub → Yahoo). It exists
   purely as a cost gate: `get_fundamentals` routes US symbols to Finnhub
   (60 calls/minute Agora-wide), so spending one on each of ~500 index members
   would rate-limit the run and silently drop most of the universe. Unlike the
