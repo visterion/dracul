@@ -213,22 +213,34 @@ public class ExecutorPositionRepository {
      * its columns straight without guessing. A collapse (remainder smaller than the leg count)
      * nulls the second column and records the flag — the ratchet reads it to tell a legitimately
      * single-legged position from one whose second leg id is merely unknown.
+     *
+     * <p><b>A collapse is NOT matched by {@code replaces}.</b> Which of the two original legs
+     * survives a collapse is decided by the broker on price tightness, which has no relation to
+     * which of Dracul's two columns that leg used to live in — a survivor can just as easily name
+     * the OLD tranche2 id as its {@code replaces} target. Matching by column would then leave
+     * {@code stop_order_id} on a cancelled id (never matched, so never overwritten) while the live
+     * survivor's id lands in {@code tranche2_stop_order_id} only to be nulled by the collapse
+     * branch — discarding the one id that still exists at the broker. So on a collapse the single
+     * surviving leg (Agora reports exactly one) always becomes {@code stop_order_id}, unconditionally,
+     * and {@code tranche2_stop_order_id} is always cleared — never matched by {@code replaces}.
      */
     public void recordTrim(long id, BigDecimal newQty, int newTrimCount,
                            List<RestoredLeg> legs, boolean collapsed) {
         ExecutorPosition current = findById(id);
         String stopOrderId = current == null ? null : current.stopOrderId();
         String tranche2StopOrderId = current == null ? null : current.tranche2StopOrderId();
-        for (RestoredLeg leg : legs) {
-            if (leg.replaces() != null && leg.replaces().equals(stopOrderId)) {
-                stopOrderId = leg.orderId();
-            }
-            if (leg.replaces() != null && leg.replaces().equals(tranche2StopOrderId)) {
-                tranche2StopOrderId = leg.orderId();
-            }
-        }
         if (collapsed) {
+            stopOrderId = legs.isEmpty() ? null : legs.get(0).orderId();
             tranche2StopOrderId = null;
+        } else {
+            for (RestoredLeg leg : legs) {
+                if (leg.replaces() != null && leg.replaces().equals(stopOrderId)) {
+                    stopOrderId = leg.orderId();
+                }
+                if (leg.replaces() != null && leg.replaces().equals(tranche2StopOrderId)) {
+                    tranche2StopOrderId = leg.orderId();
+                }
+            }
         }
         jdbc.sql("""
                 UPDATE executor_position

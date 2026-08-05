@@ -170,6 +170,18 @@ public class StopRatchetService {
             // BROKER_UNAVAILABLE escalations from 2026-07-13 onward, until this was fixed on
             // 2026-07-26. stopOrderId stays on the record because ReconcileService matches fills
             // with it — it is simply not an address here. Do NOT "restore" stopOrderId.
+            //
+            // A collapsed two-tranche position (see the twoStopLegs carve-out above) also lands
+            // here, and NOT naming p.stopOrderId() explicitly is deliberate, not incidental.
+            // ExecutorPositionRepository.recordTrim's collapse branch writes the one surviving leg
+            // id into stop_order_id unconditionally regardless of which original column it used to
+            // occupy — but that write is a second, separate piece of logic from this one. Trusting
+            // it blindly here would silently break again the same way finding-1 did if that write
+            // is ever wrong or ever bypassed by a caller that does not go through recordTrim. The
+            // by-bracket-id / by-symbol resolution below has no such dependency: it always finds
+            // whichever single leg is actually live at the broker, independent of what any column
+            // on the book claims.
+
             String bracketId = p.brokerOrderId();
             if (bracketId == null) {
                 escalate(p, runId, "NO_BRACKET_ID",

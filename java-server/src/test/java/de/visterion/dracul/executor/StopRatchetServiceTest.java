@@ -352,6 +352,10 @@ class StopRatchetServiceTest {
         // tranche2_stop_order_id is gone and stop_legs_collapsed is true. Escalating forever here
         // (as TRANCHE_RATCHET_UNSUPPORTED would) is the bug this task fixes — the surviving single
         // leg must still ratchet through the ordinary single-tranche path.
+        //
+        // stop_order_id="stop-1" here is deliberately NOT the address used: see the stopOrderId()
+        // assertion below for why naming it explicitly would be actively wrong, not merely
+        // unverified.
         ExecutorPosition p = new ExecutorPosition(40L, "c", "ACME", "BUY", BigDecimal.TEN,
                 new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
@@ -366,6 +370,14 @@ class StopRatchetServiceTest {
         FakeExecutionGateway.ModifyCall call = gateway.modifyCalls.get(0);
         assertThat(call.orderId()).isEqualTo("brk-1");
         assertThat(call.stop()).isEqualByComparingTo("104");
+        // Pins the addressing choice: null, letting the gateway resolve the surviving leg, NOT
+        // p.stopOrderId() by name. This is not merely brief-literal but the CORRECT choice —
+        // ExecutorPositionRepository.recordTrim's collapse branch can leave stop_order_id holding a
+        // cancelled id if the survivor's `replaces` named the old tranche2 column (see the fix and
+        // regression test on recordTrim). Naming that stale id here would send a modify against a
+        // leg the broker no longer has; letting Agora resolve by bracket id / by-symbol fallback is
+        // the only address that is guaranteed live for a collapsed position's single leg.
+        assertThat(call.stopOrderId()).isNull();
 
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(40L),
                 any(), any(), any(Integer.class), any(), any());
