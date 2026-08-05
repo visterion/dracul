@@ -1227,8 +1227,28 @@ public class ExecutorWebhookController {
             // never replaced; the next ratchet run would fail with LEG_NOT_FOUND forever.
             // LEG_CANCEL_INCOMPLETE does not have this gap (Agora self-maps every uncancelled leg
             // back to its own id), so this is safe there too.
-            positionRepo.repointStopLegs(position.id(),
-                    e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
+            //
+            // BUT repointStopLegs must NOT run unconditionally: several Saxo reject codes fire
+            // BEFORE the leg-cancel loop ever runs (INVALID_FRACTION, SYMBOL,
+            // QTY_EXCEEDS_POSITION, QTY_ROUNDED_TO_ZERO, CLOSE_ALREADY_PENDING — see
+            // SaxoBrokerProvider.flatten) and every Alpaca flatten rejection never touches a leg
+            // at all. On those, e.protectiveLegs() is legitimately empty, and repointStopLegs
+            // treats "not named" as "dead" — it would null BOTH live stop columns for a broker
+            // rejection that never changed broker state, permanently orphaning working stop
+            // orders (nothing restores them: updateMaintenance's stop_order_id is a COALESCE that
+            // never overwrites with NULL). Repoint only when Agora actually touched a leg
+            // (non-empty protectiveLegs) or the reject code is one of the three leg-restore codes
+            // — the third, LEG_RESTORE_FAILED_UNPROTECTED, can legitimately carry an EMPTY list in
+            // the worst case (interleaveRollback stops with nothing live), and that is exactly the
+            // one case where nulling both columns is truthful.
+            boolean legCancelWasAttempted = (e.protectiveLegs() != null && !e.protectiveLegs().isEmpty())
+                    || "LEG_CANCEL_INCOMPLETE".equals(e.rejectCode())
+                    || "LEG_RESTORE_FAILED".equals(e.rejectCode())
+                    || "LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode());
+            if (legCancelWasAttempted) {
+                positionRepo.repointStopLegs(position.id(),
+                        e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
+            }
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
                     "ESCALATE", e.rejectCode(), null,

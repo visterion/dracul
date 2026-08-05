@@ -3459,6 +3459,48 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void trimBooksBrokerQuantitiesEvenWhenAPendingOppositeCloseMakesThemNotSumToTheOriginalQty() {
+        // Pins a known, documented (not fixed here) gap: SaxoBrokerProvider.flatten's M-T6
+        // idempotent-retry lookup subtracts any already-pending opposite-side Market quantity
+        // from the requested close before placing this call's order (a prior trim whose HTTP
+        // response was lost, but which the broker already accepted). closedQty is that reduced
+        // "this call's own contribution"; remainingQty is available.subtract(closeQty) using the
+        // FULL originally-requested closeQty (a correct PROJECTION of what remains once both the
+        // pending order and this one fill). The two together therefore fall short of the original
+        // position qty by exactly the pending quantity that was never separately booked (the
+        // lost-response trim's own decision_log/order_json row was never written either, since
+        // the caller never got a response to log). Position qty 46, requested close 23 (0.5
+        // fraction), 10 already pending -> closedQty=13, remainingQty=23, sum=36 != 46.
+        //
+        // Dracul books exactly what the broker reports without trying to reconcile the gap:
+        // recordTrim's new qty is remainingQty (23, the correct final-remaining projection), and
+        // qty_closed (13) is logged as-is, undercounting this trim's true contribution to the
+        // OutcomeBatchJob's weighted-R by the 10 shares the lost trim closed. This is a real, if
+        // narrow, analytics distortion -- not a book-correctness bug: the position's own qty
+        // column stays accurate (23 is genuinely what remains once both closes fill), only the
+        // qty_closed audit trail undercounts. Whether to warn/reconcile here is left to a future
+        // change; this test only pins the current, documented behaviour.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("46"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(new BigDecimal("13"), new BigDecimal("23"),
+                        new BigDecimal("40"), "close-1", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("13");
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("23");
+        // 13 + 23 = 36, NOT the original 46 -- the gap this test documents.
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("23")), eq(1), eq(List.of()), eq(false));
+    }
+
+    @Test
     void trimPersistsTheRestoredLegIds() {
         // Gateway returns two restored protective legs on a successful trim -> recordTrim
         // receives them unchanged (plus the collapsed flag) so the stop columns get repointed.
@@ -3585,6 +3627,76 @@ class ExecutorWebhookControllerTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("LEG_RESTORE_FAILED");
+    }
+
+    @Test
+    void aRejectionBeforeTheLegCancelLoopEverRunsMustNotRepointStopLegs() {
+        // BLOCKER fix (whole-branch review, 2026-08-05): CLOSE_ALREADY_PENDING (and every other
+        // Saxo reject that fires before SaxoBrokerProvider.flatten's leg-cancel loop --
+        // INVALID_FRACTION, SYMBOL, QTY_EXCEEDS_POSITION, QTY_ROUNDED_TO_ZERO -- plus every
+        // Alpaca flatten rejection, which never cancels a leg at all) carries a legitimately
+        // EMPTY protectiveLegs() because Agora never touched a leg. Before this fix,
+        // repointStopLegs ran unconditionally on ANY BrokerRejectedException and would have
+        // nulled BOTH live stop columns here -- permanently orphaning working stop orders that
+        // were never cancelled. Scenario: a prior trim's HTTP response was lost, the broker
+        // already holds a pending partial close, and the next exit_position hits the idempotency
+        // check -> CLOSE_ALREADY_PENDING with no leg touched.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("46"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenThrow(new BrokerRejectedException(
+                        "a close of >= the requested size is already working",
+                        "CLOSE_ALREADY_PENDING", List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        // The stop columns must stay exactly as they were -- repointStopLegs must never even be
+        // called, let alone with an empty list that would null both columns.
+        verify(positionRepo, never()).repointStopLegs(anyLong(), any());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("CLOSE_ALREADY_PENDING");
+    }
+
+    @Test
+    void unprotectedRejectionWithAnEmptyLegListStillRepointsBothColumnsToNull() {
+        // The worst case the gate must still let through: LEG_RESTORE_FAILED_UNPROTECTED CAN
+        // legitimately carry an empty protectiveLegs() (interleaveRollback stopped with nothing
+        // live at all -- e.g. a single-leg position, see SaxoBrokerProvider's own single-leg
+        // rollback limitation). Unlike CLOSE_ALREADY_PENDING above, Agora DID touch a leg here, so
+        // repointStopLegs must still run and null both columns (repointStopLegs(id, List.of())
+        // nulls any currently-recorded id, since none is named as a replaces target).
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("46"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenThrow(new BrokerRejectedException(
+                        "rollback left the position unprotected", "LEG_RESTORE_FAILED_UNPROTECTED",
+                        List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        controller.exitPosition(BEARER, "run-1", body);
+
+        verify(positionRepo).repointStopLegs(eq(7L), eq(List.of()));
+        verify(telegram).notifyAlert(eq("ACME"), eq("LEG_RESTORE_FAILED_UNPROTECTED"), eq("CRITICAL"), any());
     }
 
     // -------------------------------------------------------------------
