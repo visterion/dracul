@@ -828,7 +828,7 @@ public class ExecutorWebhookController {
                     "OPEN", brokerOrderId,
                     orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    orderPriceRounded, null, null, null));
+                    orderPriceRounded, null, null, null, false));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 

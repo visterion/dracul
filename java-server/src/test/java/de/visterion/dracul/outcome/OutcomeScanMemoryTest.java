@@ -134,7 +134,7 @@ class OutcomeScanMemoryTest {
                 List.of(), signalId, sourceAgent, "2026-06-01 10:00:00.0", null, "CLOSED", null,
                 bd("100"), bd("2.0"), 0, exitPrice, realizedR, "TAKE_PROFIT",
                 "2026-06-10 10:00:00.0", null, null, null, null, null, 0, bd("93"), null, null,
-                null, null, null);
+                null, null, null, false);
     }
 
     // ------------------------------------------------------------------------------------------

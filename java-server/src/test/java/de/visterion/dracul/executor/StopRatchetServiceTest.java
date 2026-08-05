@@ -79,7 +79,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("90"), activeStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01",
                 null, "OPEN", brokerOrderId, highestPrice, mfeR, softConfirmCount, null, null, null, null,
                 "stop-1", null, null, tranche2OrderId, tranche2StopOrderId, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
     }
 
     @Test
@@ -205,7 +205,7 @@ class StopRatchetServiceTest {
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
                 null /* stop_order_id missing */, null, null, "t2-1", "s2", 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");

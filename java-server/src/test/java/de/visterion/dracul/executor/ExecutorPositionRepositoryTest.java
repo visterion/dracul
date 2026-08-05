@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.ContainerConfig;
+import de.visterion.dracul.executor.broker.RestoredLeg;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,14 +40,14 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
         var posB = new ExecutorPosition(null, "depot-1", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
 
         long idA = repo.insert(posA);
         long idB = repo.insert(posB);
@@ -74,7 +75,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
         long id = repo.insert(pos);
 
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 1,
@@ -97,7 +98,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
         long id = repo.insert(pos);
 
         repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP");
@@ -158,6 +159,69 @@ class ExecutorPositionRepositoryTest {
         assertThat(found.qty()).isEqualByComparingTo("50");
         assertThat(found.trimCount()).isEqualTo(1);
         assertThat(found.softConfirmCount()).isEqualTo(0);
+    }
+
+    @Test
+    void recordTrimWritesTheBrokerQuantityNotOurArithmetic() {
+        // 23-share position, e.g. OHI @ fraction 0.5: Dracul's own arithmetic floors to 11, but
+        // the broker (Agora) floors the other side and reports 12. The broker's number must win.
+        long id = repo.insert(openPosition("BROKERQTY" + System.nanoTime()));
+
+        repo.recordTrim(id, new BigDecimal("12"), 1, List.of(), false);
+
+        assertThat(repo.findById(id).qty()).isEqualByComparingTo("12");
+    }
+
+    @Test
+    void recordTrimRepointsBothStopColumnsViaReplaces() {
+        long id = repo.insert(openPositionWithStops("REPOINT" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("5"), new BigDecimal("90")),
+                new RestoredLeg("old-2", "new-2", new BigDecimal("5"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, false);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isEqualTo("new-2");
+    }
+
+    @Test
+    void recordTrimLeavesAnUnmatchedColumnAlone() {
+        long id = repo.insert(openPositionWithStops("UNMATCHED" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("5"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, false);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isEqualTo("old-2");
+    }
+
+    @Test
+    void collapseNullsTheSecondStopColumnAndSetsTheFlag() {
+        long id = repo.insert(openPositionWithStops("COLLAPSE" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("10"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, true);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.tranche2StopOrderId()).isNull();
+        assertThat(found.stopLegsCollapsed()).isTrue();
+    }
+
+    @Test
+    void collapseFlagRoundTripsThroughTheRowMapper() {
+        long id = repo.insert(openPositionWithStops("ROUNDTRIP" + System.nanoTime(), "old-1", "old-2"));
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("10"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, true);
+
+        var open = repo.findOpen();
+        var found = open.stream().filter(p -> p.id() == id).findFirst().orElseThrow();
+        assertThat(found.stopLegsCollapsed()).isTrue();
     }
 
     @Test
@@ -281,7 +345,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null));
+                null, null, null, null, 0, null, null, null, null, null, null, false));
     }
 
     private ExecutorPosition openPosition(String symbol) {
@@ -292,6 +356,17 @@ class ExecutorPositionRepositoryTest {
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
                 "Technology", new BigDecimal("105.5"), null, null, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
+    }
+
+    private ExecutorPosition openPositionWithStops(String symbol, String stopOrderId, String tranche2StopOrderId) {
+        return new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 2, new BigDecimal("1.5"),
+                List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, stopOrderId,
+                "Technology", new BigDecimal("105.5"), "ord-2", tranche2StopOrderId, 0, null, null,
+                null, null, null, null, false);
     }
 }

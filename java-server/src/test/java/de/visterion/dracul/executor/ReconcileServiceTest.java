@@ -57,7 +57,7 @@ class ReconcileServiceTest {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
     }
 
     @Test
@@ -103,7 +103,7 @@ class ReconcileServiceTest {
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "brk-" + id, null, null, 0, null, null, null, null, stopOrderId,
                 null, null, null, null, 0, null, null, null,
-                pendingExitReason, exitOrderId, pendingExitFillPrice);
+                pendingExitReason, exitOrderId, pendingExitFillPrice, false);
     }
 
     @Test
@@ -373,7 +373,7 @@ class ReconcileServiceTest {
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-20", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-20",
                 null, null, null, null, 0, null, null,
-                new BigDecimal("193.88"), null, null, null);
+                new BigDecimal("193.88"), null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("PSMT", "BUY", BigDecimal.TEN,
@@ -426,7 +426,7 @@ class ReconcileServiceTest {
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-7", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-7",
                 "Technology", new BigDecimal("101.5"), "ord-2", "stop-2", 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
@@ -499,7 +499,7 @@ class ReconcileServiceTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-8", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-8",
-                null, null, "ord-t2", "stop-t2", 0, null, null, null, null, null, null);
+                null, null, "ord-t2", "stop-t2", 0, null, null, null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedOrder(new BrokerOrder("tp-8", "ref-8", "ACME", OrderRole.TAKE_PROFIT,
@@ -531,7 +531,7 @@ class ReconcileServiceTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-9", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-9",
-                null, null, "ord-t2-9", "stop-t2-9", 0, null, null, null, null, null, null);
+                null, null, "ord-t2-9", "stop-t2-9", 0, null, null, null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         // Only the tranche-2 stop leg id matches (not brokerOrderId/stopOrderId/tranche2OrderId).
@@ -603,7 +603,7 @@ class ReconcileServiceTest {
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-13",
                 new BigDecimal("100"), BigDecimal.ZERO, 0, null, null, null, null, "stop-13",
                 null, null, null, null, 0, null, "2026-07-10T00:00:00Z",
-                null, null, null, null);
+                null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("FILLPOS", "BUY", BigDecimal.TEN,

@@ -40,5 +40,6 @@ public record ExecutorPosition(
         BigDecimal submittedLimitPrice,
         String pendingExitReason,
         String exitOrderId,
-        BigDecimal pendingExitFillPrice) {
+        BigDecimal pendingExitFillPrice,
+        boolean stopLegsCollapsed) {
 }

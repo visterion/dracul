@@ -28,7 +28,7 @@ class ExecutorNotifierTest {
                 new BigDecimal("178.00"), new BigDecimal("178.00"), 1, null, List.of(),
                 "sig-1", "strigoi-pead", "2026-07-20", null, "OPEN", "bo-1", null, null, 0,
                 null, null, null, null, "so-1", "Tech", null, null, null, 0, null,
-                expires, null, null, null, null);
+                expires, null, null, null, null, false);
     }
 
     private ExecutorSignal sig(String mech, Double conf, JsonNode thesis) {
