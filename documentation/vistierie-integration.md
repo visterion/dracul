@@ -311,3 +311,42 @@ depend on Agora's `get_filing_text` tool (fetches a filing's primary document
 as cleaned summary-term-sheet text), consumed via `AgoraFilings.filingText(url)`.
 Fail-soft: an unavailable filing degrades to `FilingText.unavailable()` and the
 strigoi LLM judges conservatively — the agents' `output_schema` is unchanged.
+
+## Executor trading gateway: the `flatten` contract (2026-08-05)
+
+The executor's write path to the broker goes through Agora's trading tools
+(`place_bracket`, `flatten`, `modify_bracket`, `cancel_order`), called by
+`AgoraExecutionGateway` with a non-live trading token (`dracul.executor.agora-trading-token`).
+This is a separate integration from the MCP-based hunting/price facades above:
+it is plain webhook calls (`POST {agora-base}/tools/{name}`), not MCP tool
+calls inside an agent run, because the executor itself is the caller, not an
+LLM tool-dispatch loop.
+
+**`flatten(connection, symbol, fraction)`** closes all or part of a position.
+Since 2026-08-05, a **partial** close (`fraction < 1.0`) additionally restores
+the protective stop legs Agora cancels along the way, sized down to the
+remaining holding, *before* placing the closing market order — a failed
+closing order then costs nothing, instead of leaving the remainder
+unprotected until the next maintenance run (BUG-S7). The response carries two
+new fields, on **both** the accepted and the rejected branch:
+
+| Field | Wire name(s) | Meaning |
+|---|---|---|
+| Restored protective legs | `protective_legs` (array) | Each entry has `replaces` (the old leg id it stands in for), `order_id` (the new id), `qty`, `price`. Parsed by `AgoraExecutionGateway.restoredLegs`, camelCase-tolerant (`orderId`/`order_id` etc. throughout the gateway). |
+| Leg collapse flag | `legs_collapsed` (bool, default `false`) | `true` when the remaining holding was too small to give a two-tranche position two separate stop legs; the broker keeps exactly one surviving leg instead. |
+
+`protective_legs` also appears on a **rejection** (`accepted:false`): Agora's
+rollback can cancel and re-issue legs before it discovers the closing order
+itself failed, so the exception (`BrokerRejectedException`, a
+`BrokerUnavailableException` subclass) carries the same `protective_legs` list
+via `rejectCode()`/`protectiveLegs()`. `LEG_RESTORE_FAILED_UNPROTECTED` is the
+reject code that means the remainder may now sit at the broker with less
+protection than it holds — Dracul raises a CRITICAL Telegram alert on that
+code specifically, not on every rejection.
+
+`closedQty`/`remainingQty` (`closed_qty`/`remaining_qty`) are unchanged in
+shape but are now the values that drive Dracul's own book, `order_json` and
+tool response — see `docs/wie-dracul-entscheidet.md`, "Teil-Close (TRIM):
+Legs werden restauriert, nicht nur storniert", for how the executor persists
+`protective_legs`/`legs_collapsed` into `executor_position` and reacts to a
+rejection.
