@@ -332,8 +332,8 @@ new fields, on **both** the accepted and the rejected branch:
 
 | Field | Wire name(s) | Meaning |
 |---|---|---|
-| Restored protective legs | `protective_legs` (array) | Each entry has `replaces` (the old leg id it stands in for), `order_id` (the new id), `qty`, `price`. Parsed by `AgoraExecutionGateway.restoredLegs`, camelCase-tolerant (`orderId`/`order_id` etc. throughout the gateway). |
-| Leg collapse flag | `legs_collapsed` (bool, default `false`) | `true` when the remaining holding was too small to give a two-tranche position two separate stop legs; the broker keeps exactly one surviving leg instead. |
+| Restored protective legs | `protective_legs` (array) | Each entry has `replaces` (the old leg id it stands in for), `order_id` (the new id), `qty`, `price`. Parsed by `AgoraExecutionGateway.restoredLegs` — the field is read as `order_id` only, not camelCase-tolerant. |
+| Leg collapse flag | `legs_collapsed` (bool, default `false`) | `true` when the remaining holding was too small to give every cancelled stop leg at least one share. Not necessarily "exactly one survivor": the allocator fills greedily down tightness order, so more than one leg can still come back (e.g. three 1-share legs with 2 remaining yields two survivors of 1 share each). `ExecutorPositionRepository.recordTrim` reconciles every returned leg by `replaces` against both stop columns rather than assuming a count. |
 
 `protective_legs` also appears on a **rejection** (`accepted:false`): Agora's
 rollback can cancel and re-issue legs before it discovers the closing order
