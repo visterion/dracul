@@ -149,7 +149,9 @@ public class StopRatchetService {
 
             BigDecimal oldStop = p.activeStop();
 
-            if (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null) {
+            boolean twoStopLegs = !p.stopLegsCollapsed()
+                    && (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null);
+            if (twoStopLegs) {
                 if (!ratchetTwoLegs(p, chandelier, runId, budget)) continue;
 
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
@@ -208,6 +210,15 @@ public class StopRatchetService {
      * <p><b>Without both ids there is still nothing to address</b>, and the old
      * {@code TRANCHE_RATCHET_UNSUPPORTED} escalation stands unchanged — a broker that reports no
      * leg id leaves no honest way to move the right stop.
+     *
+     * <p><b>A collapsed position never reaches this method.</b> A trim can fold two stop legs into
+     * one because the remainder was too small to give each leg at least one share; the book then
+     * records {@code stop_legs_collapsed} and only one leg genuinely exists at the broker any more.
+     * {@link #ratchet} routes that case around this method entirely and ratchets the single
+     * surviving leg through the ordinary single-tranche path instead — sending a second modify for
+     * a leg the broker no longer has would either fail loudly or, worse, silently no-op. The
+     * escalation here stays for the case it was written for: two legs genuinely exist and one id is
+     * unknown, which is a bug on the book, not a collapse.
      *
      * <p><b>One leg up, one leg not, is reported as PARTIAL — and the book keeps the OLD stop.</b>
      * Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure the

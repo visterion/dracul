@@ -346,6 +346,77 @@ class StopRatchetServiceTest {
     }
 
     @Test
+    void aCollapsedTwoTranchePositionRatchetsItsSingleLeg() {
+        // A trim folded the two stop legs into one because the remainder was too small to give
+        // each leg at least one share: tranche 2, tranche2_order_id still set, but
+        // tranche2_stop_order_id is gone and stop_legs_collapsed is true. Escalating forever here
+        // (as TRANCHE_RATCHET_UNSUPPORTED would) is the bug this task fixes — the surviving single
+        // leg must still ratchet through the ordinary single-tranche path.
+        ExecutorPosition p = new ExecutorPosition(40L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
+                new BigDecimal("1.0"), 0, null, null, null, null,
+                "stop-1", null, null, "t2-1", null, 0, null, null,
+                null, null, null, null, true);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        FakeExecutionGateway.ModifyCall call = gateway.modifyCalls.get(0);
+        assertThat(call.orderId()).isEqualTo("brk-1");
+        assertThat(call.stop()).isEqualByComparingTo("104");
+
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(40L),
+                any(), any(), any(Integer.class), any(), any());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void anUncollapsedTwoTranchePositionWithAMissingLegStillEscalates() {
+        // Same row as above, but stop_legs_collapsed is false: this is the genuinely unaddressable
+        // case the escalation exists for, and it must still fire exactly as before.
+        ExecutorPosition p = new ExecutorPosition(41L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
+                new BigDecimal("1.0"), 0, null, null, null, null,
+                "stop-1", null, null, "t2-1", null, 0, null, null,
+                null, null, null, null, false);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void anIntactTwoLegPositionStillRatchetsBothLegs() {
+        // Regression: both leg ids present and not collapsed -> both legs still move, at the same
+        // price, exactly as tranche2_bothLegIds_ratchetsBothLegsToTheSameLevel pins above.
+        ExecutorPosition p = openPosition(42L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("104");
+        assertThat(gateway.modifyCalls.get(1).stop()).isEqualByComparingTo("104");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(42L),
+                any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
     void guardDenied_tranche2_writesNothing() {
         // Proves the gate sits AFTER guard.permit: chandelier 110 - 3*5.33 = 94.01 < stop 95,
         // so the guard denies first and no escalation row is written at all.
