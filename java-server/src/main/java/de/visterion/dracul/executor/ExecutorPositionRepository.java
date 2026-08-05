@@ -249,6 +249,57 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    /**
+     * Repoints ONLY the stop-leg id columns, for a rejected trim whose rollback still changed
+     * broker state (new leg ids, or a leg irrecoverably cancelled). Unlike {@link
+     * #recordTrim(long, BigDecimal, int, List, boolean)}, this must never touch {@code qty},
+     * {@code trim_count} or {@code soft_confirm_count} — no trim happened on this path, so the
+     * soft-confirm ladder and trim ladder must survive untouched (a reset here would push a
+     * retry roughly two maintenance runs out for no reason).
+     *
+     * <p>A currently-recorded stop-leg id that is NOT named as a {@code replaces} target in
+     * {@code legs} is nulled, not left alone: Agora's own rollback can break at the first failure
+     * and report fewer live legs than were cancelled (the LEG_RESTORE_FAILED_UNPROTECTED case),
+     * so an unmatched id is dead, not merely stale. A null column is a visible protection gap; a
+     * stale id looks live and fails LEG_NOT_FOUND on the next ratchet run instead.
+     */
+    public void repointStopLegs(long id, List<RestoredLeg> legs) {
+        ExecutorPosition current = findById(id);
+        if (current == null) return;
+
+        String stopOrderId = current.stopOrderId();
+        String tranche2StopOrderId = current.tranche2StopOrderId();
+        boolean stopMatched = false;
+        boolean tranche2Matched = false;
+        for (RestoredLeg leg : legs) {
+            if (leg.replaces() != null && leg.replaces().equals(current.stopOrderId())) {
+                stopOrderId = leg.orderId();
+                stopMatched = true;
+            }
+            if (leg.replaces() != null && leg.replaces().equals(current.tranche2StopOrderId())) {
+                tranche2StopOrderId = leg.orderId();
+                tranche2Matched = true;
+            }
+        }
+        if (!stopMatched && current.stopOrderId() != null) {
+            stopOrderId = null;
+        }
+        if (!tranche2Matched && current.tranche2StopOrderId() != null) {
+            tranche2StopOrderId = null;
+        }
+
+        jdbc.sql("""
+                UPDATE executor_position
+                SET stop_order_id = :stopOrderId,
+                    tranche2_stop_order_id = :tranche2StopOrderId
+                WHERE id = :id
+                """)
+                .param("stopOrderId", stopOrderId)
+                .param("tranche2StopOrderId", tranche2StopOrderId)
+                .param("id", id)
+                .update();
+    }
+
     /** Persists the adverse-excursion extreme (lowest price seen while the position is open),
      *  used for MAE (max adverse excursion) tracking. */
     public void updateAdverseExtreme(long id, BigDecimal lowestPrice) {

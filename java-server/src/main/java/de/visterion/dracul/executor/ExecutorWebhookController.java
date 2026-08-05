@@ -1212,15 +1212,23 @@ public class ExecutorWebhookController {
         try {
             cr = gateway.flatten(connection, symbol, gatewayFraction);
         } catch (BrokerRejectedException e) {
-            // A rejection can still change broker state: Agora rolls protection back and issues
-            // NEW leg ids before reporting the rejection. Losing those here means Dracul keeps
-            // addressing cancelled stop orders and every later modification fails with
-            // LEG_NOT_FOUND — the exact defect this change exists to prevent. The trim itself did
-            // not happen, so qty and trim_count stay put; only the stop columns are repointed.
-            if (e.protectiveLegs() != null && !e.protectiveLegs().isEmpty()) {
-                positionRepo.recordTrim(position.id(), position.qty(), position.trimCount(),
-                        e.protectiveLegs(), false);
-            }
+            // A rejection can still change broker state: Agora rolls protection back and may
+            // issue NEW leg ids before reporting the rejection. The trim itself did not happen,
+            // so qty, trim_count AND soft_confirm_count must stay untouched — reusing recordTrim
+            // here (fix round 1 finding) would wrongly reset both the soft-confirm ladder and the
+            // stop_legs_collapsed flag, since recordTrim always zeroes/recomputes them for an
+            // actual trim. repointStopLegs touches ONLY the stop-leg id columns.
+            //
+            // Any currently-recorded stop-leg id that is not named (as a `replaces` target) in
+            // e.protectiveLegs() is nulled rather than left stale: Agora's own rollback
+            // (SaxoBrokerProvider.interleaveRollback) can break at the first failure and report
+            // fewer live legs than were cancelled — precisely the LEG_RESTORE_FAILED_UNPROTECTED
+            // case. Keeping an unmatched id would point Dracul at an order that was cancelled and
+            // never replaced; the next ratchet run would fail with LEG_NOT_FOUND forever.
+            // LEG_CANCEL_INCOMPLETE does not have this gap (Agora self-maps every uncancelled leg
+            // back to its own id), so this is safe there too.
+            positionRepo.repointStopLegs(position.id(),
+                    e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
                     "ESCALATE", e.rejectCode(), null,
@@ -1249,9 +1257,15 @@ public class ExecutorWebhookController {
             // Quantities come from the BROKER, never from our own arithmetic: Dracul floors
             // qty × (1−fraction) while the broker floors qty × fraction and subtracts, which
             // differ by one share on four of five live positions. Falling back to the local
-            // arithmetic only covers a provider that does not report closed/remaining qty.
-            BigDecimal qtyClosed = cr.closedQty() != null ? cr.closedQty() : position.qty().subtract(remaining);
-            BigDecimal qtyRemaining = cr.remainingQty() != null ? cr.remainingQty() : remaining;
+            // arithmetic only covers a provider that does not report closed/remaining qty — and
+            // it is all-or-nothing: trusting one broker-reported field while falling back on the
+            // other could yield qtyClosed + qtyRemaining != position.qty(), exactly the
+            // OutcomeBatchJob weighted-R inflation this change removes. Not reachable through
+            // today's gateway (it always reports both or neither), but kept safe against a future
+            // provider that reports only one.
+            boolean brokerReportedBoth = cr.closedQty() != null && cr.remainingQty() != null;
+            BigDecimal qtyClosed = brokerReportedBoth ? cr.closedQty() : position.qty().subtract(remaining);
+            BigDecimal qtyRemaining = brokerReportedBoth ? cr.remainingQty() : remaining;
 
             positionRepo.recordTrim(position.id(), qtyRemaining, position.trimCount() + 1,
                     cr.protectiveLegs(), cr.legsCollapsed());

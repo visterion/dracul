@@ -3231,11 +3231,17 @@ class ExecutorWebhookControllerTest {
         // Regression: 1 - 0.33 computed in primitive double is 0.6699999999999999, which floors
         // qty=100 to 66 instead of 67. The complement must be computed in BigDecimal so qty=100
         // trims to exactly remaining 67 / closed 33.
+        //
+        // The gateway mock reports NO broker quantities (null/null) so this actually exercises
+        // the local-arithmetic FALLBACK path -- a mock returning matching closedQty/remainingQty
+        // here would make this test pass even if the BigDecimal complement regressed back to a
+        // primitive double, because the asserted value would come from the mock, not from the
+        // controller's own arithmetic (fix round 1 finding: this test was vacuous under mutation).
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("100"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("33"), new BigDecimal("67"), new BigDecimal("112"), "close-1", List.of(), false));
+                .thenReturn(new CloseResult(null, null, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3259,11 +3265,13 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void exitPosition_trim033_qty200_remaining134() {
+        // Same fallback-path reasoning as the qty=100 test above: null/null broker quantities so
+        // the asserted 134 can only come from the controller's own BigDecimal complement.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("200"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("66"), new BigDecimal("134"), new BigDecimal("112"), "close-1", List.of(), false));
+                .thenReturn(new CloseResult(null, null, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3422,6 +3430,35 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void trimFallsBackToLocalArithmeticForBothWhenOnlyOneBrokerQuantityIsReported() {
+        // The two null fallbacks are NOT independent: a provider reporting only closedQty (or
+        // only remainingQty) must fall back to the LOCAL arithmetic for BOTH fields, never mix
+        // one broker-reported number with one locally-computed one -- that would yield
+        // qty_closed + qty_remaining != position.qty(), exactly the OutcomeBatchJob weighted-R
+        // inflation this task removes. Not reachable through today's gateway; guards against a
+        // future provider that reports only one of the pair.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        // Only closedQty reported (7, NOT matching the local floor of 5) -- remainingQty is null.
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(new BigDecimal("7"), null, new BigDecimal("112"), "close-1", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        // Both fall back to local arithmetic (qty 10 * 0.5 = 5 closed / 5 remaining), NOT 7
+        // closed paired with a locally-computed remaining.
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("5");
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("5");
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("5")), eq(1), eq(List.of()), eq(false));
+    }
+
+    @Test
     void trimPersistsTheRestoredLegIds() {
         // Gateway returns two restored protective legs on a successful trim -> recordTrim
         // receives them unchanged (plus the collapsed flag) so the stop columns get repointed.
@@ -3467,6 +3504,11 @@ class ExecutorWebhookControllerTest {
 
         verify(telegram).notifyAlert(eq("ACME"), eq("LEG_RESTORE_FAILED_UNPROTECTED"), eq("CRITICAL"), any());
 
+        // The trim did not happen -- must NOT reuse recordTrim (it would wrongly reset
+        // soft_confirm_count / stop_legs_collapsed). Only the stop-leg columns are repointed.
+        verify(positionRepo).repointStopLegs(eq(7L), eq(legs));
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
         DecisionLog log = logCaptor.getValue();
@@ -3496,6 +3538,7 @@ class ExecutorWebhookControllerTest {
 
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+        verify(positionRepo, never()).repointStopLegs(anyLong(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
@@ -3506,9 +3549,10 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void aRejectionThatRolledBackStillPersistsTheNewLegIds() {
-        // LEG_RESTORE_FAILED (not the unprotected variant): the trim itself is rejected, so qty
-        // and trim_count must NOT change, but Agora rolled protection back and issued new leg
-        // ids that must still be persisted so Dracul doesn't keep addressing cancelled orders.
+        // LEG_RESTORE_FAILED (not the unprotected variant): the trim itself is rejected, so qty,
+        // trim_count and soft_confirm_count must NOT change, but Agora rolled protection back and
+        // issued new leg ids that must still be persisted so Dracul doesn't keep addressing
+        // cancelled orders.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
@@ -3529,9 +3573,10 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
 
-        // qty unchanged (10, not the trimmed remainder) and trim_count NOT bumped (still 0) --
-        // the trim itself did not happen -- but the new leg ids are persisted.
-        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("10")), eq(0), eq(legs), eq(false));
+        // Not recordTrim -- no trim happened, so qty/trim_count/soft_confirm_count must not be
+        // touched at all. Only the stop-leg id columns are repointed via repointStopLegs.
+        verify(positionRepo).repointStopLegs(eq(7L), eq(legs));
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
 
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
 
