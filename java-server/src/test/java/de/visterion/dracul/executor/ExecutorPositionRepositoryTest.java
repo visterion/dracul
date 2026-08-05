@@ -213,13 +213,16 @@ class ExecutorPositionRepositoryTest {
     }
 
     @Test
-    void collapseSurvivorReplacingTheTranche2IdStillLandsInStopOrderId() {
-        // Which leg survives a collapse is decided by the broker on price tightness, not by which
-        // column it used to occupy. Here the survivor's `replaces` names the OLD tranche2 id, not
-        // the old stop_order_id -- matching by column (as recordTrim used to) would leave
-        // stop_order_id on the cancelled "old-1" and then null the column holding the live
-        // survivor, discarding the only id that still exists at the broker. The survivor must land
-        // in stop_order_id regardless, and the cancelled id must not survive anywhere on the row.
+    void collapseSurvivorIsMatchedByReplacesNotForcedIntoStopOrderId() {
+        // Fix round (whole-branch review, 2026-08-05): Agora's own contract
+        // (documentation/exit-tools.md) says a collapse does NOT guarantee exactly one survivor --
+        // the allocator fills greedily down tightness order, so more than one leg can come back.
+        // recordTrim's collapse branch therefore reconciles every returned leg by `replaces`
+        // against BOTH columns, exactly like the non-collapsed branch, rather than forcing
+        // whatever came back into stop_order_id unconditionally. Here the single survivor's
+        // `replaces` names the OLD tranche2 id, so it lands in tranche2_stop_order_id; stop_order_id
+        // (never named as a replaces target) is nulled -- the cancelled "old-1" must not survive
+        // anywhere on the row.
         long id = repo.insert(openPositionWithStops("COLLAPSE2" + System.nanoTime(), "old-1", "old-2"));
 
         List<RestoredLeg> legs = List.of(
@@ -227,12 +230,35 @@ class ExecutorPositionRepositoryTest {
         repo.recordTrim(id, new BigDecimal("10"), 1, legs, true);
 
         ExecutorPosition found = repo.findById(id);
-        assertThat(found.stopOrderId()).isEqualTo("survivor-1");
-        assertThat(found.tranche2StopOrderId()).isNull();
+        assertThat(found.stopOrderId()).isNull();
+        assertThat(found.tranche2StopOrderId()).isEqualTo("survivor-1");
         assertThat(found.stopLegsCollapsed()).isTrue();
         // The cancelled "old-1" must not survive on the row anywhere.
         assertThat(found.stopOrderId()).isNotEqualTo("old-1");
         assertThat(found.tranche2StopOrderId()).isNotEqualTo("old-1");
+    }
+
+    @Test
+    void collapseCanReturnTwoSurvivingLegsBothMatchedByReplaces() {
+        // Agora's own contract (documentation/exit-tools.md) is explicit that a collapse does NOT
+        // mean "exactly one leg comes back": the allocator fills greedily down tightness order, so
+        // e.g. a remainder of 2 against three cancelled stop legs (Dracul's own two, plus a foreign
+        // one on the same instrument that Agora's Uic-only filter also cancelled) can return TWO
+        // restored legs, and list position has no relation to which of Dracul's columns each one
+        // replaces. Taking legs.get(0) unconditionally (the old bug) would silently drop whichever
+        // leg didn't land at index 0 -- here both of Dracul's own legs come back, and BOTH columns
+        // must be repointed, not just one.
+        long id = repo.insert(openPositionWithStops("COLLAPSE3" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-2", "new-2", new BigDecimal("1"), new BigDecimal("90")),
+                new RestoredLeg("old-1", "new-1", new BigDecimal("1"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("2"), 1, legs, true);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isEqualTo("new-2");
+        assertThat(found.stopLegsCollapsed()).isTrue();
     }
 
     @Test

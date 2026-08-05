@@ -214,15 +214,20 @@ public class ExecutorPositionRepository {
      * nulls the second column and records the flag — the ratchet reads it to tell a legitimately
      * single-legged position from one whose second leg id is merely unknown.
      *
-     * <p><b>A collapse is NOT matched by {@code replaces}.</b> Which of the two original legs
-     * survives a collapse is decided by the broker on price tightness, which has no relation to
-     * which of Dracul's two columns that leg used to live in — a survivor can just as easily name
-     * the OLD tranche2 id as its {@code replaces} target. Matching by column would then leave
-     * {@code stop_order_id} on a cancelled id (never matched, so never overwritten) while the live
-     * survivor's id lands in {@code tranche2_stop_order_id} only to be nulled by the collapse
-     * branch — discarding the one id that still exists at the broker. So on a collapse the single
-     * surviving leg (Agora reports exactly one) always becomes {@code stop_order_id}, unconditionally,
-     * and {@code tranche2_stop_order_id} is always cleared — never matched by {@code replaces}.
+     * <p><b>A collapse still reconciles by {@code replaces}, never by list position/count.</b>
+     * Agora's own contract (see {@code documentation/exit-tools.md}, "partial close restores
+     * protective legs") is explicit that more than one leg can come back on a collapse — the
+     * allocator fills greedily down tightness order, one share at a time, so e.g. three 1-share
+     * stop legs with 2 remaining yields TWO restored legs of 1 share each, not one. Assuming
+     * "exactly one" and taking {@code legs.get(0)} unconditionally is doubly wrong: it can drop a
+     * second, genuinely live leg on the floor, and on an instrument carrying a THIRD, foreign
+     * opposite-side stop (Agora filters {@code lookupRelatedOrders} by instrument alone, not by
+     * which caller owns a leg) index 0 need not even be one of Dracul's own two legs. So this
+     * matches each returned leg to whichever of {@code stop_order_id}/{@code
+     * tranche2_stop_order_id} its {@code replaces} names, exactly like the non-collapsed branch
+     * below — the only thing "collapsed" changes is that a column whose old id was never named as
+     * a {@code replaces} target (the leg that did NOT survive the collapse) is cleared rather than
+     * left pointing at a cancelled id.
      */
     public void recordTrim(long id, BigDecimal newQty, int newTrimCount,
                            List<RestoredLeg> legs, boolean collapsed) {
@@ -230,8 +235,22 @@ public class ExecutorPositionRepository {
         String stopOrderId = current == null ? null : current.stopOrderId();
         String tranche2StopOrderId = current == null ? null : current.tranche2StopOrderId();
         if (collapsed) {
-            stopOrderId = legs.isEmpty() ? null : legs.get(0).orderId();
-            tranche2StopOrderId = null;
+            String oldStopOrderId = stopOrderId;
+            String oldTranche2StopOrderId = tranche2StopOrderId;
+            boolean stopMatched = false;
+            boolean tranche2Matched = false;
+            for (RestoredLeg leg : legs) {
+                if (leg.replaces() != null && leg.replaces().equals(oldStopOrderId)) {
+                    stopOrderId = leg.orderId();
+                    stopMatched = true;
+                }
+                if (leg.replaces() != null && leg.replaces().equals(oldTranche2StopOrderId)) {
+                    tranche2StopOrderId = leg.orderId();
+                    tranche2Matched = true;
+                }
+            }
+            if (!stopMatched) stopOrderId = null;
+            if (!tranche2Matched) tranche2StopOrderId = null;
         } else {
             for (RestoredLeg leg : legs) {
                 if (leg.replaces() != null && leg.replaces().equals(stopOrderId)) {

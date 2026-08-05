@@ -173,14 +173,16 @@ public class StopRatchetService {
             //
             // A collapsed two-tranche position (see the twoStopLegs carve-out above) also lands
             // here, and NOT naming p.stopOrderId() explicitly is deliberate, not incidental.
-            // ExecutorPositionRepository.recordTrim's collapse branch writes the one surviving leg
-            // id into stop_order_id unconditionally regardless of which original column it used to
-            // occupy — but that write is a second, separate piece of logic from this one. Trusting
-            // it blindly here would silently break again the same way finding-1 did if that write
-            // is ever wrong or ever bypassed by a caller that does not go through recordTrim. The
-            // by-bracket-id / by-symbol resolution below has no such dependency: it always finds
-            // whichever single leg is actually live at the broker, independent of what any column
-            // on the book claims.
+            // ExecutorPositionRepository.recordTrim's collapse branch reconciles each returned leg
+            // by `replaces` (fix round, whole-branch review 2026-08-05 -- Agora's own contract
+            // allows more than one survivor on a collapse, so the surviving id can land in EITHER
+            // stop_order_id or tranche2_stop_order_id depending on which original leg it replaces,
+            // not unconditionally in stop_order_id) — but that write is a second, separate piece of
+            // logic from this one. Trusting it blindly here would silently break again the same way
+            // finding-1 did if that write is ever wrong or ever bypassed by a caller that does not
+            // go through recordTrim. The by-bracket-id / by-symbol resolution below has no such
+            // dependency: it always finds whichever single leg is actually live at the broker,
+            // independent of what any column on the book claims.
 
             String bracketId = p.brokerOrderId();
             if (bracketId == null) {
