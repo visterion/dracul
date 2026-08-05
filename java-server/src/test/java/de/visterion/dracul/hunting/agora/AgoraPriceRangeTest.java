@@ -50,6 +50,19 @@ class AgoraPriceRangeTest {
                 """).range52w("AAA")).isNull();
     }
 
+    /** The production shape of a symbol younger than 52 weeks: Agora answered with a close and a
+     *  per-value {@code available:false}, and its top-level flag is false because that was the only
+     *  spec. Since {@code AgoraClient} no longer reads that flag as an outage, this body now
+     *  reaches the probe and must degrade to null — not to a fake zero low. */
+    @Test
+    void youngSymbolPayloadYieldsNullRatherThanAnOutage() {
+        assertThat(probeOf("""
+                {"symbol":"SYNTH","currentClose":143.21,"asOf":"2026-08-05","values":[
+                  {"label":"52w_range","available":false,"error":"insufficient history for 52w_range"}],
+                 "available":false}
+                """).range52w("SYNTH")).isNull();
+    }
+
     @Test
     void missingCurrentCloseYieldsNull() {
         assertThat(probeOf("""

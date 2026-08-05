@@ -144,7 +144,22 @@ public class AgoraClient {
         }
     }
 
-    /** Package-private: parse the tool's text payload; throw if it is an error/unavailable envelope. */
+    /**
+     * Package-private: parse the tool's text payload; throw only if Agora's ENVELOPE says the call
+     * failed.
+     *
+     * <p>The MCP {@code isError} flag is the sole outage discriminator, and deliberately so. Two
+     * different {@code available} flags travel the same wire and mean opposite things: Agora
+     * serialises an unavailable {@code ToolResult} as the body {@code {"available":false,...}}
+     * AND sets {@code isError}, while {@code get_indicators} — the only tool that puts a top-level
+     * {@code available} inside a SUCCESSFUL payload — uses it to say "no indicator spec produced a
+     * value". That is a statement about the data, not about the source: a symbol younger than 52
+     * weeks has no 52-week range, and Agora answered perfectly well to say so. Treating that flag
+     * as an outage threw the body away before the caller could degrade on it, logged three healthy
+     * young listings as "Agora unreachable", and pushed the lazarus source-down heuristic toward a
+     * false outage verdict. A genuine failure inside that tool throws upstream and comes back as an
+     * error envelope, so nothing is lost by trusting {@code isError} alone.
+     */
     static JsonNode parseToolText(String text, boolean isError) {
         JsonNode node;
         try {
@@ -152,7 +167,7 @@ public class AgoraClient {
         } catch (RuntimeException e) {
             throw new AgoraUnavailableException("unparseable Agora response: " + e.getMessage(), e);
         }
-        if (isError || (node.has("available") && !node.path("available").asBoolean(true))) {
+        if (isError) {
             throw new AgoraUnavailableException("Agora tool error: " + node.path("error").asString(text));
         }
         return node;

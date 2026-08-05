@@ -49,6 +49,27 @@ class ExecutorIndicatorsTest {
         assertThat(levels.available()).isFalse();
     }
 
+    /** A body whose TOP-LEVEL available is false (no spec produced a value) is data, not an outage,
+     *  and now reaches this parser. Every level must stay null and the bundle unavailable — an ATR
+     *  read as zero would size a stop at the entry price. */
+    @Test void topLevelUnavailablePayloadYieldsNoLevels() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_indicators"), any())).thenReturn(json("""
+            {"symbol":"SYNTH","currentClose":"143.21","asOf":"2026-08-05","available":false,
+             "values":[
+               {"label":"atr","available":false,"error":"insufficient history for atr"},
+               {"label":"swing_low","available":false,"error":"insufficient history for lowest"}
+             ]}
+            """));
+
+        ExecutorIndicators.Levels levels = new ExecutorIndicators(client, mapper).levels("SYNTH", 22, 20);
+
+        assertThat(levels.available()).isFalse();
+        assertThat(levels.atr()).isNull();
+        assertThat(levels.swingLow()).isNull();
+        assertThat(levels.referencePrice()).isEqualByComparingTo("143.21");
+    }
+
     @Test void agoraUnavailableReturnsUnavailable() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_indicators"), any())).thenThrow(new AgoraUnavailableException("down"));

@@ -83,6 +83,34 @@ class AgoraResearchTest {
         assertThat(ta.maCrossState()).isEqualTo("NEUTRAL");
     }
 
+    /** Young listing: Agora answered, but no spec had enough history, so the payload's TOP-LEVEL
+     *  available is false. That body now reaches this parser instead of being thrown as an outage;
+     *  every value must degrade to null/false so no exit rule fires on a phantom number. */
+    @Test void topLevelUnavailablePayloadDegradesToNulls() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_indicators"), any())).thenReturn(json("""
+            {"symbol":"SYNTH","currentClose":143.21,"asOf":"2026-08-05","available":false,
+             "values":[
+               {"label":"atr","available":false,"error":"insufficient history for atr"},
+               {"label":"chandelier_stop","available":false,"error":"insufficient history for chandelier_stop"},
+               {"label":"ma50","available":false,"error":"insufficient history for sma"},
+               {"label":"ma200","available":false,"error":"insufficient history for sma"},
+               {"label":"52w_range","available":false,"error":"insufficient history for 52w_range"}
+             ]}
+            """));
+        ExitTa ta = new AgoraResearch(client).exitTa("SYNTH", 22, new BigDecimal("3.0"), 50, 200, 250);
+        assertThat(ta.atr()).isNull();
+        assertThat(ta.atrAvailable()).isFalse();
+        assertThat(ta.chandelierStop()).isNull();
+        assertThat(ta.chandelierBreached()).isFalse();
+        assertThat(ta.maFastAvailable()).isFalse();
+        assertThat(ta.maSlowAvailable()).isFalse();
+        assertThat(ta.maCrossState()).isEqualTo("NEUTRAL");
+        assertThat(ta.high52w()).isNull();
+        assertThat(ta.low52w()).isNull();
+        assertThat(ta.window52wAvailable()).isFalse();
+    }
+
     /** Request is built as the new indicators[] spec array (names, params, labels). */
     @Test void passesParamsAsIndicatorSpecs() {
         AgoraClient client = Mockito.mock(AgoraClient.class);

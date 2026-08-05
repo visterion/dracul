@@ -88,6 +88,19 @@ class GroparExitIndicatorsTest {
         assertThat(ind.firedRules()).isEmpty();
     }
 
+    /** Young listing: bars exist, but AgoraResearch mapped an all-unavailable payload. No exit rule
+     *  may fire off that — a phantom CHANDELIER_STOP or DEATH_CROSS would push a real exit. */
+    @Test void youngSymbolTaFiresNoExitRule() {
+        var bars = List.of(bar("2026-08-04", "143.21"), bar("2026-08-05", "141.00"));
+        var ind = withTa(ExitTa.unavailable())
+                .compute("SYNTH", bars, new BigDecimal("150.00"), "2026-07-01T00:00:00Z", "12m");
+        assertThat(ind.currentClose()).isEqualByComparingTo("141.00");
+        assertThat(ind.firedRules()).isEmpty();
+        assertThat(ind.chandelierStop()).isNull();
+        assertThat(ind.window52wAvailable()).isFalse();
+        assertThat(ind.maCrossState()).isEqualTo("NEUTRAL");
+    }
+
     @Test void distToMa200InAtrComputed() {
         // close = 130, ma200 = 100, atr = 2 → (130-100)/2 = 15
         var bars = List.of(bar("2025-01-02", "130"));

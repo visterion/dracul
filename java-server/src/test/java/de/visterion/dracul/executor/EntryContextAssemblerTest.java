@@ -136,6 +136,35 @@ class EntryContextAssemblerTest {
         assertThat(ctx.adv20Notional()).isNull();
     }
 
+    /** A young listing: Agora answered (no outage, no exception) but no spec produced a value, so
+     *  the payload carries a top-level {@code available:false}. That body now reaches the assembler
+     *  and the absent indicators must still land in {@code missing} so the DATA_UNAVAILABLE
+     *  pre-veto fires — a silently-null ATR would otherwise reach position sizing. */
+    @Test
+    void topLevelUnavailableIndicators_stillMissingAtrAndAdv20() {
+        ObjectNode root = mapper.createObjectNode();
+        root.put("symbol", "SYNTH");
+        root.put("currentClose", "143.21");
+        root.put("available", false);
+        ArrayNode values = root.putArray("values");
+        addValue(values, "atr", null);
+        addValue(values, "swing_low", null);
+        addValue(values, "adv20", null);
+        addValue(values, "day_high", null);
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(root);
+        when(sectorCascade.resolve("SYNTH")).thenReturn("Technology");
+
+        EntryContext ctx = assembler.assemble(signal("SYNTH", new BigDecimal("143.21"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.missing()).contains("atr", "adv20_notional");
+        assertThat(ctx.atr()).isNull();
+        assertThat(ctx.swingLow()).isNull();
+        assertThat(ctx.adv20Notional()).isNull();
+        // the close IS real data — Agora had bars, just not enough for any indicator window
+        assertThat(ctx.price()).isEqualByComparingTo("143.21");
+        assertThat(ctx.missing()).doesNotContain("price");
+    }
+
     @Test
     void profileWithoutSectorField_missingSector() {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(

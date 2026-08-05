@@ -228,8 +228,11 @@ consumed through five neutral domain facades in
   would rate-limit the run and silently drop most of the universe. Unlike the
   other facades it deliberately **propagates** `AgoraUnavailableException` — the
   caller walks hundreds of symbols and needs an outage to be loud enough to stop
-  on. Note that Agora reports "no history for this symbol" through the same
-  envelope, so only a *run* of failures means the source is down.
+  on. A symbol with too little history is **not** such an outage: Agora answers
+  normally and marks the indicator `available: false`, and the facade returns
+  `null` for it (see "Two `available` flags" below). Both outcomes count as a
+  failed probe for the caller's source-down heuristic, so only a *run* of them
+  means the source is down.
 - **`AgoraIntraday`** — `candles` (intraday closes/volumes for daywalker).
 
 Each facade normalises Agora's tool output straight into the retained Dracul
@@ -355,6 +358,30 @@ persist as an empty result until the next TTL expiry.
 
 Voievod (no external source) and Daywalker (outside the audit scope) do
 not emit `data_source_health`.
+
+### Two `available` flags — only the envelope means "outage"
+
+Agora puts an `available` flag in two different places, and they mean opposite
+things:
+
+- **Envelope** — an unavailable `ToolResult` is serialised as the body
+  `{"available": false, "error": …}` *and* carries the MCP `isError` flag. This
+  is the source failing, and `AgoraClient.parseToolText` throws
+  `AgoraUnavailableException` on it.
+- **Payload** — `get_indicators` (the only tool that does this) puts a
+  top-level `available` into a *successful* response to say "no indicator spec
+  produced a value", e.g. a symbol younger than its 52-week window. `isError`
+  is false here, the numbers that *were* computed are in the body, and the body
+  is handed to the caller unchanged.
+
+Only the envelope flag throws. Until 2026-08-05 the payload flag threw too,
+which logged healthy young listings as "Agora unreachable" and hid the body
+from callers that were already written to degrade on it per indicator. Every
+`get_indicators` consumer treats a per-value `available: false` as "no value"
+(never as zero): `AgoraPriceRange` returns `null`, `ExecutorIndicators` reports
+an unavailable bundle, `EntryContextAssembler` names the indicator in
+`missing` so the DATA_UNAVAILABLE pre-veto fires, and `AgoraResearch` maps it
+to a null value with a false availability flag so no exit rule can fire on it.
 
 ### Known limitations (v1)
 
