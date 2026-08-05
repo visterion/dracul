@@ -384,6 +384,70 @@ class AgoraExecutionGatewayTest {
                 .hasMessageContaining("NoPosition");
     }
 
+    @Test void parsesRestoredLegsFromTheFlattenResponse() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"closedQty":"88","remainingQty":"12","avgFillPrice":"45.50","orderId":"close-1",
+                    "protective_legs":[
+                        {"replaces":"5039413297","order_id":"5039501122","qty":8,"price":45.49},
+                        {"replaces":"5039413298","order_id":"5039501123","qty":4,"price":45.49}
+                    ],
+                    "legs_collapsed":false}}
+                """);
+
+        CloseResult result = gw.flatten("depot-1", "ACME", new BigDecimal("0.88"));
+
+        assertThat(result.protectiveLegs()).hasSize(2);
+        assertThat(result.protectiveLegs()).extracting(RestoredLeg::replaces)
+                .containsExactlyInAnyOrder("5039413297", "5039413298");
+        RestoredLeg first = result.protectiveLegs().stream()
+                .filter(l -> l.replaces().equals("5039413297")).findFirst().orElseThrow();
+        assertThat(first.orderId()).isEqualTo("5039501122");
+        assertThat(first.qty()).isEqualByComparingTo("8");
+        assertThat(first.price()).isEqualByComparingTo("45.49");
+        assertThat(result.legsCollapsed()).isFalse();
+    }
+
+    @Test void closeResultHasEmptyLegsWhenTheFieldIsAbsent() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"closedQty":"100","remainingQty":"0","avgFillPrice":"108","orderId":"close-1"}}
+                """);
+
+        CloseResult result = gw.flatten("depot-1", "ACME", new BigDecimal("1"));
+
+        assertThat(result.protectiveLegs()).isEmpty();
+        assertThat(result.legsCollapsed()).isFalse();
+    }
+
+    @Test void aRejectionCarriesItsCodeAndItsRolledBackLegs() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"accepted":false,"rejectCode":"LEG_RESTORE_FAILED_UNPROTECTED",
+                    "protective_legs":[
+                        {"replaces":"5039413297","order_id":"5039501200","qty":12,"price":45.49}
+                    ]}}
+                """);
+
+        assertThatThrownBy(() -> gw.flatten("depot-1", "ACME", new BigDecimal("0.88")))
+                .isInstanceOf(BrokerRejectedException.class)
+                .satisfies(e -> {
+                    BrokerRejectedException rejected = (BrokerRejectedException) e;
+                    assertThat(rejected.rejectCode()).isEqualTo("LEG_RESTORE_FAILED_UNPROTECTED");
+                    assertThat(rejected.protectiveLegs()).hasSize(1);
+                    assertThat(rejected.protectiveLegs().get(0).replaces()).isEqualTo("5039413297");
+                    assertThat(rejected.protectiveLegs().get(0).orderId()).isEqualTo("5039501200");
+                });
+    }
+
+    @Test void brokerRejectedExceptionIsStillABrokerUnavailableException() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"LEG_CANCEL_INCOMPLETE\"}}");
+
+        assertThatThrownBy(() -> gw.flatten("depot-1", "ACME", new BigDecimal("0.5")))
+                .isInstanceOf(BrokerUnavailableException.class);
+    }
+
     @Test void modifyBracketThrowsOnRejection() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":false,\"rejectReason\":\"unknown order\"}}");

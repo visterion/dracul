@@ -3010,7 +3010,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
@@ -3051,7 +3051,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, null, "close-9"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, null, "close-9", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
@@ -3075,7 +3075,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"exit_position",
@@ -3194,7 +3194,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"), new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"), new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3230,7 +3230,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("100"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("33"), new BigDecimal("67"), new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("33"), new BigDecimal("67"), new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3258,7 +3258,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("200"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("66"), new BigDecimal("134"), new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("66"), new BigDecimal("134"), new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3299,7 +3299,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SOFT_CHANDELIER","fraction":1.0}
@@ -3333,7 +3333,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("1"), 1);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}

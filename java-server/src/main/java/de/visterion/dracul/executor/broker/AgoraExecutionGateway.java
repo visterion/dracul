@@ -246,7 +246,9 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                 decimalField(out, "closedQty", "closed_qty"),
                 decimalField(out, "remainingQty", "remaining_qty"),
                 decimalField(out, "avgFillPrice", "avg_fill_price"),
-                textOrNull(out, "orderId", "order_id"));
+                textOrNull(out, "orderId", "order_id"),
+                restoredLegs(out),
+                out.path("legs_collapsed").asBoolean(false));
     }
 
     @Override
@@ -307,18 +309,44 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     /**
      * Live Agora write tools (place_bracket, flatten, modify_bracket, cancel_order) return an
      * {@code accepted} flag; a business rejection is {@code accepted:false} with
-     * {@code rejectCode}/{@code rejectReason}. Treat that as unavailable so a rejected order is
-     * never silently returned as a success with a null orderId.
+     * {@code rejectCode}/{@code rejectReason}. Throw {@link BrokerRejectedException} — a
+     * {@link BrokerUnavailableException} subclass — so a rejected order is never silently
+     * returned as a success with a null orderId, while still letting callers that care (e.g. an
+     * {@code unprotected} reject on flatten) distinguish it from a transient outage. Any
+     * {@code protective_legs} Agora rolled back as part of the rejection are carried on the
+     * exception, because the broker issues new order ids for them and Dracul must repoint its
+     * book or later stop modifications hit LEG_NOT_FOUND.
      */
     private void requireAccepted(JsonNode out) {
         JsonNode accepted = out.path("accepted");
         if (accepted.isBoolean() && !accepted.asBoolean()) {
             String code = textOrNull(out, "rejectCode", "reject_code");
             String reason = textOrNull(out, "rejectReason", "reject_reason");
-            throw new BrokerUnavailableException("agora order rejected"
+            throw new BrokerRejectedException("agora order rejected"
                     + (code != null ? " [" + code + "]" : "")
-                    + (reason != null ? ": " + reason : ""));
+                    + (reason != null ? ": " + reason : ""),
+                    code, restoredLegs(out));
         }
+    }
+
+    /**
+     * Parses the {@code protective_legs} array Agora emits on both the accepted and the
+     * rejected branch of {@code flatten}, and omits entirely when nothing was restored. Absent
+     * or non-array -> empty list, never null.
+     */
+    private List<RestoredLeg> restoredLegs(JsonNode out) {
+        JsonNode array = out.path("protective_legs");
+        List<RestoredLeg> result = new ArrayList<>();
+        if (array.isArray()) {
+            for (JsonNode leg : array) {
+                result.add(new RestoredLeg(
+                        textOrNull(leg, "replaces"),
+                        textOrNull(leg, "order_id"),
+                        decimalField(leg, "qty"),
+                        decimalField(leg, "price")));
+            }
+        }
+        return result;
     }
 
     /** Overridable HTTP seam. Returns the full {"output": ...} envelope. */

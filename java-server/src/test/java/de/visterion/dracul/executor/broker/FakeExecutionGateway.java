@@ -117,7 +117,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
 
         BrokerPosition position = positionsBySymbol.get(symbol);
         if (position == null) {
-            return new CloseResult(BigDecimal.ZERO, BigDecimal.ZERO, null, "close-" + n);
+            return new CloseResult(BigDecimal.ZERO, BigDecimal.ZERO, null, "close-" + n, List.of(), false);
         }
 
         BigDecimal closedQty = position.qty().multiply(fraction);
@@ -132,7 +132,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
                     position.avgEntryPrice(), position.marketPrice(), position.openOrdersCount()));
         }
 
-        return new CloseResult(closedQty, remainingQty, position.marketPrice(), "close-" + n);
+        return new CloseResult(closedQty, remainingQty, position.marketPrice(), "close-" + n, List.of(), false);
     }
 
     @Override
