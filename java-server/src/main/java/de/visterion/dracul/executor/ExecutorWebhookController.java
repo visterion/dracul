@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
@@ -1210,6 +1211,30 @@ public class ExecutorWebhookController {
         CloseResult cr;
         try {
             cr = gateway.flatten(connection, symbol, gatewayFraction);
+        } catch (BrokerRejectedException e) {
+            // A rejection can still change broker state: Agora rolls protection back and issues
+            // NEW leg ids before reporting the rejection. Losing those here means Dracul keeps
+            // addressing cancelled stop orders and every later modification fails with
+            // LEG_NOT_FOUND — the exact defect this change exists to prevent. The trim itself did
+            // not happen, so qty and trim_count stay put; only the stop columns are repointed.
+            if (e.protectiveLegs() != null && !e.protectiveLegs().isEmpty()) {
+                positionRepo.recordTrim(position.id(), position.qty(), position.trimCount(),
+                        e.protectiveLegs(), false);
+            }
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "ESCALATE", e.rejectCode(), null,
+                    "broker rejected soft-exit flatten: " + e.getMessage(),
+                    confidence, null, null));
+            // Alert only on the unprotected case — a plain LEG_CANCEL_INCOMPLETE / restored-but-
+            // rejected trim keeps today's quiet escalation, or the alert loses meaning.
+            if ("LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode())) {
+                telegram.notifyAlert(symbol, e.rejectCode(), "CRITICAL",
+                        "partial close on " + symbol + " was rejected and left the remaining "
+                                + "position unprotected: " + e.getMessage());
+            }
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "reason", "BROKER_ERROR")));
         } catch (BrokerUnavailableException e) {
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
@@ -1221,14 +1246,20 @@ public class ExecutorWebhookController {
         }
 
         if (!fullExit) {
-            BigDecimal qtyClosed = position.qty().subtract(remaining);
+            // Quantities come from the BROKER, never from our own arithmetic: Dracul floors
+            // qty × (1−fraction) while the broker floors qty × fraction and subtracts, which
+            // differ by one share on four of five live positions. Falling back to the local
+            // arithmetic only covers a provider that does not report closed/remaining qty.
+            BigDecimal qtyClosed = cr.closedQty() != null ? cr.closedQty() : position.qty().subtract(remaining);
+            BigDecimal qtyRemaining = cr.remainingQty() != null ? cr.remainingQty() : remaining;
 
-            positionRepo.recordTrim(position.id(), remaining, position.trimCount() + 1);
+            positionRepo.recordTrim(position.id(), qtyRemaining, position.trimCount() + 1,
+                    cr.protectiveLegs(), cr.legsCollapsed());
 
             ObjectNode orderJson = mapper.createObjectNode();
             orderJson.put("fraction", fraction);
             orderJson.put("qty_closed", qtyClosed);
-            orderJson.put("qty_remaining", remaining);
+            orderJson.put("qty_remaining", qtyRemaining);
             orderJson.put("price", cr.avgFillPrice());
             // Exact position linkage for the outcome batch job (decision_log has no position_id
             // column; order_json carries it) — without it, a same-day close+reentry on the same
@@ -1241,7 +1272,7 @@ public class ExecutorWebhookController {
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "exited", false, "trimmed", true, "fraction", fraction,
-                    "qty_closed", qtyClosed, "qty_remaining", remaining)));
+                    "qty_closed", qtyClosed, "qty_remaining", qtyRemaining)));
         }
 
         BigDecimal exitPrice = cr.avgFillPrice();
