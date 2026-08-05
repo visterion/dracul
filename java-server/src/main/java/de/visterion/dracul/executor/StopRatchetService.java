@@ -149,7 +149,9 @@ public class StopRatchetService {
 
             BigDecimal oldStop = p.activeStop();
 
-            if (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null) {
+            boolean twoStopLegs = !p.stopLegsCollapsed()
+                    && (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null);
+            if (twoStopLegs) {
                 if (!ratchetTwoLegs(p, chandelier, runId, budget)) continue;
 
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
@@ -168,6 +170,20 @@ public class StopRatchetService {
             // BROKER_UNAVAILABLE escalations from 2026-07-13 onward, until this was fixed on
             // 2026-07-26. stopOrderId stays on the record because ReconcileService matches fills
             // with it — it is simply not an address here. Do NOT "restore" stopOrderId.
+            //
+            // A collapsed two-tranche position (see the twoStopLegs carve-out above) also lands
+            // here, and NOT naming p.stopOrderId() explicitly is deliberate, not incidental.
+            // ExecutorPositionRepository.recordTrim's collapse branch reconciles each returned leg
+            // by `replaces` (fix round, whole-branch review 2026-08-05 -- Agora's own contract
+            // allows more than one survivor on a collapse, so the surviving id can land in EITHER
+            // stop_order_id or tranche2_stop_order_id depending on which original leg it replaces,
+            // not unconditionally in stop_order_id) — but that write is a second, separate piece of
+            // logic from this one. Trusting it blindly here would silently break again the same way
+            // finding-1 did if that write is ever wrong or ever bypassed by a caller that does not
+            // go through recordTrim. The by-bracket-id / by-symbol resolution below has no such
+            // dependency: it always finds whichever single leg is actually live at the broker,
+            // independent of what any column on the book claims.
+
             String bracketId = p.brokerOrderId();
             if (bracketId == null) {
                 escalate(p, runId, "NO_BRACKET_ID",
@@ -208,6 +224,15 @@ public class StopRatchetService {
      * <p><b>Without both ids there is still nothing to address</b>, and the old
      * {@code TRANCHE_RATCHET_UNSUPPORTED} escalation stands unchanged — a broker that reports no
      * leg id leaves no honest way to move the right stop.
+     *
+     * <p><b>A collapsed position never reaches this method.</b> A trim can fold two stop legs into
+     * one because the remainder was too small to give each leg at least one share; the book then
+     * records {@code stop_legs_collapsed} and only one leg genuinely exists at the broker any more.
+     * {@link #ratchet} routes that case around this method entirely and ratchets the single
+     * surviving leg through the ordinary single-tranche path instead — sending a second modify for
+     * a leg the broker no longer has would either fail loudly or, worse, silently no-op. The
+     * escalation here stays for the case it was written for: two legs genuinely exist and one id is
+     * unknown, which is a bug on the book, not a collapse.
      *
      * <p><b>One leg up, one leg not, is reported as PARTIAL — and the book keeps the OLD stop.</b>
      * Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure the

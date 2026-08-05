@@ -4,6 +4,7 @@ import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
@@ -828,7 +829,7 @@ public class ExecutorWebhookController {
                     "OPEN", brokerOrderId,
                     orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    orderPriceRounded, null, null, null));
+                    orderPriceRounded, null, null, null, false));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 
@@ -1210,6 +1211,58 @@ public class ExecutorWebhookController {
         CloseResult cr;
         try {
             cr = gateway.flatten(connection, symbol, gatewayFraction);
+        } catch (BrokerRejectedException e) {
+            // A rejection can still change broker state: Agora rolls protection back and may
+            // issue NEW leg ids before reporting the rejection. The trim itself did not happen,
+            // so qty, trim_count AND soft_confirm_count must stay untouched — reusing recordTrim
+            // here (fix round 1 finding) would wrongly reset both the soft-confirm ladder and the
+            // stop_legs_collapsed flag, since recordTrim always zeroes/recomputes them for an
+            // actual trim. repointStopLegs touches ONLY the stop-leg id columns.
+            //
+            // Any currently-recorded stop-leg id that is not named (as a `replaces` target) in
+            // e.protectiveLegs() is nulled rather than left stale: Agora's own rollback
+            // (SaxoBrokerProvider.interleaveRollback) can break at the first failure and report
+            // fewer live legs than were cancelled — precisely the LEG_RESTORE_FAILED_UNPROTECTED
+            // case. Keeping an unmatched id would point Dracul at an order that was cancelled and
+            // never replaced; the next ratchet run would fail with LEG_NOT_FOUND forever.
+            // LEG_CANCEL_INCOMPLETE does not have this gap (Agora self-maps every uncancelled leg
+            // back to its own id), so this is safe there too.
+            //
+            // BUT repointStopLegs must NOT run unconditionally: several Saxo reject codes fire
+            // BEFORE the leg-cancel loop ever runs (INVALID_FRACTION, SYMBOL,
+            // QTY_EXCEEDS_POSITION, QTY_ROUNDED_TO_ZERO, CLOSE_ALREADY_PENDING — see
+            // SaxoBrokerProvider.flatten) and every Alpaca flatten rejection never touches a leg
+            // at all. On those, e.protectiveLegs() is legitimately empty, and repointStopLegs
+            // treats "not named" as "dead" — it would null BOTH live stop columns for a broker
+            // rejection that never changed broker state, permanently orphaning working stop
+            // orders (nothing restores them: updateMaintenance's stop_order_id is a COALESCE that
+            // never overwrites with NULL). Repoint only when Agora actually touched a leg
+            // (non-empty protectiveLegs) or the reject code is one of the three leg-restore codes
+            // — the third, LEG_RESTORE_FAILED_UNPROTECTED, can legitimately carry an EMPTY list in
+            // the worst case (interleaveRollback stops with nothing live), and that is exactly the
+            // one case where nulling both columns is truthful.
+            boolean legCancelWasAttempted = (e.protectiveLegs() != null && !e.protectiveLegs().isEmpty())
+                    || "LEG_CANCEL_INCOMPLETE".equals(e.rejectCode())
+                    || "LEG_RESTORE_FAILED".equals(e.rejectCode())
+                    || "LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode());
+            if (legCancelWasAttempted) {
+                positionRepo.repointStopLegs(position.id(),
+                        e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
+            }
+            decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "ESCALATE", e.rejectCode(), null,
+                    "broker rejected soft-exit flatten: " + e.getMessage(),
+                    confidence, null, null));
+            // Alert only on the unprotected case — a plain LEG_CANCEL_INCOMPLETE / restored-but-
+            // rejected trim keeps today's quiet escalation, or the alert loses meaning.
+            if ("LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode())) {
+                telegram.notifyAlert(symbol, e.rejectCode(), "CRITICAL",
+                        "partial close on " + symbol + " was rejected and left the remaining "
+                                + "position unprotected: " + e.getMessage());
+            }
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("exited", false, "reason", "BROKER_ERROR")));
         } catch (BrokerUnavailableException e) {
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,
@@ -1221,14 +1274,26 @@ public class ExecutorWebhookController {
         }
 
         if (!fullExit) {
-            BigDecimal qtyClosed = position.qty().subtract(remaining);
+            // Quantities come from the BROKER, never from our own arithmetic: Dracul floors
+            // qty × (1−fraction) while the broker floors qty × fraction and subtracts, which
+            // differ by one share on four of five live positions. Falling back to the local
+            // arithmetic only covers a provider that does not report closed/remaining qty — and
+            // it is all-or-nothing: trusting one broker-reported field while falling back on the
+            // other could yield qtyClosed + qtyRemaining != position.qty(), exactly the
+            // OutcomeBatchJob weighted-R inflation this change removes. Not reachable through
+            // today's gateway (it always reports both or neither), but kept safe against a future
+            // provider that reports only one.
+            boolean brokerReportedBoth = cr.closedQty() != null && cr.remainingQty() != null;
+            BigDecimal qtyClosed = brokerReportedBoth ? cr.closedQty() : position.qty().subtract(remaining);
+            BigDecimal qtyRemaining = brokerReportedBoth ? cr.remainingQty() : remaining;
 
-            positionRepo.recordTrim(position.id(), remaining, position.trimCount() + 1);
+            positionRepo.recordTrim(position.id(), qtyRemaining, position.trimCount() + 1,
+                    cr.protectiveLegs(), cr.legsCollapsed());
 
             ObjectNode orderJson = mapper.createObjectNode();
             orderJson.put("fraction", fraction);
             orderJson.put("qty_closed", qtyClosed);
-            orderJson.put("qty_remaining", remaining);
+            orderJson.put("qty_remaining", qtyRemaining);
             orderJson.put("price", cr.avgFillPrice());
             // Exact position linkage for the outcome batch job (decision_log has no position_id
             // column; order_json carries it) — without it, a same-day close+reentry on the same
@@ -1241,7 +1306,7 @@ public class ExecutorWebhookController {
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "exited", false, "trimmed", true, "fraction", fraction,
-                    "qty_closed", qtyClosed, "qty_remaining", remaining)));
+                    "qty_closed", qtyClosed, "qty_remaining", qtyRemaining)));
         }
 
         BigDecimal exitPrice = cr.avgFillPrice();

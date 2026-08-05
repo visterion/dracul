@@ -427,7 +427,7 @@ public class ReconcileService {
                         p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                         p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                         p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                        p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
+                        p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
                 exitPrice = match.closePrice();
                 exitPriceSource = "FILL";
                 realizedROverride = realizedRAgainstPlannedRisk(p, match.openPrice(), match.closePrice());
@@ -513,7 +513,7 @@ public class ReconcileService {
                     p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                     p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                     p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                    p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
+                    p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
         }
 
         if (entryJustFilled) {
@@ -542,7 +542,7 @@ public class ReconcileService {
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
-                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice());
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
     }
 
     /** Realized R for a matched RECONCILE_GONE close, measured against the ORIGINAL planned risk-per-share

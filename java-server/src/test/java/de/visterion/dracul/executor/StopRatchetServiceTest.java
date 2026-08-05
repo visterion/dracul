@@ -79,7 +79,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("90"), activeStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01",
                 null, "OPEN", brokerOrderId, highestPrice, mfeR, softConfirmCount, null, null, null, null,
                 "stop-1", null, null, tranche2OrderId, tranche2StopOrderId, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
     }
 
     @Test
@@ -205,7 +205,7 @@ class StopRatchetServiceTest {
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
                 null /* stop_order_id missing */, null, null, "t2-1", "s2", 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
@@ -343,6 +343,89 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls.get(1).stopOrderId()).isEqualTo("s2");
         assertThat(gateway.modifyCalls.get(1).orderId()).isEqualTo("brk-1");
         verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void aCollapsedTwoTranchePositionRatchetsItsSingleLeg() {
+        // A trim folded the two stop legs into one because the remainder was too small to give
+        // each leg at least one share: tranche 2, tranche2_order_id still set, but
+        // tranche2_stop_order_id is gone and stop_legs_collapsed is true. Escalating forever here
+        // (as TRANCHE_RATCHET_UNSUPPORTED would) is the bug this task fixes — the surviving single
+        // leg must still ratchet through the ordinary single-tranche path.
+        //
+        // stop_order_id="stop-1" here is deliberately NOT the address used: see the stopOrderId()
+        // assertion below for why naming it explicitly would be actively wrong, not merely
+        // unverified.
+        ExecutorPosition p = new ExecutorPosition(40L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
+                new BigDecimal("1.0"), 0, null, null, null, null,
+                "stop-1", null, null, "t2-1", null, 0, null, null,
+                null, null, null, null, true);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        FakeExecutionGateway.ModifyCall call = gateway.modifyCalls.get(0);
+        assertThat(call.orderId()).isEqualTo("brk-1");
+        assertThat(call.stop()).isEqualByComparingTo("104");
+        // Pins the addressing choice: null, letting the gateway resolve the surviving leg, NOT
+        // p.stopOrderId() by name. This is not merely brief-literal but the CORRECT choice —
+        // ExecutorPositionRepository.recordTrim's collapse branch can leave stop_order_id holding a
+        // cancelled id if the survivor's `replaces` named the old tranche2 column (see the fix and
+        // regression test on recordTrim). Naming that stale id here would send a modify against a
+        // leg the broker no longer has; letting Agora resolve by bracket id / by-symbol fallback is
+        // the only address that is guaranteed live for a collapsed position's single leg.
+        assertThat(call.stopOrderId()).isNull();
+
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(40L),
+                any(), any(), any(Integer.class), any(), any());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void anUncollapsedTwoTranchePositionWithAMissingLegStillEscalates() {
+        // Same row as above, but stop_legs_collapsed is false: this is the genuinely unaddressable
+        // case the escalation exists for, and it must still fire exactly as before.
+        ExecutorPosition p = new ExecutorPosition(41L, "c", "ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
+                new BigDecimal("1.0"), 0, null, null, null, null,
+                "stop-1", null, null, "t2-1", null, 0, null, null,
+                null, null, null, null, false);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void anIntactTwoLegPositionStillRatchetsBothLegs() {
+        // Regression: both leg ids present and not collapsed -> both legs still move, at the same
+        // price, exactly as tranche2_bothLegIds_ratchetsBothLegsToTheSameLevel pins above.
+        ExecutorPosition p = openPosition(42L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("104");
+        assertThat(gateway.modifyCalls.get(1).stop()).isEqualByComparingTo("104");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(42L),
+                any(), any(), any(Integer.class), any(), any());
     }
 
     @Test

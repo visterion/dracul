@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.broker.RestoredLeg;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -41,14 +42,14 @@ public class ExecutorPositionRepository {
                    realized_r, exit_reason, stop_order_id, sector, entry_day_high,
                    tranche2_order_id, tranche2_stop_order_id, trim_count, lowest_price,
                    entry_expires_at, submitted_limit_price, pending_exit_reason, exit_order_id,
-                   pending_exit_fill_price)
+                   pending_exit_fill_price, stop_legs_collapsed)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
                         :exitPrice, :realizedR, :exitReason, :stopOrderId, :sector, :entryDayHigh,
                         :tranche2OrderId, :tranche2StopOrderId, :trimCount, :lowestPrice,
                         CAST(:entryExpiresAt AS timestamptz), :submittedLimitPrice, :pendingExitReason,
-                        :exitOrderId, :pendingExitFillPrice)
+                        :exitOrderId, :pendingExitFillPrice, :stopLegsCollapsed)
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -83,6 +84,7 @@ public class ExecutorPositionRepository {
                 .param("pendingExitReason", p.pendingExitReason())
                 .param("exitOrderId", p.exitOrderId())
                 .param("pendingExitFillPrice", p.pendingExitFillPrice())
+                .param("stopLegsCollapsed", p.stopLegsCollapsed())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
@@ -192,10 +194,141 @@ public class ExecutorPositionRepository {
     }
 
     /** Records a scale-out trim: shrinks {@code qty}, bumps {@code trim_count}, and resets the
-     *  soft-confirm streak (a fresh qty level restarts trailing-stop soft confirmation). */
+     *  soft-confirm streak (a fresh qty level restarts trailing-stop soft confirmation).
+     *
+     *  <p>Kept for callers that have not yet been migrated to the leg-restore-aware overload
+     *  ({@link #recordTrim(long, BigDecimal, int, List, boolean)}) — it does not touch the stop
+     *  columns or the collapse flag. */
     public void recordTrim(long id, BigDecimal newQty, int newTrimCount) {
         jdbc.sql("UPDATE executor_position SET qty = :qty, trim_count = :tc, soft_confirm_count = 0 WHERE id = :id")
                 .param("qty", newQty).param("tc", newTrimCount).param("id", id).update();
+    }
+
+    /**
+     * Books a partial exit. Quantities come from the BROKER, never from our own arithmetic:
+     * Dracul floors {@code qty × (1−fraction)} while Saxo floors {@code qty × fraction} and
+     * subtracts, which differ by one share on four of five live positions.
+     *
+     * <p>The new stop leg ids are matched by the id each one replaces, so a two-tranche book keeps
+     * its columns straight without guessing. A collapse (remainder smaller than the leg count)
+     * nulls the second column and records the flag — the ratchet reads it to tell a legitimately
+     * single-legged position from one whose second leg id is merely unknown.
+     *
+     * <p><b>A collapse still reconciles by {@code replaces}, never by list position/count.</b>
+     * Agora's own contract (see {@code documentation/exit-tools.md}, "partial close restores
+     * protective legs") is explicit that more than one leg can come back on a collapse — the
+     * allocator fills greedily down tightness order, one share at a time, so e.g. three 1-share
+     * stop legs with 2 remaining yields TWO restored legs of 1 share each, not one. Assuming
+     * "exactly one" and taking {@code legs.get(0)} unconditionally is doubly wrong: it can drop a
+     * second, genuinely live leg on the floor, and on an instrument carrying a THIRD, foreign
+     * opposite-side stop (Agora filters {@code lookupRelatedOrders} by instrument alone, not by
+     * which caller owns a leg) index 0 need not even be one of Dracul's own two legs. So this
+     * matches each returned leg to whichever of {@code stop_order_id}/{@code
+     * tranche2_stop_order_id} its {@code replaces} names, exactly like the non-collapsed branch
+     * below — the only thing "collapsed" changes is that a column whose old id was never named as
+     * a {@code replaces} target (the leg that did NOT survive the collapse) is cleared rather than
+     * left pointing at a cancelled id.
+     */
+    public void recordTrim(long id, BigDecimal newQty, int newTrimCount,
+                           List<RestoredLeg> legs, boolean collapsed) {
+        ExecutorPosition current = findById(id);
+        String stopOrderId = current == null ? null : current.stopOrderId();
+        String tranche2StopOrderId = current == null ? null : current.tranche2StopOrderId();
+        if (collapsed) {
+            String oldStopOrderId = stopOrderId;
+            String oldTranche2StopOrderId = tranche2StopOrderId;
+            boolean stopMatched = false;
+            boolean tranche2Matched = false;
+            for (RestoredLeg leg : legs) {
+                if (leg.replaces() != null && leg.replaces().equals(oldStopOrderId)) {
+                    stopOrderId = leg.orderId();
+                    stopMatched = true;
+                }
+                if (leg.replaces() != null && leg.replaces().equals(oldTranche2StopOrderId)) {
+                    tranche2StopOrderId = leg.orderId();
+                    tranche2Matched = true;
+                }
+            }
+            if (!stopMatched) stopOrderId = null;
+            if (!tranche2Matched) tranche2StopOrderId = null;
+        } else {
+            for (RestoredLeg leg : legs) {
+                if (leg.replaces() != null && leg.replaces().equals(stopOrderId)) {
+                    stopOrderId = leg.orderId();
+                }
+                if (leg.replaces() != null && leg.replaces().equals(tranche2StopOrderId)) {
+                    tranche2StopOrderId = leg.orderId();
+                }
+            }
+        }
+        jdbc.sql("""
+                UPDATE executor_position
+                SET qty = :qty,
+                    trim_count = :tc,
+                    soft_confirm_count = 0,
+                    stop_order_id = :stopOrderId,
+                    tranche2_stop_order_id = :tranche2StopOrderId,
+                    stop_legs_collapsed = :collapsed
+                WHERE id = :id
+                """)
+                .param("qty", newQty)
+                .param("tc", newTrimCount)
+                .param("stopOrderId", stopOrderId)
+                .param("tranche2StopOrderId", tranche2StopOrderId)
+                .param("collapsed", collapsed)
+                .param("id", id)
+                .update();
+    }
+
+    /**
+     * Repoints ONLY the stop-leg id columns, for a rejected trim whose rollback still changed
+     * broker state (new leg ids, or a leg irrecoverably cancelled). Unlike {@link
+     * #recordTrim(long, BigDecimal, int, List, boolean)}, this must never touch {@code qty},
+     * {@code trim_count} or {@code soft_confirm_count} — no trim happened on this path, so the
+     * soft-confirm ladder and trim ladder must survive untouched (a reset here would push a
+     * retry roughly two maintenance runs out for no reason).
+     *
+     * <p>A currently-recorded stop-leg id that is NOT named as a {@code replaces} target in
+     * {@code legs} is nulled, not left alone: Agora's own rollback can break at the first failure
+     * and report fewer live legs than were cancelled (the LEG_RESTORE_FAILED_UNPROTECTED case),
+     * so an unmatched id is dead, not merely stale. A null column is a visible protection gap; a
+     * stale id looks live and fails LEG_NOT_FOUND on the next ratchet run instead.
+     */
+    public void repointStopLegs(long id, List<RestoredLeg> legs) {
+        ExecutorPosition current = findById(id);
+        if (current == null) return;
+
+        String stopOrderId = current.stopOrderId();
+        String tranche2StopOrderId = current.tranche2StopOrderId();
+        boolean stopMatched = false;
+        boolean tranche2Matched = false;
+        for (RestoredLeg leg : legs) {
+            if (leg.replaces() != null && leg.replaces().equals(current.stopOrderId())) {
+                stopOrderId = leg.orderId();
+                stopMatched = true;
+            }
+            if (leg.replaces() != null && leg.replaces().equals(current.tranche2StopOrderId())) {
+                tranche2StopOrderId = leg.orderId();
+                tranche2Matched = true;
+            }
+        }
+        if (!stopMatched && current.stopOrderId() != null) {
+            stopOrderId = null;
+        }
+        if (!tranche2Matched && current.tranche2StopOrderId() != null) {
+            tranche2StopOrderId = null;
+        }
+
+        jdbc.sql("""
+                UPDATE executor_position
+                SET stop_order_id = :stopOrderId,
+                    tranche2_stop_order_id = :tranche2StopOrderId
+                WHERE id = :id
+                """)
+                .param("stopOrderId", stopOrderId)
+                .param("tranche2StopOrderId", tranche2StopOrderId)
+                .param("id", id)
+                .update();
     }
 
     /** Persists the adverse-excursion extreme (lowest price seen while the position is open),
@@ -356,7 +489,8 @@ public class ExecutorPositionRepository {
                 rs.getBigDecimal("submitted_limit_price"),
                 rs.getString("pending_exit_reason"),
                 rs.getString("exit_order_id"),
-                rs.getBigDecimal("pending_exit_fill_price"));
+                rs.getBigDecimal("pending_exit_fill_price"),
+                rs.getBoolean("stop_legs_collapsed"));
     }
 
     private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {

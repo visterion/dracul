@@ -3,12 +3,14 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
 import de.visterion.dracul.executor.broker.BrokerOrder;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.executor.broker.PlacedBracket;
+import de.visterion.dracul.executor.broker.RestoredLeg;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.pattern.PatternRepository;
 import de.visterion.dracul.position.PositionContextRepository;
@@ -231,7 +233,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
     }
 
     /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
@@ -241,7 +243,7 @@ class ExecutorWebhookControllerTest {
         return new ExecutorPosition(id, "depot-1", symbol, side, qty,
                 entry, initialStop, initialStop, 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", entry, null, 0, null, null, null, null, null,
-                null, null, null, null, trimCount, null, null, null, null, null, null);
+                null, null, null, null, trimCount, null, null, null, null, null, null, false);
     }
 
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
@@ -334,7 +336,7 @@ class ExecutorWebhookControllerTest {
                 /* stopOrderId */ null, /* sector */ null, entryDayHigh,
                 /* tranche2OrderId */ null, /* tranche2StopOrderId */ null, /* trimCount */ 0,
                 /* lowestPrice */ null, /* entryExpiresAt */ null, /* submittedLimitPrice */ null,
-                /* pendingExitReason */ null, /* exitOrderId */ null, /* pendingExitFillPrice */ null);
+                /* pendingExitReason */ null, /* exitOrderId */ null, /* pendingExitFillPrice */ null, false);
     }
 
     @SuppressWarnings("unchecked")
@@ -2868,7 +2870,7 @@ class ExecutorWebhookControllerTest {
                 position.entryDayHigh(), position.tranche2OrderId(), position.tranche2StopOrderId(),
                 position.trimCount(), position.lowestPrice(), position.entryExpiresAt(),
                 position.submittedLimitPrice(), position.pendingExitReason(), position.exitOrderId(),
-                position.pendingExitFillPrice());
+                position.pendingExitFillPrice(), false);
         when(positionRepo.findById(1L)).thenReturn(ratcheted);
 
         ExecutorSignal signal = new ExecutorSignal("sig-42", "spin-hunter", "v1", "ACME", "BUY",
@@ -2979,7 +2981,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), 1, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0, null, null,
                 null, null, "stop-1", null, null, null, null, 0, null,
-                "2026-07-03T00:00:42Z", null, null, null, null);
+                "2026-07-03T00:00:42Z", null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
 
         JsonNode body = json("""
@@ -2995,6 +2997,7 @@ class ExecutorWebhookControllerTest {
         verifyNoInteractions(gateway);
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -3010,7 +3013,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
@@ -3051,7 +3054,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, null, "close-9"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, null, "close-9", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
@@ -3075,7 +3078,7 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"exit_position",
@@ -3185,6 +3188,7 @@ class ExecutorWebhookControllerTest {
         verifyNoInteractions(gateway);
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
     }
 
@@ -3194,7 +3198,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"), new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"), new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3207,8 +3211,9 @@ class ExecutorWebhookControllerTest {
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
-        // qty 10 * (1-0.33) = 6.7, floored to whole shares -> 6
-        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("6")), eq(1));
+        // qty 10 * (1-0.33) = 6.7 would floor to 6 by Dracul's own arithmetic, but the gateway
+        // mock reports remainingQty 7 — the broker's number must win over the local computation.
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("7")), eq(1), eq(List.of()), eq(false));
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -3218,7 +3223,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isNull();
         assertThat(log.orderJson().path("fraction").asDouble()).isEqualTo(0.33);
         assertThat(log.orderJson().has("qty_closed")).isTrue();
-        assertThat(log.orderJson().path("qty_remaining").asDouble()).isEqualTo(6.0);
+        assertThat(log.orderJson().path("qty_remaining").asDouble()).isEqualTo(7.0);
     }
 
     @Test
@@ -3226,11 +3231,17 @@ class ExecutorWebhookControllerTest {
         // Regression: 1 - 0.33 computed in primitive double is 0.6699999999999999, which floors
         // qty=100 to 66 instead of 67. The complement must be computed in BigDecimal so qty=100
         // trims to exactly remaining 67 / closed 33.
+        //
+        // The gateway mock reports NO broker quantities (null/null) so this actually exercises
+        // the local-arithmetic FALLBACK path -- a mock returning matching closedQty/remainingQty
+        // here would make this test pass even if the BigDecimal complement regressed back to a
+        // primitive double, because the asserted value would come from the mock, not from the
+        // controller's own arithmetic (fix round 1 finding: this test was vacuous under mutation).
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("100"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("33"), new BigDecimal("67"), new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(null, null, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3244,7 +3255,7 @@ class ExecutorWebhookControllerTest {
         assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("33");
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
-        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("67")), eq(1));
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("67")), eq(1), eq(List.of()), eq(false));
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
@@ -3254,11 +3265,13 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void exitPosition_trim033_qty200_remaining134() {
+        // Same fallback-path reasoning as the qty=100 test above: null/null broker quantities so
+        // the asserted 134 can only come from the controller's own BigDecimal complement.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("200"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
-                .thenReturn(new CloseResult(new BigDecimal("66"), new BigDecimal("134"), new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(null, null, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3267,7 +3280,7 @@ class ExecutorWebhookControllerTest {
         controller.exitPosition(BEARER, "run-1", body);
 
         // 200 * 0.67 = 134 exactly; double-complement drift would have produced 133.
-        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("134")), eq(1));
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("134")), eq(1), eq(List.of()), eq(false));
     }
 
     @Test
@@ -3290,6 +3303,7 @@ class ExecutorWebhookControllerTest {
 
         verifyNoInteractions(gateway);
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any());
     }
 
@@ -3299,7 +3313,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SOFT_CHANDELIER","fraction":1.0}
@@ -3313,6 +3327,7 @@ class ExecutorWebhookControllerTest {
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -3333,7 +3348,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), new BigDecimal("1"), 1);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
-                .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1"));
+                .thenReturn(new CloseResult(new BigDecimal("1"), BigDecimal.ZERO, new BigDecimal("112"), "close-1", List.of(), false));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
@@ -3348,11 +3363,340 @@ class ExecutorWebhookControllerTest {
         verify(gateway, never()).flatten(any(), any(), eq(BigDecimal.valueOf(0.5)));
         verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"), eq("FILL"));
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo).add(eq("ACME"), eq("SCALE_OUT"), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("EXIT_FULL");
+    }
+
+    // -------------------------------------------------------------------
+    // exit-position: scale-out — books what the BROKER did, and leg-restore alerting
+    // -------------------------------------------------------------------
+
+    @Test
+    void trimBooksTheBrokerQuantitiesNotItsOwn() {
+        // position qty 23, fraction 0.5: Dracul's own floor(23*0.5)=11, the broker floors the
+        // other side and reports closedQty 11 / remainingQty 12 — the broker's numbers must win
+        // everywhere: recordTrim, order_json and the response body.
+        ExecutorPosition open = openPosition(7L, "OHI", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("23"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("OHI"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(new BigDecimal("11"), new BigDecimal("12"),
+                        new BigDecimal("40"), "close-1", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"OHI","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("11");
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("12");
+
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("12")), eq(1), eq(List.of()), eq(false));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        JsonNode orderJson = logCaptor.getValue().orderJson();
+        assertThat(orderJson.path("qty_closed").asDouble()).isEqualTo(11.0);
+        assertThat(orderJson.path("qty_remaining").asDouble()).isEqualTo(12.0);
+    }
+
+    @Test
+    void trimFallsBackToLocalArithmeticWhenTheBrokerDoesNotReportQuantities() {
+        // A provider that does not report closed/remaining qty -> fall back to Dracul's own
+        // floor(qty * (1-fraction)) arithmetic, not a null/NPE.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(null, null, new BigDecimal("112"), "close-1", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("5");
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("5");
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("5")), eq(1), eq(List.of()), eq(false));
+    }
+
+    @Test
+    void trimFallsBackToLocalArithmeticForBothWhenOnlyOneBrokerQuantityIsReported() {
+        // The two null fallbacks are NOT independent: a provider reporting only closedQty (or
+        // only remainingQty) must fall back to the LOCAL arithmetic for BOTH fields, never mix
+        // one broker-reported number with one locally-computed one -- that would yield
+        // qty_closed + qty_remaining != position.qty(), exactly the OutcomeBatchJob weighted-R
+        // inflation this task removes. Not reachable through today's gateway; guards against a
+        // future provider that reports only one of the pair.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        // Only closedQty reported (7, NOT matching the local floor of 5) -- remainingQty is null.
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(new BigDecimal("7"), null, new BigDecimal("112"), "close-1", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        // Both fall back to local arithmetic (qty 10 * 0.5 = 5 closed / 5 remaining), NOT 7
+        // closed paired with a locally-computed remaining.
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("5");
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("5");
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("5")), eq(1), eq(List.of()), eq(false));
+    }
+
+    @Test
+    void trimBooksBrokerQuantitiesEvenWhenAPendingOppositeCloseMakesThemNotSumToTheOriginalQty() {
+        // Pins a known, documented (not fixed here) gap: SaxoBrokerProvider.flatten's M-T6
+        // idempotent-retry lookup subtracts any already-pending opposite-side Market quantity
+        // from the requested close before placing this call's order (a prior trim whose HTTP
+        // response was lost, but which the broker already accepted). closedQty is that reduced
+        // "this call's own contribution"; remainingQty is available.subtract(closeQty) using the
+        // FULL originally-requested closeQty (a correct PROJECTION of what remains once both the
+        // pending order and this one fill). The two together therefore fall short of the original
+        // position qty by exactly the pending quantity that was never separately booked (the
+        // lost-response trim's own decision_log/order_json row was never written either, since
+        // the caller never got a response to log). Position qty 46, requested close 23 (0.5
+        // fraction), 10 already pending -> closedQty=13, remainingQty=23, sum=36 != 46.
+        //
+        // Dracul books exactly what the broker reports without trying to reconcile the gap:
+        // recordTrim's new qty is remainingQty (23, the correct final-remaining projection), and
+        // qty_closed (13) is logged as-is, undercounting this trim's true contribution to the
+        // OutcomeBatchJob's weighted-R by the 10 shares the lost trim closed. This is a real, if
+        // narrow, analytics distortion -- not a book-correctness bug: the position's own qty
+        // column stays accurate (23 is genuinely what remains once both closes fill), only the
+        // qty_closed audit trail undercounts. Whether to warn/reconcile here is left to a future
+        // change; this test only pins the current, documented behaviour.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("46"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenReturn(new CloseResult(new BigDecimal("13"), new BigDecimal("23"),
+                        new BigDecimal("40"), "close-1", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat((BigDecimal) output.get("qty_closed")).isEqualByComparingTo("13");
+        assertThat((BigDecimal) output.get("qty_remaining")).isEqualByComparingTo("23");
+        // 13 + 23 = 36, NOT the original 46 -- the gap this test documents.
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("23")), eq(1), eq(List.of()), eq(false));
+    }
+
+    @Test
+    void trimPersistsTheRestoredLegIds() {
+        // Gateway returns two restored protective legs on a successful trim -> recordTrim
+        // receives them unchanged (plus the collapsed flag) so the stop columns get repointed.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("3"), new BigDecimal("90")),
+                new RestoredLeg("old-2", "new-2", new BigDecimal("3"), new BigDecimal("90")));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"),
+                        new BigDecimal("112"), "close-1", legs, true));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        controller.exitPosition(BEARER, "run-1", body);
+
+        verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("7")), eq(1), eq(legs), eq(true));
+    }
+
+    @Test
+    void unprotectedRejectionRaisesACriticalAlert() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("10"), new BigDecimal("90")));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerRejectedException("rollback left the position unprotected",
+                        "LEG_RESTORE_FAILED_UNPROTECTED", legs));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("LEG_RESTORE_FAILED_UNPROTECTED"), eq("CRITICAL"), any());
+
+        // The trim did not happen -- must NOT reuse recordTrim (it would wrongly reset
+        // soft_confirm_count / stop_legs_collapsed). Only the stop-leg columns are repointed.
+        verify(positionRepo).repointStopLegs(eq(7L), eq(legs));
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("LEG_RESTORE_FAILED_UNPROTECTED");
+    }
+
+    @Test
+    void aTransientBrokerFailureDoesNotRaiseAnAlert() {
+        // Plain BrokerUnavailableException (not a business rejection) keeps today's behaviour:
+        // ESCALATE row, no Telegram alert.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerUnavailableException("timeout"));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+        verify(positionRepo, never()).repointStopLegs(anyLong(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+    }
+
+    @Test
+    void aRejectionThatRolledBackStillPersistsTheNewLegIds() {
+        // LEG_RESTORE_FAILED (not the unprotected variant): the trim itself is rejected, so qty,
+        // trim_count and soft_confirm_count must NOT change, but Agora rolled protection back and
+        // issued new leg ids that must still be persisted so Dracul doesn't keep addressing
+        // cancelled orders.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("10"), new BigDecimal("90")),
+                new RestoredLeg("old-2", "new-2", new BigDecimal("10"), new BigDecimal("90")));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerRejectedException("cancel incomplete, rolled back",
+                        "LEG_RESTORE_FAILED", legs));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        // Not recordTrim -- no trim happened, so qty/trim_count/soft_confirm_count must not be
+        // touched at all. Only the stop-leg id columns are repointed via repointStopLegs.
+        verify(positionRepo).repointStopLegs(eq(7L), eq(legs));
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("LEG_RESTORE_FAILED");
+    }
+
+    @Test
+    void aRejectionBeforeTheLegCancelLoopEverRunsMustNotRepointStopLegs() {
+        // BLOCKER fix (whole-branch review, 2026-08-05): CLOSE_ALREADY_PENDING (and every other
+        // Saxo reject that fires before SaxoBrokerProvider.flatten's leg-cancel loop --
+        // INVALID_FRACTION, SYMBOL, QTY_EXCEEDS_POSITION, QTY_ROUNDED_TO_ZERO -- plus every
+        // Alpaca flatten rejection, which never cancels a leg at all) carries a legitimately
+        // EMPTY protectiveLegs() because Agora never touched a leg. Before this fix,
+        // repointStopLegs ran unconditionally on ANY BrokerRejectedException and would have
+        // nulled BOTH live stop columns here -- permanently orphaning working stop orders that
+        // were never cancelled. Scenario: a prior trim's HTTP response was lost, the broker
+        // already holds a pending partial close, and the next exit_position hits the idempotency
+        // check -> CLOSE_ALREADY_PENDING with no leg touched.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("46"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenThrow(new BrokerRejectedException(
+                        "a close of >= the requested size is already working",
+                        "CLOSE_ALREADY_PENDING", List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        // The stop columns must stay exactly as they were -- repointStopLegs must never even be
+        // called, let alone with an empty list that would null both columns.
+        verify(positionRepo, never()).repointStopLegs(anyLong(), any());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("CLOSE_ALREADY_PENDING");
+    }
+
+    @Test
+    void unprotectedRejectionWithAnEmptyLegListStillRepointsBothColumnsToNull() {
+        // The worst case the gate must still let through: LEG_RESTORE_FAILED_UNPROTECTED CAN
+        // legitimately carry an empty protectiveLegs() (interleaveRollback stopped with nothing
+        // live at all -- e.g. a single-leg position, see SaxoBrokerProvider's own single-leg
+        // rollback limitation). Unlike CLOSE_ALREADY_PENDING above, Agora DID touch a leg here, so
+        // repointStopLegs must still run and null both columns (repointStopLegs(id, List.of())
+        // nulls any currently-recorded id, since none is named as a replaces target).
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("46"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
+                .thenThrow(new BrokerRejectedException(
+                        "rollback left the position unprotected", "LEG_RESTORE_FAILED_UNPROTECTED",
+                        List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
+                """);
+
+        controller.exitPosition(BEARER, "run-1", body);
+
+        verify(positionRepo).repointStopLegs(eq(7L), eq(List.of()));
+        verify(telegram).notifyAlert(eq("ACME"), eq("LEG_RESTORE_FAILED_UNPROTECTED"), eq("CRITICAL"), any());
     }
 
     // -------------------------------------------------------------------
@@ -3559,7 +3903,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
                 null, null, null, null, null, null, null, null, null, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
@@ -3584,7 +3928,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), 2, null, List.of("X"), "sig-1", "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
                 null, null, null, null, null, null, null, null, null, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
 
         JsonNode body = json("""
@@ -4164,7 +4508,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("95"), 1, null, List.of("X"), null, "hunter",
                 "2026-06-01", null, "OPEN", "brk-1", new BigDecimal("100"), null, 0,
                 null, null, null, null, null, null, null, null, null, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));

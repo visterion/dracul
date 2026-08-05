@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.ContainerConfig;
+import de.visterion.dracul.executor.broker.RestoredLeg;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,14 +40,14 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
         var posB = new ExecutorPosition(null, "depot-1", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
 
         long idA = repo.insert(posA);
         long idB = repo.insert(posB);
@@ -74,7 +75,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
         long id = repo.insert(pos);
 
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 1,
@@ -97,7 +98,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null);
+                null, null, null, null, 0, null, null, null, null, null, null, false);
         long id = repo.insert(pos);
 
         repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP");
@@ -158,6 +159,184 @@ class ExecutorPositionRepositoryTest {
         assertThat(found.qty()).isEqualByComparingTo("50");
         assertThat(found.trimCount()).isEqualTo(1);
         assertThat(found.softConfirmCount()).isEqualTo(0);
+    }
+
+    @Test
+    void recordTrimWritesTheBrokerQuantityNotOurArithmetic() {
+        // 23-share position, e.g. OHI @ fraction 0.5: Dracul's own arithmetic floors to 11, but
+        // the broker (Agora) floors the other side and reports 12. The broker's number must win.
+        long id = repo.insert(openPosition("BROKERQTY" + System.nanoTime()));
+
+        repo.recordTrim(id, new BigDecimal("12"), 1, List.of(), false);
+
+        assertThat(repo.findById(id).qty()).isEqualByComparingTo("12");
+    }
+
+    @Test
+    void recordTrimRepointsBothStopColumnsViaReplaces() {
+        long id = repo.insert(openPositionWithStops("REPOINT" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("5"), new BigDecimal("90")),
+                new RestoredLeg("old-2", "new-2", new BigDecimal("5"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, false);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isEqualTo("new-2");
+    }
+
+    @Test
+    void recordTrimLeavesAnUnmatchedColumnAlone() {
+        long id = repo.insert(openPositionWithStops("UNMATCHED" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("5"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, false);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isEqualTo("old-2");
+    }
+
+    @Test
+    void collapseNullsTheSecondStopColumnAndSetsTheFlag() {
+        long id = repo.insert(openPositionWithStops("COLLAPSE" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("10"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, true);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.tranche2StopOrderId()).isNull();
+        assertThat(found.stopLegsCollapsed()).isTrue();
+    }
+
+    @Test
+    void collapseSurvivorIsMatchedByReplacesNotForcedIntoStopOrderId() {
+        // Fix round (whole-branch review, 2026-08-05): Agora's own contract
+        // (documentation/exit-tools.md) says a collapse does NOT guarantee exactly one survivor --
+        // the allocator fills greedily down tightness order, so more than one leg can come back.
+        // recordTrim's collapse branch therefore reconciles every returned leg by `replaces`
+        // against BOTH columns, exactly like the non-collapsed branch, rather than forcing
+        // whatever came back into stop_order_id unconditionally. Here the single survivor's
+        // `replaces` names the OLD tranche2 id, so it lands in tranche2_stop_order_id; stop_order_id
+        // (never named as a replaces target) is nulled -- the cancelled "old-1" must not survive
+        // anywhere on the row.
+        long id = repo.insert(openPositionWithStops("COLLAPSE2" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-2", "survivor-1", new BigDecimal("10"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, true);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isNull();
+        assertThat(found.tranche2StopOrderId()).isEqualTo("survivor-1");
+        assertThat(found.stopLegsCollapsed()).isTrue();
+        // The cancelled "old-1" must not survive on the row anywhere.
+        assertThat(found.stopOrderId()).isNotEqualTo("old-1");
+        assertThat(found.tranche2StopOrderId()).isNotEqualTo("old-1");
+    }
+
+    @Test
+    void collapseCanReturnTwoSurvivingLegsBothMatchedByReplaces() {
+        // Agora's own contract (documentation/exit-tools.md) is explicit that a collapse does NOT
+        // mean "exactly one leg comes back": the allocator fills greedily down tightness order, so
+        // e.g. a remainder of 2 against three cancelled stop legs (Dracul's own two, plus a foreign
+        // one on the same instrument that Agora's Uic-only filter also cancelled) can return TWO
+        // restored legs, and list position has no relation to which of Dracul's columns each one
+        // replaces. Taking legs.get(0) unconditionally (the old bug) would silently drop whichever
+        // leg didn't land at index 0 -- here both of Dracul's own legs come back, and BOTH columns
+        // must be repointed, not just one.
+        long id = repo.insert(openPositionWithStops("COLLAPSE3" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-2", "new-2", new BigDecimal("1"), new BigDecimal("90")),
+                new RestoredLeg("old-1", "new-1", new BigDecimal("1"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("2"), 1, legs, true);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isEqualTo("new-2");
+        assertThat(found.stopLegsCollapsed()).isTrue();
+    }
+
+    @Test
+    void collapseFlagRoundTripsThroughTheRowMapper() {
+        long id = repo.insert(openPositionWithStops("ROUNDTRIP" + System.nanoTime(), "old-1", "old-2"));
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("10"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, legs, true);
+
+        var open = repo.findOpen();
+        var found = open.stream().filter(p -> p.id() == id).findFirst().orElseThrow();
+        assertThat(found.stopLegsCollapsed()).isTrue();
+    }
+
+    @Test
+    void repointStopLegsRepointsAMatchedLegAndLeavesQtyTrimCountSoftConfirmAlone() {
+        long id = repo.insert(openPositionWithStops("REPOINTONLY" + System.nanoTime(), "old-1", "old-2"));
+        repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
+                new BigDecimal("104"), "old-1");
+        ExecutorPosition before = repo.findById(id);
+        assertThat(before.softConfirmCount()).isEqualTo(3);
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("5"), new BigDecimal("90")));
+        repo.repointStopLegs(id, legs);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        // Unlike recordTrim, repointStopLegs must not touch qty, trim_count or soft_confirm_count
+        // -- no trim happened on the rejection path this method serves.
+        assertThat(found.qty()).isEqualByComparingTo(before.qty());
+        assertThat(found.trimCount()).isEqualTo(before.trimCount());
+        assertThat(found.softConfirmCount()).isEqualTo(3);
+    }
+
+    @Test
+    void repointStopLegsNullsAColumnWhoseIdIsNotNamedInTheLegs() {
+        // Agora's rollback (interleaveRollback) can break at the first failure and report fewer
+        // live legs than were cancelled: one stop is matched/repointed, the other is unaccounted
+        // for entirely. An unmatched id must be nulled, not left pointing at a cancelled order.
+        long id = repo.insert(openPositionWithStops("PARTIALGAP" + System.nanoTime(), "old-1", "old-2"));
+
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("old-1", "new-1", new BigDecimal("5"), new BigDecimal("90")));
+        repo.repointStopLegs(id, legs);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("new-1");
+        assertThat(found.tranche2StopOrderId()).isNull();
+    }
+
+    @Test
+    void repointStopLegsNullsBothColumnsWhenNoLegsAreReported() {
+        // The worst-case LEG_RESTORE_FAILED_UNPROTECTED: Agora reports no live legs at all.
+        // Both currently-recorded ids must be nulled rather than left stale.
+        long id = repo.insert(openPositionWithStops("NOLEGS" + System.nanoTime(), "old-1", "old-2"));
+
+        repo.repointStopLegs(id, List.of());
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isNull();
+        assertThat(found.tranche2StopOrderId()).isNull();
+    }
+
+    @Test
+    void repointStopLegsDoesNotTouchTheCollapsedFlag() {
+        long id = repo.insert(openPositionWithStops("NOCOLLAPSETOUCH" + System.nanoTime(), "old-1", "old-2"));
+        List<RestoredLeg> collapseLegs = List.of(
+                new RestoredLeg("old-1", "mid-1", new BigDecimal("10"), new BigDecimal("90")));
+        repo.recordTrim(id, new BigDecimal("10"), 1, collapseLegs, true);
+        assertThat(repo.findById(id).stopLegsCollapsed()).isTrue();
+
+        repo.repointStopLegs(id, List.of(
+                new RestoredLeg("mid-1", "final-1", new BigDecimal("10"), new BigDecimal("90"))));
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("final-1");
+        assertThat(found.stopLegsCollapsed()).isTrue();
     }
 
     @Test
@@ -281,7 +460,7 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null));
+                null, null, null, null, 0, null, null, null, null, null, null, false));
     }
 
     private ExecutorPosition openPosition(String symbol) {
@@ -292,6 +471,17 @@ class ExecutorPositionRepositoryTest {
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
                 "Technology", new BigDecimal("105.5"), null, null, 0, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
+    }
+
+    private ExecutorPosition openPositionWithStops(String symbol, String stopOrderId, String tranche2StopOrderId) {
+        return new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 2, new BigDecimal("1.5"),
+                List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, stopOrderId,
+                "Technology", new BigDecimal("105.5"), "ord-2", tranche2StopOrderId, 0, null, null,
+                null, null, null, null, false);
     }
 }
