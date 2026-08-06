@@ -123,8 +123,9 @@ consumed through five neutral domain facades in
   returned an identical candidate list. **`recentForm4` is sliced per day since
   2026-08-06** — Agora fetches one EDGAR archive document per hit under a
   fair-use throttle and its own aggregate deadline, so a single call reads only a
-  few hundred filings whatever `limit` is passed (~272; a market-wide week holds
-  ~1,697 Form-4 filings and a market-wide day ~243, measured 2026-08-04). The
+  few hundred filings whatever `limit` is passed (~272 per call and ~243 per day
+  are DERIVED from Agora's pacing arithmetic, not yet measured on prod; the
+  ~1,697 filings a market-wide week holds was measured 2026-08-04). The
   window is therefore split into one `get_form4_transactions` call PER DAY and
   merged: `partial`/`truncated` are OR-ed across every slice (one cut day marks
   the whole answer truncated), a single slice failing keeps the other days and
@@ -132,8 +133,12 @@ consumed through five neutral domain facades in
   `unavailable`. Transactions are collected into a set keyed on the whole
   `Form4Filing` record, so a filing that Agora's 10-day late-filing pad reports
   under two slices cannot be counted twice. Cost: the per-CALL Agora budget is
-  unchanged (45 s) but the fetch endpoint's total wall clock is
-  `lookback × 45 s`. Also `ownerHistoryStrict`
+  unchanged (45 s) but the fetch endpoint's total wall clock is one call per day
+  of the (inclusive) window, capped at `MAX_WINDOW_SLICES` = 10. A caller may
+  state its own slice budget: `DaywalkerEventEngine` passes **1**, so the
+  intraday poll costs exactly one Agora call however many UTC dates its window
+  spans — its whole poll lives inside a 60 s budget, and inheriting the nightly
+  hunter's would blow it on the first poll of every trading day. Also `ownerHistoryStrict`
   (`get_form4_owner_history` — multi-year per-owner Form-4 history for the
   strigoi-insider routine/opportunistic classification; strict, propagates
   `AgoraUnavailableException` for the batch source-down guard), `concept` /

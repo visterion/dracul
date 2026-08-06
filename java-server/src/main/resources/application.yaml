@@ -43,12 +43,17 @@ dracul:
       # against a 25 000 ms client budget — which is exactly why every insider run timed out.
       # This budget is PER CALL and stays per call. Since BUG-S1b (2026-08-06) AgoraFilings
       # .recentForm4 slices its window into one call PER DAY (a market-wide week holds ~1,700
-      # Form-4 filings, a call reads ~272), so the insider fetch ENDPOINT's total wall clock is
-      # lookback x this value: 7 x 45 s = 315 s worst case, ~234 s at the measured 33.4 s.
-      # Enclosing limits: Vistierie's max_run_seconds for strigoi-insider (1800 s) still covers
-      # it; the fetch tool's webhook timeout (InsiderDefaults.FETCH_TIMEOUT_SECONDS, 60 s) does
-      # NOT any more and must be raised to >= 360 s via an agent-definition reset (see the OPEN
-      # note on that constant).
+      # Form-4 filings, a call reads ~272 — DERIVED from Agora's pacing, not yet measured on
+      # prod), so the insider fetch ENDPOINT's total wall clock is one call per DAY of the
+      # window. The window is INCLUSIVE on both ends (to.minusDays(lookback)..to), so
+      # lookback_days=7 is EIGHT days and eight slices: 8 x 45 s = 360 s worst case, ~267 s at
+      # the measured 33.4 s. AgoraFilings.MAX_WINDOW_SLICES caps it at 10 slices = 450 s.
+      # Enclosing limits: the fetch tool's webhook timeout
+      # (InsiderDefaults.FETCH_TIMEOUT_SECONDS, 600 s since 2026-08-06 — needs an
+      # agent-definition reset) and Vistierie's max_run_seconds for strigoi-insider (1800 s).
+      # NOTE the 600 s covers the Form-4 term AND the InsiderEnrichmentService calls that run in
+      # the same request (up to 25 clusters x ~5 Agora calls on the 25 s global budget), so the
+      # 150 s over the Form-4 worst case is NOT free headroom — it is where enrichment lives.
       "[get_form4_transactions]": ${DRACUL_AGORA_FORM4_TIMEOUT_MS:45000}
   hivemem:
     base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}

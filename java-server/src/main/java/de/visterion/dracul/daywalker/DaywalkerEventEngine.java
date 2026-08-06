@@ -46,6 +46,21 @@ public class DaywalkerEventEngine {
 
     private static final Logger log = LoggerFactory.getLogger(DaywalkerEventEngine.class);
 
+    /**
+     * Day-slices this poll may spend on the shared Form-4 facade — ONE, i.e. the newest UTC date
+     * of the window, which is today's filings and all an intraday INSIDER_SELL trigger looks at.
+     *
+     * <p>Not a tuning knob but a budget guard. {@code AgoraFilings.recentForm4} slices per DAY
+     * (one ~33 s Agora call each), while the whole poll — this fetch plus every per-symbol
+     * detector — must finish inside {@code dracul.daywalker.poll-budget-ms} (60 s). The poll
+     * window is {@code since..now} in UTC, so it spans two dates on the first poll of every
+     * trading day and four after a weekend: on the shared default budget that is 2-4 sequential
+     * calls, {@code planFuture.get} times out and the poll logs "skipping all symbols this poll" —
+     * zero triggers, no alert, nothing in the DB. Pinning the budget at the call site makes the
+     * cost of this fetch ONE call whatever the window does.
+     */
+    private static final int FORM4_SLICES_PER_POLL = 1;
+
     private final HeldPositionService heldPositions;
     private final WatchlistRepository watchlist;
     private final AgoraIntraday intraday;
@@ -255,7 +270,7 @@ public class DaywalkerEventEngine {
         List<Form4Filing> form4 = List.of();
         if (!universe.isEmpty()) {
             try {
-                form4 = filings.recentForm4(fromDate, toDate).items();
+                form4 = filings.recentForm4(fromDate, toDate, FORM4_SLICES_PER_POLL).items();
             } catch (Exception e) {
                 log.warn("Form-4 fetch failed during Daywalker poll: {}", e.getMessage());
             }

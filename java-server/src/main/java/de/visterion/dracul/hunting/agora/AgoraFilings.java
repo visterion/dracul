@@ -51,12 +51,14 @@ public class AgoraFilings {
      *    600 s  InsiderDefaults.FETCH_TIMEOUT_SECONDS — a third of the run budget, so the fetch
      *           cannot starve the reasoning turns even at its worst case
      *    450 s  10 slices x 45 s (dracul.agora.tool-timeout-ms[get_form4_transactions]) — the
-     *           worst case, leaving 150 s / 33% headroom inside the webhook timeout
+     *           worst case; the 150 s left inside the webhook timeout is not spare, it is where
+     *           InsiderEnrichmentService's own calls (same request) live
      * </pre>
      * Pinned by {@code InsiderToolTimeoutBudgetTest}: {@code MAX_WINDOW_SLICES x the CONFIGURED
      * Agora budget} must stay below {@code FETCH_TIMEOUT_SECONDS}, so the three numbers cannot
-     * drift apart. Ten days also comfortably covers the hunter's 7-day default and the 10-day
-     * late-filing pad that Agora searches per slice.
+     * drift apart. Ten days covers the hunter's default lookback — which is EIGHT slices, not
+     * seven: {@code StrigoiInsiderWebhookController} asks for {@code to.minusDays(lookback)..to},
+     * an inclusive window — and matches the 10-day late-filing pad Agora searches per slice.
      */
     public static final int MAX_WINDOW_SLICES = 10;
 
@@ -75,8 +77,14 @@ public class AgoraFilings {
      * holds ~1,697 Form-4 filings and a market-wide DAY ~243 (measured live 2026-08-04 on window
      * 2026-07-20..07-27), so a week-sized call read 139 of them — 51 open-market buys, 6 above
      * 500k USD, zero tickers with three filers — and the insider hunter's cluster threshold never
-     * fired: {@code items=0 (partial=false truncated=true status=healthy)}, every round. A
-     * day-sized call fits under the same deadline with headroom.
+     * fired: {@code items=0 (partial=false truncated=true status=healthy)}, every round.
+     *
+     * <p><b>That a day-sized call COVERS its day is derived, not measured.</b> Both the ~272 per
+     * call and the ~243 per day come from arithmetic (Agora's pacing constants; the weekly hit
+     * count divided by seven), and Agora is separately being fixed for a pad defect that makes a
+     * 1-day slice read the wrong late filings. Treat "a day fits" as the design intent until a
+     * prod run reports a measured figure; what is certain is that a day-sized window is an order
+     * of magnitude closer to the budget than a week-sized one.
      *
      * <p>The cut is still reported honestly: EVERY slice's {@code partial}/{@code truncated} is
      * OR-ed into the merged health, so one cut day marks the whole week truncated. A day whose
@@ -89,8 +97,37 @@ public class AgoraFilings {
      * now LINEAR in the window — which is why at most {@link #MAX_WINDOW_SLICES} days are fetched
      * (see there for the 1800/600/450 s arithmetic). A longer window keeps its NEWEST
      * {@code MAX_WINDOW_SLICES} days and is reported {@code truncated=true}.
+     *
+     * <p>This overload spends the NIGHTLY HUNTER's budget. A caller on a tighter clock must state
+     * its own — see {@link #recentForm4(LocalDate, LocalDate, int)}; inheriting this one silently
+     * is how the daywalker poll lost its 60 s budget.
      */
     public DataSourceResult<Form4Filing> recentForm4(LocalDate from, LocalDate to) {
+        return recentForm4(from, to, MAX_WINDOW_SLICES);
+    }
+
+    /**
+     * Like {@link #recentForm4(LocalDate, LocalDate)} but with the CALLER's own slice budget:
+     * at most {@code maxSlices} day-sized Agora calls, keeping the newest {@code maxSlices} days
+     * of the window and reporting {@code truncated=true} when the rest went unread.
+     *
+     * <p>Why this is a parameter and not one shared constant: the two callers are on different
+     * clocks. {@code StrigoiInsiderWebhookController} is a NIGHTLY market-wide scan inside a 600 s
+     * webhook timeout and wants breadth; {@code DaywalkerEventEngine} is an INTRADAY trigger
+     * engine whose whole poll — positions, watchlist, this fetch, and every per-symbol detector —
+     * lives inside a 60 s budget (`dracul.daywalker.poll-budget-ms`) and only wants TODAY's
+     * filings. Before this parameter existed, daywalker inherited the hunter's budget and any
+     * poll whose window spanned two UTC dates (the first poll of a trading day; four dates after
+     * a weekend) issued 2-4 sequential ~33 s calls, blew {@code planFuture.get(60 s)} and logged
+     * "skipping all symbols this poll" — a SILENT zero-trigger poll, the worst failure class this
+     * codebase has. A slice budget stated at the call site makes the cost bounded by
+     * construction rather than by how the window happens to fall.
+     *
+     * <p>{@code maxSlices} below 1 is clamped to 1: no caller may turn this into a zero-call
+     * "clean empty" answer.
+     */
+    public DataSourceResult<Form4Filing> recentForm4(LocalDate from, LocalDate to, int maxSlices) {
+        int sliceBudget = Math.max(1, maxSlices);
         // Insertion-ordered SET, not a list: the merged answer must be deterministic AND
         // duplicate-free. See the duplicate analysis on recentForm4Slice.
         java.util.LinkedHashSet<Form4Filing> merged = new java.util.LinkedHashSet<>();
@@ -108,8 +145,8 @@ public class AgoraFilings {
         // descending, so a deadline cut drops the oldest filings of the range). Dropping newest
         // instead would hand the hunter a stale window while its freshest signal went unread.
         LocalDate firstDay = from;
-        if (from.plusDays(MAX_WINDOW_SLICES - 1L).isBefore(lastDay)) {
-            firstDay = lastDay.minusDays(MAX_WINDOW_SLICES - 1L);
+        if (from.plusDays(sliceBudget - 1L).isBefore(lastDay)) {
+            firstDay = lastDay.minusDays(sliceBudget - 1L);
             truncated = true;   // days the caller asked for that were never looked at
         }
         for (LocalDate day = firstDay; !day.isAfter(lastDay); day = day.plusDays(1)) {
@@ -161,7 +198,14 @@ public class AgoraFilings {
      *       transaction code): the DTO carries no accession number, and that tuple is what
      *       identifies a Form-4 non-derivative line — the same insider filing the same code for
      *       the same size and the same value on the same day in the same ticker is one line,
-     *       reported twice.</li>
+     *       reported twice. The residual risk is NOT symmetric, and the asymmetry is the reason
+     *       this trade is acceptable: a genuinely distinct pair (a direct and an indirect holding
+     *       line of the same size, price and day) collapses into one row, which for a BUY only
+     *       UNDER-states the cluster (conservative — a cluster we miss, never one we invent),
+     *       while for a SELL row it removes a subtrahend and RAISES {@code netInsiderDollar},
+     *       flattering the cluster. Sells are advisory-only in the insider screen (they never
+     *       drop a cluster), so the flattering direction cannot by itself create a signal — but
+     *       it is the side to watch if sells ever become a gate.</li>
      * </ul>
      */
     private JsonNode recentForm4Slice(LocalDate from, LocalDate to) {

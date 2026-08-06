@@ -111,18 +111,24 @@ own worst case.
 
 This budget is **per call**. Since 2026-08-06 `AgoraFilings.recentForm4` slices
 its window into one `get_form4_transactions` call per DAY (a single call reads
-~272 filings, a market-wide week holds ~1,697), so the insider fetch endpoint's
-total wall clock is linear in the lookback. It is bounded by
-`AgoraFilings.MAX_WINDOW_SLICES` = **10** days per fetch: a longer window keeps
-its newest ten days and reports `truncated: true` rather than looking complete.
-Worst case therefore 10 × 45 s = **450 s** (~334 s at the measured 33.4 s per
-call).
+~272 filings — derived from Agora's pacing, not yet measured on prod — while a
+market-wide week holds ~1,697), so the insider fetch endpoint's total wall clock
+is linear in the lookback. The window is inclusive on both ends, so the default
+`lookback_days=7` is **eight** days and eight calls (8 × 45 s = 360 s). It is
+bounded by `AgoraFilings.MAX_WINDOW_SLICES` = **10** days per fetch: a longer
+window keeps its newest ten days and reports `truncated: true` rather than
+looking complete. Worst case therefore 10 × 45 s = **450 s** (~334 s at the
+measured 33.4 s per call). A caller with a tighter budget passes its own slice
+count — `DaywalkerEventEngine` passes 1, so its intraday poll costs exactly one
+Agora call however many UTC dates its window spans.
 
 The enclosing limits, from the outside in: Vistierie's `max_run_seconds` for
 `strigoi-insider` (1800 s) covers the whole run; the `fetch_recent_clusters`
 webhook timeout (`InsiderDefaults.FETCH_TIMEOUT_SECONDS`) is **600 s** since
-2026-08-06 (raised from 60 s) — a third of the run budget, leaving 150 s
-headroom over the 450 s worst case. Changing it requires the agent-definition
+2026-08-06 (raised from 60 s) — a third of the run budget. The 150 s between
+the 450 s Form-4 worst case and the 600 s timeout is not spare headroom: the
+`InsiderEnrichmentService` calls (up to 25 clusters × ~5 Agora calls on the 25 s
+global budget) run in the same request and live there. Changing it requires the agent-definition
 reset. `InsiderToolTimeoutBudgetTest` pins the relationship itself (slice cap ×
 the configured Agora budget < the webhook timeout), so the three numbers cannot
 drift apart.

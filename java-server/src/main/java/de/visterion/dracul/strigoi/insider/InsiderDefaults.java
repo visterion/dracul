@@ -25,9 +25,15 @@ class InsiderDefaults {
      * {@code get_form4_transactions} call PER DAY of the lookback, bounded by
      * {@code AgoraFilings.MAX_WINDOW_SLICES}. The arithmetic:
      * <pre>
-     *   10 slices x 45 000 ms  (dracul.agora.tool-timeout-ms[get_form4_transactions])
+     *   10 slices x 45 000 ms  (dracul.agora.tool-timeout-ms[get_form4_transactions]); the
+     *                          default lookback_days=7 is an INCLUSIVE window and thus EIGHT
+     *                          slices = 360 s, the cap's 10 is the worst case
      *   = 450 s worst case     (~334 s at the 33.4 s per call measured on prod 2026-08-04)
-     *   600 s declared here    -> 150 s / 33% headroom, and a third of the run budget below
+     *   + the enrichment term   InsiderEnrichmentService runs in the SAME request: up to 25
+     *                          clusters x ~5 Agora calls on the 25 s global budget, bounded by
+     *                          its own source-down guards
+     *   600 s declared here    -> the 150 s over the Form-4 worst case is NOT spare headroom;
+     *                          it is what the enrichment term has to fit into
      * </pre>
      * Vistierie's {@code max_run_seconds} for strigoi-insider (1800 s, see the definition below)
      * encloses that with room for the reasoning turns. Pinned by

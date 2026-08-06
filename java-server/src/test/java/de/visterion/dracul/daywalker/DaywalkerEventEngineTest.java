@@ -108,7 +108,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         return new GuardMocks(hp, wl, in, cd, fi, al);
     }
@@ -196,7 +196,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("ACME"), any(), any()))
                 .thenReturn(List.of(earningsMissHeadline(now.minusSeconds(600))));
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engineWithGuard(hp, wl, in, cd, fi, al, 600).detect(null, now);
@@ -221,7 +221,7 @@ class DaywalkerEventEngineTest {
         when(in.candles(anyString())).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(anyString(), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engineWithGuard(hp, wl, in, cd, fi, al, 600)
@@ -261,7 +261,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("ACME"), any(), any()))
                 .thenReturn(List.of(macroHeadline("Fed raises rates again", now.minusSeconds(120))));
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var engine = engineWithGuard(hp, wl, in, cd, fi, al, 600);   // SAME instance both polls
@@ -307,7 +307,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var now = Instant.parse("2026-06-03T18:00:00Z");
@@ -338,7 +338,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("AAPL"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("AAPL")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -362,7 +362,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(List.of(), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenThrow(new RuntimeException("boom"));
+        when(fi.recentForm4(any(), any(), anyInt())).thenThrow(new RuntimeException("boom"));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -395,7 +395,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 95), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -422,7 +422,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -451,7 +451,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("AAPL")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(anyString(), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var now = Instant.parse("2026-06-03T18:00:00Z");
@@ -479,7 +479,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("WTCH")).thenReturn(new IntradayCandles(closes(50, 55), List.of()));
         when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("WTCH")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -504,7 +504,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -546,7 +546,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("WTCH")).thenReturn(new IntradayCandles(closes(50, 55), List.of()));
         when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("WTCH")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
 
         var now = Instant.parse("2026-06-03T18:00:00Z");
         // R2: the alert row was written under a NON-primary watcher's user_id; the engine's
@@ -572,7 +572,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
 
         var now = Instant.parse("2026-06-03T18:00:00Z");
         // A STOP_PROXIMITY row (StopAlertEmitter vocabulary) for the same symbol must NOT
@@ -604,7 +604,7 @@ class DaywalkerEventEngineTest {
         });
         when(cd.news(anyString(), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al, 500).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -629,7 +629,7 @@ class DaywalkerEventEngineTest {
         when(in.candles(anyString())).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(anyString(), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -653,7 +653,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 112), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -682,7 +682,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 95), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -710,7 +710,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         when(portfolioWeights.weightsBySymbol(full))
                 .thenReturn(java.util.Map.of("ACME", new BigDecimal("100.0")));
@@ -736,7 +736,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         when(sectors.sector("ACME")).thenReturn("Semiconductors");
 
@@ -762,7 +762,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("WTCH")).thenReturn(new IntradayCandles(closes(50, 55), List.of()));
         when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("WTCH")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         when(sectors.sector("WTCH")).thenReturn("Utilities");
 
@@ -790,7 +790,7 @@ class DaywalkerEventEngineTest {
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         when(portfolioWeights.weightsBySymbol(any())).thenReturn(java.util.Map.of("ACME", new BigDecimal("100.0")));
         when(sectors.cachedSector("ACME")).thenReturn("Semiconductors");
@@ -832,7 +832,7 @@ class DaywalkerEventEngineTest {
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"), 0.9)));
         when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         when(portfolioWeights.weightsBySymbol(any())).thenReturn(java.util.Map.of("ACME", new BigDecimal("100.0")));
         when(sectors.cachedSector("ACME")).thenReturn("Semiconductors");
@@ -861,7 +861,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("BETA"), any(), any())).thenReturn(List.of(
                 macroHeadline("  FED RAISES RATES AGAIN ", Instant.parse("2026-06-03T12:00:00Z"), 0.9)));
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -886,7 +886,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of(
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         var now = Instant.parse("2026-06-03T18:00:00Z");
         // seed the ALERT ROW — the only durable cooldown carrier (spec §9): 2h ago, inside 8h
         when(al.lastAlertAtAnyOwner("PORTFOLIO", "MACRO_PORTFOLIO"))
@@ -911,7 +911,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of(
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         // NO persisted row yet (alert rows are written only at LLM completion)
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
@@ -938,7 +938,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("WTCH"), any(), any())).thenReturn(List.of(
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.recommendations("WTCH")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         assertThat(engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z")))
@@ -964,7 +964,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("AAPL"), any(), any())).thenReturn(List.of(
                 macroHeadline("  FED RAISES RATES AGAIN ", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -999,7 +999,7 @@ class DaywalkerEventEngineTest {
         when(cd.news(eq("NOQT"), any(), any())).thenReturn(List.of(
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.recommendations("NOQT")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -1033,7 +1033,7 @@ class DaywalkerEventEngineTest {
         headlines.add(macroHeadline("Fed raises rates round 0", Instant.parse("2026-06-03T12:00:00Z")));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(headlines);
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -1066,7 +1066,7 @@ class DaywalkerEventEngineTest {
                 macroHeadline("Fed raises rates again", Instant.parse("2026-06-03T12:00:00Z"))));
         when(cd.news(eq("SLOW"), any(), any())).thenReturn(List.of());
         when(cd.recommendations(anyString())).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al, 500).detect(null, Instant.parse("2026-06-03T18:00:00Z"));
@@ -1089,7 +1089,7 @@ class DaywalkerEventEngineTest {
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 105), List.of()));
         when(cd.news(eq("ACME"), any(), any())).thenReturn(List.of());
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
 
         var events = engine(hp, wl, in, cd, fi, al, 60_000, "false")
@@ -1132,7 +1132,7 @@ class DaywalkerEventEngineTest {
         when(hp.openPositions("depot-1")).thenReturn(List.of(position("ACME", 100)));
         when(in.candles("ACME")).thenReturn(new IntradayCandles(closes(100, 100), List.of()));
         when(cd.recommendations("ACME")).thenReturn(List.of());
-        when(fi.recentForm4(any(), any())).thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(fi.recentForm4(any(), any(), anyInt())).thenReturn(DataSourceResult.healthy("agora", List.of()));
         when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
         when(cd.news(eq("ACME"), any(), any()))
                 .thenReturn(List.of(macroHeadline("Fed raises rates again", now.minusSeconds(120))));
@@ -1141,5 +1141,46 @@ class DaywalkerEventEngineTest {
 
         assertThat(events).extracting(TriggerEvent::triggerType).contains(TriggerType.MACRO_PORTFOLIO);
         verify(wl, never()).distinctSweepRows();
+    }
+
+    /**
+     * BUG-S1b follow-up: the poll's Form-4 fetch costs ONE Agora call whatever the window does.
+     *
+     * <p>{@code AgoraFilings.recentForm4} slices per DAY, and the poll window is
+     * {@code since..now} in UTC — two dates on the first poll of a trading day, four after a
+     * weekend. On the nightly hunter's slice budget that is 2-4 sequential ~33 s calls inside a
+     * 60 s poll budget: {@code planFuture.get} times out and the poll logs "skipping all symbols
+     * this poll", i.e. zero triggers and no trace. This runs a REAL AgoraFilings over a mocked
+     * client so the assertion is on the actual number of Agora calls, not on a mock's arguments.
+     */
+    @Test
+    void pollWindowSpanningSeveralUtcDatesStillCostsExactlyOneForm4Call() {
+        var hp = mock(HeldPositionService.class);
+        var wl = mock(de.visterion.dracul.watchlist.WatchlistRepository.class);
+        var in = mock(AgoraIntraday.class);
+        var cd = mock(AgoraCompanyData.class);
+        var al = mock(DaywalkerAlertRepository.class);
+        var client = mock(de.visterion.dracul.marketdata.AgoraClient.class);
+        when(client.callTool(eq("get_form4_transactions"), any()))
+                .thenReturn(new tools.jackson.databind.ObjectMapper().readTree("{\"transactions\":[]}"));
+
+        when(hp.openPositions("depot-1")).thenReturn(List.of(position("SYNA", 100)));
+        when(in.candles("SYNA")).thenReturn(new IntradayCandles(closes(100, 100), List.of()));
+        when(cd.news(eq("SYNA"), any(), any())).thenReturn(List.of());
+        when(cd.recommendations("SYNA")).thenReturn(List.of());
+        when(al.lastAlertAtAnyOwner(anyString(), anyString())).thenReturn(Optional.empty());
+
+        // Friday evening -> Monday midday: the window spans FOUR UTC dates
+        var since = Instant.parse("2026-07-24T20:00:00Z");
+        var now = Instant.parse("2026-07-27T12:00:00Z");
+
+        engine(hp, wl, in, cd, new AgoraFilings(client), al, 60_000, "false").detect(since, now);
+
+        var args = org.mockito.ArgumentCaptor.forClass(tools.jackson.databind.JsonNode.class);
+        verify(client, times(1)).callTool(eq("get_form4_transactions"), args.capture());
+        // and it is the NEWEST date of the window — today's filings, what the intraday
+        // INSIDER_SELL detector actually looks at
+        assertThat(args.getValue().path("from").asString()).isEqualTo("2026-07-27");
+        assertThat(args.getValue().path("to").asString()).isEqualTo("2026-07-27");
     }
 }

@@ -73,7 +73,7 @@ class DaywalkerWebhookControllerIT {
         when(intraday.candles(anyString())).thenReturn(new IntradayCandles(List.of(), List.of()));
         when(companyData.news(anyString(), any(), any())).thenReturn(List.of());
         when(companyData.recommendations(anyString())).thenReturn(List.of());
-        when(filings.recentForm4(any(), any())).thenReturn(de.visterion.dracul.hunting.DataSourceResult.healthy("agora", List.of()));
+        when(filings.recentForm4(any(), any(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(de.visterion.dracul.hunting.DataSourceResult.healthy("agora", List.of()));
         // Reachable depot that does not hold GHOST -- see completeEndpointAcknowledgesUnknownSymbolWithoutPersisting.
         when(heldPositions.openPositions(anyString())).thenReturn(List.of(new HeldPosition(
                 "HELDSYM", BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE,

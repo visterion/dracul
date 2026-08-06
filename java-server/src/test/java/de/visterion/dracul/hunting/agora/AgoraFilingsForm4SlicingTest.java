@@ -222,6 +222,29 @@ class AgoraFilingsForm4SlicingTest {
         assertThat(r.health().detail()).isNull();
     }
 
+    /** A caller on a tighter clock states its own slice budget (the daywalker poll passes 1) and
+     *  gets the NEWEST day of its window plus a truncation flag — never the hunter's ten. */
+    @Test void aCallerSuppliedSliceBudgetBoundsTheCallCount() {
+        AgoraClient client = oneBuyPerDay();
+
+        DataSourceResult<Form4Filing> r = new AgoraFilings(client).recentForm4(MON, SUN, 1);
+
+        assertThat(capturedArgs(client, 1)).singleElement()
+                .satisfies(a -> assertThat(a.path("from").asString()).isEqualTo("2026-07-26"));
+        assertThat(r.items()).extracting(Form4Filing::transactionDate).containsExactly(SUN);
+        assertThat(r.health().truncated()).isTrue();
+    }
+
+    /** A nonsensical budget may not turn the fetch into a zero-call "clean empty" answer. */
+    @Test void aSliceBudgetBelowOneIsClampedToOneCall() {
+        AgoraClient client = oneBuyPerDay();
+
+        DataSourceResult<Form4Filing> r = new AgoraFilings(client).recentForm4(MON, SUN, 0);
+
+        assertThat(capturedArgs(client, 1)).hasSize(1);
+        assertThat(r.items()).hasSize(1);
+    }
+
     @Test void singleDayWindowStillIssuesExactlyOneCall() {
         AgoraClient client = oneBuyPerDay();
 
