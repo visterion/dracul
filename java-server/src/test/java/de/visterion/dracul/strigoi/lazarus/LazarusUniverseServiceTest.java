@@ -3,6 +3,7 @@ package de.visterion.dracul.strigoi.lazarus;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
+import de.visterion.dracul.hunting.agora.RangeProbe;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
 
@@ -34,8 +35,9 @@ class LazarusUniverseServiceTest {
         return out;
     }
 
-    private static PriceRange range(String symbol, String close, String low) {
-        return new PriceRange(symbol, new BigDecimal(close), new BigDecimal(low), new BigDecimal("99"));
+    private static RangeProbe range(String symbol, String close, String low) {
+        return RangeProbe.of(new PriceRange(symbol, new BigDecimal(close), new BigDecimal(low),
+                new BigDecimal("99")));
     }
 
     @Test
@@ -60,7 +62,7 @@ class LazarusUniverseServiceTest {
     @Test
     void countsPerSymbolFailuresWithoutDroppingTheRest() {
         AgoraPriceRange probe = mock(AgoraPriceRange.class);
-        when(probe.range52w("NODATA")).thenReturn(null);                       // Agora answered, no history
+        when(probe.range52w("NODATA")).thenReturn(RangeProbe.unusable());      // Agora answered unusably
         when(probe.range52w("BOOM")).thenThrow(new AgoraUnavailableException("nope"));
         when(probe.range52w("GOOD")).thenReturn(range("GOOD", "10.5", "10"));
         var service = new LazarusUniverseService(probe);
@@ -112,9 +114,9 @@ class LazarusUniverseServiceTest {
     @Test
     void aSuccessResetsTheConsecutiveFailureRun() {
         AgoraPriceRange probe = mock(AgoraPriceRange.class);
-        when(probe.range52w("A")).thenReturn(null);
+        when(probe.range52w("A")).thenReturn(RangeProbe.unusable());
         when(probe.range52w("B")).thenReturn(range("B", "10.5", "10"));
-        when(probe.range52w("C")).thenReturn(null);
+        when(probe.range52w("C")).thenReturn(RangeProbe.unusable());
         var service = new LazarusUniverseService(probe);
 
         var scan = service.preScreen(universe("A", "B", "C"), 0.25, 60_000L, 2, 0);
@@ -139,6 +141,61 @@ class LazarusUniverseServiceTest {
 
         assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
                 .containsExactly("D", "A");
+    }
+
+    @Test
+    void consecutiveYoungSymbolsNeitherDegradeNorDeclareTheSourceDown() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52w(anyString())).thenReturn(RangeProbe.notEligible());
+        var service = new LazarusUniverseService(probe);
+
+        // five in a row against a maxConsecutiveFailures of 2: under the old code, where a young
+        // symbol shared probeFailed's counter, this aborted the pass at symbol 2 and declared a
+        // perfectly healthy Agora down.
+        var scan = service.preScreen(universe("A", "B", "C", "D", "E"), 0.25, 60_000L, 2, 0);
+
+        assertThat(scan.sourceDown()).isFalse();
+        assertThat(scan.probeFailed()).isZero();
+        assertThat(scan.notEligible()).isEqualTo(5);
+        assertThat(scan.screened()).isEqualTo(5);
+        assertThat(scan.unscreened()).isZero();
+    }
+
+    /** Each bucket keeps its own number: one young listing, one unusable body, one dead call. */
+    @Test
+    void aMixedPassCountsEachLossInItsOwnBucket() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52w("YOUNG")).thenReturn(RangeProbe.notEligible());
+        when(probe.range52w("JUNK")).thenReturn(RangeProbe.unusable());
+        when(probe.range52w("BOOM")).thenThrow(new AgoraUnavailableException("nope"));
+        when(probe.range52w("GOOD")).thenReturn(range("GOOD", "10.5", "10"));
+        var service = new LazarusUniverseService(probe);
+
+        var scan = service.preScreen(universe("YOUNG", "JUNK", "BOOM", "GOOD"), 0.25, 60_000L, 10, 0);
+
+        assertThat(scan.notEligible()).isEqualTo(1);
+        assertThat(scan.probeFailed()).isEqualTo(2);
+        assertThat(scan.screened()).isEqualTo(4);
+        assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("GOOD");
+        assertThat(scan.sourceDown()).isFalse();
+    }
+
+    /** A young symbol does not RESET the run counter either — an outage running through a young
+     *  listing is still an outage, and must still stop the pass. */
+    @Test
+    void aYoungSymbolDoesNotMaskAGenuineFailureRun() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52w("A")).thenThrow(new AgoraUnavailableException("agora down"));
+        when(probe.range52w("YOUNG")).thenReturn(RangeProbe.notEligible());
+        when(probe.range52w("C")).thenThrow(new AgoraUnavailableException("agora down"));
+        var service = new LazarusUniverseService(probe);
+
+        var scan = service.preScreen(universe("A", "YOUNG", "C"), 0.25, 60_000L, 2, 0);
+
+        assertThat(scan.sourceDown()).isTrue();
+        assertThat(scan.probeFailed()).isEqualTo(2);
+        assertThat(scan.notEligible()).isEqualTo(1);
     }
 
     @Test

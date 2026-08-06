@@ -644,14 +644,28 @@ needs the agent-definition reset.**
 
 *Honest health.* Every way a symbol can be lost is now counted and folded into
 `data_source_health` through the shared `DataSourceHealth.degradedWith` helper:
-`partial` for data we tried to read and could not (pre-filter probe failures, a
-missing fundamentals blob, a missing 52-week low, enrichment drops, an
+`partial` for data we tried to read and could not (an unusable pre-filter
+answer, a missing fundamentals blob, a missing 52-week low, enrichment drops, an
 unavailable index falling back to the watchlist), `truncated` for universe we
 deliberately did not read (`LAZARUS_UNIVERSE_MAX`, the fundamentals budget, a
 spent `LAZARUS_PRE_FILTER_BUDGET_MS`). Status stays `healthy` throughout so the
 candidates we did find survive the prompt's "if unavailable, return exactly
 `{"prey": []}`" clause. **The one thing it can no longer be is healthy with an
-empty universe:** an unfetchable or empty universe is `unavailable`. A run of
+empty universe:** an unfetchable or empty universe is `unavailable`.
+
+**Not everything lost is a degradation (2026-08-06).** An index member younger
+than 52 weeks has no 52-week range to compare against and never will until it
+ages. Those symbols are counted separately (`notEligible` in the per-run log
+line) and deliberately do **not** set `partial`: a flag raised by a permanent
+property of an instrument fires on every run and stops carrying information.
+Measured on 2026-08-05, three S&P 500 members (all listed within the year) made
+every single lazarus run report `partial=true` while all 490 screened symbols
+were in fact read successfully. They also do not count towards
+`LAZARUS_MAX_CONSECUTIVE_FAILURES` — index constituents are walked in list
+order, so adjacent new listings could otherwise have aborted the pass and
+declared a healthy source down.
+
+A run of
 `LAZARUS_MAX_CONSECUTIVE_FAILURES` pre-filter failures stops the pass rather than
 burning hundreds of dead calls, and the next run enters the universe where this
 one stopped (in-memory rotation), so a permanently tight budget still covers the

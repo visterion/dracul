@@ -8,6 +8,7 @@ import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
+import de.visterion.dracul.hunting.agora.RangeProbe;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -62,7 +63,7 @@ class StrigoiLazarusWebhookControllerIT {
         // unreachable index would only exercise the watchlist fallback.
         when(index.constituents(anyString())).thenReturn(DataSourceResult.healthy("agora",
                 List.of(new IndexConstituent("IDXCO", "Index Co", "Industrials"))));
-        when(priceRange.range52w(anyString())).thenReturn(null);
+        when(priceRange.range52w(anyString())).thenReturn(RangeProbe.unusable());
     }
 
     @Test
@@ -111,9 +112,9 @@ class StrigoiLazarusWebhookControllerIT {
      *  52-week low is surfaced without any watchlist row existing for it. */
     @Test
     void toolEndpointScreensTheMarketUniverse() {
-        when(priceRange.range52w("IDXCO")).thenReturn(new PriceRange("IDXCO",
+        when(priceRange.range52w("IDXCO")).thenReturn(RangeProbe.of(new PriceRange("IDXCO",
                 new java.math.BigDecimal("10.50"), java.math.BigDecimal.TEN,
-                new java.math.BigDecimal("40")));
+                new java.math.BigDecimal("40"))));
         when(companyData.fundamentals("IDXCO")).thenReturn(objectMapper.readTree(
                 "{\"52WeekLow\":10.0,\"52WeekHigh\":40.0,\"roaTTM\":5.0,\"currentRatioQuarterly\":1.8," +
                 "\"totalDebt/totalEquityQuarterly\":0.4,\"grossMarginTTM\":35.0,\"netProfitMarginTTM\":8.0," +

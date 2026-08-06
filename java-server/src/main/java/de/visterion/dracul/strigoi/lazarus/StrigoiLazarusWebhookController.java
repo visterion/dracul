@@ -60,6 +60,11 @@ import java.util.stream.Collectors;
  * candidates that were found are always kept — the flags say "what you see is incomplete", not
  * "you saw nothing".
  *
+ * <p><b>…but not everything lost is a degradation.</b> Index members younger than 52 weeks have no
+ * 52-week range to compare against and never will until they age. They are counted separately
+ * ({@code notEligible}) and kept OUT of {@code partial}: a flag that is raised by a permanent
+ * property of three instruments fires every night and stops carrying information.
+ *
  * <p>The screen thresholds themselves ({@code max-above-low}, the solvency gate, the P/B-or-P/FCF
  * cheapness gate in {@link LazarusScreener}) are UNCHANGED by this fix: they were never the bug.
  */
@@ -270,13 +275,16 @@ public class StrigoiLazarusWebhookController extends HuntController {
         var enriched = enrichment.enrich(screened);
         int enrichmentDropped = screened.size() - enriched.size();
 
+        // notEligible sits next to probeFailed on purpose: the two numbers used to be one, and an
+        // operator reading this line has to be able to see at a glance that "6 symbols lost" was
+        // three young listings and nothing broken.
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
-                        + "watchlist={} fundamentals={} candidates={} (probeFailed={} noFundamentals={} "
-                        + "no52wLow={} enrichmentDropped={} unscreened={} sourceDown={})",
+                        + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
+                        + "noFundamentals={} no52wLow={} enrichmentDropped={} unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
-                fundamentalsMissing, week52Missing, enrichmentDropped, scan.unscreened(),
-                scan.sourceDown());
+                scan.notEligible(), fundamentalsMissing, week52Missing, enrichmentDropped,
+                scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,
                 fundamentalsCapDropped, fundamentalsMissing, week52Missing, enrichmentDropped));
@@ -302,10 +310,19 @@ public class StrigoiLazarusWebhookController extends HuntController {
                     "pre-filter source down after " + scan.screened() + " of " + scan.considered()
                             + " universe symbols", true, false);
         }
+        // Only the DEGRADATION count reaches this flag. scan.notEligible() — index members younger
+        // than 52 weeks — is deliberately absent: it is a permanent property of those instruments,
+        // and folding it in here made every single run report partial=true (production 2026-08-05:
+        // 490 of 490 screened, three young listings, partial=true), which turned the daily
+        // analysis's "incomplete answer" alarm into permanent noise. It stays out of the detail
+        // string too: DataSourceHealth.degradedWith only carries a detail together with a flag,
+        // and the reasoning agent reads a detail as a description of what went wrong. The count
+        // lives in the log line above, where an operator looks.
         if (scan.probeFailed() > 0) {
             h = DataSourceHealth.degradedWith(h,
                     scan.probeFailed() + " of " + scan.screened()
-                            + " universe symbols had no usable 52-week range (pre-filter)", true, false);
+                            + " universe symbols returned an unusable 52-week range (pre-filter)",
+                    true, false);
         }
         if (scan.unscreened() > 0) {
             h = DataSourceHealth.degradedWith(h,

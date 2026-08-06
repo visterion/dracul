@@ -26,9 +26,10 @@ import java.math.BigDecimal;
  *
  * <p>This class deliberately does NOT swallow {@link de.visterion.dracul.marketdata.AgoraUnavailableException}:
  * the caller walks hundreds of symbols and needs an outage to be loud so it can stop rather than
- * burn a dead remote call per remaining symbol. Note that Agora reports "no history for this
- * symbol" through the SAME envelope, so a single exception is a per-symbol event — only a RUN of
- * them means the source is down (see {@code LazarusUniverseService}).
+ * burn a dead remote call per remaining symbol. Since commit e5db10be an outage is the ONLY thing
+ * that arrives as that exception — "no 52-week window for this symbol yet" comes back as a normal
+ * body — so the three no-range reasons are separated in {@link RangeProbe} instead of collapsed
+ * into one null (see {@code LazarusUniverseService}).
  */
 @Component
 public class AgoraPriceRange {
@@ -45,12 +46,11 @@ public class AgoraPriceRange {
     }
 
     /**
-     * 52-week range + current close of {@code symbol}; null when Agora answered but the range is
-     * not usable (indicator unavailable, no close, non-positive low).
+     * 52-week range + current close of {@code symbol}, or the reason there is none. Never null.
      *
      * @throws de.visterion.dracul.marketdata.AgoraUnavailableException when the call itself failed
      */
-    public PriceRange range52w(String symbol) {
+    public RangeProbe range52w(String symbol) {
         ObjectNode args = mapper.createObjectNode();
         args.put("symbol", symbol);
         ArrayNode indicators = args.putArray("indicators");
@@ -60,18 +60,22 @@ public class AgoraPriceRange {
 
         JsonNode res = agora.callTool("get_indicators", args);
 
-        BigDecimal close = bd(res.path("currentClose"));
-        if (close == null || close.signum() <= 0) return null;
-
         for (JsonNode v : res.path("values")) {
             if (!LABEL.equals(v.path("label").asString(""))) continue;
-            if (!v.path("available").asBoolean(false)) return null;
+            // Checked BEFORE the close, deliberately: a symbol younger than the 250-bar window is
+            // not-eligible whatever else the body does or does not carry, and that verdict must not
+            // be shadowed by a missing close into a "degraded source" the operator then chases.
+            if (!v.path("available").asBoolean(false)) return RangeProbe.notEligible();
+            BigDecimal close = bd(res.path("currentClose"));
+            if (close == null || close.signum() <= 0) return RangeProbe.unusable();
             BigDecimal low = bd(v.path("value").path("low"));
             BigDecimal high = bd(v.path("value").path("high"));
-            if (low == null || low.signum() <= 0) return null;
-            return new PriceRange(symbol, close, low, high);
+            if (low == null || low.signum() <= 0) return RangeProbe.unusable();
+            return RangeProbe.of(new PriceRange(symbol, close, low, high));
         }
-        return null;
+        // Agora answered without the very spec that was asked for — nothing about the instrument
+        // explains that, so it is an upstream problem, not an ineligible symbol.
+        return RangeProbe.unusable();
     }
 
     private static BigDecimal bd(JsonNode v) {

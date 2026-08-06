@@ -30,11 +30,13 @@ class AgoraPriceRangeTest {
 
     @Test
     void readsCloseAndRange() {
-        PriceRange r = probeOf("""
-                {"symbol":"AAA","currentClose":"11.00","values":[
+        RangeProbe p = probeOf("""
+                {"symbol":"SYNTH","currentClose":"11.00","values":[
                   {"label":"52w_range","available":true,"value":{"low":"10.00","high":"40.00"}}]}
-                """).range52w("AAA");
+                """).range52w("SYNTH");
 
+        assertThat(p.kind()).isEqualTo(RangeProbe.Kind.OK);
+        PriceRange r = p.range();
         assertThat(r).isNotNull();
         Assertions.assertThat(r.currentClose()).isEqualByComparingTo("11.00");
         Assertions.assertThat(r.low52()).isEqualByComparingTo("10.00");
@@ -42,41 +44,63 @@ class AgoraPriceRangeTest {
         assertThat(r.pctAboveLow()).isEqualTo(0.10, org.assertj.core.data.Offset.offset(1e-9));
     }
 
+    /** The production shape of a symbol younger than 52 weeks (FDXF, HONA, Q on 2026-08-05):
+     *  Agora answered with a close and a per-value {@code available:false}, and its top-level flag
+     *  is false because that was the only spec. This is a permanent property of the instrument,
+     *  not a source degradation — the caller must be able to see the difference, or every run
+     *  reports partial and the daily-analysis alarm fires nightly for three young listings. */
     @Test
-    void unavailableIndicatorYieldsNullRatherThanAFakeZero() {
-        assertThat(probeOf("""
-                {"symbol":"AAA","currentClose":"11.00","values":[
-                  {"label":"52w_range","available":false}]}
-                """).range52w("AAA")).isNull();
-    }
-
-    /** The production shape of a symbol younger than 52 weeks: Agora answered with a close and a
-     *  per-value {@code available:false}, and its top-level flag is false because that was the only
-     *  spec. Since {@code AgoraClient} no longer reads that flag as an outage, this body now
-     *  reaches the probe and must degrade to null — not to a fake zero low. */
-    @Test
-    void youngSymbolPayloadYieldsNullRatherThanAnOutage() {
-        assertThat(probeOf("""
+    void youngSymbolPayloadIsNotEligibleRatherThanADegradation() {
+        RangeProbe p = probeOf("""
                 {"symbol":"SYNTH","currentClose":143.21,"asOf":"2026-08-05","values":[
                   {"label":"52w_range","available":false,"error":"insufficient history for 52w_range"}],
                  "available":false}
-                """).range52w("SYNTH")).isNull();
+                """).range52w("SYNTH");
+
+        assertThat(p.kind()).isEqualTo(RangeProbe.Kind.NOT_ELIGIBLE);
+        assertThat(p.range()).isNull();
+    }
+
+    /** …and it stays not-eligible even without a close: nothing about a symbol with no 52-week
+     *  window is going to be usable, and calling that a degradation sends the operator hunting. */
+    @Test
+    void youngSymbolWithoutACloseIsStillNotEligible() {
+        assertThat(probeOf("""
+                {"symbol":"SYNTH","values":[{"label":"52w_range","available":false}]}
+                """).range52w("SYNTH").kind()).isEqualTo(RangeProbe.Kind.NOT_ELIGIBLE);
     }
 
     @Test
-    void missingCurrentCloseYieldsNull() {
+    void missingCurrentCloseIsUnusable() {
         assertThat(probeOf("""
-                {"symbol":"AAA","values":[
+                {"symbol":"SYNTH","values":[
                   {"label":"52w_range","available":true,"value":{"low":"10.00","high":"40.00"}}]}
-                """).range52w("AAA")).isNull();
+                """).range52w("SYNTH").kind()).isEqualTo(RangeProbe.Kind.UNUSABLE);
     }
 
     @Test
-    void nonPositiveLowYieldsNull() {
+    void zeroCurrentCloseIsUnusable() {
         assertThat(probeOf("""
-                {"symbol":"AAA","currentClose":"11.00","values":[
+                {"symbol":"SYNTH","currentClose":"0","values":[
+                  {"label":"52w_range","available":true,"value":{"low":"10.00","high":"40.00"}}]}
+                """).range52w("SYNTH").kind()).isEqualTo(RangeProbe.Kind.UNUSABLE);
+    }
+
+    @Test
+    void nonPositiveLowIsUnusable() {
+        assertThat(probeOf("""
+                {"symbol":"SYNTH","currentClose":"11.00","values":[
                   {"label":"52w_range","available":true,"value":{"low":"0","high":"40.00"}}]}
-                """).range52w("AAA")).isNull();
+                """).range52w("SYNTH").kind()).isEqualTo(RangeProbe.Kind.UNUSABLE);
+    }
+
+    /** A body that does not carry the spec we asked for: nothing about the instrument explains
+     *  that, so it is an upstream problem and must be counted as one. */
+    @Test
+    void aBodyWithoutTheRequestedSpecIsUnusable() {
+        assertThat(probeOf("""
+                {"symbol":"SYNTH","currentClose":"11.00","values":[]}
+                """).range52w("SYNTH").kind()).isEqualTo(RangeProbe.Kind.UNUSABLE);
     }
 
     /** An outage must PROPAGATE — the caller uses it to stop burning dead calls on the rest of

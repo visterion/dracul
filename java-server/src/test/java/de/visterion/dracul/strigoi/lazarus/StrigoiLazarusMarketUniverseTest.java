@@ -9,6 +9,7 @@ import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
+import de.visterion.dracul.hunting.agora.RangeProbe;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
@@ -97,13 +98,13 @@ class StrigoiLazarusMarketUniverseTest {
 
     /** Trades 5 % above its 52-week low of 10 — inside both the 0.25 pre-filter and the 0.10 screen. */
     private void nearLow(String symbol) {
-        when(priceRange.range52w(symbol)).thenReturn(new PriceRange(symbol,
-                new BigDecimal("10.50"), BigDecimal.TEN, new BigDecimal("40")));
+        when(priceRange.range52w(symbol)).thenReturn(RangeProbe.of(new PriceRange(symbol,
+                new BigDecimal("10.50"), BigDecimal.TEN, new BigDecimal("40"))));
     }
 
     private void farFromLow(String symbol) {
-        when(priceRange.range52w(symbol)).thenReturn(new PriceRange(symbol,
-                new BigDecimal("30.00"), BigDecimal.TEN, new BigDecimal("40")));
+        when(priceRange.range52w(symbol)).thenReturn(RangeProbe.of(new PriceRange(symbol,
+                new BigDecimal("30.00"), BigDecimal.TEN, new BigDecimal("40"))));
     }
 
     /** A clean, cheap, solvent quality name that survives every unchanged screen threshold. */
@@ -239,9 +240,9 @@ class StrigoiLazarusMarketUniverseTest {
 
     @Test
     void preFilterFailuresAreReportedAsPartial() {
-        indexReturns("ACME", "NOHISTORY");
+        indexReturns("ACME", "UNUSABLE");
         nearLow("ACME");
-        when(priceRange.range52w("NOHISTORY")).thenReturn(null);
+        when(priceRange.range52w("UNUSABLE")).thenReturn(RangeProbe.unusable());
         when(companyData.fundamentals("ACME")).thenReturn(goodFundamentals());
 
         var result = controller.hunt(Map.of());
@@ -249,6 +250,24 @@ class StrigoiLazarusMarketUniverseTest {
         assertThat(result.items()).hasSize(1);
         assertThat(result.health().partial()).isTrue();
         assertThat(result.health().detail()).contains("pre-filter");
+    }
+
+    /** The 2026-08-05 false positive: FDXF, HONA and Q are S&P 500 members younger than 52 weeks,
+     *  so their range is not computable and never will be until they age. Losing them is not a
+     *  degradation, and reporting it as one made the daily analysis alarm fire every night. */
+    @Test
+    void symbolsTooYoungForA52WeekRangeAreNotReportedAsPartial() {
+        indexReturns("ACME", "TOOYOUNG");
+        nearLow("ACME");
+        when(priceRange.range52w("TOOYOUNG")).thenReturn(RangeProbe.notEligible());
+        when(companyData.fundamentals("ACME")).thenReturn(goodFundamentals());
+
+        var result = controller.hunt(Map.of());
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.health().isHealthy()).isTrue();
+        assertThat(result.health().partial()).isFalse();
+        assertThat(result.health().truncated()).isFalse();
     }
 
     @Test

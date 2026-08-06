@@ -228,11 +228,15 @@ consumed through five neutral domain facades in
   would rate-limit the run and silently drop most of the universe. Unlike the
   other facades it deliberately **propagates** `AgoraUnavailableException` — the
   caller walks hundreds of symbols and needs an outage to be loud enough to stop
-  on. A symbol with too little history is **not** such an outage: Agora answers
-  normally and marks the indicator `available: false`, and the facade returns
-  `null` for it (see "Two `available` flags" below). Both outcomes count as a
-  failed probe for the caller's source-down heuristic, so only a *run* of them
-  means the source is down.
+  on. It never returns `null`: the outcome is a `RangeProbe` that says WHY there
+  is no range — `OK` (a range), `NOT_ELIGIBLE` (Agora answered normally and
+  marked the indicator `available: false`, i.e. the symbol is younger than 52
+  weeks) or `UNUSABLE` (Agora answered, but without a close, with a non-positive
+  low, or without the spec that was requested). Only `UNUSABLE` and a thrown
+  outage count as a failed probe for the caller's source-down heuristic, so only
+  a *run* of real failures means the source is down — a cluster of freshly
+  listed index members cannot abort the pass (fixed 2026-08-06; see
+  `documentation/strigoi.md`, "Honest health").
 - **`AgoraIntraday`** — `candles` (intraday closes/volumes for daywalker).
 
 Each facade normalises Agora's tool output straight into the retained Dracul
