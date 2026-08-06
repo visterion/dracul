@@ -9,6 +9,7 @@ import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
+import de.visterion.dracul.hunting.agora.PriceRangeMocks;
 import de.visterion.dracul.hunting.agora.RangeProbe;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
@@ -59,7 +60,7 @@ class StrigoiLazarusMarketUniverseTest {
         heldPositionService = mock(HeldPositionService.class);
         companyData = mock(AgoraCompanyData.class);
         index = mock(AgoraIndexConstituents.class);
-        priceRange = mock(AgoraPriceRange.class);
+        priceRange = PriceRangeMocks.batching();
         enrichment = mock(LazarusEnrichmentService.class);
         when(enrichment.enrich(any())).thenAnswer(i -> {
             List<LazarusCandidate> in = i.getArgument(0);

@@ -175,9 +175,19 @@ dracul:
       universe-source: ${LAZARUS_UNIVERSE_SOURCE:sp500}
       # Hard ceiling on universe size (the S&P 500 delivers ~503 symbols incl. multi-class rows).
       universe-max: ${LAZARUS_UNIVERSE_MAX:600}
-      # Cheap pre-filter (ONE get_indicators 52w_range call per universe symbol, served by
-      # Agora's OHLC provider chain — Alpaca first for US symbols, Yahoo only as last resort)
-      # keeps a symbol when it trades at most this fraction above its 52-week low. Deliberately
+      # Symbols per get_indicators_batch call in the pre-filter. Chunking is why the pre-filter
+      # costs ~5 Agora calls per run instead of ~503: one call per index member burned Alpaca's
+      # per-minute quota (measured 2026-08-05: 49 of 645 Alpaca calls answered 429, and TwelveData
+      # at 8 credits/minute tipped over right behind it). 100 is measured — 100 symbols in one
+      # Alpaca multi-symbol bars URL answered HTTP 200 in 1.15 s on 2026-08-06 — and stays well
+      # under Agora's own 600-symbol ceiling, which REJECTS an oversized call rather than
+      # truncating it. Clamped into [1, 600] in code. Raising it also raises the worst-case
+      # overshoot of pre-filter-budget-ms: the budget is checked after each chunk, so it can be
+      # exceeded by at most one chunk's duration (bounded by dracul.agora.timeout-ms).
+      probe-chunk-size: ${LAZARUS_PROBE_CHUNK_SIZE:100}
+      # Cheap pre-filter (a 52w_range probe per universe symbol, batched by probe-chunk-size and
+      # served by Agora's OHLC provider chain — Alpaca first for US symbols, Yahoo only as last
+      # resort) keeps a symbol when it trades at most this fraction above its 52-week low. Deliberately
       # WIDER than max-above-low: it reads a 252-bar low while the authoritative screen
       # reads the provider's own 52-week low, and a pre-filter cutting tighter than the screen
       # would drop real candidates over a definitional difference. Never relaxes the screen.
@@ -195,7 +205,8 @@ dracul:
       # silently dropped symbols — the failure mode this whole fix exists to end.
       fundamentals-max: ${LAZARUS_FUNDAMENTALS_MAX:60}
       # Webhook timeout Vistierie grants the fetch tool. Must cover 1 index call + up to
-      # universe-max pre-filter calls + fundamentals-max fundamentals calls + enrichment.
+      # ceil(universe-max / probe-chunk-size) pre-filter calls + fundamentals-max fundamentals
+      # calls + enrichment.
       # NOTE: agent definitions are insertIfAbsent on prod — changing this needs the
       # agent-definition reset from the operations runbook to take effect.
       fetch-timeout-seconds: ${LAZARUS_FETCH_TIMEOUT_SECONDS:600}

@@ -48,11 +48,13 @@ import java.util.stream.Collectors;
  * {@code get_fundamentals} routes US symbols to Finnhub, throttled to 60 calls/minute across all
  * of Agora — one call per S&amp;P 500 member would spend eight minutes inside that throttle and
  * silently drop most of the universe. So {@link LazarusUniverseService} first narrows the index
- * on ONE cheap 52-week-range call per symbol — served by Agora's OHLC provider chain, Alpaca
- * first, which is a different and far less throttled source — and only the survivors (plus every
- * watchlist name, unconditionally) cost a fundamentals call. Expected Agora calls per run:
- * 1 index + ~N pre-filter (N = universe size, ~503 for the S&amp;P 500, Wikipedia-sourced and
- * cached 24 h inside Agora) + at most {@code fundamentals-max} fundamentals calls.
+ * on cheap 52-week-range probes — served by Agora's OHLC provider chain, Alpaca first, which is a
+ * different and far less throttled source — and only the survivors (plus every watchlist name,
+ * unconditionally) cost a fundamentals call. Since 2026-08-06 the pre-filter batches those probes
+ * ({@code get_indicators_batch}, {@code probe-chunk-size} symbols per call), so the expected Agora
+ * calls per run are 1 index + ceil(N / chunk-size) pre-filter calls (N = universe size, ~503 for
+ * the S&amp;P 500, Wikipedia-sourced and cached 24 h inside Agora; ~5 calls at the default chunk
+ * size, where it used to be ~503) + at most {@code fundamentals-max} fundamentals calls.
  *
  * <p><b>Nothing is lost quietly.</b> Pre-filter probe failures, missing fundamentals, a missing
  * 52-week low, enrichment drops, a spent pre-filter budget and both caps are counted and folded
@@ -320,8 +322,11 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // lives in the log line above, where an operator looks.
         if (scan.probeFailed() > 0) {
             h = DataSourceHealth.degradedWith(h,
+                    // "no usable range", not "an unusable body": since the pre-filter batches, the
+                    // count also covers symbols a chunk simply did not answer for. Both are the
+                    // same thing to the reader — a symbol we tried to screen and could not.
                     scan.probeFailed() + " of " + scan.screened()
-                            + " universe symbols returned an unusable 52-week range (pre-filter)",
+                            + " universe symbols returned no usable 52-week range (pre-filter)",
                     true, false);
         }
         if (scan.unscreened() > 0) {

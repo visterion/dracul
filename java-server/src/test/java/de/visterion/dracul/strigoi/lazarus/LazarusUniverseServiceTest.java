@@ -3,6 +3,7 @@ package de.visterion.dracul.strigoi.lazarus;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
+import de.visterion.dracul.hunting.agora.PriceRangeMocks;
 import de.visterion.dracul.hunting.agora.RangeProbe;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
@@ -10,11 +11,15 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,7 +47,7 @@ class LazarusUniverseServiceTest {
 
     @Test
     void keepsOnlySymbolsWithinTheMargin() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("NEAR")).thenReturn(range("NEAR", "11", "10"));   // +10 %
         when(probe.range52w("FAR")).thenReturn(range("FAR", "20", "10"));     // +100 %
         var service = new LazarusUniverseService(probe);
@@ -61,7 +66,7 @@ class LazarusUniverseServiceTest {
 
     @Test
     void countsPerSymbolFailuresWithoutDroppingTheRest() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("NODATA")).thenReturn(RangeProbe.unusable());      // Agora answered unusably
         when(probe.range52w("BOOM")).thenThrow(new AgoraUnavailableException("nope"));
         when(probe.range52w("GOOD")).thenReturn(range("GOOD", "10.5", "10"));
@@ -78,14 +83,16 @@ class LazarusUniverseServiceTest {
 
     @Test
     void stopsWhenTheWallClockBudgetIsSpentAndReportsTheRestUnscreened() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         AtomicLong clock = new AtomicLong(0);
-        // every probe burns 400 ms of the 700 ms budget -> A and B fit, C and D never run
+        // every probe burns 400 ms of the 700 ms budget -> the first chunk of two fits, the second
+        // never runs. The budget is checked per CHUNK, so the chunk size is what decides where the
+        // pass can stop — hence an explicit 2 here rather than the production default.
         when(probe.range52w(anyString())).thenAnswer(i -> {
             clock.addAndGet(400);
             return range(i.getArgument(0), "10.5", "10");
         });
-        var service = new LazarusUniverseService(probe, clock::get);
+        var service = new LazarusUniverseService(probe, clock::get, 2);
 
         var scan = service.preScreen(universe("A", "B", "C", "D"), 0.25, 700L, 10, 0);
 
@@ -97,7 +104,7 @@ class LazarusUniverseServiceTest {
 
     @Test
     void abortsAfterAConsecutiveFailureRunAndFlagsTheSourceDown() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w(anyString())).thenThrow(new AgoraUnavailableException("agora down"));
         var service = new LazarusUniverseService(probe);
 
@@ -113,7 +120,7 @@ class LazarusUniverseServiceTest {
      *  be mistaken for an outage. */
     @Test
     void aSuccessResetsTheConsecutiveFailureRun() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("A")).thenReturn(RangeProbe.unusable());
         when(probe.range52w("B")).thenReturn(range("B", "10.5", "10"));
         when(probe.range52w("C")).thenReturn(RangeProbe.unusable());
@@ -129,13 +136,13 @@ class LazarusUniverseServiceTest {
      *  head of the list forever — the offset rotates the entry point so coverage is eventual. */
     @Test
     void rotationOffsetMovesTheEntryPointAndWrapsAround() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         AtomicLong clock = new AtomicLong(0);
         when(probe.range52w(anyString())).thenAnswer(i -> {
             clock.addAndGet(400);
             return range(i.getArgument(0), "10.5", "10");
         });
-        var service = new LazarusUniverseService(probe, clock::get);
+        var service = new LazarusUniverseService(probe, clock::get, 2);
 
         var scan = service.preScreen(universe("A", "B", "C", "D"), 0.25, 700L, 10, 3);
 
@@ -145,7 +152,7 @@ class LazarusUniverseServiceTest {
 
     @Test
     void consecutiveYoungSymbolsNeitherDegradeNorDeclareTheSourceDown() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w(anyString())).thenReturn(RangeProbe.notEligible());
         var service = new LazarusUniverseService(probe);
 
@@ -164,7 +171,7 @@ class LazarusUniverseServiceTest {
     /** Each bucket keeps its own number: one young listing, one unusable body, one dead call. */
     @Test
     void aMixedPassCountsEachLossInItsOwnBucket() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("YOUNG")).thenReturn(RangeProbe.notEligible());
         when(probe.range52w("JUNK")).thenReturn(RangeProbe.unusable());
         when(probe.range52w("BOOM")).thenThrow(new AgoraUnavailableException("nope"));
@@ -185,7 +192,7 @@ class LazarusUniverseServiceTest {
      *  listing is still an outage, and must still stop the pass. */
     @Test
     void aYoungSymbolDoesNotMaskAGenuineFailureRun() {
-        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("A")).thenThrow(new AgoraUnavailableException("agora down"));
         when(probe.range52w("YOUNG")).thenReturn(RangeProbe.notEligible());
         when(probe.range52w("C")).thenThrow(new AgoraUnavailableException("agora down"));
@@ -198,9 +205,100 @@ class LazarusUniverseServiceTest {
         assertThat(scan.notEligible()).isEqualTo(1);
     }
 
+    // ------------------------------------------------------------------ the chunked walk (S18)
+
+    /** The whole point of chunking: a universe bigger than one chunk must produce exactly the
+     *  shortlist and exactly the counters the per-symbol walk produced for the same data — only
+     *  in ceil(n/chunk) calls instead of n. */
+    @Test
+    void aChunkedWalkReturnsTheSameShortlistAsAPerSymbolWalkWould() {
+        AgoraPriceRange probe = PriceRangeMocks.batching();
+        when(probe.range52w(anyString())).thenAnswer(i -> range(i.getArgument(0), "10.5", "10"));
+        when(probe.range52w("FAR")).thenReturn(range("FAR", "50", "10"));
+        when(probe.range52w("YOUNG")).thenReturn(RangeProbe.notEligible());
+        when(probe.range52w("JUNK")).thenReturn(RangeProbe.unusable());
+        var service = new LazarusUniverseService(probe, () -> 0L, 3);
+
+        var scan = service.preScreen(universe("A", "B", "FAR", "YOUNG", "JUNK", "C", "D"),
+                0.25, 60_000L, 10, 0);
+
+        assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("A", "B", "C", "D");
+        assertThat(scan.screened()).isEqualTo(7);
+        assertThat(scan.notEligible()).isEqualTo(1);
+        assertThat(scan.probeFailed()).isEqualTo(1);
+        assertThat(scan.unscreened()).isZero();
+        assertThat(scan.sourceDown()).isFalse();
+        // three calls for seven symbols, not seven calls
+        verify(probe, times(3)).range52wBatch(anyList());
+    }
+
+    /** A chunk that comes back COVERING FEWER SYMBOLS than it was handed is the failure this
+     *  project keeps meeting: silent partial coverage that reads downstream like a quiet market.
+     *  The unanswered symbols are degradations, exactly as if each had failed alone. */
+    @Test
+    void symbolsAChunkDoesNotAnswerForAreCountedAsDegradations() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52wBatch(anyList())).thenReturn(Map.of("A", range("A", "10.5", "10")));
+        var service = new LazarusUniverseService(probe, () -> 0L, 3);
+
+        var scan = service.preScreen(universe("A", "B", "C"), 0.25, 60_000L, 10, 0);
+
+        assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("A");
+        assertThat(scan.screened()).isEqualTo(3);
+        assertThat(scan.probeFailed()).isEqualTo(2);
+        assertThat(scan.notEligible()).isZero();   // NOT young papers — a gap in the answer
+        assertThat(scan.unscreened()).isZero();
+    }
+
+    /** A chunk whose CALL dies tells us nothing about any symbol in it, so every one of them is a
+     *  degradation — and the run counter keeps counting symbols, so the threshold still means the
+     *  same number it always did whatever the chunk size is. */
+    @Test
+    void aFailedChunkCountsItsSymbolsAndCanStillTripSourceDown() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52wBatch(anyList())).thenThrow(new AgoraUnavailableException("agora down"));
+        var service = new LazarusUniverseService(probe, () -> 0L, 4);
+
+        var scan = service.preScreen(universe("A", "B", "C", "D", "E", "F"), 0.25, 60_000L, 3, 0);
+
+        assertThat(scan.sourceDown()).isTrue();
+        // stopped INSIDE the first chunk, at the third failure — not at the chunk boundary
+        assertThat(scan.screened()).isEqualTo(3);
+        assertThat(scan.probeFailed()).isEqualTo(3);
+        assertThat(scan.unscreened()).isEqualTo(3);
+    }
+
+    /** A budget that expires mid-universe still reports the rest unscreened AND still advances the
+     *  entry point far enough for the next run to continue rather than re-screen the same head. */
+    @Test
+    void aBudgetExpiringMidUniverseLeavesTheRestUnscreenedAndRotates() {
+        AgoraPriceRange probe = PriceRangeMocks.batching();
+        AtomicLong clock = new AtomicLong(0);
+        when(probe.range52w(anyString())).thenAnswer(i -> {
+            clock.addAndGet(100);
+            return range(i.getArgument(0), "10.5", "10");
+        });
+        var service = new LazarusUniverseService(probe, clock::get, 2);
+
+        var first = service.preScreen(universe("A", "B", "C", "D", "E", "F"), 0.25, 150L, 10, 0);
+        assertThat(first.screened()).isEqualTo(2);
+        assertThat(first.unscreened()).isEqualTo(4);
+        assertThat(first.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("A", "B");
+
+        // the caller advances the offset by what was screened; the next pass picks up at C
+        clock.set(0);
+        var second = service.preScreen(universe("A", "B", "C", "D", "E", "F"), 0.25, 150L, 10,
+                first.screened());
+        assertThat(second.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("C", "D");
+    }
+
     @Test
     void emptyUniverseScansNothing() {
-        var service = new LazarusUniverseService(mock(AgoraPriceRange.class));
+        var service = new LazarusUniverseService(PriceRangeMocks.batching());
 
         var scan = service.preScreen(List.of(), 0.25, 60_000L, 10, 0);
 
