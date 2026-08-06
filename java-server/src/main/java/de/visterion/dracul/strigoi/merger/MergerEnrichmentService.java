@@ -126,7 +126,7 @@ public class MergerEnrichmentService {
         Map<String, Quote> quotes = safeQuotes(symbols);
 
         List<EnrichedMergerCandidate> out = new ArrayList<>();
-        boolean ohlcDown = false;
+        var ohlc = EnrichmentSourceGuard.forSource("merger", "candidates", "ohlc history");
         for (MergerCandidate c : capped) {
             FilingText ft = safeFilingText(c.filingUrl());
             if (!ft.available()) {
@@ -152,11 +152,12 @@ public class MergerEnrichmentService {
             // agreement date to anchor it and a symbol to look up. No agreement date is a
             // symbol-specific miss (nothing to anchor on) and must NOT trip the source-down guard.
             BigDecimal unaffectedPrice = null;
-            if (terms.agreementDate() != null && c.symbol() != null && !c.symbol().isBlank() && !ohlcDown) {
+            if (terms.agreementDate() != null && c.symbol() != null && !c.symbol().isBlank() && !ohlc.isDown()) {
                 try {
                     unaffectedPrice = unaffectedPriceFor(c.symbol(), terms.agreementDate());
+                    ohlc.recordSuccess();
                 } catch (RuntimeException e) {
-                    ohlcDown = EnrichmentSourceGuard.isSourceDown(e, "merger", "candidates", "ohlc history");
+                    ohlc.recordFailure(e);
                     log.debug("merger enrichment: ohlc history unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
             }

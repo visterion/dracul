@@ -168,7 +168,14 @@ public class AgoraClient {
             throw new AgoraUnavailableException("unparseable Agora response: " + e.getMessage(), e);
         }
         if (isError) {
-            throw new AgoraUnavailableException("Agora tool error: " + node.path("error").asString(text));
+            // REQUEST scope: Agora ANSWERED. Whatever went wrong, it went wrong about this one
+            // call — "Yahoo Finance OHLC returned HTTP 404 NOT_FOUND" is Yahoo saying it does not
+            // know that symbol, "no CIK for XYZ" is one issuer that will not resolve. Callers that
+            // batch must not read either as an outage; a run of them still may (see
+            // EnrichmentSourceGuard), and a genuine Agora-side failure that also arrives this way
+            // will produce exactly such a run.
+            throw new AgoraUnavailableException(AgoraUnavailableException.Scope.REQUEST,
+                    "Agora tool error: " + node.path("error").asString(text), null);
         }
         return node;
     }

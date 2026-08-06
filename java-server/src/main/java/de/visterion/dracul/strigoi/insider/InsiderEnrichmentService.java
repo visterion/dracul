@@ -40,10 +40,17 @@ import java.util.Optional;
  *
  *  <p>Latency guard (the tool webhook has a 30s budget, a dead Agora call burns ~16s):
  *  clusters are sorted by {@code totalDollarValue} descending and bounded to {@link #MAX};
- *  a source that fails with an <em>availability</em> error ({@link AgoraUnavailableException}
- *  or {@link MarketDataException} of kind UNAVAILABLE — as opposed to a symbol-specific
- *  NOT_FOUND) is skipped for all remaining clusters, and once two or more sources are down,
- *  enrichment is skipped entirely for the rest of the batch (flags false). The coverage
+ *  a source is skipped for all remaining clusters once {@link EnrichmentSourceGuard} declares it
+ *  down — either because Agora produced no answer at all
+ *  ({@link AgoraUnavailableException.Scope#SOURCE}, or a {@link MarketDataException} of kind
+ *  UNAVAILABLE from a non-Agora feed) or because it answered with a per-request error for
+ *  {@value EnrichmentSourceGuard#MAX_CONSECUTIVE_REQUEST_FAILURES} clusters in a row. A SINGLE
+ *  per-request error (an unknown symbol, an unresolvable issuer) degrades that one cluster and
+ *  nothing else — reading it as an outage is what switched the whole enrichment stage off on
+ *  2026-08-06. Once two or more sources are down,
+ *  enrichment is skipped entirely for the rest of the batch (flags false). Every cluster that
+ *  loses a source is counted into {@link EnrichedInsiderBatch#degradedClusters} so the fetch
+ *  health can report it as {@code partial}. The coverage
  *  fetch uses {@link AgoraCompanyData#recommendationsStrict} (propagates outages) so its
  *  guard is real; the metrics fetch (via the swallowing {@code fundamentals()}) and the
  *  earnings facade still absorb outages internally (degrading to null/empty), so OHLC and
@@ -80,103 +87,145 @@ public class InsiderEnrichmentService {
         this.routineClassifier = routineClassifier;
     }
 
-    /** Per-batch source health: a source marked down is not queried again this batch. */
+    /** Per-batch source health: one guard per source, and a source marked down is not queried
+     *  again this batch. {@code degradedClusters} counts the clusters that lost at least one
+     *  source — the per-item losses that used to leave no trace at all outside a DEBUG line. */
     private static final class SourceHealth {
-        boolean metricsDown, ohlcDown, coverageDown, earningsDown, ownerHistoryDown;
+        final EnrichmentSourceGuard metrics = guard("equity metrics");
+        final EnrichmentSourceGuard ohlc = guard("ohlc history");
+        final EnrichmentSourceGuard coverage = guard("recommendations");
+        final EnrichmentSourceGuard earnings = guard("next-earnings");
+        final EnrichmentSourceGuard ownerHistory = guard("form4 owner history");
+
+        int degradedClusters;
+
+        private static EnrichmentSourceGuard guard(String source) {
+            return EnrichmentSourceGuard.forSource("insider", "clusters", source);
+        }
 
         int downCount() {
-            return (metricsDown ? 1 : 0) + (ohlcDown ? 1 : 0)
-                    + (coverageDown ? 1 : 0) + (earningsDown ? 1 : 0)
-                    + (ownerHistoryDown ? 1 : 0);
+            return (metrics.isDown() ? 1 : 0) + (ohlc.isDown() ? 1 : 0)
+                    + (coverage.isDown() ? 1 : 0) + (earnings.isDown() ? 1 : 0)
+                    + (ownerHistory.isDown() ? 1 : 0);
         }
 
         boolean skipAll() { return downCount() >= 2; }
     }
 
-    public List<EnrichedInsiderCluster> enrich(List<InsiderCluster> clusters) {
+    public EnrichedInsiderBatch enrich(List<InsiderCluster> clusters) {
         List<InsiderCluster> bounded = clusters.stream()
                 .sorted(Comparator.comparing(InsiderCluster::totalDollarValue,
                         Comparator.nullsFirst(Comparator.naturalOrder())).reversed())
                 .limit(MAX)
                 .toList();
-        if (clusters.size() > MAX) {
+        boolean truncated = clusters.size() > MAX;
+        if (truncated) {
             log.info("insider enrichment: {} clusters exceed the cap of {}, dropping the {} smallest by totalDollarValue",
                     clusters.size(), MAX, clusters.size() - MAX);
         }
         SourceHealth health = new SourceHealth();
-        return bounded.stream().map(c -> enrichOne(c, health)).toList();
+        List<EnrichedInsiderCluster> enriched = bounded.stream().map(c -> enrichOne(c, health)).toList();
+        if (health.degradedClusters > 0) {
+            log.info("insider enrichment: {} of {} clusters lost at least one enrichment source",
+                    health.degradedClusters, enriched.size());
+        }
+        return new EnrichedInsiderBatch(enriched, truncated, health.degradedClusters);
     }
 
     private EnrichedInsiderCluster enrichOne(InsiderCluster c, SourceHealth health) {
         if (health.skipAll()) {
+            health.degradedClusters++;
             return unenriched(c);
         }
+        boolean degraded = false;
 
         Double marketCap = null;
-        if (!health.metricsDown) {
+        if (!health.metrics.isDown()) {
             try {
                 EquityMetrics em = equityMetrics.metricsWithoutSector(c.ticker());
                 if (em.available()) marketCap = em.marketCap();
+                health.metrics.recordSuccess();
             } catch (RuntimeException e) {
-                health.metricsDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "equity metrics");
+                health.metrics.recordFailure(e);
+                degraded = true;
                 log.debug("insider enrichment: equity metrics unavailable for {}: {}", c.ticker(), e.getMessage());
             }
+        } else {
+            degraded = true;
         }
 
         BigDecimal adv = null;
         BigDecimal ytdReturn = null;
-        if (!health.ohlcDown) {
+        if (!health.ohlc.isDown()) {
             try {
                 List<OhlcBar> bars = marketData.dailyOhlcHistory(c.ticker(), historyDays());
                 adv = advFrom(bars);
                 ytdReturn = ytdReturnFrom(bars);
+                health.ohlc.recordSuccess();
             } catch (RuntimeException e) {
-                health.ohlcDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "ohlc history");
+                health.ohlc.recordFailure(e);
+                degraded = true;
                 log.debug("insider enrichment: ohlc history unavailable for {}: {}", c.ticker(), e.getMessage());
             }
+        } else {
+            degraded = true;
         }
 
         Integer coverage = null;
         boolean coverageAvailable = false;
-        if (!health.coverageDown) {
+        if (!health.coverage.isDown()) {
             try {
                 AnalystCoverage cov = AnalystCoverage.of(companyData.recommendationsStrict(c.ticker()));
                 coverage = cov.coverage();
                 coverageAvailable = cov.available();
+                health.coverage.recordSuccess();
             } catch (RuntimeException e) {
-                health.coverageDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "recommendations");
+                health.coverage.recordFailure(e);
+                degraded = true;
                 log.debug("insider enrichment: recommendations unavailable for {}: {}", c.ticker(), e.getMessage());
             }
+        } else {
+            degraded = true;
         }
 
         LocalDate nextEarnings = null;
         Integer daysToEarnings = null;
-        if (!health.earningsDown) {
+        if (!health.earnings.isDown()) {
             try {
                 Optional<LocalDate> next = earnings.nextEarningsDate(c.ticker());
                 if (next.isPresent()) {
                     nextEarnings = next.get();
                     daysToEarnings = (int) ChronoUnit.DAYS.between(LocalDate.now(), nextEarnings);
                 }
+                health.earnings.recordSuccess();
             } catch (RuntimeException e) {
-                health.earningsDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "next-earnings");
+                health.earnings.recordFailure(e);
+                degraded = true;
                 log.debug("insider enrichment: next-earnings unavailable for {}: {}", c.ticker(), e.getMessage());
             }
+        } else {
+            degraded = true;
         }
 
         // Routine/opportunistic classification (Cohen-Malloy-Pomorski). ONE owner-history call
         // per cluster — the tool returns EVERY reporting owner of the company at once, so a
         // cluster with N filers still costs a single Agora call, not N.
         Classification classification = Classification.unavailable(c.filers());
-        if (!health.ownerHistoryDown) {
+        if (!health.ownerHistory.isDown()) {
             try {
                 Form4OwnerHistory history = filings.ownerHistoryStrict(c.ticker());
                 classification = classify(c, history);
+                health.ownerHistory.recordSuccess();
             } catch (RuntimeException e) {
-                health.ownerHistoryDown = EnrichmentSourceGuard.isSourceDown(e, "insider", "clusters", "form4 owner history");
+                health.ownerHistory.recordFailure(e);
+                degraded = true;
                 log.debug("insider enrichment: owner history unavailable for {}: {}", c.ticker(), e.getMessage());
             }
+        } else {
+            degraded = true;
         }
+
+        if (degraded) health.degradedClusters++;
 
         if (health.skipAll()) {
             log.info("insider enrichment: {} sources down, skipping enrichment for the remaining clusters",

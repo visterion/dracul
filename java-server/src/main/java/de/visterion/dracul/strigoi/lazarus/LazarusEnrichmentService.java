@@ -112,9 +112,9 @@ public class LazarusEnrichmentService {
         }
         var out = new ArrayList<EnrichedLazarusCandidate>();
         boolean scoreDown = false;
-        boolean ohlcDown = false;
         boolean conceptsDown = false;
-        boolean revisionsDown = false;
+        var ohlc = EnrichmentSourceGuard.forSource("lazarus", "candidates", "ohlc");
+        var revisions = EnrichmentSourceGuard.forSource("lazarus", "candidates", "recommendations");
         for (LazarusCandidate c : bounded) {
             FundamentalScore s = FundamentalScore.unavailable();
             if (!scoreDown) {
@@ -133,11 +133,12 @@ public class LazarusEnrichmentService {
                 continue; // accruals hard-drop
             }
             TimingSignals t = TimingSignals.EMPTY;
-            if (!ohlcDown) {
+            if (!ohlc.isDown()) {
                 try {
                     t = timingSignalsFrom(marketData.dailyOhlcHistory(c.symbol(), OHLC_LOOKBACK_DAYS));
+                    ohlc.recordSuccess();
                 } catch (RuntimeException e) {
-                    ohlcDown = EnrichmentSourceGuard.isSourceDown(e, "lazarus", "candidates", "ohlc");
+                    ohlc.recordFailure(e);
                     log.debug("lazarus enrichment: ohlc history unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
             }
@@ -162,13 +163,14 @@ public class LazarusEnrichmentService {
             }
             EarningsRevisions rev = EarningsRevisions.unavailable();
             AnalystCoverage cov = AnalystCoverage.of(List.of());
-            if (!revisionsDown) {
+            if (!revisions.isDown()) {
                 try {
                     List<RecommendationTrend> trend = companyData.recommendationsStrict(c.symbol());
                     rev = revisionsProxy.revisions(trend);
                     cov = AnalystCoverage.of(trend);
+                    revisions.recordSuccess();
                 } catch (RuntimeException e) {
-                    revisionsDown = EnrichmentSourceGuard.isSourceDown(e, "lazarus", "candidates", "recommendations");
+                    revisions.recordFailure(e);
                     log.debug("lazarus enrichment: recommendations unavailable for {}: {}",
                             c.symbol(), e.getMessage());
                 }

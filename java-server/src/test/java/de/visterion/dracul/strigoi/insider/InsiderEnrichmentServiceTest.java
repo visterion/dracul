@@ -29,6 +29,13 @@ import static org.mockito.Mockito.when;
 
 class InsiderEnrichmentServiceTest {
 
+    /** The enriched clusters only — most assertions here predate {@link EnrichedInsiderBatch}
+     *  and care about the clusters, not the batch's degradation accounting. */
+    private static List<EnrichedInsiderCluster> enrich(InsiderEnrichmentService svc,
+                                                       List<InsiderCluster> clusters) {
+        return svc.enrich(clusters).clusters();
+    }
+
     private static InsiderCluster cluster(String ticker) {
         return cluster(ticker, BigDecimal.valueOf(1_800_000));
     }
@@ -152,7 +159,7 @@ class InsiderEnrichmentServiceTest {
         var svc = enrichmentService(marketDataReturning(bars()),
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.of(nextEarnings)));
 
-        var out = svc.enrich(List.of(cluster("AAA")));
+        var out = enrich(svc, List.of(cluster("AAA")));
 
         assertThat(out).hasSize(1);
         var e = out.get(0);
@@ -177,7 +184,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(null, false), companyData(TREND),
                 earnings(Optional.of(LocalDate.now().plusDays(30))));
 
-        var e = svc.enrich(List.of(cluster("BBB"))).get(0);
+        var e = enrich(svc, List.of(cluster("BBB"))).get(0);
 
         assertThat(e.marketCap()).isNull();
         // adv still computed from OHLC, so the metrics group stays available
@@ -194,7 +201,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(850.0, true), companyData(TREND),
                 earnings(Optional.of(LocalDate.now().plusDays(30))));
 
-        var e = svc.enrich(List.of(cluster("CCC"))).get(0);
+        var e = enrich(svc, List.of(cluster("CCC"))).get(0);
 
         assertThat(e.adv()).isNull();
         assertThat(e.ytdReturn()).isNull();
@@ -212,7 +219,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(850.0, true), companyData(List.of()),
                 earnings(Optional.of(LocalDate.now().plusDays(30))));
 
-        var e = svc.enrich(List.of(cluster("DDD"))).get(0);
+        var e = enrich(svc, List.of(cluster("DDD"))).get(0);
 
         assertThat(e.analystCoverage()).isNull();
         assertThat(e.coverageAvailable()).isFalse();
@@ -226,7 +233,7 @@ class InsiderEnrichmentServiceTest {
         var svc = enrichmentService(marketDataReturning(bars()),
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
 
-        var e = svc.enrich(List.of(cluster("EEE"))).get(0);
+        var e = enrich(svc, List.of(cluster("EEE"))).get(0);
 
         assertThat(e.nextEarningsDate()).isNull();
         assertThat(e.daysToEarnings()).isNull();
@@ -244,7 +251,7 @@ class InsiderEnrichmentServiceTest {
         var svc = enrichmentService(marketDataThrowing(),
                 equityMetrics(null, false), throwingCompanyData, throwingEarnings);
 
-        var out = svc.enrich(List.of(cluster("FFF")));
+        var out = enrich(svc, List.of(cluster("FFF")));
 
         assertThat(out).hasSize(1);
         var e = out.get(0);
@@ -272,7 +279,7 @@ class InsiderEnrichmentServiceTest {
                 marketDataReturning(barsOn(LocalDate.now().minusDays(9), 10)),
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
 
-        var e = svc.enrich(List.of(cluster("GGG"))).get(0);
+        var e = enrich(svc, List.of(cluster("GGG"))).get(0);
 
         assertThat(e.adv()).isNull();
         assertThat(e.ytdReturn()).isEqualByComparingTo("0");
@@ -288,7 +295,7 @@ class InsiderEnrichmentServiceTest {
                 marketDataReturning(barsOn(LocalDate.of(LocalDate.now().getYear() - 1, 11, 1), 25)),
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
 
-        var e = svc.enrich(List.of(cluster("HHH"))).get(0);
+        var e = enrich(svc, List.of(cluster("HHH"))).get(0);
 
         assertThat(e.adv()).isEqualByComparingTo("10000000");
         assertThat(e.ytdReturn()).isNull();
@@ -305,7 +312,7 @@ class InsiderEnrichmentServiceTest {
         var svc = enrichmentService(marketDataReturning(bars()),
                 m, companyData(TREND), earnings(Optional.empty()));
 
-        var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB")));
+        var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
         // NOT_FOUND is symbol-specific: AAA degrades, BBB is still queried and fully enriched
         verify(m, times(1)).metricsWithoutSector("AAA");
@@ -326,7 +333,7 @@ class InsiderEnrichmentServiceTest {
 
         var svc = enrichmentService(marketDataReturning(bars()), m, cd, earn);
 
-        var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB")));
+        var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
         // the down source is queried exactly once, then skipped for the rest of the batch
         verify(m, times(1)).metricsWithoutSector(anyString());
@@ -350,7 +357,7 @@ class InsiderEnrichmentServiceTest {
         var svc = enrichmentService(marketDataReturning(bars()),
                 equityMetrics(850.0, true), cd, earnings(Optional.empty()));
 
-        var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB")));
+        var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
         // the down source is queried exactly once, then skipped for the rest of the batch
         verify(cd, times(1)).recommendationsStrict(anyString());
@@ -372,7 +379,7 @@ class InsiderEnrichmentServiceTest {
 
         var svc = enrichmentService(marketDataThrowing(), m, cd, earn);
 
-        var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB"), cluster("CCC")));
+        var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB"), cluster("CCC")));
 
         // metrics + ohlc are marked down during cluster 1 -> no source is queried again at all
         verify(m, times(1)).metricsWithoutSector(anyString());
@@ -397,7 +404,7 @@ class InsiderEnrichmentServiceTest {
         List<InsiderCluster> clusters = new ArrayList<>();
         for (int i = 0; i < 30; i++) clusters.add(cluster("SYM" + i, BigDecimal.valueOf(500_000 + i * 1000)));
 
-        var out = svc.enrich(clusters);
+        var out = enrich(svc, clusters);
 
         assertThat(out).hasSize(25);
         // sorted descending by totalDollarValue: the largest first, the 5 smallest dropped
@@ -429,7 +436,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
                 filingsReturning(history), new RoutineClassifier());
 
-        var e = svc.enrich(List.of(cluster("AAA"))).get(0);
+        var e = enrich(svc, List.of(cluster("AAA"))).get(0);
 
         assertThat(e.classificationAvailable()).isTrue();
         assertThat(e.classifiedFilers()).isEqualTo(2);   // Alice + Carol
@@ -466,7 +473,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
                 filingsReturning(history), new RoutineClassifier());
 
-        var e = svc.enrich(List.of(cluster("AAA"))).get(0);
+        var e = enrich(svc, List.of(cluster("AAA"))).get(0);
 
         var carolOut = e.filers().stream().filter(f -> f.name().equals("Carol")).findFirst().orElseThrow();
         assertThat(carolOut.classification()).isEqualTo(FilerClassification.UNKNOWN);
@@ -479,7 +486,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
                 filings, new RoutineClassifier());
 
-        var out = svc.enrich(List.of(cluster("AAA"), cluster("BBB")));
+        var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
         // an availability failure on cluster 1 marks the source down: cluster 2 is NOT queried
         verify(filings, times(1)).ownerHistoryStrict(anyString());
@@ -510,7 +517,7 @@ class InsiderEnrichmentServiceTest {
                 equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
                 filingsReturning(history), new RoutineClassifier());
 
-        var e = svc.enrich(List.of(cluster("AAA"))).get(0);
+        var e = enrich(svc, List.of(cluster("AAA"))).get(0);
 
         assertThat(e.classificationAvailable()).isTrue();   // the call succeeded
         assertThat(e.classifiedFilers()).isZero();          // but no filer matched an owner
