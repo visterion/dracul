@@ -3,6 +3,7 @@ package de.visterion.dracul.gropar;
 import de.visterion.dracul.agent.AgentToolCatalog;
 import de.visterion.dracul.agent.ToolFetchCache;
 import de.visterion.dracul.hivemem.HiveMemResearchService;
+import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.notify.TelegramNotifier;
@@ -36,6 +37,8 @@ class GroparWebhookControllerTest {
     private ExitSignalRepository exitSignalRepo;
     private TelegramNotifier telegram;
     private ObjectMapper mapper;
+    private GroparExitIndicators indicatorService;
+    private RiskMetricsService riskService;
 
     private GroparWebhookController controller;
 
@@ -62,10 +65,21 @@ class GroparWebhookControllerTest {
 
         when(exitSignalRepo.insert(any(ExitSignal.class), any())).thenReturn(true);
 
-        controller = new GroparWebhookController(
+        this.indicatorService = indicatorService;
+        this.riskService = riskService;
+
+        controller = newController(marketData);
+    }
+
+    /** Builds a controller over an arbitrary {@link AgoraMarketData} — used by the tests that
+     *  need the REAL parser over a stubbed Agora payload rather than a mocked facade. */
+    private GroparWebhookController newController(AgoraMarketData md) {
+        return new GroparWebhookController(
                 "tok",
-                heldPositionService, marketData, exitSignalRepo, telegram,
-                indicatorService, riskService, cache, mapper, mock(HiveMemResearchService.class),
+                heldPositionService, md, exitSignalRepo, telegram,
+                indicatorService, riskService,
+                new ToolFetchCache(new AgentToolCatalog(java.util.List.of()), 0),
+                mapper, mock(HiveMemResearchService.class),
                 CONNECTION,
                 "alice@x",   // dracul.primary-user-email
                 260,  // historyDays
@@ -514,5 +528,71 @@ class GroparWebhookControllerTest {
 
         verify(exitSignalRepo, times(2)).insert(any(ExitSignal.class), eq("alice@x"));
         verify(telegram, times(1)).notifyAlert(eq("ACME"), eq("EXIT"), eq("SELL"), any());
+    }
+
+    // =========================================================================
+    // Agora "nothing to serve" payload (available:false, no bars).
+    //
+    // Agora stopped collapsing MarketDataException.Kind.NOT_FOUND into an error
+    // envelope, so this arrives as a NORMAL get_ohlc payload instead of throwing.
+    // These two tests therefore drive the REAL AgoraMarketData parser over a stubbed
+    // AgoraClient rather than the mocked facade — that is the only way to exercise
+    // the post-deploy behaviour.
+    // =========================================================================
+
+    private AgoraMarketData agoraServing(String ohlcPayload) {
+        AgoraClient client = mock(AgoraClient.class);
+        when(client.callTool(eq("get_ohlc"), any()))
+                .thenReturn(JsonMapper.builder().build().readTree(ohlcPayload));
+        return new AgoraMarketData(client);
+    }
+
+    @Test
+    void fetchHeldPositions_unavailableOhlcPayload_rendersNoPriceInsteadOfTheEntryPrice() throws Exception {
+        var pos = taOnly("SYNA", "100", "10");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(pos));
+        var c = newController(agoraServing("{\"symbol\":\"SYNA\",\"available\":false,\"bars\":[]}"));
+
+        var resp = c.fetchHeldPositions(BEARER, null);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) ((Map<String, Object>)
+                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
+
+        // Rendered, not skipped: the operator holds this position.
+        assertThat(positions).hasSize(1);
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.symbol()).isEqualTo("SYNA");
+        assertThat(view.entryPrice()).isEqualTo(100.0);
+
+        // The defect this guards: currentPrice must NOT be the entry price (a fabricated 0 % P/L).
+        assertThat(view.currentPrice())
+                .as("an unknown current price must not be substituted by the entry price")
+                .isNull();
+        assertThat(view.currentPriceAvailable()).isFalse();
+        // The loss is visible in the payload the agent reads, not just in a log line.
+        assertThat(view.indicators().currentClose()).isNull();
+        assertThat(view.indicators().gainLossPct()).isNull();
+    }
+
+    @Test
+    void fetchHeldPositions_healthyOhlcPayload_stillReportsTheRealPrice() throws Exception {
+        var pos = taOnly("SYNB", "100", "10");
+        when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of(pos));
+        var c = newController(agoraServing("""
+                {"symbol":"SYNB","available":true,"bars":[
+                  {"date":"2026-06-01","open":100,"high":106,"low":99,"close":105,"volume":1000}]}
+                """));
+
+        var resp = c.fetchHeldPositions(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        var positions = (List<?>) ((Map<String, Object>)
+                ((Map<?, ?>) resp.getBody()).get("output")).get("positions");
+        var view = (HeldPositionView) positions.get(0);
+        assertThat(view.currentPrice()).isEqualTo(105.0);
+        assertThat(view.currentPriceAvailable()).isTrue();
+        assertThat(view.indicators().gainLossPct()).isEqualByComparingTo("5.0000");
     }
 }

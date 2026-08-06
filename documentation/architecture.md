@@ -334,7 +334,7 @@ tranche-2 size-ups.
 - `exit_signals` — one row per gropar verdict per position per run: `id` (UUID PK), `symbol` (TEXT NOT NULL), `verdict` (TEXT NOT NULL, CHECK: SELL / TRIM / HOLD), `rationale` (TEXT), `confidence` (NUMERIC(4,3)), `vistierie_run_id` (TEXT), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), `user_id` (TEXT NOT NULL DEFAULT 'default'). Partial unique index `uq_exit_signals_run_item` (V21) on `(vistierie_run_id, watchlist_item_id)` (where both are non-null) enforces at most one exit signal per run per position; a second partial unique index `(vistierie_run_id, symbol)` (V29, where `vistierie_run_id IS NOT NULL`) is the one that actually fires for gropar's depot-sourced signals since A5 -- they never carry a `watchlist_item_id` (always written `null`), so V21's index never matches them.
 - index on `(user_id, symbol, created_at DESC)`
 - `MorningReportService.build` (A8, 2026-07-13) reads the latest signal **per symbol**, not per `watchlist_item_id`, for the same reason: gropar's depot-sourced signals key by symbol only.
-- Gropar data flow (repointed 2026-07-13 to the depot-as-SSOT model): open **depot-1** positions joined by symbol to `position_context` (`HeldPositionService.openPositions`) → daily OHLC history (Agora `get_ohlc`, via `AgoraMarketData.dailyOhlcHistory`) for the current close, plus exit TA (ATR/Chandelier stop, MA cross, 52-week proximity) from Agora `get_indicators` via `AgoraResearch` → `GroparExitIndicators` assembles the bundle (adds gain/loss thresholds; `RiskMetricsService` retained, fed Agora ATR + the position's stored context `initialStop` for the R-framework) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts. (The local `ExitIndicatorService` was removed once Agora's `get_indicators` became the TA source.) A position with no open `position_context` row degrades to TA-only (thesis/kill-criteria absent) rather than being dropped.
+- Gropar data flow (repointed 2026-07-13 to the depot-as-SSOT model): open **depot-1** positions joined by symbol to `position_context` (`HeldPositionService.openPositions`) → daily OHLC history (Agora `get_ohlc`, via `AgoraMarketData.dailyOhlcHistory`) for the current close, plus exit TA (ATR/Chandelier stop, MA cross, 52-week proximity) from Agora `get_indicators` via `AgoraResearch` → `GroparExitIndicators` assembles the bundle (adds gain/loss thresholds; `RiskMetricsService` retained, fed Agora ATR + the position's stored context `initialStop` for the R-framework) → reasoning-tier LLM judgment → `ExitSignal` (SELL / TRIM / HOLD) → `dracul.exit_signals` → `GET /api/exit-signals` + Telegram push for SELL/TRIM verdicts. (The local `ExitIndicatorService` was removed once Agora's `get_indicators` became the TA source.) A position with no open `position_context` row degrades to TA-only (thesis/kill-criteria absent) rather than being dropped. A position whose OHLC history comes back **empty** (Agora's `available:false` payload — a normal response, not an error) is likewise still rendered, with `currentPrice: null` + `currentPriceAvailable: false`: the entry price is never substituted, since that would render a fabricated 0 % P/L indistinguishable from a position that has not moved. `GroparWebhookController` logs one `WARN` per priceless symbol plus a per-fetch summary count.
 - Gropar position guard: `GroparPauseReconciler` (present only when `dracul.gropar.enabled=true`, `@Order(30)` so it runs after `GenericAgentRegistrar`) listens to `WatchlistChangedEvent` and to `ApplicationReadyEvent`, checks whether the live depot (`HeldPositionService.openPositions("depot-1")`) has any open positions, and calls `VistierieClient.patchAgent("gropar", positions.isEmpty())`. An in-memory last-applied state suppresses redundant Vistierie calls; a failed patch is logged and retried on the next event. gropar's pause is thus system-managed (operator uses the `enabled` flag, not the manual pause toggle).
 
 **Verdict native currency (V13):**
@@ -641,9 +641,24 @@ wrapped so one bad symbol/position never aborts the rest.
   populate `hypothetical.skipped_reason` and mark the row `complete=true` —
   never a fabricated number. A genuine OHLC-provider outage is *not* treated
   as a permanent skip: the row is left untouched (absent/incomplete) so the
-  next nightly run retries. `complete` otherwise flips to `true` once 60
-  bars exist; a re-run before then re-walks and upserts the same row
-  (`ON CONFLICT (log_id_ref) DO UPDATE`) rather than duplicating it.
+  next nightly run retries. A symbol whose OHLC fetch *succeeds* but serves
+  **no bars at all** over the whole lookback (Agora's `available:false`
+  payload — the price source has nothing for this instrument, which is a
+  normal response rather than an error) is likewise not evaluated: the row
+  gets `hypothetical.skipped_reason` and stays `complete=false`, so a later
+  run recomputes it for real once bars return. `complete` otherwise flips to
+  `true` once 60 bars exist; a re-run before then re-walks and upserts the
+  same row (`ON CONFLICT (log_id_ref) DO UPDATE`) rather than duplicating it.
+- **`hypothetical.would_have_stopped_out` is `null` whenever
+  `skipped_reason` is set** — the walk evaluated nothing, so `false` would
+  read as "the stop was never hit". This matters because
+  `OutcomeLogRepository.findVetoRows()` reads the column with no
+  `complete` filter: a fabricated `false` would reach the calibration
+  report (`GET /api/calibration`) immediately. Skipped rows are counted
+  there under `skipped` per `reason_code` and never contribute to
+  `stopped_out_pct` or the R means — that count is where an operator sees
+  the loss; the batch also logs a per-run `WARN` with how many
+  counterfactuals had no OHLC data at all.
 
 **Spin-off lifecycle table (V26): `spin_candidate`.** Backs strigoi-spin's full
 lifecycle persistence (see `documentation/strigoi.md`, "Strigoi-Spin: lifecycle

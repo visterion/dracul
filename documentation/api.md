@@ -1689,7 +1689,8 @@ Response:
 ```json
 { "output": { "positions": [
   { "symbol": "ACME", "companyName": "Acme Corp",
-    "entryPrice": 100.0, "shareCount": 50, "currentPrice": 142.5,
+    "entryPrice": 100.0, "shareCount": 50,
+    "currentPrice": 142.5, "currentPriceAvailable": true,
     "unrealisedGainPct": 42.5,
     "indicators": {
       "chandelier_stop": 128.0,
@@ -1714,6 +1715,15 @@ existed) degrades to TA-only — `indicators`/`risk` are still populated, `thesi
 the deduped union of `kill_criteria` across the verdict's contributing prey (resolved at
 context-write time, not live), omitted entirely (no empty array) when none of them
 declared any.
+
+`currentPrice` is **nullable** and paired with `currentPriceAvailable`, following the same
+"value + `*Available` flag" convention the `indicators` / `risk` blocks already use. When the
+price feed serves no bars for a symbol (Agora's `available: false` payload — a normal response,
+not an error), the position is still returned, but with `currentPrice: null` and
+`currentPriceAvailable: false`. The entry price is never substituted: that would render a
+fabricated 0 % P/L that reads exactly like a position that has not moved. The prompt binds the
+agent to HOLD, null out `gain_loss_pct`, and say so in the rationale. Each such position is
+logged with a `WARN`, plus one summary line per fetch with the count.
 
 ### `POST /api/gropar/complete`
 

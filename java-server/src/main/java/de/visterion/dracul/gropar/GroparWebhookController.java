@@ -105,6 +105,7 @@ public class GroparWebhookController {
             var positions = heldPositionService.openPositions(connection);
 
             var views = new ArrayList<HeldPositionView>();
+            var priceless = new ArrayList<String>();
             for (HeldPosition hp : positions) {
                 try {
                     if (fetchThrottleMs > 0 && !views.isEmpty()) {
@@ -143,7 +144,24 @@ public class GroparWebhookController {
                     var profitTargets = ScaleOutLadder.profitTargets(
                             hp.avgPrice(), risk.rAvailable() ? risk.r() : null);
 
-                    BigDecimal currentPrice = ind.currentClose() != null ? ind.currentClose() : hp.avgPrice();
+                    // An empty price series means we do NOT know this position's current price.
+                    // It used to fall back to the entry price, which renders a fabricated 0 %
+                    // P/L that is indistinguishable from a position that genuinely has not
+                    // moved -- and since Agora stopped collapsing "this instrument has nothing
+                    // to serve" into an error envelope (it now answers available:false with no
+                    // bars), that fallback is reachable instead of the position being skipped.
+                    // Report the loss the way gropar already reports every other missing input:
+                    // null value + an *Available flag (ExitIndicators.atrAvailable,
+                    // RiskMetrics.rAvailable, ...), which the prompt already binds the agent to
+                    // ("Only use indicators whose available flag is true"). The position stays
+                    // in the list -- the operator holds it, so it must not silently vanish.
+                    BigDecimal currentPrice = ind.currentClose();
+                    if (currentPrice == null) {
+                        priceless.add(hp.symbol());
+                        log.warn("gropar: no price series for {} — rendering the position with "
+                                + "currentPrice=null (currentPriceAvailable=false), never the entry price",
+                                hp.symbol());
+                    }
 
                     views.add(new HeldPositionView(
                             hp.symbol(),
@@ -151,7 +169,8 @@ public class GroparWebhookController {
                             hp.symbol(), // depot positions carry no company name -- symbol is the best available label
                             hp.avgPrice().doubleValue(),
                             hp.quantity().doubleValue(),
-                            currentPrice == null ? 0.0 : currentPrice.doubleValue(),
+                            currentPrice == null ? null : currentPrice.doubleValue(),
+                            currentPrice != null,
                             ind,
                             risk,
                             firedRules,
@@ -163,6 +182,13 @@ public class GroparWebhookController {
                     log.warn("gropar: market data unavailable for {} — skipping: {}",
                             hp.symbol(), e.getMessage());
                 }
+            }
+            // Countable, not just per-symbol noise: one summary line per fetch so a price
+            // blackout across the depot reads as a number in the operator's nightly log
+            // review instead of dissolving into individual warnings.
+            if (!priceless.isEmpty()) {
+                log.warn("gropar: {} of {} held position(s) rendered without a current price: {}",
+                        priceless.size(), views.size(), priceless);
             }
             return Map.of("output", Map.of("positions", views));
         });

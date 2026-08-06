@@ -62,6 +62,10 @@ public class OutcomeBatchJob {
     private final AgoraMarketData marketData;
     private final ObjectMapper mapper;
 
+    /** Per-run tally of counterfactuals whose symbol served no OHLC data at all. Only ever
+     *  touched from the single-threaded {@code @Scheduled} run. */
+    private int noDataSymbols;
+
     public OutcomeBatchJob(ExecutorPositionRepository positions, DecisionLogRepository decisionLog,
             ExecutorSignalRepository signals, OutcomeLogRepository outcomeLog,
             HypotheticalREngine engine, AgoraMarketData marketData, ObjectMapper mapper) {
@@ -300,13 +304,23 @@ public class OutcomeBatchJob {
     // -------------------------------------------------------------------
 
     private void processCounterfactuals() {
+        noDataSymbols = 0;
+        int seen = 0;
         for (DecisionLog reject : decisionLog.findSignalRowsByAction("REJECT")) {
+            seen++;
             try {
                 processReject(reject);
             } catch (Exception e) {
                 log.warn("outcome batch: COUNTERFACTUAL processing failed for {} ({}): {}",
                         reject.logId(), reject.symbol(), e.getMessage(), e);
             }
+        }
+        // Countable loss: without this line a batch in which every symbol came back empty looks
+        // exactly like a clean batch. The same figure is visible to the operator in the
+        // calibration report, where these rows are counted as `skipped` per reason_code.
+        if (noDataSymbols > 0) {
+            log.warn("outcome batch: {} of {} counterfactual(s) had no OHLC data at all "
+                    + "and were written as skipped, not evaluated", noDataSymbols, seen);
         }
     }
 
@@ -336,9 +350,9 @@ public class OutcomeBatchJob {
                 outcome = HypotheticalOutcome.skipped("decision_log created_at unparseable");
                 complete = true;
             } else {
-                List<OhlcBar> bars;
+                BarsAfter fetched;
                 try {
-                    bars = fetchBarsAfter(reject.symbol(), decisionDate);
+                    fetched = fetchBarsAfter(reject.symbol(), decisionDate);
                 } catch (MarketDataException e) {
                     // Transient data-provider outage, not a permanent skip: leave the row
                     // untouched (absent/incomplete) so the next nightly run retries.
@@ -346,16 +360,45 @@ public class OutcomeBatchJob {
                             reject.symbol(), logIdRef, e.getMessage());
                     return;
                 }
-                int horizon = resolveHorizon(signal);
-                outcome = engine.walk(side, orderPrice, atr, null, bars, horizon);
-                complete = outcome.skippedReason() != null || bars.size() >= 60;
+                if (fetched.sourceEmpty()) {
+                    // The source served NO bars at all over the whole lookback. Since Agora
+                    // stopped collapsing "this instrument has nothing to serve" into an error
+                    // envelope, this arrives as a normal available:false payload rather than a
+                    // MarketDataException -- so without this branch the walk would run over an
+                    // empty path and write would_have_stopped_out=false, an answer to a question
+                    // that was never evaluated. Reuse the engine's own missing-input path
+                    // (HypotheticalOutcome.skipped): CalibrationService already excludes
+                    // skipped rows from every veto mean and counts them separately.
+                    outcome = HypotheticalOutcome.skipped(
+                            "no OHLC bars available for symbol over the whole lookback");
+                    // NOT complete: a data blackout is not a verdict on the signal. Leaving the
+                    // row open means the next nightly run recomputes it for real once bars
+                    // return, exactly like the MarketDataException branch above.
+                    complete = false;
+                    noDataSymbols++;
+                    log.warn("outcome batch: no OHLC bars at all for {} (reject {}) — writing an "
+                            + "explicitly skipped counterfactual, not a stopped-out=false verdict",
+                            reject.symbol(), logIdRef);
+                } else {
+                    int horizon = resolveHorizon(signal);
+                    List<OhlcBar> bars = fetched.after();
+                    outcome = engine.walk(side, orderPrice, atr, null, bars, horizon);
+                    complete = outcome.skippedReason() != null || bars.size() >= 60;
+                }
             }
         }
 
         ObjectNode hypo = mapper.createObjectNode();
         putOrNull(hypo, "r_after_20d", outcome.rAfter20d());
         putOrNull(hypo, "r_after_60d", outcome.rAfter60d());
-        hypo.put("would_have_stopped_out", outcome.wouldHaveStoppedOut());
+        // A skipped walk evaluated nothing, so its wouldHaveStoppedOut=false is a placeholder,
+        // not a finding (see HypotheticalOutcome's class doc). Persisting that literal false
+        // would let "we could not look" read as "the stop was never hit" — and findVetoRows()
+        // reads this column with NO complete-filter, so it would land in the calibration report
+        // immediately. JSON null is the honest value; parseBoolean(null) -> null, and
+        // CalibrationService already divides only by the rows where it is non-null.
+        if (outcome.skippedReason() != null) hypo.putNull("would_have_stopped_out");
+        else hypo.put("would_have_stopped_out", outcome.wouldHaveStoppedOut());
         if (outcome.skippedReason() != null) hypo.put("skipped_reason", outcome.skippedReason());
         else hypo.putNull("skipped_reason");
 
@@ -371,11 +414,18 @@ public class OutcomeBatchJob {
         outcomeLog.upsert(row);
     }
 
-    private List<OhlcBar> fetchBarsAfter(String symbol, LocalDate signalDate) {
+    /** Bars after the signal date, plus whether the SOURCE served nothing at all.
+     *  The two must not be conflated: an empty {@code after} with a non-empty history is the
+     *  normal "signal is too fresh, no bars yet" case and stays retryable-but-evaluable, while
+     *  {@code sourceEmpty} means the symbol has no price data to evaluate against at all. */
+    private record BarsAfter(List<OhlcBar> after, boolean sourceEmpty) {}
+
+    private BarsAfter fetchBarsAfter(String symbol, LocalDate signalDate) {
         long daysSince = ChronoUnit.DAYS.between(signalDate, LocalDate.now(ZoneOffset.UTC));
         int lookback = (int) Math.min(MAX_OHLC_LOOKBACK_DAYS, Math.max(90, daysSince + 90));
         List<OhlcBar> all = marketData.dailyOhlcHistory(symbol, lookback);
-        return all.stream().filter(b -> b.date().isAfter(signalDate)).toList();
+        return new BarsAfter(all.stream().filter(b -> b.date().isAfter(signalDate)).toList(),
+                all.isEmpty());
     }
 
     private int resolveHorizon(ExecutorSignal signal) {

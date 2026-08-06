@@ -6,6 +6,7 @@ import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
 import de.visterion.dracul.executor.ExecutorSignal;
 import de.visterion.dracul.executor.ExecutorSignalRepository;
+import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.OhlcBar;
 import org.junit.jupiter.api.Test;
@@ -364,5 +365,96 @@ class OutcomeBatchJobTest {
         OutcomeLogRow row = captor.getValue();
         assertThat(row.complete()).isTrue();
         assertThat(row.hypothetical().path("skipped_reason").isNull()).isFalse();
+    }
+
+    // =========================================================================
+    // Agora "nothing to serve" payload (available:false, no bars).
+    //
+    // NOT_FOUND is no longer collapsed into an error envelope upstream, so this
+    // arrives as a normal get_ohlc payload instead of a MarketDataException. These
+    // tests drive the REAL AgoraMarketData parser over a stubbed AgoraClient so the
+    // post-deploy path is what is exercised.
+    // =========================================================================
+
+    private OutcomeBatchJob jobOverAgora(String ohlcPayload) {
+        AgoraClient client = mock(AgoraClient.class);
+        when(client.callTool(eq("get_ohlc"), any()))
+                .thenReturn(mapper.readTree(ohlcPayload));
+        return new OutcomeBatchJob(positions, decisionLog, signals, outcomeLog, engine,
+                new AgoraMarketData(client), mapper);
+    }
+
+    private DecisionLog rejectFor(String symbol, String logId, String signalId) {
+        return decisionRow(logId, signalId, symbol, "REJECT", "PACE_LIMIT",
+                mapper.readTree("{\"order_price\":100,\"atr\":2}"), null, "strigoi-spin", "v1");
+    }
+
+    private void wireReject(DecisionLog reject, String signalId) {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of(reject));
+        when(outcomeLog.isComplete(reject.logId())).thenReturn(false);
+        when(signals.findById(signalId)).thenReturn(new ExecutorSignal(signalId, "strigoi-spin", "v1",
+                reject.symbol(), "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "REJECTED", null));
+    }
+
+    @Test
+    void counterfactual_unavailableOhlcPayload_writesSkippedNotStoppedOutFalse() {
+        DecisionLog reject = rejectFor("SYNA", "reject-nodata", "sig-nd");
+        wireReject(reject, "sig-nd");
+
+        jobOverAgora("{\"symbol\":\"SYNA\",\"available\":false,\"bars\":[]}").run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+
+        assertThat(row.kind()).isEqualTo("COUNTERFACTUAL");
+        // The defect this guards: a symbol with no data must not answer "the stop was
+        // never hit". findVetoRows() reads this column with no complete-filter.
+        assertThat(row.hypothetical().path("would_have_stopped_out").isNull())
+                .as("would_have_stopped_out must be null (not evaluated), never a fabricated false")
+                .isTrue();
+        // Visibility: the row is explicitly marked skipped, which is what
+        // CalibrationService counts separately and excludes from every veto mean.
+        assertThat(row.hypothetical().path("skipped_reason").asString())
+                .contains("no OHLC bars available");
+        assertThat(row.hypothetical().path("r_after_20d").isNull()).isTrue();
+        assertThat(row.hypothetical().path("r_after_60d").isNull()).isTrue();
+        assertThat(row.hunterLabel()).isNull();
+        // A data blackout is not a verdict: the row stays open so a later run recomputes it.
+        assertThat(row.complete()).isFalse();
+    }
+
+    @Test
+    void counterfactual_healthyOhlcPayload_stillEvaluatesTheWalk() {
+        DecisionLog reject = rejectFor("SYNB", "reject-ok", "sig-ok");
+        wireReject(reject, "sig-ok");
+
+        // The decision row is dated 2026-06-01; bars after it drift 100.5 -> 110, so the
+        // +1R target (entry 100, atr 2 -> stop 96, rPerShare 4) is reached and the stop is not.
+        StringBuilder bars = new StringBuilder("[");
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        for (int i = 1; i <= 20; i++) {
+            BigDecimal close = bd("100").add(bd("0.5").multiply(BigDecimal.valueOf(i)));
+            if (i > 1) bars.append(',');
+            bars.append("{\"date\":\"").append(start.plusDays(i)).append("\",")
+                .append("\"open\":").append(close)
+                .append(",\"high\":").append(close.add(bd("0.5")))
+                .append(",\"low\":").append(close.subtract(bd("0.5")))
+                .append(",\"close\":").append(close)
+                .append(",\"volume\":1000}");
+        }
+        bars.append(']');
+
+        jobOverAgora("{\"symbol\":\"SYNB\",\"available\":true,\"bars\":" + bars + "}").run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
+        assertThat(row.hypothetical().path("would_have_stopped_out").asBoolean()).isFalse();
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(2.0);
+        assertThat(row.hunterLabel()).isTrue();
     }
 }
