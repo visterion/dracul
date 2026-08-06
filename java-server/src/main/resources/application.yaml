@@ -35,7 +35,10 @@ dracul:
       # +    190 ms  the one archive GET that may start just before the deadline (THROTTLE_MS 110
       #              + ~80 ms fetch) — the deadline is checked before a fetch, not during it
       # +  1 000 ms  MCP framing, JSON serialisation of the result set, transport
-      # = 39 090 ms worst case; 45 000 leaves ~15 % headroom.
+      # +  2 500 ms  EdgarSearchService.SEARCH_RETRY_BUDGET_MS, the aggregate retry budget added
+      #              2026-08-06 for EFTS's intermittent 500s (BUG-S19; two of thirteen calls in
+      #              one measured hour, the same query returning both 200 and 500)
+      # = 41 590 ms worst case; 45 000 leaves ~8 % headroom.
       # Measured end-to-end on prod 2026-08-04: 33.4 s (3.7 s paging + 29.9 s archive phase),
       # against a 25 000 ms client budget — which is exactly why every insider run timed out.
       # Enclosing limits, all larger: the insider fetch tool's webhook timeout (InsiderDefaults,
