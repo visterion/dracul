@@ -109,10 +109,17 @@ EDGAR forms token was corrected and the result set grew from 42 to 1 697 hits.
 `AgoraTimeoutBudgetTest` fails the build if the budget ever drops below Agora's
 own worst case.
 
-The enclosing limits, all larger: the `fetch_recent_clusters` webhook timeout
-(60 s, `InsiderDefaults.FETCH_TIMEOUT_SECONDS` — changing it requires an
-agent-definition reset) and Vistierie's `max_run_seconds` for `strigoi-insider`
-(1800 s).
+This budget is **per call**. Since 2026-08-06 `AgoraFilings.recentForm4` slices
+its window into one `get_form4_transactions` call per DAY (a single call reads
+~272 filings, a market-wide week holds ~1,697), so the insider fetch endpoint's
+total wall clock is `lookback × 45 s` — 315 s worst case for the default 7-day
+lookback, ~234 s at the measured per-call 33.4 s.
+
+The enclosing limits: Vistierie's `max_run_seconds` for `strigoi-insider`
+(1800 s) still covers that total. The `fetch_recent_clusters` webhook timeout
+(60 s, `InsiderDefaults.FETCH_TIMEOUT_SECONDS`) does **not** any more and must be
+raised to at least 360 s — that changes the agent definition and therefore
+requires the agent-definition reset, so it is deliberately not carried in code.
 
 Map keys must be written in bracket form (`"[get_form4_transactions]"`): Spring's
 relaxed binding strips `_` out of a plain map key, so an unbracketed key would

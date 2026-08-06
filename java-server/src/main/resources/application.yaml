@@ -41,8 +41,14 @@ dracul:
       # = 41 590 ms worst case; 45 000 leaves ~8 % headroom.
       # Measured end-to-end on prod 2026-08-04: 33.4 s (3.7 s paging + 29.9 s archive phase),
       # against a 25 000 ms client budget — which is exactly why every insider run timed out.
-      # Enclosing limits, all larger: the insider fetch tool's webhook timeout (InsiderDefaults,
-      # 60 s) and Vistierie's max_run_seconds for strigoi-insider (1800 s).
+      # This budget is PER CALL and stays per call. Since BUG-S1b (2026-08-06) AgoraFilings
+      # .recentForm4 slices its window into one call PER DAY (a market-wide week holds ~1,700
+      # Form-4 filings, a call reads ~272), so the insider fetch ENDPOINT's total wall clock is
+      # lookback x this value: 7 x 45 s = 315 s worst case, ~234 s at the measured 33.4 s.
+      # Enclosing limits: Vistierie's max_run_seconds for strigoi-insider (1800 s) still covers
+      # it; the fetch tool's webhook timeout (InsiderDefaults.FETCH_TIMEOUT_SECONDS, 60 s) does
+      # NOT any more and must be raised to >= 360 s via an agent-definition reset (see the OPEN
+      # note on that constant).
       "[get_form4_transactions]": ${DRACUL_AGORA_FORM4_TIMEOUT_MS:45000}
   hivemem:
     base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}

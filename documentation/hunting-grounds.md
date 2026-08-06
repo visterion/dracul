@@ -120,11 +120,20 @@ consumed through five neutral domain facades in
   `AgoraEarnings.recent`. Before 2026-08-04 they sent no `limit` and always
   reported `healthy`: a market-wide Form-4 window silently arrived cut at 100
   rows out of several thousand filings, and a 20-day and a 90-day merger window
-  returned an identical candidate list. **`recentForm4` is still bounded in
-  practice** — Agora fetches one EDGAR archive document per hit under a fair-use
-  throttle and its own aggregate deadline, so a market-wide window parses only a
-  few hundred filings whatever `limit` is passed. That cut now arrives as
-  `truncated: true` instead of as an empty result. Also `ownerHistoryStrict`
+  returned an identical candidate list. **`recentForm4` is sliced per day since
+  2026-08-06** — Agora fetches one EDGAR archive document per hit under a
+  fair-use throttle and its own aggregate deadline, so a single call reads only a
+  few hundred filings whatever `limit` is passed (~272; a market-wide week holds
+  ~1,697 Form-4 filings and a market-wide day ~243, measured 2026-08-04). The
+  window is therefore split into one `get_form4_transactions` call PER DAY and
+  merged: `partial`/`truncated` are OR-ed across every slice (one cut day marks
+  the whole answer truncated), a single slice failing keeps the other days and
+  marks the result truncated, and only ALL slices failing degrades to
+  `unavailable`. Transactions are collected into a set keyed on the whole
+  `Form4Filing` record, so a filing that Agora's 10-day late-filing pad reports
+  under two slices cannot be counted twice. Cost: the per-CALL Agora budget is
+  unchanged (45 s) but the fetch endpoint's total wall clock is
+  `lookback × 45 s`. Also `ownerHistoryStrict`
   (`get_form4_owner_history` — multi-year per-owner Form-4 history for the
   strigoi-insider routine/opportunistic classification; strict, propagates
   `AgoraUnavailableException` for the batch source-down guard), `concept` /

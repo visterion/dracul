@@ -46,9 +46,11 @@ class AgoraFilingsDegradationTest {
 
         new AgoraFilings(client).recentForm4(FROM, TO);
 
+        // one call per day since the day-slicing (BUG-S1b); every one of them asks for the maximum
         ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
-        Mockito.verify(client).callTool(eq("get_form4_transactions"), args.capture());
-        assertThat(args.getValue().path("limit").asInt(0)).isEqualTo(TOOL_MAX);
+        Mockito.verify(client, Mockito.atLeastOnce()).callTool(eq("get_form4_transactions"), args.capture());
+        assertThat(args.getAllValues()).isNotEmpty()
+                .allSatisfy(a -> assertThat(a.path("limit").asInt(0)).isEqualTo(TOOL_MAX));
     }
 
     @Test void searchSpinoffsAsksForTheToolMaximum() {

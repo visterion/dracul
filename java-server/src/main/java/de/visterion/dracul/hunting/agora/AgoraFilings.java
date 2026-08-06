@@ -43,30 +43,115 @@ public class AgoraFilings {
     /**
      * Market-wide Form-4 transactions in [from, to]; callers filter by ticker client-side.
      *
-     * <p>Asking for {@link #WINDOW_LIMIT} raises the ceiling but does NOT make the answer complete:
-     * Agora's Form-4 path issues one EDGAR archive GET per hit behind a fair-use throttle and under
-     * its own aggregate deadline, so a market-wide window parses only a few hundred filings before
-     * the deadline fires — whatever limit is passed. That remaining bottleneck lives in Agora, not
-     * here; what changed is that the cut now arrives as {@code truncated=true} and is reported
-     * instead of being read as "nothing found".
+     * <p>Sliced into ONE Agora call PER DAY and merged. One call for a whole week does not fit
+     * Agora's budget: it reads one EDGAR archive document per filing under a 30 s aggregate
+     * deadline at ~110 ms spacing, i.e. <b>~272 filings per call</b> (derived from Agora's own
+     * pacing arithmetic since its BUG-S1a rate-limiter fix; before it, ~159). A market-wide week
+     * holds ~1,697 Form-4 filings and a market-wide DAY ~243 (measured live 2026-08-04 on window
+     * 2026-07-20..07-27), so a week-sized call read 139 of them — 51 open-market buys, 6 above
+     * 500k USD, zero tickers with three filers — and the insider hunter's cluster threshold never
+     * fired: {@code items=0 (partial=false truncated=true status=healthy)}, every round. A
+     * day-sized call fits under the same deadline with headroom.
+     *
+     * <p>The cut is still reported honestly: EVERY slice's {@code partial}/{@code truncated} is
+     * OR-ed into the merged health, so one cut day marks the whole week truncated. A day whose
+     * call throws keeps the other days but likewise marks the result truncated (that day IS
+     * missing data); only ALL days failing degrades to {@code unavailable} — see
+     * {@link #recentForm4Failure}.
+     *
+     * <p>Cost: the per-CALL Agora budget ({@code dracul.agora.tool-timeout-ms
+     * [get_form4_transactions]}, 45 s) is unchanged, but the fetch endpoint's TOTAL wall clock
+     * grows with the lookback — a 7-day insider run is ~7 x the measured 33.4 s. It stays far
+     * inside Vistierie's {@code max_run_seconds} (1800 s, see {@code InsiderDefaults}) but no
+     * longer inside {@code InsiderDefaults.FETCH_TIMEOUT_SECONDS} (60 s), which must be raised to
+     * cover 7 x 45 s before this is relied on in production — an agent-definition reset, i.e. an
+     * operational step, not a code change.
      */
     public DataSourceResult<Form4Filing> recentForm4(LocalDate from, LocalDate to) {
-        JsonNode res;
-        try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("from", from.toString()).put("to", to.toString()).put("limit", WINDOW_LIMIT);
-            res = agora.callTool("get_form4_transactions", args);
-        } catch (AgoraUnavailableException e) {
-            return DataSourceResult.unavailable(SOURCE, "agora: " + e.getMessage());
+        // Insertion-ordered SET, not a list: the merged answer must be deterministic AND
+        // duplicate-free. See the duplicate analysis on recentForm4Slice.
+        java.util.LinkedHashSet<Form4Filing> merged = new java.util.LinkedHashSet<>();
+        boolean partial = false;
+        boolean truncated = false;
+        boolean anySliceSucceeded = false;
+        String lastFailure = null;
+
+        // An inverted window is not sliced (the loop would issue zero calls and report a clean
+        // empty answer); it is forwarded verbatim and Agora decides what it means.
+        LocalDate lastDay = to.isBefore(from) ? from : to;
+        for (LocalDate day = from; !day.isAfter(lastDay); day = day.plusDays(1)) {
+            JsonNode res;
+            try {
+                res = recentForm4Slice(day, day.isBefore(to) ? day : to);
+            } catch (AgoraUnavailableException e) {
+                lastFailure = e.getMessage();
+                truncated = true;   // this day's filings are missing — never report that as clean
+                continue;
+            }
+            anySliceSucceeded = true;
+            partial |= res.path("partial").asBoolean(false);
+            truncated |= res.path("truncated").asBoolean(false);
+            mapForm4Rows(res, merged);
         }
-        List<Form4Filing> out = new ArrayList<>();
+        if (!anySliceSucceeded) return recentForm4Failure(lastFailure);
+        return degradation(partial, truncated, List.copyOf(merged), "Form-4 transactions");
+    }
+
+    /**
+     * One day-sized {@code get_form4_transactions} call.
+     *
+     * <p>On the late-filing pad and why slicing is still safe. Agora's {@code fetchForm4} runs TWO
+     * EFTS searches per call: the caller's exact filing-date window, then
+     * {@code FORM4_LATE_FILING_PAD_DAYS} = 10 filing-days after it, for trades made inside the
+     * window but filed after it closed. With one call per day those pads overlap the following
+     * slices' own windows, so:
+     * <ul>
+     *   <li>(a) YES, the same accession is fetched by more than one call — day D's pad covers
+     *       filing dates D+1..D+10, which are day D+1..D+10's own windows. That is duplicated
+     *       archive-GET budget, and it is the price of slicing: the pad exists so that a day's
+     *       LATE filings are seen at all, and a day whose late filings are never read loses
+     *       exactly the transactions the cluster screen is looking for. It costs nothing in the
+     *       common case, because a slice's hits are ordered window-first and a market-wide day
+     *       (~243 filings) already consumes most of the ~272-filing deadline before the pad hits
+     *       are reached.</li>
+     *   <li>(b) NO, it cannot produce duplicate TRANSACTIONS. Agora filters every parsed
+     *       transaction on its {@code transactionDate} against the CALLER's window
+     *       ({@code parseForm4}: skip if {@code txDate} is before {@code from} or after
+     *       {@code to}), so the day-D call can only ever emit transactions dated D — whether the
+     *       filing was found by its window search or by its pad. The slices' outputs are disjoint
+     *       by construction, which is why they may simply be concatenated.</li>
+     *   <li>(c) Handling: rely on the transaction-date filter, but do not TRUST it — collect into
+     *       a {@link java.util.LinkedHashSet}. A duplicated transaction would add a second filer
+     *       row to a ticker and manufacture a cluster that never happened, which is far worse
+     *       than dropping a byte-identical row. The dedup key is the whole {@link Form4Filing}
+     *       record (ticker + filer name + role + transaction date + shares + dollar value +
+     *       transaction code): the DTO carries no accession number, and that tuple is what
+     *       identifies a Form-4 non-derivative line — the same insider filing the same code for
+     *       the same size and the same value on the same day in the same ticker is one line,
+     *       reported twice.</li>
+     * </ul>
+     */
+    private JsonNode recentForm4Slice(LocalDate from, LocalDate to) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("from", from.toString()).put("to", to.toString()).put("limit", WINDOW_LIMIT);
+        return agora.callTool("get_form4_transactions", args);
+    }
+
+    /** Every slice threw: a genuine outage, reported as {@code unavailable} rather than as a
+     *  quiet empty answer — the hunters' "if status is unavailable, return exactly {@code
+     *  {"prey": []}}" clause depends on telling the two apart. */
+    private static DataSourceResult<Form4Filing> recentForm4Failure(String lastFailure) {
+        return DataSourceResult.unavailable(SOURCE, "agora: " + lastFailure);
+    }
+
+    private static void mapForm4Rows(JsonNode res, java.util.Collection<Form4Filing> into) {
         for (JsonNode t : res.path("transactions")) {
             try {
                 JsonNode date = t.path("transactionDate");
                 if (date.isMissingNode() || date.isNull()) continue;   // consumers require a date
                 String ticker = t.path("ticker").asString("").toUpperCase();
                 if (ticker.isEmpty()) continue;
-                out.add(new Form4Filing(
+                into.add(new Form4Filing(
                         ticker,
                         t.path("filerName").asString(""),
                         t.path("filerRole").asString(""),
@@ -76,7 +161,6 @@ public class AgoraFilings {
                         t.path("code").asString("")));
             } catch (RuntimeException ignored) { /* skip malformed row */ }
         }
-        return reportingDegradation(res, out, "Form-4 transactions");
     }
 
     /** Spin-off registrations (forms=10-12B). Ticker may be empty on fresh registrations. */
@@ -137,8 +221,14 @@ public class AgoraFilings {
      * an untouched payload looks exactly as it did before.
      */
     private static <T> DataSourceResult<T> reportingDegradation(JsonNode res, List<T> out, String what) {
-        boolean partial = res.path("partial").asBoolean(false);
-        boolean truncated = res.path("truncated").asBoolean(false);
+        return degradation(res.path("partial").asBoolean(false),
+                res.path("truncated").asBoolean(false), out, what);
+    }
+
+    /** {@link #reportingDegradation} over flags already OR-ed across several responses (the
+     *  day-sliced Form-4 fetch); same contract, same wording. */
+    private static <T> DataSourceResult<T> degradation(boolean partial, boolean truncated,
+                                                       List<T> out, String what) {
         if (!partial && !truncated) return DataSourceResult.healthy(SOURCE, out);
         return new DataSourceResult<>(out, DataSourceHealth.degraded(SOURCE,
                 (partial ? "partial: " + what + " window not fully covered" : "")

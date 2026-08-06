@@ -23,6 +23,15 @@ class InsiderDefaults {
      * (dracul.agora.tool-timeout-ms[get_form4_transactions], 45 s) — a market-wide Form-4 scan
      * measured 33.4 s on prod 2026-08-04 and its worst case is ~39 s. Pinned by
      * {@code InsiderToolTimeoutBudgetTest}. Changing it needs an agent-definition reset.
+     *
+     * <p><b>OPEN, 2026-08-06 (BUG-S1b):</b> {@code AgoraFilings.recentForm4} now issues ONE
+     * {@code get_form4_transactions} call PER DAY of the lookback. The per-CALL budget is
+     * unchanged, but a 7-day fetch spends up to 7 x 45 s = 315 s (~234 s at the measured 33.4 s)
+     * inside itself, so 60 s no longer encloses it — this value must be raised to at least 360 s
+     * before the fetch tool's timeout is relied on. It is deliberately NOT raised here: it is
+     * baked into the agent definition and changing it requires the operational
+     * agent-definition-reset procedure, not a code change. Vistierie's {@code max_run_seconds}
+     * (1800 s, below) still encloses the new total with room to spare.
      */
     static final int FETCH_TIMEOUT_SECONDS = 60;
 
