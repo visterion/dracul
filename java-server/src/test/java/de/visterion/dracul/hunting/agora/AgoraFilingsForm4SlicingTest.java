@@ -187,6 +187,41 @@ class AgoraFilingsForm4SlicingTest {
         assertThat(r.health().detail()).contains("edgar down");
     }
 
+    /**
+     * The slicing made the cost linear in the lookback, and the tool's input schema permits 30
+     * days — 31 sequential calls at up to 45 s would be ~1395 s inside ONE tool call. The cap
+     * bounds that; the days DROPPED are the oldest, and the cut is reported.
+     */
+    @Test void aWindowLongerThanTheSliceCapKeepsTheNewestDaysAndReportsTruncation() {
+        AgoraClient client = oneBuyPerDay();
+        LocalDate from = SUN.minusDays(29);                  // 30-day lookback, the schema maximum
+
+        DataSourceResult<Form4Filing> r = new AgoraFilings(client).recentForm4(from, SUN);
+
+        List<JsonNode> args = capturedArgs(client, AgoraFilings.MAX_WINDOW_SLICES);
+        assertThat(args).extracting(a -> a.path("from").asString())
+                .containsExactly("2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20",
+                        "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25",
+                        "2026-07-26");                       // the NEWEST cap days, oldest dropped
+        assertThat(r.items()).hasSize(AgoraFilings.MAX_WINDOW_SLICES);
+        assertThat(r.health().truncated()).isTrue();         // days we never looked at
+        assertThat(r.health().detail()).contains("truncated");
+        assertThat(r.health().isHealthy()).isTrue();
+    }
+
+    /** A window AT the cap is covered completely and must not be marked truncated for that. */
+    @Test void aWindowExactlyAtTheSliceCapIsNotTruncated() {
+        AgoraClient client = oneBuyPerDay();
+        LocalDate from = SUN.minusDays(AgoraFilings.MAX_WINDOW_SLICES - 1);
+
+        DataSourceResult<Form4Filing> r = new AgoraFilings(client).recentForm4(from, SUN);
+
+        List<JsonNode> args = capturedArgs(client, AgoraFilings.MAX_WINDOW_SLICES);
+        assertThat(args.get(0).path("from").asString()).isEqualTo(from.toString());
+        assertThat(r.health().truncated()).isFalse();
+        assertThat(r.health().detail()).isNull();
+    }
+
     @Test void singleDayWindowStillIssuesExactlyOneCall() {
         AgoraClient client = oneBuyPerDay();
 

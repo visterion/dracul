@@ -18,22 +18,24 @@ class InsiderDefaults {
     private static final String FETCH = "fetch_recent_clusters";
 
     /**
-     * Webhook timeout for the fetch tool, in seconds. Must stay strictly larger than the Agora
-     * budget the same request spends inside itself
-     * (dracul.agora.tool-timeout-ms[get_form4_transactions], 45 s) — a market-wide Form-4 scan
-     * measured 33.4 s on prod 2026-08-04 and its worst case is ~39 s. Pinned by
-     * {@code InsiderToolTimeoutBudgetTest}. Changing it needs an agent-definition reset.
+     * Webhook timeout for the fetch tool, in seconds. Must enclose the WHOLE Agora budget the
+     * same request spends inside itself.
      *
-     * <p><b>OPEN, 2026-08-06 (BUG-S1b):</b> {@code AgoraFilings.recentForm4} now issues ONE
-     * {@code get_form4_transactions} call PER DAY of the lookback. The per-CALL budget is
-     * unchanged, but a 7-day fetch spends up to 7 x 45 s = 315 s (~234 s at the measured 33.4 s)
-     * inside itself, so 60 s no longer encloses it — this value must be raised to at least 360 s
-     * before the fetch tool's timeout is relied on. It is deliberately NOT raised here: it is
-     * baked into the agent definition and changing it requires the operational
-     * agent-definition-reset procedure, not a code change. Vistierie's {@code max_run_seconds}
-     * (1800 s, below) still encloses the new total with room to spare.
+     * <p>Since BUG-S1b that is no longer one call: {@code AgoraFilings.recentForm4} issues one
+     * {@code get_form4_transactions} call PER DAY of the lookback, bounded by
+     * {@code AgoraFilings.MAX_WINDOW_SLICES}. The arithmetic:
+     * <pre>
+     *   10 slices x 45 000 ms  (dracul.agora.tool-timeout-ms[get_form4_transactions])
+     *   = 450 s worst case     (~334 s at the 33.4 s per call measured on prod 2026-08-04)
+     *   600 s declared here    -> 150 s / 33% headroom, and a third of the run budget below
+     * </pre>
+     * Vistierie's {@code max_run_seconds} for strigoi-insider (1800 s, see the definition below)
+     * encloses that with room for the reasoning turns. Pinned by
+     * {@code InsiderToolTimeoutBudgetTest}, which asserts the RELATIONSHIP (slice cap x the
+     * CONFIGURED Agora budget < this value) rather than a remembered number, so the three cannot
+     * drift apart. Changing this value needs an agent-definition reset.
      */
-    static final int FETCH_TIMEOUT_SECONDS = 60;
+    static final int FETCH_TIMEOUT_SECONDS = 600;
 
     @Bean
     AgentDefaultProvider insiderDefaultProvider(

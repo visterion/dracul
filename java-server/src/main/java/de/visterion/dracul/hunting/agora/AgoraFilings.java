@@ -35,6 +35,31 @@ public class AgoraFilings {
      *  production. Ask for the tool's maximum instead (Agora {@code MAX_LIMIT} on both tools). */
     private static final int WINDOW_LIMIT = 1000;
 
+    /**
+     * How many day-sized {@code get_form4_transactions} calls ONE {@link #recentForm4} may issue.
+     *
+     * <p>Day-slicing made the cost LINEAR in the caller's window, and the insider fetch tool's
+     * input schema permits {@code lookback_days} up to 30 — 31 sequential calls at up to 45 s each
+     * is ~1395 s inside a single tool call, against Vistierie's 1800 s {@code max_run_seconds} for
+     * the WHOLE run. So the slice count is capped rather than the schema narrowed: the caller keeps
+     * its contract and an answer that covered fewer days than asked says so via
+     * {@code truncated=true} instead of looking complete.
+     *
+     * <p>The arithmetic that fixes the number, from the outside in:
+     * <pre>
+     *   1800 s  Vistierie max_run_seconds for strigoi-insider (the whole run: fetch + reasoning)
+     *    600 s  InsiderDefaults.FETCH_TIMEOUT_SECONDS — a third of the run budget, so the fetch
+     *           cannot starve the reasoning turns even at its worst case
+     *    450 s  10 slices x 45 s (dracul.agora.tool-timeout-ms[get_form4_transactions]) — the
+     *           worst case, leaving 150 s / 33% headroom inside the webhook timeout
+     * </pre>
+     * Pinned by {@code InsiderToolTimeoutBudgetTest}: {@code MAX_WINDOW_SLICES x the CONFIGURED
+     * Agora budget} must stay below {@code FETCH_TIMEOUT_SECONDS}, so the three numbers cannot
+     * drift apart. Ten days also comfortably covers the hunter's 7-day default and the 10-day
+     * late-filing pad that Agora searches per slice.
+     */
+    public static final int MAX_WINDOW_SLICES = 10;
+
     private final AgoraClient agora;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -60,12 +85,10 @@ public class AgoraFilings {
      * {@link #recentForm4Failure}.
      *
      * <p>Cost: the per-CALL Agora budget ({@code dracul.agora.tool-timeout-ms
-     * [get_form4_transactions]}, 45 s) is unchanged, but the fetch endpoint's TOTAL wall clock
-     * grows with the lookback — a 7-day insider run is ~7 x the measured 33.4 s. It stays far
-     * inside Vistierie's {@code max_run_seconds} (1800 s, see {@code InsiderDefaults}) but no
-     * longer inside {@code InsiderDefaults.FETCH_TIMEOUT_SECONDS} (60 s), which must be raised to
-     * cover 7 x 45 s before this is relied on in production — an agent-definition reset, i.e. an
-     * operational step, not a code change.
+     * [get_form4_transactions]}, 45 s) is unchanged, but the fetch endpoint's TOTAL wall clock is
+     * now LINEAR in the window — which is why at most {@link #MAX_WINDOW_SLICES} days are fetched
+     * (see there for the 1800/600/450 s arithmetic). A longer window keeps its NEWEST
+     * {@code MAX_WINDOW_SLICES} days and is reported {@code truncated=true}.
      */
     public DataSourceResult<Form4Filing> recentForm4(LocalDate from, LocalDate to) {
         // Insertion-ordered SET, not a list: the merged answer must be deterministic AND
@@ -79,7 +102,17 @@ public class AgoraFilings {
         // An inverted window is not sliced (the loop would issue zero calls and report a clean
         // empty answer); it is forwarded verbatim and Agora decides what it means.
         LocalDate lastDay = to.isBefore(from) ? from : to;
-        for (LocalDate day = from; !day.isAfter(lastDay); day = day.plusDays(1)) {
+        // Over the cap the OLDEST days are dropped, not the newest: the hunter looks for RECENT
+        // insider clusters, so the days nearest `to` are the ones its threshold can still fire on,
+        // and Agora's own cut inside a slice already works this way (EFTS returns file_date
+        // descending, so a deadline cut drops the oldest filings of the range). Dropping newest
+        // instead would hand the hunter a stale window while its freshest signal went unread.
+        LocalDate firstDay = from;
+        if (from.plusDays(MAX_WINDOW_SLICES - 1L).isBefore(lastDay)) {
+            firstDay = lastDay.minusDays(MAX_WINDOW_SLICES - 1L);
+            truncated = true;   // days the caller asked for that were never looked at
+        }
+        for (LocalDate day = firstDay; !day.isAfter(lastDay); day = day.plusDays(1)) {
             JsonNode res;
             try {
                 res = recentForm4Slice(day, day.isBefore(to) ? day : to);
