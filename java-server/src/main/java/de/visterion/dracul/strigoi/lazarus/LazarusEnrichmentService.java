@@ -37,11 +37,15 @@ import java.util.List;
  *  (price vs 50-day MA, weeks since the 52-week closing low, ~3-month momentum) computed from
  *  ONE Agora daily-OHLC query (~260 trading days) per candidate, so the LLM can tell a falling
  *  knife from base building instead of guessing from {@code pctAboveLow} alone. Fail-soft per
- *  candidate; an <em>availability</em> failure ({@link AgoraUnavailableException} or
- *  {@link MarketDataException} of kind UNAVAILABLE — as opposed to a symbol-specific
- *  NOT_FOUND) marks the OHLC source down for the remaining candidates of the batch, mirroring
- *  the insider-enrichment latency guard (a dead Agora call burns ~16s of the webhook's 30s
- *  budget).
+ *  candidate; every source is behind its own {@link EnrichmentSourceGuard}, which declares it
+ *  down for the remaining candidates of the batch only when Agora produced no answer at all
+ *  ({@link AgoraUnavailableException.Scope#SOURCE}, or a {@link MarketDataException} of kind
+ *  UNAVAILABLE from a non-Agora feed) or answered with a per-request error for
+ *  {@value EnrichmentSourceGuard#MAX_CONSECUTIVE_REQUEST_FAILURES} candidates in a row. That
+ *  guard exists for latency (a dead Agora call burns ~16s of the webhook's 30s budget) — but a
+ *  SINGLE per-request error (an unknown symbol, an unresolvable issuer) is a statement about
+ *  that ONE candidate and degrades nothing else; reading it as an outage is what switched the
+ *  insider enrichment off for a whole run on 2026-08-06.
  *
  *  <p>Surviving candidates finally get a classic Altman Z-Score ({@link AltmanZCalculator})
  *  as a distress screen, fail-soft to {@code zScoreAvailable=false}. Z is attempted for every
@@ -49,8 +53,12 @@ import java.util.List;
  *  F-score, since non-US names often carry a sparse/absent F-score while their concept balance
  *  sheet is fully present, and gating Z on the F-score would starve the distress screen abroad.
  *  Post-A2 a data-less symbol comes back as ok-empty concepts (an unavailable Z that does NOT
- *  throw), so only a genuine {@link AgoraUnavailableException} during the Z concept fetches marks
- *  the concept source down for the remaining candidates of the batch (mirroring the OHLC guard).
+ *  throw), so it never reaches the concept guard at all.
+ *
+ *  <p>Every candidate that loses at least one source — whether from its own failed lookup or
+ *  because the source was already down — is counted into
+ *  {@link EnrichedLazarusBatch#degradedCandidates}, so the loss reaches
+ *  {@code data_source_health} as {@code partial} instead of leaving only a DEBUG line.
  *
  *  <p>Finally each surviving candidate gets the echo SP3 forward-revisions read from ONE
  *  additional recommendation-trend call ({@link AgoraCompanyData#recommendationsStrict} —
@@ -101,7 +109,7 @@ public class LazarusEnrichmentService {
         }
     }
 
-    public List<EnrichedLazarusCandidate> enrich(List<LazarusCandidate> candidates) {
+    public EnrichedLazarusBatch enrich(List<LazarusCandidate> candidates) {
         List<LazarusCandidate> bounded = candidates.stream()
                 .sorted(Comparator.comparingDouble(LazarusCandidate::pctAboveLow))
                 .limit(MAX_CANDIDATES)
@@ -111,22 +119,25 @@ public class LazarusEnrichmentService {
                     candidates.size(), MAX_CANDIDATES, candidates.size() - MAX_CANDIDATES);
         }
         var out = new ArrayList<EnrichedLazarusCandidate>();
-        boolean scoreDown = false;
-        boolean conceptsDown = false;
+        int degradedCandidates = 0;
+        var score = EnrichmentSourceGuard.forSource("lazarus", "candidates", "fundamental score");
         var ohlc = EnrichmentSourceGuard.forSource("lazarus", "candidates", "ohlc");
+        var concepts = EnrichmentSourceGuard.forSource("lazarus", "candidates", "concepts (altman-z)");
         var revisions = EnrichmentSourceGuard.forSource("lazarus", "candidates", "recommendations");
         for (LazarusCandidate c : bounded) {
+            boolean degraded = false;
             FundamentalScore s = FundamentalScore.unavailable();
-            if (!scoreDown) {
+            if (!score.isDown()) {
                 try {
                     s = filings.fundamentalScoreStrict(c.symbol());
-                } catch (AgoraUnavailableException e) {
-                    scoreDown = true;
-                    log.warn("lazarus enrichment: fundamental-score source down ({}), skipping it "
-                            + "for the remaining candidates", e.getMessage());
+                    score.recordSuccess();
                 } catch (RuntimeException e) {
+                    score.recordFailure(e);
+                    degraded = true;
                     log.debug("lazarus enrichment: fundamental score unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
+            } else {
+                degraded = true;
             }
             if (s.cfoExceedsNetIncomeAvailable() && !s.cfoExceedsNetIncome()) {
                 log.debug("lazarus enrichment dropped {}: cfo does not exceed net income (accruals)", c.symbol());
@@ -139,8 +150,11 @@ public class LazarusEnrichmentService {
                     ohlc.recordSuccess();
                 } catch (RuntimeException e) {
                     ohlc.recordFailure(e);
+                    degraded = true;
                     log.debug("lazarus enrichment: ohlc history unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
+            } else {
+                degraded = true;
             }
             AltmanZCalculator.AltmanZ z = AltmanZCalculator.AltmanZ.unavailable();
             // Z is decoupled from the F-score (Task B3): attempt it whenever the concept source is
@@ -150,16 +164,17 @@ public class LazarusEnrichmentService {
             // symbol returns ok-empty concepts (an unavailable Z that does NOT throw), so an
             // absent-data candidate can no longer false-trip the source-down guard the way an
             // exception would.
-            if (!conceptsDown) {
+            if (!concepts.isDown()) {
                 try {
                     z = altmanZ.zScore(c.symbol(), c.marketCap(), c.reportingCurrency());
-                } catch (AgoraUnavailableException e) {
-                    conceptsDown = true;
-                    log.warn("lazarus enrichment: concept source down ({}), skipping altman-z "
-                            + "for the remaining candidates", e.getMessage());
+                    concepts.recordSuccess();
                 } catch (RuntimeException e) {
+                    concepts.recordFailure(e);
+                    degraded = true;
                     log.debug("lazarus enrichment: altman-z unavailable for {}: {}", c.symbol(), e.getMessage());
                 }
+            } else {
+                degraded = true;
             }
             EarningsRevisions rev = EarningsRevisions.unavailable();
             AnalystCoverage cov = AnalystCoverage.of(List.of());
@@ -171,10 +186,14 @@ public class LazarusEnrichmentService {
                     revisions.recordSuccess();
                 } catch (RuntimeException e) {
                     revisions.recordFailure(e);
+                    degraded = true;
                     log.debug("lazarus enrichment: recommendations unavailable for {}: {}",
                             c.symbol(), e.getMessage());
                 }
+            } else {
+                degraded = true;
             }
+            if (degraded) degradedCandidates++;
             out.add(new EnrichedLazarusCandidate(
                     c.symbol(), c.companyName(), c.currentPrice(), c.week52Low(), c.week52High(),
                     c.pctAboveLow(), c.roaTtm(), c.currentRatio(), c.debtToEquity(), c.grossMargin(),
@@ -185,7 +204,11 @@ public class LazarusEnrichmentService {
                     z.zScore(), z.available(),
                     rev.netProxy(), rev.direction(), cov.coverage(), rev.available()));
         }
-        return out;
+        if (degradedCandidates > 0) {
+            log.info("lazarus enrichment: {} of {} candidates lost at least one enrichment source",
+                    degradedCandidates, out.size());
+        }
+        return new EnrichedLazarusBatch(List.copyOf(out), degradedCandidates);
     }
 
     /** All three timing signals from one oldest-first daily-OHLC series; bars without a

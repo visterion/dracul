@@ -99,7 +99,7 @@ class LazarusEnrichmentServiceTest {
     void mapsFundamentalScoreOntoCandidate() {
         when(filings.fundamentalScoreStrict("ACME")).thenReturn(GOOD_SCORE);
 
-        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("ACME")));
+        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("ACME"))).candidates();
 
         assertThat(out).hasSize(1);
         EnrichedLazarusCandidate e = out.get(0);
@@ -116,7 +116,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("BADCO")).thenReturn(new FundamentalScore(
                 3, 8, BigDecimal.valueOf(0.15), false, true, true));
 
-        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("BADCO")));
+        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("BADCO"))).candidates();
 
         assertThat(out).isEmpty();
         // a hard-dropped candidate costs no further remote calls: no OHLC, no recommendations
@@ -129,7 +129,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("NOACCR")).thenReturn(new FundamentalScore(
                 5, 6, null, false, false, true));
 
-        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NOACCR")));
+        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NOACCR"))).candidates();
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).symbol()).isEqualTo("NOACCR");
@@ -141,7 +141,7 @@ class LazarusEnrichmentServiceTest {
     void keepsCandidateWithZeroScoreWhenFundamentalScoreUnavailable() {
         when(filings.fundamentalScoreStrict("NODATA")).thenReturn(FundamentalScore.unavailable());
 
-        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NODATA")));
+        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NODATA"))).candidates();
 
         assertThat(out).hasSize(1);
         EnrichedLazarusCandidate e = out.get(0);
@@ -155,7 +155,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("STAB")).thenReturn(GOOD_SCORE);
         when(marketData.dailyOhlcHistory(eq("STAB"), anyInt())).thenReturn(stabilizingBars());
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("STAB"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("STAB"))).candidates().get(0);
 
         assertThat(e.priceVs50dMa()).isEqualByComparingTo("-0.0307");
         assertThat(e.weeksSinceNewLow()).isEqualTo(6);
@@ -174,7 +174,7 @@ class LazarusEnrichmentServiceTest {
                 BigDecimal.TEN, 1_000_000L));
         when(marketData.dailyOhlcHistory(eq("FRESH"), anyInt())).thenReturn(bars);
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("FRESH"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("FRESH"))).candidates().get(0);
 
         assertThat(e.weeksSinceNewLow()).isZero();
         assertThat(e.timingAvailable()).isTrue();
@@ -186,7 +186,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("THIN"), anyInt()))
                 .thenReturn(flatBars(40, BigDecimal.TEN, LocalDate.now()));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("THIN"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("THIN"))).candidates().get(0);
 
         assertThat(e.priceVs50dMa()).isNull();
         assertThat(e.weeksSinceNewLow()).isNull();
@@ -200,7 +200,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("MAONLY"), anyInt()))
                 .thenReturn(flatBars(60, BigDecimal.TEN, LocalDate.now()));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("MAONLY"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("MAONLY"))).candidates().get(0);
 
         assertThat(e.priceVs50dMa()).isEqualByComparingTo("0.0000"); // flat series: on the MA
         assertThat(e.momentum3m()).isNull();
@@ -214,7 +214,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("MIDLEN"), anyInt()))
                 .thenReturn(flatBars(100, BigDecimal.TEN, LocalDate.now()));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("MIDLEN"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("MIDLEN"))).candidates().get(0);
 
         assertThat(e.priceVs50dMa()).isEqualByComparingTo("0.0000");
         assertThat(e.momentum3m()).isEqualByComparingTo("0.0000");
@@ -228,7 +228,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("NOHLC"), anyInt()))
                 .thenThrow(new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "outage"));
 
-        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NOHLC")));
+        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NOHLC"))).candidates();
 
         assertThat(out).hasSize(1);
         EnrichedLazarusCandidate e = out.get(0);
@@ -246,7 +246,7 @@ class LazarusEnrichmentServiceTest {
                 .thenThrow(new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "outage"));
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("AAA"), candidate("BBB")));
+                service.enrich(List.of(candidate("AAA"), candidate("BBB"))).candidates();
 
         // the down source is queried exactly once, then skipped for the rest of the batch
         verify(marketData, times(1)).dailyOhlcHistory(anyString(), anyInt());
@@ -264,7 +264,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("EDGE50"), anyInt()))
                 .thenReturn(flatBars(50, BigDecimal.TEN, LocalDate.now()));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("EDGE50"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("EDGE50"))).candidates().get(0);
 
         assertThat(e.priceVs50dMa()).isEqualByComparingTo("0.0000"); // inclusive boundary
         assertThat(e.momentum3m()).isNull();
@@ -277,7 +277,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("EDGE63"), anyInt()))
                 .thenReturn(flatBars(63, BigDecimal.TEN, LocalDate.now()));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("EDGE63"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("EDGE63"))).candidates().get(0);
 
         assertThat(e.momentum3m()).isEqualByComparingTo("0.0000"); // inclusive boundary
         assertThat(e.priceVs50dMa()).isEqualByComparingTo("0.0000");
@@ -290,7 +290,7 @@ class LazarusEnrichmentServiceTest {
         when(marketData.dailyOhlcHistory(eq("EDGE252"), anyInt()))
                 .thenReturn(flatBars(252, BigDecimal.TEN, LocalDate.now()));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("EDGE252"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("EDGE252"))).candidates().get(0);
 
         assertThat(e.weeksSinceNewLow()).isZero(); // inclusive boundary; flat ties -> latest bar
         assertThat(e.priceVs50dMa()).isEqualByComparingTo("0.0000");
@@ -307,7 +307,7 @@ class LazarusEnrichmentServiceTest {
                 .thenReturn(flatBars(260, BigDecimal.TEN, LocalDate.now()));
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("GONE"), candidate("HERE")));
+                service.enrich(List.of(candidate("GONE"), candidate("HERE"))).candidates();
 
         verify(marketData, times(1)).dailyOhlcHistory(eq("GONE"), anyInt());
         verify(marketData, times(1)).dailyOhlcHistory(eq("HERE"), anyInt());
@@ -326,7 +326,7 @@ class LazarusEnrichmentServiceTest {
         when(altmanZ.zScore(eq("ACME"), eq(900.0), any()))
                 .thenReturn(new AltmanZCalculator.AltmanZ(new BigDecimal("3.40"), true));
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("ACME"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("ACME"))).candidates().get(0);
 
         assertThat(e.zScore()).isEqualByComparingTo("3.40");
         assertThat(e.zScoreAvailable()).isTrue();
@@ -338,7 +338,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("NODATA")).thenReturn(FundamentalScore.unavailable());
         // setUp default: altmanZ -> unavailable (post-A2 ok-empty concepts never throw)
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("NODATA"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("NODATA"))).candidates().get(0);
 
         // Task B3: Z is decoupled from the F-score — a sparse/absent F-score (common for non-US
         // names whose concept balance sheets are still present) must NOT suppress the Z attempt
@@ -352,7 +352,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("NOZ")).thenReturn(GOOD_SCORE);
         // setUp default: altmanZ -> unavailable
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("NOZ"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("NOZ"))).candidates().get(0);
 
         assertThat(e.zScore()).isNull();
         assertThat(e.zScoreAvailable()).isFalse();
@@ -365,7 +365,7 @@ class LazarusEnrichmentServiceTest {
         when(altmanZ.zScore(anyString(), any(), any())).thenThrow(new AgoraUnavailableException("down"));
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("AAA"), candidate("BBB")));
+                service.enrich(List.of(candidate("AAA"), candidate("BBB"))).candidates();
 
         // the down source is probed exactly once, then skipped for the rest of the batch
         verify(altmanZ, times(1)).zScore(anyString(), any(), any());
@@ -389,7 +389,7 @@ class LazarusEnrichmentServiceTest {
                 .thenReturn(new AltmanZCalculator.AltmanZ(new BigDecimal("2.10"), true));
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("BOOM"), candidate("FINE")));
+                service.enrich(List.of(candidate("BOOM"), candidate("FINE"))).candidates();
 
         assertThat(out.get(0).zScoreAvailable()).isFalse(); // fail-soft, candidate kept
         assertThat(out.get(1).zScore()).isEqualByComparingTo("2.10"); // source not disabled
@@ -402,7 +402,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict(anyString())).thenThrow(new AgoraUnavailableException("down"));
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("AAA"), candidate("BBB")));
+                service.enrich(List.of(candidate("AAA"), candidate("BBB"))).candidates();
 
         // the down source is probed exactly once, then skipped for the rest of the batch
         verify(filings, times(1)).fundamentalScoreStrict(anyString());
@@ -427,7 +427,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("FINE")).thenReturn(GOOD_SCORE);
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("BOOM"), candidate("FINE")));
+                service.enrich(List.of(candidate("BOOM"), candidate("FINE"))).candidates();
 
         verify(filings, times(2)).fundamentalScoreStrict(anyString()); // source not disabled
         assertThat(out.get(0).fScore()).isZero();     // fail-soft, candidate kept
@@ -455,7 +455,7 @@ class LazarusEnrichmentServiceTest {
         when(companyData.recommendationsStrict("DOWN")).thenReturn(DOWN_TREND);
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("UP", 0.01), candidate("DOWN", 0.02)));
+                service.enrich(List.of(candidate("UP", 0.01), candidate("DOWN", 0.02))).candidates();
 
         EnrichedLazarusCandidate up = out.get(0);
         assertThat(up.netEstimateRevisionsProxy()).isEqualTo(5);
@@ -476,7 +476,7 @@ class LazarusEnrichmentServiceTest {
         when(filings.fundamentalScoreStrict("NOTREND")).thenReturn(GOOD_SCORE);
         // setUp default: companyData unstubbed -> empty trend list
 
-        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NOTREND")));
+        List<EnrichedLazarusCandidate> out = service.enrich(List.of(candidate("NOTREND"))).candidates();
 
         assertThat(out).hasSize(1);
         EnrichedLazarusCandidate e = out.get(0);
@@ -493,7 +493,7 @@ class LazarusEnrichmentServiceTest {
         when(companyData.recommendationsStrict(anyString())).thenThrow(new AgoraUnavailableException("down"));
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("AAA"), candidate("BBB")));
+                service.enrich(List.of(candidate("AAA"), candidate("BBB"))).candidates();
 
         // the down source is probed exactly once, then skipped for the rest of the batch
         verify(companyData, times(1)).recommendationsStrict(anyString());
@@ -517,7 +517,7 @@ class LazarusEnrichmentServiceTest {
         when(companyData.recommendationsStrict("FINE")).thenReturn(UP_TREND);
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("BOOM", 0.01), candidate("FINE", 0.02)));
+                service.enrich(List.of(candidate("BOOM", 0.01), candidate("FINE", 0.02))).candidates();
 
         verify(companyData, times(2)).recommendationsStrict(anyString()); // source not disabled
         assertThat(out.get(0).revisionsAvailable()).isFalse(); // fail-soft, candidate kept
@@ -540,7 +540,7 @@ class LazarusEnrichmentServiceTest {
             List<LazarusCandidate> candidates = new ArrayList<>();
             for (int i = 0; i < 30; i++) candidates.add(candidate("SYM" + i, 0.001 * i));
 
-            List<EnrichedLazarusCandidate> out = service.enrich(candidates);
+            List<EnrichedLazarusCandidate> out = service.enrich(candidates).candidates();
 
             assertThat(out).hasSize(25);
             // sorted ASCENDING by pctAboveLow: SYM0..SYM24 (closest to the low) survive,
@@ -570,7 +570,7 @@ class LazarusEnrichmentServiceTest {
             List<LazarusCandidate> candidates = new ArrayList<>();
             for (int i = 0; i < 25; i++) candidates.add(candidate("SYM" + i, 0.001 * i));
 
-            assertThat(service.enrich(candidates)).hasSize(25); // inclusive boundary
+            assertThat(service.enrich(candidates).candidates()).hasSize(25); // inclusive boundary
             assertThat(appender.list).noneMatch(ev -> ev.getFormattedMessage().contains("cap"));
         } finally {
             logger.detachAppender(appender);

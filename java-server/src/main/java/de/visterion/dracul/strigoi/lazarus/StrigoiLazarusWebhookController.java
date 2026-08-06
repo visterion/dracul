@@ -57,7 +57,8 @@ import java.util.stream.Collectors;
  * size, where it used to be ~503) + at most {@code fundamentals-max} fundamentals calls.
  *
  * <p><b>Nothing is lost quietly.</b> Pre-filter probe failures, missing fundamentals, a missing
- * 52-week low, enrichment drops, a spent pre-filter budget and both caps are counted and folded
+ * 52-week low, enrichment drops, candidates that came back missing an enrichment source, a spent
+ * pre-filter budget and both caps are counted and folded
  * into {@code partial} / {@code truncated} via {@link DataSourceHealth#degradedWith}. The
  * candidates that were found are always kept — the flags say "what you see is incomplete", not
  * "you saw nothing".
@@ -277,7 +278,12 @@ public class StrigoiLazarusWebhookController extends HuntController {
             raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
         }
         var screened = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
-        var enriched = enrichment.enrich(screened);
+        var batch = enrichment.enrich(screened);
+        var enriched = batch.candidates();
+        // Two DIFFERENT losses, deliberately on two counters: enrichmentDropped are candidates that
+        // are GONE (accruals hard-drop, enrichment cap) — a size difference; degradedCandidates are
+        // candidates still in the list that came back missing a source, which a size difference
+        // cannot see.
         int enrichmentDropped = screened.size() - enriched.size();
 
         // notEligible sits next to probeFailed on purpose: the two numbers used to be one, and an
@@ -285,14 +291,16 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // three young listings and nothing broken.
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
                         + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
-                        + "noFundamentals={} no52wLow={} enrichmentDropped={} unscreened={} sourceDown={})",
+                        + "noFundamentals={} no52wLow={} enrichmentDropped={} enrichmentDegraded={} "
+                        + "unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
                 scan.notEligible(), fundamentalsMissing, week52Missing, enrichmentDropped,
-                scan.unscreened(), scan.sourceDown());
+                batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,
-                fundamentalsCapDropped, fundamentalsMissing, week52Missing, enrichmentDropped));
+                fundamentalsCapDropped, fundamentalsMissing, week52Missing, enrichmentDropped,
+                batch.degradedCandidates()));
     }
 
     /**
@@ -304,7 +312,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
      */
     private DataSourceHealth health(String indexDetail, LazarusUniverseService.Scan scan,
                                     int universeCapDropped, int fundamentalsCapDropped,
-                                    int fundamentalsMissing, int week52Missing, int enrichmentDropped) {
+                                    int fundamentalsMissing, int week52Missing, int enrichmentDropped,
+                                    int enrichmentDegraded) {
         DataSourceHealth h = DataSourceHealth.healthy(SOURCE);
         if (indexDetail != null) {
             h = DataSourceHealth.degradedWith(h,
@@ -357,6 +366,13 @@ public class StrigoiLazarusWebhookController extends HuntController {
         if (enrichmentDropped > 0) {
             h = DataSourceHealth.degradedWith(h,
                     enrichmentDropped + " screened candidates dropped during enrichment", true, false);
+        }
+        // A candidate that lost only SOME of its enrichment is still returned, so the size-based
+        // enrichmentDropped above cannot see it. Reported as partial ("what you see is
+        // incomplete"), never as a drop — the candidate is there, some of its fields are not.
+        if (enrichmentDegraded > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    enrichmentDegraded + " candidates lost at least one enrichment source", true, false);
         }
         return h;
     }

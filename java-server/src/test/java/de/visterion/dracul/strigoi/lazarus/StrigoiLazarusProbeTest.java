@@ -47,7 +47,7 @@ class StrigoiLazarusProbeTest {
         companyData = mock(AgoraCompanyData.class);
         var screener = new LazarusScreener();
         var enrichment = mock(LazarusEnrichmentService.class);
-        when(enrichment.enrich(any())).thenReturn(List.of());
+        when(enrichment.enrich(any())).thenReturn(new EnrichedLazarusBatch(List.of(), 0));
         var index = mock(AgoraIndexConstituents.class);
         var priceRange = mock(AgoraPriceRange.class);
         var preyRepo = mock(PreyRepository.class);

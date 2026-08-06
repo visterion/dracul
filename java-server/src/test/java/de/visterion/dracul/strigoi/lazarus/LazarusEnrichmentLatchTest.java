@@ -51,7 +51,7 @@ class LazarusEnrichmentLatchTest {
         when(filings.fundamentalScoreStrict("SPARSE")).thenReturn(FundamentalScore.unavailable());
         when(altmanZ.zScore(anyString(), any(), any())).thenReturn(Z_OK);
 
-        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("SPARSE"))).get(0);
+        EnrichedLazarusCandidate e = service.enrich(List.of(candidate("SPARSE"))).candidates().get(0);
 
         verify(altmanZ, times(1)).zScore(eq("SPARSE"), any(), any());
         assertThat(e.zScoreAvailable()).isTrue();
@@ -67,7 +67,7 @@ class LazarusEnrichmentLatchTest {
         when(altmanZ.zScore(eq("LATER"), any(), any())).thenReturn(Z_OK);
 
         List<EnrichedLazarusCandidate> out =
-                service.enrich(List.of(candidate("EMPTY"), candidate("LATER")));
+                service.enrich(List.of(candidate("EMPTY"), candidate("LATER"))).candidates();
 
         // an ok-empty (non-throwing) unavailable must not trip the source-down latch
         verify(altmanZ, times(1)).zScore(eq("EMPTY"), any(), any());

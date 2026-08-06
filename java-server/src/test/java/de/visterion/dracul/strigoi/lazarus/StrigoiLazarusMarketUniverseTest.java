@@ -64,7 +64,8 @@ class StrigoiLazarusMarketUniverseTest {
         enrichment = mock(LazarusEnrichmentService.class);
         when(enrichment.enrich(any())).thenAnswer(i -> {
             List<LazarusCandidate> in = i.getArgument(0);
-            return in.stream().map(StrigoiLazarusMarketUniverseTest::enriched).toList();
+            return new EnrichedLazarusBatch(
+                    in.stream().map(StrigoiLazarusMarketUniverseTest::enriched).toList(), 0);
         });
 
         when(watchlist.findAllByUser("default")).thenReturn(List.of());
@@ -237,6 +238,31 @@ class StrigoiLazarusMarketUniverseTest {
 
         assertThat(result.health().partial()).isTrue();
         assertThat(result.health().detail()).contains("52-week low");
+    }
+
+    /** A candidate that came back MISSING an enrichment source is still a candidate, so the
+     *  size-based {@code enrichmentDropped} counter cannot see it. It reaches the health through
+     *  {@code EnrichedLazarusBatch.degradedCandidates()} instead — as partial, never as a drop. */
+    @Test
+    void candidatesThatLostAnEnrichmentSourceAreReportedAsPartial() {
+        indexReturns("ACME");
+        nearLow("ACME");
+        when(companyData.fundamentals("ACME")).thenReturn(goodFundamentals());
+        // doAnswer, not when(...): re-stubbing with when() would CALL the mock and re-enter the
+        // setUp answer with a null argument.
+        doAnswer(i -> {
+            List<LazarusCandidate> in = i.getArgument(0);
+            return new EnrichedLazarusBatch(
+                    in.stream().map(StrigoiLazarusMarketUniverseTest::enriched).toList(), 1);
+        }).when(enrichment).enrich(any());
+
+        var result = controller.hunt(Map.of());
+
+        assertThat(result.items()).hasSize(1);                 // the candidate is kept
+        assertThat(result.health().isHealthy()).isTrue();
+        assertThat(result.health().partial()).isTrue();
+        assertThat(result.health().truncated()).isFalse();
+        assertThat(result.health().detail()).contains("lost at least one enrichment source");
     }
 
     @Test
