@@ -143,7 +143,10 @@ public class StrigoiLazarusWebhookController extends HuntController {
             @Value("${dracul.strigoi.lazarus.universe-source:sp500}") String universeSource,
             @Value("${dracul.strigoi.lazarus.universe-max:600}") int universeMax,
             @Value("${dracul.strigoi.lazarus.pre-filter-margin:0.25}") double preFilterMargin,
-            @Value("${dracul.strigoi.lazarus.pre-filter-budget-ms:150000}") long preFilterBudgetMs,
+            // Fallback matches application.yaml's 240000 on purpose: the yaml always wins in a real
+            // deployment, so a differing literal here is dead config that only misleads whoever reads
+            // it looking for the effective value.
+            @Value("${dracul.strigoi.lazarus.pre-filter-budget-ms:240000}") long preFilterBudgetMs,
             @Value("${dracul.strigoi.lazarus.max-consecutive-dead-chunks:2}") int maxConsecutiveDeadChunks,
             @Value("${dracul.strigoi.lazarus.fundamentals-max:60}") int fundamentalsMax) {
         super(token, preyRepo, cache, memory, memoryLinks);
