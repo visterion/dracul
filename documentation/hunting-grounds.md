@@ -120,25 +120,28 @@ consumed through five neutral domain facades in
   `AgoraEarnings.recent`. Before 2026-08-04 they sent no `limit` and always
   reported `healthy`: a market-wide Form-4 window silently arrived cut at 100
   rows out of several thousand filings, and a 20-day and a 90-day merger window
-  returned an identical candidate list. **`recentForm4` is sliced per day since
-  2026-08-06** — Agora fetches one EDGAR archive document per hit under a
-  fair-use throttle and its own aggregate deadline, so a single call reads only a
-  few hundred filings whatever `limit` is passed (~272 per call and ~243 per day
-  are DERIVED from Agora's pacing arithmetic, not yet measured on prod; the
-  ~1,697 filings a market-wide week holds was measured 2026-08-04). The
-  window is therefore split into one `get_form4_transactions` call PER DAY and
-  merged: `partial`/`truncated` are OR-ed across every slice (one cut day marks
-  the whole answer truncated), a single slice failing keeps the other days and
-  marks the result truncated, and only ALL slices failing degrades to
-  `unavailable`. Transactions are collected into a set keyed on the whole
-  `Form4Filing` record, so a filing that Agora's 10-day late-filing pad reports
-  under two slices cannot be counted twice. Cost: the per-CALL Agora budget is
-  unchanged (45 s) but the fetch endpoint's total wall clock is one call per day
-  of the (inclusive) window, capped at `MAX_WINDOW_SLICES` = 10. A caller may
-  state its own slice budget: `DaywalkerEventEngine` passes **1**, so the
-  intraday poll costs exactly one Agora call however many UTC dates its window
-  spans — its whole poll lives inside a 60 s budget, and inheriting the nightly
-  hunter's would blow it on the first poll of every trading day. Also `ownerHistoryStrict`
+  returned an identical candidate list. **`recentForm4` is fetched as a
+  receding walk since 2026-08-06** — Agora fetches one EDGAR archive document
+  per hit under a fair-use throttle and its own aggregate deadline, so a single
+  call reads only the newest ~272 filings of its window whatever `limit` is
+  passed. A NARROW window is the worst place to spend that: measured on
+  production 2026-08-05, a one-day window returned 13 transactions where the
+  8-day window returned 676, of which 191 were dated inside that same single day
+  (EFTS orders by `file_date` descending and SEC §16(a) grants two business
+  days, so a day's filings mostly report earlier trades, which the
+  transaction-date filter discards). So `from` stays fixed and only `to` recedes
+  (2 days per call, from the smallest measured reach), each call keeping every
+  filing it reads inside the caller's window; the calls overlap deliberately and
+  are merged into a set keyed on the whole `Form4Filing` record. `partial` is
+  OR-ed across the calls, while `truncated` means the WALK did not reach `from`
+  (budget exhausted or a call failed) rather than that some call was cut — every
+  call of this walk is cut by construction. Only ALL calls failing degrades to
+  `unavailable`. Cost: the per-call Agora budget is unchanged (45 s); the
+  default 8-day insider window costs four calls, capped at `MAX_WINDOW_SLICES` =
+  10. A caller may state its own budget: `DaywalkerEventEngine` passes **1**, so
+  the intraday poll is one wide call over its whole window — its poll lives
+  inside a 60 s budget, and a narrow window would also be the low-yield shape
+  described above. Also `ownerHistoryStrict`
   (`get_form4_owner_history` — multi-year per-owner Form-4 history for the
   strigoi-insider routine/opportunistic classification; strict, propagates
   `AgoraUnavailableException` for the batch source-down guard), `concept` /

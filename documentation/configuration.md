@@ -110,17 +110,16 @@ EDGAR forms token was corrected and the result set grew from 42 to 1 697 hits.
 own worst case.
 
 This budget is **per call**. Since 2026-08-06 `AgoraFilings.recentForm4` slices
-its window into one `get_form4_transactions` call per DAY (a single call reads
-~272 filings — derived from Agora's pacing, not yet measured on prod — while a
-market-wide week holds ~1,697), so the insider fetch endpoint's total wall clock
-is linear in the lookback. The window is inclusive on both ends, so the default
-`lookback_days=7` is **eight** days and eight calls (8 × 45 s = 360 s). It is
-bounded by `AgoraFilings.MAX_WINDOW_SLICES` = **10** days per fetch: a longer
-window keeps its newest ten days and reports `truncated: true` rather than
-looking complete. Worst case therefore 10 × 45 s = **450 s** (~334 s at the
-measured 33.4 s per call). A caller with a tighter budget passes its own slice
-count — `DaywalkerEventEngine` passes 1, so its intraday poll costs exactly one
-Agora call however many UTC dates its window spans.
+its window as a **receding walk**: `from` stays at the start of the lookback and
+only `to` steps back, two days per call, until receding further would precede
+`from`. Each call reads the newest ~272 filings of its own window, so the
+default `lookback_days=7` (an inclusive 8-day window) costs **four** calls —
+4 × 45 s = 180 s. It is bounded by `AgoraFilings.MAX_WINDOW_SLICES` = **10**
+calls (19 days of window): a longer window is walked as far as the budget allows
+and reports `truncated: true` rather than looking complete. Worst case therefore
+10 × 45 s = **450 s**. A caller with a tighter budget passes its own count —
+`DaywalkerEventEngine` passes 1, so its intraday poll is exactly one wide call
+over its whole window.
 
 The enclosing limits, from the outside in: Vistierie's `max_run_seconds` for
 `strigoi-insider` (1800 s) covers the whole run; the `fetch_recent_clusters`

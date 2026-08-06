@@ -49,18 +49,18 @@ class AgoraFilingsTest {
         assertThat(f.transactionCode()).isEqualTo("P");
     }
 
-    /** The window is sliced per day (see {@link AgoraFilingsForm4SlicingTest}); the first and the
-     *  last slice must be the window's own bounds. */
+    /** The window is fetched as a receding walk (see {@link AgoraFilingsForm4WalkTest}): every
+     *  call keeps the caller's {@code from}, only {@code to} steps back. */
     @Test void recentForm4SendsWindowArgs() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_form4_transactions"), any())).thenReturn(json("{\"transactions\":[]}"));
         new AgoraFilings(client).recentForm4(LocalDate.parse("2026-06-24"), LocalDate.parse("2026-07-01"));
         ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
-        Mockito.verify(client, Mockito.times(8)).callTool(eq("get_form4_transactions"), args.capture());
-        assertThat(args.getAllValues().get(0).path("from").asString()).isEqualTo("2026-06-24");
-        assertThat(args.getAllValues().get(0).path("to").asString()).isEqualTo("2026-06-24");
-        assertThat(args.getValue().path("from").asString()).isEqualTo("2026-07-01");
-        assertThat(args.getValue().path("to").asString()).isEqualTo("2026-07-01");
+        Mockito.verify(client, Mockito.times(4)).callTool(eq("get_form4_transactions"), args.capture());
+        assertThat(args.getAllValues()).allSatisfy(
+                a -> assertThat(a.path("from").asString()).isEqualTo("2026-06-24"));
+        assertThat(args.getAllValues()).extracting(a -> a.path("to").asString())
+                .containsExactly("2026-07-01", "2026-06-29", "2026-06-27", "2026-06-25");
     }
 
     @Test void recentForm4UnavailableOnAgoraFailure() {

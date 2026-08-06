@@ -42,12 +42,15 @@ dracul:
       # Measured end-to-end on prod 2026-08-04: 33.4 s (3.7 s paging + 29.9 s archive phase),
       # against a 25 000 ms client budget — which is exactly why every insider run timed out.
       # This budget is PER CALL and stays per call. Since BUG-S1b (2026-08-06) AgoraFilings
-      # .recentForm4 slices its window into one call PER DAY (a market-wide week holds ~1,700
-      # Form-4 filings, a call reads ~272 — DERIVED from Agora's pacing, not yet measured on
-      # prod), so the insider fetch ENDPOINT's total wall clock is one call per DAY of the
-      # window. The window is INCLUSIVE on both ends (to.minusDays(lookback)..to), so
-      # lookback_days=7 is EIGHT days and eight slices: 8 x 45 s = 360 s worst case, ~267 s at
-      # the measured 33.4 s. AgoraFilings.MAX_WINDOW_SLICES caps it at 10 slices = 450 s.
+      # .recentForm4 fetches its window as a RECEDING WALK: `from` fixed, `to` stepping back 2
+      # days per call until it would precede `from`. One call reads the newest ~272 filings of
+      # ITS window, and a narrow window is the WORST place to spend that budget — measured on
+      # prod 2026-08-05, a 1-day window returned 13 transactions while the 8-day window returned
+      # 676, of which 191 were dated inside that same single day (EFTS orders by file_date
+      # descending and SEC 16(a) allows two business days, so today's filings mostly report
+      # trades of the previous days). The default lookback_days=7 is an INCLUSIVE 8-day window
+      # and costs FOUR calls (to, to-2, to-4, to-6) = 180 s worst case.
+      # AgoraFilings.MAX_WINDOW_SLICES caps any window at 10 calls = 450 s.
       # Enclosing limits: the fetch tool's webhook timeout
       # (InsiderDefaults.FETCH_TIMEOUT_SECONDS, 600 s since 2026-08-06 — needs an
       # agent-definition reset) and Vistierie's max_run_seconds for strigoi-insider (1800 s).

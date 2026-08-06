@@ -1146,10 +1146,10 @@ class DaywalkerEventEngineTest {
     /**
      * BUG-S1b follow-up: the poll's Form-4 fetch costs ONE Agora call whatever the window does.
      *
-     * <p>{@code AgoraFilings.recentForm4} slices per DAY, and the poll window is
-     * {@code since..now} in UTC — two dates on the first poll of a trading day, four after a
-     * weekend. On the nightly hunter's slice budget that is 2-4 sequential ~33 s calls inside a
-     * 60 s poll budget: {@code planFuture.get} times out and the poll logs "skipping all symbols
+     * <p>{@code AgoraFilings.recentForm4} walks its window in several calls for the nightly
+     * hunter, and the poll window is {@code since..now} in UTC — two dates on the first poll of a
+     * trading day, four after a weekend. On the hunter's budget that is several sequential ~33 s
+     * calls inside a 60 s poll budget: {@code planFuture.get} times out and the poll logs "skipping all symbols
      * this poll", i.e. zero triggers and no trace. This runs a REAL AgoraFilings over a mocked
      * client so the assertion is on the actual number of Agora calls, not on a mock's arguments.
      */
@@ -1178,9 +1178,10 @@ class DaywalkerEventEngineTest {
 
         var args = org.mockito.ArgumentCaptor.forClass(tools.jackson.databind.JsonNode.class);
         verify(client, times(1)).callTool(eq("get_form4_transactions"), args.capture());
-        // and it is the NEWEST date of the window — today's filings, what the intraday
-        // INSIDER_SELL detector actually looks at
-        assertThat(args.getValue().path("from").asString()).isEqualTo("2026-07-27");
+        // ...and it is the caller's WHOLE window in one call, not a narrow slice of it: a
+        // one-day window measured 13 transactions on prod where the wide window found 191 for
+        // that same date (EFTS orders by file_date descending, SEC 16(a) allows two days).
+        assertThat(args.getValue().path("from").asString()).isEqualTo("2026-07-24");
         assertThat(args.getValue().path("to").asString()).isEqualTo("2026-07-27");
     }
 }

@@ -47,17 +47,24 @@ public class DaywalkerEventEngine {
     private static final Logger log = LoggerFactory.getLogger(DaywalkerEventEngine.class);
 
     /**
-     * Day-slices this poll may spend on the shared Form-4 facade — ONE, i.e. the newest UTC date
-     * of the window, which is today's filings and all an intraday INSIDER_SELL trigger looks at.
+     * Agora calls this poll may spend on the shared Form-4 facade — ONE, i.e. a single wide
+     * {@code get_form4_transactions} over the poll's whole {@code since..now} window.
      *
-     * <p>Not a tuning knob but a budget guard. {@code AgoraFilings.recentForm4} slices per DAY
-     * (one ~33 s Agora call each), while the whole poll — this fetch plus every per-symbol
-     * detector — must finish inside {@code dracul.daywalker.poll-budget-ms} (60 s). The poll
-     * window is {@code since..now} in UTC, so it spans two dates on the first poll of every
-     * trading day and four after a weekend: on the shared default budget that is 2-4 sequential
-     * calls, {@code planFuture.get} times out and the poll logs "skipping all symbols this poll" —
-     * zero triggers, no alert, nothing in the DB. Pinning the budget at the call site makes the
-     * cost of this fetch ONE call whatever the window does.
+     * <p>Not a tuning knob but a budget guard. {@code AgoraFilings.recentForm4} walks its window
+     * in several ~33 s calls for the nightly hunter, while this whole poll — the fetch plus every
+     * per-symbol detector — must finish inside {@code dracul.daywalker.poll-budget-ms} (60 s).
+     * Inheriting the hunter's budget would blow {@code planFuture.get} and log "skipping all
+     * symbols this poll": zero triggers, no alert, nothing in the DB. One call, whatever the
+     * window spans, is the only shape that fits.
+     *
+     * <p>Known and accepted, NOT introduced here: a short window is inherently low-yield. EFTS
+     * orders by {@code file_date} descending and SEC §16(a) allows two business days, so the
+     * filings filed today mostly report trades from the previous one or two days, which the
+     * transaction-date filter discards — a one-day window measured 13 transactions on prod
+     * 2026-08-05 where a week-wide window found 191 for that same date. The intraday
+     * INSIDER_SELL trigger therefore sees a thin, lagging slice of the day's insider selling.
+     * That is pre-existing daywalker behaviour and a separate decision (widen the poll window, or
+     * accept the lag) — written down here so the next reader is not surprised by it.
      */
     private static final int FORM4_SLICES_PER_POLL = 1;
 

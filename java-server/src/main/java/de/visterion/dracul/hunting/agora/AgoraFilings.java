@@ -36,29 +36,69 @@ public class AgoraFilings {
     private static final int WINDOW_LIMIT = 1000;
 
     /**
-     * How many day-sized {@code get_form4_transactions} calls ONE {@link #recentForm4} may issue.
+     * How far the walk's {@code to} bound recedes between two calls, in calendar days.
      *
-     * <p>Day-slicing made the cost LINEAR in the caller's window, and the insider fetch tool's
-     * input schema permits {@code lookback_days} up to 30 — 31 sequential calls at up to 45 s each
-     * is ~1395 s inside a single tool call, against Vistierie's 1800 s {@code max_run_seconds} for
-     * the WHOLE run. So the slice count is capped rather than the schema narrowed: the caller keeps
-     * its contract and an answer that covered fewer days than asked says so via
-     * {@code truncated=true} instead of looking complete.
+     * <p><b>Derived from the production measurements in {@link #recentForm4}, not chosen round.</b>
+     * Each call reads the newest ~272 filings inside ITS window, so what a call actually covers is
+     * a stretch of filing dates ending at its own {@code to}. The three wide calls measured on
+     * 2026-08-05 covered, by transaction date:
+     * <pre>
+     *   to=2026-08-05  ->  08-03..08-05  (419/191/57 on the dense days)   reach: 2 days
+     *   to=2026-08-03  ->  07-30..08-03  (134/155/76/15/42)               reach: 4 days
+     *   to=2026-08-01  ->  07-29..07-31  (193/90/98)                      reach: 3 days
+     * </pre>
+     * The step must not exceed the SMALLEST reach, or the walk leaves a hole between where one
+     * call stopped and where the next begins — a silently swallowed day is exactly the failure
+     * this whole exercise exists to prevent. The smallest measured reach is 2 days (the
+     * {@code to=08-05} call, whose budget was eaten by the 419-filing day 08-03), so the step is
+     * 2 and the other two calls' 3-4 day reach becomes overlap, not gap.
+     *
+     * <p><b>Why the step is FIXED and not derived per call from the response.</b> The oldest
+     * {@code transactionDate} a call carries is observable, and using it as "how far I got" is
+     * tempting and wrong: the {@code to=08-05} call carried ONE transaction dated 07-29 (a
+     * straggler, late-filed) while its dense coverage stopped at 08-03. Receding to that oldest
+     * date would have jumped the walk straight past 07-30..08-02 — the very days holding 134, 155,
+     * 76 and 15 transactions. And a transaction dated d only proves some filing with file_date
+     * >= d was read; it can never bound how far BACK the filing-date reach went. Coverage is
+     * therefore not observable from the response at all, and the step rests on the measured reach
+     * with a 2x margin on the typical day.
+     *
+     * <p><b>Residual risk, stated rather than hidden:</b> a filing day heavier than the heaviest
+     * measured one could make a call's reach fall below 2 days, and the seam to the next call
+     * would then hold a filing-date gap that nothing in the response reveals. The mitigation is
+     * the margin (the step is half the typical measured reach), not a runtime check; a run cannot
+     * prove its own continuity. If a prod run ever shows a day denser than 08-03's 419 filings,
+     * this constant is what must move.
+     */
+    private static final int FORM4_WALK_STEP_DAYS = 2;
+
+    /**
+     * How many {@code get_form4_transactions} calls ONE {@link #recentForm4} may issue.
+     *
+     * <p>The receding walk makes the cost LINEAR in the caller's window (one call per
+     * {@link #FORM4_WALK_STEP_DAYS} days of it), and the insider fetch tool's input schema permits
+     * {@code lookback_days} up to 30 — 16 sequential calls at up to 45 s each is ~720 s inside a
+     * single tool call, against a 600 s webhook timeout. So the call count is capped rather than
+     * the schema narrowed: the caller keeps its contract and a walk that did not reach {@code from}
+     * says so via {@code truncated=true} instead of looking complete.
+     *
+     * <p>Ten calls cover {@code 1 + 2 x 9 = 19} days of window. The hunter's default
+     * {@code lookback_days=7} is an INCLUSIVE 8-day window and costs FOUR calls
+     * ({@code to}, {@code to-2}, {@code to-4}, {@code to-6}; {@code to-8} would precede
+     * {@code from}), i.e. 4 x 45 s = 180 s worst case.
      *
      * <p>The arithmetic that fixes the number, from the outside in:
      * <pre>
      *   1800 s  Vistierie max_run_seconds for strigoi-insider (the whole run: fetch + reasoning)
      *    600 s  InsiderDefaults.FETCH_TIMEOUT_SECONDS — a third of the run budget, so the fetch
      *           cannot starve the reasoning turns even at its worst case
-     *    450 s  10 slices x 45 s (dracul.agora.tool-timeout-ms[get_form4_transactions]) — the
+     *    450 s  10 calls x 45 s (dracul.agora.tool-timeout-ms[get_form4_transactions]) — the
      *           worst case; the 150 s left inside the webhook timeout is not spare, it is where
      *           InsiderEnrichmentService's own calls (same request) live
      * </pre>
      * Pinned by {@code InsiderToolTimeoutBudgetTest}: {@code MAX_WINDOW_SLICES x the CONFIGURED
      * Agora budget} must stay below {@code FETCH_TIMEOUT_SECONDS}, so the three numbers cannot
-     * drift apart. Ten days covers the hunter's default lookback — which is EIGHT slices, not
-     * seven: {@code StrigoiInsiderWebhookController} asks for {@code to.minusDays(lookback)..to},
-     * an inclusive window — and matches the 10-day late-filing pad Agora searches per slice.
+     * drift apart.
      */
     public static final int MAX_WINDOW_SLICES = 10;
 
@@ -70,33 +110,56 @@ public class AgoraFilings {
     /**
      * Market-wide Form-4 transactions in [from, to]; callers filter by ticker client-side.
      *
-     * <p>Sliced into ONE Agora call PER DAY and merged. One call for a whole week does not fit
-     * Agora's budget: it reads one EDGAR archive document per filing under a 30 s aggregate
-     * deadline at ~110 ms spacing, i.e. <b>~272 filings per call</b> (derived from Agora's own
-     * pacing arithmetic since its BUG-S1a rate-limiter fix; before it, ~159). A market-wide week
-     * holds ~1,697 Form-4 filings and a market-wide DAY ~243 (measured live 2026-08-04 on window
-     * 2026-07-20..07-27), so a week-sized call read 139 of them — 51 open-market buys, 6 above
-     * 500k USD, zero tickers with three filers — and the insider hunter's cluster threshold never
-     * fired: {@code items=0 (partial=false truncated=true status=healthy)}, every round.
+     * <p>Fetched as a RECEDING WALK: {@code from} stays fixed at the start of the lookback and
+     * only the {@code to} bound steps back by {@link #FORM4_WALK_STEP_DAYS} per call, until
+     * receding further would precede {@code from}. Each call reads the newest ~272 filings inside
+     * its own window (Agora fetches one EDGAR archive document per hit under a 30 s aggregate
+     * deadline), and because those filings all sit inside {@code [from, to]}, every transaction
+     * they carry survives the transaction-date filter and is kept.
      *
-     * <p><b>That a day-sized call COVERS its day is derived, not measured.</b> Both the ~272 per
-     * call and the ~243 per day come from arithmetic (Agora's pacing constants; the weekly hit
-     * count divided by seven), and Agora is separately being fixed for a pad defect that makes a
-     * 1-day slice read the wrong late filings. Treat "a day fits" as the design intent until a
-     * prod run reports a measured figure; what is certain is that a day-sized window is an order
-     * of magnitude closer to the budget than a week-sized one.
+     * <p><b>Measured on prod Agora {@code 4586c51} (limit=1000, ~35 s per call), 2026-08-05.</b>
+     * These four numbers are the whole design rationale — reproduce them before changing it:
+     * <pre>
+     *   from=2026-08-04 to=2026-08-04 ->  13 tx, truncated=true, 0 open-market buys
+     *                                     by txDate {08-04: 13}
+     *   from=2026-07-29 to=2026-08-05 -> 676 tx, truncated=true, 16 open-market buys
+     *                                     by txDate {07-29:1, 07-30:2, 07-31:6,
+     *                                                08-03:419, 08-04:191, 08-05:57}
+     *   from=2026-07-29 to=2026-08-03 -> 424 tx, truncated=true
+     *                                     by txDate {07-29:2, 07-30:134, 07-31:155,
+     *                                                08-01:76, 08-02:15, 08-03:42}
+     *   from=2026-07-29 to=2026-08-01 -> 381 tx, truncated=true
+     *                                     by txDate {07-29:193, 07-30:90, 07-31:98}
+     * </pre>
+     * A ONE-DAY window for 2026-08-04 yields <b>13</b> transactions; the wide window finds
+     * <b>191</b> for that same date. That is structural, not noise: EFTS orders by
+     * {@code file_date} DESCENDING and SEC §16(a) gives filers two business days, so the filings
+     * filed ON day D overwhelmingly report trades of D-1/D-2 — which the transaction-date filter
+     * then discards. A narrow window spends its entire budget on the lowest-yield filings that
+     * exist. Eight day-slices would have returned ~104 transactions where ONE wide call returns
+     * 676; the day-slicing this replaced (BUG-S1b, first attempt) was worse than the single call
+     * it was meant to fix. The three wide calls above union to ~1,400 transactions.
      *
-     * <p>The cut is still reported honestly: EVERY slice's {@code partial}/{@code truncated} is
-     * OR-ed into the merged health, so one cut day marks the whole week truncated. A day whose
-     * call throws keeps the other days but likewise marks the result truncated (that day IS
-     * missing data); only ALL days failing degrades to {@code unavailable} — see
-     * {@link #recentForm4Failure}.
+     * <p>Overlap between consecutive calls is DELIBERATE, not waste: the step is smaller than the
+     * measured reach precisely so that no day falls between two calls. The duplicate rows that
+     * follow are removed by the record-wide {@link java.util.LinkedHashSet} below — an identical
+     * transaction returned by the {@code to=08-05} and the {@code to=08-03} call is one element,
+     * and this access pattern is exactly what that set was built for (same {@link Form4Filing}
+     * values from two windows). First-seen order is kept, so the merged list stays deterministic:
+     * newest-window rows first.
      *
-     * <p>Cost: the per-CALL Agora budget ({@code dracul.agora.tool-timeout-ms
-     * [get_form4_transactions]}, 45 s) is unchanged, but the fetch endpoint's TOTAL wall clock is
-     * now LINEAR in the window — which is why at most {@link #MAX_WINDOW_SLICES} days are fetched
-     * (see there for the 1800/600/450 s arithmetic). A longer window keeps its NEWEST
-     * {@code MAX_WINDOW_SLICES} days and is reported {@code truncated=true}.
+     * <p><b>Truncation semantics: NOT the OR of the calls' own flags.</b> Every call in this walk
+     * comes back {@code truncated=true} by construction — each one IS a deliberate cut of its own
+     * window, that is how the strategy works — so OR-ing them would set the flag on every single
+     * answer and tell the hunter nothing. The question the flag must answer is whether the WALK
+     * covered what was asked for, so {@code truncated} means: the walk did NOT reach {@code from}
+     * (the slice budget ran out first), or one of its calls failed and left a hole. A walk that
+     * receded past {@code from} within budget is reported clean, and the per-call flags are
+     * deliberately ignored — recorded here rather than dropped silently. {@code partial} IS still
+     * OR-ed: it means Agora could not cover the window it was given, which stays meaningful.
+     *
+     * <p>A call that throws keeps the other calls' rows and marks the result truncated; only ALL
+     * calls failing degrades to {@code unavailable} — see {@link #recentForm4Failure}.
      *
      * <p>This overload spends the NIGHTLY HUNTER's budget. A caller on a tighter clock must state
      * its own — see {@link #recentForm4(LocalDate, LocalDate, int)}; inheriting this one silently
@@ -108,92 +171,90 @@ public class AgoraFilings {
 
     /**
      * Like {@link #recentForm4(LocalDate, LocalDate)} but with the CALLER's own slice budget:
-     * at most {@code maxSlices} day-sized Agora calls, keeping the newest {@code maxSlices} days
-     * of the window and reporting {@code truncated=true} when the rest went unread.
+     * at most {@code maxSlices} calls of the receding walk, reporting {@code truncated=true} when
+     * the budget ran out before the walk reached {@code from}. With {@code maxSlices=1} this is
+     * exactly one wide call over the caller's whole window — the pre-slicing behaviour, and the
+     * highest-yield single call available.
      *
      * <p>Why this is a parameter and not one shared constant: the two callers are on different
      * clocks. {@code StrigoiInsiderWebhookController} is a NIGHTLY market-wide scan inside a 600 s
      * webhook timeout and wants breadth; {@code DaywalkerEventEngine} is an INTRADAY trigger
      * engine whose whole poll — positions, watchlist, this fetch, and every per-symbol detector —
-     * lives inside a 60 s budget (`dracul.daywalker.poll-budget-ms`) and only wants TODAY's
-     * filings. Before this parameter existed, daywalker inherited the hunter's budget and any
-     * poll whose window spanned two UTC dates (the first poll of a trading day; four dates after
-     * a weekend) issued 2-4 sequential ~33 s calls, blew {@code planFuture.get(60 s)} and logged
-     * "skipping all symbols this poll" — a SILENT zero-trigger poll, the worst failure class this
-     * codebase has. A slice budget stated at the call site makes the cost bounded by
-     * construction rather than by how the window happens to fall.
+     * lives inside a 60 s budget (`dracul.daywalker.poll-budget-ms`) and can afford exactly one
+     * call. Without this parameter daywalker would inherit the hunter's budget and any poll whose
+     * window spanned several days would issue several sequential ~33 s calls, blow
+     * {@code planFuture.get(60 s)} and log "skipping all symbols this poll" — a SILENT
+     * zero-trigger poll, the worst failure class this codebase has. A slice budget stated at the
+     * call site makes the cost bounded by construction rather than by how the window falls.
      *
      * <p>{@code maxSlices} below 1 is clamped to 1: no caller may turn this into a zero-call
      * "clean empty" answer.
      */
     public DataSourceResult<Form4Filing> recentForm4(LocalDate from, LocalDate to, int maxSlices) {
         int sliceBudget = Math.max(1, maxSlices);
-        // Insertion-ordered SET, not a list: the merged answer must be deterministic AND
-        // duplicate-free. See the duplicate analysis on recentForm4Slice.
+        // Insertion-ordered SET, not a list: consecutive calls overlap ON PURPOSE, so the merged
+        // answer must be deterministic AND duplicate-free. See the duplicate analysis on
+        // recentForm4Slice.
         java.util.LinkedHashSet<Form4Filing> merged = new java.util.LinkedHashSet<>();
         boolean partial = false;
-        boolean truncated = false;
-        boolean anySliceSucceeded = false;
+        boolean aCallFailed = false;
+        boolean anyCallSucceeded = false;
+        boolean walkReachedFrom = false;
         String lastFailure = null;
 
-        // An inverted window is not sliced (the loop would issue zero calls and report a clean
-        // empty answer); it is forwarded verbatim and Agora decides what it means.
-        LocalDate lastDay = to.isBefore(from) ? from : to;
-        // Over the cap the OLDEST days are dropped, not the newest: the hunter looks for RECENT
-        // insider clusters, so the days nearest `to` are the ones its threshold can still fire on,
-        // and Agora's own cut inside a slice already works this way (EFTS returns file_date
-        // descending, so a deadline cut drops the oldest filings of the range). Dropping newest
-        // instead would hand the hunter a stale window while its freshest signal went unread.
-        LocalDate firstDay = from;
-        if (from.plusDays(sliceBudget - 1L).isBefore(lastDay)) {
-            firstDay = lastDay.minusDays(sliceBudget - 1L);
-            truncated = true;   // days the caller asked for that were never looked at
-        }
-        for (LocalDate day = firstDay; !day.isAfter(lastDay); day = day.plusDays(1)) {
-            JsonNode res;
+        // The receding walk: `from` is FIXED, only `to` steps back. An inverted window makes one
+        // verbatim call and is done — Agora decides what it means.
+        LocalDate callTo = to;
+        for (int call = 0; call < sliceBudget; call++) {
             try {
-                res = recentForm4Slice(day, day.isBefore(to) ? day : to);
+                JsonNode res = recentForm4Slice(from, callTo);
+                anyCallSucceeded = true;
+                partial |= res.path("partial").asBoolean(false);
+                // res.truncated is deliberately NOT OR-ed here — every call of this walk is a cut
+                // of its own window by construction, so the flag would always be true and say
+                // nothing. See the truncation paragraph on recentForm4.
+                mapForm4Rows(res, merged);
             } catch (AgoraUnavailableException e) {
                 lastFailure = e.getMessage();
-                truncated = true;   // this day's filings are missing — never report that as clean
-                continue;
+                aCallFailed = true;   // a hole in the walk — never report that as clean
             }
-            anySliceSucceeded = true;
-            partial |= res.path("partial").asBoolean(false);
-            truncated |= res.path("truncated").asBoolean(false);
-            mapForm4Rows(res, merged);
+            LocalDate next = callTo.minusDays(FORM4_WALK_STEP_DAYS);
+            if (next.isBefore(from)) {
+                // Receding further would precede `from`: the last call's window already started at
+                // `from` and its measured reach covers the remaining <= FORM4_WALK_STEP_DAYS days.
+                walkReachedFrom = true;
+                break;
+            }
+            callTo = next;
         }
-        if (!anySliceSucceeded) return recentForm4Failure(lastFailure);
-        return degradation(partial, truncated, List.copyOf(merged), "Form-4 transactions");
+        if (!anyCallSucceeded) return recentForm4Failure(lastFailure);
+        return degradation(partial, !walkReachedFrom || aCallFailed,
+                List.copyOf(merged), "Form-4 transactions");
     }
 
     /**
-     * One day-sized {@code get_form4_transactions} call.
+     * One {@code get_form4_transactions} call of the receding walk: fixed {@code from}, receding
+     * {@code to}.
      *
-     * <p>On the late-filing pad and why slicing is still safe. Agora's {@code fetchForm4} runs TWO
-     * EFTS searches per call: the caller's exact filing-date window, then
-     * {@code FORM4_LATE_FILING_PAD_DAYS} = 10 filing-days after it, for trades made inside the
-     * window but filed after it closed. With one call per day those pads overlap the following
-     * slices' own windows, so:
+     * <p>On duplicates. Consecutive calls of the walk OVERLAP by design — the step (2 days) is
+     * smaller than a call's measured reach (2-4 days), because a step larger than the reach would
+     * leave a day uncovered between two calls. Overlap is therefore not waste to be eliminated
+     * but the mechanism that closes the seams, and it means:
      * <ul>
-     *   <li>(a) YES, the same accession is fetched by more than one call — day D's pad covers
-     *       filing dates D+1..D+10, which are day D+1..D+10's own windows. That is duplicated
-     *       archive-GET budget, and it is the price of slicing: the pad exists so that a day's
-     *       LATE filings are seen at all, and a day whose late filings are never read loses
-     *       exactly the transactions the cluster screen is looking for. It costs nothing in the
-     *       common case, because a slice's hits are ordered window-first and a market-wide day
-     *       (~243 filings) already consumes most of the ~272-filing deadline before the pad hits
-     *       are reached.</li>
-     *   <li>(b) NO, it cannot produce duplicate TRANSACTIONS. Agora filters every parsed
-     *       transaction on its {@code transactionDate} against the CALLER's window
-     *       ({@code parseForm4}: skip if {@code txDate} is before {@code from} or after
-     *       {@code to}), so the day-D call can only ever emit transactions dated D — whether the
-     *       filing was found by its window search or by its pad. The slices' outputs are disjoint
-     *       by construction, which is why they may simply be concatenated.</li>
-     *   <li>(c) Handling: rely on the transaction-date filter, but do not TRUST it — collect into
-     *       a {@link java.util.LinkedHashSet}. A duplicated transaction would add a second filer
-     *       row to a ticker and manufacture a cluster that never happened, which is far worse
-     *       than dropping a byte-identical row. The dedup key is the whole {@link Form4Filing}
+     *   <li>(a) YES, the same accession is fetched by more than one call, and so is the same
+     *       transaction: the {@code to=08-05} and the {@code to=08-03} call both cover
+     *       transaction dates 07-30..08-03 in the measured week. The duplicated archive-GET
+     *       budget is the price of continuity. Agora's own late-filing pad
+     *       ({@code FORM4_LATE_FILING_PAD_DAYS} = 10 filing-days past each {@code to}) adds more
+     *       of the same, and is what lets a call see trades filed after its window closed.</li>
+     *   <li>(b) So YES, duplicate TRANSACTIONS reach us — unlike the day-slicing this replaced,
+     *       where Agora's transaction-date filter ({@code parseForm4}: drop if {@code txDate} is
+     *       outside the caller's window) made the slices disjoint by construction. Here the
+     *       windows are nested, not disjoint, so the same row genuinely arrives twice.</li>
+     *   <li>(c) Handling: the {@link java.util.LinkedHashSet} below is therefore LOAD-BEARING,
+     *       not defensive. A duplicated transaction would add a second filer row to a ticker and
+     *       manufacture a cluster that never happened. The dedup key is the whole
+     *       {@link Form4Filing}
      *       record (ticker + filer name + role + transaction date + shares + dollar value +
      *       transaction code): the DTO carries no accession number, and that tuple is what
      *       identifies a Form-4 non-derivative line — the same insider filing the same code for
