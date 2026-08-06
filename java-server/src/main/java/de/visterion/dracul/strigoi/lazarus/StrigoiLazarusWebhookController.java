@@ -107,7 +107,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private final int universeMax;
     private final double preFilterMargin;
     private final long preFilterBudgetMs;
-    private final int maxConsecutiveFailures;
+    private final int maxConsecutiveDeadChunks;
     private final int fundamentalsMax;
 
     /**
@@ -144,7 +144,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
             @Value("${dracul.strigoi.lazarus.universe-max:600}") int universeMax,
             @Value("${dracul.strigoi.lazarus.pre-filter-margin:0.25}") double preFilterMargin,
             @Value("${dracul.strigoi.lazarus.pre-filter-budget-ms:150000}") long preFilterBudgetMs,
-            @Value("${dracul.strigoi.lazarus.max-consecutive-failures:10}") int maxConsecutiveFailures,
+            @Value("${dracul.strigoi.lazarus.max-consecutive-dead-chunks:2}") int maxConsecutiveDeadChunks,
             @Value("${dracul.strigoi.lazarus.fundamentals-max:60}") int fundamentalsMax) {
         super(token, preyRepo, cache, memory, memoryLinks);
         this.watchlist = watchlist;
@@ -165,7 +165,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
         this.universeMax = universeMax;
         this.preFilterMargin = preFilterMargin;
         this.preFilterBudgetMs = preFilterBudgetMs;
-        this.maxConsecutiveFailures = maxConsecutiveFailures;
+        this.maxConsecutiveDeadChunks = maxConsecutiveDeadChunks;
         this.fundamentalsMax = fundamentalsMax;
     }
 
@@ -225,7 +225,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
         }
 
         var scan = universeService.preScreen(universe, preFilterMargin, preFilterBudgetMs,
-                maxConsecutiveFailures, rotationOffset.get());
+                maxConsecutiveDeadChunks, rotationOffset.get());
         rotationOffset.addAndGet(Math.max(scan.screened(), 1));
 
         // Watchlist names first (unconditional), then the index shortlist closest to its low —

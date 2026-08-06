@@ -663,15 +663,15 @@ property of an instrument fires on every run and stops carrying information.
 Measured on 2026-08-05, three S&P 500 members (all listed within the year) made
 every single lazarus run report `partial=true` while all 490 screened symbols
 were in fact read successfully. They also do not count towards
-`LAZARUS_MAX_CONSECUTIVE_FAILURES` — index constituents are walked in list
+`LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS` — index constituents are walked in list
 order, so adjacent new listings could otherwise have aborted the pass and
 declared a healthy source down.
 
-A run of
-`LAZARUS_MAX_CONSECUTIVE_FAILURES` pre-filter failures stops the pass rather than
-burning hundreds of dead calls, and the next run enters the universe where this
-one stopped (in-memory rotation), so a permanently tight budget still covers the
-whole index eventually. Screen thresholds are unchanged — they were never the bug.
+A run of `LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS` pre-filter chunk calls that
+resolved **nothing at all** stops the pass rather than burning dead calls, and
+the next run enters the universe where this one stopped (in-memory rotation), so
+a permanently tight budget still covers the whole index eventually. Screen
+thresholds are unchanged — they were never the bug.
 
 **Batched pre-filter (2026-08-06).** The pre-filter no longer spends one
 `get_indicators` call per index member. It walks the universe in chunks of
@@ -695,9 +695,8 @@ Nothing about the accounting changed with it, deliberately:
   all <m> as degradations`. A batch path that silently returns fewer symbols than
   it asked for reads downstream exactly like a quiet market; this is the line that
   makes it visible.
-- `LAZARUS_MAX_CONSECUTIVE_FAILURES` still counts **symbols**, not chunks, and
-  the pass still stops mid-chunk on the threshold, so `screened` never claims
-  symbols nobody looked at.
+- The source-down heuristic counts **chunks**, not symbols (fixed 2026-08-06,
+  see below), and the pass stops at a chunk boundary.
 - `LAZARUS_PRE_FILTER_BUDGET_MS` is checked after each chunk (the call is
   indivisible), so the pass can overshoot the budget by at most one chunk's
   duration — one Agora request, bounded by `DRACUL_AGORA_TIMEOUT_MS` (25 s)
@@ -707,6 +706,37 @@ Nothing about the accounting changed with it, deliberately:
 Agora rejects a batch over its own 600-symbol cap rather than truncating it;
 Dracul clamps the configured chunk size into `[1, 600]` so it can never produce
 one.
+
+**Source-down now counts dead chunks, not failed symbols (2026-08-06).** The
+heuristic that declares Agora down was written for the per-symbol walk, where
+failures arrived scattered among successes. Batching changed the shape of a
+loss: one transient upstream page error discards a whole block of adjacent
+symbols. Measured the same day: an upstream page error inside a 90-symbol chunk
+discarded 37 partially read symbols, those 37 adjacent failures blew through the
+old threshold of 10 symbols, and the run ended `screened=410 … unscreened=80
+sourceDown=true` on a 490-symbol universe whose other chunks answered fine.
+
+The rule now:
+
+- The unit is the **chunk call**. A chunk that resolved at least one usable range
+  **clears** the run — a source that answers is answering, however few of that
+  chunk's symbols it could serve. A chunk that resolved none while failing at
+  least one **increments** it. A chunk of nothing but too-young symbols does
+  neither.
+- There is no per-symbol component left. Symbols lost inside an otherwise
+  healthy chunk are still counted and still raise `partial`; they are simply not
+  evidence about the source.
+- The threshold is `LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS` (default 2). The old
+  `LAZARUS_MAX_CONSECUTIVE_FAILURES` was **removed**, not reinterpreted: its
+  value meant symbols, and reading an operator's `10` as 10 chunks would put the
+  threshold beyond a 490-symbol universe's reach. An env var of the old name now
+  has no effect.
+- Cost of being wrong the other way: against a wholly dead source the pass spends
+  at most 2 of the ~5 chunk calls a 490-symbol universe costs at the default
+  chunk size — at most 2 x `DRACUL_AGORA_TIMEOUT_MS` (25 s) = 50 s.
+  `LAZARUS_PRE_FILTER_BUDGET_MS` (240 s) remains the backstop and bounds even the
+  case where the heuristic never trips: all ~5 chunks against a timing-out source
+  cost ~125 s and still fit inside it.
 
 **Cache-expiry caveat:** `handleFetch` responses are served through
 `ToolFetchCache` (per-tool TTL). A pattern approved or rejected after a tool's

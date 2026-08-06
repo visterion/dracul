@@ -212,10 +212,16 @@ dracul:
       # Wall-clock ceiling for the pre-filter pass. What it does not reach is reported as
       # truncated, and the next run enters the universe where this one stopped.
       pre-filter-budget-ms: ${LAZARUS_PRE_FILTER_BUDGET_MS:240000}
-      # Consecutive pre-filter failures before the source counts as down and the pass stops.
-      # Agora reports "no history for this symbol" through the same envelope as "Agora is
-      # unreachable", so one failure proves nothing — a run of them does.
-      max-consecutive-failures: ${LAZARUS_MAX_CONSECUTIVE_FAILURES:10}
+      # Consecutive pre-filter CHUNK calls that resolved nothing at all before the source counts as
+      # down and the pass stops. Counted in chunks, not symbols: since probes are batched, one
+      # transient upstream page error discards a block of adjacent symbols at once, and the old
+      # symbol counter (LAZARUS_MAX_CONSECUTIVE_FAILURES, 10 symbols — REMOVED on 2026-08-06, an
+      # env var of that name now has no effect) mistook 37 such symbols for a dead Agora and left
+      # 80 of 490 symbols unscreened. A chunk that resolved even one range clears the run; a chunk
+      # of nothing but too-young symbols neither increments nor clears it. Against a wholly dead
+      # source this spends at most 2 of the ~5 chunk calls a 490-symbol universe costs (<= 2 x
+      # dracul.agora.timeout-ms = 50 s), well inside pre-filter-budget-ms, which is the backstop.
+      max-consecutive-dead-chunks: ${LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS:2}
       # Ceiling on get_fundamentals calls per run. This is THE cost gate: get_fundamentals routes
       # US symbols to Finnhub, throttled to 60 calls/minute across all of Agora (Agora config
       # agora.data.finnhub.calls-per-minute), cached 6 h. Overrunning it produces 429s and

@@ -27,9 +27,10 @@ import java.util.function.LongSupplier;
  * Alpaca's per-minute quota: 49 of 645 Alpaca calls answered 429 on 2026-08-05, TwelveData (8
  * credits/minute) tipped over right behind it and Yahoo carried the remainder. One
  * {@code get_indicators_batch} call per chunk of {@code probe-chunk-size} (default 100) turns that
- * into ~5 calls. Nothing about the COUNTING changed with it — a chunk that answers for fewer
- * symbols than it was handed has those symbols counted as degradations, one by one, exactly as if
- * each had failed on its own.
+ * into ~5 calls. Losses are still COUNTED per symbol — a chunk that answers for fewer symbols than
+ * it was handed has those symbols counted as degradations, one by one, exactly as if each had
+ * failed on its own — but they no longer ARRIVE per symbol, and the source-down heuristic below
+ * had to be moved onto the unit they arrive in.
  *
  * <p><b>Why a pre-filter is not optional.</b> The authoritative screen
  * ({@link LazarusScreener}) reads its 52-week low, solvency and valuation metrics out of
@@ -62,17 +63,33 @@ import java.util.function.LongSupplier;
  *       bounded by {@code dracul.agora.timeout-ms}). The scan starts at a caller-supplied rotating
  *       offset and wraps, so a permanently tight budget still covers the whole index over
  *       successive runs instead of re-screening the same head of the alphabet forever.</li>
- *   <li><b>{@code sourceDown}</b> — a RUN of consecutive {@code probeFailed} events, counted in
- *       SYMBOLS and not in chunks: a wholly failed chunk contributes as many consecutive failures
- *       as it had symbols, so the threshold means the same number it always did whatever the chunk
- *       size is. One failure
- *       still proves nothing (a single bad body can be the symbol's fault), a run of them does, and
- *       stopping there saves hundreds of dead remote calls. An ineligible symbol deliberately does
- *       NOT touch that run counter: index constituents are walked in list order, so a handful of
- *       adjacent young listings would otherwise reach {@code maxConsecutiveFailures} (10 by
- *       default, {@code dracul.strigoi.lazarus.max-consecutive-failures}), abort the pass
- *       mid-universe and declare a perfectly healthy Agora down. It does not RESET the counter
- *       either — a young symbol interleaved into a genuine outage must not paper over it.</li>
+ *   <li><b>{@code sourceDown}</b> — a run of consecutive DEAD CHUNKS: chunk calls that resolved
+ *       nothing at all. The unit is the CHUNK because that is the unit a loss now arrives in, and
+ *       counting symbols instead cost 80 of 490 symbols in production on 2026-08-06: Alpaca hit one
+ *       transient page error inside a 90-symbol chunk, Agora correctly discarded the 37 partially
+ *       read symbols of that unfinished page walk rather than hand up truncated series, and those
+ *       37 adjacent symbol failures blew straight through a threshold of 10 and aborted the walk
+ *       ({@code screened=410 … unscreened=80 sourceDown=true}). A chunk in which 63 symbols
+ *       resolved and 37 were discarded is not evidence of a dead source; a run of chunks in which
+ *       NOTHING resolved is. There is deliberately no per-symbol component left: however many
+ *       symbols of one chunk come back unusable, as long as one range resolved the source
+ *       demonstrably answers, and those losses are already carried by {@code probeFailed} into
+ *       {@code partial}.
+ *       <p>A chunk with at least one usable range RESETS the run to zero. A chunk that resolved
+ *       none and failed at least one increments it. A chunk that neither resolved nor failed
+ *       anything — every symbol in it merely too young — does neither: index constituents are
+ *       walked in list order, so a cluster of young listings must not reach the threshold
+ *       ({@code maxConsecutiveDeadChunks}, 2 by default,
+ *       {@code dracul.strigoi.lazarus.max-consecutive-dead-chunks}) and declare a healthy Agora
+ *       down, and it must not reset a run that a genuine outage is building either.
+ *       <p>Two is the smallest number that still needs corroboration, and it is cheap: against a
+ *       wholly dead source the pass spends 2 of the ~5 chunk calls a 490-symbol universe costs at
+ *       the default chunk size of 100 — at most 2 × {@code dracul.agora.timeout-ms} (25 s) = 50 s.
+ *       The wall-clock {@code pre-filter-budget-ms} (240 s) is the real backstop and bounds even
+ *       the no-heuristic case: all ~5 chunks against a timing-out source cost ~125 s and still fit
+ *       inside it. The old symbol-counting rule was tuned for ~490 single-symbol calls, where
+ *       burning the universe was the expensive mistake; batching removed that risk and left only
+ *       the false positive.</p></li>
  * </ul>
  *
  * <p>Telling the first two apart only became possible at commit e5db10be, which made the MCP
@@ -112,7 +129,8 @@ public class LazarusUniverseService {
      * @param notEligible probed symbols that simply have no 52-week window yet (freshly listed).
      *                    Counted for the log line, never reported as a degradation.
      * @param unscreened  {@code considered - screened}; &gt; 0 means the pass was cut short
-     * @param sourceDown  the pass stopped on a run of consecutive failures
+     * @param sourceDown  the pass stopped on a run of consecutive chunk calls that resolved nothing.
+     *                    Unchanged in MEANING for the caller: "do not read this as a quiet market".
      */
     public record Scan(List<PreScreened> shortlist, int considered, int screened,
                        int probeFailed, int notEligible, int unscreened, boolean sourceDown) {}
@@ -166,11 +184,13 @@ public class LazarusUniverseService {
      *                                tighter than the screen would drop real candidates over a
      *                                definitional difference.
      * @param budgetMs                wall-clock ceiling for the whole pass
-     * @param maxConsecutiveFailures  failures in a row before the source is declared down
+     * @param maxConsecutiveDeadChunks chunk calls that resolved NOTHING, in a row, before the
+     *                                source is declared down. Chunks, not symbols — see the class
+     *                                javadoc for the production run that unit cost.
      * @param rotationOffset          index to start at; the pass wraps around the universe
      */
     public Scan preScreen(List<IndexConstituent> universe, double margin, long budgetMs,
-                          int maxConsecutiveFailures, int rotationOffset) {
+                          int maxConsecutiveDeadChunks, int rotationOffset) {
         int size = universe.size();
         if (size == 0) return new Scan(List.of(), 0, 0, 0, 0, 0, false);
 
@@ -180,10 +200,9 @@ public class LazarusUniverseService {
         int screened = 0;
         int probeFailed = 0;
         int notEligible = 0;
-        int consecutiveFailures = 0;
+        int consecutiveDeadChunks = 0;
         boolean sourceDown = false;
 
-        chunks:
         for (int i = 0; i < size; i += chunkSize) {
             List<IndexConstituent> chunk = new ArrayList<>(Math.min(chunkSize, size - i));
             for (int j = i; j < Math.min(i + chunkSize, size); j++) {
@@ -192,8 +211,7 @@ public class LazarusUniverseService {
 
             // ONE call for the whole chunk. An outage tells us nothing about any symbol in it, so
             // every one of them is a degradation — the same verdict each would have earned from
-            // its own failed call, which is what keeps the consecutive-failure threshold meaning
-            // the same number of SYMBOLS it always did.
+            // its own failed call.
             Map<String, RangeProbe> answer;
             try {
                 answer = priceRange.range52wBatch(chunk.stream().map(IndexConstituent::symbol).toList());
@@ -215,18 +233,24 @@ public class LazarusUniverseService {
                         answered, chunk.size(), chunk.size() - answered);
             }
 
+            // Evidence about the SOURCE is gathered per chunk, not per symbol: one call answered
+            // for all of them at once, so only its overall outcome says anything about whether
+            // the source is alive.
+            int chunkResolved = 0;
+            int chunkFailed = 0;
+
             for (IndexConstituent c : chunk) {
                 screened++;
                 RangeProbe probe = probes.get(c.symbol());
                 if (probe == null) {
                     probeFailed++;
-                    consecutiveFailures++;
+                    chunkFailed++;
                     log.debug("lazarus pre-filter: no 52w-range entry for {} in the batch answer",
                             c.symbol());
                 } else {
                     switch (probe.kind()) {
                         case OK -> {
-                            consecutiveFailures = 0;
+                            chunkResolved++;
                             PriceRange r = probe.range();
                             if (r.pctAboveLow() <= margin) {
                                 shortlist.add(new PreScreened(c.symbol(), c.companyName(),
@@ -234,27 +258,33 @@ public class LazarusUniverseService {
                             }
                         }
                         // A symbol too young for a 52-week window: counted, but neither a degradation
-                        // nor evidence about the source, so the run counter is left exactly as it was
-                        // — not incremented (young listings cluster in list order and would abort the
+                        // nor evidence about the source. It contributes to neither tally, so a chunk
+                        // made up only of young listings leaves the run counter exactly as it was —
+                        // not incremented (young listings cluster in list order and would abort the
                         // pass) and not reset (that would hide a genuine outage running through them).
                         case NOT_ELIGIBLE -> notEligible++;
                         case UNUSABLE -> {
                             probeFailed++;
-                            consecutiveFailures++;
+                            chunkFailed++;
                             log.debug("lazarus pre-filter: unusable 52w-range body for {}", c.symbol());
                         }
                     }
                 }
-                // Checked per SYMBOL, inside the chunk: the call is already paid for, but the pass
-                // must still stop at the same failure count it did before chunking, or `screened`
-                // would silently grow to the chunk boundary and claim symbols nobody looked at.
-                if (consecutiveFailures >= maxConsecutiveFailures) {
-                    sourceDown = true;
-                    log.warn("lazarus pre-filter: {} consecutive 52w-range failures — treating the source as "
-                            + "down and leaving {} of {} universe symbols unscreened",
-                            consecutiveFailures, size - screened, size);
-                    break chunks;
-                }
+            }
+
+            // Checked at the CHUNK boundary, never mid-chunk: the call is already paid for and every
+            // symbol in it has already been judged, so stopping early would only throw away answers
+            // that are in hand. A chunk that resolved anything proves the source answers and clears
+            // the run; only a chunk that resolved nothing while failing something is evidence.
+            if (chunkResolved > 0) {
+                consecutiveDeadChunks = 0;
+            } else if (chunkFailed > 0 && ++consecutiveDeadChunks >= maxConsecutiveDeadChunks) {
+                sourceDown = true;
+                log.warn("lazarus pre-filter: {} consecutive 52w-range chunk(s) resolved nothing "
+                        + "({} symbols in the last one) — treating the source as down and leaving "
+                        + "{} of {} universe symbols unscreened",
+                        consecutiveDeadChunks, chunk.size(), size - screened, size);
+                break;
             }
 
             if (clock.getAsLong() >= deadline) {

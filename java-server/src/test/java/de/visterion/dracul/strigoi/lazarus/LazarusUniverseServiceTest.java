@@ -102,11 +102,15 @@ class LazarusUniverseServiceTest {
         assertThat(scan.sourceDown()).isFalse();
     }
 
+    /** Every chunk resolving nothing IS a dead source, and the pass must still stop there rather
+     *  than burn the rest of the universe. Setup adjusted for the chunk unit (chunk size 1 makes
+     *  each symbol its own chunk call, which is the shape this test always described); the intent
+     *  — a genuine outage still aborts the pass and flags it — is unchanged. */
     @Test
     void abortsAfterAConsecutiveFailureRunAndFlagsTheSourceDown() {
         AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w(anyString())).thenThrow(new AgoraUnavailableException("agora down"));
-        var service = new LazarusUniverseService(probe);
+        var service = new LazarusUniverseService(probe, () -> 0L, 1);
 
         var scan = service.preScreen(universe("A", "B", "C", "D", "E"), 0.25, 60_000L, 2, 0);
 
@@ -116,15 +120,15 @@ class LazarusUniverseServiceTest {
         assertThat(scan.shortlist()).isEmpty();
     }
 
-    /** A single success resets the run counter — a scattering of history-less symbols must not
-     *  be mistaken for an outage. */
+    /** A single resolved range clears the run — a scattering of unusable bodies must not be
+     *  mistaken for an outage. */
     @Test
     void aSuccessResetsTheConsecutiveFailureRun() {
         AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("A")).thenReturn(RangeProbe.unusable());
         when(probe.range52w("B")).thenReturn(range("B", "10.5", "10"));
         when(probe.range52w("C")).thenReturn(RangeProbe.unusable());
-        var service = new LazarusUniverseService(probe);
+        var service = new LazarusUniverseService(probe, () -> 0L, 1);
 
         var scan = service.preScreen(universe("A", "B", "C"), 0.25, 60_000L, 2, 0);
 
@@ -188,15 +192,15 @@ class LazarusUniverseServiceTest {
         assertThat(scan.sourceDown()).isFalse();
     }
 
-    /** A young symbol does not RESET the run counter either — an outage running through a young
-     *  listing is still an outage, and must still stop the pass. */
+    /** A chunk of nothing but young symbols does not RESET the run either — an outage running
+     *  through a young listing is still an outage, and must still stop the pass. */
     @Test
     void aYoungSymbolDoesNotMaskAGenuineFailureRun() {
         AgoraPriceRange probe = PriceRangeMocks.batching();
         when(probe.range52w("A")).thenThrow(new AgoraUnavailableException("agora down"));
         when(probe.range52w("YOUNG")).thenReturn(RangeProbe.notEligible());
         when(probe.range52w("C")).thenThrow(new AgoraUnavailableException("agora down"));
-        var service = new LazarusUniverseService(probe);
+        var service = new LazarusUniverseService(probe, () -> 0L, 1);
 
         var scan = service.preScreen(universe("A", "YOUNG", "C"), 0.25, 60_000L, 2, 0);
 
@@ -253,21 +257,86 @@ class LazarusUniverseServiceTest {
     }
 
     /** A chunk whose CALL dies tells us nothing about any symbol in it, so every one of them is a
-     *  degradation — and the run counter keeps counting symbols, so the threshold still means the
-     *  same number it always did whatever the chunk size is. */
+     *  degradation — and a RUN of such chunks is what a dead source looks like: the pass stops and
+     *  reports the rest unscreened. Setup adjusted to the chunk unit (threshold 2 chunks of 2
+     *  symbols instead of 3 symbols); the intent — every chunk failing still trips and still stops
+     *  the walk — is unchanged. */
     @Test
     void aFailedChunkCountsItsSymbolsAndCanStillTripSourceDown() {
         AgoraPriceRange probe = mock(AgoraPriceRange.class);
         when(probe.range52wBatch(anyList())).thenThrow(new AgoraUnavailableException("agora down"));
-        var service = new LazarusUniverseService(probe, () -> 0L, 4);
+        var service = new LazarusUniverseService(probe, () -> 0L, 2);
 
-        var scan = service.preScreen(universe("A", "B", "C", "D", "E", "F"), 0.25, 60_000L, 3, 0);
+        var scan = service.preScreen(universe("A", "B", "C", "D", "E", "F", "G", "H"),
+                0.25, 60_000L, 2, 0);
 
         assertThat(scan.sourceDown()).isTrue();
-        // stopped INSIDE the first chunk, at the third failure — not at the chunk boundary
-        assertThat(scan.screened()).isEqualTo(3);
-        assertThat(scan.probeFailed()).isEqualTo(3);
-        assertThat(scan.unscreened()).isEqualTo(3);
+        // stopped at the boundary of the SECOND dead chunk — the answers already paid for are kept
+        assertThat(scan.screened()).isEqualTo(4);
+        assertThat(scan.probeFailed()).isEqualTo(4);
+        assertThat(scan.unscreened()).isEqualTo(4);
+    }
+
+    // -------------------------------------------------------- source-down counts chunks (S26)
+
+    /**
+     * THE production regression of 2026-08-06. One transient Alpaca page error inside a 90-symbol
+     * chunk made Agora discard 37 partially read symbols — correctly, a truncated series reads
+     * downstream as "insufficient history" — and the symbol-counting heuristic read those 37
+     * adjacent failures as a dead Agora: {@code screened=410 … unscreened=80 sourceDown=true} out
+     * of a 490-symbol universe, on a source that answered every other chunk fine. One dead chunk
+     * followed by chunks that resolve is not an outage; the walk must run to the end.
+     */
+    @Test
+    void oneDeadChunkAmongHealthyOnesNeitherFlagsTheSourceNorStopsTheWalk() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52wBatch(anyList())).thenAnswer(i -> {
+            List<String> symbols = i.getArgument(0);
+            if (symbols.contains("SYNA")) throw new AgoraUnavailableException("chunk incomplete");
+            Map<String, RangeProbe> out = new java.util.LinkedHashMap<>();
+            for (String s : symbols) out.put(s, range(s, "10.5", "10"));
+            return out;
+        });
+        var service = new LazarusUniverseService(probe, () -> 0L, 4);
+
+        var scan = service.preScreen(universe("SYNA", "SYNB", "SYNC", "SYND",
+                "SYNE", "SYNF", "SYNG", "SYNH", "SYNI", "SYNJ", "SYNK", "SYNL"), 0.25, 60_000L, 2, 0);
+
+        assertThat(scan.sourceDown()).isFalse();
+        assertThat(scan.screened()).isEqualTo(12);          // the walk reached the end
+        assertThat(scan.unscreened()).isZero();
+        assertThat(scan.probeFailed()).isEqualTo(4);        // the dead chunk is still counted, loudly
+        assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("SYNE", "SYNF", "SYNG", "SYNH", "SYNI", "SYNJ", "SYNK", "SYNL");
+        verify(probe, times(3)).range52wBatch(anyList());
+    }
+
+    /**
+     * A source that answers is a source that answers, however few of a chunk's symbols it could
+     * serve: one resolved range clears the run. This is the second half of the same fix — the
+     * production chunk resolved 63 of 90 and was read as dead. The losses are still degradations
+     * ({@code probeFailed} → {@code partial}); they are simply not evidence about the SOURCE.
+     */
+    @Test
+    void aChunkThatResolvesOnlyAFewSymbolsNeverTripsHoweverManyAreUnusable() {
+        AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        when(probe.range52wBatch(anyList())).thenAnswer(i -> {
+            List<String> symbols = i.getArgument(0);
+            Map<String, RangeProbe> out = new java.util.LinkedHashMap<>();
+            for (String s : symbols) out.put(s, RangeProbe.unusable());
+            out.put(symbols.getFirst(), range(symbols.getFirst(), "10.5", "10"));   // exactly one lives
+            return out;
+        });
+        var service = new LazarusUniverseService(probe, () -> 0L, 5);
+
+        var scan = service.preScreen(universe("SYNA", "SYNB", "SYNC", "SYND", "SYNE",
+                "SYNF", "SYNG", "SYNH", "SYNI", "SYNJ"), 0.25, 60_000L, 2, 0);
+
+        assertThat(scan.sourceDown()).isFalse();
+        assertThat(scan.screened()).isEqualTo(10);
+        assertThat(scan.probeFailed()).isEqualTo(8);        // 4 unusable per chunk, still degradations
+        assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("SYNA", "SYNF");
     }
 
     /** A budget that expires mid-universe still reports the rest unscreened AND still advances the
@@ -294,6 +363,26 @@ class LazarusUniverseServiceTest {
                 first.screened());
         assertThat(second.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
                 .containsExactly("C", "D");
+    }
+
+    /**
+     * The unit lives in the property NAME, in both places that carry a default. The rename is the
+     * point: {@code LAZARUS_MAX_CONSECUTIVE_FAILURES} meant 10 SYMBOLS, and silently re-reading an
+     * operator's 10 as 10 CHUNKS would put the threshold at 1000 symbols — a heuristic that can
+     * never trip inside a 490-symbol universe. A stale env var of the old name is inert instead,
+     * and the pass falls back to the documented default of 2 chunks.
+     */
+    @Test
+    void theThresholdIsPinnedInChunksAndTheOldSymbolPropertyIsGone() throws Exception {
+        String yaml = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/resources/application.yaml"));
+        assertThat(yaml).contains("max-consecutive-dead-chunks: ${LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS:2}");
+        assertThat(yaml).doesNotContain("${LAZARUS_MAX_CONSECUTIVE_FAILURES");
+
+        String controller = java.nio.file.Files.readString(java.nio.file.Path.of(
+                "src/main/java/de/visterion/dracul/strigoi/lazarus/StrigoiLazarusWebhookController.java"));
+        assertThat(controller).contains("${dracul.strigoi.lazarus.max-consecutive-dead-chunks:2}");
+        assertThat(controller).doesNotContain("max-consecutive-failures");
     }
 
     @Test
