@@ -28,7 +28,24 @@ public final class BasicFinancialsExtractor {
                 dbl(metrics, "peTTM"),
                 dbl(metrics, "freeCashFlowPerShareTTM"),
                 dbl(metrics, "marketCapitalization"),
-                str(metrics, "reportingCurrency"));
+                str(metrics, "reportingCurrency"),
+                week52RangeUnavailable(metrics));
+    }
+
+    /**
+     * Agora's group-scoped marker for "the 52-week OHLC source failed while we asked"
+     * (agora c89dba7): {@code "52WeekRange": {"available": false, "error": "<reason>"}}, a sibling
+     * of {@code 52WeekLow} / {@code 52WeekHigh} inside the metrics blob. It is emitted ONLY on a
+     * source failure — an instrument-scoped {@code NOT_FOUND} deliberately carries no marker,
+     * because that is a statement about the instrument, not the source.
+     *
+     * <p>Read defensively as "available is explicitly false": a missing key, a non-object value or
+     * anything other than boolean {@code false} means "no failure reported". Until agora c89dba7 is
+     * deployed the key is simply never present, and this reads exactly as it always did.
+     */
+    private static boolean week52RangeUnavailable(JsonNode metrics) {
+        JsonNode available = metrics.path("52WeekRange").path("available");
+        return available.isBoolean() && !available.asBoolean();
     }
 
     private static Double dbl(JsonNode metric, String field) {

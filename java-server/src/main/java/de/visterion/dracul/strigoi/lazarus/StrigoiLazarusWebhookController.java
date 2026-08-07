@@ -68,6 +68,18 @@ import java.util.stream.Collectors;
  * ({@code notEligible}) and kept OUT of {@code partial}: a flag that is raised by a permanent
  * property of three instruments fires every night and stops carrying information.
  *
+ * <p><b>The same split applies one stage later, at the fundamentals (BUG-S29).</b> A null
+ * {@code 52WeekLow} used to be counted as {@code no52wLow} whatever caused it, so an outage of
+ * Agora's OHLC chain was recorded as a fact about the company. Since agora c89dba7 the metrics
+ * blob carries a group-scoped marker when — and only when — the SOURCE failed:
+ * {@code "52WeekRange": {"available": false, "error": "..."}}. Dracul reads it through
+ * {@link BasicFinancials#week52RangeUnavailable()} and counts the two cases apart:
+ * {@code no52wLowSourceFailed} is a degradation and drives {@code partial}, while
+ * {@code no52wLow} is a statement about the instrument and lives in the log line only — exactly
+ * the treatment {@code probeFailed} and {@code notEligible} already get in the pre-filter. Either
+ * way the symbol is skipped, so no false candidate can arise from either. Until agora c89dba7 is
+ * deployed the marker is never present and every such loss lands, as before, on {@code no52wLow}.
+ *
  * <p>The screen thresholds themselves ({@code max-above-low}, the solvency gate, the P/B-or-P/FCF
  * cheapness gate in {@link LazarusScreener}) are UNCHANGED by this fix: they were never the bug.
  */
@@ -265,6 +277,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
         var raws = new ArrayList<LazarusRaw>();
         int fundamentalsMissing = 0;
         int week52Missing = 0;
+        int week52SourceFailed = 0;
         for (LazarusUniverseService.PreScreened p : targets) {
             BasicFinancials f = BasicFinancialsExtractor.extract(companyData.fundamentals(p.symbol()));
             if (f == null) {
@@ -272,7 +285,18 @@ public class StrigoiLazarusWebhookController extends HuntController {
                 continue;
             }
             if (f.week52Low() == null) {
-                week52Missing++;
+                // The same split the pre-filter already draws between notEligible and probeFailed,
+                // one stage later: a null 52-week low reaches us for two very different reasons and
+                // used to land on one counter. With Agora's group-scoped marker present the SOURCE
+                // failed while we asked (a degradation — a retry or a healthy provider would answer);
+                // without it the value is genuinely absent for this INSTRUMENT, which no retry, no
+                // failover and no bigger budget will ever change.
+                if (f.week52RangeUnavailable()) {
+                    week52SourceFailed++;
+                    log.debug("strigoi-lazarus: 52-week range source unavailable for {}", p.symbol());
+                } else {
+                    week52Missing++;
+                }
                 continue;
             }
             raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
@@ -291,16 +315,17 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // three young listings and nothing broken.
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
                         + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
-                        + "noFundamentals={} no52wLow={} enrichmentDropped={} enrichmentDegraded={} "
+                        + "noFundamentals={} no52wLow={} no52wLowSourceFailed={} "
+                        + "enrichmentDropped={} enrichmentDegraded={} "
                         + "unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
-                scan.notEligible(), fundamentalsMissing, week52Missing, enrichmentDropped,
-                batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
+                scan.notEligible(), fundamentalsMissing, week52Missing, week52SourceFailed,
+                enrichmentDropped, batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,
-                fundamentalsCapDropped, fundamentalsMissing, week52Missing, enrichmentDropped,
-                batch.degradedCandidates()));
+                fundamentalsCapDropped, fundamentalsMissing, week52SourceFailed,
+                enrichmentDropped, batch.degradedCandidates()));
     }
 
     /**
@@ -312,8 +337,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
      */
     private DataSourceHealth health(String indexDetail, LazarusUniverseService.Scan scan,
                                     int universeCapDropped, int fundamentalsCapDropped,
-                                    int fundamentalsMissing, int week52Missing, int enrichmentDropped,
-                                    int enrichmentDegraded) {
+                                    int fundamentalsMissing, int week52SourceFailed,
+                                    int enrichmentDropped, int enrichmentDegraded) {
         DataSourceHealth h = DataSourceHealth.healthy(SOURCE);
         if (indexDetail != null) {
             h = DataSourceHealth.degradedWith(h,
@@ -359,9 +384,14 @@ public class StrigoiLazarusWebhookController extends HuntController {
             h = DataSourceHealth.degradedWith(h,
                     fundamentalsMissing + " symbols dropped: no fundamentals", true, false);
         }
-        if (week52Missing > 0) {
+        // week52Missing — the instrument genuinely has no 52-week low — is deliberately NOT folded
+        // in, for the same reason scan.notEligible() is not: nothing failed, and no retry, failover
+        // or bigger budget will produce a value. It is counted in the log line above, where an
+        // operator looks. Only the SOURCE failure below is a degradation.
+        if (week52SourceFailed > 0) {
             h = DataSourceHealth.degradedWith(h,
-                    week52Missing + " symbols dropped: no 52-week low in fundamentals", true, false);
+                    week52SourceFailed + " symbols dropped: 52-week range source unavailable",
+                    true, false);
         }
         if (enrichmentDropped > 0) {
             h = DataSourceHealth.degradedWith(h,

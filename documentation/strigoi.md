@@ -647,8 +647,9 @@ needs the agent-definition reset.**
 *Honest health.* Every way a symbol can be lost is now counted and folded into
 `data_source_health` through the shared `DataSourceHealth.degradedWith` helper:
 `partial` for data we tried to read and could not (an unusable pre-filter
-answer, a missing fundamentals blob, a missing 52-week low, enrichment drops, an
-unavailable index falling back to the watchlist), `truncated` for universe we
+answer, a missing fundamentals blob, a 52-week range whose SOURCE failed,
+enrichment drops, an unavailable index falling back to the watchlist),
+`truncated` for universe we
 deliberately did not read (`LAZARUS_UNIVERSE_MAX`, the fundamentals budget, a
 spent `LAZARUS_PRE_FILTER_BUDGET_MS`). Status stays `healthy` throughout so the
 candidates we did find survive the prompt's "if unavailable, return exactly
@@ -666,6 +667,21 @@ were in fact read successfully. They also do not count towards
 `LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS` — index constituents are walked in list
 order, so adjacent new listings could otherwise have aborted the pass and
 declared a healthy source down.
+
+**The same split at the fundamentals stage (2026-08-07, BUG-S29).** A candidate
+whose fundamentals carry no 52-week low used to be counted as `no52wLow` and
+reported as `partial` whatever the reason — so an outage of Agora's OHLC chain
+was recorded as a fact about the company. Agora now emits a group-scoped marker
+inside the metrics blob when, and only when, the source failed:
+`"52WeekRange": {"available": false, "error": "..."}`; an instrument-scoped
+absence deliberately carries none. Dracul reads it and counts the two apart:
+`no52wLowSourceFailed` in the per-run log line is a degradation and sets
+`partial` ("N symbols dropped: 52-week range source unavailable"), while
+`no52wLow` — the instrument genuinely has no such value — stays in the log line
+only, exactly as `notEligible` does. Either way the symbol is dropped, so
+neither can produce a false candidate. Until the Agora-side change is deployed
+the marker is never present and every such loss lands, as before, on `no52wLow`
+(which no longer sets `partial`).
 
 A run of `LAZARUS_MAX_CONSECUTIVE_DEAD_CHUNKS` pre-filter chunk calls that
 resolved **nothing at all** stops the pass rather than burning dead calls, and

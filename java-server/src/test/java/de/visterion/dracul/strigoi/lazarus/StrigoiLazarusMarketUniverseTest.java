@@ -225,8 +225,36 @@ class StrigoiLazarusMarketUniverseTest {
         assertThat(result.health().detail()).contains("fundamentals");
     }
 
+    /**
+     * BUG-S29: a missing 52-week low is only a degradation when the SOURCE failed. Until agora
+     * c89dba7 both cases arrived as a bare absent key and this test asserted {@code partial=true}
+     * for either — which counted a provider outage and a property of the instrument as the same
+     * thing. The marker splits them; this half pins the outage.
+     */
     @Test
-    void missing52WeekLowIsReportedAsPartial() {
+    void aFailed52WeekRangeSourceIsReportedAsPartial() {
+        indexReturns("ACME", "NO52W");
+        nearLow("ACME");
+        nearLow("NO52W");
+        when(companyData.fundamentals("ACME")).thenReturn(goodFundamentals());
+        when(companyData.fundamentals("NO52W")).thenReturn(MAPPER.readTree(
+                "{\"roaTTM\":5.0,\"pbAnnual\":1.2,\"freeCashFlowPerShareTTM\":2.3,"
+                        + "\"52WeekRange\":{\"available\":false,\"error\":\"synthetic outage\"}}"));
+
+        var result = controller.hunt(Map.of());
+
+        assertThat(result.health().partial()).isTrue();
+        assertThat(result.health().detail()).contains("52-week range source unavailable");
+    }
+
+    /**
+     * The other half: no marker means the instrument genuinely has no 52-week low. Not a
+     * degradation — the same verdict {@code notEligible} gets in the pre-filter, and the same
+     * reason: no retry, failover or budget will ever produce a value, so a nightly {@code partial}
+     * would be permanent noise. The symbol is still dropped and still counted in the log line.
+     */
+    @Test
+    void aGenuinelyMissing52WeekLowIsNotADegradation() {
         indexReturns("ACME", "NO52W");
         nearLow("ACME");
         nearLow("NO52W");
@@ -236,8 +264,9 @@ class StrigoiLazarusMarketUniverseTest {
 
         var result = controller.hunt(Map.of());
 
-        assertThat(result.health().partial()).isTrue();
-        assertThat(result.health().detail()).contains("52-week low");
+        assertThat(result.items()).hasSize(1);   // ACME survives, NO52W is dropped
+        assertThat(result.health().partial()).isFalse();
+        assertThat(result.health().detail()).isNull();
     }
 
     /** A candidate that came back MISSING an enrichment source is still a candidate, so the
