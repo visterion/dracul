@@ -1,8 +1,21 @@
 # Prompt archive
 
-This directory preserves prior versions of agent prompt bodies for history and
-rollback reference. It is a **source-tree convention only** — nothing here is
-read at runtime, and the directory is not required to exist in the built jar.
+This directory preserves prior versions of agent prompt bodies.
+
+> ⚠️ **This archive is READ AT RUNTIME.** It used to be a source-tree convention
+> only; it is not any more. `PromptArchive` loads every file here and
+> `AgentDefinitionBootstrap` uses the resulting hash set to decide whether a
+> stored prompt in `agent_definition` is a *stale default* (safe to overwrite
+> with the current bundled prompt) or a *genuine operator edit* (must be
+> preserved). Maven copies `src/main/resources` wholesale, so these files ship
+> in the fat jar under `BOOT-INF/classes/prompts/archive/`; `PromptArchiveTest`
+> pins that they stay reachable.
+>
+> **Consequence of skipping step 1 below:** the old prompt is no longer
+> recognised as one we shipped, so it is treated as an operator edit and the new
+> bundled prompt **will not propagate** to that agent. The failure is loud (a
+> WARN containing `diverges from bundled`), not silent — but it still needs a
+> manual agent-definition reset to clear.
 
 ## Convention
 
@@ -30,6 +43,6 @@ its `<!-- agent-meta ... version: X.Y.Z -->` header):
 
 `PromptRegistryTest` enforces steps 2 and 3: it fails the build if any live
 prompt file's header version or body hash no longer matches
-`prompt_registry.json`. Archiving the old copy (step 1) is not machine-checked
-— it is a convention for humans (and future git-blame archaeology), not a CI
-gate.
+`prompt_registry.json`. Archiving the old copy (step 1) is still not
+machine-checked — the build cannot know which versions once shipped — but it is
+no longer merely cosmetic: see the warning above.

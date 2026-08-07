@@ -87,6 +87,20 @@ public class AgentDefinitionStore {
         replaceTools(d);
     }
 
+    /**
+     * Narrow update used by {@link AgentDefinitionBootstrap} to reconcile a stale stored prompt to
+     * the bundled default. Deliberately touches only {@code prompt_text}: schedule, turns, budgets
+     * and tool bindings stay whatever the operator configured. A no-op if the name is absent.
+     */
+    public void updatePromptText(String name, String promptText) {
+        jdbc.sql("""
+                UPDATE agent_definition SET prompt_text = :prompt, updated_at = now()
+                WHERE name = :name
+                """)
+                .param("name", name).param("prompt", promptText)
+                .update();
+    }
+
     private void replaceTools(AgentDefinition d) {
         jdbc.sql("DELETE FROM agent_tool_binding WHERE agent_name = :n")
                 .param("n", d.name()).update();

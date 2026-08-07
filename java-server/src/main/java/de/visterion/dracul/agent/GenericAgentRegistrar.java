@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Objects;
 
 @Component
-@Order(20)
 public class GenericAgentRegistrar {
 
     private static final Logger log = LoggerFactory.getLogger(GenericAgentRegistrar.class);
@@ -53,7 +52,13 @@ public class GenericAgentRegistrar {
         this.hiveMemAgentReadToken = hiveMemAgentReadToken;
     }
 
+    /**
+     * NOTE: the {@code @Order} belongs on the listener METHOD, not on the class — see
+     * {@link AgentDefinitionBootstrap#onReady()}. Must run last: it pushes the store's prompt to
+     * Vistierie, so it has to observe the bootstrap's reconcile (10), never race it.
+     */
     @EventListener(ApplicationReadyEvent.class)
+    @Order(20)
     public void registerAll() {
         checkMcpTokenConfigured();
         for (var def : store.findAllEnabled()) {

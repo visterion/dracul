@@ -21,7 +21,6 @@ import java.util.Objects;
  * only, since a user-edited prompt is legitimate.
  */
 @Component
-@Order(10)
 public class PromptRegistryValidator {
 
     private static final Logger log = LoggerFactory.getLogger(PromptRegistryValidator.class);
@@ -39,7 +38,14 @@ public class PromptRegistryValidator {
         this.settings = settings;
     }
 
+    /**
+     * NOTE: the {@code @Order} belongs on the listener METHOD, not on the class — see
+     * {@link AgentDefinitionBootstrap#onReady()}. Ordered after the bootstrap (10) so the DB check
+     * below observes the <em>reconciled</em> store: a divergence that survives the bootstrap is a
+     * real operator edit, not a stale default about to be overwritten.
+     */
     @EventListener(ApplicationReadyEvent.class)
+    @Order(15)
     public void validate() {
         List<String> mismatched = new ArrayList<>();
         for (var def : store.findAllEnabled()) {
@@ -85,8 +91,14 @@ public class PromptRegistryValidator {
 
         String dbHash = PromptHashes.hash(def.promptText());
         if (!Objects.equals(dbHash, entry.bodyHash())) {
-            log.info("prompt registry: '{}' DB prompt diverges from bundled default "
-                    + "(db hash '{}' != registry hash '{}') — user edit or stale default",
+            // WARN, not INFO: AgentDefinitionBootstrap has already reconciled every stale default
+            // by now, so a surviving divergence means the bundled prompt is NOT what the agent
+            // runs and cannot become so on its own. Keep the literal phrase "diverges from
+            // bundled" — the daily analysis greps for it.
+            log.warn("prompt registry: '{}' DB prompt diverges from bundled default "
+                    + "(db hash '{}' != registry hash '{}') — an operator edit is pinning this "
+                    + "agent; the bundled prompt is NOT in effect and will not propagate until "
+                    + "the stored prompt is reset",
                     agent, dbHash, entry.bodyHash());
         }
 

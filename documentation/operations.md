@@ -15,6 +15,46 @@
   3. Optionally lower `DRACUL_DAYWALKER_NOTIFY_LEVEL` to `WARNING` for more alerts.
   A blank token or chat id disables push; alerts are still persisted and visible in Chronicle.
 
+### Prompt changes propagate automatically (since 2026-08-07)
+
+A bundled prompt change now reaches an already-registered agent on the next
+restart, without a manual definition reset.
+
+`AgentDefinitionBootstrap` still seeds insert-if-absent, but afterwards it
+reconciles the prompt: if the stored `prompt_text` is byte-identical to any
+prompt this project ever shipped for that agent — the current
+`prompts/<agent>.md` or any `prompts/archive/<agent>/<version>.md` — it is
+treated as an un-edited stale default and overwritten with the bundled one.
+Only the prompt body is touched; schedule, turn/run limits and tool bindings
+keep whatever the operator configured. `GenericAgentRegistrar` then pushes the
+result to Vistierie.
+
+Startup lines to expect:
+
+    <agent> stored prompt was a previously shipped default (p-…) — reconciled to the bundled default (p-…)
+    <agent> updated in Vistierie
+
+A manual reset is still required for:
+
+* **`output_schema` changes** — reconciliation covers `prompt_text` only, so
+  every schema-change section below still applies as written.
+* **An agent whose stored prompt was edited through the UI**, or whose previous
+  version was never archived. These are deliberately never overwritten, and the
+  refusal is loud:
+
+      <agent> stored prompt diverges from bundled default and matches no version
+      Dracul ever shipped (stored p-…, bundled p-…) — keeping it as an operator
+      edit. THE BUNDLED PROMPT CANNOT REACH THIS AGENT until the stored prompt is
+      reset
+
+  Reset that one agent to accept the bundled prompt and discard the edit.
+
+Because the archive is now consulted at runtime, bumping a prompt version
+**requires** copying the old file to `prompts/archive/<agent>/<old-version>.md`
+(the step `prompts/archive/README.md` already prescribed). Skipping it does not
+corrupt anything — it downgrades an automatic reconcile into the loud warning
+above plus a manual reset.
+
 ### Post-deploy: agent definition resets (executor vetoes / kill-criteria / strigoi enrichment change set)
 
 Deploying the executor MAX_TRANCHE/CORRELATED/kill-criteria change set, the
