@@ -40,9 +40,14 @@ import java.util.Set;
  * models it as a single row. When either bracket's exit leg fills (or the whole position vanishes)
  * this class cannot correctly TRIM the row to the surviving tranche's quantity, so it deliberately
  * neither closes nor silently keeps the row: it escalates ({@code TRANCHE2_DESYNC}) and leaves the
- * row OPEN for operator attention. Full multi-leg reconciliation (partial close down to the
- * surviving tranche) lands with TRIM support; until then, capital protection is provided by the
- * broker-held stops, not by this book row.
+ * row OPEN for operator attention. Capital protection in that state comes from the broker-held
+ * stops, not from this book row.
+ *
+ * <p><b>Multi-leg reconciliation is deliberately NOT implemented</b> (BUG-S11). This javadoc used
+ * to promise that a partial close down to the surviving tranche "lands with TRIM support"; it
+ * never did, and the 2026-08-05 partial-flatten design named it explicitly as a non-goal. The
+ * promise was worse than silence — it invited the next reader to plan around a capability that
+ * does not exist. Building it is a design decision, not a gap to be filled in passing.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
