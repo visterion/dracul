@@ -93,6 +93,58 @@ class AgoraClientReconnectTest {
         }
     }
 
+    /**
+     * A cut session recovers exactly like any other transient failure — and is reported as the
+     * non-event it is: INFO, naming the tool, not "failed". Verbatim message shape from prod
+     * (2026-08-07, during an Agora restart).
+     */
+    @Test void reportsASessionCutAtInfoAndStillRetriesOnce() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraClient.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            JsonNode ok = MAPPER.readTree("{\"ok\":true}");
+            StubClient client = new StubClient(n -> {
+                if (n == 1) throw new RuntimeException("MCP session with server terminated");
+                return ok;
+            });
+            assertThat(client.callTool("search_filings", null)).isSameAs(ok);
+            assertThat(client.calls.get()).isEqualTo(2);
+            assertThat(appender.list)
+                    .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO
+                            && e.getFormattedMessage().contains("Agora session for search_filings was cut"));
+            assertThat(appender.list).noneMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /** Anything that is not a cut session keeps the old WARN — a real failure must not be demoted. */
+    @Test void otherTransientFailureStillWarns() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraClient.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            JsonNode ok = MAPPER.readTree("{\"ok\":true}");
+            StubClient client = new StubClient(n -> {
+                if (n == 1) throw new RuntimeException("connection reset");
+                return ok;
+            });
+            assertThat(client.callTool("get_quote", null)).isSameAs(ok);
+            assertThat(appender.list)
+                    .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                            && e.getFormattedMessage().contains("Agora call get_quote failed"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
     /** The other terminal path: attempt() itself throws AgoraUnavailableException (empty response
      *  or an error envelope) and callTool rethrows it without a retry — that must log too. */
     @Test void logsTerminalFailureOnPassThrough() {

@@ -91,7 +91,18 @@ public class AgoraClient {
             throw e;
         } catch (RuntimeException e) {
             // session may be stale — drop the client, reconnect once, retry
-            log.warn("Agora call {} failed ({}); reconnecting", name, e.toString());
+            if (isSessionCut(e)) {
+                // A cut session is not a fault, it is what an Agora restart looks like from here:
+                // measured on prod 2026-08-07, Agora restarted 06:31:18Z and the two calls that
+                // were holding a session (search_filings 06:32:14Z, get_form4_transactions
+                // 06:35:44Z) both landed here and both succeeded on the retry below. Logging that
+                // at WARN put a "failed" next to a call that did not fail. If the retry does not
+                // recover, the WARN two lines down says so — that is where the severity belongs.
+                log.info("Agora session for {} was cut mid-call ({}) — reconnecting and retrying "
+                        + "once; this is the normal shape of an Agora restart", name, e.getMessage());
+            } else {
+                log.warn("Agora call {} failed ({}); reconnecting", name, e.toString());
+            }
             closeQuietly(timeoutForTool(name));
             try {
                 return attempt(name, argsMap);
@@ -100,6 +111,19 @@ public class AgoraClient {
                 throw new AgoraUnavailableException("Agora unreachable for " + name + ": " + e2.getMessage(), e2);
             }
         }
+    }
+
+    /**
+     * The MCP library's wording for "the server no longer knows this session", verbatim from prod
+     * logs. Matched on the message rather than on a type because mcp-core raises it as a plain
+     * {@link RuntimeException}; a miss only costs the old WARN wording, never the retry.
+     */
+    static boolean isSessionCut(Throwable e) {
+        for (Throwable t = e; t != null && t != t.getCause(); t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && m.contains("MCP session with server terminated")) return true;
+        }
+        return false;
     }
 
     /**

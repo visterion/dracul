@@ -682,6 +682,28 @@ columns to `prey`). Standard Postgres backup / restore is sufficient.
   driver. Key events: Strigoi run start/end, Prey written, Verdict
   created, Daywalker trigger, Telegram notification sent.
 
+### Reading the log while Agora restarts
+
+Restarting Agora cuts the MCP sessions Dracul is holding. That is expected and
+self-healing — Dracul drops the client, reconnects and retries the call once —
+so it must not read like a fault:
+
+- `INFO  ... Agora session for <tool> was cut mid-call (...) — reconnecting and
+  retrying once` is the normal shape of an Agora restart. If nothing follows it
+  for that tool, the retry succeeded and nothing was lost.
+- `WARN  ... Agora unreachable for <tool> after reconnect` is the real signal:
+  the retry failed too. Two of these in a row means Agora is down, not
+  restarting.
+
+Until 2026-08-07 each of those restarts also produced an `ERROR ...
+reactor.core.publisher.Operators : Operator called default onErrorDropped` with
+a long stack trace. It never indicated a fault: the MCP client library discards
+its own terminal error when it re-initializes a cut session, and reactor's
+default hook prints whatever nobody subscribed to. `ReactorDroppedErrorHook`
+now demotes that one fingerprint to `DEBUG`. Any other dropped reactor error
+still logs at `ERROR` with its stack trace — if you see one after a deploy, it
+is not this.
+
 ## Agent budget guard
 
 A scheduled agent without a Vistierie budget silently never runs: Vistierie
