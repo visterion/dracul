@@ -8,6 +8,8 @@ import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
 import de.visterion.dracul.notify.TelegramNotifier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -53,6 +55,13 @@ public class ReconcileService {
      *  webhook soft/LLM exit reason) is a RECONCILE_CLOSE. */
     private static final Set<String> HARD_REASONS =
             Set.of("HARD_STOP", "HARD_KILL_CRITERIA", "GIVEBACK_BREACH");
+
+    private static final Logger log = LoggerFactory.getLogger(ReconcileService.class);
+
+    /** How far back to ask for filled orders. Reconcile runs nightly, so this only has to span
+     *  the gap between two passes plus slack; 72h covers a weekend and a missed run without
+     *  pulling an unbounded history window on every call. */
+    private static final int FILL_LOOKBACK_HOURS = 72;
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -139,6 +148,26 @@ public class ReconcileService {
             return new ReconcileResult(open, Set.of());
         }
 
+        // Recently FILLED orders, fetched separately because `orders` above is an OPEN-orders
+        // view on every broker (Saxo /port/v1/orders/me, Alpaca's status=open default) and can
+        // therefore never contain a fill. Without this, findFilledExitLeg below was unreachable
+        // and a stopped-out position could only ever be booked as RECONCILE_GONE, losing the
+        // HARD_STOP / TAKE_PROFIT distinction that drives cooldowns and the outcome book.
+        //
+        // Deliberately fail-soft and NOT part of the BROKER_UNAVAILABLE bail-out above: the
+        // history endpoint is a separate, slower call, and losing it must degrade reconcile to
+        // exactly its previous behaviour (the RECONCILE_GONE path, which recovers real fill
+        // prices from closedPositions) rather than abort the whole pass.
+        List<BrokerOrder> filledOrders;
+        try {
+            filledOrders = gateway.filledOrdersSince(connection,
+                    clock.instant().minus(Duration.ofHours(FILL_LOOKBACK_HOURS)));
+        } catch (RuntimeException e) {
+            log.warn("filled-order history unavailable during reconcile ({}); "
+                    + "falling back to position-gone detection", e.getMessage());
+            filledOrders = List.of();
+        }
+
         // Orphan scan (broker→DB): a live broker position with no open book row means an
         // entry was placed but never persisted (crash / DB failure after placeBracket) —
         // unmanaged capital. Escalate only; NEVER auto-flatten (operator-in-the-loop). Runs on
@@ -169,11 +198,11 @@ public class ReconcileService {
             // other reconcile logic (tranche2 desync, entry-pending, normal fill detection) can
             // touch it. Never close on our own say-so; only the broker's confirmed state may.
             if (p.pendingExitReason() != null) {
-                finalizePendingExitOrKeep(p, bp, orders, runId, survivors);
+                finalizePendingExitOrKeep(p, bp, orders, filledOrders, runId, survivors);
                 continue;
             }
 
-            BrokerOrder filledLeg = findFilledExitLeg(p, orders);
+            BrokerOrder filledLeg = findFilledExitLeg(p, filledOrders);
 
             if (p.tranche2OrderId() != null && (bp == null || filledLeg != null)) {
                 escalateTranche2Desync(p, filledLeg, runId);
@@ -207,20 +236,50 @@ public class ReconcileService {
                         || o.status() == OrderStatus.PARTIALLY_FILLED);
     }
 
-    private BrokerOrder findFilledExitLeg(ExecutorPosition p, List<BrokerOrder> orders) {
-        return orders.stream()
+    /**
+     * The position's stop/target leg that has FILLED, or null. {@code filledOrders} must be the
+     * history-backed list — the open-orders view can never contain a fill.
+     *
+     * <p>The role filter is deliberately skipped for an order whose id IS one of the stop legs we
+     * persisted ({@code stop_order_id} / {@code tranche2_stop_order_id}): that identity is our own
+     * record of what the leg is, and it beats the broker's reported role. It has to, because the
+     * history endpoint carries no bracket-leg structure — Agora falls back to deriving the role
+     * from the order type, and an order that came back as OTHER would otherwise be dropped and
+     * the fill silently missed. Only orders matched purely by {@code parentId} still need a
+     * STOP_LOSS/TAKE_PROFIT role, since a parent match alone does not say which leg this is.
+     */
+    private BrokerOrder findFilledExitLeg(ExecutorPosition p, List<BrokerOrder> filledOrders) {
+        return filledOrders.stream()
                 .filter(o -> o.status() == OrderStatus.FILLED)
-                .filter(o -> o.role() == OrderRole.STOP_LOSS || o.role() == OrderRole.TAKE_PROFIT)
-                .filter(o -> matchesPosition(p, o))
+                .filter(o -> matchesKnownStopLeg(p, o)
+                        || ((o.role() == OrderRole.STOP_LOSS || o.role() == OrderRole.TAKE_PROFIT)
+                            && matchesPosition(p, o)))
+                .map(o -> asStopLegIfKnown(p, o))
                 .findFirst().orElse(null);
+    }
+
+    /** A known stop leg reported with a vague role (the history endpoint's best-effort
+     *  {@code roleOf(type)} hint) is relabelled STOP_LOSS, so {@link #closePosition} books it as
+     *  HARD_STOP instead of falling through to the RECONCILE_GONE estimate. An explicit
+     *  TAKE_PROFIT is never overwritten. */
+    private BrokerOrder asStopLegIfKnown(ExecutorPosition p, BrokerOrder o) {
+        if (o.role() == OrderRole.STOP_LOSS || o.role() == OrderRole.TAKE_PROFIT) return o;
+        if (!matchesKnownStopLeg(p, o)) return o;
+        return new BrokerOrder(o.orderId(), o.clientRef(), o.symbol(), OrderRole.STOP_LOSS,
+                o.status(), o.qty(), o.filledQty(), o.avgFillPrice(), o.parentId());
+    }
+
+    /** True when the order IS one of the two stop legs this position recorded at placement. */
+    private boolean matchesKnownStopLeg(ExecutorPosition p, BrokerOrder o) {
+        boolean stopIdMatch = p.stopOrderId() != null && p.stopOrderId().equals(o.orderId());
+        boolean stop2Match = p.tranche2StopOrderId() != null && p.tranche2StopOrderId().equals(o.orderId());
+        return stopIdMatch || stop2Match;
     }
 
     private boolean matchesPosition(ExecutorPosition p, BrokerOrder o) {
         boolean parentMatch = p.brokerOrderId() != null && p.brokerOrderId().equals(o.parentId());
-        boolean stopIdMatch = p.stopOrderId() != null && p.stopOrderId().equals(o.orderId());
         boolean parent2Match = p.tranche2OrderId() != null && p.tranche2OrderId().equals(o.parentId());
-        boolean stop2Match = p.tranche2StopOrderId() != null && p.tranche2StopOrderId().equals(o.orderId());
-        return parentMatch || stopIdMatch || parent2Match || stop2Match;
+        return parentMatch || parent2Match || matchesKnownStopLeg(p, o);
     }
 
     /**
@@ -262,10 +321,16 @@ public class ReconcileService {
      * the matched filled exit leg's {@code avgFillPrice} (source FILL) → the fill price stamped
      * at submit time, {@code pending_exit_fill_price} (source FILL) → the position's
      * {@code active_stop} as a last resort (source MARK, no fill data available at all).
+     *
+     * <p>{@code openOrders} answers "is the exit still working?" and {@code filledOrders} answers
+     * "what did it fill at?" — two different broker views. Reading the fill out of the open-orders
+     * list is what used to make the FILL branch unreachable, silently demoting every finalization
+     * to the submit-time price or the MARK estimate.
      */
     private void finalizePendingExitOrKeep(ExecutorPosition p, BrokerPosition bp,
-            List<BrokerOrder> orders, String runId, List<ExecutorPosition> survivors) {
-        boolean exitOrderStillWorking = p.exitOrderId() != null && orders.stream()
+            List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders, String runId,
+            List<ExecutorPosition> survivors) {
+        boolean exitOrderStillWorking = p.exitOrderId() != null && openOrders.stream()
                 .filter(o -> p.exitOrderId().equals(o.orderId()))
                 .anyMatch(o -> o.status() == OrderStatus.WORKING || o.status() == OrderStatus.PARTIALLY_FILLED);
 
@@ -278,7 +343,7 @@ public class ReconcileService {
             return;
         }
 
-        BrokerOrder filledExitLeg = p.exitOrderId() == null ? null : orders.stream()
+        BrokerOrder filledExitLeg = p.exitOrderId() == null ? null : filledOrders.stream()
                 .filter(o -> o.status() == OrderStatus.FILLED)
                 .filter(o -> p.exitOrderId().equals(o.orderId()))
                 .findFirst().orElse(null);

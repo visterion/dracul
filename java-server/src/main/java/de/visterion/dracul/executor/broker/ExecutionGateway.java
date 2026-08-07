@@ -10,7 +10,19 @@ public interface ExecutionGateway {
     AccountSnapshot account(String connection);
     List<BrokerPosition> positions(String connection);
     List<BrokerClosedPosition> closedPositions(String connection);
+    /** Orders the broker currently reports as OPEN. A filled order is never in here — Saxo backs
+     *  this with {@code /port/v1/orders/me} and Alpaca defaults {@code /v2/orders} to
+     *  {@code status=open}. Use {@link #filledOrdersSince} to see fills. */
     List<BrokerOrder> orders(String connection);
+
+    /**
+     * Orders that reached a terminal state at or after {@code since} — the only way to observe a
+     * FILLED order, since {@link #orders} is an open-orders view on every broker. Backed by
+     * Agora's history path (Saxo {@code /cs/v1/audit/orderactivities}, Alpaca
+     * {@code status=closed}), which carries real fills but no bracket-leg structure: expect a
+     * missing {@code parentId} and a best-effort {@code role}, and match by order id.
+     */
+    List<BrokerOrder> filledOrdersSince(String connection, java.time.Instant since);
     Optional<BrokerOrder> orderByRef(String connection, String ref);
     PlacedBracket placeBracket(String connection, BracketRequest req);
     /** fraction in (0,1]; 1.0 = full close. */

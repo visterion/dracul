@@ -15,6 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -789,6 +790,73 @@ class ReconcileServiceTest {
         verify(positionRepo).close(eq(22L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("RECONCILE_GONE"));
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
+    }
+
+    // -------------------------------------------------------------------
+    // filled-stop detection reads the history view, not the open-orders view (BUG-S12)
+    // -------------------------------------------------------------------
+
+    @Test
+    void filledStop_isDetectedEvenThoughItIsNotAnOpenOrder() {
+        // BUG-S12: findFilledExitLeg only ever saw gateway.orders(), which is an OPEN-orders view
+        // on every broker (Saxo /port/v1/orders/me, Alpaca's status=open default) — a filled order
+        // is by definition absent from it, so the HARD_STOP path was unreachable and a stop-out
+        // could only ever be booked as RECONCILE_GONE. The fill must come from the history call.
+        ExecutorPosition p = openPosition(50L, "SYNA", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "2000000001", "2000000002", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Seeded FILLED -> the fake surfaces it only via filledOrdersSince, exactly like Agora.
+        gateway.seedOrder(new BrokerOrder("2000000002", "ref-50", "SYNA", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("95"), "2000000001"));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        assertThat(gateway.orders("c")).isEmpty();   // the fill is genuinely not an open order
+        assertThat(gateway.filledOrdersSinceArgs).containsExactly(NOW.minus(Duration.ofHours(72)));
+
+        verify(positionRepo).close(eq(50L), eq(new BigDecimal("95")), any(),
+                eq("HARD_STOP"), eq("FILL"));
+        verify(cooldownRepo).add(eq("SYNA"), eq("HARD_STOP"), any(), any());
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void filledStopReportedWithoutARole_isStillBookedAsHardStop() {
+        // The history endpoint carries real fills but no bracket-leg structure, so Agora falls
+        // back to a best-effort role hint and a stop leg can come back as OTHER. Our own
+        // stop_order_id is the better evidence of what that order is; dropping it on the role
+        // filter would miss the fill and demote the close to a RECONCILE_GONE estimate.
+        ExecutorPosition p = openPosition(51L, "SYNB", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "2000000003", "2000000004", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("2000000004", null, "SYNB", OrderRole.OTHER,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("94.50"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(51L), eq(new BigDecimal("94.50")), any(),
+                eq("HARD_STOP"), eq("FILL"));
+    }
+
+    @Test
+    void filledOrderHistoryUnavailable_degradesToPositionGoneDetection() {
+        // Fail-soft: the history call is a separate, slower endpoint. Losing it must leave
+        // reconcile at exactly its previous behaviour — close via the position-gone path, which
+        // still recovers real fill prices from closedPositions — never abort the pass.
+        ExecutorPosition p = openPosition(52L, "SYNA", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "2000000005", "2000000006", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.filledOrdersUnavailable = true;
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNA", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("-50"), "sig-1"));
+
+        assertThat(service.reconcile("c", "run1").survivors()).isEmpty();
+
+        verify(positionRepo).close(eq(52L), eq(new BigDecimal("95")), any(),
+                eq("RECONCILE_GONE"), eq("FILL"));
     }
 
     // -------------------------------------------------------------------

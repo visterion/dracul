@@ -32,6 +32,12 @@ public class FakeExecutionGateway implements ExecutionGateway {
 
     public boolean unavailable = false;
 
+    /** Every {@code since} argument {@link #filledOrdersSince} was called with. */
+    public final List<java.time.Instant> filledOrdersSinceArgs = new ArrayList<>();
+    /** When true, only the filled-order history call fails — lets a test drive the fail-soft
+     *  degradation to position-gone detection without taking the whole broker down. */
+    public boolean filledOrdersUnavailable = false;
+
     /** When &gt; 0, that many upcoming {@link #modifyBracket} calls fail with
      *  {@link #modifyFailureMessage} (one per call). The attempt is still recorded in
      *  {@link #modifyCalls}, so a test can count retries. */
@@ -89,7 +95,25 @@ public class FakeExecutionGateway implements ExecutionGateway {
     @Override
     public List<BrokerOrder> orders(String connection) {
         checkAvailable();
-        return new ArrayList<>(orders);
+        // Mirrors the real gateway: this is an OPEN-orders view (Saxo /port/v1/orders/me, Alpaca's
+        // status=open default), so a FILLED order is never in it. Seeded fills surface only via
+        // filledOrdersSince — a fake that returned them here made unreachable production code look
+        // exercised (BUG-S12).
+        return orders.stream().filter(o -> o.status() != OrderStatus.FILLED)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+    }
+
+    /** Every seeded FILLED order. {@code since} is ignored — the fake keeps no timestamps; tests
+     *  that care about the window assert on the argument via {@link #filledOrdersSinceArgs}. */
+    @Override
+    public List<BrokerOrder> filledOrdersSince(String connection, java.time.Instant since) {
+        checkAvailable();
+        filledOrdersSinceArgs.add(since);
+        if (filledOrdersUnavailable) {
+            throw new BrokerUnavailableException("fake filled-order history unavailable");
+        }
+        return orders.stream().filter(o -> o.status() == OrderStatus.FILLED)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
     }
 
     @Override

@@ -2243,14 +2243,22 @@ conditions to match:
 `documentation/configuration.md`). On each maintenance pass,
 `EntryExpiryService` (wired into the pipeline right after `ReconcileService`,
 so it sees freshly-reconciled fill state) looks up any `OPEN` position past
-its `entry_expires_at` and reads the entry order's status from the same
-broker source `ReconcileService` uses (`ExecutionGateway.orders`):
+its `entry_expires_at` and reads the entry order's status from
+`ExecutionGateway.orders` — the broker's **open**-orders view, which is also
+what `ReconcileService` uses to decide whether an order is still working:
 
 | Entry order status | Effect |
 |---|---|
 | `WORKING` (0 filled) | Cancels the order (`ExecutionGateway.cancelOrder`), marks the position `CANCELLED` (`ExecutorPositionRepository.markCancelled`), marks the source signal `EXPIRED` (skipped if the position has no `source_signal_id`) |
 | `PARTIALLY_FILLED` | Cancels only the unfilled remainder; the position **stays OPEN** with its (reconciled) quantity — this service only ever cancels, never re-prices or re-sizes |
 | `FILLED`, or the order can no longer be found (status unavailable) | No action this run |
+
+In practice a filled entry always reaches this table as "no longer found": the
+open-orders view never contains a fill (see the reconciliation section in
+`documentation/architecture.md`). Both cases mean "no action", so the outcome
+is the same either way — this service deliberately does not pay for the extra
+history call `ReconcileService` makes, because it has nothing to do with a
+fill.
 
 Both the full-cancel and partial-cancel paths write one `decision_log` row
 (`trigger_type=MAINTENANCE`, `action=CANCEL_EXPIRED`,

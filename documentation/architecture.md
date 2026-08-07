@@ -445,7 +445,23 @@ guarantees book-equals-broker: once a position fills, `entry_price` is the
 source of truth from the broker's `avgEntryPrice` (average entry fill price
 across all tranches), and `submitted_limit_price` (added in V33) keeps the
 original limit for slippage accounting (`slippage = entry_price −
-submitted_limit_price`). When a hard-trigger flatten (stop-breach, kill
+submitted_limit_price`).
+
+`qty` follows the same rule and means **shares actually held at the broker**,
+never shares intended. A submitted-but-unfilled order contributes nothing to
+it: `add-tranche` persists only the tranche flip and the two leg ids, leaving
+`qty`/`entry_price` at their held values, and
+`ReconcileService.updateMaintenance()` converges `qty` to the broker's reported
+quantity on every pass (logged once per actual change as `SYNC` /`QTY_SYNC`; a
+null or non-positive broker quantity is ignored rather than blanking a good
+book value). This also converges a partially filled entry, which would
+otherwise keep its full intended size indefinitely. The rule matters because
+every quantity-based consumer sizes real money off the field — the
+`exit_position` flatten remainder and the exposure/open-heat inputs to the
+`BUDGET` and `HEAT_LIMIT` vetos. Intended-but-unfilled size is a display
+concern and appears only in the tranche-2 notification.
+
+When a hard-trigger flatten (stop-breach, kill
 criteria) or LLM soft exit calls the broker to close the position, the
 pending-exit columns (`pending_exit_reason`, `exit_order_id`,
 `exit_submitted_at`, `pending_exit_fill_price`) stamp the request and the
@@ -487,6 +503,30 @@ labeling it as an estimate rather than a real fill (never `NULL`, never
 `FILL`) so the outcome/calibration loop can distinguish real bookings from
 placeholders. `exit_price_source` values are therefore `FILL`, `MARK`, or
 `RECONCILE_GONE`.
+
+**Fills are read from the order history, not the open-orders view.**
+`ExecutionGateway.orders(connection)` is an open-orders view on every broker
+(Saxo's `/port/v1/orders/me`, Alpaca's `status=open` default for `/v2/orders`),
+so a filled order is by definition absent from it. Detecting a filled exit leg
+therefore uses a separate call, `ExecutionGateway.filledOrdersSince(connection,
+since)` — Agora's `get_orders` with `status=closed` and a `from` timestamp,
+which routes to the history path (Saxo `/cs/v1/audit/orderactivities`, Alpaca
+`status=closed`). Reconcile uses the open view to answer "is the exit order
+still working?" and the history view to answer "what did it fill at?", both in
+`findFilledExitLeg()` and in `finalizePendingExitOrKeep()`. The lookback window
+is 72 hours — reconcile runs nightly, so this only has to span the gap between
+two passes plus a weekend.
+
+The history carries real fills but no bracket-leg structure: `parentId` is
+absent and the role is a best-effort hint derived from the order type. An order
+whose id **is** one of the position's persisted stop legs (`stop_order_id` /
+`tranche2_stop_order_id`) is therefore matched on that identity and relabeled
+`STOP_LOSS`, since the book's own record of what a leg is beats the broker's
+role hint; only matches made purely by `parentId` still require an explicit
+`STOP_LOSS`/`TAKE_PROFIT` role. The history call is fail-soft and deliberately
+outside the `BROKER_UNAVAILABLE` bail-out: if it fails, reconcile degrades to
+exactly the position-gone behaviour described above (which still recovers real
+fill prices from `closedPositions`) rather than aborting the pass.
 
 **Hunters feed the executor (`PreySignalEmitter`).** When the executor is
 enabled, each hunter's `/complete` webhook — right after it persists prey —

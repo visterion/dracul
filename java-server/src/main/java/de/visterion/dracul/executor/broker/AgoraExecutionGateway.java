@@ -136,6 +136,34 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         return result;
     }
 
+    /**
+     * Asks Agora for the CLOSED-order history since {@code since} and keeps only the fills.
+     * {@code status=closed} is what flips Agora off its open-orders view onto the history path
+     * (Saxo's audit endpoint / Alpaca's closed orders); without both this argument and the date
+     * range a FILLED order is unobservable, which is what made the stop-fill detection in
+     * {@code ReconcileService} unreachable on every broker.
+     */
+    @Override
+    public List<BrokerOrder> filledOrdersSince(String connection, java.time.Instant since) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("connection", connection);
+        args.put("status", "closed");
+        args.put("from", since.toString());
+        JsonNode out = unwrap(call("get_orders", args));
+
+        JsonNode array = out.path("orders");
+        if (!array.isArray()) array = out;
+
+        List<BrokerOrder> result = new ArrayList<>();
+        if (array.isArray()) {
+            for (JsonNode o : array) {
+                BrokerOrder order = toBrokerOrder(o);
+                if (order.status() == OrderStatus.FILLED) result.add(order);
+            }
+        }
+        return result;
+    }
+
     @Override
     public Optional<BrokerOrder> orderByRef(String connection, String ref) {
         ObjectNode args = mapper.createObjectNode();
