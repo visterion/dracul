@@ -481,6 +481,18 @@ public class ReconcileService {
                 && match.closePrice() != null && match.closePrice().signum() > 0;
     }
 
+    /** Copy of {@code p} with only {@code qty} replaced — the 38-component record has no wither. */
+    private static ExecutorPosition withQty(ExecutorPosition p, BigDecimal qty) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), qty,
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+    }
+
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp, String runId) {
         // The broker actually holds this position -> the entry is confirmed filled. Clear the
         // GTD expiry marker: from here on `entry_expires_at IS NULL` doubles as the persisted
@@ -514,6 +526,29 @@ public class ReconcileService {
                     p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                     p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                     p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+        }
+
+        // Book = broker for QUANTITY too. `qty` means shares HELD (see ExecutorPosition), so the
+        // broker's reported holding is the truth and the book follows it. This is what closes the
+        // window in which a submitted-but-unfilled tranche-2 limit (or a partially filled entry)
+        // left the book claiming more shares than exist: prod 2026-08-06 had STT booked at 12
+        // against 6 held and OFG at 42 against 21, and every quantity-based action — the
+        // exit_position flatten remainder, the exposure/heat veto inputs — computed on the
+        // phantom half. Idempotent, logs only on an actual change; a null/non-positive broker qty
+        // is ignored rather than blanking a good book value.
+        BigDecimal brokerQty = bp.qty();
+        if (brokerQty != null && brokerQty.signum() > 0
+                && p.qty() != null && p.qty().compareTo(brokerQty) != 0) {
+            positionRepo.syncQty(p.id(), brokerQty);
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("old_qty", p.qty());
+            inputs.put("new_qty", brokerQty);
+            ObjectNode orderJson = mapper.createObjectNode();
+            orderJson.put("position_id", p.id());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                    "SYNC", "QTY_SYNC", orderJson, null, null, null, null));
+            p = withQty(p, brokerQty);
         }
 
         if (entryJustFilled) {

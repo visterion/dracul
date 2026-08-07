@@ -143,6 +143,18 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
+    /** Overwrites {@code qty} with the quantity the broker actually reports holding, leaving every
+     *  other field untouched — the qty analogue of {@link #syncEntryPrice}. This is what makes
+     *  {@code ExecutorPosition.qty} mean "shares held": a partially filled entry or a still-working
+     *  tranche-2 limit converges here as the broker confirms shares, instead of the book carrying
+     *  an intended size no position backs. */
+    public void syncQty(long id, BigDecimal brokerQty) {
+        jdbc.sql("UPDATE executor_position SET qty = :qty WHERE id = :id")
+                .param("qty", brokerQty)
+                .param("id", id)
+                .update();
+    }
+
     /** Stamps a submitted-but-not-yet-confirmed exit onto an OPEN position (status stays OPEN
      *  until the fill is confirmed and {@link #close} is called). */
     public void markPendingExit(long id, String reason, String exitOrderId, BigDecimal fillPrice,
@@ -179,6 +191,17 @@ public class ExecutorPositionRepository {
                 .orElse(null);
     }
 
+    /**
+     * Records that a tranche-2 order is working: flips {@code tranche} to 2 and stores the two leg
+     * ids.
+     *
+     * <p>{@code qty}/{@code entryPrice} are written through unchanged by the only production
+     * caller ({@code ExecutorWebhookController.addTranche}) — a submitted tranche-2 limit is not
+     * yet held, and {@code qty} means shares held (see {@link ExecutorPosition}). The book grows
+     * when {@code ReconcileService} sees the broker's larger position, not when the order is sent.
+     * The parameters stay on the signature because the columns must be written in the same
+     * statement as the tranche flip.
+     */
     public void updateTranche2(long id, BigDecimal newQty, BigDecimal newEntryPrice,
                                String tranche2OrderId, String tranche2StopOrderId) {
         jdbc.sql("""

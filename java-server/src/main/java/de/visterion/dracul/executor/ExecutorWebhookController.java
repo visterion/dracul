@@ -1623,16 +1623,21 @@ public class ExecutorWebhookController {
         String brokerOrderId = placed.bracketId();
 
         try {
-            BigDecimal newQty = position.qty().add(trancheQty);
-            // Weighted recompute from submitted (limit) prices — intentionally not broker-basis
-            // yet. ReconcileService.updateMaintenance() converges entry_price to the broker's
-            // real post-add average open price on the next reconcile run, so any tranche-2
-            // slippage self-corrects without special-casing it here.
-            BigDecimal newEntry = position.qty().multiply(position.entryPrice())
+            // INTENDED totals, for the notification only — the tranche-2 limit is merely WORKING
+            // at this point, so the broker holds none of `trancheQty` yet.
+            BigDecimal intendedQty = position.qty().add(trancheQty);
+            // Weighted recompute from submitted (limit) prices — intentionally not broker-basis.
+            BigDecimal intendedEntry = position.qty().multiply(position.entryPrice())
                     .add(trancheQty.multiply(pxRounded))
-                    .divide(newQty, 6, RoundingMode.HALF_UP);
+                    .divide(intendedQty, 6, RoundingMode.HALF_UP);
 
-            positionRepo.updateTranche2(position.id(), newQty, newEntry, brokerOrderId, placed.stopLegId());
+            // The BOOK keeps the held qty/entry_price untouched: `qty` means shares HELD (see
+            // ExecutorPosition), and booking the intended total here is what let a flatten size on
+            // 12 shares while the broker held 6 (STT/OFG, 2026-08-06). Only the tranche flip and
+            // the two leg ids are persisted now; ReconcileService.updateMaintenance() grows qty —
+            // and converges entry_price to the real post-add broker basis — once the fill lands.
+            positionRepo.updateTranche2(position.id(), position.qty(), position.entryPrice(),
+                    brokerOrderId, placed.stopLegId());
 
             try {
                 decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
@@ -1646,8 +1651,8 @@ public class ExecutorWebhookController {
                         position.sourceSignalId(), position.id(), brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyTranche2(position, trancheQty, pxRounded, newQty, newEntry,
-                    t2.reason(), connection);
+            executorNotifier.notifyTranche2(position, trancheQty, pxRounded, intendedQty,
+                    intendedEntry, t2.reason(), connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,

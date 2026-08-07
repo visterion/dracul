@@ -246,6 +246,45 @@ class ExecutorWebhookControllerTest {
                 null, null, null, null, trimCount, null, null, null, null, null, null, false);
     }
 
+    /** Two-tranche position, tranche-2 limit still working: {@code qty} is what the broker HOLDS
+     *  (tranche 1 only), the tranche-2 leg ids are set. Mirrors the prod STT/OFG shape. */
+    private ExecutorPosition unfilledTranche2Position(long id, String symbol, BigDecimal heldQty) {
+        return new ExecutorPosition(id, "depot-1", symbol, "BUY", heldQty,
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 2, null,
+                List.of("X"), "sig-1", "hunter", "2026-06-01", null, "OPEN", "2000000001",
+                new BigDecimal("100"), null, 0, null, null, null, null, "2000000002",
+                null, null, "2000000003", "2000000004", 0, null, null, null, null, null, null, false);
+    }
+
+    @Test
+    void exitPosition_onPositionWithWorkingTranche2_trimsAgainstHeldSharesOnly() {
+        // BUG-S9 (prod 2026-08-06): SYNA was booked at 12 shares — 6 held plus an intended
+        // tranche-2 6 whose limit was still Working — while the broker held 6. A 0.5 trim then
+        // computed its remainder from 12 and left the book claiming 6 shares against 3 held.
+        // With `qty` meaning shares HELD, the book carries 6 and the trim books a remainder of 3.
+        ExecutorPosition open = unfilledTranche2Position(50L, "SYNA", new BigDecimal("6"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("SYNA"), any()))
+                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("3"),
+                        new BigDecimal("104"), "2000000005", List.of(), false));
+
+        JsonNode body = json("""
+                {"symbol":"SYNA","fraction":0.5,"reason":"SOFT_EXIT"}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("trimmed")).isEqualTo(true);
+        // 6 held, 0.5 trim -> 3 closed, 3 remaining. Against the pre-fix book (12) this was
+        // 6 closed / 6 remaining, i.e. a trim sized on 6 shares that did not exist.
+        assertThat(((BigDecimal) output.get("qty_remaining"))).isEqualByComparingTo("3");
+
+        ArgumentCaptor<BigDecimal> remainingCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).recordTrim(eq(50L), remainingCaptor.capture(), eq(1), any(), anyBoolean());
+        assertThat(remainingCaptor.getValue()).isEqualByComparingTo("3");
+    }
+
     private ExecutorSignal signal(String signalId, double confidence, BigDecimal referencePrice) {
         return signal(signalId, confidence, referencePrice, "PENDING");
     }
@@ -3705,7 +3744,10 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void addTranche_eligible_nonDegenerateWeightedAverage() {
-        // 10@100 existing + 7@102 add -> weighted-average entry (10*100 + 7*102) / 17 = 100.823529.
+        // 10@100 held + 7@102 SUBMITTED -> the INTENDED weighted-average entry is
+        // (10*100 + 7*102) / 17 = 100.823529 on 17 shares. That pair is a notification figure
+        // only: the tranche-2 limit is merely working, so the book keeps 10@100 until the broker
+        // reports the fill (BUG-S9 — `qty` means shares HELD).
         ExecutorPosition open = openPosition(11L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
@@ -3736,8 +3778,16 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<BigDecimal> entryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateTranche2(eq(11L), qtyCaptor.capture(), entryCaptor.capture(),
                 eq("brk-11"), eq("stop-11"));
-        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("17");
-        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100.823529");
+        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("10");
+        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100");
+
+        // The intended totals still reach the operator notification.
+        ArgumentCaptor<BigDecimal> notifyQtyCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> notifyEntryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(executorNotifier).notifyTranche2(any(), any(), any(), notifyQtyCaptor.capture(),
+                notifyEntryCaptor.capture(), any(), any());
+        assertThat(notifyQtyCaptor.getValue()).isEqualByComparingTo("17");
+        assertThat(notifyEntryCaptor.getValue()).isEqualByComparingTo("100.823529");
     }
 
     @Test
@@ -3774,9 +3824,11 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<BigDecimal> entryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateTranche2(eq(7L), qtyCaptor.capture(), entryCaptor.capture(),
                 eq("brk-2"), eq("stop-2"));
-        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("20");
-        // weighted average: (10*100 + 10*100) / 20 = 100.000000
-        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100.000000");
+        // BUG-S9: the tranche-2 limit is WORKING, so the book stays at the 10 shares actually
+        // held. The intended 20 lands only once ReconcileService sees the broker's larger
+        // position; asserting 20 here is what pinned the flatten-on-phantom-shares bug.
+        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("10");
+        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100");
 
         ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo).insert(decisionCaptor.capture());
@@ -4291,8 +4343,10 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<BigDecimal> entryCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateTranche2(eq(7L), qtyCaptor.capture(), entryCaptor.capture(),
                 eq("brk-existing"), isNull());
-        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("17");
-        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100.000000");
+        // An ADOPTED order is still only WORKING — nothing is held yet either, so the book keeps
+        // the 10 shares it holds (BUG-S9).
+        assertThat(qtyCaptor.getValue()).isEqualByComparingTo("10");
+        assertThat(entryCaptor.getValue()).isEqualByComparingTo("100");
 
         verify(decisionRepo).insert(argThat(d -> d != null && !d.accepted()
                 && "DUPLICATE".equals(d.rejectReason())

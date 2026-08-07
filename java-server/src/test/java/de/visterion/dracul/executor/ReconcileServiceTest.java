@@ -22,7 +22,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -787,5 +789,80 @@ class ReconcileServiceTest {
         verify(positionRepo).close(eq(22L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("RECONCILE_GONE"));
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
+    }
+
+    // -------------------------------------------------------------------
+    // qty sync — `qty` means shares HELD (BUG-S9)
+    // -------------------------------------------------------------------
+
+    /** Two-tranche position whose tranche-2 limit is still working: the book was grown to the
+     *  intended total at placement, the broker holds only tranche 1. */
+    private ExecutorPosition unfilledTranche2Position(long id, String symbol, BigDecimal bookedQty) {
+        return new ExecutorPosition(id, "c", symbol, "BUY", bookedQty, new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), 2, null, List.of(), "sig-1", "agent",
+                "2026-07-01", null, "OPEN", "2000000001", null, null, 0, null, null, null, null,
+                "2000000002", null, null, "2000000003", "2000000004", 0, null, null, null,
+                null, null, null, false);
+    }
+
+    @Test
+    void unfilledTranche2_syncsBookQtyDownToWhatTheBrokerHolds() {
+        // Prod 2026-08-06: SYNA booked at 12 shares (tranche 1 = 6, plus an intended tranche-2 6
+        // whose limit was still Working) while the broker held 6. Every quantity-based action —
+        // the exit_position flatten remainder, the exposure/heat veto inputs — then computed on a
+        // phantom 6 shares. The book must follow the broker.
+        ExecutorPosition p = unfilledTranche2Position(40L, "SYNA", new BigDecimal("12"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("SYNA", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncQty(40L, new BigDecimal("6"));
+
+        // The survivor handed on to the maintenance pipeline (hard triggers, LLM context,
+        // exposure/heat) must already carry the held quantity, not the stale booked one.
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().qty()).isEqualByComparingTo("6");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog sync = logCaptor.getAllValues().stream()
+                .filter(l -> "QTY_SYNC".equals(l.reasonCode()))
+                .findFirst().orElseThrow();
+        assertThat(sync.action()).isEqualTo("SYNC");
+        assertThat(sync.symbol()).isEqualTo("SYNA");
+        assertThat(sync.inputsSnapshot().path("old_qty").asInt()).isEqualTo(12);
+        assertThat(sync.inputsSnapshot().path("new_qty").asInt()).isEqualTo(6);
+    }
+
+    @Test
+    void qtyAlreadyMatchingBroker_doesNotSyncOrLog() {
+        // Idempotence: the sync must be a no-op once the tranche-2 fill has landed, or every
+        // reconcile pass would write a redundant row.
+        ExecutorPosition p = unfilledTranche2Position(41L, "SYNB", new BigDecimal("12"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("SYNB", "BUY", new BigDecimal("12"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+    }
+
+    @Test
+    void brokerQtyMissing_leavesBookQtyAlone() {
+        // Fail-soft: a broker payload without a usable quantity must never blank a good book value.
+        ExecutorPosition p = unfilledTranche2Position(42L, "SYNA", new BigDecimal("12"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("SYNA", "BUY", null,
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).syncQty(anyLong(), any());
     }
 }
