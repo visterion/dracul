@@ -345,6 +345,125 @@ class StopRatchetServiceTest {
         verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
     }
 
+    /** Synthetic collapsed-position fixture: {@code stop_legs_collapsed} true, with whatever the
+     *  test wants in the two stop-leg id columns. Order ids are invented 10-digit values. */
+    private ExecutorPosition collapsedPosition(long id, String symbol, String stopOrderId,
+            String tranche2StopOrderId) {
+        return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("90"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "2000000000", new BigDecimal("110"),
+                new BigDecimal("1.0"), 0, null, null, null, null,
+                stopOrderId, null, null, "2000000003", tranche2StopOrderId, 0, null, null,
+                null, null, null, null, true);
+    }
+
+    @Test
+    void aCollapsedPositionStillNamingTwoLegsMovesBothByTheirOwnIds() {
+        // BUG-S13. A collapse can legitimately leave BOTH id columns populated: recordTrim's
+        // collapse branch writes a column only when a RESTORED (live) leg's `replaces` names it,
+        // and Agora's allocator can hand back more than one live leg. Gating the two-leg path on
+        // stop_legs_collapsed made this position send ONE unnamed modify, which Agora resolves
+        // through modifyBySymbolFallback — and that keeps only the LAST Stop order on the Uic. One
+        // leg moved, the other silently kept its old price, picked by the broker's scan order.
+        // Two named legs are two live legs, so both must move, each addressed by its own id.
+        ExecutorPosition p = collapsedPosition(50L, "SYNA", "2000000001", "2000000002");
+
+        service.ratchet(List.of(p), Map.of("SYNA", new BigDecimal("2.0")),
+                Map.of("SYNA", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isEqualTo("2000000001");
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("104");
+        assertThat(gateway.modifyCalls.get(1).stopOrderId()).isEqualTo("2000000002");
+        assertThat(gateway.modifyCalls.get(1).stop()).isEqualByComparingTo("104");
+        // Neither call may leave the leg to the broker's fallback — that is the whole finding.
+        assertThat(gateway.modifyCalls).allSatisfy(c -> assertThat(c.stopOrderId()).isNotNull());
+
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(50L),
+                any(), any(), any(Integer.class),
+                org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("104")) == 0),
+                org.mockito.ArgumentMatchers.isNull());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void aCollapsedTwoLegPositionWhoseSecondLegFailsKeepsTheOldStop() {
+        // Same shape, second leg refused by the broker. A half-moved exit is worse than one that
+        // did not move: the book must NOT record 104, because only 104-for-everything would make
+        // stopguard's single active_stop column true. It stays at 95, the level every share still
+        // honours, and the run escalates PARTIAL_TRANCHE_RATCHET naming both legs.
+        ExecutorPosition p = collapsedPosition(51L, "SYNB", "2000000001", "2000000002");
+        gateway.modifyFailures = 1;
+        gateway.failModifyForStopOrderId = "2000000002";
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order";
+        service = newService(1, 0L, 0L);
+
+        service.ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
+                Map.of("SYNB", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        // Book untouched: no new active_stop, and emphatically no success push.
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, times(2)).insert(logCaptor.capture());
+        List<DecisionLog> logs = logCaptor.getAllValues();
+        // A stale book id fails LOUDLY once the leg is addressed by name — LEG_NOT_FOUND is a
+        // structural rejection, escalated on the first attempt, never retried.
+        assertThat(logs.get(0).reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        assertThat(logs.get(0).reasoning()).contains("LEG_NOT_FOUND").contains("2000000002");
+        assertThat(logs.get(1).action()).isEqualTo("ESCALATE");
+        assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
+        assertThat(logs.get(1).orderJson().get("moved_stop_order_id").asString()).isEqualTo("2000000001");
+        assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("2000000002");
+        assertThat(logs.get(1).orderJson().get("active_stop").asDouble()).isEqualTo(95.0);
+        assertThat(logs.get(1).orderJson().get("attempted_stop").asDouble()).isEqualTo(104.0);
+    }
+
+    @Test
+    void aCollapsedPositionDownToOneLegStillSendsExactlyOneUnnamedModify() {
+        // The other side of the same routing decision: collapsed AND only one stop id left, so one
+        // leg genuinely exists. Exactly one modify, still unnamed — with a single stop on the
+        // instrument, "the last stop order" and "the only stop order" are the same order, so the
+        // broker-side resolution is safe here in a way it is not for two legs. Unchanged by the fix.
+        ExecutorPosition p = collapsedPosition(52L, "SYNA", "2000000001", null);
+
+        service.ratchet(List.of(p), Map.of("SYNA", new BigDecimal("2.0")),
+                Map.of("SYNA", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("2000000000");
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isNull();
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("104");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(52L),
+                any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void aCollapsedPositionWithNoStopIdAtAllStillRatchetsThroughTheBracket() {
+        // Degenerate but reachable: a collapse whose survivor matched neither column nulls both.
+        // The collapse flag still explains the absence, so this must not escalate as a book bug —
+        // one bracket-addressed modify, exactly as for any other single-legged position.
+        ExecutorPosition p = collapsedPosition(53L, "SYNB", null, null);
+
+        service.ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
+                Map.of("SYNB", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isNull();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+    }
+
     @Test
     void aCollapsedTwoTranchePositionRatchetsItsSingleLeg() {
         // A trim folded the two stop legs into one because the remainder was too small to give

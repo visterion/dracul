@@ -33,11 +33,12 @@ import java.util.Map;
  *   <li>the guard denies a non-improving move — silent, the normal case;</li>
  *   <li>the rounded chandelier is on the wrong side of the last close (or no close is known) —
  *       silent, a regular "not yet" state owned by the soft trigger;</li>
- *   <li>a tranche 2 is open but one of its two stop legs has no id on the record —
- *       {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}. A leg that cannot be NAMED cannot be
- *       moved without guessing, and a silent partial ratchet would leave the book claiming a stop
- *       half the position does not have. With both ids present, both legs are ratcheted to the
- *       same level instead — see {@link #ratchetTwoLegs};</li>
+ *   <li>a tranche 2 is open but one of its two stop legs has no id on the record, and no recorded
+ *       collapse explains the missing one — {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}. A leg
+ *       that cannot be NAMED cannot be moved without guessing, and a silent partial ratchet would
+ *       leave the book claiming a stop half the position does not have. With both ids present,
+ *       both legs are ratcheted to the same level instead — see {@link #ratchetTwoLegs}. How many
+ *       legs exist is read off the two id columns, never off {@code stop_legs_collapsed};</li>
  *   <li>{@code brokerOrderId} is null — {@code ESCALATE / NO_BRACKET_ID}.</li>
  * </ul>
  *
@@ -149,8 +150,30 @@ public class StopRatchetService {
 
             BigDecimal oldStop = p.activeStop();
 
-            boolean twoStopLegs = !p.stopLegsCollapsed()
-                    && (p.tranche() >= 2 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null);
+            // "How many protective legs does the broker hold RIGHT NOW" and "were legs folded
+            // together at some point" are two different questions, and gating the two-leg path on
+            // stop_legs_collapsed answered the first with the second. That conflation is BUG-S13:
+            // a collapse can legitimately leave BOTH id columns populated, because
+            // ExecutorPositionRepository.recordTrim's collapse branch writes a column only when a
+            // RESTORED leg's `replaces` names it, and Agora's allocator can hand back more than
+            // one live leg on a collapse (it fills greedily one share at a time down tightness
+            // order). Such a position used to skip ratchetTwoLegs and send a single unnamed modify,
+            // which Agora resolves through modifyBySymbolFallback — and that fallback keeps the
+            // LAST Stop-type order it scans on the Uic. One leg moved, the other silently stayed at
+            // its old price, and which one moved was the broker's scan order, not our decision.
+            //
+            // So the leg COUNT is read off the id columns, which is where it is actually recorded:
+            // a non-null stop column can only have been written from a leg Agora reported as live
+            // (place_bracket, updateTranche2, recordTrim, repointStopLegs — updateMaintenance's
+            // COALESCE never invents one), so two non-null columns mean two live legs, collapsed or
+            // not. stop_legs_collapsed keeps exactly ONE job: it explains why a two-tranche
+            // position has only one stop id, and so distinguishes a legitimately single-legged
+            // survivor (ratchet the one leg) from a book whose second id is merely unknown
+            // (escalate — see ratchetTwoLegs). It must never again decide how many legs there are.
+            boolean bothLegsNamed = p.stopOrderId() != null && p.tranche2StopOrderId() != null;
+            boolean expectsTwoLegs = p.tranche() >= 2
+                    || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
+            boolean twoStopLegs = bothLegsNamed || (expectsTwoLegs && !p.stopLegsCollapsed());
             if (twoStopLegs) {
                 if (!ratchetTwoLegs(p, chandelier, runId, budget)) continue;
 
@@ -171,18 +194,18 @@ public class StopRatchetService {
             // 2026-07-26. stopOrderId stays on the record because ReconcileService matches fills
             // with it — it is simply not an address here. Do NOT "restore" stopOrderId.
             //
-            // A collapsed two-tranche position (see the twoStopLegs carve-out above) also lands
-            // here, and NOT naming p.stopOrderId() explicitly is deliberate, not incidental.
-            // ExecutorPositionRepository.recordTrim's collapse branch reconciles each returned leg
-            // by `replaces` (fix round, whole-branch review 2026-08-05 -- Agora's own contract
-            // allows more than one survivor on a collapse, so the surviving id can land in EITHER
-            // stop_order_id or tranche2_stop_order_id depending on which original leg it replaces,
-            // not unconditionally in stop_order_id) — but that write is a second, separate piece of
-            // logic from this one. Trusting it blindly here would silently break again the same way
-            // finding-1 did if that write is ever wrong or ever bypassed by a caller that does not
-            // go through recordTrim. The by-bracket-id / by-symbol resolution below has no such
-            // dependency: it always finds whichever single leg is actually live at the broker,
-            // independent of what any column on the book claims.
+            // A COLLAPSED position reaches this point only when at most one stop id is on the
+            // record — the routing above sends a collapsed position that still names two legs to
+            // ratchetTwoLegs, because two named legs are two live legs. For the genuine single
+            // survivor, NOT naming p.stopOrderId() explicitly stays deliberate: recordTrim's
+            // collapse branch matches each restored leg by `replaces`, so the survivor lands in
+            // whichever column its predecessor occupied, and the OTHER column is cleared. Reading
+            // the surviving id off the book would therefore mean trusting a second, separate piece
+            // of logic — and a caller that bypasses recordTrim would break this the same way
+            // finding-1 did. The by-bracket-id / by-symbol resolution has no such dependency: with
+            // exactly one stop live on the instrument, "the last stop order found" and "the only
+            // stop order" are the same order, which is precisely what makes the fallback safe here
+            // and unsafe for two legs.
 
             String bracketId = p.brokerOrderId();
             if (bracketId == null) {
@@ -225,14 +248,28 @@ public class StopRatchetService {
      * {@code TRANCHE_RATCHET_UNSUPPORTED} escalation stands unchanged — a broker that reports no
      * leg id leaves no honest way to move the right stop.
      *
-     * <p><b>A collapsed position never reaches this method.</b> A trim can fold two stop legs into
-     * one because the remainder was too small to give each leg at least one share; the book then
-     * records {@code stop_legs_collapsed} and only one leg genuinely exists at the broker any more.
-     * {@link #ratchet} routes that case around this method entirely and ratchets the single
-     * surviving leg through the ordinary single-tranche path instead — sending a second modify for
-     * a leg the broker no longer has would either fail loudly or, worse, silently no-op. The
-     * escalation here stays for the case it was written for: two legs genuinely exist and one id is
-     * unknown, which is a bug on the book, not a collapse.
+     * <p><b>A collapse does not exempt a position from this method — the leg COUNT decides.</b> A
+     * trim folds stop legs together when the remainder is too small to give each leg at least one
+     * share, and the book then records {@code stop_legs_collapsed}. That flag says legs were folded
+     * once; it does not say how many are left. Agora's allocator can hand back more than one live
+     * leg on a collapse, and {@code recordTrim} then keeps both id columns — so a collapsed
+     * position that still names two legs holds two live stops and is ratcheted here, both by name
+     * (BUG-S13: routing it to the single-leg path instead moved one leg and left the other at its
+     * old price, chosen by Agora's by-symbol fallback rather than by us). Only a collapsed position
+     * down to a single named leg is routed around this method, to the ordinary single-tranche path.
+     *
+     * <p><b>A named id that the broker no longer holds fails LOUDLY</b>, which is the second reason
+     * to address by name: Agora rejects an unknown leg id with {@code LEG_NOT_FOUND} (see
+     * {@code SaxoBrokerProvider.rejectUnusableLeg} / {@code AlpacaBrokerProvider}) rather than
+     * substituting some other order, and that arrives here as a non-transient
+     * {@link BrokerUnavailableException} which escalates on the first attempt with the reject code
+     * in the reasoning. A book pointing at a dead leg therefore becomes visible instead of silently
+     * re-pricing whichever stop the broker happened to scan last. No separate escalation code is
+     * needed for it, and none is invented here.
+     *
+     * <p>The {@code TRANCHE_RATCHET_UNSUPPORTED} escalation below stays for the case it was written
+     * for: two legs are expected, one id is unknown and no collapse explains it — a bug on the
+     * book.
      *
      * <p><b>One leg up, one leg not, is reported as PARTIAL — and the book keeps the OLD stop.</b>
      * Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure the
