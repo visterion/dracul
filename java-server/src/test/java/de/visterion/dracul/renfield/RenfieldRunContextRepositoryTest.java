@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RenfieldRunContextRepositoryTest {
 
     @Autowired RenfieldRunContextRepository repo;
+    @Autowired org.springframework.jdbc.core.simple.JdbcClient jdbc;
 
     @Test
     void saveThenFindBySymbolRoundTrips() {
@@ -46,6 +47,26 @@ class RenfieldRunContextRepositoryTest {
         var row = repo.findBySymbol(runId, "ACME").orElseThrow();
         assertThat(row.held()).isFalse();
         assertThat(row.positionSource()).isEqualTo("fallback");
+    }
+
+    /** The 30-day sweep the scheduler runs on every trigger: rows past the window go,
+     *  today's snapshot stays. */
+    @Test
+    void deleteOlderThanDropsAgedRowsAndKeepsFreshOnes() {
+        String oldRun = "run-old-" + System.nanoTime();
+        String freshRun = "run-fresh-" + System.nanoTime();
+        repo.save(oldRun, Map.of("ACME", true), "ok");
+        repo.save(freshRun, Map.of("ACME", true), "ok");
+        jdbc.sql("UPDATE renfield_run_context SET created_at = now() - interval '31 days' "
+                        + "WHERE run_id = :runId")
+                .param("runId", oldRun)
+                .update();
+
+        int purged = repo.deleteOlderThan(30);
+
+        assertThat(purged).isGreaterThanOrEqualTo(1);
+        assertThat(repo.findBySymbol(oldRun, "ACME")).isEmpty();
+        assertThat(repo.findBySymbol(freshRun, "ACME")).isPresent();
     }
 
     @Test

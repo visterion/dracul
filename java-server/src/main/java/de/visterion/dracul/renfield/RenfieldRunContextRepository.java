@@ -58,6 +58,19 @@ public class RenfieldRunContextRepository {
                 .optional();
     }
 
+    /** Drops snapshots older than {@code days} days and returns how many rows went. The
+     *  snapshot is only ever read by the action-check of the run that wrote it (minutes
+     *  after the trigger), so anything older is dead weight; the scheduler calls this once
+     *  per trigger. Returns 0 when there is nothing to drop. */
+    public int deleteOlderThan(int days) {
+        return jdbc.sql("""
+                DELETE FROM renfield_run_context
+                WHERE created_at < now() - (:days || ' days')::interval
+                """)
+                .param("days", days)
+                .update();
+    }
+
     private RunContextRow mapRow(ResultSet rs, int n) throws SQLException {
         var createdAt = rs.getTimestamp("created_at");
         return new RunContextRow(
