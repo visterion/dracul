@@ -10,6 +10,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -24,6 +25,7 @@ class RenfieldWebhookControllerTest {
     private TelegramNotifier notifier;
     private SseBroadcaster broadcaster;
     private HiveMemResearchService memory;
+    private RenfieldRunContextRepository runContext;
     private RenfieldWebhookController controller;
     private RenfieldWebhookController backfillController;
 
@@ -33,10 +35,11 @@ class RenfieldWebhookControllerTest {
         notifier = mock(TelegramNotifier.class);
         broadcaster = mock(SseBroadcaster.class);
         memory = mock(HiveMemResearchService.class);
+        runContext = mock(RenfieldRunContextRepository.class);
         controller = new RenfieldWebhookController("tok", OWNER, false, proposals, notifier,
-                broadcaster, memory, new JsonMapper());
+                broadcaster, memory, new JsonMapper(), runContext);
         backfillController = new RenfieldWebhookController("tok", OWNER, true, proposals, notifier,
-                broadcaster, memory, new JsonMapper());
+                broadcaster, memory, new JsonMapper(), runContext);
     }
 
     private static JsonNode json(String s) throws Exception {
@@ -235,6 +238,107 @@ class RenfieldWebhookControllerTest {
     }
 
     @Test
+    void buyOnHeldSymbolLogsWarnButPersists() throws Exception {
+        when(proposals.insert(anyString(), anyString(), anyString(), any(), any(), any(),
+                anyString(), any(), anyString(), any())).thenReturn(1);
+        when(runContext.findBySymbol("run-14", "ACME"))
+                .thenReturn(Optional.of(new RunContextRow("ACME", true, "ok", java.time.Instant.now())));
+
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(RenfieldWebhookController.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var resp = controller.complete(BEARER, "run-14", null, json("""
+                    {"status":"done","output":{"proposals":[
+                       {"symbol":"ACME","action":"buy","entry_zone":"","stop":"",
+                        "confidence":0.7,"rationale":"already in the depot"}
+                    ],"market_note":"m"}}
+                    """));
+
+            assertThat(resp.getStatusCode().value()).isEqualTo(204);
+            verify(proposals).insert(eq(OWNER), eq("ACME"), eq("buy"), eq(""), eq(""),
+                    eq(new BigDecimal("0.7")), eq("already in the depot"), eq("m"), eq("run-14"),
+                    isNull());
+            assertThat(appender.list).anySatisfy(ev -> {
+                assertThat(ev.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                assertThat(ev.getFormattedMessage()).contains("ACME").contains("held=true");
+            });
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void missingSnapshotSkipsTheCheckAndLogsInfo() throws Exception {
+        when(proposals.insert(anyString(), anyString(), anyString(), any(), any(), any(),
+                anyString(), any(), anyString(), any())).thenReturn(1);
+        when(runContext.findBySymbol("run-15", "ACME")).thenReturn(Optional.empty());
+
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(RenfieldWebhookController.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var resp = controller.complete(BEARER, "run-15", null, json("""
+                    {"status":"done","output":{"proposals":[
+                       {"symbol":"ACME","action":"buy","entry_zone":"","stop":"",
+                        "confidence":0.7,"rationale":"r"}
+                    ],"market_note":"m"}}
+                    """));
+
+            assertThat(resp.getStatusCode().value()).isEqualTo(204);
+            verify(proposals).insert(eq(OWNER), eq("ACME"), eq("buy"), eq(""), eq(""),
+                    eq(new BigDecimal("0.7")), eq("r"), eq("m"), eq("run-15"), isNull());
+            assertThat(appender.list).anySatisfy(ev -> {
+                assertThat(ev.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(ev.getFormattedMessage())
+                        .contains("no run-context snapshot").contains("ACME");
+            });
+            assertThat(appender.list).noneSatisfy(ev ->
+                    assertThat(ev.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void warnHoldsAndActionablesAreCountedSeparately() throws Exception {
+        when(proposals.insert(anyString(), anyString(), anyString(), any(), any(), any(),
+                anyString(), any(), anyString(), any())).thenReturn(1);
+        when(runContext.findBySymbol("run-16", "ACME"))
+                .thenReturn(Optional.of(new RunContextRow("ACME", true, "ok", java.time.Instant.now())));
+        when(runContext.findBySymbol("run-16", "BETA"))
+                .thenReturn(Optional.of(new RunContextRow("BETA", false, "ok", java.time.Instant.now())));
+
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(RenfieldWebhookController.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            controller.complete(BEARER, "run-16", null, json("""
+                    {"status":"done","output":{"proposals":[
+                       {"symbol":"ACME","action":"buy","entry_zone":"","stop":"",
+                        "confidence":0.7,"rationale":"held already"},
+                       {"symbol":"BETA","action":"buy","entry_zone":"","stop":"",
+                        "confidence":0.6,"rationale":"not held"}
+                    ],"market_note":"m"}}
+                    """));
+
+            assertThat(appender.list).anySatisfy(ev -> {
+                assertThat(ev.getLevel()).isEqualTo(ch.qos.logback.classic.Level.INFO);
+                assertThat(ev.getFormattedMessage())
+                        .contains("persisted 2 of 2").contains("1 flagged buy-on-held");
+            });
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
     void controllerBeanAbsentWhenRenfieldDisabled() {
         var runner = new org.springframework.boot.test.context.runner.WebApplicationContextRunner()
                 .withPropertyValues("dracul.renfield.webhook-token=tok",
@@ -244,6 +348,8 @@ class RenfieldWebhookControllerTest {
                 .withBean(SseBroadcaster.class, () -> mock(SseBroadcaster.class))
                 .withBean(HiveMemResearchService.class, () -> mock(HiveMemResearchService.class))
                 .withBean(ObjectMapper.class, JsonMapper::new)
+                .withBean(RenfieldRunContextRepository.class,
+                        () -> mock(RenfieldRunContextRepository.class))
                 .withUserConfiguration(RenfieldWebhookController.class);
         // dracul.renfield.enabled defaults false → no bean.
         runner.run(ctx -> assertThat(ctx).doesNotHaveBean(RenfieldWebhookController.class));

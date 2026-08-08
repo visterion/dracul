@@ -35,7 +35,7 @@ class RenfieldMemoryTest {
         broadcaster = mock(SseBroadcaster.class);
         memory = mock(HiveMemResearchService.class);
         controller = new RenfieldWebhookController("tok", OWNER, false, proposals, notifier, broadcaster,
-                memory, new JsonMapper());
+                memory, new JsonMapper(), mock(RenfieldRunContextRepository.class));
     }
 
     private static JsonNode json(String s) throws Exception {

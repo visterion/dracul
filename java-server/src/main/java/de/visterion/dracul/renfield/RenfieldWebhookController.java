@@ -48,6 +48,7 @@ public class RenfieldWebhookController {
     private final HiveMemResearchService memory;
     private final ObjectMapper mapper;
     private final boolean backfillEnabled;
+    private final RenfieldRunContextRepository runContext;
 
     public RenfieldWebhookController(
             @Value("${dracul.renfield.webhook-token}") String token,
@@ -57,7 +58,8 @@ public class RenfieldWebhookController {
             TelegramNotifier notifier,
             SseBroadcaster broadcaster,
             HiveMemResearchService memory,
-            ObjectMapper mapper) {
+            ObjectMapper mapper,
+            RenfieldRunContextRepository runContext) {
         this.verifier = new BearerTokenVerifier(token);
         this.owner = primaryUser == null || primaryUser.isBlank() ? "default" : primaryUser;
         this.proposals = proposals;
@@ -66,6 +68,7 @@ public class RenfieldWebhookController {
         this.memory = memory;
         this.mapper = mapper;
         this.backfillEnabled = backfillEnabled;
+        this.runContext = runContext;
     }
 
     @PostMapping("/complete")
@@ -112,9 +115,13 @@ public class RenfieldWebhookController {
         }
 
         int inserted = 0;
+        int flaggedBuyOnHeld = 0;
         for (JsonNode p : valid) {
             String symbol = p.path("symbol").asText();
             String action = p.path("action").asText();
+            if ("buy".equals(action) && checkBuyOnHeld(runId, symbol)) {
+                flaggedBuyOnHeld++;
+            }
             String rationale = p.path("rationale").asText("");
             BigDecimal confidence = p.path("confidence").isNumber()
                     ? new BigDecimal(p.path("confidence").asText()) : null;
@@ -157,8 +164,48 @@ public class RenfieldWebhookController {
         } else {
             log.info("renfield run {} retried delivery — 0 new rows, suppressing Telegram/SSE", runId);
         }
-        log.info("renfield run {} persisted {} of {} proposal(s)", runId, inserted, valid.size());
+        log.info("renfield run {} persisted {} of {} proposal(s), {} flagged buy-on-held",
+                runId, inserted, valid.size(), flaggedBuyOnHeld);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * F4 (spec 2026-08-08 §F4): a {@code buy} proposal for a symbol the trigger-time
+     * snapshot marked as held is almost certainly wrong. Logged as WARN, never dropped
+     * — the rationale stays useful even with an unsound label. Checked against the
+     * snapshot taken at trigger time ({@link RenfieldRunContextRepository}), never
+     * against a fresh depot/watchlist read: the completion arrives ~90s after the
+     * trigger, and a depot that has since become unreachable would make a fresh check
+     * pass silently exactly when it matters most.
+     *
+     * <p>Persistence of the proposal never depends on this check: a missing snapshot
+     * (backfill replay, or a manually-triggered run outside the scheduler) logs INFO —
+     * visibly "not checked", never silently "checked and clean" — and an unexpected
+     * failure of the lookup itself logs WARN and is treated the same as "not checked".
+     *
+     * @return true iff a WARN was logged (row found and held)
+     */
+    private boolean checkBuyOnHeld(String runId, String symbol) {
+        try {
+            var row = runContext.findBySymbol(runId, symbol);
+            if (row.isEmpty()) {
+                log.info("renfield run {} — no run-context snapshot for {}, buy-on-held check "
+                        + "skipped (expected for a backfill replay or a manually-triggered run)",
+                        runId, symbol);
+                return false;
+            }
+            if (row.get().held()) {
+                log.warn("renfield run {} — buy proposal for {} conflicts with the trigger-time "
+                        + "snapshot (held=true, position_source={}); keeping the proposal, "
+                        + "flagging only", runId, symbol, row.get().positionSource());
+                return true;
+            }
+            return false;
+        } catch (RuntimeException e) {
+            log.warn("renfield run {} — run-context lookup for {} failed unexpectedly, "
+                    + "buy-on-held check skipped: {}", runId, symbol, e.getMessage());
+            return false;
+        }
     }
 
     /** ONE bundled plain-text message per run (no parse_mode; German per convention). */
