@@ -168,9 +168,16 @@ no new scheduler):
 1. **INGEST** — `AgoraFilings.searchSpinoffs` (10-12B, default 60-day lookback) →
    `SpinoffScreener` (CIK-first dedup, collapsing amendments) → `upsertRegistered`
    writes each spin-co as a `REGISTERED` row. Idempotent: `INSERT … ON CONFLICT DO
-   NOTHING` on the natural key `COALESCE(cik, lower(company_name))`, so a re-run never
-   duplicates a spin-co nor resets its lifecycle. The spin-co's registrant CIK is
-   parsed from the EDGAR filing URL (`CikExtractor.fromFilingUrl`) and preserved.
+   UPDATE` on the natural key `COALESCE(cik, lower(company_name))`, so a re-run never
+   duplicates a spin-co nor resets its lifecycle — but it CAN backfill a `symbol` that
+   was missing (`SET symbol = COALESCE(spin_candidate.symbol, EXCLUDED.symbol)`; a
+   known symbol is never overwritten, `company_name`/`filing_url` are never touched on
+   conflict since `company_name` is itself part of the conflict key for a CIK-less
+   row). Added 2026-08-08: Agora's EFTS reader failed to resolve the ticker on some
+   10-12B filings before its 2026-08-04 fix, leaving nine rows stuck `symbol IS NULL`
+   forever under plain `DO NOTHING`; re-ingesting the same filing now lands the ticker.
+   The spin-co's registrant CIK is parsed from the EDGAR filing URL
+   (`CikExtractor.fromFilingUrl`) and preserved.
 2. **RECONCILE** — `SpinLifecycleReconciler` recomputes the desired state from the
    persisted non-terminal rows and applies forward-only transitions via guarded
    compare-and-set. Two phases: calendar transitions (pure SQL/Java, **zero** Agora
@@ -184,7 +191,7 @@ no new scheduler):
    persisted columns + snapshots of the **active, unpromoted** window {`REGISTERED`,
    `WHEN_ISSUED`, `DISTRIBUTED`}, newest-discovered first — not read straight from
    the live search — **and restricted to the hunt's requested window** (`filing_date`
-   OR `distribution_date` on/after `today − lookback_days`;
+   OR `distribution_date` OR `distributed_at` on/after `today − lookback_days`;
    `SpinCandidateRepository.findActiveUnpromotedInWindow`). Before 2026-08-04 this
    read the whole active table, so `lookback_days` reached the EDGAR ingest search
    but never the answer: a 14-day and a 90-day request returned the identical rows.
@@ -192,6 +199,13 @@ no new scheduler):
    filing-date window on the ingest side; the distribution date is ORed in because a
    spin-off's tradeable event lands weeks or months after the 10-12B and a
    freshly-distributed spin-co must not drop out because its registration is old.
+   Added 2026-08-08: `distributed_at` (the reconciler's own DISTRIBUTED-transition
+   timestamp) joins the same OR, because `distribution_date` is parsed from the term
+   sheet prose and is frequently absent — checked against all nine of the then-stuck
+   production rows, none of whose term sheets mentioned a "record date" or
+   "distribution date" — so a row with an old `filing_date` and a null
+   `distribution_date` used to transition to DISTRIBUTED and then never reach the LLM
+   again, no matter how fresh the transition.
    `discovered_at` is deliberately not the filter (it records when Dracul first saw
    the row, not a market fact) — it stays the ordering. A row carrying neither date
    is always returned rather than silently dropped. The response is capped at 50

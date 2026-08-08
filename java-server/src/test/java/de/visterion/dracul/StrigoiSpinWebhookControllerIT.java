@@ -144,6 +144,65 @@ class StrigoiSpinWebhookControllerIT {
         assertThat(health.path("source").asString("")).isEqualTo("agora");
     }
 
+    /**
+     * 2026-08-08 spin-ticker-backfill, end-to-end regression: a row planted long before the
+     * lookback window, with no symbol (the historic Agora EFTS bug this fix targets), no term
+     * sheet, and therefore no {@code distribution_date}. Re-reading the same filing today backfills
+     * the ticker (change 1), which lets the quote probe move it to DISTRIBUTED (stamping
+     * {@code distributed_at = now()}), which change 3 is what keeps it in the RESPOND payload
+     * despite the old filing date and the still-NULL distribution date. Asserting only the DB row
+     * would prove nothing about change 3 — the payload is the actual regression guard.
+     */
+    @Test
+    void backfilledSymbolReachesDistributedAndSurvivesTheWindowViaDistributedAt() {
+        jdbc.sql("""
+                INSERT INTO spin_candidate (cik, symbol, company_name, form_type, filing_date, filing_url, status)
+                VALUES ('0000009999', NULL, 'Healed Spinco', '10-12B', :filed, 'http://sec/healed', 'REGISTERED')
+                """)
+                .param("filed", LocalDate.now().minusDays(200))
+                .update();
+
+        // Re-reading the SAME filing, Agora now resolves the ticker (the fix this backfill targets).
+        when(filings.searchSpinoffs(any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("agora", List.of(
+                        new SpinoffFiling("HEAL", "Healed Spinco", "10-12B",
+                                LocalDate.now().minusDays(200), "http://sec/healed", "0000009999"))));
+        // Quote resolves -> the price probe moves it to DISTRIBUTED this same run.
+        when(marketData.quotes(any()))
+                .thenReturn(Map.of("HEAL", new Quote(new BigDecimal("27.04"), BigDecimal.ZERO)));
+
+        // A lookback_days distinct from every other test in this class (30): the ToolFetchCache key
+        // is (toolName, lookback_days), shared across test methods within the one Spring context, so
+        // reusing 30 here would silently serve back an earlier test's cached SPN/REG payload instead
+        // of actually invoking hunt() for this scenario.
+        JsonNode cands = rest.post().uri("/api/strigoi-spin/tools/fetch-candidates")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer test-spin-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("run_id", "r-healed", "tool_name", "fetch_recent_spinoff_candidates",
+                        "input", Map.of("lookback_days", 31)))
+                .retrieve().body(JsonNode.class)
+                .path("output").path("candidates");
+
+        JsonNode heal = bySymbol(cands, "HEAL");
+        assertThat(heal).as("backfilled + freshly-distributed candidate reaches the payload").isNotNull();
+        assertThat(heal.path("status").asString("")).isEqualTo("DISTRIBUTED");
+
+        var row = jdbc.sql("""
+                        SELECT symbol, status, filing_date, distribution_date
+                          FROM spin_candidate WHERE cik = '0000009999'
+                        """)
+                .query((rs, n) -> Map.of(
+                        "symbol", String.valueOf(rs.getString("symbol")),
+                        "status", rs.getString("status"),
+                        "filingDate", rs.getObject("filing_date", LocalDate.class),
+                        "distributionDate", String.valueOf(rs.getObject("distribution_date", LocalDate.class))))
+                .single();
+        assertThat(row.get("symbol")).isEqualTo("HEAL");
+        assertThat(row.get("status")).isEqualTo("DISTRIBUTED");
+        assertThat((LocalDate) row.get("filingDate")).isBefore(LocalDate.now().minusDays(30));
+        assertThat(row.get("distributionDate")).as("no term sheet date was ever parsed").isEqualTo("null");
+    }
+
     @Test
     void toolEndpointReturns401WithoutBearer() {
         try {

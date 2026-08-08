@@ -17,9 +17,9 @@ import java.util.Optional;
 /**
  * Persistence for tracked spin-off candidates (V26 {@code spin_candidate}).
  * JdbcClient-based, mirroring {@link de.visterion.dracul.prey.PreyRepository}:
- * explicit {@code INSERT ... ON CONFLICT DO NOTHING} for idempotent ingestion,
- * guarded compare-and-set UPDATEs for the forward-only lifecycle, and no Spring
- * Data JPA.
+ * explicit {@code INSERT ... ON CONFLICT DO UPDATE} for idempotent, self-healing
+ * ingestion (see {@link #upsertRegistered}), guarded compare-and-set UPDATEs for
+ * the forward-only lifecycle, and no Spring Data JPA.
  *
  * <p>Idempotency and the {@link SpinoffScreener} dedup key both mirror the V26
  * expression unique index {@code COALESCE(cik, lower(company_name))}: one row per
@@ -54,20 +54,46 @@ public class SpinCandidateRepository {
 
     /**
      * Ingests a screened candidate as a REGISTERED row. Idempotent: a row that
-     * collides on the natural key ({@code COALESCE(cik, lower(company_name))}) is
-     * skipped via ON CONFLICT DO NOTHING, so re-running the hunt never duplicates a
-     * spin-co nor resets its lifecycle. Both cik and symbol are normalised to NULL
+     * collides on the natural key ({@code COALESCE(cik, lower(company_name))}) does
+     * not get re-inserted nor lose its lifecycle — but it DOES get a chance to
+     * backfill its {@code symbol}: {@code ON CONFLICT ... DO UPDATE SET symbol =
+     * COALESCE(spin_candidate.symbol, EXCLUDED.symbol)} only ever fills a NULL
+     * symbol, never overwrites one already set. This exists because a ticker can
+     * legitimately arrive later — Agora's EFTS reader has historically failed to
+     * resolve it on the filing that first created the row — and re-running the hunt
+     * over the same filing is the only way that ticker ever lands. Deliberately
+     * NOT carried over on conflict: {@code company_name} and {@code filing_url}. For
+     * a row with {@code cik IS NULL}, {@code company_name} (lowercased) IS the
+     * conflict key itself; mutating it inside the same DO UPDATE would move the row
+     * out of its own index value. Both cik and symbol are normalised to NULL
      * when blank — cik so a "" never becomes a real natural key (COALESCE('', name)
      * = ''), matching the screener's blank-cik-degrades-to-name behaviour; symbol as
-     * "no ticker yet". Returns whether a new row was actually inserted.
+     * "no ticker yet". Returns whether a new row was actually inserted (not merely
+     * updated) — computed via {@code RETURNING (xmax = 0) AS inserted}, since
+     * Postgres's regular affected-row count no longer distinguishes INSERT from
+     * UPDATE now that the conflict path can also touch a row.
+     *
+     * <p><b>The {@code SET} clause must stay unconditional — never add a
+     * {@code WHERE spin_candidate.symbol IS NULL}.</b> Postgres requires an
+     * {@code ON CONFLICT ... DO UPDATE} to affect the conflicting row for
+     * {@code RETURNING} to produce anything; a {@code WHERE} that excludes rows
+     * whose symbol is already set would make every identical-replay upsert (the
+     * common case — most hunts re-ingest a row with no new information) match zero
+     * rows, and {@code .query(Boolean.class).single()} would then throw
+     * {@code EmptyResultDataAccessException} in production instead of returning
+     * {@code false}. The {@code COALESCE} inside the unconditional {@code SET} is
+     * what already makes the write a no-op when the symbol is unchanged — the
+     * {@code WHERE} is not needed for correctness and would only break this method.
      */
     public boolean upsertRegistered(SpinCandidate c) {
-        int rows = jdbc.sql("""
+        Boolean inserted = jdbc.sql("""
                 INSERT INTO spin_candidate
                   (cik, symbol, company_name, form_type, filing_date, filing_url, status)
                 VALUES
                   (:cik, :symbol, :companyName, :formType, :filingDate::date, :filingUrl, 'REGISTERED')
-                ON CONFLICT ((COALESCE(cik, lower(company_name)))) DO NOTHING
+                ON CONFLICT ((COALESCE(cik, lower(company_name)))) DO UPDATE
+                   SET symbol = COALESCE(spin_candidate.symbol, EXCLUDED.symbol)
+                RETURNING (xmax = 0) AS inserted
                 """)
                 .param("cik", emptyToNull(c.cik()))
                 .param("symbol", emptyToNull(c.symbol()))
@@ -75,8 +101,9 @@ public class SpinCandidateRepository {
                 .param("formType", c.formType())
                 .param("filingDate", c.filingDate())
                 .param("filingUrl", c.filingUrl())
-                .update();
-        return rows > 0;
+                .query(Boolean.class)
+                .single();
+        return Boolean.TRUE.equals(inserted);
     }
 
     /**
@@ -191,6 +218,21 @@ public class SpinCandidateRepository {
      * spin-co because its registration is old would delete exactly the candidates this hunter
      * exists for. A row is therefore in-window when EITHER date falls inside it.
      *
+     * <p>{@code distributed_at} joins the same OR for the same reason, one level more defensive:
+     * {@code distribution_date} is parsed from the 10-12B term sheet prose and is frequently
+     * absent — no "record date" or "distribution date" language in the filing at all — so it
+     * cannot be relied on to carry a freshly-distributed row into the window by itself. The
+     * {@link SpinLifecycleReconciler} price probe stamps {@code distributed_at = now()} the
+     * moment it moves a row to DISTRIBUTED, independent of whether the term sheet ever yielded a
+     * date. Without this clause a row whose {@code filing_date} predates the window and whose
+     * {@code distribution_date} is NULL transitions to DISTRIBUTED and then silently never
+     * reaches the LLM — exactly the failure this method exists to prevent for {@code filing_date}.
+     *
+     * <p>Both `distribution_date` and `distributed_at` in a single OR is deliberate belt-and-braces,
+     * not redundancy: the term sheet's stated date (when parsed) and the reconciler's own
+     * transition timestamp are two independent signals for "this just became tradeable", and
+     * either one is sufficient to keep a candidate in front of the hunter.
+     *
      * <p>{@code discovered_at} is deliberately NOT the filter: it records when Dracul's cron first
      * saw the row, not when anything happened in the market — a backfill or a re-ingest would make
      * every row look brand new. It stays the ORDER BY (freshest setups lead), as before.
@@ -211,6 +253,7 @@ public class SpinCandidateRepository {
                 WHERE status IN ('REGISTERED', 'WHEN_ISSUED', 'DISTRIBUTED') AND promoted_at IS NULL
                   AND (filing_date >= :since
                        OR distribution_date >= :since
+                       OR distributed_at >= :since
                        OR (filing_date IS NULL AND distribution_date IS NULL))
                 ORDER BY discovered_at DESC, cik DESC
                 LIMIT :limit

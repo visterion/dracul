@@ -64,7 +64,8 @@ class SpinCandidateRepositoryIT {
     @Test
     void upsertOnConflictSameCikIsNoOp() {
         assertThat(repo.upsertRegistered(candidate("0000000103", "AAA", "Repo Conflict One"))).isTrue();
-        // same CIK, different company string (an amendment) -> DO NOTHING, no second row
+        // same CIK, different company string (an amendment) -> conflict path fires (DO UPDATE)
+        // but changes nothing here: same symbol both times, so COALESCE is a no-op, no second row
         assertThat(repo.upsertRegistered(candidate("0000000103", "AAA", "Repo Conflict One Amended"))).isFalse();
 
         Integer count = jdbc.sql("SELECT count(*) FROM spin_candidate WHERE cik = :c")
@@ -85,6 +86,70 @@ class SpinCandidateRepositoryIT {
         Integer count = jdbc.sql("SELECT count(*) FROM spin_candidate WHERE lower(company_name) = :n")
                 .param("n", "repo namekey co").query(Integer.class).single();
         assertThat(count).isEqualTo(1);
+    }
+
+    // --- Ticker backfill on conflict (2026-08-08 spin-ticker-backfill) ---
+
+    @Test
+    void upsertBackfillsMissingSymbolOnConflictWithoutTouchingStatusOrSnapshots() {
+        assertThat(repo.upsertRegistered(candidate("0000000910", null, "Repo Backfill Co"))).isTrue();
+        long id = idByCompany("Repo Backfill Co");
+        assertThat(repo.findById(id).orElseThrow().symbol()).isNull();
+
+        // re-reading the same filing, the ticker now resolves -> ON CONFLICT DO UPDATE backfills it
+        boolean insertedAgain = repo.upsertRegistered(candidate("0000000910", "ADIG", "Repo Backfill Co"));
+        assertThat(insertedAgain).as("a backfilling upsert is not a fresh insert").isFalse();
+
+        SpinCandidateRow after = repo.findById(id).orElseThrow();
+        assertThat(after.symbol()).isEqualTo("ADIG");
+        assertThat(after.status()).isEqualTo(SpinStatus.REGISTERED);
+        assertThat(after.registeredSnapshot()).isNull();
+        assertThat(after.distributedSnapshot()).isNull();
+    }
+
+    @Test
+    void upsertNeverOverwritesAnAlreadyKnownSymbol() {
+        assertThat(repo.upsertRegistered(candidate("0000000911", "ADIG", "Repo Keep Co"))).isTrue();
+        long id = idByCompany("Repo Keep Co");
+
+        assertThat(repo.upsertRegistered(candidate("0000000911", "WRONG", "Repo Keep Co"))).isFalse();
+
+        assertThat(repo.findById(id).orElseThrow().symbol()).isEqualTo("ADIG");
+    }
+
+    @Test
+    void upsertWithBlankSymbolLeavesAnUnresolvedSymbolNullNeverEmptyString() {
+        assertThat(repo.upsertRegistered(candidate("0000000912", null, "Repo StaysNull Co"))).isTrue();
+        long id = idByCompany("Repo StaysNull Co");
+
+        assertThat(repo.upsertRegistered(candidate("0000000912", "", "Repo StaysNull Co"))).isFalse();
+
+        assertThat(repo.findById(id).orElseThrow().symbol()).isNull();
+    }
+
+    @Test
+    void upsertReturnValueIsFalseForBothAnIdenticalReplayAndABackfill() {
+        assertThat(repo.upsertRegistered(candidate("0000000913", "MFP", "Repo ReturnValue Co"))).isTrue();
+        // identical replay: DO UPDATE fires (same conflict key) but COALESCE keeps the existing
+        // symbol -> xmax != 0 -> not counted as an insert
+        assertThat(repo.upsertRegistered(candidate("0000000913", "MFP", "Repo ReturnValue Co"))).isFalse();
+        // a genuinely backfilling upsert -> still not an insert, the row already existed
+        assertThat(repo.upsertRegistered(candidate("0000000913", "MFP", "Repo ReturnValue Co"))).isFalse();
+    }
+
+    @Test
+    void upsertBackfillOnANameKeyedRowNeverMutatesTheCompanyNameConflictKey() {
+        // cik null -> the conflict key IS lower(company_name); a DO UPDATE must not touch that column
+        assertThat(repo.upsertRegistered(candidate(null, null, "Repo Namekey Backfill Co"))).isTrue();
+        long id = idByCompany("Repo Namekey Backfill Co");
+
+        // same spin-co arrives again in different capitalisation, this time with a resolved ticker
+        assertThat(repo.upsertRegistered(candidate(null, "MFP", "REPO NAMEKEY BACKFILL CO"))).isFalse();
+
+        SpinCandidateRow row = repo.findById(id).orElseThrow();
+        assertThat(row.symbol()).isEqualTo("MFP");
+        assertThat(row.companyName()).as("company_name is the conflict key itself; must stay untouched")
+                .isEqualTo("Repo Namekey Backfill Co");
     }
 
     @Test
