@@ -777,6 +777,13 @@ export default {
     error: 'Could not load data',
     close: 'Close',
   },
+  instrumentSearch: {
+    placeholder: 'Symbol or company name',
+    empty: 'No matches.',
+    hint: 'Try the name without umlauts.',
+    unavailable: 'Search is currently unavailable.',
+    addToWatchlist: 'Add to watchlist',
+  },
   strigoi: {
     back: 'back',
     loadError: 'Failed to load strigoi.',

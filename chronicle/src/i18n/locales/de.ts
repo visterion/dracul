@@ -777,6 +777,13 @@ export default {
     error: 'Daten konnten nicht geladen werden',
     close: 'Schließen',
   },
+  instrumentSearch: {
+    placeholder: 'Symbol oder Firmenname',
+    empty: 'Keine Treffer.',
+    hint: 'Deutsche Namen oft ohne Umlaut versuchen.',
+    unavailable: 'Suche gerade nicht verfügbar.',
+    addToWatchlist: 'Zur Watchlist hinzufügen',
+  },
   strigoi: {
     back: 'zurück',
     loadError: 'Strigoi konnte nicht geladen werden.',
