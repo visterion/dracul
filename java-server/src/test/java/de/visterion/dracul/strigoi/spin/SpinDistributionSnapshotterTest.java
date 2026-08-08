@@ -59,21 +59,36 @@ class SpinDistributionSnapshotterTest {
         when(filings.ownerHistoryStrict("SPN"))
                 .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));   // open-market buy after DIST
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isEqualTo(300.0);
         assertThat(s.parentMarketCapMillions()).isEqualTo(1500.0);
         assertThat(s.sizeRatio()).isEqualTo(0.2);                 // 300 / 1500
         assertThat(s.daysSinceDistribution()).isEqualTo(30);
+        assertThat(s.distributionDateConfirmed()).isTrue();
         assertThat(s.postSpinInsiderBuying()).isTrue();
         assertThat(s.marketCapAvailable()).isTrue();
         assertThat(s.insiderAvailable()).isTrue();
     }
 
+    @Test void unconfirmedDistributionDateIsCarriedThroughAsUnconfirmed() {
+        // Same effective date as computesSizeRatioDaysAndPostSpinBuying, but it is the
+        // distributed_at fallback rather than the real term-sheet date (see
+        // SpinCandidateEnricher#enrichDistributed) — distributionDateConfirmed must say so.
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
+        when(filings.ownerHistoryStrict("SPN"))
+                .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));
+
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, false, TODAY);
+
+        assertThat(s.daysSinceDistribution()).isEqualTo(30);
+        assertThat(s.distributionDateConfirmed()).isFalse();
+    }
+
     @Test void blankParentLeavesParentFieldsAndRatioNull() {
         when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
 
-        var s = snapshotter.snapshot("SPN", "", DIST, TODAY);
+        var s = snapshotter.snapshot("SPN", "", DIST, true, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isEqualTo(300.0);
         assertThat(s.parentMarketCapMillions()).isNull();
@@ -87,7 +102,7 @@ class SpinDistributionSnapshotterTest {
         when(filings.ownerHistoryStrict("SPN"))
                 .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isNull();
         assertThat(s.parentMarketCapMillions()).isNull();
@@ -103,7 +118,7 @@ class SpinDistributionSnapshotterTest {
                 tx(LocalDate.of(2026, 5, 20), "P"),               // purchase BEFORE distribution
                 tx(LocalDate.of(2026, 6, 20), "S")));             // post-distribution SALE, not a buy
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY);
 
         assertThat(s.postSpinInsiderBuying()).isFalse();
         assertThat(s.insiderAvailable()).isTrue();
@@ -112,10 +127,11 @@ class SpinDistributionSnapshotterTest {
     @Test void nullDistributionDateDegradesCalendarAndInsiderFields() {
         when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
 
-        var s = snapshotter.snapshot("SPN", "PAR", null, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", null, false, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isEqualTo(300.0); // market cap unaffected
         assertThat(s.daysSinceDistribution()).isNull();
+        assertThat(s.distributionDateConfirmed()).isFalse();      // no date at all -> never "confirmed"
         assertThat(s.postSpinInsiderBuying()).isNull();
         assertThat(s.insiderAvailable()).isFalse();
         verify(filings, never()).ownerHistoryStrict(anyString()); // no distribution date -> no insider call
@@ -125,7 +141,7 @@ class SpinDistributionSnapshotterTest {
         when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
         when(filings.ownerHistoryStrict("SPN")).thenThrow(new AgoraUnavailableException("down"));
 
-        assertThatThrownBy(() -> snapshotter.snapshot("SPN", "PAR", DIST, TODAY))
+        assertThatThrownBy(() -> snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY))
                 .isInstanceOf(AgoraUnavailableException.class);
     }
 }

@@ -246,9 +246,16 @@ as JSONB):
   `spincoMarketCapMillions` / `parentMarketCapMillions` (Finnhub via
   `EquityMetricsExtractor`, parent keyed on the best-effort `parent_symbol`),
   `sizeRatio` (spinco ÷ parent market cap, the small-spin-off effect; null unless both
-  caps resolve), `daysSinceDistribution`, and `postSpinInsiderBuying` (any Form-4
-  open-market purchase — code `P` — on or after the distribution date, from one
-  `ownerHistoryStrict` call).
+  caps resolve), `daysSinceDistribution`, `distributionDateConfirmed`, and
+  `postSpinInsiderBuying` (any Form-4 open-market purchase — code `P` — on or after the
+  distribution date, from one `ownerHistoryStrict` call). `daysSinceDistribution` is
+  measured off the effective distribution date (see the RESPOND step above) — the
+  term-sheet `distribution_date` when known, else the `distributed_at` detection
+  timestamp. Added 2026-08-08: `distributionDateConfirmed` (`true`/`false`) says which
+  case applies, so the LLM never reads a small `daysSinceDistribution` as "the window
+  just opened" when it is really only "Dracul just noticed" — the gap a one-off
+  backfill run exposed by moving five long-completed spin-offs to `DISTRIBUTED` in a
+  single pass, each stamped with today's `distributed_at`.
 - **`SETTLED`** — the fundamental re-rating read (`SpinValuationSnapshotter`):
   `priceToBook` (Finnhub `pbAnnual`), `fcfYield` (reciprocal of Finnhub
   `pfcfShareTTM`), `bookValue` (XBRL Assets − Liabilities), and `evToEbit`. **`evToEbit`

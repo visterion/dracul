@@ -25,7 +25,13 @@ import java.time.temporal.ChronoUnit;
  *       it is handed.</li>
  *   <li><b>sizeRatio</b> = spincoMarketCap / parentMarketCap (scale-4), the small-spin-off effect;
  *       null unless both caps are present and the parent's is positive.</li>
- *   <li><b>daysSinceDistribution</b> = whole days from the distribution date to {@code today}.</li>
+ *   <li><b>daysSinceDistribution</b> = whole days from the effective distribution date to
+ *       {@code today}. That date is the term-sheet {@code distribution_date} when known; otherwise
+ *       it falls back to {@code distributed_at}, which is when {@link SpinLifecycleReconciler}
+ *       first OBSERVED the spin-co trading — not the market event itself, and for a row whose
+ *       DISTRIBUTED transition happened well after the real distribution (e.g. a backfill run) this
+ *       understates {@code daysSinceDistribution} substantially. {@code distributionDateConfirmed}
+ *       tells the caller which case applies.</li>
  *   <li><b>postSpinInsiderBuying</b> — whether any reporting owner made an open-market purchase
  *       (Form-4 code {@code P}) on or after the distribution date, derived from ONE
  *       {@link AgoraFilings#ownerHistoryStrict(String)} call.</li>
@@ -57,24 +63,33 @@ public class SpinDistributionSnapshotter {
             Double parentMarketCapMillions,
             Double sizeRatio,
             Integer daysSinceDistribution,
+            boolean distributionDateConfirmed,
             Boolean postSpinInsiderBuying,
             boolean marketCapAvailable,
             boolean insiderAvailable) {
 
         static SpinDistributionSnapshot unavailable() {
-            return new SpinDistributionSnapshot(null, null, null, null, null, false, false);
+            return new SpinDistributionSnapshot(null, null, null, null, false, null, false, false);
         }
     }
 
     /**
      * @param spincoSymbol     the now-trading spin-off ticker.
      * @param parentSymbol     the parent ticker, or blank/null when it could not be resolved.
-     * @param distributionDate the distribution (first-trade) date; null degrades the calendar and
-     *                         insider fields to null.
+     * @param distributionDate the EFFECTIVE distribution date used for the calendar/insider math —
+     *                         see {@link SpinLifecycleReconciler#effectiveDistributionDate}. Null
+     *                         degrades the calendar and insider fields to null.
+     * @param distributionDateConfirmed whether {@code distributionDate} is the real, term-sheet
+     *                         distribution date (true) or the {@code distributed_at} fallback — the
+     *                         date Dracul first OBSERVED the spin-co trading, which can lag the real
+     *                         event by weeks to months for a row transitioned late (e.g. a backfill).
+     *                         Carried through to {@code daysSinceDistribution} so the caller never
+     *                         mistakes an observation timestamp for the market event.
      * @param today            the reconciliation date (passed in for deterministic testing).
      */
     public SpinDistributionSnapshot snapshot(String spincoSymbol, String parentSymbol,
-                                             LocalDate distributionDate, LocalDate today) {
+                                             LocalDate distributionDate, boolean distributionDateConfirmed,
+                                             LocalDate today) {
         Double spincoCap = marketCapMillions(spincoSymbol);
         Double parentCap = marketCapMillions(parentSymbol);
         boolean marketCapAvailable = spincoCap != null;
@@ -99,7 +114,8 @@ public class SpinDistributionSnapshotter {
         }
 
         return new SpinDistributionSnapshot(spincoCap, parentCap, sizeRatio,
-                daysSinceDistribution, postSpinInsiderBuying, marketCapAvailable, insiderAvailable);
+                daysSinceDistribution, distributionDateConfirmed && daysSinceDistribution != null,
+                postSpinInsiderBuying, marketCapAvailable, insiderAvailable);
     }
 
     /** Finnhub market cap (USD millions) for a ticker; null when the ticker is blank or the

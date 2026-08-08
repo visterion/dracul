@@ -8,6 +8,7 @@ import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
+import de.visterion.dracul.hunting.agora.PriceRangeMocks;
 import de.visterion.dracul.hunting.agora.RangeProbe;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.junit.jupiter.api.*;
@@ -64,6 +65,10 @@ class StrigoiLazarusWebhookControllerIT {
         when(index.constituents(anyString())).thenReturn(DataSourceResult.healthy("agora",
                 List.of(new IndexConstituent("IDXCO", "Index Co", "Industrials"))));
         when(priceRange.range52w(anyString())).thenReturn(RangeProbe.unusable());
+        // Production reads the market universe through range52wBatch (since 2026-08-06); wire the
+        // injected mock's batch method to answer out of these same per-symbol stubs so tests can
+        // keep stubbing range52w(symbol) directly. See PriceRangeMocks javadoc for the semantics.
+        PriceRangeMocks.wireBatchFromSingleStubs(priceRange);
     }
 
     @Test
