@@ -87,6 +87,26 @@ class SpinCandidateWindowRepositoryIT {
         assertThat(names(rows)).containsExactly("Window Undated Co");
     }
 
+    /**
+     * 2026-08-08 spin-ticker-backfill, change 3: {@code distributed_at} joins the window OR
+     * alongside {@code distribution_date}. Without it, a row whose {@code filing_date} is old
+     * and whose {@code distribution_date} is NULL (no term sheet ever carried a date — the common
+     * case) transitions to DISTRIBUTED and then never reaches the LLM again, no matter how fresh
+     * the transition. This is the exact HONA/MFP/MBGL production shape.
+     */
+    @Test
+    void distributedAtInsideTheWindowKeepsAnOldFilingWithNoTermSheetDateVisible() {
+        LocalDate today = LocalDate.now();
+        repo.upsertRegistered(candidate("0000009107", "HEAL", "Window Healed Co",
+                today.minusDays(200).toString()));
+        jdbc.sql("UPDATE spin_candidate SET status = 'DISTRIBUTED', distributed_at = now() "
+                + "WHERE cik = '0000009107'").update();
+
+        List<SpinCandidateRow> rows = repo.findActiveUnpromotedInWindow(today.minusDays(14), 50);
+
+        assertThat(names(rows)).containsExactly("Window Healed Co");
+    }
+
     @Test
     void statusAndPromotionFiltersStillApply() {
         LocalDate today = LocalDate.now();

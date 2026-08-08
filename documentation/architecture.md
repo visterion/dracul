@@ -723,8 +723,8 @@ lifecycle persistence (see `documentation/strigoi.md`, "Strigoi-Spin: lifecycle
 persistence"), turning the hunter from a stateless single-shot scan into a tracker
 that follows each Form-10-12B registration across hunts. One row per tracked
 spin-co; `SpinCandidateRepository` is JdbcClient-based (explicit `INSERT … ON
-CONFLICT DO NOTHING` + guarded compare-and-set UPDATEs), mirroring `PreyRepository`
-— no Spring Data JPA.
+CONFLICT DO UPDATE` that only ever backfills a missing `symbol` + guarded
+compare-and-set UPDATEs), mirroring `PreyRepository` — no Spring Data JPA.
 
 | Group | Columns |
 |---|---|
@@ -741,10 +741,14 @@ CONFLICT DO NOTHING` + guarded compare-and-set UPDATEs), mirroring `PreyReposito
 - **Idempotency:** expression unique index `uq_spin_candidate_natural` on
   `COALESCE(cik, lower(company_name))` — one row per spin-co, keyed on its CIK when
   known, degrading to the lowercased company name before a CIK is available. The
-  ingestion upsert (`ON CONFLICT DO NOTHING`) targets this expression and the
+  ingestion upsert (`ON CONFLICT DO UPDATE SET symbol = COALESCE(spin_candidate.symbol,
+  EXCLUDED.symbol)`, added 2026-08-08) targets this expression and the
   `SpinoffScreener` dedup key mirrors it exactly (same technique as V21's
   `uq_prey_natural_day`), so a re-run never duplicates a spin-co nor resets its
-  lifecycle.
+  lifecycle — it only ever fills a previously-unresolved `symbol`, never overwrites
+  a known one, and never touches `company_name`/`filing_url` (for a CIK-less row
+  `company_name` **is** the conflict key itself, so mutating it inside the same
+  `DO UPDATE` would move the row out of its own index value).
 - **Supporting indexes:** `idx_spin_candidate_last_checked` on `last_checked_at`
   (the reconciler's oldest-checked-first work-queue scan); partial
   `idx_spin_candidate_promotable` on `(status, distributed_at) WHERE promoted_at IS
