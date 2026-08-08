@@ -134,6 +134,24 @@ class CloudflareAccessFilterTest {
         assertThat(r[1]).isEqualTo(200);
     }
 
+    @Test void renfieldCompleteWebhookIsExcluded() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("POST", "/api/renfield/complete"));
+        assertThat(r[1]).isEqualTo(200);
+    }
+
+    @Test void renfieldProposalsOperatorPathStillEnforced() throws Exception {
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var req = new MockHttpServletRequest("GET", "/api/renfield/proposals");
+        assertThat(run(filter, req)[1]).isEqualTo(401);
+
+        var req2 = new MockHttpServletRequest("GET", "/api/renfield/proposals");
+        req2.addHeader("Cf-Access-Jwt-Assertion", mint("alice@x.com", AUD, Instant.now().plusSeconds(300)));
+        var r2 = run(filter, req2);
+        assertThat(r2[1]).isEqualTo(200);
+        assertThat(r2[0]).isEqualTo("alice@x.com");
+    }
+
     @Test void executorSignalsOperatorPathStillEnforced() throws Exception {
         var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
         var r = run(filter, new MockHttpServletRequest("GET", "/api/executor/signals"));
