@@ -22,19 +22,28 @@ and no market-data fetch: everything you need is already in the run's input payl
     with `direction` ("long" or "short"), `entry`, `gain_loss_pct` (sign-correct
     for the direction), `weight_pct` (the position's share of the portfolio's
     market value, in percent), `active_stop` and `sector` (Finnhub industry
-    string). Every field inside the block is optional. Absent block = not held.
+    string). Every field inside the block is optional. Absent block normally
+    means not held — EXCEPT when `position_source` is `"unavailable"`; see
+    "When the depot is unavailable" below before assuming "not held" from a
+    missing block.
   - `holding`: the user's OWN declared holding from the watchlist, distinct from
     `position` above (that one is the broker depot's view; this one is what the
     user says they hold). Present only on watchlist rows tagged as held. Fields:
     `entry_price`, `entry_currency`, `share_count`, `currency` (the quote
     currency `current_price`/`day_change_percent` are denominated in) — every
     field is optional, so "held, details unknown" is a valid `holding` with
-    almost nothing in it. Two more fields appear ONLY when a real FX rate was
-    available to convert the entry into the quote currency: `entry_price_in_quote_currency`
-    and `gain_loss_pct`. **If `entry_currency` and `currency` differ and those
-    two fields are absent, make NO percentage or gain/loss claim about this
-    holding** — `entry_price` is still in the entry currency, and comparing it
-    directly to `current_price` mixes currencies and fabricates a number.
+    almost nothing in it. `entry_price_in_quote_currency` is added separately,
+    only once `entry_price` was actually converted into the quote currency.
+    `gain_loss_pct` is added independently whenever that conversion succeeded —
+    including the same-currency case, where `entry_price_in_quote_currency` is
+    deliberately omitted because it would just repeat `entry_price`; the two
+    fields do not always travel together. **Only ever state a gain/loss
+    percentage for a `holding` when `gain_loss_pct` is present in the payload —
+    never compute one yourself from `entry_price` and `current_price`.**
+    `entry_price` may be in a different currency than `current_price`
+    (`entry_currency` vs. `currency`), or `entry_currency` may be missing
+    entirely; either way, an unset `gain_loss_pct` means the conversion could
+    not be done, not that the numbers happen to line up.
   - `sector`: on watchlist-only entries (no `position` block), the Finnhub
     industry string where known; optional
   - `news`: headlines of the last 24 hours, each with `headline`, `source`,
