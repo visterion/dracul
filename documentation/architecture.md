@@ -257,7 +257,25 @@ directly without triggering any market-data call.
   `proposal.new` event per completed run (`{count, run_id, ts}`), not one event per proposal row. An
   empty watchlist means the scheduler never triggers a run at all (no Telegram, no SSE); a completed
   run whose proposals list comes back empty still inserts zero rows but sends a "keine Vorschläge
-  heute" Telegram digest (no SSE event in that case).
+  heute" Telegram digest (no SSE event in that case). Read back via
+  `GET /api/renfield/proposals?days=N` (see `documentation/api.md`).
+- `trade_proposals.news_sentiment` (V43, JSONB, nullable) — the optional per-proposal array of
+  `{headline, sentiment}` objects the prompt may emit (`sentiment` in `[-1.0, +1.0]`); persisted
+  verbatim as JSON text cast to `jsonb` and surfaced on the read model as `newsSentiment`.
+  Index `trade_proposals_owner_symbol_created_idx` on `(owner, symbol, created_at DESC)` (V43)
+  backs `TradeProposalRepository.findPriorBySymbols`, the per-symbol prior-proposal lookup renfield
+  runs once per review (not once per symbol) to give each symbol its own top-5 via a `row_number()`
+  window over the last 10 days.
+- `renfield_run_context` (V43) — `run_id` (VARCHAR), `symbol` (VARCHAR), `held` (BOOLEAN),
+  `position_source` (VARCHAR(16)), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()), PK
+  `(run_id, symbol)`. One row per watchlist symbol, written by `RenfieldScheduler` right after
+  triggering a run: a snapshot of what was held (`holding` present, or an open depot position) at
+  the moment the agent reasoned about it. `RenfieldWebhookController` reads it back per symbol when
+  a proposal arrives to flag (WARN-log only, never drop) a `buy` proposal for a symbol the snapshot
+  marked `held=true` — the completion arrives ~90s after the trigger, so checking against a fresh
+  depot read instead could pass silently exactly when the depot has since become unreachable. Rows
+  older than 30 days are purged by the same scheduler call
+  (`RenfieldRunContextRepository.deleteOlderThan`).
 
 **Verdict columns (V6):**
 - `contributing_prey_ids` (JSONB, NOT NULL DEFAULT '[]') — array of prey UUIDs the verdict was synthesized from; written by the Voievod synthesizer on every upsert. Used for change-detection (skip upsert when the cluster is identical) and will feed outcome analysis in Etappe 8.

@@ -34,7 +34,8 @@ class RenfieldMemoryTest {
         notifier = mock(TelegramNotifier.class);
         broadcaster = mock(SseBroadcaster.class);
         memory = mock(HiveMemResearchService.class);
-        controller = new RenfieldWebhookController("tok", OWNER, proposals, notifier, broadcaster, memory);
+        controller = new RenfieldWebhookController("tok", OWNER, false, proposals, notifier, broadcaster,
+                memory, new JsonMapper(), mock(RenfieldRunContextRepository.class));
     }
 
     private static JsonNode json(String s) throws Exception {
@@ -44,9 +45,9 @@ class RenfieldMemoryTest {
     @Test
     void perRowFreshInsert_writesOneMemoryCellPerPersistedProposal() throws Exception {
         when(proposals.insert(anyString(), anyString(), anyString(), any(), any(), any(),
-                anyString(), any(), anyString())).thenReturn(1);
+                anyString(), any(), anyString(), any())).thenReturn(1);
 
-        var resp = controller.complete(BEARER, "run-1", json("""
+        var resp = controller.complete(BEARER, "run-1", null, json("""
                 {"status":"done","output":{"proposals":[
                    {"symbol":"ACME","action":"buy","entry_zone":"41.50-42.20","stop":"39.80",
                     "confidence":0.7,"rationale":"guidance cut priced in"},
@@ -65,11 +66,11 @@ class RenfieldMemoryTest {
     @Test
     void perRowDuplicateInsert_doesNotWriteMemoryForThatRow() throws Exception {
         when(proposals.insert(anyString(), eq("ACME"), anyString(), any(), any(), any(),
-                anyString(), any(), anyString())).thenReturn(0);
+                anyString(), any(), anyString(), any())).thenReturn(0);
         when(proposals.insert(anyString(), eq("BETA"), anyString(), any(), any(), any(),
-                anyString(), any(), anyString())).thenReturn(1);
+                anyString(), any(), anyString(), any())).thenReturn(1);
 
-        controller.complete(BEARER, "run-2", json("""
+        controller.complete(BEARER, "run-2", null, json("""
                 {"status":"done","output":{"proposals":[
                    {"symbol":"ACME","action":"buy","entry_zone":"","stop":"",
                     "confidence":0.7,"rationale":"r"},
@@ -87,11 +88,11 @@ class RenfieldMemoryTest {
     @Test
     void memoryThrows_completionStillReturns204() throws Exception {
         when(proposals.insert(anyString(), anyString(), anyString(), any(), any(), any(),
-                anyString(), any(), anyString())).thenReturn(1);
+                anyString(), any(), anyString(), any())).thenReturn(1);
         doThrow(new RuntimeException("bug")).when(memory).writeThesisMemory(anyString(), anyString(),
                 any(), any(), any(), any(), any(), any(), any(), anyDouble(), any());
 
-        var resp = controller.complete(BEARER, "run-3", json("""
+        var resp = controller.complete(BEARER, "run-3", null, json("""
                 {"status":"done","output":{"proposals":[
                    {"symbol":"ACME","action":"buy","entry_zone":"","stop":"",
                     "confidence":0.7,"rationale":"r"}],"market_note":"m"}}

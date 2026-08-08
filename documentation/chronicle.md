@@ -42,6 +42,7 @@ Both documents are required reading before implementing any view.
 | 11 | Depots | `/depots` | Trade-Republic-style live broker overview: summary bar (Σ equity, day change, total cash), one section per depot (header with provider/environment/probe status/"Stand:" freshness, headline value + day change + P&L, cash/invested/buying-power stats, performance chart with 1T/1W/1M/1J/Max ranges, allocation bar, positions table, orders), plus the operator-analytics Calibration card | High | ✅ Task C2 / A9 |
 | 12 | Depot Position Detail | `/depots/:connection/:symbol` | Trade-Republic-style instrument page: header (price + selected-timeframe change), 1T/1W/1M/1J/Max chart with dotted baseline, stat tiles, open orders, profile description, and horizontally scrollable News/Ereignisse/Insights/Finanzen card rows | High | ✅ Task C3 |
 | 13 | Agent Activity (Inspector) | `/inspector` | Operator-only browser of every Vistierie run across all agents: agent filter (client-side constant list of known agents + "all"), paginated run list (agent, started-at, status, error marker, snippet), click-to-expand raw transcript via `RawTranscriptPanel`, "load more" pagination | Low (operator tool) | ✅ Agent Activity Inspector, Task 4 |
+| 14 | Proposals | `/proposals` | Read-only view of renfield's daily watchlist review: `GET /api/renfield/proposals?days=7`, grouped by run (newest first), action items (buy/add/trim/sell/drop_from_watchlist) shown separately from plain `hold` observations; live-refreshes on the `proposal.new` SSE event | Medium | ✅ T1.6 renfield repair |
 
 > **Portfolio retired (Task A9, depot-as-SSOT).** The manual, watchlist-HELD-based
 > "Portfolio" view (`/portfolio`, backed by `GET /api/portfolio`) has been removed.
@@ -567,10 +568,11 @@ pointer-events: none) with a Phase 2 badge.
 
 ## Navigation structure
 
-The seven top-level nav destinations (Chronicle, Watchlist, Depots, Report,
-Pattern Library, Backtest, Settings) are available from both the desktop top-bar
-and the mobile bottom tab bar. Deep-linked views (Verdict Detail, Strigoi Detail,
-Prey Detail) are not in the nav but are reachable via in-app links.
+The top-level nav destinations (Chronicle, Watchlist, Depots, Report, Proposals,
+Pattern Library, Backtest, Settings, Inspector) are available from both the desktop
+top-bar and the mobile bottom tab bar (`useNavItems()`, the single source of truth
+shared by both). Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail) are
+not in the nav but are reachable via in-app links.
 
 - **Chronicle** is the home page. Most navigation starts here.
 - **Verdict Detail** and **Strigoi Detail** are deep-linked from Chronicle items.
@@ -580,6 +582,8 @@ Prey Detail) are not in the nav but are reachable via in-app links.
   Detail (button rendered, not yet wired).
 - **Report** is the daily Morning Report — the intended first stop each morning
   to review Groparul's stop/target/action summary for every held position.
+- **Proposals** surfaces renfield's daily watchlist-review output — a read-only
+  history of trade proposals, not an order ticket.
 - **Pattern Library** is reviewed periodically when the Voievod proposes new patterns.
 - **Backtest** is a reference view; the compute engine is deferred to Stufe 5.
 - **Settings** holds utility config plus the admin-only embedded Schatzkammer

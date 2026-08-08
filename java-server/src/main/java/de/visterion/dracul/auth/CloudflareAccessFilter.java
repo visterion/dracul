@@ -39,6 +39,7 @@ public class CloudflareAccessFilter extends OncePerRequestFilter {
     static final List<String> EXCLUDED =
             List.of("/api/strigoi-", "/api/voievod", "/api/voievod-outcome", "/api/gropar",
                     "/api/daywalker", "/api/daywalker-deep", "/api/executor/tools", "/api/executor/complete",
+                    "/api/renfield/complete",
                     "/actuator/health");
 
     private final boolean bypass;

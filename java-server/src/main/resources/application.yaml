@@ -412,6 +412,12 @@ dracul:
     # Task 11 (spec §11): total wall-clock budget for the prior_memory pre-fetch across the
     # WHOLE assembleInput run (not per-symbol) -- bounds a black-holing HiveMem.
     prior-memory-budget-ms: ${DRACUL_RENFIELD_PRIOR_MEMORY_BUDGET_MS:2000}
+    # One-off backfill seam (T1.6 repair): when true, X-Dracul-Backfill: true on
+    # /api/renfield/complete suppresses Telegram, SSE and the HiveMem write-back so a
+    # replay of lost runs doesn't alert or poison prior_memory. Default off — the
+    # endpoint's only auth is a bearer token, so an always-on header would be a
+    # standing way to write proposals with all alerting silenced.
+    backfill-enabled: ${DRACUL_RENFIELD_BACKFILL_ENABLED:false}
   watchlist:
     price-refresh:
       enabled: ${DRACUL_WATCHLIST_PRICE_REFRESH_ENABLED:true}

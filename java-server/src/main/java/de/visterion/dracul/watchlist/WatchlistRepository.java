@@ -322,6 +322,25 @@ public class WatchlistRepository {
                 .list();
     }
 
+    /** A directed FX pair (from -> to), e.g. the entry currency of a held position and the
+     *  currency its live quote comes in. */
+    public record CurrencyPair(String from, String to) {}
+
+    /** Distinct (entry_currency, currency) pairs actually held — the conversion the "held since"
+     *  P/L needs, since entry_price is booked in entry_currency but current_price arrives in
+     *  currency. Rows where they match are excluded (no conversion needed). */
+    public List<CurrencyPair> distinctEntryCurrencyPairs() {
+        return jdbc.sql("""
+                SELECT DISTINCT entry_currency, currency FROM watchlist_items
+                 WHERE entry_currency IS NOT NULL AND currency IS NOT NULL
+                   AND upper(entry_currency) <> upper(currency)
+                """)
+                .query((rs, rowNum) -> new CurrencyPair(
+                        rs.getString("entry_currency"),
+                        rs.getString("currency")))
+                .list();
+    }
+
     /** Update price + day-change for every row of a ticker; returns rows affected. */
     public int updatePriceByTicker(String ticker, double price, double dayChangePercent) {
         return jdbc.sql("""
