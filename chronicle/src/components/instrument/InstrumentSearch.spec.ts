@@ -114,6 +114,26 @@ describe('InstrumentSearch', () => {
     expect(wrapper.emitted('select')?.[0]?.[0]).toBe('SYNA.HE')
   })
 
+  it('tracks aria-activedescendant with the arrow-key highlight', async () => {
+    const wrapper = mountSearch()
+    await typeInto(wrapper, 'nokia')
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    const input = wrapper.get('[data-testid="is-input"]')
+    expect(input.attributes('aria-activedescendant')).toBeFalsy()
+
+    const rows = wrapper.findAll('[data-testid="is-row"]')
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    expect(input.attributes('aria-activedescendant')).toBe(rows[0].attributes('id'))
+
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    expect(input.attributes('aria-activedescendant')).toBe(rows[1].attributes('id'))
+
+    await input.trigger('keydown', { key: 'Escape' })
+    expect(input.attributes('aria-activedescendant')).toBeFalsy()
+  })
+
   it('clears the results on escape', async () => {
     const wrapper = mountSearch()
     await typeInto(wrapper, 'nokia')

@@ -9,13 +9,16 @@
       autocomplete="off"
       aria-autocomplete="list"
       :aria-expanded="showDropdown"
+      :aria-controls="listboxId"
+      :aria-activedescendant="activeDescendant"
       :placeholder="t('instrumentSearch.placeholder')"
       @keydown="onKeydown"
     />
 
-    <div v-if="showDropdown" class="is-dropdown" role="listbox">
+    <div v-if="showDropdown" :id="listboxId" class="is-dropdown" role="listbox">
       <div
         v-for="(hit, i) in results"
+        :id="rowId(i)"
         :key="hit.symbol"
         class="is-row"
         data-testid="is-row"
@@ -41,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useApi } from '../../api'
 import type { InstrumentSearchHit } from '../../api/types'
@@ -64,14 +67,23 @@ const failed = ref(false)
 const searchedEmpty = ref(false)
 
 let debounceHandle: ReturnType<typeof setTimeout> | null = null
-// Sequence number, bumped per request: the ONLY thing that decides whether a
-// response is still current. This is what discards an overtaking response —
-// not the AbortController below, which is UI correctness only.
+// Sequence number, bumped per request/escape/select: the mechanism that
+// discards an overtaking response. A response handler only applies its
+// result if its captured id still matches this counter — a slower, earlier
+// request that resolves after a newer one has already landed is dropped.
 let sequence = 0
-let controller: AbortController | null = null
 
 const empty = computed(() => searchedEmpty.value && !loading.value && !failed.value)
 const showDropdown = computed(() => results.value.length > 0 || empty.value || failed.value)
+
+// ARIA 1.2 combobox-with-listbox pattern: the listbox and its options get
+// stable ids so the input can point `aria-controls`/`aria-activedescendant`
+// at them for assistive technology, mirroring the visual highlight.
+const listboxId = useId()
+function rowId(i: number): string { return `${listboxId}-opt-${i}` }
+const activeDescendant = computed(() =>
+  highlightIndex.value >= 0 && highlightIndex.value < results.value.length ? rowId(highlightIndex.value) : undefined,
+)
 
 function resetState() {
   results.value = []
@@ -101,15 +113,6 @@ watch(query, value => {
 
 async function runSearch(q: string) {
   const id = ++sequence
-  // A fresh AbortController per request, aborting whichever request preceded
-  // it. This is purely for the browser-side fetch bookkeeping — it does NOT
-  // stop the backend from doing the work: Agora's tool call is synchronous
-  // and blocking, so an aborted request's server-side cost is already spent
-  // by the time we abort. The sequence number above is what actually keeps
-  // a stale response from overwriting a newer one in the UI.
-  controller?.abort()
-  controller = new AbortController()
-
   loading.value = true
   failed.value = false
   try {
@@ -156,10 +159,7 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-onBeforeUnmount(() => {
-  cancelPending()
-  controller?.abort()
-})
+onBeforeUnmount(cancelPending)
 </script>
 
 <style scoped>
