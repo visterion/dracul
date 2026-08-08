@@ -17,6 +17,7 @@ import de.visterion.dracul.vistierie.VistierieClient;
 import de.visterion.dracul.vistierie.VistierieRunDetail;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -48,6 +49,16 @@ class RenfieldSchedulerTest {
     private final FxService fx = mock(FxService.class);
 
     private static final String OWNER = "alice@example.com";
+    private static final String RUN_ID = "run-default";
+
+    /** Vistierie answers every trigger with a run id, as it does in production. Without this
+     *  every test would log "no run id returned", drowning the genuine production signal.
+     *  Tests that care about the id (or its absence) re-stub it. */
+    @BeforeEach
+    void stubTriggeredRunId() {
+        when(vistierie.triggerRun(anyString(), any(), any(), any())).thenReturn(
+                new VistierieRunDetail(RUN_ID, "renfield", "running", null, null, null, null));
+    }
 
     private RenfieldScheduler scheduler() {
         return scheduler(30);
@@ -506,7 +517,7 @@ class RenfieldSchedulerTest {
         assertThat(holdingOf(symbol)).containsEntry("currency", "USD")
                 .doesNotContainKey("entry_price")
                 .doesNotContainKey("share_count")
-                .doesNotContainKey("entry_price_in_currency")
+                .doesNotContainKey("entry_price_in_quote_currency")
                 .doesNotContainKey("gain_loss_pct");
     }
 
@@ -528,7 +539,7 @@ class RenfieldSchedulerTest {
         assertThat(holding).containsEntry("entry_price", 330.76)
                 .containsEntry("entry_currency", "EUR")
                 .containsEntry("currency", "USD")
-                .doesNotContainKey("entry_price_in_currency")
+                .doesNotContainKey("entry_price_in_quote_currency")
                 .doesNotContainKey("gain_loss_pct");
     }
 
@@ -546,7 +557,7 @@ class RenfieldSchedulerTest {
 
         var holding = holdingOf(symbolsOf(scheduler().assembleInput(items, Instant.now())).get(0));
 
-        assertThat((BigDecimal) holding.get("entry_price_in_currency")).isEqualByComparingTo("200.0000");
+        assertThat((BigDecimal) holding.get("entry_price_in_quote_currency")).isEqualByComparingTo("200.0000");
         // 220 vs 200 in USD -> +10 %, NOT 220 vs 170.
         assertThat((BigDecimal) holding.get("gain_loss_pct")).isEqualByComparingTo("10.00");
     }
@@ -593,6 +604,43 @@ class RenfieldSchedulerTest {
         assertThat(symbols.get(0)).containsKey("holding");
         assertThat(symbols.get(1)).containsEntry("symbol", "FRGN").doesNotContainKey("holding");
         assertThat(symbols.toString()).doesNotContain("99.99").doesNotContain("42.0");
+        // Structural half of the rule: assemble reads the list it was handed and NOTHING else.
+        // A reintroduced (and therefore unscoped) watchlist query would light this up.
+        verifyNoMoreInteractions(watchlist);
+    }
+
+    /** A broken proposal-history lookup must not cost the day: the run goes out, the key is
+     *  OMITTED (never `[]`, which reads as "nothing was proposed"), and a top-level marker
+     *  says the lookup failed -- the same shape as position_source. */
+    @Test
+    void priorProposalLookupFailureLeavesTheKeyAbsentAndMarksTheSource() {
+        quietWorld();
+        stubDepot(List.of());
+        when(watchlist.findAllByUser(OWNER)).thenReturn(List.of(item("AVGO", null)));
+        when(proposals.findPriorBySymbols(eq(OWNER), anyList()))
+                .thenThrow(new RuntimeException("trade_proposals unreachable"));
+
+        scheduler().run();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(vistierie).triggerRun(eq("renfield"), captor.capture(), any(), any());
+        Map<String, Object> input = captor.getValue();
+        assertThat(input).containsEntry("prior_proposals_source", "unavailable");
+        assertThat(symbolsOf(input).get(0)).doesNotContainKey("prior_proposals");
+    }
+
+    /** The healthy counterpart: the marker exists on every payload, not only on failure. */
+    @Test
+    void healthyPriorProposalLookupMarksTheSourceOk() {
+        quietWorld();
+        stubDepot(List.of());
+        List<WatchlistItem> items = List.of(item("AVGO", null));
+
+        var input = scheduler().assembleInput(items, Instant.now());
+
+        assertThat(input).containsEntry("prior_proposals_source", "ok");
+        assertThat(symbolsOf(input).get(0)).containsKey("prior_proposals");
     }
 
     /** F2: one batched query for the whole review, not one per symbol. */

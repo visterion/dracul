@@ -200,8 +200,26 @@ public class RenfieldScheduler {
 
         // F2: ONE batched query for the whole review — a per-symbol lookup would be 60 round
         // trips per run at the prod cap.
-        Map<String, List<PriorProposal>> priorProposals = proposals.findPriorBySymbols(
-                owner, items.stream().map(WatchlistItem::ticker).toList());
+        //
+        // The query runs BEFORE triggerRun and sits inside run()'s blanket catch, so letting it
+        // escape would turn a hiccup on `trade_proposals` into no run, no payload, no digest —
+        // the silent day this repair exists to remove, for a table the trigger never needed
+        // before. Degrading to `[]` is equally wrong: it reads exactly like "nothing was
+        // proposed yesterday". So the third path, the same shape as `position_source` and the
+        // house convention of the daily analysis (design §E): the key is OMITTED and a
+        // top-level marker says the lookup failed.
+        Map<String, List<PriorProposal>> priorProposals;
+        String priorProposalsSource;
+        try {
+            priorProposals = proposals.findPriorBySymbols(
+                    owner, items.stream().map(WatchlistItem::ticker).toList());
+            priorProposalsSource = "ok";
+        } catch (RuntimeException e) {
+            log.warn("renfield: prior-proposal lookup failed — reviewing without proposal history: {}",
+                    e.getMessage());
+            priorProposals = null;
+            priorProposalsSource = "unavailable";
+        }
 
         Map<String, Boolean> heldForSnapshot = new LinkedHashMap<>();
         var symbols = new ArrayList<Map<String, Object>>();
@@ -255,20 +273,23 @@ public class RenfieldScheduler {
                             .toList()
                     : List.of();
             m.put("prior_memory", priorMemory);
-            m.put("prior_proposals", priorProposals.getOrDefault(item.ticker(), List.of()).stream()
-                    .map(pp -> {
-                        var e = new LinkedHashMap<String, Object>();
-                        e.put("date", pp.date());
-                        e.put("action", pp.action());
-                        e.put("confidence", pp.confidence());
-                        return (Map<String, Object>) e;
-                    })
-                    .toList());
+            if (priorProposals != null) {
+                m.put("prior_proposals", priorProposals.getOrDefault(item.ticker(), List.of()).stream()
+                        .map(pp -> {
+                            var e = new LinkedHashMap<String, Object>();
+                            e.put("date", pp.date());
+                            e.put("action", pp.action());
+                            e.put("confidence", pp.confidence());
+                            return (Map<String, Object>) e;
+                        })
+                        .toList());
+            }
             symbols.add(m);
         }
         var input = new LinkedHashMap<String, Object>();
         input.put("as_of", now.toString());
         input.put("position_source", positionSource);
+        input.put("prior_proposals_source", priorProposalsSource);
         input.put("symbols", symbols);
         return new Assembled(input, heldForSnapshot, positionSource);
     }
@@ -309,7 +330,7 @@ public class RenfieldScheduler {
         boolean sameCurrency = from.equalsIgnoreCase(to);
         BigDecimal entryInQuoteCurrency = sameCurrency ? entry : fx.convert(entry, from, to);
         if (entryInQuoteCurrency == null || entryInQuoteCurrency.signum() <= 0) return h;
-        if (!sameCurrency) h.put("entry_price_in_currency", entryInQuoteCurrency);
+        if (!sameCurrency) h.put("entry_price_in_quote_currency", entryInQuoteCurrency);
 
         BigDecimal current = quote != null && quote.price() != null
                 ? quote.price()
