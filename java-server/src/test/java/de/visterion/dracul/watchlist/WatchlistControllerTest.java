@@ -43,6 +43,11 @@ class WatchlistControllerTest {
 
     private static final String USER = "default";
 
+    /** Exactly 24 chars — the widened pattern's upper boundary; must still be accepted. */
+    private static final String SYMBOL_24_CHARS = "A" + "B".repeat(23);
+    /** Exactly 25 chars — one past the boundary; must be rejected. */
+    private static final String SYMBOL_25_CHARS = "A" + "B".repeat(24);
+
     @LocalServerPort int port;
 
     @Autowired JsonMapper objectMapper;
@@ -75,8 +80,10 @@ class WatchlistControllerTest {
 
     private void cleanupTestRows() {
         jdbc.sql("DELETE FROM watchlist_items WHERE user_id = :user AND ticker IN "
-                        + "('SYNA','SYNB','AT0000A324Q2.VI','NOKIA')")
+                        + "('SYNA','SYNB','SYNC','SYND','SYNE','SYNF','AT0000A324Q2.VI','NOKIA',"
+                        + ":sym24)")
                 .param("user", USER)
+                .param("sym24", SYMBOL_24_CHARS)
                 .update();
     }
 
@@ -165,5 +172,51 @@ class WatchlistControllerTest {
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody().get("companyName").asString()).isEqualTo("Synthetic Beta AG");
+    }
+
+    /**
+     * Fix round 1: the {@code company_name = ticker} comparison must be exact — no case
+     * folding, no trimming. A row named {@code 'sync'} against ticker {@code SYNC}, or
+     * {@code ' SYND '} against ticker {@code SYND}, does NOT satisfy an exact match and must
+     * stay untouched. A {@code lower()} or {@code trim()} variant of the SQL would heal both
+     * rows here and fail this test.
+     */
+    @Test void reAddingDoesNotOverwriteALooseTickerMatch() {
+        repo.insert(USER, "SYNC", "sync", 5.0, List.of(5.0), "TRACKING", "manual", null, "EUR");
+        repo.insert(USER, "SYND", " SYND ", 5.0, List.of(5.0), "TRACKING", "manual", null, "EUR");
+
+        var caseResponse = post("""
+                {"symbol":"SYNC","tag":"TRACKING","name":"Synthetic Gamma Oyj"}
+                """);
+        var whitespaceResponse = post("""
+                {"symbol":"SYND","tag":"TRACKING","name":"Synthetic Delta Oyj"}
+                """);
+
+        assertThat(caseResponse.getStatusCode().value()).isEqualTo(200);
+        assertThat(caseResponse.getBody().get("companyName").asString()).isEqualTo("sync");
+        assertThat(whitespaceResponse.getStatusCode().value()).isEqualTo(200);
+        assertThat(whitespaceResponse.getBody().get("companyName").asString()).isEqualTo(" SYND ");
+    }
+
+    @Test void aTwentyFourCharSymbolIsAcceptedAndTwentyFiveIsRejected() {
+        var accepted = post("{\"symbol\":\"" + SYMBOL_24_CHARS + "\",\"tag\":\"TRACKING\"}");
+        var rejected = post("{\"symbol\":\"" + SYMBOL_25_CHARS + "\",\"tag\":\"TRACKING\"}");
+
+        assertThat(accepted.getStatusCode().value()).isEqualTo(201);
+        assertThat(rejected.getStatusCode().value()).isEqualTo(400);
+    }
+
+    @Test void blankNameFallsBackToTheSymbolAndAPaddedNameIsStoredTrimmed() {
+        var blank = post("""
+                {"symbol":"SYNE","tag":"TRACKING","name":""}
+                """);
+        var padded = post("""
+                {"symbol":"SYNF","tag":"TRACKING","name":"  Trimmed Name  "}
+                """);
+
+        assertThat(blank.getStatusCode().value()).isEqualTo(201);
+        assertThat(blank.getBody().get("companyName").asString()).isEqualTo("SYNE");
+        assertThat(padded.getStatusCode().value()).isEqualTo(201);
+        assertThat(padded.getBody().get("companyName").asString()).isEqualTo("Trimmed Name");
     }
 }
