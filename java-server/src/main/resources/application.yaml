@@ -58,6 +58,10 @@ dracul:
       # the same request (up to 25 clusters x ~5 Agora calls on the 25 s global budget), so the
       # 150 s over the Form-4 worst case is NOT free headroom — it is where enrichment lives.
       "[get_form4_transactions]": ${DRACUL_AGORA_FORM4_TIMEOUT_MS:45000}
+      # Interactive, user-typed search. AgoraClient.callTool is synchronized, so EVERY
+      # Dracul->Agora call shares one lock; a short budget keeps a search from holding it in
+      # front of the stop watcher and the price refresher.
+      "[search_instruments]": ${DRACUL_AGORA_TIMEOUT_SEARCH_MS:2000}
   hivemem:
     base-url: ${DRACUL_HIVEMEM_BASE_URL:http://hivemem:8421}
     mcp-token: ${DRACUL_HIVEMEM_MCP_TOKEN:}

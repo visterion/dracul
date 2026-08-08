@@ -146,6 +146,14 @@ class CloudflareAccessFilterTest {
         assertThat(r[1]).isEqualTo(401);
     }
 
+    @Test void instrumentSearchPathStillEnforced() throws Exception {
+        // /api/instruments/** is NOT on the exclusion list (unlike the webhook paths above) —
+        // instrument search stays behind Cloudflare Access like every other operator route.
+        var filter = new CloudflareAccessFilter(teamDomain, AUD, devEnv());
+        var r = run(filter, new MockHttpServletRequest("GET", "/api/instruments/search"));
+        assertThat(r[1]).isEqualTo(401);
+    }
+
     @Test void bypassModeUsesDevUserHeaderElseDefault() throws Exception {
         var filter = new CloudflareAccessFilter("", "", devEnv());
         var req = new MockHttpServletRequest("GET", "/api/watchlist");
