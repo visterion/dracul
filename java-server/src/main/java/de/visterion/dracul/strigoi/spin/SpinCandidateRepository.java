@@ -17,9 +17,9 @@ import java.util.Optional;
 /**
  * Persistence for tracked spin-off candidates (V26 {@code spin_candidate}).
  * JdbcClient-based, mirroring {@link de.visterion.dracul.prey.PreyRepository}:
- * explicit {@code INSERT ... ON CONFLICT DO NOTHING} for idempotent ingestion,
- * guarded compare-and-set UPDATEs for the forward-only lifecycle, and no Spring
- * Data JPA.
+ * explicit {@code INSERT ... ON CONFLICT DO UPDATE} for idempotent, self-healing
+ * ingestion (see {@link #upsertRegistered}), guarded compare-and-set UPDATEs for
+ * the forward-only lifecycle, and no Spring Data JPA.
  *
  * <p>Idempotency and the {@link SpinoffScreener} dedup key both mirror the V26
  * expression unique index {@code COALESCE(cik, lower(company_name))}: one row per
@@ -72,6 +72,18 @@ public class SpinCandidateRepository {
      * updated) — computed via {@code RETURNING (xmax = 0) AS inserted}, since
      * Postgres's regular affected-row count no longer distinguishes INSERT from
      * UPDATE now that the conflict path can also touch a row.
+     *
+     * <p><b>The {@code SET} clause must stay unconditional — never add a
+     * {@code WHERE spin_candidate.symbol IS NULL}.</b> Postgres requires an
+     * {@code ON CONFLICT ... DO UPDATE} to affect the conflicting row for
+     * {@code RETURNING} to produce anything; a {@code WHERE} that excludes rows
+     * whose symbol is already set would make every identical-replay upsert (the
+     * common case — most hunts re-ingest a row with no new information) match zero
+     * rows, and {@code .query(Boolean.class).single()} would then throw
+     * {@code EmptyResultDataAccessException} in production instead of returning
+     * {@code false}. The {@code COALESCE} inside the unconditional {@code SET} is
+     * what already makes the write a no-op when the symbol is unchanged — the
+     * {@code WHERE} is not needed for correctness and would only break this method.
      */
     public boolean upsertRegistered(SpinCandidate c) {
         Boolean inserted = jdbc.sql("""

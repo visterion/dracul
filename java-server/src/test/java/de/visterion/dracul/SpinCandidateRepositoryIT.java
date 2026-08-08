@@ -64,7 +64,8 @@ class SpinCandidateRepositoryIT {
     @Test
     void upsertOnConflictSameCikIsNoOp() {
         assertThat(repo.upsertRegistered(candidate("0000000103", "AAA", "Repo Conflict One"))).isTrue();
-        // same CIK, different company string (an amendment) -> DO NOTHING, no second row
+        // same CIK, different company string (an amendment) -> conflict path fires (DO UPDATE)
+        // but changes nothing here: same symbol both times, so COALESCE is a no-op, no second row
         assertThat(repo.upsertRegistered(candidate("0000000103", "AAA", "Repo Conflict One Amended"))).isFalse();
 
         Integer count = jdbc.sql("SELECT count(*) FROM spin_candidate WHERE cik = :c")

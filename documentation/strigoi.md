@@ -201,10 +201,11 @@ no new scheduler):
    freshly-distributed spin-co must not drop out because its registration is old.
    Added 2026-08-08: `distributed_at` (the reconciler's own DISTRIBUTED-transition
    timestamp) joins the same OR, because `distribution_date` is parsed from the term
-   sheet prose and is frequently never set — no term sheet ever mentions a "record
-   date" or "distribution date" for a real share of filings — so a row with an old
-   `filing_date` and a null `distribution_date` used to transition to DISTRIBUTED and
-   then never reach the LLM again, no matter how fresh the transition.
+   sheet prose and is frequently absent — checked against all nine of the then-stuck
+   production rows, none of whose term sheets mentioned a "record date" or
+   "distribution date" — so a row with an old `filing_date` and a null
+   `distribution_date` used to transition to DISTRIBUTED and then never reach the LLM
+   again, no matter how fresh the transition.
    `discovered_at` is deliberately not the filter (it records when Dracul first saw
    the row, not a market fact) — it stays the ordering. A row carrying neither date
    is always returned rather than silently dropped. The response is capped at 50
