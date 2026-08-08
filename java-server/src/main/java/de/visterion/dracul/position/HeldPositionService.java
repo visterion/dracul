@@ -34,14 +34,34 @@ public class HeldPositionService {
         this.contextRepo = contextRepo;
     }
 
-    /** Every open depot position for {@code connection}, left-joined by symbol to its context. */
+    /**
+     * The open positions for one connection PLUS whether the depot actually answered.
+     * {@code available == false} means the read failed ({@link DepotUnavailableException});
+     * the position list is then empty. Callers that must not confuse "the depot is empty"
+     * with "the depot is down" -- renfield's payload does exactly that -- use this method;
+     * everyone else keeps {@link #openPositions(String)}.
+     */
+    public record OpenPositions(List<HeldPosition> positions, boolean available) {}
+
+    /**
+     * Every open depot position for {@code connection}, left-joined by symbol to its context.
+     * Fail-soft: an unreachable depot yields an EMPTY LIST, indistinguishable from an empty
+     * depot. That is deliberate and depended upon (Gropar's "empty list =&gt; pause" rule,
+     * {@code FxRateRefresher}, {@code DaywalkerCompletionService}, the Lazarus path) -- do
+     * not change it. Use {@link #openPositionsOrUnavailable(String)} when the difference matters.
+     */
     public List<HeldPosition> openPositions(String connection) {
+        return openPositionsOrUnavailable(connection).positions();
+    }
+
+    /** Same read as {@link #openPositions(String)}, but reporting whether the depot answered. */
+    public OpenPositions openPositionsOrUnavailable(String connection) {
         List<DepotPosition> positions;
         try {
             positions = depotClient.positions(connection).positions();
         } catch (DepotUnavailableException e) {
             log.warn("depot unavailable for connection {}: {}", connection, e.toString());
-            return List.of();
+            return new OpenPositions(List.of(), false);
         }
 
         List<HeldPosition> result = new ArrayList<>();
@@ -49,7 +69,7 @@ public class HeldPositionService {
             Optional<PositionContextRow> context = contextRepo.findOpenBySymbol(connection, p.symbol());
             result.add(join(p, context.orElse(null)));
         }
-        return result;
+        return new OpenPositions(result, true);
     }
 
     private HeldPosition join(DepotPosition p, PositionContextRow ctx) {

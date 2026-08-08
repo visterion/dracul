@@ -62,6 +62,13 @@ public class FxRateRefresher {
             for (String c : currencies) {
                 if (c != null && !c.equalsIgnoreCase(display)) fx.warm(c, display);
             }
+            // T5: also warm the directed entry_currency -> currency pairs actually held, so the
+            // renfield "since entry" P/L can convert instead of silently comparing amounts in
+            // two different currencies. FxService.pair() is directional, so this does not
+            // duplicate the c -> display warming above.
+            for (WatchlistRepository.CurrencyPair p : watchlistRepo.distinctEntryCurrencyPairs()) {
+                fx.warm(p.from(), p.to());
+            }
         } catch (RuntimeException e) {
             log.warn("FX rate refresh failed: {}", e.getMessage());
         }

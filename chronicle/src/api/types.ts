@@ -272,6 +272,38 @@ export interface MorningReport {
   positions: MorningReportLine[]
 }
 
+// ── Renfield (daily watchlist review) ──────────────────────────
+
+export type ProposalAction = 'buy' | 'add' | 'trim' | 'sell' | 'hold' | 'drop_from_watchlist'
+
+export interface ProposalNewsHeadline {
+  headline: string
+  /** [-1.0, +1.0] per schemas/renfield-review.json — a wire number, never a
+   *  string label. Bucket it for display (see ProposalRow.vue). */
+  sentiment: number
+}
+
+export interface Proposal {
+  id: string
+  symbol: string
+  action: ProposalAction
+  entryZone: string | null
+  stop: string | null
+  confidence: number | null
+  rationale: string
+  /** Array of {headline, sentiment} objects, or null when no news was consulted. */
+  newsSentiment: ProposalNewsHeadline[] | null
+}
+
+/** One renfield run — a batch of proposals produced by a single daily review,
+ *  newest run first (`GET /api/renfield/proposals`). */
+export interface ProposalRun {
+  runId: string
+  createdAt: string
+  marketNote: string
+  proposals: Proposal[]
+}
+
 export interface Me { email: string }
 
 export interface PatchPositionRequest {

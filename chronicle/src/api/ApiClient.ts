@@ -8,7 +8,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
-  DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit,
+  DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
 } from './types'
 
 export interface ApiClient {
@@ -64,4 +64,5 @@ export interface ApiClient {
   getInspectorRuns(agent: string | null, limit?: number, offset?: number): Promise<InspectorRunsResponse>
   getDecisionDoc(): Promise<{ markdown: string } | null>
   searchInstruments(q: string, limit?: number): Promise<InstrumentSearchHit[]>
+  getProposals(days?: number): Promise<ProposalRun[]>
 }

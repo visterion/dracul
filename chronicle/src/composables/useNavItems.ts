@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 
 /** Must be kept in sync with the route `name`s defined in the router. */
 export type NavName =
-  | 'chronicle' | 'watchlist' | 'depots' | 'morning-report' | 'pattern-library'
+  | 'chronicle' | 'watchlist' | 'depots' | 'morning-report' | 'proposals' | 'pattern-library'
   | 'backtest' | 'settings' | 'inspector'
 
 export interface NavItem {
@@ -31,6 +31,7 @@ export function useNavItems() {
     { name: 'watchlist',       label: t('app.nav.watchlist'),      icon: 'ph-eye',           matchPrefixes: ['/watchlist'] },
     { name: 'depots',          label: t('app.nav.depots'),         icon: 'ph-vault',         matchPrefixes: ['/depots', '/portfolio'] },
     { name: 'morning-report',  label: t('app.nav.report'),         icon: 'ph-sun-horizon',   matchPrefixes: ['/report'] },
+    { name: 'proposals',       label: t('app.nav.proposals'),      icon: 'ph-note-pencil',   matchPrefixes: ['/proposals'] },
     { name: 'pattern-library', label: t('app.nav.patternLibrary'), icon: 'ph-book-open',     matchPrefixes: ['/patterns'] },
     { name: 'backtest',        label: t('app.nav.backtest'),       icon: 'ph-chart-line-up', matchPrefixes: ['/backtest'] },
     { name: 'settings',        label: t('app.nav.settings'),       icon: 'ph-gear-six',      matchPrefixes: ['/settings'] },

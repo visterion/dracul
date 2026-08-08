@@ -8,6 +8,7 @@ import de.visterion.dracul.hunting.agora.SectorResolver;
 import de.visterion.dracul.hunting.news.NewsEventTagger;
 import de.visterion.dracul.hunting.news.NewsEventType;
 import de.visterion.dracul.marketdata.AgoraMarketData;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.marketdata.Quote;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
@@ -15,6 +16,7 @@ import de.visterion.dracul.position.PortfolioWeights;
 import de.visterion.dracul.position.PositionMath;
 import de.visterion.dracul.verdict.VerdictRepository;
 import de.visterion.dracul.vistierie.VistierieClient;
+import de.visterion.dracul.vistierie.VistierieRunDetail;
 import de.visterion.dracul.watchlist.WatchlistItem;
 import de.visterion.dracul.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
@@ -25,6 +27,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -50,6 +53,10 @@ public class RenfieldScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(RenfieldScheduler.class);
 
+    /** How long a run-context snapshot is kept. Only the action-check of its own run reads it,
+     *  minutes after the trigger; 30 days is pure forensic headroom. */
+    private static final int RUN_CONTEXT_RETENTION_DAYS = 30;
+
     private final WatchlistRepository watchlist;
     private final AgoraMarketData marketData;
     private final AgoraCompanyData companyData;
@@ -60,6 +67,9 @@ public class RenfieldScheduler {
     private final SectorResolver sectors;
     private final VistierieClient vistierie;
     private final HiveMemResearchService memory;
+    private final TradeProposalRepository proposals;
+    private final RenfieldRunContextRepository runContext;
+    private final FxService fx;
     private final String publicUrl;
     private final String webhookToken;
     private final String connection;
@@ -73,6 +83,8 @@ public class RenfieldScheduler {
             VerdictRepository verdicts, HeldPositionService heldPositions,
             PortfolioWeights portfolioWeights, SectorResolver sectors,
             VistierieClient vistierie, HiveMemResearchService memory,
+            TradeProposalRepository proposals, RenfieldRunContextRepository runContext,
+            FxService fx,
             @Value("${dracul.public-url}") String publicUrl,
             @Value("${dracul.renfield.webhook-token:dev-token-change-me}") String webhookToken,
             @Value("${dracul.position.connection:depot-1}") String connection,
@@ -89,6 +101,9 @@ public class RenfieldScheduler {
         this.sectors = sectors;
         this.vistierie = vistierie;
         this.memory = memory;
+        this.proposals = proposals;
+        this.runContext = runContext;
+        this.fx = fx;
         this.publicUrl = publicUrl;
         this.webhookToken = webhookToken;
         this.connection = connection;
@@ -116,17 +131,57 @@ public class RenfieldScheduler {
                 log.info("renfield: capped watchlist review to {} of {} symbols (dropped {})",
                         maxSymbols, items.size(), items.size() - maxSymbols);
             }
-            var input = assembleInput(selected, Instant.now());
-            vistierie.triggerRun("renfield", input,
+            var assembled = assemble(selected, Instant.now());
+            var detail = vistierie.triggerRun("renfield", assembled.input(),
                     publicUrl + "/api/renfield/complete", webhookToken);
             log.info("renfield review triggered for {} watchlist symbols", selected.size());
+            snapshotRunContext(detail, assembled);
         } catch (RuntimeException e) {
             log.warn("renfield trigger failed: {}", e.getMessage());
         }
     }
 
+    /**
+     * Persists what was held at trigger time, so the action-check (F4) judges a proposal
+     * against the state the agent actually reasoned about rather than a depot that may have
+     * changed -- or failed to load -- by the time the completion arrives. Best-effort and
+     * separately caught: the run is already away, so a DB hiccup here must not masquerade as
+     * "renfield trigger failed". Older rows are swept in the same step.
+     */
+    private void snapshotRunContext(VistierieRunDetail detail, Assembled assembled) {
+        String runId = detail == null ? null : detail.id();
+        if (runId == null || runId.isBlank()) {
+            log.warn("renfield: no run id returned — skipping the run-context snapshot "
+                    + "(the action check will report the snapshot as missing)");
+            return;
+        }
+        try {
+            runContext.save(runId, assembled.heldBySymbol(), assembled.positionSource());
+            int purged = runContext.deleteOlderThan(RUN_CONTEXT_RETENTION_DAYS);
+            if (purged > 0) {
+                log.info("renfield: purged {} run-context rows older than {} days",
+                        purged, RUN_CONTEXT_RETENTION_DAYS);
+            }
+        } catch (RuntimeException e) {
+            log.warn("renfield: run-context snapshot for run {} failed: {}", runId, e.getMessage());
+        }
+    }
+
+    /** The assembled payload plus the two facts the snapshot needs but the payload nests. */
+    record Assembled(Map<String, Object> input, Map<String, Boolean> heldBySymbol,
+                     String positionSource) {}
+
     Map<String, Object> assembleInput(List<WatchlistItem> items, Instant now) {
-        List<HeldPosition> open = heldPositions.openPositions(connection);
+        return assemble(items, now).input();
+    }
+
+    Assembled assemble(List<WatchlistItem> items, Instant now) {
+        // "the depot is empty" and "the depot is down" must never read the same: the payload
+        // says which of the two it was, and the prompt tells the agent to lean on `holding`
+        // when the broker view is unavailable.
+        HeldPositionService.OpenPositions depot = heldPositions.openPositionsOrUnavailable(connection);
+        List<HeldPosition> open = depot.positions();
+        String positionSource = depot.available() ? "ok" : "unavailable";
         Map<String, BigDecimal> weights = portfolioWeights.weightsBySymbol(open);
         Map<String, HeldPosition> heldBySymbol = new LinkedHashMap<>();
         for (HeldPosition p : PortfolioWeights.collapseBySymbol(open)) {
@@ -143,6 +198,30 @@ public class RenfieldScheduler {
         // budget is spent, remaining symbols simply skip the call and get an empty prior_memory.
         long priorMemoryDeadline = System.nanoTime() + priorMemoryBudgetMs * 1_000_000L;
 
+        // F2: ONE batched query for the whole review — a per-symbol lookup would be 60 round
+        // trips per run at the prod cap.
+        //
+        // The query runs BEFORE triggerRun and sits inside run()'s blanket catch, so letting it
+        // escape would turn a hiccup on `trade_proposals` into no run, no payload, no digest —
+        // the silent day this repair exists to remove, for a table the trigger never needed
+        // before. Degrading to `[]` is equally wrong: it reads exactly like "nothing was
+        // proposed yesterday". So the third path, the same shape as `position_source` and the
+        // house convention of the daily analysis (design §E): the key is OMITTED and a
+        // top-level marker says the lookup failed.
+        Map<String, List<PriorProposal>> priorProposals;
+        String priorProposalsSource;
+        try {
+            priorProposals = proposals.findPriorBySymbols(
+                    owner, items.stream().map(WatchlistItem::ticker).toList());
+            priorProposalsSource = "ok";
+        } catch (RuntimeException e) {
+            log.warn("renfield: prior-proposal lookup failed — reviewing without proposal history: {}",
+                    e.getMessage());
+            priorProposals = null;
+            priorProposalsSource = "unavailable";
+        }
+
+        Map<String, Boolean> heldForSnapshot = new LinkedHashMap<>();
         var symbols = new ArrayList<Map<String, Object>>();
         for (WatchlistItem item : items) {
             var m = new LinkedHashMap<String, Object>();
@@ -170,6 +249,12 @@ public class RenfieldScheduler {
                 String sector = sectors.sector(item.ticker());
                 if (sector != null) m.put("sector", sector);
             }
+            // F1: what the USER holds, from the HELD tag of the owner-scoped watchlist row —
+            // independent of, and printed next to, the broker `position` block above. The five
+            // paper positions in the depot are not the seventeen real holdings.
+            Map<String, Object> holding = holdingFor(item, q);
+            if (holding != null) m.put("holding", holding);
+            heldForSnapshot.put(item.ticker(), holding != null || p != null);
             m.put("news", newsFor(item.ticker(), from, to));
             m.put("alerts", alertsFor(item.ticker(), since));
             if (item.verdictId() != null) {
@@ -188,12 +273,78 @@ public class RenfieldScheduler {
                             .toList()
                     : List.of();
             m.put("prior_memory", priorMemory);
+            if (priorProposals != null) {
+                m.put("prior_proposals", priorProposals.getOrDefault(item.ticker(), List.of()).stream()
+                        .map(pp -> {
+                            var e = new LinkedHashMap<String, Object>();
+                            e.put("date", pp.date());
+                            e.put("action", pp.action());
+                            e.put("confidence", pp.confidence());
+                            return (Map<String, Object>) e;
+                        })
+                        .toList());
+            }
             symbols.add(m);
         }
         var input = new LinkedHashMap<String, Object>();
         input.put("as_of", now.toString());
+        input.put("position_source", positionSource);
+        input.put("prior_proposals_source", priorProposalsSource);
         input.put("symbols", symbols);
-        return input;
+        return new Assembled(input, heldForSnapshot, positionSource);
+    }
+
+    /**
+     * The user's own holding for one watchlist row, or null when the row is not tagged HELD.
+     * Built ONLY from the owner-scoped {@code items} list handed to {@link #assemble} — a
+     * fresh watchlist query would hand a second account's entry prices and share counts to
+     * the LLM.
+     *
+     * <p>Most HELD rows carry neither entry price nor share count; the block still exists,
+     * just with fewer fields — "held, details unknown" and "not held" must not look alike.
+     *
+     * <p>Currency: the entry sits in {@code entry_currency}, the quote in {@code currency},
+     * and on prod those differ (EUR entry, USD quote). A percentage across the two would be
+     * part FX move, so it is only emitted once a real rate exists. The decision is taken on
+     * {@link FxService#hasRate} and NEVER on the return value of
+     * {@link FxService#convert}, which hands back the unchanged amount on a cache miss and
+     * is then indistinguishable from a genuine 1:1 conversion.
+     */
+    private Map<String, Object> holdingFor(WatchlistItem item, Quote quote) {
+        if (!"HELD".equals(item.tag())) return null;
+        // Belt to the owner-scoped braces above: a row belonging to somebody else contributes
+        // no holding, whatever put it into the list.
+        if (item.owner() != null && !item.owner().equals(owner)) return null;
+        var h = new LinkedHashMap<String, Object>();
+        if (item.entryPrice() != null) h.put("entry_price", item.entryPrice());
+        if (notBlank(item.entryCurrency())) h.put("entry_currency", item.entryCurrency());
+        if (item.shareCount() != null) h.put("share_count", item.shareCount());
+        if (notBlank(item.currency())) h.put("currency", item.currency());
+
+        String from = item.entryCurrency();
+        String to = item.currency();
+        if (item.entryPrice() == null || !notBlank(from) || !notBlank(to) || !fx.hasRate(from, to)) {
+            return h;
+        }
+        BigDecimal entry = BigDecimal.valueOf(item.entryPrice());
+        boolean sameCurrency = from.equalsIgnoreCase(to);
+        BigDecimal entryInQuoteCurrency = sameCurrency ? entry : fx.convert(entry, from, to);
+        if (entryInQuoteCurrency == null || entryInQuoteCurrency.signum() <= 0) return h;
+        if (!sameCurrency) h.put("entry_price_in_quote_currency", entryInQuoteCurrency);
+
+        BigDecimal current = quote != null && quote.price() != null
+                ? quote.price()
+                : BigDecimal.valueOf(item.currentPrice());
+        if (current.signum() > 0) {
+            h.put("gain_loss_pct", current.subtract(entryInQuoteCurrency)
+                    .multiply(BigDecimal.valueOf(100))
+                    .divide(entryInQuoteCurrency, 2, RoundingMode.HALF_UP));
+        }
+        return h;
+    }
+
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
     }
 
     private List<Map<String, Object>> newsFor(String symbol, LocalDate from, LocalDate to) {

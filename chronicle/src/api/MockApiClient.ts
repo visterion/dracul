@@ -13,6 +13,7 @@ import type {
   InspectorRunsResponse,
   DepotMove,
   InstrumentSearchHit,
+  ProposalRun,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -32,6 +33,7 @@ import {
   mockDepots, mockDepotsResponse, mockDepotChart, mockInstrumentChart, mockInstrumentInfo,
   mockDepotHistory,
 } from '../mocks/depots'
+import { mockProposalRuns } from '../mocks/proposals'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -493,5 +495,10 @@ export class MockApiClient implements ApiClient {
     ]
       .filter(hit => hit.symbol.toLowerCase().includes(needle) || hit.name.toLowerCase().includes(needle))
       .slice(0, limit)
+  }
+
+  async getProposals(_days = 7): Promise<ProposalRun[]> {
+    await delay(50)
+    return structuredClone(mockProposalRuns)
   }
 }

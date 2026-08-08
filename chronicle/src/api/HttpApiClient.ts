@@ -9,7 +9,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
-  DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit,
+  DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -406,5 +406,11 @@ export class HttpApiClient implements ApiClient {
     )
     if (!res.ok) throw new ApiError(`searchInstruments failed: HTTP ${res.status}`, res.status)
     return res.json() as Promise<InstrumentSearchHit[]>
+  }
+
+  async getProposals(days = 7): Promise<ProposalRun[]> {
+    const res = await fetch(`${this.baseUrl}/api/renfield/proposals?days=${days}`)
+    if (!res.ok) throw new Error(`getProposals failed: HTTP ${res.status}`)
+    return res.json() as Promise<ProposalRun[]>
   }
 }

@@ -374,6 +374,28 @@ where their history indicates it (see `watchlist_items.source` in `architecture.
 > `"default"` — a bug that caused signals to be invisible after the legacy
 > owner migration. Prod signals now correctly resolve against the primary user.
 
+## Renfield Proposals
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/renfield/proposals?days=N` | Read side of renfield's daily watchlist review, owner-scoped via `CurrentUserHolder`. `days` defaults to 7 and is clamped to 1–90. |
+
+`RenfieldProposalController` groups `trade_proposals` rows into one entry per run
+(newest run first): `{ runId, createdAt, marketNote, proposals: [{ id, symbol, action,
+entryZone, stop, confidence, rationale, newsSentiment }] }`. No `@ConditionalOnProperty`
+gate — already-persisted proposal history stays readable even after the renfield agent
+itself is switched off (`DRACUL_RENFIELD_ENABLED=false`); the property only gates
+whether new runs happen. Backed by Chronicle's `/proposals` view (see
+`documentation/chronicle.md`), which also subscribes to the `proposal.new` SSE event
+to refetch the window on a new run.
+
+> This is a human, Cloudflare-Access-gated read — deliberately its own controller, not
+> a second method on `RenfieldWebhookController` (that class carries a
+> `BearerTokenVerifier` for the `/api/renfield/complete` machine webhook below, and
+> `WebhookExclusionParityTest` pins every `BearerTokenVerifier`-bearing handler against
+> `CloudflareAccessFilter.EXCLUDED` in both directions — putting the read endpoint on
+> the webhook class would make one of those two directions unsatisfiable).
+
 ## Morning Report
 
 | Method | Path | Purpose |
