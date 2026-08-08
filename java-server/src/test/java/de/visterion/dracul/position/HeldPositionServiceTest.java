@@ -111,4 +111,37 @@ class HeldPositionServiceTest {
 
         assertThat(out).extracting(HeldPosition::currency).containsExactly("USD", "USD");
     }
+
+    /** The distinction openPositions() cannot make: an empty depot answered. */
+    @Test
+    void openPositionsOrUnavailableReportsAvailableOnAnEmptyDepot() {
+        when(depotClient.positions(CONNECTION))
+                .thenReturn(new PositionsSnapshot(List.of(), "2026-07-13T00:00:00Z"));
+
+        var out = service.openPositionsOrUnavailable(CONNECTION);
+
+        assertThat(out.available()).isTrue();
+        assertThat(out.positions()).isEmpty();
+    }
+
+    /** ... and the same empty list when the depot did NOT answer. */
+    @Test
+    void openPositionsOrUnavailableReportsUnavailableWhenTheDepotIsDown() {
+        when(depotClient.positions(CONNECTION))
+                .thenThrow(new DepotUnavailableException("depot down"));
+
+        var out = service.openPositionsOrUnavailable(CONNECTION);
+
+        assertThat(out.available()).isFalse();
+        assertThat(out.positions()).isEmpty();
+    }
+
+    /** The old method keeps its fail-soft semantics on top of the new one. */
+    @Test
+    void openPositionsStillDegradesToAnEmptyListWhenTheDepotIsDown() {
+        when(depotClient.positions(CONNECTION))
+                .thenThrow(new DepotUnavailableException("depot down"));
+
+        assertThat(service.openPositions(CONNECTION)).isEmpty();
+    }
 }
