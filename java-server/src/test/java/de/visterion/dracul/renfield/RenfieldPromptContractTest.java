@@ -28,4 +28,19 @@ class RenfieldPromptContractTest {
                 .as("the guard is renfield-only and must stay OUTSIDE the shared byte-identical block")
                 .isGreaterThan(endSentinelIndex);
     }
+
+    /**
+     * Prompt/schema-drift guard (recurring bug class in this project, see task-6/7): the payload
+     * gained {@code holding}, {@code position_source} and {@code prior_proposals} fields, and it
+     * is not enough for the scheduler to emit them — the prompt must actually name and explain
+     * them, or the agent silently ignores data it never learned exists.
+     */
+    @Test
+    void promptNamesTheHoldingAndPriorProposalPayloadFields() {
+        String prompt = AgentResources.classpath("prompts/renfield.md");
+
+        assertThat(prompt).as("prompt must describe the `holding` field").contains("`holding`");
+        assertThat(prompt).as("prompt must describe `position_source`").contains("`position_source`");
+        assertThat(prompt).as("prompt must describe `prior_proposals`").contains("`prior_proposals`");
+    }
 }
