@@ -730,7 +730,7 @@ compare-and-set UPDATEs), mirroring `PreyRepository` — no Spring Data JPA.
 |---|---|
 | Filing identity | `cik` (spin-co registrant CIK, parsed from the filing URL), `symbol`, `company_name` (NOT NULL), `form_type`, `filing_date`, `filing_url` |
 | Parsed term sheet | `distribution_ratio`, `record_date`, `distribution_date`, `term_sheet_available`, `term_sheet_text` (raw information-statement prose kept for the LLM to read the spin thesis), `parent_symbol` (best-effort parent ticker for the size-ratio) |
-| Lifecycle | `status` (TEXT, validated by the Java `SpinStatus` enum — **not** a DB enum, same convention as `executor_signal.status`), plus audit timestamps `discovered_at`, `last_checked_at`, `distributed_at`, `settled_at`, `abandoned_at` |
+| Lifecycle | `status` (TEXT, validated by the Java `SpinStatus` enum — **not** a DB enum, same convention as `executor_signal.status`), plus audit timestamps `discovered_at`, `last_checked_at`, `distributed_at`, `settled_at`, `abandoned_at`. These are OBSERVATION timestamps — when Dracul's reconciler noticed the transition — not market-event dates; `distributed_at` in particular can lag the real distribution by weeks to months (e.g. a backfill run that moves several long-completed spin-offs to `DISTRIBUTED` in one pass). The LLM payload's `distributionDateConfirmed` flag (see `documentation/strigoi.md`) says whether a candidate's `daysSinceDistribution` is anchored to the real term-sheet date or to this fallback |
 | Stage enrichment | `registered_snapshot`, `distributed_snapshot`, `settled_snapshot` (JSONB — the per-stage balance-sheet / size-forced-selling / valuation snapshots) |
 | Promotion | `promoted_at`, `promoted_prey_id` (a **soft** link to the emitted prey — no hard FK) |
 

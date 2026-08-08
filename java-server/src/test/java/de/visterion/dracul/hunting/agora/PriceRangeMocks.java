@@ -30,6 +30,17 @@ public final class PriceRangeMocks {
 
     public static AgoraPriceRange batching() {
         AgoraPriceRange probe = mock(AgoraPriceRange.class);
+        wireBatchFromSingleStubs(probe);
+        return probe;
+    }
+
+    /**
+     * Wires {@code range52wBatch} on an already-existing {@link AgoraPriceRange} mock (e.g. one
+     * injected via {@code @MockitoBean}) to answer out of that same mock's {@code range52w}
+     * stubs, using the same two translations documented on {@link #batching()}. Use this when the
+     * mock instance is provided by the test framework and cannot be swapped for {@link #batching()}.
+     */
+    public static void wireBatchFromSingleStubs(AgoraPriceRange probe) {
         when(probe.range52wBatch(anyList())).thenAnswer(inv -> {
             List<String> symbols = inv.getArgument(0);
             Map<String, RangeProbe> out = new LinkedHashMap<>();
@@ -44,6 +55,5 @@ public final class PriceRangeMocks {
             }
             return out;
         });
-        return probe;
     }
 }

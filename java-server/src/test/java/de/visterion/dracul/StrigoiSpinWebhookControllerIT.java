@@ -36,6 +36,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
@@ -92,8 +93,8 @@ class StrigoiSpinWebhookControllerIT {
         when(balanceSheet.snapshot(any(), any())).thenReturn(
                 new SpinBalanceSheetSnapshot(new BigDecimal("5000"), new BigDecimal("2000"),
                         new BigDecimal("1000"), "Industrials", true));
-        when(distribution.snapshot(any(), any(), any(), any())).thenReturn(
-                new SpinDistributionSnapshot(150.0, 3000.0, 0.05, 4, false, true, true));
+        when(distribution.snapshot(any(), any(), any(), anyBoolean(), any())).thenReturn(
+                new SpinDistributionSnapshot(150.0, 3000.0, 0.05, 4, true, false, true, true));
     }
 
     private JsonNode fetch(String runId) {
@@ -120,6 +121,7 @@ class StrigoiSpinWebhookControllerIT {
         assertThat(spn.path("spincoMarketCapMillions").asDouble()).isEqualTo(150.0);
         assertThat(spn.path("sizeRatio").asDouble()).isEqualTo(0.05);
         assertThat(spn.path("daysSinceDistribution").asInt()).isEqualTo(4);
+        assertThat(spn.path("distributionDateConfirmed").asBoolean()).isTrue();
 
         JsonNode reg = bySymbol(cands, "REG");
         assertThat(reg).as("REG candidate returned").isNotNull();
@@ -129,6 +131,10 @@ class StrigoiSpinWebhookControllerIT {
         // Fix 1: raw term-sheet prose flows to the payload and termSheetAvailable is truthful
         assertThat(reg.path("termSheetAvailable").asBoolean()).isTrue();
         assertThat(reg.path("termSheet").asString("")).contains("Big Parent Corporation");
+        // REG never reached DISTRIBUTED, so its distributed_snapshot is null — distributionDateConfirmed
+        // must still come back as a concrete `false`, never a missing key or a null.
+        assertThat(reg.has("distributionDateConfirmed")).isTrue();
+        assertThat(reg.path("distributionDateConfirmed").asBoolean(true)).isFalse();
 
         // lifecycle persisted: SPN advanced to DISTRIBUTED in the DB
         String spnStatus = jdbc.sql("SELECT status FROM spin_candidate WHERE symbol = 'SPN'")
@@ -186,6 +192,10 @@ class StrigoiSpinWebhookControllerIT {
         JsonNode heal = bySymbol(cands, "HEAL");
         assertThat(heal).as("backfilled + freshly-distributed candidate reaches the payload").isNotNull();
         assertThat(heal.path("status").asString("")).isEqualTo("DISTRIBUTED");
+        // No term-sheet distributionDate was ever parsed for HEAL, so the enricher must tell the
+        // snapshotter that its effective distribution date is the distributed_at fallback (the
+        // detection stamp), not a confirmed term-sheet date — see SpinCandidateEnricher#enrichDistributed.
+        org.mockito.Mockito.verify(distribution).snapshot(eq("HEAL"), any(), any(), eq(false), any());
 
         var row = jdbc.sql("""
                         SELECT symbol, status, filing_date, distribution_date

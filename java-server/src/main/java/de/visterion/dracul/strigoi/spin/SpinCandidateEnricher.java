@@ -227,7 +227,10 @@ public class SpinCandidateEnricher {
             if (!health.ownerHistoryDown) {
                 try {
                     LocalDate dist = SpinLifecycleReconciler.effectiveDistributionDate(row);
-                    var snap = distribution.snapshot(row.symbol(), row.parentSymbol(), dist, today);
+                    // Whether `dist` is the real term-sheet distribution date, or the fallback
+                    // detection (distributed_at) date — see SpinDistributionSnapshotter#snapshot.
+                    boolean distConfirmed = row.distributionDate() != null;
+                    var snap = distribution.snapshot(row.symbol(), row.parentSymbol(), dist, distConfirmed, today);
                     repo.storeSnapshot(row.id(), SpinStatus.DISTRIBUTED, mapper.valueToTree(snap));
                     touched = true;
                 } catch (AgoraUnavailableException e) {
@@ -285,6 +288,7 @@ public class SpinCandidateEnricher {
                 // DISTRIBUTED
                 dbl(dist, "spincoMarketCapMillions"), dbl(dist, "parentMarketCapMillions"),
                 dbl(dist, "sizeRatio"), integer(dist, "daysSinceDistribution"),
+                boolOrFalse(dist, "distributionDateConfirmed"),
                 bool(dist, "postSpinInsiderBuying"),
                 // SETTLED
                 dbl(set, "priceToBook"), dbl(set, "evToEbit"), dbl(set, "fcfYield"));
@@ -340,6 +344,14 @@ public class SpinCandidateEnricher {
         if (node == null) return null;
         JsonNode n = node.path(field);
         return n.isBoolean() ? n.asBoolean() : null;
+    }
+
+    /** Like {@link #bool}, but for a non-nullable snapshot field: absent/wrong-type reads as false
+     *  (never a market-fact claim) rather than propagating null. */
+    private static boolean boolOrFalse(JsonNode node, String field) {
+        if (node == null) return false;
+        JsonNode n = node.path(field);
+        return n.isBoolean() && n.asBoolean();
     }
 
     private static String text(JsonNode node, String field) {
