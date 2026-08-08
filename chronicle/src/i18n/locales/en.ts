@@ -471,6 +471,8 @@ export default {
       cancel: 'Cancel',
       add: 'Add',
       notFound: 'Symbol {symbol} not found.',
+      invalid: 'Invalid input.',
+      unavailable: 'Service temporarily unavailable. Please try again later.',
     },
     toast: {
       added: '{symbol} added to watchlist',
@@ -796,6 +798,13 @@ export default {
     noData: 'No data',
     error: 'Could not load data',
     close: 'Close',
+  },
+  instrumentSearch: {
+    placeholder: 'Symbol or company name',
+    empty: 'No matches.',
+    hint: 'Try the name without umlauts.',
+    unavailable: 'Search is currently unavailable.',
+    addToWatchlist: 'Add to watchlist',
   },
   strigoi: {
     back: 'back',

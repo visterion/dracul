@@ -66,6 +66,51 @@ describe('InstrumentInfoPanel', () => {
     expect(w.find('[data-testid="ip-section-news"]').exists()).toBe(false)
   })
 
+  it('distinguishes a missing section from a failed fetch, with a translated message', async () => {
+    // Today every failure is swallowed ("A failed info bundle must never error the panel"),
+    // so a real backend outage would read as "not available for this listing".
+    getInstrumentInfo.mockReset()
+    getInstrumentInfo.mockRejectedValue(new Error('HTTP 502'))
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.find('[data-testid="iip-error"]').exists()).toBe(true)
+    expect(w.find('[data-testid="iip-unavailable"]').exists()).toBe(false)
+    // The raw exception text ('HTTP 502') must never reach the user — only
+    // the translated, readable message.
+    expect(w.get('[data-testid="iip-error"]').text()).toBe(de.instrument.error)
+  })
+
+  it('shows a named empty state for a listing without filings', async () => {
+    getInstrumentInfo.mockResolvedValue({ symbol: 'AAPL', profile: { name: 'Apple Inc' },
+      news: null, earnings: null, analystEstimates: null, earningsEstimates: null,
+      fundamentalScore: null, fundamentals: null, insiderActivity: null })
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.find('[data-testid="iip-unavailable"]').exists()).toBe(true)
+    expect(w.find('[data-testid="iip-error"]').exists()).toBe(false)
+  })
+
+  it('clears the previous instrument\'s error/empty state on a symbol change', async () => {
+    getInstrumentInfo.mockRejectedValueOnce(new Error('HTTP 502'))
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.find('[data-testid="iip-error"]').exists()).toBe(true)
+
+    // Next symbol's fetch is still pending — the stale error must be gone
+    // immediately, not linger until the new fetch resolves.
+    let resolveNext!: (v: unknown) => void
+    getInstrumentInfo.mockReturnValueOnce(new Promise(resolve => { resolveNext = resolve }))
+    await w.setProps({ symbol: 'MSFT' })
+    expect(w.find('[data-testid="iip-error"]').exists()).toBe(false)
+    expect(w.find('[data-testid="iip-unavailable"]').exists()).toBe(false)
+
+    resolveNext({ symbol: 'MSFT', profile: { name: 'Microsoft Corp' },
+      news: null, earnings: null, analystEstimates: null, earningsEstimates: null,
+      fundamentalScore: null, fundamentals: null, insiderActivity: null })
+    await flushPromises()
+    expect(w.find('[data-testid="iip-unavailable"]').exists()).toBe(true)
+  })
+
   it('price target uses currency prop, plain number without it', async () => {
     getInstrumentInfo.mockResolvedValue({ symbol: 'AAPL',
       analystEstimates: { priceTarget: 200, recommendations: [{ strongBuy: 1, buy: 0, hold: 0, sell: 0, strongSell: 0 }] },

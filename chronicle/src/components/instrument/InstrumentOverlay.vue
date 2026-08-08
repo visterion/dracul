@@ -23,6 +23,16 @@
         {{ t('instrument.held') }} · {{ holding.position.name ?? store.openSymbol }} →
       </RouterLink>
 
+      <div class="io-add-row">
+        <button
+          class="btn btn-crimson-ghost io-add"
+          data-testid="io-add"
+          :disabled="adding"
+          @click="onAdd"
+        >{{ t('instrumentSearch.addToWatchlist') }}</button>
+        <p v-if="addError" class="io-add-error" role="alert" data-testid="io-add-error">{{ addError }}</p>
+      </div>
+
       <InstrumentInfoPanel :symbol="store.openSymbol" @header="onHeader" />
     </div>
   </v-dialog>
@@ -35,11 +45,18 @@ import { RouterLink } from 'vue-router'
 import InstrumentInfoPanel from './InstrumentInfoPanel.vue'
 import { useInstrumentOverlayStore } from '../../stores/instrumentOverlay'
 import { useDepotsStore } from '../../stores/depots'
+import { useApi } from '../../api'
+import { useToast } from '../../composables/useToast'
+import { useWatchlistEvents } from '../../composables/useWatchlistEvents'
+import { mapWatchlistAddError } from '../../utils/watchlistAddError'
 import { formatNumber } from '../../utils/format'
 
 const { t } = useI18n()
 const store = useInstrumentOverlayStore()
 const depots = useDepotsStore()
+const api = useApi()
+const toast = useToast()
+const watchlistEvents = useWatchlistEvents()
 
 const header = ref<{ name: string; lastPrice: number | null; change: number | null; changePct: number | null }>({ name: '', lastPrice: null, change: null, changePct: null })
 function onHeader(h: typeof header.value) { header.value = h }
@@ -50,10 +67,37 @@ const holding = computed(() => (store.openSymbol ? depots.findHolding(store.open
 
 function pnlClass(v: number | null): string { return v == null ? '' : v > 0 ? 'pos' : v < 0 ? 'neg' : '' }
 
-// On each open: reset header, fire-and-forget refresh of the holdings snapshot.
+const adding = ref(false)
+const addError = ref<string | null>(null)
+
+async function onAdd() {
+  const symbol = store.openSymbol
+  if (!symbol) return
+  adding.value = true
+  addError.value = null
+  // The store's name (from the search hit) wins — the header's name comes from
+  // the profile endpoint, which returns none at all for non-US listings.
+  const name = store.openName ?? (header.value.name || undefined)
+  try {
+    const created = await api.createWatchlistItem({ symbol, tag: 'TRACKING', name })
+    toast.show(t('watchlist.toast.added', { symbol: created.ticker }))
+    // WatchlistView owns its own `items` list, loaded once on mount — an add
+    // from here (mounted once at the App shell) has to be surfaced to it
+    // explicitly, or the new row never appears until a full reload.
+    watchlistEvents.notifyAdded(created)
+  } catch (e) {
+    addError.value = mapWatchlistAddError(e, symbol, t)
+  } finally {
+    adding.value = false
+  }
+}
+
+// On each open: reset header + any stale add-error, fire-and-forget refresh
+// of the holdings snapshot.
 watch(() => store.openSymbol, sym => {
   if (sym == null) return
   header.value = { name: '', lastPrice: null, change: null, changePct: null }
+  addError.value = null
   void depots.load()
 })
 </script>
@@ -74,4 +118,7 @@ watch(() => store.openSymbol, sym => {
 .io-close { background: none; border: none; color: var(--ash-gray); cursor: pointer; font-size: 1.1rem; }
 .io-banner { display: block; background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px; padding: var(--space-2) var(--space-3); color: var(--cathedral-gold); text-decoration: none; font-size: var(--text-body-sm); }
 .io-banner:hover { border-color: var(--cathedral-gold); }
+.io-add-row { display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+.io-add { align-self: flex-start; }
+.io-add-error { color: var(--blood-crimson); font-size: var(--text-micro); margin: 0; }
 </style>

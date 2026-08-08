@@ -103,6 +103,20 @@ verdict synthesis, echo PEAD screener + enrichment, gropar) inject it directly.
   volume, 6-12 month momentum and average daily dollar volume. Throws
   `MarketDataException(UNAVAILABLE)` on Agora failure.
 
+## Instrument search (Chronicle)
+
+`GET /api/instruments/search` (`InstrumentSearchController` /
+`InstrumentSearchService`) is a thin pass-through to Agora's
+`search_instruments` tool — no provider code lives in Dracul for this, mirroring
+the "AgoraMarketData deliberately replaced the direct-provider seam" rule above.
+Agora's `search_instruments` is Yahoo-backed and **global** (not scoped to any
+index or watchlist), which is why it surfaces symbols like `AT0000A324Q2.VI`
+that no other Dracul hunting path would ever see. The result carries `symbol`,
+`name`, `exchange`, `type` — **no currency**, unlike `get_quote`/`get_ohlc`.
+Queries under 2 characters are answered `[]` without spending an Agora call.
+See `documentation/api.md` § Instruments for the full response shape and
+`documentation/configuration.md` § Agora for `DRACUL_AGORA_TIMEOUT_SEARCH_MS`.
+
 ## Hunting fetch via Agora (five domain facades)
 
 As of slice 7c, all hunting-ground fetch that used to be served by direct

@@ -219,6 +219,42 @@ sets the user, else `default`.
 ### `GET /api/me`
 Returns `{ "email": "<current user>" }`.
 
+## Instruments
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/instruments/search` | Global instrument search (Chronicle's `InstrumentSearch` component), passed through to Agora's `search_instruments` tool |
+
+### `GET /api/instruments/search`
+
+Query params: `q` (search text), `limit` (default `10`, capped at 25).
+
+A `q` shorter than 2 characters returns `[]` immediately, without calling
+Agora — a keystroke burst on an empty/one-char query must not spend the
+shared Agora request lock. Response is a **plain JSON array** (no envelope) of:
+
+```json
+[{ "symbol": "NOK", "name": "Nokia Corporation", "exchange": "NYQ", "type": "EQUITY" }]
+```
+
+There is no `currency` field — the upstream search payload carries none.
+An Agora outage answers `502`. The endpoint is authenticated like every other
+`/api/**` route and has its own short Agora request budget
+(`DRACUL_AGORA_TIMEOUT_SEARCH_MS`, default 2000 ms — see configuration.md):
+`AgoraClient.callTool` is `synchronized`, so every Dracul→Agora call shares one
+lock, and this is the first interactive, user-typed caller — a keystroke burst
+must not queue in front of the stop-loss watcher or the price refresher.
+
+### Canonical path family for instrument data
+
+**`/api/instruments/**` is the canonical path family for instrument data going
+forward.** `GET /api/depots/instrument/{symbol}` (the profile/news/earnings/
+analyst/fundamentals/insider bundle used by the depot position detail page —
+see "Depots" below) predates this decision and **stays where it is for now**;
+it is not being moved as part of this slice. Recorded here explicitly so a
+second, uncoordinated home for instrument endpoints does not grow unnoticed —
+any new instrument-data endpoint belongs under `/api/instruments/**`.
+
 ## Watchlist
 
 ### Watchlist (collaborative)
@@ -236,13 +272,29 @@ require ownership — editing another user's item returns **403**.
 
 ### `POST /api/watchlist`
 
-Request body: `{ "symbol": "3750.HK", "tag": "HELD" | "TRACKING", "sourceVerdictId"?: "<uuid>" }`.
+Request body: `{ "symbol": "3750.HK", "tag": "HELD" | "TRACKING", "sourceVerdictId"?: "<uuid>", "name"?: "3M Company" }`.
 
-`symbol` must match `^[A-Z0-9][A-Z0-9.\-]{0,11}$` — uppercase, 1–12 chars, starting
+`symbol` must match `^[A-Z0-9][A-Z0-9.\-]{0,23}$` — uppercase, 1–24 chars, starting
 with a letter or digit, then letters/digits/`.`/`-`. This admits exchange-suffixed
-tickers (`3750.HK`, `300750.SZ`, `ABBN.SW`, `BRK.B`) alongside plain US symbols.
-Adding an already-present ticker (same owner) merges instead of duplicating. On an
-unknown symbol the market-data provider returns `422 MARKET_DATA_NOT_FOUND`.
+tickers (`3750.HK`, `300750.SZ`, `ABBN.SW`, `BRK.B`) and longer global-search
+results (`AT0000A324Q2.VI`, 15 chars) alongside plain US symbols. No database
+migration was needed for the widened length: every ticker column is `text` with
+no length limit. The frontend's own `TICKER_RE` (`WatchlistView.vue`) must stay
+byte-identical to this pattern.
+
+`name` is optional, max 128 chars, blank treated as absent — the company name
+from an instrument-search hit (`GET /api/instruments/search`), since `get_quote`
+carries no company name. When creating a **new** row, a supplied `name` wins over
+the symbol-as-name fallback (`md.companyName()`, which is just the ticker).
+Adding an already-present ticker (same owner) merges instead of duplicating; when
+a `name` is supplied on that merge, it backfills `company_name` **only** where
+the stored value is exactly equal to the ticker (`WatchlistRepository.updateCompanyNameIfEqualsTicker`
+— exact string comparison, no case folding or trimming; rows whose
+`company_name` is `NULL` are never backfilled). This heals rows created before
+the search existed, which were named after their ticker.
+
+On an unknown symbol the market-data provider returns `422 MARKET_DATA_NOT_FOUND`
+(an Agora outage, as opposed to an unknown symbol, returns `502 MARKET_DATA_UNAVAILABLE`).
 
 ### `PATCH /api/watchlist/{id}/position`
 

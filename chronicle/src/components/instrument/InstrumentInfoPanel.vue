@@ -27,6 +27,12 @@
     <!-- Caller-provided middle content (depot: stat tiles + orders + as-of). -->
     <slot name="between" />
 
+    <!-- A failed fetch and a successful-but-empty bundle must read differently:
+         the former is a backend outage, the latter is a listing with nothing
+         to show (e.g. a non-US exchange with no filings). -->
+    <div v-if="infoError" class="ip-info-state" data-testid="iip-error">{{ infoError }}</div>
+    <div v-else-if="info && !hasAnySection" class="ip-info-state" data-testid="iip-unavailable">{{ t('instrument.noData') }}</div>
+
     <!-- ── News ───────────────────────────────────────────── -->
     <InfoCardRow v-if="newsItems.length" :title="t('depots.detail.news.title')" :testid="`${testidPrefix}-section-news`">
       <component
@@ -156,6 +162,11 @@ watch(range, loadChart)
 
 // ── Instrument info bundle ───────────────────────────────────
 const info = ref<InstrumentInfo | null>(null)
+// Distinguishes "the fetch itself failed" (backend outage — iip-error) from
+// "the fetch succeeded but there was nothing to show" (iip-unavailable,
+// derived below from `info` + `hasAnySection`). The panel must never hard-fail
+// either way — both states render inline instead of throwing.
+const infoError = ref<string | null>(null)
 let infoRequestId = 0
 
 async function loadInfo() {
@@ -165,11 +176,14 @@ async function loadInfo() {
     const result = await api.getInstrumentInfo(symbol)
     if (id !== infoRequestId) return
     info.value = result
+    infoError.value = null
   } catch {
-    // A failed info bundle must never error the panel — the sections that
-    // depend on it simply stay hidden (info.value stays null).
     if (id !== infoRequestId) return
     info.value = null
+    // Always the translated, readable message — the raw exception text (e.g.
+    // "getInstrumentInfo failed: HTTP 502") is an internal detail, not
+    // something a user should read.
+    infoError.value = t('instrument.error')
   }
 }
 
@@ -288,6 +302,13 @@ const financeRows = computed<FinanceRow[]>(() => {
   return rows
 })
 
+// True once a successful fetch produced at least one renderable section —
+// drives the iip-unavailable empty state (only shown when `info` is set,
+// i.e. the fetch succeeded, and nothing came of it).
+const hasAnySection = computed(() =>
+  newsItems.value.length > 0 || eventItems.value.length > 0 || insightCards.value.length > 0 || financeRows.value.length > 0,
+)
+
 // ── Header emit ──────────────────────────────────────────────
 const headerData = computed(() => ({
   name: displayName(props.symbol, asString(profileRecord.value?.name)),
@@ -305,6 +326,10 @@ watch(() => props.symbol, () => {
   const wasDefaultRange = range.value === '1m'
   range.value = '1m'
   if (wasDefaultRange) loadChart()
+  // Clear the previous instrument's info/error state immediately — otherwise
+  // its error or empty state stays on screen until the new fetch resolves.
+  info.value = null
+  infoError.value = null
   loadInfo()
 }, { immediate: true })
 </script>
@@ -319,6 +344,7 @@ watch(() => props.symbol, () => {
 }
 .dp-range-btn.active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
 .dp-chart-loading, .dp-chart-error { color: var(--ash-gray); font-size: var(--text-body-sm); padding: var(--space-4) 0; }
+.ip-info-state { color: var(--ash-gray); font-size: var(--text-body-sm); }
 
 .icr-card { background: var(--crypt-black-elevated); border: var(--hairline); border-radius: 4px; padding: var(--space-3) var(--space-4); min-width: 220px; max-width: min(78vw, 300px); display: flex; flex-direction: column; gap: var(--space-1); }
 .icr-card-title { color: var(--bone-ivory); font-size: var(--text-body-sm); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; line-height: 1.35; }

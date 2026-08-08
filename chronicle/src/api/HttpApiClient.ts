@@ -9,7 +9,7 @@ import type {
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
   DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
-  DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, ProposalRun,
+  DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
 } from './types'
 
 export class HttpApiClient implements ApiClient {
@@ -398,6 +398,14 @@ export class HttpApiClient implements ApiClient {
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`getDecisionDoc failed: HTTP ${res.status}`)
     return res.json() as Promise<{ markdown: string }>
+  }
+
+  async searchInstruments(q: string, limit = 10): Promise<InstrumentSearchHit[]> {
+    const res = await fetch(
+      `${this.baseUrl}/api/instruments/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    )
+    if (!res.ok) throw new ApiError(`searchInstruments failed: HTTP ${res.status}`, res.status)
+    return res.json() as Promise<InstrumentSearchHit[]>
   }
 
   async getProposals(days = 7): Promise<ProposalRun[]> {

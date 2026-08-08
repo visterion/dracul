@@ -12,6 +12,7 @@ import type {
   RunTranscript,
   InspectorRunsResponse,
   DepotMove,
+  InstrumentSearchHit,
   ProposalRun,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
@@ -479,6 +480,21 @@ export class MockApiClient implements ApiClient {
   async getDecisionDoc(): Promise<{ markdown: string }> {
     await delay(50)
     return { markdown: '# Wie Dracul entscheidet\n\n*(Beispiel im Dev-Modus)*\n\n## Die Jäger\n\n- Spin\n- Insider\n\n| Agent | Wann |\n|---|---|\n| voievod | 08:00 |\n' }
+  }
+
+  async searchInstruments(q: string, limit = 10): Promise<InstrumentSearchHit[]> {
+    await delay(50)
+    if (q.length < 2) return []
+    // Filtered on the query (not just a length check) so the "keine Treffer"
+    // empty state is actually reachable in mock/dev mode — a query that
+    // matches neither symbol nor name (e.g. "zzz") now correctly returns [].
+    const needle = q.toLowerCase()
+    return [
+      { symbol: 'MOCK', name: 'Mock Instrument Corp', exchange: 'NYSE', type: 'EQUITY' },
+      { symbol: 'MOCK.HE', name: 'Mock Instrument Corp', exchange: 'HEL', type: 'EQUITY' },
+    ]
+      .filter(hit => hit.symbol.toLowerCase().includes(needle) || hit.name.toLowerCase().includes(needle))
+      .slice(0, limit)
   }
 
   async getProposals(_days = 7): Promise<ProposalRun[]> {

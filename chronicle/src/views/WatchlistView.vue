@@ -71,14 +71,15 @@
         <v-dialog v-model="addOpen" max-width="420">
           <div class="watchlist__dialog">
             <div class="watchlist__dialog-title">{{ t('watchlist.dialog.title') }}</div>
+            <InstrumentSearch @select="onSearchSelect" />
             <input
               v-model="addSymbol"
               class="watchlist__dialog-input"
               type="text"
               :placeholder="t('watchlist.dialog.placeholder')"
-              maxlength="10"
+              maxlength="24"
               data-testid="wl-add-symbol"
-              @input="addSymbol = addSymbol.toUpperCase()"
+              @input="onSymbolInput"
               @keydown.enter="onAddSymbol"
             />
             <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
@@ -242,10 +243,13 @@ import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import WatchlistSourceBadge from '../components/watchlist/WatchlistSourceBadge.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import TickerButton from '../components/instrument/TickerButton.vue'
+import InstrumentSearch from '../components/instrument/InstrumentSearch.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import { useToast } from '../composables/useToast'
-import { ApiError } from '../api/errors'
+import { useWatchlistEvents } from '../composables/useWatchlistEvents'
+import { useInstrumentOverlayStore } from '../stores/instrumentOverlay'
+import { mapWatchlistAddError } from '../utils/watchlistAddError'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
 import { formatPercent, pctClass } from '../utils/format'
 import { displayName } from '../utils/instrument'
@@ -257,13 +261,16 @@ const { smAndDown } = useDisplay()
 const api = useApi()
 const me = useMe()
 const toast = useToast()
+const overlay = useInstrumentOverlayStore()
+const watchlistEvents = useWatchlistEvents()
 const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
 const searchQuery = ref('')
-// Valid ticker shape: leading letter or digit, then up to 11 of letter/digit/dot/hyphen.
-// Shared by the add dialog's submit guard, onAddSymbol, and the search CTA.
-const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/
+// Valid ticker shape: leading letter or digit, then up to 23 of letter/digit/dot/hyphen.
+// Identical to the backend pattern — shared by the add dialog's submit guard,
+// onAddSymbol, and the search CTA.
+const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,23}$/
 const activeFilter = ref<'all' | 'alerts'>('all')
 const mode = ref<'list' | 'compare'>('list')
 const compareWith = ref<string | null>(null)
@@ -364,6 +371,20 @@ function openAddDialog() {
   addOpen.value = true
 }
 
+function onSymbolInput() {
+  addSymbol.value = addSymbol.value.toUpperCase()
+}
+
+// A search hit opens the instrument overlay (one entry point: search → look
+// at it → add from there) instead of filling the dialog's direct-entry
+// field — the overlay's own add-button (InstrumentOverlay.vue) carries the
+// name through from here. The direct field stays reserved for the
+// exact-ticker + Enter path, which never has a name to send.
+function onSearchSelect(symbol: string, name: string) {
+  addOpen.value = false
+  overlay.open(symbol, name)
+}
+
 async function onAddSymbol() {
   if (!TICKER_RE.test(addSymbol.value)) return
   addSubmitting.value = true
@@ -375,13 +396,20 @@ async function onAddSymbol() {
     addOpen.value = false
     addSymbol.value = ''
   } catch (e) {
-    addError.value = e instanceof ApiError && (e.status === 404 || e.status === 422)
-      ? t('watchlist.dialog.notFound', { symbol: addSymbol.value })
-      : (e as Error).message
+    addError.value = mapWatchlistAddError(e, addSymbol.value, t)
   } finally {
     addSubmitting.value = false
   }
 }
+
+// An add from the instrument overlay (search hit -> overlay -> its own
+// add-button) mutates nothing here on its own — the overlay is mounted once
+// at the App shell, not inside this view. Consume its signal the same way
+// the direct-add path already merges a created item into `items`.
+watch(watchlistEvents.lastAdded, created => {
+  if (!created) return
+  items.value = [created, ...items.value.filter(i => i.id !== created.id)]
+})
 
 function onAddFromSearch() {
   if (!addableSymbol.value) return

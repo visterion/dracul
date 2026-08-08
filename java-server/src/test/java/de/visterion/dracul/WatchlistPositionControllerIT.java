@@ -217,9 +217,10 @@ class WatchlistPositionControllerIT {
 
     @Test
     void rejectsTooLongSymbol() {
+        // 25 chars: one past the widened pattern's 24-char boundary (^[A-Z0-9][A-Z0-9.\-]{0,23}$).
         var status = rest.post().uri("/api/watchlist")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("symbol", "ABCDEFGHIJKLM", "tag", "HELD")) // 13 chars
+                .body(Map.of("symbol", "ABCDEFGHIJKLMNOPQRSTUVWXY", "tag", "HELD")) // 25 chars
                 .exchange((req, res) -> res.getStatusCode().value());
         assertThat(status).isEqualTo(400);
     }

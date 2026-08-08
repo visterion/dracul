@@ -471,6 +471,8 @@ export default {
       cancel: 'Abbrechen',
       add: 'Hinzufügen',
       notFound: 'Symbol {symbol} nicht gefunden.',
+      invalid: 'Ungültige Eingabe.',
+      unavailable: 'Dienst vorübergehend nicht erreichbar. Bitte später erneut versuchen.',
     },
     toast: {
       added: '{symbol} zur Watchlist hinzugefügt',
@@ -796,6 +798,13 @@ export default {
     noData: 'Keine Daten',
     error: 'Daten konnten nicht geladen werden',
     close: 'Schließen',
+  },
+  instrumentSearch: {
+    placeholder: 'Symbol oder Firmenname',
+    empty: 'Keine Treffer.',
+    hint: 'Deutsche Namen oft ohne Umlaut versuchen.',
+    unavailable: 'Suche gerade nicht verfügbar.',
+    addToWatchlist: 'Zur Watchlist hinzufügen',
   },
   strigoi: {
     back: 'zurück',

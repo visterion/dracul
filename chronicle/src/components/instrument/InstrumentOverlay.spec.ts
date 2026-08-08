@@ -7,11 +7,13 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import InstrumentOverlay from './InstrumentOverlay.vue'
 import de from '../../i18n/locales/de'
 import { useInstrumentOverlayStore } from '../../stores/instrumentOverlay'
+import { ApiError } from '../../api/errors'
 import type { Depot, DepotPositionView } from '../../api/types'
 
 // ── api mock ─────────────────────────────────────────────────────
 const getDepots = vi.fn()
-vi.mock('../../api', () => ({ useApi: () => ({ getDepots }) }))
+const createWatchlistItem = vi.fn()
+vi.mock('../../api', () => ({ useApi: () => ({ getDepots, createWatchlistItem }) }))
 
 function pos(symbol: string, over: Partial<DepotPositionView> = {}): DepotPositionView {
   return {
@@ -70,6 +72,7 @@ describe('InstrumentOverlay', () => {
     setActivePinia(createPinia())
     getDepots.mockReset()
     getDepots.mockResolvedValue({ depots: [] })
+    createWatchlistItem.mockReset()
     await router.push('/')
   })
 
@@ -191,5 +194,64 @@ describe('InstrumentOverlay', () => {
 
     await w.find(`[aria-label="${de.instrument.close}"]`).trigger('click')
     expect(store.openSymbol).toBeNull()
+  })
+
+  it('passes the search-supplied name when adding from the overlay, not the header\'s', async () => {
+    // The stubbed InstrumentInfoPanel always emits `Name ${symbol}` as the header
+    // name (see InstrumentInfoPanelStub above) — i.e. `Name SYNA.HE`, which is
+    // present and DIFFERENT from the store's search-supplied name. A regression
+    // to the header fallback (e.g. `header.value.name ?? store.openName`, the
+    // wrong precedence) would send 'Name SYNA.HE' and fail this assertion.
+    // NOKIA.HE has no profile name at all in production, so the panel header
+    // cannot supply it there — this is the scenario that matters.
+    createWatchlistItem.mockResolvedValue({
+      id: 'w-1', ticker: 'SYNA.HE', companyName: 'Synthetic Alpha Oyj', currentPrice: 1,
+      dayChangePercent: 0, status: 'calm', addedAt: '2026-08-08', tag: 'TRACKING', verdictId: null,
+      alerts: [], priceHistory30d: [], entryPrice: null, shareCount: null, owner: 'me@example.com',
+      currency: 'EUR', entryCurrency: 'EUR', nativeCurrentPrice: 1, nativeCurrency: 'EUR',
+      nativeEntryPrice: null, source: 'manual',
+    })
+    const store = useInstrumentOverlayStore()
+    const w = mountOverlay()
+    store.open('SYNA.HE', 'Synthetic Alpha Oyj')
+    await flushPromises()
+
+    // Sanity: the header name really is present and really does differ from
+    // the store's name, so this test is actually discriminating.
+    expect(w.find('[data-testid="io-header-name"]').text()).toBe('Name SYNA.HE')
+
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    expect(createWatchlistItem).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'SYNA.HE', name: 'Synthetic Alpha Oyj' }))
+  })
+
+  it('shows a readable message when the add fails validation', async () => {
+    // 400 used to fall into the raw-message branch ('bad request' verbatim);
+    // assert the actual mapped string, not just non-empty.
+    createWatchlistItem.mockRejectedValue(new ApiError('bad request', 400))
+    const store = useInstrumentOverlayStore()
+    const w = mountOverlay()
+    store.open('AAPL')
+    await flushPromises()
+
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[data-testid="io-add-error"]').text()).toBe(de.watchlist.dialog.invalid)
+  })
+
+  it('maps a 5xx (Agora outage) to a translated message, not the raw HTTP string', async () => {
+    createWatchlistItem.mockRejectedValue(new ApiError('createWatchlistItem failed: HTTP 502', 502))
+    const store = useInstrumentOverlayStore()
+    const w = mountOverlay()
+    store.open('AAPL')
+    await flushPromises()
+
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[data-testid="io-add-error"]').text()).toBe(de.watchlist.dialog.unavailable)
   })
 })

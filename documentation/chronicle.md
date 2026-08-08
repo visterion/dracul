@@ -231,6 +231,41 @@ not a separate navigation target).
 `PatternCasesDialog` (case table), `LiveAlertPanel`, and the ticker headings
 on `VerdictDetailView`, `PreyDetailView`, `ExitSignalDetailView`.
 
+The overlay also carries an **"add to watchlist" button** (`InstrumentOverlay.vue`,
+`data-testid="io-add"`), calling `POST /api/watchlist`. The name it sends is the
+search hit's name when the overlay was opened from a search result
+(`useInstrumentOverlayStore().openName`), falling back to the info panel's
+profile name — `get_quote` alone carries no company name. A `404`/`422`
+response (unknown symbol) renders the existing "Symbol X not found" message
+inline; `400` (validation) renders a distinct invalid-symbol message.
+
+### Instrument search
+
+**`InstrumentSearch.vue`** (`src/components/instrument/`) is a reusable,
+debounced (250 ms), keyboard-navigable (arrow keys + Enter + Escape) search box
+over `GET /api/instruments/search` (`api.searchInstruments(q, limit)`). It is
+wired into the Watchlist "add" dialog, ahead of the existing direct-entry
+ticker field: **selecting a search hit opens the instrument overlay**
+(`useInstrumentOverlayStore().open(symbol, name)`) rather than filling the
+dialog's text field — the overlay's own add-button then carries the hit's name
+through. The direct-entry path (typing an exact ticker and pressing Enter) is
+unchanged and never has a name to send.
+
+An in-flight request is superseded by a later one via a monotonic sequence
+counter (a slower, earlier response arriving after a newer one has already
+landed is dropped) — the same defensive pattern the info panel below uses for
+its own chart/info fetches. The dropdown distinguishes three states: **results**
+(rows), a **named empty state** (query resolved, zero hits — distinct copy from
+"not enough characters typed yet", which shows no dropdown at all), and an
+**error state** (the Agora call itself failed, e.g. the 502 outage case) — never
+conflated, mirroring the info panel's `iip-error`/`iip-unavailable` split below.
+
+`InstrumentInfoPanel.vue` similarly distinguishes a **missing section**
+(`iip-unavailable` — the fetch succeeded but produced no renderable section,
+e.g. a non-US listing with no analyst estimates) from a **failed fetch**
+(`iip-error` — the backend call itself threw, rendered as a translated,
+user-facing message, never the raw exception text).
+
 ## ApiClient abstraction
 
 The frontend uses an `ApiClient` interface with two implementations:

@@ -60,4 +60,19 @@ class AgoraToolTimeoutsTest {
                     assertThat(bound.forTool("get_form4_transactions", 25_000L)).isEqualTo(45_000L);
                 });
     }
+
+    @Test
+    void shippedApplicationYamlBindsTheSearchInstrumentsKeyVerbatim() {
+        new ApplicationContextRunner()
+                .withInitializer(new ConfigDataApplicationContextInitializer())
+                .withUserConfiguration(Config.class)
+                .run(ctx -> {
+                    AgoraToolTimeouts bound = ctx.getBean(AgoraToolTimeouts.class);
+                    assertThat(bound.toolTimeoutMs())
+                            .as("dracul.agora.tool-timeout-ms must bind 'search_instruments' verbatim "
+                                    + "— an unbracketed key would be normalised to 'searchinstruments'")
+                            .containsKey("search_instruments");
+                    assertThat(bound.forTool("search_instruments", 25_000L)).isEqualTo(2_000L);
+                });
+    }
 }

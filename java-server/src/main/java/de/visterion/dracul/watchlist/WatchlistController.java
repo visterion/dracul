@@ -58,6 +58,12 @@ public class WatchlistController {
         String user = CurrentUserHolder.get();
         Optional<WatchlistItem> existing = repo.findByUserAndTicker(user, req.symbol());
         if (existing.isPresent()) {
+            String supplied = req.nameOrNull();
+            if (supplied != null) {
+                // Heals rows created before the search existed, which are named after their
+                // ticker because get_quote carries no company name.
+                repo.updateCompanyNameIfEqualsTicker(existing.get().id(), supplied);
+            }
             WatchlistItem merged = repo.mergeVerdictIdIfNull(
                     existing.get().id(), req.sourceVerdictId());
             events.publishEvent(new WatchlistChangedEvent());
@@ -66,10 +72,11 @@ public class WatchlistController {
 
         MarketData md = marketData.resolve(req.symbol());
         List<Double> hist = md.priceHistory30d().stream().map(BigDecimal::doubleValue).toList();
-        // NOTE(7b): Agora get_quote returns no company name → md.companyName() is the ticker (display fallback).
+        // The search knows the company name; get_quote does not (md.companyName() is the ticker).
+        String displayName = req.nameOrNull() != null ? req.nameOrNull() : md.companyName();
         String source = req.sourceVerdictId() != null ? "verdict" : "manual";
         WatchlistItem created = repo.insert(
-                user, req.symbol(), md.companyName(),
+                user, req.symbol(), displayName,
                 md.currentPrice().doubleValue(), hist,
                 req.tag(), source, req.sourceVerdictId(), md.currency());
         events.publishEvent(new WatchlistChangedEvent());

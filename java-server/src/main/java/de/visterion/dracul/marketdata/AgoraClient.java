@@ -175,14 +175,15 @@ public class AgoraClient {
      * <p>The MCP {@code isError} flag is the sole outage discriminator, and deliberately so. Two
      * different {@code available} flags travel the same wire and mean opposite things: Agora
      * serialises an unavailable {@code ToolResult} as the body {@code {"available":false,...}}
-     * AND sets {@code isError}, while {@code get_indicators} — the only tool that puts a top-level
-     * {@code available} inside a SUCCESSFUL payload — uses it to say "no indicator spec produced a
-     * value". That is a statement about the data, not about the source: a symbol younger than 52
-     * weeks has no 52-week range, and Agora answered perfectly well to say so. Treating that flag
-     * as an outage threw the body away before the caller could degrade on it, logged three healthy
-     * young listings as "Agora unreachable", and pushed the lazarus source-down heuristic toward a
-     * false outage verdict. A genuine failure inside that tool throws upstream and comes back as an
-     * error envelope, so nothing is lost by trusting {@code isError} alone.
+     * AND sets {@code isError}, while {@code get_quote}, {@code get_ohlc} and {@code get_indicators}
+     * put a top-level {@code available} inside a SUCCESSFUL payload — used to say "this symbol (or
+     * this indicator spec) produced no data". That is a statement about the data, not about the
+     * source: an unresolvable symbol or a listing younger than 52 weeks has no quote/range, and
+     * Agora answered perfectly well to say so. Treating that flag as an outage threw the body away
+     * before the caller could degrade on it, logged healthy responses as "Agora unreachable", and
+     * pushed the lazarus source-down heuristic toward a false outage verdict. A genuine failure
+     * inside those tools throws upstream and comes back as an error envelope, so nothing is lost by
+     * trusting {@code isError} alone.
      */
     static JsonNode parseToolText(String text, boolean isError) {
         JsonNode node;

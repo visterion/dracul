@@ -315,6 +315,8 @@ export interface CreateWatchlistRequest {
   symbol: string
   tag: WatchlistTag
   sourceVerdictId?: string | null
+  /** Company name from the instrument search; the backend has none from get_quote. */
+  name?: string
 }
 
 export interface PatchWatchlistRequest {
@@ -738,6 +740,14 @@ export interface DepotChart {
 }
 
 export type ChartRange = '1d' | '1w' | '1m' | '1y' | 'max'
+
+/** One row from `GET /api/instruments/search` — a plain array, no envelope. */
+export interface InstrumentSearchHit {
+  symbol: string
+  name: string
+  exchange: string
+  type: string
+}
 
 export interface InstrumentInfo {
   symbol: string
