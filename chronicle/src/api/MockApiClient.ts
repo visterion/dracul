@@ -12,6 +12,7 @@ import type {
   RunTranscript,
   InspectorRunsResponse,
   DepotMove,
+  ProposalRun,
 } from './types'
 import { mockPrey, archivedPrey } from '../mocks/prey'
 import { mockVerdicts } from '../mocks/verdicts'
@@ -31,6 +32,7 @@ import {
   mockDepots, mockDepotsResponse, mockDepotChart, mockInstrumentChart, mockInstrumentInfo,
   mockDepotHistory,
 } from '../mocks/depots'
+import { mockProposalRuns } from '../mocks/proposals'
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -477,5 +479,10 @@ export class MockApiClient implements ApiClient {
   async getDecisionDoc(): Promise<{ markdown: string }> {
     await delay(50)
     return { markdown: '# Wie Dracul entscheidet\n\n*(Beispiel im Dev-Modus)*\n\n## Die Jäger\n\n- Spin\n- Insider\n\n| Agent | Wann |\n|---|---|\n| voievod | 08:00 |\n' }
+  }
+
+  async getProposals(_days = 7): Promise<ProposalRun[]> {
+    await delay(50)
+    return structuredClone(mockProposalRuns)
   }
 }

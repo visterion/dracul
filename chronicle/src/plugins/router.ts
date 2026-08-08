@@ -39,6 +39,7 @@ const router = createRouter({
     },
     { path: '/exit-signal/:id', name: 'exit-signal-detail', component: () => import('../views/ExitSignalDetailView.vue') },
     { path: '/report', name: 'morning-report', component: () => import('../views/MorningReportView.vue') },
+    { path: '/proposals', name: 'proposals', component: () => import('../views/ProposalsView.vue') },
     {
       path: '/patterns',
       name: 'pattern-library',
