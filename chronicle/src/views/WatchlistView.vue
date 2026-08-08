@@ -247,6 +247,7 @@ import InstrumentSearch from '../components/instrument/InstrumentSearch.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import { useToast } from '../composables/useToast'
+import { useInstrumentOverlayStore } from '../stores/instrumentOverlay'
 import { ApiError } from '../api/errors'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
 import { formatPercent, pctClass } from '../utils/format'
@@ -259,6 +260,7 @@ const { smAndDown } = useDisplay()
 const api = useApi()
 const me = useMe()
 const toast = useToast()
+const overlay = useInstrumentOverlayStore()
 const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
@@ -356,9 +358,6 @@ function dotClass(status: WatchlistStatus): 'positive' | 'warning' | 'danger' {
 // ── Add / delete (preserved real features) ──
 const addOpen = ref(false)
 const addSymbol = ref('')
-// Company name, set only via a search-hit selection — a manual symbol edit
-// clears it so a stale name never rides along with a different symbol.
-const addName = ref<string | null>(null)
 const addSubmitting = ref(false)
 const addError = ref<string | null>(null)
 
@@ -366,20 +365,22 @@ const rowBusyId = ref<string | null>(null)
 
 function openAddDialog() {
   addSymbol.value = ''
-  addName.value = null
   addError.value = null
   addOpen.value = true
 }
 
 function onSymbolInput() {
   addSymbol.value = addSymbol.value.toUpperCase()
-  addName.value = null
 }
 
+// A search hit opens the instrument overlay (one entry point: search → look
+// at it → add from there) instead of filling the dialog's direct-entry
+// field — the overlay's own add-button (InstrumentOverlay.vue) carries the
+// name through from here. The direct field stays reserved for the
+// exact-ticker + Enter path, which never has a name to send.
 function onSearchSelect(symbol: string, name: string) {
-  addSymbol.value = symbol
-  addName.value = name
-  addError.value = null
+  addOpen.value = false
+  overlay.open(symbol, name)
 }
 
 async function onAddSymbol() {
@@ -387,12 +388,11 @@ async function onAddSymbol() {
   addSubmitting.value = true
   addError.value = null
   try {
-    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING', name: addName.value ?? undefined })
+    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING' })
     items.value = [created, ...items.value.filter(i => i.id !== created.id)]
     toast.show(t('watchlist.toast.added', { symbol: created.ticker }))
     addOpen.value = false
     addSymbol.value = ''
-    addName.value = null
   } catch (e) {
     if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
       addError.value = t('watchlist.dialog.notFound', { symbol: addSymbol.value })
@@ -409,7 +409,6 @@ async function onAddSymbol() {
 function onAddFromSearch() {
   if (!addableSymbol.value) return
   addSymbol.value = addableSymbol.value
-  addName.value = null
   addError.value = null
   addOpen.value = true
 }

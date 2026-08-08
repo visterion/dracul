@@ -115,7 +115,9 @@ describe('WatchlistView add dialog', () => {
   }
 
   it('renders a readable message on a validation error', async () => {
-    // 400 used to fall into the raw-message branch; only 404/422 were mapped.
+    // 400 used to fall into the raw-message branch ('bad request' verbatim);
+    // only 404/422 were mapped. Assert the actual mapped string, not just
+    // non-empty — the raw message is also non-empty and would pass a weaker check.
     mockCreateWatchlistItem.mockRejectedValue(new ApiError('bad request', 400))
     const w = mountView()
     await flushPromises()
@@ -124,7 +126,7 @@ describe('WatchlistView add dialog', () => {
     await w.get('[data-testid="wl-add-submit"]').trigger('click')
     await flushPromises()
 
-    expect(w.get('[role="alert"]').text()).not.toBe('')
+    expect(w.get('[role="alert"]').text()).toBe(de.watchlist.dialog.invalid)
   })
 
   it('lets a 15-char symbol reach the API', async () => {
@@ -153,20 +155,34 @@ describe('WatchlistView add dialog', () => {
     expect(w.get('[role="alert"]').text()).toContain('NOKIA')
   })
 
-  it('passes the search-supplied name along when adding', async () => {
-    mockCreateWatchlistItem.mockResolvedValue(item({ id: 'w-10', ticker: 'SYNA.HE', companyName: 'Synthetic Alpha Oyj' }))
+  it('a search hit closes the dialog and opens the instrument overlay with symbol + name', async () => {
+    // One entry point: search -> look at it -> add from there. Selecting a
+    // hit must NOT fill the dialog's direct-entry field; it hands off to the
+    // overlay store, whose own add-button (InstrumentOverlay.vue) is where
+    // the create request actually happens.
     const w = mountView()
     await flushPromises()
+    const store = useInstrumentOverlayStore()
 
     await w.get('[data-testid="wl-open-add"]').trigger('click')
     // Simulate the InstrumentSearch selection via its emit — the same event
     // the dialog's @select="onSearchSelect" handler consumes.
     w.getComponent(InstrumentSearch).vm.$emit('select', 'SYNA.HE', 'Synthetic Alpha Oyj')
     await flushPromises()
-    await w.get('[data-testid="wl-add-submit"]').trigger('click')
+
+    expect(store.openSymbol).toBe('SYNA.HE')
+    expect(store.openName).toBe('Synthetic Alpha Oyj')
+    expect(mockCreateWatchlistItem).not.toHaveBeenCalled()
+  })
+
+  it('accepts a 24-char symbol and rejects a 25-char one (TICKER_RE boundary, byte-identical to the backend)', async () => {
+    const w = mountView()
     await flushPromises()
 
-    expect(mockCreateWatchlistItem).toHaveBeenCalledWith(
-      expect.objectContaining({ symbol: 'SYNA.HE', name: 'Synthetic Alpha Oyj' }))
+    await openDialogAndType(w, 'A'.repeat(24))
+    expect((w.get('[data-testid="wl-add-submit"]').element as HTMLButtonElement).disabled).toBe(false)
+
+    await openDialogAndType(w, 'A'.repeat(25))
+    expect((w.get('[data-testid="wl-add-submit"]').element as HTMLButtonElement).disabled).toBe(true)
   })
 })

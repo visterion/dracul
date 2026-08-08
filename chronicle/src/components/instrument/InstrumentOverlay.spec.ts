@@ -196,8 +196,14 @@ describe('InstrumentOverlay', () => {
     expect(store.openSymbol).toBeNull()
   })
 
-  it('passes the search-supplied name when adding from the overlay', async () => {
-    // NOKIA.HE has no profile name at all, so the panel header cannot supply it.
+  it('passes the search-supplied name when adding from the overlay, not the header\'s', async () => {
+    // The stubbed InstrumentInfoPanel always emits `Name ${symbol}` as the header
+    // name (see InstrumentInfoPanelStub above) — i.e. `Name SYNA.HE`, which is
+    // present and DIFFERENT from the store's search-supplied name. A regression
+    // to the header fallback (e.g. `header.value.name ?? store.openName`, the
+    // wrong precedence) would send 'Name SYNA.HE' and fail this assertion.
+    // NOKIA.HE has no profile name at all in production, so the panel header
+    // cannot supply it there — this is the scenario that matters.
     createWatchlistItem.mockResolvedValue({
       id: 'w-1', ticker: 'SYNA.HE', companyName: 'Synthetic Alpha Oyj', currentPrice: 1,
       dayChangePercent: 0, status: 'calm', addedAt: '2026-08-08', tag: 'TRACKING', verdictId: null,
@@ -210,6 +216,10 @@ describe('InstrumentOverlay', () => {
     store.open('SYNA.HE', 'Synthetic Alpha Oyj')
     await flushPromises()
 
+    // Sanity: the header name really is present and really does differ from
+    // the store's name, so this test is actually discriminating.
+    expect(w.find('[data-testid="io-header-name"]').text()).toBe('Name SYNA.HE')
+
     await w.get('[data-testid="io-add"]').trigger('click')
     await flushPromises()
 
@@ -218,6 +228,8 @@ describe('InstrumentOverlay', () => {
   })
 
   it('shows a readable message when the add fails validation', async () => {
+    // 400 used to fall into the raw-message branch ('bad request' verbatim);
+    // assert the actual mapped string, not just non-empty.
     createWatchlistItem.mockRejectedValue(new ApiError('bad request', 400))
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
@@ -227,6 +239,6 @@ describe('InstrumentOverlay', () => {
     await w.get('[data-testid="io-add"]').trigger('click')
     await flushPromises()
 
-    expect(w.get('[data-testid="io-add-error"]').text()).not.toBe('')
+    expect(w.get('[data-testid="io-add-error"]').text()).toBe(de.watchlist.dialog.invalid)
   })
 })

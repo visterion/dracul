@@ -177,10 +177,13 @@ async function loadInfo() {
     if (id !== infoRequestId) return
     info.value = result
     infoError.value = null
-  } catch (e) {
+  } catch {
     if (id !== infoRequestId) return
     info.value = null
-    infoError.value = e instanceof Error ? e.message : t('instrument.error')
+    // Always the translated, readable message — the raw exception text (e.g.
+    // "getInstrumentInfo failed: HTTP 502") is an internal detail, not
+    // something a user should read.
+    infoError.value = t('instrument.error')
   }
 }
 
@@ -323,6 +326,10 @@ watch(() => props.symbol, () => {
   const wasDefaultRange = range.value === '1m'
   range.value = '1m'
   if (wasDefaultRange) loadChart()
+  // Clear the previous instrument's info/error state immediately — otherwise
+  // its error or empty state stays on screen until the new fetch resolves.
+  info.value = null
+  infoError.value = null
   loadInfo()
 }, { immediate: true })
 </script>
