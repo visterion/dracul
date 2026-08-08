@@ -34,6 +34,14 @@ class SpinCandidateEnricherPayloadWindowTest {
                 null, null, "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z", null, null, null);
     }
 
+    private static SpinCandidateRow distributedRow(String symbol, tools.jackson.databind.JsonNode distributedSnapshot) {
+        return new SpinCandidateRow(1L, "0000000001", symbol, symbol + " Co", "10-12B",
+                LocalDate.parse("2026-07-01"), "https://sec/" + symbol,
+                null, null, null, false, null, null,
+                SpinStatus.DISTRIBUTED, null, distributedSnapshot, null,
+                null, null, "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z", "2026-08-08T00:00:00Z", null, null);
+    }
+
     private SpinCandidateEnricher enricher(SpinCandidateRepository repo) {
         return new SpinCandidateEnricher(repo,
                 Mockito.mock(SpinLifecycleReconciler.class),
@@ -68,5 +76,38 @@ class SpinCandidateEnricherPayloadWindowTest {
 
         assertThat(payload.candidates()).hasSize(SpinCandidateEnricher.RESPONSE_LIMIT);
         assertThat(payload.truncated()).isTrue();
+    }
+
+    // --- distributionDateConfirmed wire mapping (2026-08-08 fix follow-up review) ---
+
+    @Test void explicitFalseInTheSnapshotIsCarriedThroughAsFalse() {
+        SpinCandidateRepository repo = Mockito.mock(SpinCandidateRepository.class);
+        ObjectMapper mapper = new ObjectMapper();
+        var snapshot = mapper.readTree(
+                "{\"spincoMarketCapMillions\":150.0,\"daysSinceDistribution\":4,\"distributionDateConfirmed\":false}");
+        when(repo.findActiveUnpromotedInWindow(any(), anyInt()))
+                .thenReturn(List.of(distributedRow("SPN", snapshot)));
+
+        SpinPayload payload = enricher(repo).payload(LocalDate.parse("2026-07-20"));
+
+        assertThat(payload.candidates()).hasSize(1);
+        assertThat(payload.candidates().getFirst().distributionDateConfirmed()).isFalse();
+    }
+
+    @Test void aSnapshotPredatingTheFieldReadsAsUnconfirmedNotAsAnError() {
+        // A distributed_snapshot persisted before this fix shipped has no
+        // distributionDateConfirmed key at all (not merely a null value) — boolOrFalse must
+        // treat an absent field the same as an explicit false, never throw or propagate null.
+        SpinCandidateRepository repo = Mockito.mock(SpinCandidateRepository.class);
+        ObjectMapper mapper = new ObjectMapper();
+        var snapshot = mapper.readTree(
+                "{\"spincoMarketCapMillions\":150.0,\"daysSinceDistribution\":4}");
+        when(repo.findActiveUnpromotedInWindow(any(), anyInt()))
+                .thenReturn(List.of(distributedRow("OLD", snapshot)));
+
+        SpinPayload payload = enricher(repo).payload(LocalDate.parse("2026-07-20"));
+
+        assertThat(payload.candidates()).hasSize(1);
+        assertThat(payload.candidates().getFirst().distributionDateConfirmed()).isFalse();
     }
 }

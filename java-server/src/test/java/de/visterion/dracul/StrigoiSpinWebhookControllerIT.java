@@ -131,6 +131,10 @@ class StrigoiSpinWebhookControllerIT {
         // Fix 1: raw term-sheet prose flows to the payload and termSheetAvailable is truthful
         assertThat(reg.path("termSheetAvailable").asBoolean()).isTrue();
         assertThat(reg.path("termSheet").asString("")).contains("Big Parent Corporation");
+        // REG never reached DISTRIBUTED, so its distributed_snapshot is null — distributionDateConfirmed
+        // must still come back as a concrete `false`, never a missing key or a null.
+        assertThat(reg.has("distributionDateConfirmed")).isTrue();
+        assertThat(reg.path("distributionDateConfirmed").asBoolean(true)).isFalse();
 
         // lifecycle persisted: SPN advanced to DISTRIBUTED in the DB
         String spnStatus = jdbc.sql("SELECT status FROM spin_candidate WHERE symbol = 'SPN'")

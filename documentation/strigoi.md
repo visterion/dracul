@@ -186,7 +186,10 @@ no new scheduler):
 3. **ENRICH** — `SpinCandidateEnricher` fetches stage-appropriate data for a bounded
    work-set (rows that transitioned this run first, then non-terminal rows
    oldest-checked, deduped and capped at **25/run** to hold the webhook latency
-   budget) and persists it as per-stage JSONB snapshots.
+   budget) and persists it as per-stage JSONB snapshots. A row past the cap keeps
+   answering RESPOND from its last-persisted snapshot (e.g. a stale `daysSinceDistribution`)
+   until its next enrich turn — self-correcting, and conservative in the direction that
+   matters (a stale count only ever reads too LARGE, never too fresh).
 4. **RESPOND** — the LLM payload (`EnrichedSpinCandidate` rows) is rebuilt from the
    persisted columns + snapshots of the **active, unpromoted** window {`REGISTERED`,
    `WHEN_ISSUED`, `DISTRIBUTED`}, newest-discovered first — not read straight from
@@ -256,6 +259,15 @@ as JSONB):
   just opened" when it is really only "Dracul just noticed" — the gap a one-off
   backfill run exposed by moving five long-completed spin-offs to `DISTRIBUTED` in a
   single pass, each stamped with today's `distributed_at`.
+  **Known gap, deliberately left open:** the deterministic promotion gate
+  (`StrigoiSpinWebhookController.withinPromotionWindow`, `SPIN_PROMOTION_WINDOW_DAYS`,
+  default 90 days) reads the same unconfirmed `daysSinceDistribution` and does **not**
+  check `distributionDateConfirmed`. For the five 2026-08-08 backfill rows (HONA, BSEM,
+  ADIG, MBGL, MFP) this means `daysSinceDistribution` reads ~0 at the snapshot and the
+  promotion window stays open until roughly November 2026, even though the real
+  distributions were May–July 2026. Not fixed here: gating the deterministic promoter
+  on freshness of the wrong date is a hunting-behavior change (which candidates get
+  promoted), not an honesty fix, and is the operator's call.
 - **`SETTLED`** — the fundamental re-rating read (`SpinValuationSnapshotter`):
   `priceToBook` (Finnhub `pbAnnual`), `fcfYield` (reciprocal of Finnhub
   `pfcfShareTTM`), `bookValue` (XBRL Assets − Liabilities), and `evToEbit`. **`evToEbit`
@@ -804,7 +816,8 @@ other companies' theses as its own symbol's history (observed in production 2026
 `strigoi-index`). Prompts bumped: `strigoi-echo` 1.8.0, `strigoi-index` 2.2.0,
 `strigoi-insider` 1.6.0, `strigoi-lazarus` 1.5.0, `strigoi-merger` 1.4.0,
 `strigoi-spin` 1.5.0, `gropar` 1.2.0, `voievod` 1.3.0. (`strigoi-lazarus` moved on
-to 1.6.0 with the market-wide-universe change of 2026-08-04.)
+to 1.6.0 with the market-wide-universe change of 2026-08-04; `strigoi-spin` moved on
+to 1.6.0 with the `distributionDateConfirmed` fix of 2026-08-08, see below.)
 
 `daywalker` and `renfield` do not carry the tool: their memory context is pre-fetched
 server-side by `HiveMemResearchService.searchForInput`, which has always filtered on
