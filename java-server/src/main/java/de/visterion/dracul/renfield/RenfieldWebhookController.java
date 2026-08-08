@@ -200,6 +200,13 @@ public class RenfieldWebhookController {
                         + "flagging only", runId, symbol, row.get().positionSource());
                 return true;
             }
+            if ("unavailable".equals(row.get().positionSource())) {
+                // held=false here is not "confirmed not held" — it's the depot-unreachable
+                // default set by RenfieldScheduler#assemble. Say so explicitly, or this looks
+                // exactly like a clean check when the trigger-time depot read simply failed.
+                log.info("renfield run {} — buy-on-held check for {} inconclusive: trigger-time "
+                        + "snapshot has position_source=unavailable", runId, symbol);
+            }
             return false;
         } catch (RuntimeException e) {
             log.warn("renfield run {} — run-context lookup for {} failed unexpectedly, "

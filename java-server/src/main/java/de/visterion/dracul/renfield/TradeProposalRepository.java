@@ -57,10 +57,15 @@ public class TradeProposalRepository {
                 .update();
     }
 
-    /** Proposals for one owner from the last {@code days} days, newest first; within
-     *  a run (same created_at down to the transaction's clock granularity) rows keep
-     *  insertion order via the ctid tie-break — same convention as WatchlistRepository's
-     *  alert ordering. */
+    /** Proposals for one owner from the last {@code days} days, newest run first; within
+     *  a run, insertion order. Each row of a run gets its own {@code created_at} — the
+     *  webhook inserts one proposal per autocommit statement (no shared transaction), so
+     *  timestamps within a run can differ by more than a second (measured on the identical
+     *  pattern in {@code daywalker_alerts}: up to 1.385s apart) — a plain
+     *  {@code created_at DESC} would silently reorder proposals within a run, disagreeing
+     *  with the priority order the agent proposed them in and Telegram rendered them in.
+     *  The window function ranks runs by their latest row's timestamp so a run's rows stay
+     *  contiguous, then orders within the run ascending (insertion order). */
     public List<TradeProposal> findRecent(String owner, int days) {
         return jdbc.sql("""
                 SELECT id, symbol, action, entry_zone, stop, confidence, rationale,
@@ -68,7 +73,7 @@ public class TradeProposalRepository {
                 FROM trade_proposals
                 WHERE owner = :owner
                   AND created_at > now() - (:days || ' days')::interval
-                ORDER BY created_at DESC, ctid ASC
+                ORDER BY max(created_at) OVER (PARTITION BY run_id) DESC, run_id, created_at ASC
                 """)
                 .param("owner", owner)
                 .param("days", days)

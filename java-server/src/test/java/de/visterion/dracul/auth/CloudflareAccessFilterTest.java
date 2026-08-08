@@ -146,10 +146,10 @@ class CloudflareAccessFilterTest {
         assertThat(run(filter, req)[1]).isEqualTo(401);
 
         var req2 = new MockHttpServletRequest("GET", "/api/renfield/proposals");
-        req2.addHeader("Cf-Access-Jwt-Assertion", mint("alice@x.com", AUD, Instant.now().plusSeconds(300)));
+        req2.addHeader("Cf-Access-Jwt-Assertion", mint("alice@example.com", AUD, Instant.now().plusSeconds(300)));
         var r2 = run(filter, req2);
         assertThat(r2[1]).isEqualTo(200);
-        assertThat(r2[0]).isEqualTo("alice@x.com");
+        assertThat(r2[0]).isEqualTo("alice@example.com");
     }
 
     @Test void executorSignalsOperatorPathStillEnforced() throws Exception {

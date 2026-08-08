@@ -51,9 +51,10 @@ public class RenfieldProposalController {
         int clamped = Math.max(MIN_DAYS, Math.min(MAX_DAYS, days));
         List<TradeProposal> rows = proposals.findRecent(CurrentUserHolder.get(), clamped);
 
-        // findRecent is ordered created_at DESC, ctid ASC — rows of the same run are
-        // contiguous and appear before older runs, so a LinkedHashMap keyed by runId
-        // reproduces "newest run first, insertion order within a run" without re-sorting.
+        // findRecent orders by each run's latest created_at (newest run first) and then
+        // by created_at within the run (insertion order) — rows of the same run are
+        // contiguous, so a LinkedHashMap keyed by runId reproduces "newest run first,
+        // insertion order within a run" without re-sorting.
         Map<String, RunAccumulator> byRun = new LinkedHashMap<>();
         for (TradeProposal row : rows) {
             RunAccumulator run = byRun.computeIfAbsent(row.runId(),

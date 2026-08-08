@@ -50,8 +50,8 @@ class TradeProposalRepositoryTest {
         String owner = "alice@example.com";
         String symbol = "SENT" + System.nanoTime();
         String json = """
-                [{"headline":"ACME beats estimates","sentiment":"positive"},
-                 {"headline":"ACME faces lawsuit","sentiment":"negative"}]
+                [{"headline":"ACME beats estimates","sentiment":0.6},
+                 {"headline":"ACME faces lawsuit","sentiment":-0.5}]
                 """;
 
         int inserted = repo.insert(owner, symbol, "buy", "10-12", "9.50",
@@ -64,8 +64,8 @@ class TradeProposalRepositoryTest {
         assertThat(found.newsSentiment().isArray()).isTrue();
         assertThat(found.newsSentiment().get(0).path("headline").asText())
                 .isEqualTo("ACME beats estimates");
-        assertThat(found.newsSentiment().get(1).path("sentiment").asText())
-                .isEqualTo("negative");
+        assertThat(found.newsSentiment().get(1).path("sentiment").asDouble())
+                .isEqualTo(-0.5);
     }
 
     @Test
@@ -167,6 +167,33 @@ class TradeProposalRepositoryTest {
 
         assertThat(prior.get(symbol)).hasSize(1);
         assertThat(prior.get(symbol).get(0).action()).isEqualTo("buy");
+    }
+
+    @Test
+    void findRecentPreservesInsertionOrderWithinARun() {
+        // Regression for the reverse-priority-order bug: RenfieldWebhookController#complete
+        // runs no shared transaction, so each proposal of a run is its own autocommit
+        // statement with its own created_at. A plain `created_at DESC` tie-break therefore
+        // reorders a run's rows by timestamp instead of preserving the agent's priority
+        // order, disagreeing with what Telegram rendered for the same run.
+        String owner = "alice@example.com";
+        String runId = "run-order-" + System.nanoTime();
+        String symbolA = "ORDA" + System.nanoTime();
+        String symbolB = "ORDB" + System.nanoTime();
+        String symbolC = "ORDC" + System.nanoTime();
+
+        // Three separate calls -> three separate autocommit statements, exactly like the
+        // webhook's per-proposal insert loop (no shared transaction wraps them here either).
+        repo.insert(owner, symbolA, "buy", "", "", null, "r", "note", runId, null);
+        repo.insert(owner, symbolB, "buy", "", "", null, "r", "note", runId, null);
+        repo.insert(owner, symbolC, "buy", "", "", null, "r", "note", runId, null);
+
+        var symbolsInOrder = repo.findRecent(owner, 1).stream()
+                .filter(p -> p.runId().equals(runId))
+                .map(TradeProposal::symbol)
+                .toList();
+
+        assertThat(symbolsInOrder).containsExactly(symbolA, symbolB, symbolC);
     }
 
     @Test

@@ -569,10 +569,10 @@ pointer-events: none) with a Phase 2 badge.
 ## Navigation structure
 
 The top-level nav destinations (Chronicle, Watchlist, Depots, Report, Proposals,
-Pattern Library, Backtest, Settings) are available from both the desktop top-bar
-and the mobile bottom tab bar (`useNavItems()`, the single source of truth shared
-by both). Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail) are not
-in the nav but are reachable via in-app links.
+Pattern Library, Backtest, Settings, Inspector) are available from both the desktop
+top-bar and the mobile bottom tab bar (`useNavItems()`, the single source of truth
+shared by both). Deep-linked views (Verdict Detail, Strigoi Detail, Prey Detail) are
+not in the nav but are reachable via in-app links.
 
 - **Chronicle** is the home page. Most navigation starts here.
 - **Verdict Detail** and **Strigoi Detail** are deep-linked from Chronicle items.
