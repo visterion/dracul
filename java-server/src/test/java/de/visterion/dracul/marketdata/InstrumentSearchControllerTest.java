@@ -19,6 +19,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class InstrumentSearchControllerTest {
@@ -118,5 +119,34 @@ class InstrumentSearchControllerTest {
 
         mvc.perform(get("/api/instruments/search").param("q", "nokia"))
                 .andExpect(status().isBadGateway());
+    }
+
+    /**
+     * The happy path never crossed the HTTP layer before this test — only the 502
+     * case did (above). Proves `q`/`limit` bind from the query string as expected
+     * and the response body is the plain array shape (no wrapper object), the exact
+     * contract chronicle/src/api/HttpApiClient.ts#searchInstruments and every 400/
+     * 422/5xx branch downstream of it depends on.
+     */
+    @Test void searchesAndReturnsAPlainArrayBody() throws Exception {
+        agoraReturns("""
+            {"results":[{"symbol":"SYNA","name":"Synthetic Alpha Oyj","exchange":"NYSE","type":"EQUITY"}]}
+            """);
+        MockMvc mvc = MockMvcBuilders
+                .standaloneSetup(new InstrumentSearchController(service))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        mvc.perform(get("/api/instruments/search").param("q", "nokia").param("limit", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].symbol").value("SYNA"))
+                .andExpect(jsonPath("$[0].name").value("Synthetic Alpha Oyj"))
+                .andExpect(jsonPath("$[0].exchange").value("NYSE"))
+                .andExpect(jsonPath("$[0].type").value("EQUITY"));
+
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        verify(agora).callTool(eq("search_instruments"), args.capture());
+        assertThat(args.getValue().path("limit").asInt()).isEqualTo(5);
     }
 }

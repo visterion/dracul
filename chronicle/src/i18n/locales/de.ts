@@ -471,6 +471,7 @@ export default {
       add: 'Hinzufügen',
       notFound: 'Symbol {symbol} nicht gefunden.',
       invalid: 'Ungültige Eingabe.',
+      unavailable: 'Dienst vorübergehend nicht erreichbar. Bitte später erneut versuchen.',
     },
     toast: {
       added: '{symbol} zur Watchlist hinzugefügt',

@@ -483,9 +483,15 @@ export class MockApiClient implements ApiClient {
   async searchInstruments(q: string, limit = 10): Promise<InstrumentSearchHit[]> {
     await delay(50)
     if (q.length < 2) return []
+    // Filtered on the query (not just a length check) so the "keine Treffer"
+    // empty state is actually reachable in mock/dev mode — a query that
+    // matches neither symbol nor name (e.g. "zzz") now correctly returns [].
+    const needle = q.toLowerCase()
     return [
       { symbol: 'MOCK', name: 'Mock Instrument Corp', exchange: 'NYSE', type: 'EQUITY' },
       { symbol: 'MOCK.HE', name: 'Mock Instrument Corp', exchange: 'HEL', type: 'EQUITY' },
-    ].slice(0, limit)
+    ]
+      .filter(hit => hit.symbol.toLowerCase().includes(needle) || hit.name.toLowerCase().includes(needle))
+      .slice(0, limit)
   }
 }

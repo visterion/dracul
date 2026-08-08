@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import WatchlistView from './WatchlistView.vue'
 import InstrumentSearch from '../components/instrument/InstrumentSearch.vue'
+import InstrumentOverlay from '../components/instrument/InstrumentOverlay.vue'
 import { useInstrumentOverlayStore } from '../stores/instrumentOverlay'
 import { ApiError } from '../api/errors'
 import de from '../i18n/locales/de'
@@ -155,6 +157,18 @@ describe('WatchlistView add dialog', () => {
     expect(w.get('[role="alert"]').text()).toContain('NOKIA')
   })
 
+  it('maps a 5xx (Agora outage) to a translated message, not the raw HTTP string', async () => {
+    mockCreateWatchlistItem.mockRejectedValue(new ApiError('createWatchlistItem failed: HTTP 502', 502))
+    const w = mountView()
+    await flushPromises()
+
+    await openDialogAndType(w, 'NOKIA')
+    await w.get('[data-testid="wl-add-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[role="alert"]').text()).toBe(de.watchlist.dialog.unavailable)
+  })
+
   it('a search hit closes the dialog and opens the instrument overlay with symbol + name', async () => {
     // One entry point: search -> look at it -> add from there. Selecting a
     // hit must NOT fill the dialog's direct-entry field; it hands off to the
@@ -184,5 +198,68 @@ describe('WatchlistView add dialog', () => {
 
     await openDialogAndType(w, 'A'.repeat(25))
     expect((w.get('[data-testid="wl-add-submit"]').element as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+// The overlay is mounted once at the App shell (see App.vue), reachable from
+// anywhere — this wrapper reproduces that shape so an add triggered through
+// the overlay can be observed landing back in WatchlistView's own list,
+// exactly like the real app instead of two isolated component mounts.
+const InstrumentInfoPanelStub = defineComponent({
+  name: 'InstrumentInfoPanel',
+  props: { symbol: { type: String, required: true }, currency: { type: String, required: false } },
+  emits: ['header'],
+  template: '<div data-testid="ip-stub" />',
+})
+
+const AppShell = defineComponent({
+  components: { WatchlistView, InstrumentOverlay },
+  template: '<div><WatchlistView /><InstrumentOverlay /></div>',
+})
+
+function mountApp() {
+  return mount(AppShell, {
+    global: { plugins: [i18n], stubs: { InstrumentInfoPanel: InstrumentInfoPanelStub } },
+  })
+}
+
+describe('WatchlistView + InstrumentOverlay integration', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGetWatchlistItems.mockClear()
+    mockGetWatchlistItems.mockResolvedValue([itemA, itemB])
+    mockCreateWatchlistItem.mockReset()
+    mockSearchInstruments.mockReset()
+    mockSearchInstruments.mockResolvedValue([])
+  })
+
+  it('an add from the overlay appears in the watchlist list, and the just-added ticker stops being offered by the search CTA', async () => {
+    mockCreateWatchlistItem.mockResolvedValue(
+      item({ id: 'w-77', ticker: 'NOKIA.HE', companyName: 'Nokia Oyj' }),
+    )
+    const w = mountApp()
+    await flushPromises()
+
+    await w.get('[data-testid="wl-open-add"]').trigger('click')
+    // Search hit -> overlay opens (see the WatchlistView-only test above for
+    // the wiring itself) -> click the overlay's own add button.
+    w.getComponent(InstrumentSearch).vm.$emit('select', 'NOKIA.HE', 'Nokia Oyj')
+    await flushPromises()
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    const rows = w.findAll('[data-testid="watchlist-item"]')
+    expect(rows.some(r => r.text().includes('NOKIA.HE'))).toBe(true)
+
+    // Second symptom: the empty-filter "add this ticker" CTA must not still
+    // offer the ticker that was just added. Switch to the "alerts" tab (the
+    // new item has none, so the filtered list collapses to empty) and search
+    // its exact ticker — `addableSymbol` must see it in `items` regardless of
+    // the active filter tab, or the CTA would re-offer a ticker already added.
+    await w.findAll('.watch-tab')[1].trigger('click')
+    const searchInput = w.get('.watch-search input')
+    await searchInput.setValue('NOKIA.HE')
+    await flushPromises()
+    expect(w.find('[data-testid="wl-search-add"]').exists()).toBe(false)
   })
 })

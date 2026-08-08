@@ -247,8 +247,9 @@ import InstrumentSearch from '../components/instrument/InstrumentSearch.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import { useToast } from '../composables/useToast'
+import { useWatchlistEvents } from '../composables/useWatchlistEvents'
 import { useInstrumentOverlayStore } from '../stores/instrumentOverlay'
-import { ApiError } from '../api/errors'
+import { mapWatchlistAddError } from '../utils/watchlistAddError'
 import type { WatchlistItem, WatchlistStatus } from '../api/types'
 import { formatPercent, pctClass } from '../utils/format'
 import { displayName } from '../utils/instrument'
@@ -261,6 +262,7 @@ const api = useApi()
 const me = useMe()
 const toast = useToast()
 const overlay = useInstrumentOverlayStore()
+const watchlistEvents = useWatchlistEvents()
 const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
@@ -394,17 +396,20 @@ async function onAddSymbol() {
     addOpen.value = false
     addSymbol.value = ''
   } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
-      addError.value = t('watchlist.dialog.notFound', { symbol: addSymbol.value })
-    } else if (e instanceof ApiError && e.status === 400) {
-      addError.value = t('watchlist.dialog.invalid')
-    } else {
-      addError.value = (e as Error).message
-    }
+    addError.value = mapWatchlistAddError(e, addSymbol.value, t)
   } finally {
     addSubmitting.value = false
   }
 }
+
+// An add from the instrument overlay (search hit -> overlay -> its own
+// add-button) mutates nothing here on its own — the overlay is mounted once
+// at the App shell, not inside this view. Consume its signal the same way
+// the direct-add path already merges a created item into `items`.
+watch(watchlistEvents.lastAdded, created => {
+  if (!created) return
+  items.value = [created, ...items.value.filter(i => i.id !== created.id)]
+})
 
 function onAddFromSearch() {
   if (!addableSymbol.value) return

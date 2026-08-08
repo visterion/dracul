@@ -47,7 +47,8 @@ import { useInstrumentOverlayStore } from '../../stores/instrumentOverlay'
 import { useDepotsStore } from '../../stores/depots'
 import { useApi } from '../../api'
 import { useToast } from '../../composables/useToast'
-import { ApiError } from '../../api/errors'
+import { useWatchlistEvents } from '../../composables/useWatchlistEvents'
+import { mapWatchlistAddError } from '../../utils/watchlistAddError'
 import { formatNumber } from '../../utils/format'
 
 const { t } = useI18n()
@@ -55,6 +56,7 @@ const store = useInstrumentOverlayStore()
 const depots = useDepotsStore()
 const api = useApi()
 const toast = useToast()
+const watchlistEvents = useWatchlistEvents()
 
 const header = ref<{ name: string; lastPrice: number | null; change: number | null; changePct: number | null }>({ name: '', lastPrice: null, change: null, changePct: null })
 function onHeader(h: typeof header.value) { header.value = h }
@@ -79,14 +81,12 @@ async function onAdd() {
   try {
     const created = await api.createWatchlistItem({ symbol, tag: 'TRACKING', name })
     toast.show(t('watchlist.toast.added', { symbol: created.ticker }))
+    // WatchlistView owns its own `items` list, loaded once on mount — an add
+    // from here (mounted once at the App shell) has to be surfaced to it
+    // explicitly, or the new row never appears until a full reload.
+    watchlistEvents.notifyAdded(created)
   } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
-      addError.value = t('watchlist.dialog.notFound', { symbol })
-    } else if (e instanceof ApiError && e.status === 400) {
-      addError.value = t('watchlist.dialog.invalid')
-    } else {
-      addError.value = (e as Error).message
-    }
+    addError.value = mapWatchlistAddError(e, symbol, t)
   } finally {
     adding.value = false
   }

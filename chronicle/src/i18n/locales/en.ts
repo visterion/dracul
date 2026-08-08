@@ -471,6 +471,7 @@ export default {
       add: 'Add',
       notFound: 'Symbol {symbol} not found.',
       invalid: 'Invalid input.',
+      unavailable: 'Service temporarily unavailable. Please try again later.',
     },
     toast: {
       added: '{symbol} added to watchlist',

@@ -241,4 +241,17 @@ describe('InstrumentOverlay', () => {
 
     expect(w.get('[data-testid="io-add-error"]').text()).toBe(de.watchlist.dialog.invalid)
   })
+
+  it('maps a 5xx (Agora outage) to a translated message, not the raw HTTP string', async () => {
+    createWatchlistItem.mockRejectedValue(new ApiError('createWatchlistItem failed: HTTP 502', 502))
+    const store = useInstrumentOverlayStore()
+    const w = mountOverlay()
+    store.open('AAPL')
+    await flushPromises()
+
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[data-testid="io-add-error"]').text()).toBe(de.watchlist.dialog.unavailable)
+  })
 })
