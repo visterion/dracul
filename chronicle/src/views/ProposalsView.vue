@@ -14,6 +14,10 @@
       <v-skeleton-loader v-for="i in 3" :key="i" type="list-item-two-line" />
     </template>
 
+    <div v-else-if="error" class="empty small" data-testid="proposals-error">
+      <div class="em-text">{{ error }}</div>
+    </div>
+
     <div v-else-if="runs.length === 0" class="empty small" data-testid="proposals-empty">
       <div class="em-text">{{ t('proposals.empty') }}</div>
     </div>
@@ -72,6 +76,7 @@ const api = useApi()
 
 const runs = ref<ProposalRun[]>([])
 const loading = ref(true)
+const error = ref<string | null>(null)
 let source: EventSource | null = null
 
 async function load() {
@@ -81,9 +86,16 @@ async function load() {
 onMounted(async () => {
   try {
     await load()
+  } catch (e) {
+    // A failed load must never be mistaken for "no proposals exist" (the
+    // primary-user-only empty state) — that would hide a real backend
+    // failure behind a message that reads as normal, expected behavior.
+    error.value = e instanceof Error ? e.message : t('proposals.loadError')
   } finally {
     loading.value = false
   }
+  // Always connect, even after a failed initial load — a transient fetch
+  // error must not permanently kill live updates for the rest of the session.
   connect()
 })
 
@@ -101,7 +113,12 @@ function connect() {
   const base = import.meta.env.VITE_API_BASE ?? ''
   source = new EventSource(`${base}/api/events`)
   source.addEventListener('proposal.new', () => {
-    void load()
+    // Best-effort refresh: a transient failure here must not surface as an
+    // unhandled rejection. It also must not clobber proposals already on
+    // screen with an error state — only the initial load can do that.
+    load().catch((e: unknown) => {
+      console.error('proposals: refresh after proposal.new failed', e)
+    })
   })
 }
 

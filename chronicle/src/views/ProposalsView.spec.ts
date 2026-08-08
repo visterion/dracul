@@ -13,6 +13,7 @@ import type { ProposalRun } from '../api/types'
 class FakeEventSource {
   static instances: FakeEventSource[] = []
   private listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
+  close = vi.fn()
 
   constructor(public url: string) {
     FakeEventSource.instances.push(this)
@@ -21,8 +22,6 @@ class FakeEventSource {
   addEventListener(type: string, cb: (e: MessageEvent) => void) {
     (this.listeners[type] ??= []).push(cb)
   }
-
-  close() {}
 
   dispatch(type: string, data: unknown) {
     for (const cb of this.listeners[type] ?? []) {
@@ -39,7 +38,7 @@ const runA: ProposalRun = {
     {
       id: 'p-1', symbol: 'AVGO', action: 'add', entryZone: '265-270', stop: '245',
       confidence: 0.72, rationale: 'Nachkauf im Rücksetzer.',
-      newsSentiment: [{ headline: 'Broadcom übertrifft Erwartungen', sentiment: 'positive' }],
+      newsSentiment: [{ headline: 'Broadcom übertrifft Erwartungen', sentiment: 0.6 }],
     },
     {
       id: 'p-2', symbol: 'PYPL', action: 'hold', entryZone: '', stop: '',
@@ -57,7 +56,7 @@ const runB: ProposalRun = {
     {
       id: 'p-3', symbol: 'NVDA', action: 'trim', entryZone: '', stop: '118',
       confidence: 0.58, rationale: 'Gewinnmitnahme nach starkem Lauf.',
-      newsSentiment: [{ headline: 'Sektor-Rotation aus Halbleitern', sentiment: 'negative' }],
+      newsSentiment: [{ headline: 'Sektor-Rotation aus Halbleitern', sentiment: -0.5 }],
     },
   ],
 }
@@ -129,6 +128,24 @@ describe('ProposalsView', () => {
     expect(news[0].text()).toContain('Broadcom übertrifft Erwartungen')
   })
 
+  it('buckets a numeric sentiment (the wire type) into a label and a CSS class, end to end', async () => {
+    // Pins the fix for the number-vs-string mismatch: sentiment arrives as a
+    // number in [-1.0, +1.0] (schemas/renfield-review.json), never a string
+    // label — a regression here would silently go back to rendering "0.6"
+    // with no color, matching none of .sentiment-positive/negative/neutral.
+    const w = mountView()
+    await flushPromises()
+
+    const positiveTag = w.get('[data-testid="proposal-run-run-2"] .news-sentiment')
+    expect(positiveTag.classes()).toContain('sentiment-positive')
+    expect(positiveTag.classes()).not.toContain('sentiment-0.6')
+    expect(positiveTag.text()).toBe('positiv')
+
+    const negativeTag = w.get('[data-testid="proposal-run-run-1"] .news-sentiment')
+    expect(negativeTag.classes()).toContain('sentiment-negative')
+    expect(negativeTag.text()).toBe('negativ')
+  })
+
   it('appends a run when a proposal.new SSE event arrives', async () => {
     const w = mountView()
     await flushPromises()
@@ -163,5 +180,36 @@ describe('ProposalsView', () => {
     const empty = w.get('[data-testid="proposals-empty"]')
     expect(empty.text()).toContain('Renfield')
     expect(w.find('[data-testid^="proposal-run-"]').exists()).toBe(false)
+  })
+
+  it('shows a dedicated error state on a failed load, not the primary-user empty state', async () => {
+    mockGetProposals.mockRejectedValueOnce(new Error('HTTP 500'))
+    const w = mountView()
+    await flushPromises()
+
+    expect(w.find('[data-testid="proposals-empty"]').exists()).toBe(false)
+    const errorEl = w.get('[data-testid="proposals-error"]')
+    expect(errorEl.text()).toBe('HTTP 500')
+  })
+
+  it('still connects the SSE subscription after a failed initial load', async () => {
+    mockGetProposals.mockRejectedValueOnce(new Error('HTTP 500'))
+    mountView()
+    await flushPromises()
+
+    expect(FakeEventSource.instances).toHaveLength(1)
+  })
+
+  it('closes the SSE subscription on unmount', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    expect(FakeEventSource.instances).toHaveLength(1)
+    const es = FakeEventSource.instances[0]
+    expect(es.close).not.toHaveBeenCalled()
+
+    w.unmount()
+
+    expect(es.close).toHaveBeenCalledTimes(1)
   })
 })

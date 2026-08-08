@@ -526,6 +526,7 @@ export default {
     subtitle: 'Daily watchlist proposals, grouped by run.',
     readonlyNote: 'Informational only — Dracul places no orders.',
     empty: 'No proposals yet. Renfield only reviews the primary user\'s watchlist — this view stays permanently empty for other accounts.',
+    loadError: 'Proposals could not be loaded.',
     actionItems: 'Action items',
     warnHolds: 'Warn-holds (observation only)',
     entryZone: 'Entry zone',

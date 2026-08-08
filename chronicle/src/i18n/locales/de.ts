@@ -526,6 +526,7 @@ export default {
     subtitle: 'Tägliche Vorschläge zur Watchlist, nach Lauf gruppiert.',
     readonlyNote: 'Nur informativ — Dracul platziert keine Orders.',
     empty: 'Noch keine Vorschläge. Renfield prüft ausschließlich die Watchlist des Primärnutzers — für andere Konten bleibt diese Ansicht dauerhaft leer.',
+    loadError: 'Vorschläge konnten nicht geladen werden.',
     actionItems: 'Handlungsvorschläge',
     warnHolds: 'Warn-Holds (nur Beobachtung)',
     entryZone: 'Einstiegszone',

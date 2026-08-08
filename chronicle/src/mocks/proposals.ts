@@ -9,7 +9,7 @@ export const mockProposalRuns: ProposalRun[] = [
       {
         id: 'prop-1', symbol: 'AVGO', action: 'add', entryZone: '265-270', stop: '245',
         confidence: 0.72, rationale: 'Position bestätigt Aufwärtstrend, Nachkauf im Rücksetzer sinnvoll.',
-        newsSentiment: [{ headline: 'Broadcom übertrifft Quartalsschätzungen', sentiment: 'positive' }],
+        newsSentiment: [{ headline: 'Broadcom übertrifft Quartalsschätzungen', sentiment: 0.6 }],
       },
       {
         id: 'prop-2', symbol: 'PYPL', action: 'hold', entryZone: '', stop: '',
@@ -26,7 +26,7 @@ export const mockProposalRuns: ProposalRun[] = [
       {
         id: 'prop-3', symbol: 'NVDA', action: 'trim', entryZone: '', stop: '118',
         confidence: 0.58, rationale: 'Gewinnmitnahme nach starkem Lauf, Stop nachgezogen.',
-        newsSentiment: [{ headline: 'Sektor-Rotation aus Halbleitern', sentiment: 'negative' }],
+        newsSentiment: [{ headline: 'Sektor-Rotation aus Halbleitern', sentiment: -0.5 }],
       },
     ],
   },

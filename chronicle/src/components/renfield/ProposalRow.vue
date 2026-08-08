@@ -18,12 +18,21 @@ function actionPillClass(action: string): string {
   }
 }
 
-// Falls back to the raw wire value for a sentiment tag the frontend doesn't
-// know a translation for yet, rather than rendering the i18n key literally.
-function sentimentLabel(sentiment: string): string {
-  const key = `proposals.sentiment.${sentiment}`
-  const translated = t(key)
-  return translated === key ? sentiment : translated
+// Wire sentiment is a number in [-1.0, +1.0] (schemas/renfield-review.json,
+// pinned by NewsSentimentSchemaTest) — never a string label. Bucket it the
+// same way the rest of the app reasons about signed scores: a dead zone
+// around 0 reads as neutral rather than forcing every non-zero value into
+// positive/negative.
+type SentimentBucket = 'positive' | 'negative' | 'neutral'
+
+function sentimentBucket(sentiment: number): SentimentBucket {
+  if (sentiment > 0.2) return 'positive'
+  if (sentiment < -0.2) return 'negative'
+  return 'neutral'
+}
+
+function sentimentLabel(sentiment: number): string {
+  return t(`proposals.sentiment.${sentimentBucket(sentiment)}`)
 }
 </script>
 
@@ -59,7 +68,7 @@ function sentimentLabel(sentiment: string): string {
       data-testid="proposal-news"
     >
       <li v-for="(n, idx) in proposal.newsSentiment" :key="idx" class="news-item">
-        <span class="news-sentiment" :class="`sentiment-${n.sentiment}`">{{ sentimentLabel(n.sentiment) }}</span>
+        <span class="news-sentiment" :class="`sentiment-${sentimentBucket(n.sentiment)}`">{{ sentimentLabel(n.sentiment) }}</span>
         <span class="news-headline">{{ n.headline }}</span>
       </li>
     </ul>

@@ -278,15 +278,17 @@ export type ProposalAction = 'buy' | 'add' | 'trim' | 'sell' | 'hold' | 'drop_fr
 
 export interface ProposalNewsHeadline {
   headline: string
-  sentiment: string
+  /** [-1.0, +1.0] per schemas/renfield-review.json — a wire number, never a
+   *  string label. Bucket it for display (see ProposalRow.vue). */
+  sentiment: number
 }
 
 export interface Proposal {
   id: string
   symbol: string
   action: ProposalAction
-  entryZone: string
-  stop: string
+  entryZone: string | null
+  stop: string | null
   confidence: number | null
   rationale: string
   /** Array of {headline, sentiment} objects, or null when no news was consulted. */
