@@ -43,4 +43,47 @@ class FxRateRefresherTest {
         verify(fx, never()).warm("EUR", "EUR");
         verifyNoMoreInteractions(fx);
     }
+
+    @Test
+    void warmsHeldEntryCurrencyPairsInAdditionToDisplayCurrencyPairs() {
+        FxService fx = mock(FxService.class);
+        AppSettingsRepository settings = mock(AppSettingsRepository.class);
+        WatchlistRepository watchlist = mock(WatchlistRepository.class);
+        VerdictRepository verdicts = mock(VerdictRepository.class);
+        HeldPositionService heldPositions = mock(HeldPositionService.class);
+
+        when(settings.getDisplayCurrency()).thenReturn("EUR");
+        when(watchlist.distinctCurrencies()).thenReturn(List.of("USD"));
+        when(verdicts.distinctCurrencies()).thenReturn(List.of());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+        when(watchlist.distinctEntryCurrencyPairs()).thenReturn(List.of(
+                new WatchlistRepository.CurrencyPair("EUR", "USD")));
+
+        new FxRateRefresher(fx, settings, watchlist, verdicts, heldPositions, "depot-1").refresh();
+
+        verify(fx).warm("USD", "EUR");
+        verify(fx).warm("EUR", "USD");
+        verifyNoMoreInteractions(fx);
+    }
+
+    @Test
+    void skipsEntryCurrencyPairWhenEntryCurrencyMatchesCurrency() {
+        FxService fx = mock(FxService.class);
+        AppSettingsRepository settings = mock(AppSettingsRepository.class);
+        WatchlistRepository watchlist = mock(WatchlistRepository.class);
+        VerdictRepository verdicts = mock(VerdictRepository.class);
+        HeldPositionService heldPositions = mock(HeldPositionService.class);
+
+        when(settings.getDisplayCurrency()).thenReturn("EUR");
+        when(watchlist.distinctCurrencies()).thenReturn(List.of());
+        when(verdicts.distinctCurrencies()).thenReturn(List.of());
+        when(heldPositions.openPositions("depot-1")).thenReturn(List.of());
+        // entry_currency == currency: distinctEntryCurrencyPairs() already filters these out at
+        // the SQL level, so an empty result here means no warm call for this ticker's pair.
+        when(watchlist.distinctEntryCurrencyPairs()).thenReturn(List.of());
+
+        new FxRateRefresher(fx, settings, watchlist, verdicts, heldPositions, "depot-1").refresh();
+
+        verifyNoMoreInteractions(fx);
+    }
 }
