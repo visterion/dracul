@@ -38,6 +38,26 @@ class WatchlistPriceRefresherTest {
         verify(repo, never()).updatePriceByTicker(anyString(), anyDouble(), anyDouble());
     }
 
+    /** Task 8, Step 11: pins the design rule that a batch degrades per-symbol, never as a whole
+     *  — one unresolvable ticker (e.g. Agora's noData shape for an unknown symbol) must not stop
+     *  the other rows of the SAME batch call from being refreshed. */
+    @Test
+    void oneUnresolvedTickerInABatchStillUpdatesTheOthers() {
+        var repo = mock(WatchlistRepository.class);
+        var port = mock(AgoraMarketData.class);
+        when(repo.distinctTickers()).thenReturn(List.of("AVGO", "NOKIA", "NVDA"));
+        when(port.quotes(List.of("AVGO", "NOKIA", "NVDA"))).thenReturn(Map.of(
+                "AVGO", new Quote(new BigDecimal("382.07"), new BigDecimal("-0.9")),
+                "NVDA", new Quote(new BigDecimal("143.20"), new BigDecimal("1.1"))));
+
+        new WatchlistPriceRefresher(repo, port).refresh();
+
+        verify(repo).updatePriceByTicker("AVGO", 382.07, -0.9);
+        verify(repo).updatePriceByTicker("NVDA", 143.20, 1.1);
+        verify(repo, never()).updatePriceByTicker(eq("NOKIA"), anyDouble(), anyDouble());
+        verify(port, times(1)).quotes(anyCollection());
+    }
+
     @Test
     void providerExceptionIsSwallowed() {
         var repo = mock(WatchlistRepository.class);

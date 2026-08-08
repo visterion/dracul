@@ -88,6 +88,27 @@ class StopProximityWatcherTest {
         verifyNoInteractions(emitter);
     }
 
+    /** Task 8, Step 11: pins the design rule that a batch degrades per-symbol, never as a whole
+     *  — one unresolvable ticker in the batch (Agora's noData shape for an unknown symbol) must
+     *  not stop the other held positions of the SAME poll from being checked against their stop. */
+    @Test
+    void oneUnresolvedSymbolInABatchStillChecksTheOthers() {
+        var withStop = withContext("AAA", "11111111-1111-1111-1111-111111111111", new BigDecimal("100"));
+        var noQuote = withContext("NOKIA", "22222222-2222-2222-2222-222222222222", new BigDecimal("50"));
+        when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of(withStop, noQuote));
+        // NOKIA never resolves (Agora noData) -> AgoraMarketData.quotes() simply omits it.
+        when(marketData.quotes(anyCollection()))
+                .thenReturn(Map.of("AAA", new Quote(new BigDecimal("100"), BigDecimal.ZERO)));
+
+        watcher.poll();
+
+        verify(marketData, times(1)).quotes(anyCollection());
+        verify(emitter).emit(eq("default"), eq("AAA"),
+                eq(StopZone.BREACHED), eq(new BigDecimal("100")),
+                eq(new BigDecimal("100")), any(Instant.class));
+        verify(emitter, never()).emit(eq("default"), eq("NOKIA"), any(), any(), any(), any());
+    }
+
     @Test
     void depotUnavailableYieldsEmptyPositionsAndNoOp() {
         when(heldPositions.openPositions(CONNECTION)).thenReturn(List.of());

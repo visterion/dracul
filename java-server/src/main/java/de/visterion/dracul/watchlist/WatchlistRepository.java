@@ -262,6 +262,24 @@ public class WatchlistRepository {
         return findById(id).orElseThrow();
     }
 
+    /** Fills in company_name only where it is still literally the ticker. Exact comparison —
+     *  no case or trim tolerance. Returns true when a row was updated. */
+    public boolean updateCompanyNameIfEqualsTicker(String id, String name) {
+        UUID uuid;
+        try { uuid = UUID.fromString(id); }
+        catch (IllegalArgumentException e) { return false; }
+        int rows = jdbc.sql("""
+                    UPDATE watchlist_items
+                       SET company_name = :name
+                     WHERE id = :id
+                       AND company_name = ticker
+                    """)
+                .param("name", name)
+                .param("id", uuid)
+                .update();
+        return rows > 0;
+    }
+
     public boolean updateTag(String id, String tag) {
         UUID uuid;
         try { uuid = UUID.fromString(id); }

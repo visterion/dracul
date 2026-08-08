@@ -64,7 +64,7 @@ class WatchlistControllerSourceTest {
 
     @Test
     void createWithNullSourceVerdictIdInsertsWithManualSource() {
-        controller.create(new CreateWatchlistRequest("ACME", "TRACKING", null));
+        controller.create(new CreateWatchlistRequest("ACME", "TRACKING", null, null));
 
         verify(repo).insert(eq(USER), eq("ACME"), any(), anyDouble(), any(),
                 eq("TRACKING"), eq("manual"), isNull(), any());
@@ -75,7 +75,7 @@ class WatchlistControllerSourceTest {
         String verdictId = "b0000000-0000-0000-0000-000000000001";
         when(verdictRepo.findDetailById(verdictId)).thenReturn(Optional.of(mock(VerdictDetail.class)));
 
-        controller.create(new CreateWatchlistRequest("ACME", "TRACKING", verdictId));
+        controller.create(new CreateWatchlistRequest("ACME", "TRACKING", verdictId, null));
 
         verify(repo).insert(eq(USER), eq("ACME"), any(), anyDouble(), any(),
                 eq("TRACKING"), eq("verdict"), eq(verdictId), any());
