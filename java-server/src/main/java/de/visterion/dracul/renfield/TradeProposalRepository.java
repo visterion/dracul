@@ -28,13 +28,6 @@ public class TradeProposalRepository {
         this.mapper = mapper;
     }
 
-    /** Legacy 9-arg entry point kept for callers that don't yet supply sentiment
-     *  (news_sentiment stays SQL NULL, never an empty-object husk). */
-    public int insert(String owner, String symbol, String action, String entryZone, String stop,
-            BigDecimal confidence, String rationale, String marketNote, String runId) {
-        return insert(owner, symbol, action, entryZone, stop, confidence, rationale, marketNote, runId, null);
-    }
-
     /** Inserts one proposal row; returns rows inserted — 0 when the (run_id, symbol)
      *  unique key already exists (idempotent webhook retry), 1 otherwise.
      *  {@code newsSentimentJson} is an already-serialized JSON string (array of
