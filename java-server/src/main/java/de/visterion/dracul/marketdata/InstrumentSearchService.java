@@ -34,7 +34,12 @@ public class InstrumentSearchService {
         args.put("query", query);
         args.put("limit", Math.clamp(limit, 1, MAX_LIMIT));
 
-        JsonNode out = agora.callTool("search_instruments", args);
+        JsonNode out;
+        try {
+            out = agora.callTool("search_instruments", args);
+        } catch (AgoraUnavailableException e) {
+            throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE, e.getMessage(), e);
+        }
         List<InstrumentSearchHit> hits = new ArrayList<>();
         for (JsonNode r : out.path("results")) {
             String symbol = r.path("symbol").asString("");
