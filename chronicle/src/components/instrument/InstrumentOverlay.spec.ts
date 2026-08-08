@@ -7,11 +7,13 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import InstrumentOverlay from './InstrumentOverlay.vue'
 import de from '../../i18n/locales/de'
 import { useInstrumentOverlayStore } from '../../stores/instrumentOverlay'
+import { ApiError } from '../../api/errors'
 import type { Depot, DepotPositionView } from '../../api/types'
 
 // ── api mock ─────────────────────────────────────────────────────
 const getDepots = vi.fn()
-vi.mock('../../api', () => ({ useApi: () => ({ getDepots }) }))
+const createWatchlistItem = vi.fn()
+vi.mock('../../api', () => ({ useApi: () => ({ getDepots, createWatchlistItem }) }))
 
 function pos(symbol: string, over: Partial<DepotPositionView> = {}): DepotPositionView {
   return {
@@ -70,6 +72,7 @@ describe('InstrumentOverlay', () => {
     setActivePinia(createPinia())
     getDepots.mockReset()
     getDepots.mockResolvedValue({ depots: [] })
+    createWatchlistItem.mockReset()
     await router.push('/')
   })
 
@@ -191,5 +194,39 @@ describe('InstrumentOverlay', () => {
 
     await w.find(`[aria-label="${de.instrument.close}"]`).trigger('click')
     expect(store.openSymbol).toBeNull()
+  })
+
+  it('passes the search-supplied name when adding from the overlay', async () => {
+    // NOKIA.HE has no profile name at all, so the panel header cannot supply it.
+    createWatchlistItem.mockResolvedValue({
+      id: 'w-1', ticker: 'SYNA.HE', companyName: 'Synthetic Alpha Oyj', currentPrice: 1,
+      dayChangePercent: 0, status: 'calm', addedAt: '2026-08-08', tag: 'TRACKING', verdictId: null,
+      alerts: [], priceHistory30d: [], entryPrice: null, shareCount: null, owner: 'me@example.com',
+      currency: 'EUR', entryCurrency: 'EUR', nativeCurrentPrice: 1, nativeCurrency: 'EUR',
+      nativeEntryPrice: null, source: 'manual',
+    })
+    const store = useInstrumentOverlayStore()
+    const w = mountOverlay()
+    store.open('SYNA.HE', 'Synthetic Alpha Oyj')
+    await flushPromises()
+
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    expect(createWatchlistItem).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'SYNA.HE', name: 'Synthetic Alpha Oyj' }))
+  })
+
+  it('shows a readable message when the add fails validation', async () => {
+    createWatchlistItem.mockRejectedValue(new ApiError('bad request', 400))
+    const store = useInstrumentOverlayStore()
+    const w = mountOverlay()
+    store.open('AAPL')
+    await flushPromises()
+
+    await w.get('[data-testid="io-add"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[data-testid="io-add-error"]').text()).not.toBe('')
   })
 })

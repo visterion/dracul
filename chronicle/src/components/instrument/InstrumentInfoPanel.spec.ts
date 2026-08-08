@@ -66,6 +66,27 @@ describe('InstrumentInfoPanel', () => {
     expect(w.find('[data-testid="ip-section-news"]').exists()).toBe(false)
   })
 
+  it('distinguishes a missing section from a failed fetch', async () => {
+    // Today every failure is swallowed ("A failed info bundle must never error the panel"),
+    // so a real backend outage would read as "not available for this listing".
+    getInstrumentInfo.mockReset()
+    getInstrumentInfo.mockRejectedValue(new Error('HTTP 502'))
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.find('[data-testid="iip-error"]').exists()).toBe(true)
+    expect(w.find('[data-testid="iip-unavailable"]').exists()).toBe(false)
+  })
+
+  it('shows a named empty state for a listing without filings', async () => {
+    getInstrumentInfo.mockResolvedValue({ symbol: 'AAPL', profile: { name: 'Apple Inc' },
+      news: null, earnings: null, analystEstimates: null, earningsEstimates: null,
+      fundamentalScore: null, fundamentals: null, insiderActivity: null })
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.find('[data-testid="iip-unavailable"]').exists()).toBe(true)
+    expect(w.find('[data-testid="iip-error"]').exists()).toBe(false)
+  })
+
   it('price target uses currency prop, plain number without it', async () => {
     getInstrumentInfo.mockResolvedValue({ symbol: 'AAPL',
       analystEstimates: { priceTarget: 200, recommendations: [{ strongBuy: 1, buy: 0, hold: 0, sell: 0, strongSell: 0 }] },

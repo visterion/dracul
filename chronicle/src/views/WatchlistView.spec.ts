@@ -3,7 +3,9 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import WatchlistView from './WatchlistView.vue'
+import InstrumentSearch from '../components/instrument/InstrumentSearch.vue'
 import { useInstrumentOverlayStore } from '../stores/instrumentOverlay'
+import { ApiError } from '../api/errors'
 import de from '../i18n/locales/de'
 import type { WatchlistItem } from '../api/types'
 
@@ -41,13 +43,16 @@ const itemA = item({ id: 'w-1', ticker: 'PYPL' })
 const itemB = item({ id: 'w-2', ticker: 'AVGO', companyName: 'Broadcom Inc' })
 const mockGetWatchlistItems = vi.fn(async () => [itemA, itemB])
 const mockGetMe = vi.fn(async () => ({ email: 'me@example.com' }))
+const mockCreateWatchlistItem = vi.fn()
+const mockSearchInstruments = vi.fn(async () => [])
 
 vi.mock('../api', () => ({
   useApi: () => ({
     getWatchlistItems: mockGetWatchlistItems,
     getMe: mockGetMe,
-    createWatchlistItem: vi.fn(),
+    createWatchlistItem: mockCreateWatchlistItem,
     deleteWatchlistItem: vi.fn(),
+    searchInstruments: mockSearchInstruments,
   }),
 }))
 
@@ -64,6 +69,9 @@ describe('WatchlistView ticker overlay', () => {
     setActivePinia(createPinia())
     mockGetWatchlistItems.mockClear()
     mockGetWatchlistItems.mockResolvedValue([itemA, itemB])
+    mockCreateWatchlistItem.mockReset()
+    mockSearchInstruments.mockReset()
+    mockSearchInstruments.mockResolvedValue([])
   })
 
   it('clicking the ticker opens the instrument overlay and does not change the selected row', async () => {
@@ -87,5 +95,78 @@ describe('WatchlistView ticker overlay', () => {
     const rowsAfter = w.findAll('[data-testid="watchlist-item"]')
     expect(rowsAfter[0].classes()).toContain('active')
     expect(rowsAfter[1].classes()).not.toContain('active')
+  })
+})
+
+describe('WatchlistView add dialog', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGetWatchlistItems.mockClear()
+    mockGetWatchlistItems.mockResolvedValue([itemA, itemB])
+    mockCreateWatchlistItem.mockReset()
+    mockSearchInstruments.mockReset()
+    mockSearchInstruments.mockResolvedValue([])
+  })
+
+  async function openDialogAndType(w: ReturnType<typeof mountView>, symbol: string) {
+    await w.get('[data-testid="wl-open-add"]').trigger('click')
+    const input = w.get('[data-testid="wl-add-symbol"]')
+    await input.setValue(symbol)
+  }
+
+  it('renders a readable message on a validation error', async () => {
+    // 400 used to fall into the raw-message branch; only 404/422 were mapped.
+    mockCreateWatchlistItem.mockRejectedValue(new ApiError('bad request', 400))
+    const w = mountView()
+    await flushPromises()
+
+    await openDialogAndType(w, 'NOKIA')
+    await w.get('[data-testid="wl-add-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[role="alert"]').text()).not.toBe('')
+  })
+
+  it('lets a 15-char symbol reach the API', async () => {
+    // TICKER_RE used to cap at 12 chars and silently return.
+    mockCreateWatchlistItem.mockResolvedValue(item({ id: 'w-9', ticker: 'AT0000A324Q2.VI' }))
+    const w = mountView()
+    await flushPromises()
+
+    await openDialogAndType(w, 'AT0000A324Q2.VI')
+    await w.get('[data-testid="wl-add-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(mockCreateWatchlistItem).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'AT0000A324Q2.VI' }))
+  })
+
+  it('still maps 422 to the not-found message', async () => {
+    mockCreateWatchlistItem.mockRejectedValue(new ApiError('nope', 422))
+    const w = mountView()
+    await flushPromises()
+
+    await openDialogAndType(w, 'NOKIA')
+    await w.get('[data-testid="wl-add-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(w.get('[role="alert"]').text()).toContain('NOKIA')
+  })
+
+  it('passes the search-supplied name along when adding', async () => {
+    mockCreateWatchlistItem.mockResolvedValue(item({ id: 'w-10', ticker: 'SYNA.HE', companyName: 'Synthetic Alpha Oyj' }))
+    const w = mountView()
+    await flushPromises()
+
+    await w.get('[data-testid="wl-open-add"]').trigger('click')
+    // Simulate the InstrumentSearch selection via its emit — the same event
+    // the dialog's @select="onSearchSelect" handler consumes.
+    w.getComponent(InstrumentSearch).vm.$emit('select', 'SYNA.HE', 'Synthetic Alpha Oyj')
+    await flushPromises()
+    await w.get('[data-testid="wl-add-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(mockCreateWatchlistItem).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'SYNA.HE', name: 'Synthetic Alpha Oyj' }))
   })
 })

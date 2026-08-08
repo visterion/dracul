@@ -71,14 +71,15 @@
         <v-dialog v-model="addOpen" max-width="420">
           <div class="watchlist__dialog">
             <div class="watchlist__dialog-title">{{ t('watchlist.dialog.title') }}</div>
+            <InstrumentSearch @select="onSearchSelect" />
             <input
               v-model="addSymbol"
               class="watchlist__dialog-input"
               type="text"
               :placeholder="t('watchlist.dialog.placeholder')"
-              maxlength="10"
+              maxlength="24"
               data-testid="wl-add-symbol"
-              @input="addSymbol = addSymbol.toUpperCase()"
+              @input="onSymbolInput"
               @keydown.enter="onAddSymbol"
             />
             <p v-if="addError" class="watchlist__dialog-error" role="alert">{{ addError }}</p>
@@ -242,6 +243,7 @@ import WatchlistCompare from '../components/watchlist/WatchlistCompare.vue'
 import WatchlistSourceBadge from '../components/watchlist/WatchlistSourceBadge.vue'
 import MoneyDisplay from '../components/common/MoneyDisplay.vue'
 import TickerButton from '../components/instrument/TickerButton.vue'
+import InstrumentSearch from '../components/instrument/InstrumentSearch.vue'
 import { useApi } from '../api'
 import { useMe } from '../composables/useMe'
 import { useToast } from '../composables/useToast'
@@ -261,9 +263,10 @@ const items = ref<WatchlistItem[]>([])
 const loading = ref(true)
 const selectedId = ref<string | null>(null)
 const searchQuery = ref('')
-// Valid ticker shape: leading letter or digit, then up to 11 of letter/digit/dot/hyphen.
-// Shared by the add dialog's submit guard, onAddSymbol, and the search CTA.
-const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,11}$/
+// Valid ticker shape: leading letter or digit, then up to 23 of letter/digit/dot/hyphen.
+// Identical to the backend pattern — shared by the add dialog's submit guard,
+// onAddSymbol, and the search CTA.
+const TICKER_RE = /^[A-Z0-9][A-Z0-9.\-]{0,23}$/
 const activeFilter = ref<'all' | 'alerts'>('all')
 const mode = ref<'list' | 'compare'>('list')
 const compareWith = ref<string | null>(null)
@@ -353,6 +356,9 @@ function dotClass(status: WatchlistStatus): 'positive' | 'warning' | 'danger' {
 // ── Add / delete (preserved real features) ──
 const addOpen = ref(false)
 const addSymbol = ref('')
+// Company name, set only via a search-hit selection — a manual symbol edit
+// clears it so a stale name never rides along with a different symbol.
+const addName = ref<string | null>(null)
 const addSubmitting = ref(false)
 const addError = ref<string | null>(null)
 
@@ -360,8 +366,20 @@ const rowBusyId = ref<string | null>(null)
 
 function openAddDialog() {
   addSymbol.value = ''
+  addName.value = null
   addError.value = null
   addOpen.value = true
+}
+
+function onSymbolInput() {
+  addSymbol.value = addSymbol.value.toUpperCase()
+  addName.value = null
+}
+
+function onSearchSelect(symbol: string, name: string) {
+  addSymbol.value = symbol
+  addName.value = name
+  addError.value = null
 }
 
 async function onAddSymbol() {
@@ -369,15 +387,20 @@ async function onAddSymbol() {
   addSubmitting.value = true
   addError.value = null
   try {
-    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING' })
+    const created = await api.createWatchlistItem({ symbol: addSymbol.value, tag: 'TRACKING', name: addName.value ?? undefined })
     items.value = [created, ...items.value.filter(i => i.id !== created.id)]
     toast.show(t('watchlist.toast.added', { symbol: created.ticker }))
     addOpen.value = false
     addSymbol.value = ''
+    addName.value = null
   } catch (e) {
-    addError.value = e instanceof ApiError && (e.status === 404 || e.status === 422)
-      ? t('watchlist.dialog.notFound', { symbol: addSymbol.value })
-      : (e as Error).message
+    if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
+      addError.value = t('watchlist.dialog.notFound', { symbol: addSymbol.value })
+    } else if (e instanceof ApiError && e.status === 400) {
+      addError.value = t('watchlist.dialog.invalid')
+    } else {
+      addError.value = (e as Error).message
+    }
   } finally {
     addSubmitting.value = false
   }
@@ -386,6 +409,7 @@ async function onAddSymbol() {
 function onAddFromSearch() {
   if (!addableSymbol.value) return
   addSymbol.value = addableSymbol.value
+  addName.value = null
   addError.value = null
   addOpen.value = true
 }

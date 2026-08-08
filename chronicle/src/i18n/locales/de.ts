@@ -470,6 +470,7 @@ export default {
       cancel: 'Abbrechen',
       add: 'Hinzufügen',
       notFound: 'Symbol {symbol} nicht gefunden.',
+      invalid: 'Ungültige Eingabe.',
     },
     toast: {
       added: '{symbol} zur Watchlist hinzugefügt',

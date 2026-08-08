@@ -470,6 +470,7 @@ export default {
       cancel: 'Cancel',
       add: 'Add',
       notFound: 'Symbol {symbol} not found.',
+      invalid: 'Invalid input.',
     },
     toast: {
       added: '{symbol} added to watchlist',
