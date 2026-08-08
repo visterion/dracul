@@ -88,6 +88,7 @@ Wikipedia) internally, so there is no Dracul-side adapter chain any more.
 | `DRACUL_AGORA_TIMEOUT_MS` (`dracul.agora.timeout-ms`) | `25000` | Request timeout (ms) on the Agora MCP client, for every tool without a per-tool override. |
 | `DRACUL_AGORA_CONNECT_TIMEOUT_MS` (`dracul.agora.connect-timeout-ms`) | `5000` | Connect timeout (ms) on the Agora MCP client, kept short so a dead Agora fails fast while a slow-but-alive one is waited out. |
 | `DRACUL_AGORA_FORM4_TIMEOUT_MS` (`dracul.agora.tool-timeout-ms["[get_form4_transactions]"]`) | `45000` | Per-tool request timeout (ms) for the market-wide Form-4 scan. See below. |
+| `DRACUL_AGORA_TIMEOUT_SEARCH_MS` (`dracul.agora.tool-timeout-ms["[search_instruments]"]`) | `2000` | Per-tool request timeout (ms) for `GET /api/instruments/search` (Chronicle's instrument search). Deliberately short: `AgoraClient.callTool` is `synchronized`, so every Dracul→Agora call shares one lock, and this is the first interactive, user-typed caller — a keystroke burst must not queue in front of the stop-loss watcher or the price refresher behind the default 25 s budget. |
 
 **Per-tool request budgets.** `dracul.agora.tool-timeout-ms` is a map from MCP
 tool name to milliseconds; anything not listed uses `dracul.agora.timeout-ms`.
