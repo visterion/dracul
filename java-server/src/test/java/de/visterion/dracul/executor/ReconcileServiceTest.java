@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -76,10 +77,13 @@ class ReconcileServiceTest {
 
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(1L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
-                eq("HARD_STOP"), eq("FILL"));
+                eq("HARD_STOP"), eq("FILL"), rValueCaptor.capture());
         assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("95");
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("-1.0");
+        // r_value is the entry/stop denominator computeR actually divided by (100 - 95).
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("5");
 
         ArgumentCaptor<Instant> expiryCaptor = ArgumentCaptor.forClass(Instant.class);
         verify(cooldownRepo).add(eq("ACME"), eq("HARD_STOP"), expiryCaptor.capture(), any());
@@ -126,8 +130,8 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
@@ -159,8 +163,8 @@ class ReconcileServiceTest {
 
         assertThat(survivors).hasSize(1);
         assertThat(survivors.get(0).status()).isEqualTo("OPEN");
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -258,7 +262,7 @@ class ReconcileServiceTest {
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<String> sourceCaptor = ArgumentCaptor.forClass(String.class);
         verify(positionRepo).close(eq(31L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
-                eq("HARD_STOP"), sourceCaptor.capture());
+                eq("HARD_STOP"), sourceCaptor.capture(), any());
         assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("188.50");
         assertThat(sourceCaptor.getValue()).isEqualTo("FILL");
         assertThat(realizedRCaptor.getValue()).isNotNull();
@@ -292,7 +296,7 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo).close(eq(32L), eq(new BigDecimal("102.5")), any(),
-                eq("SOFT_CHANDELIER"), eq("FILL"));
+                eq("SOFT_CHANDELIER"), eq("FILL"), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -312,7 +316,7 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo).close(eq(33L), eq(new BigDecimal("95")), any(),
-                eq("HARD_STOP"), eq("MARK"));
+                eq("HARD_STOP"), eq("MARK"), any());
 
         assertThat(survivors).isEmpty();
     }
@@ -329,9 +333,11 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(2L), eq(new BigDecimal("112")), realizedRCaptor.capture(),
-                eq("TAKE_PROFIT"), eq("FILL"));
+                eq("TAKE_PROFIT"), eq("FILL"), rValueCaptor.capture());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("2.4");
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("5");
 
         verify(cooldownRepo).add(eq("ACME"), eq("TAKE_PROFIT"), any(), any());
         assertThat(survivors).isEmpty();
@@ -356,7 +362,7 @@ class ReconcileServiceTest {
         assertThat(highestCaptor.getValue()).isEqualByComparingTo("108");
         assertThat(mfeCaptor.getValue()).isEqualByComparingTo("1.6");
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
 
         // A position the broker actually holds is filled — never flagged unfilled.
         assertThat(result.unfilledIds()).isEmpty();
@@ -510,7 +516,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -543,7 +549,7 @@ class ReconcileServiceTest {
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -568,7 +574,7 @@ class ReconcileServiceTest {
         ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
         List<ExecutorPosition> survivors = result.survivors();
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(decisionRepo, never()).insert(any());
         assertThat(survivors).hasSize(1);
         assertThat(survivors.get(0).id()).isEqualTo(11L);
@@ -590,7 +596,7 @@ class ReconcileServiceTest {
         ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
         List<ExecutorPosition> survivors = result.survivors();
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         assertThat(survivors).hasSize(1);
         assertThat(survivors.get(0).id()).isEqualTo(12L);
         assertThat(result.unfilledIds()).containsExactly(12L);
@@ -681,7 +687,7 @@ class ReconcileServiceTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
         assertThat(log.symbol()).isNull();
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
 
         assertThat(survivors).isEqualTo(List.of(p));
@@ -718,11 +724,19 @@ class ReconcileServiceTest {
                 .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP); // ~ -0.007805
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(20L), eq(new BigDecimal("364.10")), realizedRCaptor.capture(),
-                eq("RECONCILE_GONE"), eq("FILL"));
+                eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
         assertThat(realizedRCaptor.getValue().signum()).isLessThan(0);
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        // r_value here must be the PLANNED-risk denominator (402.57 - 370.54), NOT the live
+        // entry/stop denominator computeR would have used -- same reason realizedR is measured
+        // against planned risk (see realizedRAgainstPlannedRisk()).
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("32.03");
+        assertThat(realizedRCaptor.getValue())
+                .isEqualByComparingTo(new BigDecimal("364.10").subtract(new BigDecimal("364.35"))
+                        .divide(rValueCaptor.getValue(), 6, RoundingMode.HALF_UP));
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
     }
 
     @Test
@@ -742,7 +756,7 @@ class ReconcileServiceTest {
 
         ArgumentCaptor<BigDecimal> cap = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(22L), eq(new BigDecimal("350.00")), cap.capture(),
-                eq("RECONCILE_GONE"), eq("FILL"));
+                eq("RECONCILE_GONE"), eq("FILL"), any());
         assertThat(cap.getValue()).isEqualByComparingTo(expectedR);
         assertThat(cap.getValue().signum()).isLessThan(0); // sharpest anti-sign-flip assertion
     }
@@ -763,7 +777,7 @@ class ReconcileServiceTest {
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(21L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
-                eq("RECONCILE_GONE"), eq("RECONCILE_GONE"));
+                eq("RECONCILE_GONE"), eq("RECONCILE_GONE"), any());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
     }
 
@@ -788,8 +802,125 @@ class ReconcileServiceTest {
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(22L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
-                eq("RECONCILE_GONE"), eq("RECONCILE_GONE"));
+                eq("RECONCILE_GONE"), eq("RECONCILE_GONE"), any());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
+    }
+
+    // -------------------------------------------------------------------
+    // r_value persists the ACTUAL denominator realized_r was divided by (bugfix/executor-exit-audit).
+    // Numbers below are hand-written from the fix brief (2026-08-09), not copied from any
+    // production transcript.
+    // -------------------------------------------------------------------
+
+    @Test
+    void reconcileGone_ffivShapedMatch_persistsPlannedRiskDenominator() {
+        // RECONCILE_GONE matched-fill path: realized_r is measured against the PLANNED risk
+        // (submitted-limit entry vs initial stop), not the live entry/stop computeR would use --
+        // and r_value must record that SAME planned-risk denominator, not the live one.
+        // planned entry 409.54, initial stop 371.00 -> planned risk 38.54.
+        // real fill entry 393.76, real exit 366.26 -> pnl -27.50 -> realized_r -0.713544.
+        ExecutorPosition p = openPosition(60L, "FFIV", "BUY", new BigDecimal("409.54"),
+                new BigDecimal("371.00"), "brk-60", "stop-60", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedClosedPosition(new BrokerClosedPosition("FFIV", new BigDecimal("393.76"),
+                new BigDecimal("366.26"), new BigDecimal("-27.50"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(60L), eq(new BigDecimal("366.26")), realizedRCaptor.capture(),
+                eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("-0.713544");
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("38.54");
+        // the row must be reconcilable against itself: realized_r == pnl / r_value
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(
+                new BigDecimal("366.26").subtract(new BigDecimal("393.76"))
+                        .divide(rValueCaptor.getValue(), 6, RoundingMode.HALF_UP));
+    }
+
+    @Test
+    void reconcileGone_sellShapedMatch_persistsPlannedRiskDenominator() {
+        // SELL side of the RECONCILE_GONE planned-risk path: plannedRisk = stop - entry (stop
+        // above entry for a short), pnl = realEntry - realExit.
+        ExecutorPosition p = openPosition(61L, "SHRT1", "SELL", new BigDecimal("200"),
+                new BigDecimal("210"), "brk-61", "stop-61", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedClosedPosition(new BrokerClosedPosition("SHRT1", new BigDecimal("195"),
+                new BigDecimal("180"), new BigDecimal("15"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(61L), eq(new BigDecimal("180")), realizedRCaptor.capture(),
+                eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("1.5");
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("10");
+    }
+
+    @Test
+    void hardStop_isrgShapedFill_persistsLiveEntryStopDenominator() {
+        // Normal computeR path (not RECONCILE_GONE): r_value must be the live entry/stop
+        // denominator, matching whatever realized_r was actually divided by.
+        // entry 402.57, stop 370.54 -> denominator 32.03; stopped out exactly at the stop
+        // -> realized_r -1.000000.
+        ExecutorPosition p = openPosition(62L, "ISRGX", "BUY", new BigDecimal("402.57"),
+                new BigDecimal("370.54"), "brk-62", "stop-62", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("stop-62", "ref-62", "ISRGX", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("370.54"), "brk-62"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(62L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
+                eq("HARD_STOP"), eq("FILL"), rValueCaptor.capture());
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("-1.000000");
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("32.03");
+    }
+
+    @Test
+    void hardStop_sellShapedFill_persistsLiveEntryStopDenominator() {
+        // SELL side of the normal computeR path: denominator = stop - entry.
+        ExecutorPosition p = openPosition(63L, "SHRT2", "SELL", new BigDecimal("200"),
+                new BigDecimal("210"), "brk-63", "stop-63", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("stop-63", "ref-63", "SHRT2", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("190"), "brk-63"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(63L), eq(new BigDecimal("190")), realizedRCaptor.capture(),
+                eq("HARD_STOP"), eq("FILL"), rValueCaptor.capture());
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("1.000000");
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("10");
+    }
+
+    @Test
+    void hardStop_zeroDenominator_persistsNullRValueNotAMeaninglessNumber() {
+        // Degenerate case (entry == initial stop -> zero-risk denominator): computeR already
+        // returns null for realized_r in this case. r_value must ALSO stay null instead of
+        // persisting a meaningless "0" or the numerator -- there is nothing valid to reconcile
+        // realized_r against when realized_r itself is null.
+        ExecutorPosition p = openPosition(64L, "ZERORISK", "BUY", new BigDecimal("100"),
+                new BigDecimal("100"), "brk-64", "stop-64", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("stop-64", "ref-64", "ZERORISK", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("100"), "brk-64"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(64L), eq(new BigDecimal("100")), isNull(),
+                eq("HARD_STOP"), eq("FILL"), isNull());
     }
 
     // -------------------------------------------------------------------
@@ -816,7 +947,7 @@ class ReconcileServiceTest {
         assertThat(gateway.filledOrdersSinceArgs).containsExactly(NOW.minus(Duration.ofHours(72)));
 
         verify(positionRepo).close(eq(50L), eq(new BigDecimal("95")), any(),
-                eq("HARD_STOP"), eq("FILL"));
+                eq("HARD_STOP"), eq("FILL"), any());
         verify(cooldownRepo).add(eq("SYNA"), eq("HARD_STOP"), any(), any());
         assertThat(survivors).isEmpty();
     }
@@ -837,7 +968,7 @@ class ReconcileServiceTest {
         service.reconcile("c", "run1");
 
         verify(positionRepo).close(eq(51L), eq(new BigDecimal("94.50")), any(),
-                eq("HARD_STOP"), eq("FILL"));
+                eq("HARD_STOP"), eq("FILL"), any());
     }
 
     @Test
@@ -856,7 +987,7 @@ class ReconcileServiceTest {
         assertThat(service.reconcile("c", "run1").survivors()).isEmpty();
 
         verify(positionRepo).close(eq(52L), eq(new BigDecimal("95")), any(),
-                eq("RECONCILE_GONE"), eq("FILL"));
+                eq("RECONCILE_GONE"), eq("FILL"), any());
     }
 
     // -------------------------------------------------------------------

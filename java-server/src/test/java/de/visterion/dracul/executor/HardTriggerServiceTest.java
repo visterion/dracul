@@ -74,7 +74,7 @@ class HardTriggerServiceTest {
         verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(1L),
                 org.mockito.ArgumentMatchers.eq("HARD_STOP"),
                 org.mockito.ArgumentMatchers.eq("close-1"), any(), org.mockito.ArgumentMatchers.eq(NOW));
-        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -105,7 +105,7 @@ class HardTriggerServiceTest {
         verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(2L),
                 org.mockito.ArgumentMatchers.eq("GIVEBACK_BREACH"),
                 org.mockito.ArgumentMatchers.eq("close-1"), any(), org.mockito.ArgumentMatchers.eq(NOW));
-        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -127,7 +127,7 @@ class HardTriggerServiceTest {
 
         assertThat(gateway.flattenedSymbols).isEmpty();
         assertThat(survivors).containsExactly(p);
-        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
     }
 
     @Test
@@ -139,7 +139,7 @@ class HardTriggerServiceTest {
 
         assertThat(gateway.flattenedSymbols).isEmpty();
         assertThat(survivors).containsExactly(p);
-        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
     }
 
     @Test
@@ -157,7 +157,7 @@ class HardTriggerServiceTest {
         verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(6L),
                 org.mockito.ArgumentMatchers.eq("HARD_KILL_CRITERIA"),
                 org.mockito.ArgumentMatchers.eq("close-1"), any(), org.mockito.ArgumentMatchers.eq(NOW));
-        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -277,7 +277,7 @@ class HardTriggerServiceTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
         assertThat(log.symbol()).isEqualTo("ACME");
 
-        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
         assertThat(survivors).containsExactly(p);
     }
 }

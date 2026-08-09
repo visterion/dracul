@@ -3034,7 +3034,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("reason")).isEqualTo("NOT_FILLED");
 
         verifyNoInteractions(gateway);
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
@@ -3068,10 +3068,13 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<BigDecimal> exitPriceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).close(eq(7L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
-                eq("SOFT_CHANDELIER"), eq("FILL"));
+                eq("SOFT_CHANDELIER"), eq("FILL"), rValueCaptor.capture());
         assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("112");
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("2.4");
+        // r_value is the entry/stop denominator computeR actually divided by (100 - 95).
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("5");
 
         verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
 
@@ -3107,8 +3110,8 @@ class ExecutorWebhookControllerTest {
 
         verify(positionRepo).markPendingExit(eq(7L), eq("SOFT_CHANDELIER"), eq("close-9"),
                 isNull(), eq(FIXED_NOW));
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
     }
 
@@ -3131,7 +3134,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exit_reason")).isEqualTo("SOFT_CHANDELIER");
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
@@ -3154,7 +3157,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("reason")).isEqualTo("NO_OPEN_POSITION");
 
         verify(gateway, never()).flatten(any(), any(), any());
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
     }
 
     @Test
@@ -3174,7 +3177,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
 
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
@@ -3225,7 +3228,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("reason")).isEqualTo("SCHEMA_INVALID");
 
         verifyNoInteractions(gateway);
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
@@ -3249,7 +3252,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(false);
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33)));
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         // qty 10 * (1-0.33) = 6.7 would floor to 6 by Dracul's own arithmetic, but the gateway
         // mock reports remainingQty 7 — the broker's number must win over the local computation.
         verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("7")), eq(1), eq(List.of()), eq(false));
@@ -3343,7 +3346,7 @@ class ExecutorWebhookControllerTest {
         verifyNoInteractions(gateway);
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
-        verify(positionRepo, never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
     }
 
     @Test
@@ -3364,7 +3367,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("exited")).isEqualTo(true);
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo).add(eq("ACME"), eq("SOFT_CHANDELIER"), any(), any());
@@ -3400,7 +3403,7 @@ class ExecutorWebhookControllerTest {
 
         verify(gateway, times(1)).flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE));
         verify(gateway, never()).flatten(any(), any(), eq(BigDecimal.valueOf(0.5)));
-        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"), eq("FILL"));
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SCALE_OUT"), eq("FILL"), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
         verify(cooldownRepo).add(eq("ACME"), eq("SCALE_OUT"), any(), any());
