@@ -259,15 +259,30 @@ as JSONB):
   just opened" when it is really only "Dracul just noticed" — the gap a one-off
   backfill run exposed by moving five long-completed spin-offs to `DISTRIBUTED` in a
   single pass, each stamped with today's `distributed_at`.
-  **Known gap, deliberately left open:** the deterministic promotion gate
+  **Closed 2026-08-09:** the deterministic promotion gate
   (`StrigoiSpinWebhookController.withinPromotionWindow`, `SPIN_PROMOTION_WINDOW_DAYS`,
-  default 90 days) reads the same unconfirmed `daysSinceDistribution` and does **not**
-  check `distributionDateConfirmed`. For the five 2026-08-08 backfill rows (HONA, BSEM,
-  ADIG, MBGL, MFP) this means `daysSinceDistribution` reads ~0 at the snapshot and the
-  promotion window stays open until roughly November 2026, even though the real
-  distributions were May–July 2026. Not fixed here: gating the deterministic promoter
-  on freshness of the wrong date is a hunting-behavior change (which candidates get
-  promoted), not an honesty fix, and is the operator's call.
+  default 90 days) now **requires `distributionDateConfirmed = true`** in addition to
+  the existing `spincoMarketCapMillions` and window checks — a missing/`false` flag
+  fails the gate regardless of how small `daysSinceDistribution` reads. This closes the
+  hole the five 2026-08-08 backfill rows (HONA, BSEM, ADIG, MBGL, MFP) exposed: each
+  read `daysSinceDistribution ≈ 0` from the `distributed_at` fallback and would have
+  stayed promotable until roughly November 2026 despite real distributions in
+  May–July 2026. **Current consequence — not a corner case, the prevailing state:**
+  as of 2026-08-09, `SpinTermsParser` has not extracted a `distribution_date` for
+  *any* of the nine tracked candidates on prod (`term_sheet_available = true` on all
+  nine, `count(distribution_date) = 0`), so `distributionDateConfirmed` is `false`
+  everywhere and **the gate currently blocks every candidate from promotion**, not
+  just the five backfilled rows. This is a deliberate, operator-accepted state, not a
+  bug — the alternative (promoting on an unconfirmed date) is the exact hole this
+  change closes — but it means the promotion path is effectively off until the parser
+  starts resolving real dates. Made visible: a row that clears every other condition
+  (cap resolved, inside the window) and is held back only by
+  `distributionDateConfirmed = false` logs a `strigoi-spin candidate {id} ({symbol})
+  would promote (...) but distributionDateConfirmed=false — deliberately held back,
+  not an error` INFO line, so a run in which this is the reason nothing promotes does
+  not read like a quiet night in the daily analysis. Rows failing on cap or window do
+  not produce this line — only the confirmed-only case does, to keep it a signal
+  rather than noise.
 - **`SETTLED`** — the fundamental re-rating read (`SpinValuationSnapshotter`):
   `priceToBook` (Finnhub `pbAnnual`), `fcfYield` (reciprocal of Finnhub
   `pfcfShareTTM`), `bookValue` (XBRL Assets − Liabilities), and `evToEbit`. **`evToEbit`
@@ -286,8 +301,12 @@ window and can never be re-emitted. This is **idempotency marking, not the emit
 decision** — the LLM already decided what to emit from the RESPOND payload; the hook
 only closes the double-emission loop. Gate (deliberately relaxed from the blueprint):
 `status = DISTRIBUTED` and `promoted_at IS NULL` (both enforced by the SQL lookup), a
-non-null `spincoMarketCapMillions`, and `daysSinceDistribution ≤ promotion-window-days`
-(default 90). **`sizeRatio` is NOT a hard condition** — parent/sizeRatio are often
+non-null `spincoMarketCapMillions`, `distributionDateConfirmed = true` (as of
+2026-08-09 — see above; **currently `false` for every tracked candidate on prod, so
+the gate blocks all promotion until `SpinTermsParser` resolves a real distribution
+date**, an accepted operator-authorised state, not a bug), and
+`daysSinceDistribution ≤ promotion-window-days` (default 90). **`sizeRatio` is NOT a
+hard condition** — parent/sizeRatio are often
 unresolvable and gating on them would silence the hunter, so `sizeRatio` is a
 confidence booster in the prompt instead. Exactly-once is layered: the delivery-level
 filter in `complete()` (only newly-inserted prey reach the hook), the row-level

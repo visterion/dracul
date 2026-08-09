@@ -310,8 +310,12 @@ class StrigoiSpinWebhookControllerIT {
     @Test
     void completePromotesDistributedCandidateAndLinksPreyId() {
         // sizeRatio deliberately null — the relaxed gate promotes on spincoMarketCap + window alone.
+        // distributionDateConfirmed:true — a row with a confirmed date inside the window is
+        // promotable exactly as before the gate change. A gate that requires the flag but reads it
+        // from the wrong layer (e.g. always false) would fail this test.
         long id = insertDistributed("PROMO",
-                "{\"spincoMarketCapMillions\":150.0,\"sizeRatio\":null,\"daysSinceDistribution\":5}");
+                "{\"spincoMarketCapMillions\":150.0,\"sizeRatio\":null,\"daysSinceDistribution\":5,"
+                        + "\"distributionDateConfirmed\":true}");
 
         postSpinoffPrey("run-promo-1", "PROMO");
 
@@ -333,7 +337,8 @@ class StrigoiSpinWebhookControllerIT {
     @Test
     void duplicateDeliveryDoesNotRePromoteNorDoublePersist() {
         long id = insertDistributed("DUP",
-                "{\"spincoMarketCapMillions\":120.0,\"sizeRatio\":0.04,\"daysSinceDistribution\":3}");
+                "{\"spincoMarketCapMillions\":120.0,\"sizeRatio\":0.04,\"daysSinceDistribution\":3,"
+                        + "\"distributionDateConfirmed\":true}");
 
         postSpinoffPrey("run-dup-1", "DUP");
         String firstPromotedAt = jdbc.sql("SELECT promoted_at FROM spin_candidate WHERE id = :id")
@@ -375,6 +380,152 @@ class StrigoiSpinWebhookControllerIT {
                 "SELECT count(*) FROM spin_candidate WHERE promoted_at IS NOT NULL")
                 .query(Integer.class).single();
         assertThat(promotedCount).as("nothing promoted").isEqualTo(0);
+    }
+
+    /** Confirmed date, outside the (default 90-day) window: not promotable. Regression guard for a
+     *  gate that stopped checking {@code daysSinceDistribution} against {@code promotionWindowDays}
+     *  at all, or that inverted the comparison. */
+    @Test
+    void confirmedDateOutsideWindowIsNotPromoted() {
+        long id = insertDistributed("STALE",
+                "{\"spincoMarketCapMillions\":200.0,\"sizeRatio\":0.03,\"daysSinceDistribution\":120,"
+                        + "\"distributionDateConfirmed\":true}");
+
+        postSpinoffPrey("run-stale-1", "STALE");
+
+        var promotedAt = jdbc.sql("SELECT promoted_at::text FROM spin_candidate WHERE id = :id")
+                .param("id", id).query(String.class).optional();
+        assertThat(promotedAt).as("120 days out of a 90-day window must not promote").isEmpty();
+    }
+
+    /**
+     * The regression this whole change targets: an UNCONFIRMED distribution date reading
+     * {@code daysSinceDistribution = 0} — exactly the shape the 2026-08-08 ticker backfill produced
+     * for HONA/BSEM/ADIG/MBGL/MFP (real filings from 2026-05-27..2026-07-24, all stamped
+     * {@code distributed_at = 2026-08-08}). A gate that only checks
+     * {@code daysSinceDistribution <= promotionWindowDays} without requiring
+     * {@code distributionDateConfirmed} would promote this row (0 <= 90) even though the real
+     * forced-selling window closed months ago.
+     */
+    @Test
+    void unconfirmedZeroDaysIsNotPromoted() {
+        long id = insertDistributed("BACKFILL",
+                "{\"spincoMarketCapMillions\":90.0,\"sizeRatio\":0.02,\"daysSinceDistribution\":0,"
+                        + "\"distributionDateConfirmed\":false}");
+
+        postSpinoffPrey("run-backfill-1", "BACKFILL");
+
+        var promotedAt = jdbc.sql("SELECT promoted_at::text FROM spin_candidate WHERE id = :id")
+                .param("id", id).query(String.class).optional();
+        assertThat(promotedAt)
+                .as("unconfirmed daysSinceDistribution=0 (the backfill shape) must not promote")
+                .isEmpty();
+    }
+
+    /**
+     * Same as {@link #unconfirmedZeroDaysIsNotPromoted}, but with the flag entirely absent from the
+     * snapshot JSON rather than explicitly {@code false} — the shape older/backfilled rows that never
+     * carried the field would actually have on disk. Regression guard for a gate implemented as
+     * {@code dist.path("distributionDateConfirmed").asBoolean()} (defaults to {@code false} for a
+     * missing key too, so this should behave identically to the explicit-false case) versus one that
+     * mis-reads a missing key as confirmed.
+     */
+    @Test
+    void missingConfirmedFlagIsNotPromoted() {
+        long id = insertDistributed("NOFLAG",
+                "{\"spincoMarketCapMillions\":90.0,\"sizeRatio\":0.02,\"daysSinceDistribution\":0}");
+
+        postSpinoffPrey("run-noflag-1", "NOFLAG");
+
+        var promotedAt = jdbc.sql("SELECT promoted_at::text FROM spin_candidate WHERE id = :id")
+                .param("id", id).query(String.class).optional();
+        assertThat(promotedAt).as("missing distributionDateConfirmed key must not promote").isEmpty();
+    }
+
+    /** No {@code daysSinceDistribution} at all (even with a confirmed flag true): unchanged from
+     *  today's behaviour — {@code days.isNumber()} is false, so the gate fails regardless of the new
+     *  confirmed check. Regression guard against accidentally loosening the missing-days case while
+     *  adding the confirmed check. */
+    @Test
+    void missingDaysSinceDistributionIsNotPromoted() {
+        long id = insertDistributed("NODAYS",
+                "{\"spincoMarketCapMillions\":90.0,\"sizeRatio\":0.02,\"distributionDateConfirmed\":true}");
+
+        postSpinoffPrey("run-nodays-1", "NODAYS");
+
+        var promotedAt = jdbc.sql("SELECT promoted_at::text FROM spin_candidate WHERE id = :id")
+                .param("id", id).query(String.class).optional();
+        assertThat(promotedAt).as("missing daysSinceDistribution must not promote (unchanged)").isEmpty();
+    }
+
+    /**
+     * Visibility guard (2026-08-09): a row that clears every other promotion condition — resolved
+     * cap, inside the window — and is held back ONLY because {@code distributionDateConfirmed} is
+     * false must log a visible, symbol-identifying INFO line. Prod currently has zero candidates with
+     * a confirmed distribution date ({@code SpinTermsParser} has never extracted one), so this is not
+     * an edge case there — a run where every row silently fails this one check must not read like a
+     * quiet night in the daily analysis. Catches: a gate change that suppresses the marker (e.g. logs
+     * only at DEBUG, or logs nothing at all).
+     */
+    @Test
+    void unconfirmedButOtherwiseEligibleLogsVisibleInfo() {
+        ch.qos.logback.classic.Logger controllerLog =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                        de.visterion.dracul.strigoi.spin.StrigoiSpinWebhookController.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        controllerLog.addAppender(appender);
+        try {
+            insertDistributed("HELDBACK",
+                    "{\"spincoMarketCapMillions\":90.0,\"sizeRatio\":0.02,\"daysSinceDistribution\":7,"
+                            + "\"distributionDateConfirmed\":false}");
+
+            postSpinoffPrey("run-heldback-1", "HELDBACK");
+
+            boolean logged = appender.list.stream()
+                    .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.INFO
+                            && e.getFormattedMessage().contains("HELDBACK")
+                            && e.getFormattedMessage().contains("distributionDateConfirmed=false"));
+            assertThat(logged).as("visible INFO fired for the otherwise-eligible, held-back row").isTrue();
+        } finally {
+            controllerLog.detachAppender(appender);
+        }
+    }
+
+    /**
+     * Negative counterpart to {@link #unconfirmedButOtherwiseEligibleLogsVisibleInfo}: a row that
+     * fails on cap or window must NOT also produce the "held back only by the confirmed flag" line —
+     * otherwise the marker degrades into noise indistinguishable from ordinary non-promotion. Catches
+     * an implementation that checks {@code distributionDateConfirmed} before the cap/window
+     * conditions (or independently of them) and logs regardless of what else failed.
+     */
+    @Test
+    void unconfirmedAndOutsideWindowDoesNotLogTheHeldBackMarker() {
+        ch.qos.logback.classic.Logger controllerLog =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                        de.visterion.dracul.strigoi.spin.StrigoiSpinWebhookController.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        controllerLog.addAppender(appender);
+        try {
+            // Unconfirmed AND outside the window AND no market cap — none of these alone would earn
+            // the marker; the row is simply, unremarkably not promotable.
+            insertDistributed("NOISY",
+                    "{\"daysSinceDistribution\":400,\"distributionDateConfirmed\":false}");
+
+            postSpinoffPrey("run-noisy-1", "NOISY");
+
+            boolean logged = appender.list.stream()
+                    .anyMatch(e -> e.getFormattedMessage().contains("NOISY")
+                            && e.getFormattedMessage().contains("distributionDateConfirmed=false"));
+            assertThat(logged)
+                    .as("a row failing cap+window too must not also fire the held-back-only marker")
+                    .isFalse();
+        } finally {
+            controllerLog.detachAppender(appender);
+        }
     }
 
     @Test
