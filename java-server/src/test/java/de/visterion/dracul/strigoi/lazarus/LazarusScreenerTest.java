@@ -140,9 +140,10 @@ class LazarusScreenerTest {
 
     @Test
     void priceBelowThe52WeekLow_isAUnitError_notACandidate() {
-        // BRK.B-shape: price in B-share units, 52-week low in A-share units.
-        // Numbers set by hand, not copied from a prod transcript.
-        var raw = raw("SYNBRK", 520.96, financials(693021.0, 788294.9, 5.96, 0.18, 1.51));
+        // Synthetic, modelled on a class of real unit mismatch (a price quoted in one
+        // share-class unit against a 52-week low quoted in another): the magnitudes here
+        // are invented round numbers, not a production transcript.
+        var raw = raw("SYNBRK", 500.00, financials(700000.0, 800000.0, 5.0, 0.2, 1.5));
         var result = screener.screen(List.of(raw), 0.10, 3.0, 2.0, 20);
         assertThat(result.candidates()).isEmpty();
         assertThat(result.implausibleRange()).isEqualTo(1);
