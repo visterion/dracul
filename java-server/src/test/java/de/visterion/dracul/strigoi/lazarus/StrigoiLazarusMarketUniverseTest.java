@@ -89,7 +89,7 @@ class StrigoiLazarusMarketUniverseTest {
                 c.pctAboveLow(), c.roaTtm(), c.currentRatio(), c.debtToEquity(), c.grossMargin(),
                 c.netMargin(), c.revenueGrowthYoy(), c.epsGrowthYoy(), c.priceToBook(), c.peTtm(),
                 c.fcfPerShare(), 0, 0, null, false, false,
-                null, null, null, false, null, false, null, null, 0, false);
+                null, null, null, false, null, false, null, null, 0, false, null, false);
     }
 
     private void indexReturns(String... symbols) {

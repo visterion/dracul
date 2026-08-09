@@ -37,7 +37,15 @@ import java.math.BigDecimal;
  *  ({@code revisionsAvailable}/{@code coverageAvailable}) only because the values live in
  *  two records there; both are false exactly when the shared trend response is empty, so
  *  they can never diverge. When {@code revisionsAvailable} is false all three fields are
- *  null (no trend at all — unknown, never a judgement). */
+ *  null (no trend at all — unknown, never a judgement).
+ *
+ *  <p>{@code marketCapUsdMillions} is {@link LazarusCandidate#marketCap()} normalised to USD
+ *  millions by {@link LazarusEnrichmentService}: unchanged for a null/{@code "USD"}
+ *  {@code reportingCurrency}, converted via {@link de.visterion.dracul.marketdata.FxService}
+ *  for any other currency. {@code marketCapAvailable} is false — and {@code marketCapUsdMillions}
+ *  null — whenever the raw market cap is absent OR the reporting currency is non-USD and no
+ *  cached FX rate is available; a missing/unconvertible size is always unknown, **never** read
+ *  as small. */
 public record EnrichedLazarusCandidate(
         String symbol,
         String companyName,
@@ -69,5 +77,7 @@ public record EnrichedLazarusCandidate(
         Integer netEstimateRevisionsProxy,
         String netEstimateRevisionsDirection,
         Integer analystCoverage,
-        boolean revisionsAvailable
+        boolean revisionsAvailable,
+        Double marketCapUsdMillions,
+        boolean marketCapAvailable
 ) {}

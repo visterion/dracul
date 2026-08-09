@@ -5,6 +5,7 @@ import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.strigoi.echo.RevisionsProxy;
@@ -37,6 +38,7 @@ class LazarusEnrichmentServiceTest {
     private AgoraMarketData marketData;
     private AltmanZCalculator altmanZ;
     private AgoraCompanyData companyData;
+    private FxService fx;
     private LazarusEnrichmentService service;
 
     @BeforeEach
@@ -45,9 +47,10 @@ class LazarusEnrichmentServiceTest {
         marketData = mock(AgoraMarketData.class); // unstubbed -> empty bar list (no timing)
         altmanZ = mock(AltmanZCalculator.class);
         companyData = mock(AgoraCompanyData.class); // unstubbed -> empty trend (no revisions)
+        fx = mock(FxService.class);
         when(altmanZ.zScore(anyString(), any(), any())).thenReturn(AltmanZCalculator.AltmanZ.unavailable());
         service = new LazarusEnrichmentService(filings, marketData, altmanZ, companyData,
-                new RevisionsProxy());
+                new RevisionsProxy(), fx);
     }
 
     private static LazarusCandidate candidate(String symbol) {
@@ -57,6 +60,20 @@ class LazarusEnrichmentServiceTest {
     private static LazarusCandidate candidate(String symbol, double pctAboveLow) {
         return new LazarusCandidate(symbol, symbol + " Inc", 10.0, 9.0, 40.0, pctAboveLow,
                 5.0, 1.8, 0.4, 35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3, 900.0);
+    }
+
+    /** A candidate carrying an explicit market cap + reporting currency (null = USD), for the
+     *  marketCapUsdMillions/marketCapAvailable enrichment tests. */
+    private static LazarusCandidate candidate(String symbol, Double marketCap, String reportingCurrency) {
+        return new LazarusCandidate(symbol, symbol + " Inc", 10.0, 9.0, 40.0, 0.05,
+                5.0, 1.8, 0.4, 35.0, 8.0, 4.0, 3.0, 1.2, 11.0, 2.3, marketCap, reportingCurrency);
+    }
+
+    /** Enriches a single candidate (with a benign default fundamental score) and returns its
+     *  enriched wire shape. */
+    private EnrichedLazarusCandidate enrich(LazarusCandidate c) {
+        when(filings.fundamentalScoreStrict(c.symbol())).thenReturn(GOOD_SCORE);
+        return service.enrich(List.of(c)).candidates().get(0);
     }
 
     /** {@code count} consecutive daily bars ending at {@code end}, all closing at {@code close}. */
@@ -575,5 +592,45 @@ class LazarusEnrichmentServiceTest {
         } finally {
             logger.detachAppender(appender);
         }
+    }
+
+    // --- market cap USD normalisation ---
+
+    @Test
+    void nonUsMarketCapIsConvertedToUsd() {
+        when(fx.hasRate("EUR", "USD")).thenReturn(true);
+        when(fx.convert(any(), eq("EUR"), eq("USD")))
+                .thenReturn(new BigDecimal("41966.03"));
+        var out = enrich(candidate("SYNEU", 36294.0, "EUR"));
+        assertThat(out.marketCapUsdMillions()).isEqualTo(41966.03);
+        assertThat(out.marketCapAvailable()).isTrue();
+    }
+
+    @Test
+    void usMarketCapPassesThroughUnconverted() {
+        var out = enrich(candidate("SYNUS", 3712698.2, null));
+        assertThat(out.marketCapUsdMillions()).isEqualTo(3712698.2);
+        assertThat(out.marketCapAvailable()).isTrue();
+        verify(fx, never()).convert(any(), any(), any());
+    }
+
+    @Test
+    void missingFxRateMakesTheSizeUnknown_neverTheRawValue() {
+        when(fx.hasRate("CNY", "USD")).thenReturn(false);
+        var out = enrich(candidate("SYNCN", 1522877.0, "CNY"));
+        assertThat(out.marketCapUsdMillions()).isNull();
+        assertThat(out.marketCapAvailable()).isFalse();
+        // Der eigentliche Punkt: NIEMALS der Rohwert. convert() liefert bei einem Cache-Miss
+        // den unkonvertierten Betrag zurueck (FxService:34) — wer nur convert() aufruft und das
+        // Ergebnis glaubt, liest 1 522 877 CNY als USD und macht aus einem 226-Mrd-Titel
+        // scheinbar denselben Wert in einer anderen Waehrung.
+        verify(fx, never()).convert(any(), any(), any());
+    }
+
+    @Test
+    void absentMarketCapIsUnknown() {
+        var out = enrich(candidate("SYNNULL", null, null));
+        assertThat(out.marketCapUsdMillions()).isNull();
+        assertThat(out.marketCapAvailable()).isFalse();
     }
 }
