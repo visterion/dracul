@@ -136,12 +136,15 @@ public class StrigoiSpinWebhookController extends HuntController {
      *
      * <p><b>Promotion gate (deliberately relaxed from blueprint §5).</b> Hard conditions:
      * {@code status = DISTRIBUTED} and {@code promoted_at IS NULL} (both enforced by the SQL lookup),
-     * a non-null {@code spincoMarketCapMillions} (reliably obtainable), and
-     * {@code daysSinceDistribution <= promotion-window-days} (config, default 90). {@code sizeRatio}
-     * is NOT a hard condition here — parent/sizeRatio are often unresolvable, and gating on them
-     * would silence the hunter; sizeRatio is a confidence booster in the prompt instead. A prey whose
-     * symbol matches no promotable row (untracked, already-promoted, or failing the snapshot gate) is
-     * skipped fail-soft — the prey itself is already persisted regardless.
+     * a non-null {@code spincoMarketCapMillions} (reliably obtainable), {@code
+     * distributionDateConfirmed = true} (the date anchoring {@code daysSinceDistribution} must be a
+     * real term-sheet date, not the detection-timestamp fallback — see {@link
+     * #withinPromotionWindow}), and {@code daysSinceDistribution <= promotion-window-days} (config,
+     * default 90). {@code sizeRatio} is NOT a hard condition here — parent/sizeRatio are often
+     * unresolvable, and gating on them would silence the hunter; sizeRatio is a confidence booster in
+     * the prompt instead. A prey whose symbol matches no promotable row (untracked, already-promoted,
+     * or failing the snapshot gate) is skipped fail-soft — the prey itself is already persisted
+     * regardless.
      */
     @Override
     protected void afterPersist(List<Prey> inserted, JsonNode body) {
@@ -164,13 +167,31 @@ public class StrigoiSpinWebhookController extends HuntController {
         }
     }
 
-    /** Snapshot gate: a non-null {@code spincoMarketCapMillions} and a {@code daysSinceDistribution}
-     *  still inside the forced-selling window. Both are read from the persisted DISTRIBUTED snapshot
-     *  (the same fields the LLM saw). A missing snapshot / missing fields fails the gate. */
+    /** Snapshot gate: a non-null {@code spincoMarketCapMillions}, a CONFIRMED
+     *  {@code distributionDateConfirmed}, and a {@code daysSinceDistribution} still inside the
+     *  forced-selling window. All three are read from the persisted DISTRIBUTED snapshot (the same
+     *  fields the LLM saw). A missing snapshot / missing fields fails the gate.
+     *
+     *  <p><b>Why the confirmed check (2026-08-08/09).</b> {@code daysSinceDistribution} is measured
+     *  from the term-sheet distribution date when known, otherwise it falls back to
+     *  {@code distributed_at} — the timestamp Dracul first OBSERVED the spin-co trading, not the
+     *  market event. For a row whose DISTRIBUTED transition happened long after the real
+     *  distribution (a backfill run, e.g. the 2026-08-08 ticker-backfill that stamped HONA, BSEM,
+     *  ADIG, MBGL and MFP with {@code distributed_at = 2026-08-08} for filings from 2026-05-27 to
+     *  2026-07-24), {@code daysSinceDistribution} reads 0 and the row would stay promotable until
+     *  roughly the fallback timestamp + {@code promotionWindowDays}, months after the real forced-
+     *  selling window closed. {@code distributionDateConfirmed} (see
+     *  {@link SpinDistributionSnapshotter}) says whether the date is anchored to the term sheet
+     *  rather than to detection; requiring it true closes that hole. Deliberately no fallback: a
+     *  genuinely fresh spin-off whose term sheet carries no distribution date also will not be
+     *  promoted until a later enrichment pass resolves one — the conservative direction, accepted by
+     *  the operator. Missing key defaults to {@code false} (unconfirmed), matching how the enricher
+     *  writes older/backfilled rows that never carried the flag at all. */
     private boolean withinPromotionWindow(SpinCandidateRow row) {
         JsonNode dist = row.distributedSnapshot();
         if (dist == null) return false;
         if (!dist.path("spincoMarketCapMillions").isNumber()) return false;
+        if (!dist.path("distributionDateConfirmed").asBoolean(false)) return false;
         JsonNode days = dist.path("daysSinceDistribution");
         return days.isNumber() && days.asInt() <= promotionWindowDays;
     }
