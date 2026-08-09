@@ -79,7 +79,7 @@ class StrigoiLazarusMarketUniverseTest {
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
-                0.10, 3.0, 2.0, 20, "AAPL",
+                0.10, 3.0, 2.0, 20, 100_000.0, "AAPL",
                 "sp500", 600, 0.25, 150_000L, 10, 60);
     }
 
@@ -333,7 +333,7 @@ class StrigoiLazarusMarketUniverseTest {
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
-                0.10, 3.0, 2.0, 20, "AAPL",
+                0.10, 3.0, 2.0, 20, 100_000.0, "AAPL",
                 "sp500", 1, 0.25, 150_000L, 10, 60);
         indexReturns("ACME", "SECOND");
         nearLow("ACME");
@@ -353,7 +353,7 @@ class StrigoiLazarusMarketUniverseTest {
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
-                0.10, 3.0, 2.0, 20, "AAPL",
+                0.10, 3.0, 2.0, 20, 100_000.0, "AAPL",
                 "sp500", 600, 0.25, 150_000L, 10, 1);
         indexReturns("ACME", "SECOND");
         nearLow("ACME");
@@ -403,7 +403,7 @@ class StrigoiLazarusMarketUniverseTest {
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
-                0.10, 3.0, 2.0, 20, "AAPL",
+                0.10, 3.0, 2.0, 20, 100_000.0, "AAPL",
                 "watchlist", 600, 0.25, 150_000L, 10, 60);
         when(watchlist.findAllByUser("default")).thenReturn(List.of(item("ACME", 10.50)));
         when(companyData.fundamentals("ACME")).thenReturn(goodFundamentals());
@@ -424,7 +424,7 @@ class StrigoiLazarusMarketUniverseTest {
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
-                0.10, 3.0, 2.0, 20, "AAPL",
+                0.10, 3.0, 2.0, 20, 100_000.0, "AAPL",
                 "watchlist", 600, 0.25, 150_000L, 10, 60);
 
         var result = controller.hunt(Map.of());

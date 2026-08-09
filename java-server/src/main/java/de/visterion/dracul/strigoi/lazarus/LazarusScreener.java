@@ -17,7 +17,7 @@ import java.util.List;
 public class LazarusScreener {
 
     public ScreenResult screen(List<LazarusRaw> raws, double maxAboveLow, double maxDebtEquity,
-            double maxPriceToBook, double maxPFcf) {
+            double maxPriceToBook, double maxPFcf, double megaCapUsdMillions) {
         List<LazarusCandidate> out = new ArrayList<>();
         int implausibleRange = 0;
         for (LazarusRaw r : raws) {
@@ -47,7 +47,28 @@ public class LazarusScreener {
             boolean pbCheap = f.priceToBook() != null && f.priceToBook() > 0 && f.priceToBook() <= maxPriceToBook;
             boolean fcfCheap = f.fcfPerShare() != null && f.fcfPerShare() > 0
                     && (r.currentPrice() / f.fcfPerShare()) <= maxPFcf;
-            if (!pbCheap && !fcfCheap) continue;
+
+            // Size-dependent exemption: Piotroski's cheapness gate encodes its origin universe
+            // (2000, the highest book-to-market quintile). A mega-cap never trades below twice its
+            // book value — measured 2026-08-09, 17 of 122 S&P names above 100 Bn USD clear the gate,
+            // and they are banks, oil and telecom. The cohort this hunter emitted in June
+            // (MSFT/ADBE/CRM/NVDA/META, +36%/+36%/+28%/+7%/+5% by 2026-08-08) has been structurally
+            // excluded since the gate landed. Loosens CHEAPNESS only, never QUALITY: this check
+            // stands entirely inside the cheapness OR-chain, downstream of the solvency and
+            // leverage gates above, which stay exactly as strict as before.
+            //
+            // Screener runs BEFORE enrichment (Task 2's marketCapUsdMillions is not yet available),
+            // so it reads f.marketCap() directly — MILLIONS OF THE REPORTING CURRENCY — and only
+            // trusts it when the reporting currency is null or USD. A non-USD name (e.g. 0941.HK,
+            // ~226 Bn USD reported in CNY) does NOT get the exemption in this slice: comparing a raw
+            // non-USD figure against a USD threshold would be right by accident and wrong in
+            // principle, and dragging an FX dependency into this pure, I/O-free class is not worth
+            // it for one gate. A missing marketCap never counts as big enough either — fail-closed.
+            boolean usdReported = f.reportingCurrency() == null || "USD".equalsIgnoreCase(f.reportingCurrency());
+            boolean megaCap = usdReported && f.marketCap() != null && f.marketCap() >= megaCapUsdMillions
+                    && megaCapUsdMillions > 0;
+
+            if (!pbCheap && !fcfCheap && !megaCap) continue;
 
             out.add(new LazarusCandidate(
                     r.symbol(), r.companyName(), r.currentPrice(),

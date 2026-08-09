@@ -187,6 +187,10 @@ dracul:
       schedule: ${DRACUL_LAZARUS_SCHEDULE:0 0 6 * * 1-5}
       max-above-low: ${LAZARUS_MAX_ABOVE_LOW:0.10}
       max-debt-equity: ${LAZARUS_MAX_DEBT_EQUITY:3.0}
+      # Top-quartile cutoff of the S&P 500 distribution (full census n=502, 2026-08-09: p75 =
+      # 96,390 Mio USD). Above this size the cheapness gate (max-price-to-book / max-p-fcf) is
+      # skipped — NOT the quality checks. 0 disables the exemption.
+      mega-cap-usd-millions: ${LAZARUS_MEGA_CAP_USD_MILLIONS:100000}
       # --- universe (D7) -------------------------------------------------------------------
       # The screened universe is an index fetched from Agora (get_index_constituents), NOT the
       # manually maintained watchlist: an empty watchlist used to make every run a guaranteed
