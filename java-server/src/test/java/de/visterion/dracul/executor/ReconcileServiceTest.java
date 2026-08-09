@@ -808,35 +808,36 @@ class ReconcileServiceTest {
 
     // -------------------------------------------------------------------
     // r_value persists the ACTUAL denominator realized_r was divided by (bugfix/executor-exit-audit).
-    // Numbers below are hand-written from the fix brief (2026-08-09), not copied from any
-    // production transcript.
+    // Symbol and prices below are synthetic (invented for this test, offset from the fix brief's
+    // shape so no absolute value matches any real transcript) -- only the ratios that exercise the
+    // divergence are preserved.
     // -------------------------------------------------------------------
 
     @Test
-    void reconcileGone_ffivShapedMatch_persistsPlannedRiskDenominator() {
+    void reconcileGone_plannedVsLiveShapedMatch_persistsPlannedRiskDenominator() {
         // RECONCILE_GONE matched-fill path: realized_r is measured against the PLANNED risk
         // (submitted-limit entry vs initial stop), not the live entry/stop computeR would use --
         // and r_value must record that SAME planned-risk denominator, not the live one.
-        // planned entry 409.54, initial stop 371.00 -> planned risk 38.54.
-        // real fill entry 393.76, real exit 366.26 -> pnl -27.50 -> realized_r -0.713544.
-        ExecutorPosition p = openPosition(60L, "FFIV", "BUY", new BigDecimal("409.54"),
-                new BigDecimal("371.00"), "brk-60", "stop-60", null, null);
+        // planned entry 459.54, initial stop 421.00 -> planned risk 38.54.
+        // real fill entry 443.76, real exit 416.26 -> pnl -27.50 -> realized_r -0.713544.
+        ExecutorPosition p = openPosition(60L, "SYNQ1", "BUY", new BigDecimal("459.54"),
+                new BigDecimal("421.00"), "brk-60", "stop-60", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
-        gateway.seedClosedPosition(new BrokerClosedPosition("FFIV", new BigDecimal("393.76"),
-                new BigDecimal("366.26"), new BigDecimal("-27.50"), "sig-1"));
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNQ1", new BigDecimal("443.76"),
+                new BigDecimal("416.26"), new BigDecimal("-27.50"), "sig-1"));
 
         service.reconcile("c", "run1");
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(60L), eq(new BigDecimal("366.26")), realizedRCaptor.capture(),
+        verify(positionRepo).close(eq(60L), eq(new BigDecimal("416.26")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("-0.713544");
         assertThat(rValueCaptor.getValue()).isEqualByComparingTo("38.54");
         // the row must be reconcilable against itself: realized_r == pnl / r_value
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(
-                new BigDecimal("366.26").subtract(new BigDecimal("393.76"))
+                new BigDecimal("416.26").subtract(new BigDecimal("443.76"))
                         .divide(rValueCaptor.getValue(), 6, RoundingMode.HALF_UP));
     }
 
@@ -859,6 +860,39 @@ class ReconcileServiceTest {
                 eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("1.5");
         assertThat(rValueCaptor.getValue()).isEqualByComparingTo("10");
+    }
+
+    @Test
+    void reconcileGone_matchWithNonPositivePlannedRisk_fallsBackToComputeRInsteadOfBookingNull() {
+        // Review finding (code review on 595aa34a, Critical 1): realizedRAgainstPlannedRisk wraps
+        // its null-guard result in a non-null RCalc(null, null) now that it returns a record. The
+        // fallback at the closePosition call site must still treat THAT as "no override" and fall
+        // through to computeR -- exactly like base fell through when the method returned a bare
+        // null -- or a matched RECONCILE_GONE close silently books realized_r=NULL instead of a
+        // number wherever plannedRisk <= 0.
+        //
+        // plannedRisk <= 0 here comes from the book's entry_price already sitting BELOW the
+        // initial stop (365 < 370) -- exactly what a prior run's syncEntryPrice can leave behind
+        // on a gapped-down fill (the ISRG scenario this whole branch exists for), not from
+        // entry_price == initial_stop.
+        ExecutorPosition p = openPosition(65L, "GAPFAIL", "BUY", new BigDecimal("365"),
+                new BigDecimal("370"), "brk-65", "stop-65", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedClosedPosition(new BrokerClosedPosition("GAPFAIL", new BigDecimal("360"),
+                new BigDecimal("350"), new BigDecimal("-10"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        // computeR(effective, exitPrice): effective.entryPrice() = 360 (synced this run),
+        // initialStop = 370 -> denominator -10; exitPrice 350 -> numerator -10 -> R = 1.000000.
+        ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(65L), eq(new BigDecimal("350")), realizedRCaptor.capture(),
+                eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
+        assertThat(realizedRCaptor.getValue()).isNotNull();
+        assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("1.000000");
+        assertThat(rValueCaptor.getValue()).isEqualByComparingTo("-10");
     }
 
     @Test

@@ -510,7 +510,12 @@ public class ReconcileService {
             exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
         }
 
-        RCalc rCalc = rCalcOverride != null ? rCalcOverride : computeR(effective, exitPrice);
+        // rCalcOverride is non-null whenever the RECONCILE_GONE matched-fill branch ran, even
+        // when the planned-risk guard rejected the denominator (plannedRisk <= 0) and its .r()
+        // is null -- that case must fall through to computeR exactly like base did when
+        // realizedRAgainstPlannedRisk itself returned null, not book a null realized_r.
+        RCalc rCalc = (rCalcOverride != null && rCalcOverride.r() != null)
+                ? rCalcOverride : computeR(effective, exitPrice);
         BigDecimal realizedR = rCalc.r();
 
         if (exitPriceSource != null) {
