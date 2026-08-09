@@ -741,6 +741,19 @@ the next run enters the universe where this one stopped (in-memory rotation), so
 a permanently tight budget still covers the whole index eventually. Screen
 thresholds are unchanged — they were never the bug.
 
+**A price below the candidate's own 52-week low is a unit error, not a
+candidate (2026-08-09).** `LazarusScreener` used to check only the upper bound
+(`pctAboveLow > maxAboveLow`), so a name whose price and 52-week-low figures
+are quoted in different units could pass as "at its low" while actually
+sitting near its yearly *high*. Measured on prod Agora, 2026-08-09: BRK.B
+returned `price 520.96` (B-share units) against `52WeekLow 693021` (A-share
+units), `pctAboveLow = -0.9992`. `screen(...)` now returns a `ScreenResult`
+(`candidates` + `implausibleRange`) instead of a bare list and drops any row
+with `pctAboveLow < 0` (`== 0`, price exactly at the low, still passes).
+Same treatment as `notEligible`/`no52wLow`: a data error about the instrument,
+not a source outage, so it counts in the per-run log line
+(`implausibleRange=…`) but never sets `partial`.
+
 **Batched pre-filter (2026-08-06).** The pre-filter no longer spends one
 `get_indicators` call per index member. It walks the universe in chunks of
 `LAZARUS_PROBE_CHUNK_SIZE` (default 100) and asks Agora's `get_indicators_batch`

@@ -301,7 +301,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
             }
             raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
         }
-        var screened = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
+        var screenResult = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
+        var screened = screenResult.candidates();
         var batch = enrichment.enrich(screened);
         var enriched = batch.candidates();
         // Two DIFFERENT losses, deliberately on two counters: enrichmentDropped are candidates that
@@ -316,11 +317,13 @@ public class StrigoiLazarusWebhookController extends HuntController {
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
                         + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
                         + "noFundamentals={} no52wLow={} no52wLowSourceFailed={} "
+                        + "implausibleRange={} "
                         + "enrichmentDropped={} enrichmentDegraded={} "
                         + "unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
                 scan.notEligible(), fundamentalsMissing, week52Missing, week52SourceFailed,
+                screenResult.implausibleRange(),
                 enrichmentDropped, batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,

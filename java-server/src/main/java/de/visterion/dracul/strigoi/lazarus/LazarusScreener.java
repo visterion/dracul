@@ -16,9 +16,10 @@ import java.util.List;
 @Component
 public class LazarusScreener {
 
-    public List<LazarusCandidate> screen(List<LazarusRaw> raws, double maxAboveLow, double maxDebtEquity,
+    public ScreenResult screen(List<LazarusRaw> raws, double maxAboveLow, double maxDebtEquity,
             double maxPriceToBook, double maxPFcf) {
         List<LazarusCandidate> out = new ArrayList<>();
+        int implausibleRange = 0;
         for (LazarusRaw r : raws) {
             BasicFinancials f = r.financials();
             if (f == null) continue;
@@ -26,6 +27,11 @@ public class LazarusScreener {
             if (low == null || low <= 0 || r.currentPrice() <= 0) continue;
 
             double pctAboveLow = (r.currentPrice() - low) / low;
+            // A price BELOW the 52-week low is definitionally impossible: either the price and
+            // the low are quoted in different units (BRK.B returns the low in A-share units
+            // against a price in B-share units), or one of the two numbers is simply wrong. The
+            // upper-bound check alone lets a name sitting at its 52-week HIGH pass as "at the low".
+            if (pctAboveLow < 0) { implausibleRange++; continue; }
             if (pctAboveLow > maxAboveLow) continue;
 
             // solvency: positive ROA OR positive free cash flow; both null → no evidence, skip
@@ -51,6 +57,6 @@ public class LazarusScreener {
                     f.epsGrowthYoy(), f.priceToBook(), f.peTtm(), f.fcfPerShare(),
                     f.marketCap(), f.reportingCurrency()));
         }
-        return out;
+        return new ScreenResult(out, implausibleRange);
     }
 }
