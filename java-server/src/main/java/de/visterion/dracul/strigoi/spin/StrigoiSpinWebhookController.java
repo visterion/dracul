@@ -186,13 +186,31 @@ public class StrigoiSpinWebhookController extends HuntController {
      *  genuinely fresh spin-off whose term sheet carries no distribution date also will not be
      *  promoted until a later enrichment pass resolves one — the conservative direction, accepted by
      *  the operator. Missing key defaults to {@code false} (unconfirmed), matching how the enricher
-     *  writes older/backfilled rows that never carried the flag at all. */
+     *  writes older/backfilled rows that never carried the flag at all.
+     *
+     *  <p><b>Visibility (2026-08-09).</b> Confirmed dates are currently rare-to-absent in prod
+     *  ({@code SpinTermsParser} has not yet extracted a distribution date for any of the nine tracked
+     *  candidates), so this gate is not a narrow edge case in practice — it is the thing deciding
+     *  whether ANY candidate promotes right now, and a run where every row fails silently for this
+     *  one reason must not read like a quiet night in the daily analysis (the failure class this
+     *  project keeps getting bitten by). When a row clears every other condition — cap resolved,
+     *  inside the window — and fails ONLY on the confirmed flag, that is logged at INFO so it is
+     *  distinguishable from an ordinary/expected non-promotion (cap missing, window expired) and from
+     *  an error. Rows failing an earlier condition do not reach this log — one extra line per
+     *  otherwise-eligible candidate, not one per hunt. */
     private boolean withinPromotionWindow(SpinCandidateRow row) {
         JsonNode dist = row.distributedSnapshot();
         if (dist == null) return false;
         if (!dist.path("spincoMarketCapMillions").isNumber()) return false;
-        if (!dist.path("distributionDateConfirmed").asBoolean(false)) return false;
         JsonNode days = dist.path("daysSinceDistribution");
-        return days.isNumber() && days.asInt() <= promotionWindowDays;
+        if (!(days.isNumber() && days.asInt() <= promotionWindowDays)) return false;
+        if (!dist.path("distributionDateConfirmed").asBoolean(false)) {
+            log.info("strigoi-spin candidate {} ({}) would promote (cap resolved, {} days within the "
+                            + "{}-day window) but distributionDateConfirmed=false — deliberately held back, "
+                            + "not an error",
+                    row.id(), row.symbol(), days.asInt(), promotionWindowDays);
+            return false;
+        }
+        return true;
     }
 }
