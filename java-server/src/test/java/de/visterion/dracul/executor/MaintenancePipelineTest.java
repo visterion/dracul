@@ -339,7 +339,7 @@ class MaintenancePipelineTest {
         List<EnrichedPosition> result = gatedPipeline.run("c", "r1");
 
         assertThat(fakeGateway.flattenedSymbols).isEmpty();
-        verify(positionRepo, org.mockito.Mockito.never()).close(anyLong(), any(), any(), any());
+        verify(positionRepo, org.mockito.Mockito.never()).close(anyLong(), any(), any(), any(), any());
         verify(cooldownRepo, org.mockito.Mockito.never()).add(any(), any(), any(), any());
         assertThat(result).hasSize(1);
         assertThat(result.get(0).symbol()).isEqualTo("AAA");

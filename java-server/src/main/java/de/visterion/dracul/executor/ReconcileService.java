@@ -366,10 +366,11 @@ public class ReconcileService {
             exitPriceSource = "MARK";
         }
 
-        BigDecimal realizedR = computeR(p, exitPrice);
+        RCalc rCalc = computeR(p, exitPrice);
+        BigDecimal realizedR = rCalc.r();
         String exitReason = p.pendingExitReason();
 
-        positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource);
+        positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource, rCalc.denominator());
         cooldownRepo.add(p.symbol(), exitReason,
                 clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
 
@@ -446,7 +447,7 @@ public class ReconcileService {
         // Set only for the RECONCILE_GONE matched-fill case: realizedR there must be measured
         // against the ORIGINAL planned risk (planned entry vs initial stop), not recomputed from
         // the synced real entry -- see realizedRAgainstPlannedRisk() for why.
-        BigDecimal realizedROverride = null;
+        RCalc rCalcOverride = null;
         if (filledLeg != null && filledLeg.role() == OrderRole.STOP_LOSS) {
             exitReason = "HARD_STOP";
             exitPrice = filledLeg.avgFillPrice();
@@ -500,7 +501,7 @@ public class ReconcileService {
                         p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
                 exitPrice = match.closePrice();
                 exitPriceSource = "FILL";
-                realizedROverride = realizedRAgainstPlannedRisk(p, match.openPrice(), match.closePrice());
+                rCalcOverride = realizedRAgainstPlannedRisk(p, match.openPrice(), match.closePrice());
             } else {
                 exitPriceSource = "RECONCILE_GONE";
             }
@@ -509,12 +510,18 @@ public class ReconcileService {
             exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
         }
 
-        BigDecimal realizedR = realizedROverride != null ? realizedROverride : computeR(effective, exitPrice);
+        // rCalcOverride is non-null whenever the RECONCILE_GONE matched-fill branch ran, even
+        // when the planned-risk guard rejected the denominator (plannedRisk <= 0) and its .r()
+        // is null -- that case must fall through to computeR exactly like base did when
+        // realizedRAgainstPlannedRisk itself returned null, not book a null realized_r.
+        RCalc rCalc = (rCalcOverride != null && rCalcOverride.r() != null)
+                ? rCalcOverride : computeR(effective, exitPrice);
+        BigDecimal realizedR = rCalc.r();
 
         if (exitPriceSource != null) {
-            positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource);
+            positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource, rCalc.denominator());
         } else {
-            positionRepo.close(p.id(), exitPrice, realizedR, exitReason);
+            positionRepo.close(p.id(), exitPrice, realizedR, exitReason, rCalc.denominator());
         }
         cooldownRepo.add(p.symbol(), exitReason,
                 clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
@@ -633,7 +640,7 @@ public class ReconcileService {
                 ? baseHighest.min(currentClose)
                 : baseHighest.max(currentClose);
 
-        BigDecimal currentR = computeR(p, currentClose);
+        BigDecimal currentR = computeR(p, currentClose).r();
         BigDecimal baseMfe = p.mfeR() == null ? BigDecimal.ZERO : p.mfeR();
         BigDecimal newMfeR = currentR == null ? baseMfe : baseMfe.max(currentR);
 
@@ -650,11 +657,19 @@ public class ReconcileService {
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
     }
 
+    /** Realized R together with the denominator (risk-per-share) it was actually divided by, so
+     *  the same expression that produces {@code realized_r} also produces what gets persisted
+     *  into {@code r_value} — see {@link ExecutorPositionRepository#close}. {@code r} is null
+     *  exactly when the denominator was unusable (zero or non-positive risk); {@code denominator}
+     *  is then also null so nothing meaningless gets persisted in that case. */
+    private record RCalc(BigDecimal r, BigDecimal denominator) {
+    }
+
     /** Realized R for a matched RECONCILE_GONE close, measured against the ORIGINAL planned risk-per-share
      *  (planned entry vs initial stop). We must NOT recompute risk from the synced real fill: a gapped fill can
      *  land on the wrong side of the stop (a long filled below its stop), which inverts an entry-stop denominator
      *  and flips a realized loss into a positive R. Numerator uses the real open/close fills. */
-    private BigDecimal realizedRAgainstPlannedRisk(ExecutorPosition planned, BigDecimal realEntry, BigDecimal realExit) {
+    private RCalc realizedRAgainstPlannedRisk(ExecutorPosition planned, BigDecimal realEntry, BigDecimal realExit) {
         BigDecimal plannedRisk;
         BigDecimal pnl;
         if ("SELL".equals(planned.side())) {
@@ -664,12 +679,13 @@ public class ReconcileService {
             plannedRisk = planned.entryPrice().subtract(planned.initialStop());
             pnl = realExit.subtract(realEntry);
         }
-        if (plannedRisk.signum() <= 0) return null;   // guard <= 0, not == 0
-        return pnl.divide(plannedRisk, 6, RoundingMode.HALF_UP);
+        if (plannedRisk.signum() <= 0) return new RCalc(null, null);   // guard <= 0, not == 0
+        BigDecimal r = pnl.divide(plannedRisk, 6, RoundingMode.HALF_UP);
+        return new RCalc(r, plannedRisk);
     }
 
-    private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {
-        if (exitPrice == null) return null;
+    private RCalc computeR(ExecutorPosition p, BigDecimal exitPrice) {
+        if (exitPrice == null) return new RCalc(null, null);
         BigDecimal denominator;
         BigDecimal numerator;
         if ("SELL".equals(p.side())) {
@@ -679,7 +695,8 @@ public class ReconcileService {
             numerator = exitPrice.subtract(p.entryPrice());
             denominator = p.entryPrice().subtract(p.initialStop());
         }
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
-        return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
+        if (denominator.compareTo(BigDecimal.ZERO) == 0) return new RCalc(null, null);
+        BigDecimal r = numerator.divide(denominator, 6, RoundingMode.HALF_UP);
+        return new RCalc(r, denominator);
     }
 }

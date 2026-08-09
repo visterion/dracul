@@ -101,13 +101,17 @@ class ExecutorPositionRepositoryTest {
                 null, null, null, null, 0, null, null, null, null, null, null, false);
         long id = repo.insert(pos);
 
-        repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP");
+        repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP", new BigDecimal("10"));
 
         assertThat(repo.findOpen()).extracting(ExecutorPosition::symbol).doesNotContain(symbol);
         var found = repo.findById(id);
         assertThat(found.status()).isEqualTo("CLOSED");
         assertThat(found.realizedR()).isEqualByComparingTo("-1.0");
         assertThat(found.exitReason()).isEqualTo("HARD_STOP");
+        // r_value is the denominator realized_r was actually divided by -- persisted so the row
+        // is reconcilable against itself instead of leaving the divisor unrecorded (was always
+        // NULL before this fix, see ExecutorPositionRepository#close).
+        assertThat(found.rValue()).isEqualByComparingTo("10");
     }
 
     @Test
@@ -432,7 +436,7 @@ class ExecutorPositionRepositoryTest {
     void findOpenBySymbolIgnoresClosedPositions() {
         String symbol = "FOBS-CLOSED-" + UUID.randomUUID();
         long id = insertOpenPosition(symbol, "193.88");
-        repo.close(id, new BigDecimal("195"), new BigDecimal("0.2"), "TAKE_PROFIT");
+        repo.close(id, new BigDecimal("195"), new BigDecimal("0.2"), "TAKE_PROFIT", null);
 
         assertThat(repo.findOpenBySymbol("depot-1", symbol)).isNull();
     }
@@ -442,7 +446,7 @@ class ExecutorPositionRepositoryTest {
         String symbol = "PSMT-" + UUID.randomUUID();
         long id = insertOpenPosition(symbol, "193.88");
 
-        repo.close(id, new BigDecimal("191.20"), new BigDecimal("-0.5"), "HARD_STOP", "FILL");
+        repo.close(id, new BigDecimal("191.20"), new BigDecimal("-0.5"), "HARD_STOP", "FILL", null);
 
         ExecutorPosition p = repo.findById(id);
         assertThat(p.status()).isEqualTo("CLOSED");

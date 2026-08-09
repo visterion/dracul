@@ -97,7 +97,7 @@ class OutcomeBatchJobIT {
 
         // Final exit 67 @ 104 (R = (104-100)/5 = 0.8).
         positionRepo.updateAdverseExtreme(positionId, bd("93")); // MAE = (93-100)/5 = -1.4
-        positionRepo.close(positionId, bd("104"), bd("0.8"), "TAKE_PROFIT");
+        positionRepo.close(positionId, bd("104"), bd("0.8"), "TAKE_PROFIT", null);
         var exitInputs = mapper.readTree("{\"exit_price\":104,\"realized_r\":0.8}");
         decisionLogRepo.insert(new DecisionLog(null, "run-1", "exec-v0.2", "SOFT_TRIGGER", null,
                 null, null, symbol, exitInputs, null, "EXIT_FULL", "TAKE_PROFIT", null, null, null, null, null));
@@ -174,7 +174,7 @@ class OutcomeBatchJobIT {
 
         // Final exit 67 @ 104 (R = 0.8).
         positionRepo.updateAdverseExtreme(positionId, bd("93"));
-        positionRepo.close(positionId, bd("104"), bd("0.8"), "TAKE_PROFIT");
+        positionRepo.close(positionId, bd("104"), bd("0.8"), "TAKE_PROFIT", null);
         var exitInputs = mapper.readTree("{\"exit_price\":104,\"realized_r\":0.8}");
         decisionLogRepo.insert(new DecisionLog(null, "run-1", "exec-v0.2", "SOFT_TRIGGER", null,
                 null, null, symbol, exitInputs, null, "EXIT_FULL", "TAKE_PROFIT", null, null, null, null, null));

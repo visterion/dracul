@@ -109,17 +109,26 @@ public class ExecutorPositionRepository {
                 .update();
     }
 
-    public void close(long id, BigDecimal exitPrice, BigDecimal realizedR, String exitReason) {
-        close(id, exitPrice, realizedR, exitReason, null);
+    /** {@code rValue} is the denominator (risk-per-share) that {@code realizedR} was actually
+     *  divided by — either the planned-risk denominator ({@code realizedRAgainstPlannedRisk}) or
+     *  the live entry/stop denominator ({@code computeR}), whichever the caller used. Persisting
+     *  it is what makes {@code realized_r} reconcilable against the other stored columns; without
+     *  it, a row computed against planned risk looks inconsistent with entry/stop/exit. Null
+     *  exactly when {@code realizedR} is null (zero/non-positive denominator — nothing meaningful
+     *  to record). */
+    public void close(long id, BigDecimal exitPrice, BigDecimal realizedR, String exitReason,
+            BigDecimal rValue) {
+        close(id, exitPrice, realizedR, exitReason, null, rValue);
     }
 
     public void close(long id, BigDecimal exitPrice, BigDecimal realizedR, String exitReason,
-            String exitPriceSource) {
+            String exitPriceSource, BigDecimal rValue) {
         jdbc.sql("""
                 UPDATE executor_position
                 SET status = 'CLOSED',
                     exit_price = :exitPrice,
                     realized_r = :realizedR,
+                    r_value = :rValue,
                     exit_reason = :exitReason,
                     exit_price_source = :exitPriceSource,
                     closed_at = now()
@@ -127,6 +136,7 @@ public class ExecutorPositionRepository {
                 """)
                 .param("exitPrice", exitPrice)
                 .param("realizedR", realizedR)
+                .param("rValue", rValue)
                 .param("exitReason", exitReason)
                 .param("exitPriceSource", exitPriceSource)
                 .param("id", id)

@@ -1334,9 +1334,10 @@ public class ExecutorWebhookController {
                     Map.of("exited", false, "pending", true)));
         }
 
-        BigDecimal realizedR = computeR(position, exitPrice);
+        RCalc rCalc = computeR(position, exitPrice);
+        BigDecimal realizedR = rCalc.r();
 
-        positionRepo.close(position.id(), exitPrice, realizedR, reason, "FILL");
+        positionRepo.close(position.id(), exitPrice, realizedR, reason, "FILL", rCalc.denominator());
         cooldownRepo.add(symbol, reason, clock.instant().plus(Duration.ofDays(cooldownDays)),
                 "fresh setup only");
 
@@ -1379,7 +1380,15 @@ public class ExecutorWebhookController {
         return zdt.toInstant();
     }
 
-    private BigDecimal computeR(ExecutorPosition p, BigDecimal exitPrice) {
+    /** Realized R together with the denominator (risk-per-share) it was actually divided by, so
+     *  the same expression that produces {@code realized_r} also produces what gets persisted
+     *  into {@code r_value} — see {@link ExecutorPositionRepository#close}. {@code r} is null
+     *  exactly when the denominator was zero; {@code denominator} is then also null so nothing
+     *  meaningless gets persisted in that case. */
+    private record RCalc(BigDecimal r, BigDecimal denominator) {
+    }
+
+    private RCalc computeR(ExecutorPosition p, BigDecimal exitPrice) {
         BigDecimal numerator;
         BigDecimal denominator;
         if ("SELL".equals(p.side())) {
@@ -1389,8 +1398,9 @@ public class ExecutorWebhookController {
             numerator = exitPrice.subtract(p.entryPrice());
             denominator = p.entryPrice().subtract(p.initialStop());
         }
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) return null;
-        return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
+        if (denominator.compareTo(BigDecimal.ZERO) == 0) return new RCalc(null, null);
+        BigDecimal r = numerator.divide(denominator, 6, RoundingMode.HALF_UP);
+        return new RCalc(r, denominator);
     }
 
     // -------------------------------------------------------------------
