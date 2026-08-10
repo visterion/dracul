@@ -120,9 +120,9 @@ DAMPENER, never a veto — unlike the Z-below-1.8 distress veto and the
 falling-knife rule, negative revisions alone do not suppress an otherwise
 strong candidate. The severity ladder stays: F-Score ratio below 0.67, or
 fewer than 6 available criteria, = skip; Z below 1.8 = veto; falling knife =
-veto or hard dampening; negative revisions = dampen + risk. Conversely, `up` or `flat` revisions on a name sitting near
-its low are a quiet reinforcer — the market has stopped cutting while the
-price is at the bottom.
+veto or hard dampening; negative revisions = dampen + risk. Conversely, `up`
+or `flat` revisions on a name sitting near its low are a quiet reinforcer —
+the market has stopped cutting while the price is at the bottom.
 
 Neglect premium: when `revisionsAvailable` is true, a LOW `analystCoverage`
 (few analysts) marks an under-followed name where mispricing at the low
