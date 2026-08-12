@@ -115,6 +115,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private final double maxDebtEquity;
     private final double maxPriceToBook;
     private final double maxPFcf;
+    private final double megaCapUsdMillions;
     private final String probeSymbol;
     private final String universeSource;
     private final int universeMax;
@@ -152,6 +153,10 @@ public class StrigoiLazarusWebhookController extends HuntController {
             @Value("${dracul.strigoi.lazarus.max-debt-equity:3.0}") double maxDebtEquity,
             @Value("${dracul.strigoi.lazarus.max-price-to-book:2.0}") double maxPriceToBook,
             @Value("${dracul.strigoi.lazarus.max-p-fcf:20}") double maxPFcf,
+            // Fallback matches application.yaml's 100000 on purpose: the yaml always wins in a real
+            // deployment, so a differing literal here is dead config that only misleads whoever reads
+            // it looking for the effective value.
+            @Value("${dracul.strigoi.lazarus.mega-cap-usd-millions:100000}") double megaCapUsdMillions,
             @Value("${dracul.strigoi.lazarus.probe-symbol:AAPL}") String probeSymbol,
             @Value("${dracul.strigoi.lazarus.universe-source:sp500}") String universeSource,
             @Value("${dracul.strigoi.lazarus.universe-max:600}") int universeMax,
@@ -176,6 +181,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
         this.maxDebtEquity = maxDebtEquity;
         this.maxPriceToBook = maxPriceToBook;
         this.maxPFcf = maxPFcf;
+        this.megaCapUsdMillions = megaCapUsdMillions;
         this.probeSymbol = probeSymbol;
         this.universeSource = universeSource;
         this.universeMax = universeMax;
@@ -301,7 +307,9 @@ public class StrigoiLazarusWebhookController extends HuntController {
             }
             raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
         }
-        var screened = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
+        var screenResult = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf,
+                megaCapUsdMillions);
+        var screened = screenResult.candidates();
         var batch = enrichment.enrich(screened);
         var enriched = batch.candidates();
         // Two DIFFERENT losses, deliberately on two counters: enrichmentDropped are candidates that
@@ -316,11 +324,13 @@ public class StrigoiLazarusWebhookController extends HuntController {
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
                         + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
                         + "noFundamentals={} no52wLow={} no52wLowSourceFailed={} "
+                        + "implausibleRange={} "
                         + "enrichmentDropped={} enrichmentDegraded={} "
                         + "unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
                 scan.notEligible(), fundamentalsMissing, week52Missing, week52SourceFailed,
+                screenResult.implausibleRange(),
                 enrichmentDropped, batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,

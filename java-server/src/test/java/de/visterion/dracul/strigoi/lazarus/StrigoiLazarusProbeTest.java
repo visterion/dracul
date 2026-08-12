@@ -60,7 +60,7 @@ class StrigoiLazarusProbeTest {
                 "tok", watchlist, companyData, screener, enrichment, preyRepo, cache,
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
-                0.10, 3.0, 2.0, 20, CANARY,
+                0.10, 3.0, 2.0, 20, 100_000.0, CANARY,
                 "watchlist", 600, 0.25, 150_000L, 10, 60);
     }
 

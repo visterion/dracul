@@ -3,6 +3,7 @@ package de.visterion.dracul.strigoi.lazarus;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.marketdata.AgoraMarketData;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.strigoi.echo.RevisionsProxy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,7 +39,7 @@ class LazarusEnrichmentLatchTest {
         altmanZ = mock(AltmanZCalculator.class);
         AgoraCompanyData companyData = mock(AgoraCompanyData.class); // empty trend -> no revisions
         service = new LazarusEnrichmentService(filings, marketData, altmanZ, companyData,
-                new RevisionsProxy());
+                new RevisionsProxy(), mock(FxService.class));
     }
 
     private static LazarusCandidate candidate(String symbol) {

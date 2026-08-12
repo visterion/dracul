@@ -5,6 +5,7 @@ import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.RecommendationTrend;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
@@ -90,14 +91,17 @@ public class LazarusEnrichmentService {
     private final AltmanZCalculator altmanZ;
     private final AgoraCompanyData companyData;
     private final RevisionsProxy revisionsProxy;
+    private final FxService fx;
 
     public LazarusEnrichmentService(AgoraFilings filings, AgoraMarketData marketData,
-            AltmanZCalculator altmanZ, AgoraCompanyData companyData, RevisionsProxy revisionsProxy) {
+            AltmanZCalculator altmanZ, AgoraCompanyData companyData, RevisionsProxy revisionsProxy,
+            FxService fx) {
         this.filings = filings;
         this.marketData = marketData;
         this.altmanZ = altmanZ;
         this.companyData = companyData;
         this.revisionsProxy = revisionsProxy;
+        this.fx = fx;
     }
 
     /** Timing/stabilization signals of one candidate; any field may be null (unknown). */
@@ -109,6 +113,29 @@ public class LazarusEnrichmentService {
         }
     }
 
+    /** USD-normalised market cap of one candidate; {@code valueUsdMillions} is null whenever
+     *  {@code available} is false — never a fallback to the raw, unconverted number. */
+    private record MarketCapUsd(Double valueUsdMillions, boolean available) {
+        static final MarketCapUsd UNKNOWN = new MarketCapUsd(null, false);
+    }
+
+    /** {@link LazarusCandidate#marketCap()} normalised to USD millions. Null market cap is
+     *  unknown. A null/{@code "USD"} reporting currency passes the raw value through unconverted
+     *  (no FX call at all). Any other currency is converted ONLY when {@link FxService#hasRate}
+     *  confirms a cached rate — {@link FxService#convert} is never called otherwise, because on
+     *  a cache miss it returns the amount unconverted rather than blocking, which would silently
+     *  read e.g. CNY millions as USD millions. */
+    private MarketCapUsd marketCapUsdMillionsOf(LazarusCandidate c) {
+        if (c.marketCap() == null) return MarketCapUsd.UNKNOWN;
+        String currency = c.reportingCurrency();
+        if (currency == null || "USD".equalsIgnoreCase(currency)) {
+            return new MarketCapUsd(c.marketCap(), true);
+        }
+        if (!fx.hasRate(currency, "USD")) return MarketCapUsd.UNKNOWN;
+        BigDecimal converted = fx.convert(BigDecimal.valueOf(c.marketCap()), currency, "USD");
+        return new MarketCapUsd(converted.doubleValue(), true);
+    }
+
     public EnrichedLazarusBatch enrich(List<LazarusCandidate> candidates) {
         List<LazarusCandidate> bounded = candidates.stream()
                 .sorted(Comparator.comparingDouble(LazarusCandidate::pctAboveLow))
@@ -118,6 +145,16 @@ public class LazarusEnrichmentService {
             log.info("lazarus enrichment: {} candidates exceed the cap of {}, dropping the {} farthest above their 52w low",
                     candidates.size(), MAX_CANDIDATES, candidates.size() - MAX_CANDIDATES);
         }
+        // Warm once per distinct non-USD reporting currency, BEFORE the candidate loop, so the
+        // per-candidate conversion below only ever reads the cache. warm() never throws (it logs
+        // and keeps the last-known rate on failure); hasRate() afterwards is the sole availability
+        // signal — convert() alone cannot serve that role, since it silently returns the
+        // unconverted amount on a cache miss (FxService:34).
+        bounded.stream()
+                .map(LazarusCandidate::reportingCurrency)
+                .filter(c -> c != null && !"USD".equalsIgnoreCase(c))
+                .distinct()
+                .forEach(c -> fx.warm(c, "USD"));
         var out = new ArrayList<EnrichedLazarusCandidate>();
         int degradedCandidates = 0;
         var score = EnrichmentSourceGuard.forSource("lazarus", "candidates", "fundamental score");
@@ -194,6 +231,7 @@ public class LazarusEnrichmentService {
                 degraded = true;
             }
             if (degraded) degradedCandidates++;
+            MarketCapUsd cap = marketCapUsdMillionsOf(c);
             out.add(new EnrichedLazarusCandidate(
                     c.symbol(), c.companyName(), c.currentPrice(), c.week52Low(), c.week52High(),
                     c.pctAboveLow(), c.roaTtm(), c.currentRatio(), c.debtToEquity(), c.grossMargin(),
@@ -202,7 +240,8 @@ public class LazarusEnrichmentService {
                     s.cfoExceedsNetIncome(), s.cfoExceedsNetIncomeAvailable(),
                     t.priceVs50dMa(), t.weeksSinceNewLow(), t.momentum3m(), t.available(),
                     z.zScore(), z.available(),
-                    rev.netProxy(), rev.direction(), cov.coverage(), rev.available()));
+                    rev.netProxy(), rev.direction(), cov.coverage(), rev.available(),
+                    cap.valueUsdMillions(), cap.available()));
         }
         if (degradedCandidates > 0) {
             log.info("lazarus enrichment: {} of {} candidates lost at least one enrichment source",
