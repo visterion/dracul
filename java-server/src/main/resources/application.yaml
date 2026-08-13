@@ -241,6 +241,14 @@ dracul:
       # NOTE: agent definitions are insertIfAbsent on prod — changing this needs the
       # agent-definition reset from the operations runbook to take effect.
       fetch-timeout-seconds: ${LAZARUS_FETCH_TIMEOUT_SECONDS:600}
+      # Ceiling on get_company_profile calls per run, spent by LazarusListingResolver to confirm
+      # a candidate's listing. Same default (40) as the constructor's own @Value fallback — kept
+      # here too, in the DEFAULT position, not the compose env-list: an unset env var falls
+      # through to THIS number, but an env-list entry like LAZARUS_PROFILE_MAX with an empty
+      # value (the compose ${VAR:-default} pattern) would still win over the Java-side default,
+      # since Spring never even sees a missing property in that case — only a property that is
+      # genuinely absent from both compose and this file reaches the @Value fallback.
+      profile-max: ${LAZARUS_PROFILE_MAX:40}
     merger:
       enabled: ${STRIGOI_MERGER_ENABLED:false}
       webhook-token: ${STRIGOI_MERGER_TOKEN:dev-token-change-me}

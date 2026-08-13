@@ -1,6 +1,7 @@
 package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
+import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,7 +71,10 @@ public class LazarusListingResolver {
         int calls = 0;
 
         for (LazarusCandidate c : candidates) {
-            if (c.reportingCurrency() != null) {
+            // A blank (non-null) currency carries no evidence, exactly like a blank ticker below —
+            // it must not count as "present" and fall straight to FOREIGN_SUFFIXED. It falls through
+            // to the same profile resolution a null currency gets.
+            if (c.reportingCurrency() != null && !c.reportingCurrency().isBlank()) {
                 out.add(c.withListing(ListingResolution.FOREIGN_SUFFIXED));
                 continue;
             }
@@ -88,8 +92,20 @@ public class LazarusListingResolver {
                 guard.recordSuccess();
             } catch (RuntimeException e) {
                 guard.recordFailure(e);
-                log.debug("lazarus listing resolution: profile unavailable for {}: {}",
-                        c.symbol(), e.getMessage());
+                // AgoraUnavailableException.unwrap == null means this was neither a SOURCE nor a
+                // REQUEST-scoped Agora failure — an unrelated bug (e.g. a malformed profile blob
+                // throwing while it is read), not an availability story. recordFailure(e) above
+                // treats it as a benign per-item outcome (same as EnrichmentSourceGuard's own
+                // NOT_FOUND/unrelated-RuntimeException carve-out) and never trips the guard for it,
+                // so DEBUG would be its only trace — invisible in a nightly run. WARN instead; the
+                // Agora outage path (SOURCE/REQUEST) keeps its existing DEBUG line unchanged.
+                if (AgoraUnavailableException.unwrap(e) == null) {
+                    log.warn("lazarus listing resolution: {} threw a non-availability error resolving its listing: {}",
+                            c.symbol(), e.getMessage(), e);
+                } else {
+                    log.debug("lazarus listing resolution: profile unavailable for {}: {}",
+                            c.symbol(), e.getMessage());
+                }
                 out.add(c.withListing(ListingResolution.UNKNOWN));
                 if (c.marketCap() != null) listingUnknown++;
                 continue;
