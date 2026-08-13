@@ -307,8 +307,9 @@ public class StrigoiLazarusWebhookController extends HuntController {
             }
             raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
         }
-        var screenResult = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf,
-                megaCapUsdMillions);
+        // megaCapUsdMillions is no longer passed into the screener — the size decision now happens
+        // downstream of listing resolution (Task 3/4); the field stays on this controller for that.
+        var screenResult = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
         var screened = screenResult.candidates();
         var batch = enrichment.enrich(screened);
         var enriched = batch.candidates();

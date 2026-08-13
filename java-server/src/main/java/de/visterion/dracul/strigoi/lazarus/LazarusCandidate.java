@@ -5,7 +5,12 @@ package de.visterion.dracul.strigoi.lazarus;
  *  Altman-Z market-value-of-equity input during enrichment (it is not copied onto the
  *  enriched wire shape). {@code reportingCurrency} is the ISO-4217 code that market cap is
  *  quoted in (non-US path only; null for US) and is threaded into the non-US Altman-Z X4
- *  currency-consistency guard. */
+ *  currency-consistency guard. {@code cheapGatePassed} records whether the candidate cleared
+ *  the P/B or P/FCF cheapness gate on its own; {@code listingResolution} records whether the
+ *  listing behind {@code marketCap}/{@code reportingCurrency} has been resolved yet — the
+ *  screener itself can never resolve it (pure, I/O-free) and always sets
+ *  {@link ListingResolution#UNKNOWN}; a later stage replaces the value once it has called out
+ *  to resolve the listing. */
 public record LazarusCandidate(
         String symbol,
         String companyName,
@@ -24,9 +29,13 @@ public record LazarusCandidate(
         Double peTtm,
         Double fcfPerShare,
         Double marketCap,
-        String reportingCurrency
+        String reportingCurrency,
+        boolean cheapGatePassed,
+        ListingResolution listingResolution
 ) {
-    /** Back-compat convenience for US callers/tests with no reporting currency (defaults null). */
+    /** Back-compat convenience for US callers/tests with no reporting currency and no
+     *  gate/listing state (defaults: reportingCurrency null, cheapGatePassed true,
+     *  listingResolution UNKNOWN). */
     public LazarusCandidate(
             String symbol, String companyName, double currentPrice, double week52Low,
             double week52High, double pctAboveLow, Double roaTtm, Double currentRatio,
@@ -35,6 +44,20 @@ public record LazarusCandidate(
             Double marketCap) {
         this(symbol, companyName, currentPrice, week52Low, week52High, pctAboveLow, roaTtm,
                 currentRatio, debtToEquity, grossMargin, netMargin, revenueGrowthYoy, epsGrowthYoy,
-                priceToBook, peTtm, fcfPerShare, marketCap, null);
+                priceToBook, peTtm, fcfPerShare, marketCap, null, true, ListingResolution.UNKNOWN);
+    }
+
+    /** Back-compat convenience for callers that set reportingCurrency but not the gate/listing
+     *  state (defaults: cheapGatePassed true, listingResolution UNKNOWN). */
+    public LazarusCandidate(
+            String symbol, String companyName, double currentPrice, double week52Low,
+            double week52High, double pctAboveLow, Double roaTtm, Double currentRatio,
+            Double debtToEquity, Double grossMargin, Double netMargin, Double revenueGrowthYoy,
+            Double epsGrowthYoy, Double priceToBook, Double peTtm, Double fcfPerShare,
+            Double marketCap, String reportingCurrency) {
+        this(symbol, companyName, currentPrice, week52Low, week52High, pctAboveLow, roaTtm,
+                currentRatio, debtToEquity, grossMargin, netMargin, revenueGrowthYoy, epsGrowthYoy,
+                priceToBook, peTtm, fcfPerShare, marketCap, reportingCurrency, true,
+                ListingResolution.UNKNOWN);
     }
 }
