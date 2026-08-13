@@ -35,7 +35,7 @@ class LazarusScreenerTest {
     }
 
     /**
-     * Financials for the mega-cap exemption tests: priced exactly at its 52-week low (100.0),
+     * Financials for the size-hope tests: priced exactly at its 52-week low (100.0),
      * healthy solvency (ROA 5%) unless overridden, low leverage, given priceToBook/fcfPerShare/
      * marketCap/reportingCurrency.
      */
@@ -216,7 +216,7 @@ class LazarusScreenerTest {
         // A market cap this large used to trip the screener's own mega-cap threshold. Now the
         // screener makes no size decision at all — it only forwards the hope (cheapGatePassed
         // stays false); the controller decides size after resolving the listing (Task 3/4).
-        var raw = raw("SYNHUGE", 100.0, financialsAtLow(6.26, null, 6_000_000.0, null));
+        var raw = raw("SYNHUGE", 100.0, financialsAtLow(9.0, null, 6_000_000.0, null));
         var result = screener.screen(List.of(raw), 0.10, 3.0, 2.0, 20);
         assertThat(result.candidates()).extracting(LazarusCandidate::symbol).containsExactly("SYNHUGE");
         assertThat(result.candidates().get(0).cheapGatePassed()).isFalse();
@@ -226,7 +226,7 @@ class LazarusScreenerTest {
     void theSizeHopeCoversOnlyCheapness_neverQuality() {
         // A market cap is present, but ROA <= 0 and no FCF: stays out like any other name — the
         // solvency gate runs upstream of the cheapness gate and is untouched by this change.
-        var raw = raw("SYNBAD", 100.0, financialsAtLow(6.26, null, 3_712_698.0, null, -5.48));
+        var raw = raw("SYNBAD", 100.0, financialsAtLow(9.0, null, 5_000_000.0, null, -1.0));
         var result = screener.screen(List.of(raw), 0.10, 3.0, 2.0, 20);
         assertThat(result.candidates()).isEmpty();
     }

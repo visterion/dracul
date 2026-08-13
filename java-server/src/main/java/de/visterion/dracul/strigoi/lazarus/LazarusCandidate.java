@@ -34,8 +34,12 @@ public record LazarusCandidate(
         ListingResolution listingResolution
 ) {
     /** Back-compat convenience for US callers/tests with no reporting currency and no
-     *  gate/listing state (defaults: reportingCurrency null, cheapGatePassed true,
-     *  listingResolution UNKNOWN). */
+     *  gate/listing state (defaults: reportingCurrency null, cheapGatePassed false,
+     *  listingResolution UNKNOWN). {@code cheapGatePassed} defaults to {@code false}, not
+     *  {@code true}: {@code true} means "cleared the cheapness gate on its own" and, from
+     *  Task 4 onward, skips the size/listing/FX re-check entirely — a fail-open default here
+     *  would silently disable that guard for every caller that doesn't set the field
+     *  explicitly. Fail-closed instead. */
     public LazarusCandidate(
             String symbol, String companyName, double currentPrice, double week52Low,
             double week52High, double pctAboveLow, Double roaTtm, Double currentRatio,
@@ -44,11 +48,13 @@ public record LazarusCandidate(
             Double marketCap) {
         this(symbol, companyName, currentPrice, week52Low, week52High, pctAboveLow, roaTtm,
                 currentRatio, debtToEquity, grossMargin, netMargin, revenueGrowthYoy, epsGrowthYoy,
-                priceToBook, peTtm, fcfPerShare, marketCap, null, true, ListingResolution.UNKNOWN);
+                priceToBook, peTtm, fcfPerShare, marketCap, null, false, ListingResolution.UNKNOWN);
     }
 
     /** Back-compat convenience for callers that set reportingCurrency but not the gate/listing
-     *  state (defaults: cheapGatePassed true, listingResolution UNKNOWN). */
+     *  state (defaults: cheapGatePassed false, listingResolution UNKNOWN — see the other
+     *  back-compat constructor's Javadoc for why {@code false}, not {@code true}, is the safe
+     *  default). */
     public LazarusCandidate(
             String symbol, String companyName, double currentPrice, double week52Low,
             double week52High, double pctAboveLow, Double roaTtm, Double currentRatio,
@@ -57,7 +63,7 @@ public record LazarusCandidate(
             Double marketCap, String reportingCurrency) {
         this(symbol, companyName, currentPrice, week52Low, week52High, pctAboveLow, roaTtm,
                 currentRatio, debtToEquity, grossMargin, netMargin, revenueGrowthYoy, epsGrowthYoy,
-                priceToBook, peTtm, fcfPerShare, marketCap, reportingCurrency, true,
+                priceToBook, peTtm, fcfPerShare, marketCap, reportingCurrency, false,
                 ListingResolution.UNKNOWN);
     }
 }
