@@ -461,18 +461,71 @@ class StrigoiLazarusWebhookControllerTest {
                 .doesNotContain("dropped during enrichment");
     }
 
+    /** A candidate that cleared the cheapness gate on its own STAYS in the response even with an
+     *  unresolved listing — "what you see is incomplete", not "you saw nothing". This is the
+     *  lighter of the two unresolved-listing consequences and must never be confused, in the
+     *  detail text, with a candidate that is actually gone (the next test). */
     @Test
-    void listingUnknownRaisesPartialWithBothConsequences() {
+    void listingUnknownKeptStaysInTheResponseAsPartial() {
+        LazarusCandidate c = rawCandidate("KEEPUNK", 9_000_000.0, null, true, ListingResolution.UNKNOWN);
         var enrichment = mock(LazarusEnrichmentService.class);
-        when(enrichment.enrich(any())).thenReturn(new EnrichedLazarusBatch(List.of(), 0));
-        var controller = sizeDecisionController(screenerReturning(), resolverReturning(0, 3),
-                mock(FxService.class), enrichment, 100_000.0);
+        var captor = captureScreened(enrichment);
+        var controller = sizeDecisionController(screenerReturning(c),
+                resolverReturning(0, 0, c), mock(FxService.class), enrichment, 100_000.0);
 
         var result = controller.hunt(Map.of());
 
+        assertThat(captor.getValue()).hasSize(1); // cheapGatePassed carried it through, unresolved or not
         assertThat(result.health().partial()).isTrue();
-        assertThat(result.health().detail()).contains("size exemption");
-        assertThat(result.health().detail()).contains("Altman-Z");
+        assertThat(result.health().detail())
+                .contains("1 candidates have an unresolved listing (no size exemption, no Altman-Z)");
+        assertThat(result.health().detail()).doesNotContain("were dropped");
+    }
+
+    /** A candidate that did NOT clear the cheapness gate and never got a trustworthy size because
+     *  its listing stayed unresolved is GONE from the response — the harder case, a source outage
+     *  that cost a candidate outright, and the detail text must say so distinctly from the "kept"
+     *  case above. */
+    @Test
+    void listingUnknownDroppedIsGoneFromTheResponse() {
+        LazarusCandidate c = rawCandidate("DROPUNK", 9_000_000.0, null, false, ListingResolution.UNKNOWN);
+        var enrichment = mock(LazarusEnrichmentService.class);
+        var captor = captureScreened(enrichment);
+        var controller = sizeDecisionController(screenerReturning(c),
+                resolverReturning(0, 0, c), mock(FxService.class), enrichment, 100_000.0);
+
+        var result = controller.hunt(Map.of());
+
+        assertThat(captor.getValue()).isEmpty(); // not cheap, no trustable size -- gone
+        assertThat(result.health().partial()).isTrue();
+        assertThat(result.health().detail())
+                .contains("1 candidates were dropped for an unresolved listing (no size exemption possible)");
+        assertThat(result.health().detail()).doesNotContain("candidates have an unresolved listing");
+    }
+
+    /** Anti-noise: a foreign-suffixed listing (the resolver already established the currency) is
+     *  neither "kept unresolved" nor "dropped unresolved" — it is resolved, whatever the keep
+     *  decision does with it afterwards. Both counters must stay at zero for it. */
+    @Test
+    void foreignSuffixedListingNeverCountsAsUnknownEitherWay() {
+        LazarusCandidate kept = rawCandidate("FXKEEP", 9_000_000.0, "EUR", true, ListingResolution.FOREIGN_SUFFIXED);
+        var enrichmentA = mock(LazarusEnrichmentService.class);
+        captureScreened(enrichmentA);
+        var resultKept = sizeDecisionController(screenerReturning(kept), resolverReturning(0, 0, kept),
+                mock(FxService.class), enrichmentA, 100_000.0).hunt(Map.of());
+
+        LazarusCandidate dropped = rawCandidate("FXDROP", 1_000.0, "EUR", false, ListingResolution.FOREIGN_SUFFIXED);
+        var enrichmentB = mock(LazarusEnrichmentService.class);
+        captureScreened(enrichmentB);
+        var fxB = mock(FxService.class);
+        when(fxB.hasRate("EUR", "USD")).thenReturn(false); // unavailable size, still not "unresolved"
+        var resultDropped = sizeDecisionController(screenerReturning(dropped), resolverReturning(0, 0, dropped),
+                fxB, enrichmentB, 100_000.0).hunt(Map.of());
+
+        assertThat(Optional.ofNullable(resultKept.health().detail()).orElse(""))
+                .doesNotContain("unresolved listing");
+        assertThat(Optional.ofNullable(resultDropped.health().detail()).orElse(""))
+                .doesNotContain("unresolved listing");
     }
 
     @Test

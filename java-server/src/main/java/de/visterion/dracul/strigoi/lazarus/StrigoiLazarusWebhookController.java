@@ -341,6 +341,18 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // documented off switch (a bare >= comparison would silently give every priced candidate
         // the exemption once size stops being a filter).
         List<LazarusCandidate> screened = new ArrayList<>();
+        // Two DIFFERENT consequences of an unresolved listing, split AFTER the keep decision below
+        // (not by LazarusListingResolver.Resolved.listingUnknown(), which counts before the keep
+        // decision and therefore cannot tell them apart): a candidate that cleared the cheapness
+        // gate on its own stays in the response regardless of its size — "what you see is
+        // incomplete", still there, just without a size exemption or an Altman-Z. A candidate that
+        // needed the size exemption and never got one because its listing could not be resolved is
+        // GONE from the response — the harder case, a source outage that cost candidates outright.
+        // Folding both into one counter (the pre-Task-4-followup shape) made a profile-endpoint
+        // outage read as "N candidates have an unresolved listing" while items= silently shrank by
+        // the same N, unreadable for an operator or the reasoning agent.
+        int listingUnknownKept = 0;
+        int listingUnknownDropped = 0;
         for (LazarusCandidate c : resolvedResult.candidates()) {
             Double usdMillions = null;
             boolean marketCapAvailable = false;
@@ -378,6 +390,12 @@ public class StrigoiLazarusWebhookController extends HuntController {
             LazarusCandidate withUsd = c.withMarketCapUsd(usdMillions, marketCapAvailable);
             boolean keep = withUsd.cheapGatePassed()
                     || (marketCapAvailable && usdMillions >= megaCapUsdMillions && megaCapUsdMillions > 0);
+            // Mirrors the resolver's own rule (LazarusListingResolver.java): only a candidate that
+            // actually carried a market cap had anything to lose by staying unresolved, and a
+            // foreign-suffixed or US-confirmed listing is not this loss at all — only UNKNOWN is.
+            if (c.marketCap() != null && c.listingResolution() == ListingResolution.UNKNOWN) {
+                if (keep) listingUnknownKept++; else listingUnknownDropped++;
+            }
             if (keep) screened.add(withUsd);
         }
 
@@ -398,19 +416,20 @@ public class StrigoiLazarusWebhookController extends HuntController {
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
                         + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
                         + "noFundamentals={} no52wLow={} no52wLowSourceFailed={} "
-                        + "implausibleRange={} foreignListing={} listingUnknown={} "
+                        + "implausibleRange={} foreignListing={} listingUnknownKept={} "
+                        + "listingUnknownDropped={} "
                         + "enrichmentDropped={} enrichmentDegraded={} "
                         + "unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
                 scan.notEligible(), fundamentalsMissing, week52Missing, week52SourceFailed,
                 screenResult.implausibleRange(), resolvedResult.foreignListing(),
-                resolvedResult.listingUnknown(),
+                listingUnknownKept, listingUnknownDropped,
                 enrichmentDropped, batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,
                 fundamentalsCapDropped, fundamentalsMissing, week52SourceFailed,
-                resolvedResult.listingUnknown(), enrichmentDropped, batch.degradedCandidates()));
+                listingUnknownKept, listingUnknownDropped, enrichmentDropped, batch.degradedCandidates()));
     }
 
     /**
@@ -423,7 +442,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private DataSourceHealth health(String indexDetail, LazarusUniverseService.Scan scan,
                                     int universeCapDropped, int fundamentalsCapDropped,
                                     int fundamentalsMissing, int week52SourceFailed,
-                                    int listingUnknown, int enrichmentDropped, int enrichmentDegraded) {
+                                    int listingUnknownKept, int listingUnknownDropped,
+                                    int enrichmentDropped, int enrichmentDegraded) {
         DataSourceHealth h = DataSourceHealth.healthy(SOURCE);
         if (indexDetail != null) {
             h = DataSourceHealth.degradedWith(h,
@@ -484,15 +504,29 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // every night), not a lookup failure, and folding it in would turn `partial` into noise
         // that fires forever. It stays in the log line above.
         //
-        // listingUnknown IS a degradation: the profile lookup failed, was capped, or the guard was
-        // already tripped, so this candidate's size could not be established. Both consequences are
-        // named — no size exemption AND no Altman-Z, since Task 5 gates Z on the same resolution —
-        // so the reasoning agent reading one detail string understands the full blast radius.
-        if (listingUnknown > 0) {
-            h = DataSourceHealth.degradedWith(h,
-                    listingUnknown + " candidates have an unresolved listing (no size exemption, "
-                            + "no Altman-Z)",
-                    true, false);
+        // An unresolved listing IS a degradation — the profile lookup failed, was capped, or the
+        // guard was already tripped, so this candidate's size could not be established — but it has
+        // TWO different consequences that must not share one number. A candidate that cleared the
+        // cheapness gate on its own stays in the response regardless of size: "what you see is
+        // incomplete", still there, just without a size exemption or an Altman-Z (Task 5 gates Z on
+        // the same resolution). A candidate that needed the size exemption and never got one because
+        // its listing stayed unresolved is GONE from the response — a source outage that cost
+        // candidates outright, the harder case. Folding both into one counter used to read as
+        // "N candidates have an unresolved listing" while items= silently shrank by the same N,
+        // unreadable for an operator or the reasoning agent trying to tell "still here, degraded"
+        // from "missing entirely".
+        if (listingUnknownKept > 0 || listingUnknownDropped > 0) {
+            StringBuilder detail = new StringBuilder();
+            if (listingUnknownKept > 0) {
+                detail.append(listingUnknownKept)
+                        .append(" candidates have an unresolved listing (no size exemption, no Altman-Z)");
+            }
+            if (listingUnknownDropped > 0) {
+                if (detail.length() > 0) detail.append("; ");
+                detail.append(listingUnknownDropped)
+                        .append(" candidates were dropped for an unresolved listing (no size exemption possible)");
+            }
+            h = DataSourceHealth.degradedWith(h, detail.toString(), true, false);
         }
         if (enrichmentDropped > 0) {
             h = DataSourceHealth.degradedWith(h,
