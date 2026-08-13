@@ -325,9 +325,13 @@ public class StrigoiLazarusWebhookController extends HuntController {
         // (it logs and keeps the last-known rate), and hasRate() afterwards is the sole availability
         // signal — convert() cannot serve that role, since it silently returns the unconverted
         // amount on a cache miss (FxService:35).
+        // Mirrors LazarusListingResolver's own "blank carries no evidence" rule
+        // (LazarusListingResolver.java:78): a blank-but-non-null currency is not USD, but it is
+        // also not a real ISO code to warm a rate for — without the isBlank() check this used to
+        // fire a pointless get_fx_rate(from="") call (plus a WARN) once per night.
         resolvedResult.candidates().stream()
                 .map(LazarusCandidate::reportingCurrency)
-                .filter(c -> c != null && !"USD".equalsIgnoreCase(c))
+                .filter(c -> c != null && !c.isBlank() && !"USD".equalsIgnoreCase(c))
                 .distinct()
                 .forEach(c -> fx.warm(c, "USD"));
 
@@ -351,8 +355,20 @@ public class StrigoiLazarusWebhookController extends HuntController {
                         }
                     }
                     case US_CONFIRMED -> {
-                        usdMillions = c.marketCap();
-                        marketCapAvailable = true;
+                        // Defensive, not load-bearing today: LazarusListingResolver only ever
+                        // assigns US_CONFIRMED when reportingCurrency was null/blank to begin with
+                        // (a non-blank currency short-circuits straight to FOREIGN_SUFFIXED before
+                        // any profile call), so this branch cannot currently see a non-USD
+                        // currency. But that invariant lives in a DIFFERENT class — if a future
+                        // change ever let US_CONFIRMED coexist with a set currency ("profile ticker
+                        // matches, currency irrelevant"), a bare pass-through would silently read
+                        // e.g. EUR millions as USD millions past the mega-cap threshold, which is
+                        // exactly the bug this whole plan removes. Guard it here too.
+                        String currency = c.reportingCurrency();
+                        if (currency == null || currency.isBlank() || "USD".equalsIgnoreCase(currency)) {
+                            usdMillions = c.marketCap();
+                            marketCapAvailable = true;
+                        }
                     }
                     case UNKNOWN -> {
                         // no size can be trusted for an unresolved listing — stays unavailable.

@@ -21,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -288,6 +289,24 @@ class StrigoiLazarusWebhookControllerTest {
         assertThat(kept.marketCapAvailable()).isTrue();
     }
 
+    /** Defensive-in-depth: {@link LazarusListingResolver} only ever assigns US_CONFIRMED with a
+     *  null/blank reportingCurrency today, so this cannot happen through the real resolver — but
+     *  the invariant lives in a different class. Should a future resolver change ever pair
+     *  US_CONFIRMED with a set currency, the controller must still refuse to read that raw figure
+     *  as USD rather than silently reading e.g. EUR millions past the mega-cap threshold. */
+    @Test
+    void usConfirmedWithASetCurrencyIsNeverTrustedAsUsd() {
+        LazarusCandidate c = rawCandidate("ODD", 250_000.0, "EUR", false, ListingResolution.US_CONFIRMED);
+        var enrichment = mock(LazarusEnrichmentService.class);
+        var captor = captureScreened(enrichment);
+        var controller = sizeDecisionController(screenerReturning(c),
+                resolverReturning(0, 0, c), mock(FxService.class), enrichment, 100_000.0);
+
+        controller.hunt(Map.of());
+
+        assertThat(captor.getValue()).isEmpty(); // not cheap, and no trusted USD size either
+    }
+
     @Test
     void usConfirmedBelowThresholdIsDroppedSilently() {
         LazarusCandidate c = rawCandidate("SMALL", 60_000.0, null, false, ListingResolution.US_CONFIRMED);
@@ -400,6 +419,24 @@ class StrigoiLazarusWebhookControllerTest {
         verify(fx, never()).warm(any(), any());
     }
 
+    /** A blank (non-null) currency carries no evidence, mirroring
+     *  {@code LazarusListingResolver}'s own rule (LazarusListingResolver.java:78) — it is not USD,
+     *  but it is also not a real ISO code to warm a rate for. Without the {@code isBlank()} guard
+     *  this used to fire a pointless {@code get_fx_rate(from="")} call once per night. */
+    @Test
+    void blankCurrencyNeverWarmsEither() {
+        LazarusCandidate c = rawCandidate("BLANK", 250_000.0, "  ", true, ListingResolution.FOREIGN_SUFFIXED);
+        var enrichment = mock(LazarusEnrichmentService.class);
+        captureScreened(enrichment);
+        var fx = mock(FxService.class);
+        var controller = sizeDecisionController(screenerReturning(c),
+                resolverReturning(0, 0, c), fx, enrichment, 100_000.0);
+
+        controller.hunt(Map.of());
+
+        verify(fx, never()).warm(any(), any());
+    }
+
     @Test
     void enrichmentDroppedIgnoresSizeHopes() {
         // Run A: no size hopes at all -- the screener/resolver return nothing.
@@ -420,8 +457,8 @@ class StrigoiLazarusWebhookControllerTest {
 
         assertThat(resultB.health().detail()).isEqualTo(resultA.health().detail());
         assertThat(resultB.health().partial()).isFalse();
-        assertThat(resultB.health().detail() == null
-                || !resultB.health().detail().contains("dropped during enrichment")).isTrue();
+        assertThat(Optional.ofNullable(resultB.health().detail()).orElse(""))
+                .doesNotContain("dropped during enrichment");
     }
 
     @Test
