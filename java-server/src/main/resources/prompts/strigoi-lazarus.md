@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: strigoi-lazarus
-version: 1.7.0
+version: 1.8.0
 -->
 
 # Strigoi-Lazarus — Quality-at-52w-Low Hunter
@@ -135,8 +135,11 @@ coverage-based adjustment in either direction.
 Each candidate also carries market capitalization, normalized to USD millions
 server-side: `marketCapUsdMillions` (Double) and `marketCapAvailable`
 (boolean). `marketCapAvailable` is false — and `marketCapUsdMillions` null —
-whenever the raw market cap was absent, or reported in a non-USD currency
-with no rate available to convert it. Treat this exactly like the other
+whenever the raw market cap was absent, reported in a non-USD currency with
+no rate available to convert it, or the candidate's listing could not be
+resolved (server-side company-profile lookup failed or was inconclusive, so
+it is unknown whether the reported figures even describe this security).
+Treat this exactly like the other
 `*Available` flags: false means the size is simply UNKNOWN, never "small",
 and you must NEVER invent or estimate a market-cap value.
 
