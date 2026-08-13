@@ -51,7 +51,7 @@ class AltmanZCalculatorTest {
             return out;
         });
         // Routing is now purely on ListingResolution (never the symbol shape), so this whole
-        // (US golden) suite drives the 2-param overload, which is fixed to US_CONFIRMED.
+        // (US golden) suite passes ListingResolution.US_CONFIRMED explicitly.
         calculator = new AltmanZCalculator(filings);
     }
 
@@ -92,7 +92,7 @@ class AltmanZCalculatorTest {
     void computesClassicZFromHandCheckableInputs() {
         stubHealthyConcepts();
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40");
@@ -103,7 +103,7 @@ class AltmanZCalculatorTest {
     void fetchesAllTagsInASingleBulkCall() {
         stubHealthyConcepts();
 
-        calculator.zScore("ACME", 900.0);
+        calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> tags = ArgumentCaptor.forClass(List.class);
@@ -132,7 +132,7 @@ class AltmanZCalculatorTest {
         stubAnnual("OperatingIncomeLoss", 0L);
         stubAnnual("Revenues", 0L);
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 600.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 600.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("0.60");
@@ -152,7 +152,7 @@ class AltmanZCalculatorTest {
         stubAnnual("OperatingIncomeLoss", -50_000_000L);
         stubAnnual("Revenues", 1_000_000_000L);
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 270.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 270.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("0.11");
@@ -167,7 +167,7 @@ class AltmanZCalculatorTest {
             stubHealthyConcepts();
             stubbed.remove(missing);   // absent from the bulk map (comes back empty)
 
-            AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+            AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
             assertThat(z.available()).as("missing %s must make Z unavailable", missing).isFalse();
             assertThat(z.zScore()).as("no partial Z with missing %s", missing).isNull();
@@ -176,9 +176,9 @@ class AltmanZCalculatorTest {
 
     @Test
     void missingMarketCapYieldsUnavailableWithoutAnyRemoteCall() {
-        assertThat(calculator.zScore("ACME", null).available()).isFalse();
-        assertThat(calculator.zScore("ACME", 0.0).available()).isFalse();
-        assertThat(calculator.zScore("ACME", -5.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", null, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 0.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
+        assertThat(calculator.zScore("ACME", -5.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
         verifyNoInteractions(filings);
     }
 
@@ -188,7 +188,7 @@ class AltmanZCalculatorTest {
         // filer stopped reporting Liabilities: latest instant is a year older than Assets'
         stubInstant("Liabilities", BS_DATE.minusYears(1), 600_000_000L);
 
-        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
     }
 
     @Test
@@ -197,7 +197,7 @@ class AltmanZCalculatorTest {
         // revenue only reported for the PRIOR fiscal year -> would mix flow periods in X3/X5
         stubAnnual("Revenues", BS_DATE.minusYears(1), 1_400_000_000L);
 
-        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
     }
 
     @Test
@@ -207,7 +207,7 @@ class AltmanZCalculatorTest {
         stubbed.put("OperatingIncomeLoss", new ConceptSeries("OperatingIncomeLoss",
                 List.of(new ConceptSeries.Point(BS_DATE.minusDays(90), BS_DATE, BigDecimal.valueOf(30_000_000L)))));
 
-        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
     }
 
     @Test
@@ -216,7 +216,7 @@ class AltmanZCalculatorTest {
         stubbed.remove("Revenues");   // primary revenue tag not filed
         stubAnnual("RevenueFromContractWithCustomerExcludingAssessedTax", 1_500_000_000L);
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // same hand calculation as above
@@ -234,7 +234,7 @@ class AltmanZCalculatorTest {
         // new tag: the annual point matching the EBIT fiscal-year end
         stubAnnual("RevenueFromContractWithCustomerExcludingAssessedTax", 1_500_000_000L);
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // computed off the NEW tag's 1500M
@@ -245,7 +245,7 @@ class AltmanZCalculatorTest {
         stubHealthyConcepts();
         stubInstant("Liabilities", 0L); // X4 denominator; no derivation operands stubbed
 
-        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
     }
 
     @Test
@@ -256,7 +256,7 @@ class AltmanZCalculatorTest {
                 new ConceptSeries.Point(null, BS_DATE.minusYears(1), BigDecimal.valueOf(2_000_000_000L)),
                 new ConceptSeries.Point(null, BS_DATE, BigDecimal.valueOf(1_000_000_000L)))));
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // computed off the 1000M balance sheet
@@ -274,7 +274,7 @@ class AltmanZCalculatorTest {
         stubbed.remove("Liabilities");                       // standalone tag absent
         stubInstant("StockholdersEquity", 400_000_000L);      // Assets (1000M) - 400M = 600M
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // derived liabilities 600M
@@ -289,7 +289,7 @@ class AltmanZCalculatorTest {
         stubbed.remove("Liabilities");
         stubInstant("StockholdersEquity", 1_100_000_000L);   // Assets (1000M) - 1100M = -100M -> discarded
 
-        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
     }
 
     /** Neither the standalone {@code Liabilities} tag nor {@code StockholdersEquity} is on file,
@@ -303,7 +303,7 @@ class AltmanZCalculatorTest {
         // no StockholdersEquity stubbed -> identity fallback unavailable
         stubInstant("LiabilitiesNoncurrent", 350_000_000L);    // 250M (current) + 350M = 600M
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // derived liabilities 600M
@@ -317,7 +317,7 @@ class AltmanZCalculatorTest {
         stubHealthyConcepts();
         stubbed.remove("Liabilities");   // no identity operand, no current+noncurrent operand
 
-        assertThat(calculator.zScore("ACME", 900.0).available()).isFalse();
+        assertThat(calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED).available()).isFalse();
     }
 
     // ---- Task B: restatement (latest-filed) dedup ----------------------------------------
@@ -333,7 +333,7 @@ class AltmanZCalculatorTest {
                 new ConceptSeries.Point(null, BS_DATE, BigDecimal.valueOf(2_000_000_000L), LocalDate.of(2026, 2, 1)),
                 new ConceptSeries.Point(null, BS_DATE, BigDecimal.valueOf(1_000_000_000L), LocalDate.of(2026, 5, 1)))));
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // later-filed 1000M, not stale 2000M
@@ -351,7 +351,7 @@ class AltmanZCalculatorTest {
                 new ConceptSeries.Point(BS_DATE.minusDays(364), BS_DATE,
                         BigDecimal.valueOf(1_500_000_000L), LocalDate.of(2026, 5, 1))))); // restatement
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // restated 1500M, not stale 1400M
@@ -373,7 +373,7 @@ class AltmanZCalculatorTest {
                 new ConceptSeries.Point(null, BS_DATE,
                         BigDecimal.valueOf(1_000_000_000L), LocalDate.of(2025, 2, 1))))); // actual latest year, filed earlier
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // newest period, not the later-filed stale year
@@ -395,7 +395,7 @@ class AltmanZCalculatorTest {
                 new ConceptSeries.Point(BS_DATE.minusDays(364), BS_DATE,
                         BigDecimal.valueOf(120_000_000L), LocalDate.of(2025, 2, 1)))));   // actual latest FY, filed earlier
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0);
+        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("3.40"); // newest fiscal year, not the later-filed stale one
@@ -406,7 +406,7 @@ class AltmanZCalculatorTest {
         when(filings.companyFactsStrict(eq("ACME"), any()))
                 .thenThrow(new AgoraUnavailableException("down"));
 
-        assertThatThrownBy(() -> calculator.zScore("ACME", 900.0))
+        assertThatThrownBy(() -> calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED))
                 .isInstanceOf(AgoraUnavailableException.class);
     }
 
@@ -439,7 +439,11 @@ class AltmanZCalculatorTest {
     /** The regression anchor against the Z silently going unavailable for a foreign listing: a
      *  suffixed symbol with a matching concept unit stays AVAILABLE on the concept path, even
      *  though its currency ("XTS") is neither USD nor one this suite otherwise stubs — proving
-     *  the gate is {@code reportingCurrency != null}, not a specific currency value. */
+     *  the gate is {@code reportingCurrency != null}, not a specific currency value.
+     *  {@code healthyConceptsIn} feeds the same seven hand-checkable inputs as
+     *  {@link #stubHealthyConcepts()}, so the score is pinned at the same 3.40, not just
+     *  "some" available value — proving the concept path computes correctly, not merely that it
+     *  returns something. */
     @Test
     void foreignSuffixedTakesTheConceptPath() {
         AgoraFilings foreignFilings = mock(AgoraFilings.class);
@@ -451,6 +455,7 @@ class AltmanZCalculatorTest {
                 "FOO.XX", 900.0, "XTS", ListingResolution.FOREIGN_SUFFIXED);
 
         assertThat(z.available()).isTrue();
+        assertThat(z.zScore()).isEqualByComparingTo("3.40"); // same hand calculation as stubHealthyConcepts()
         verify(foreignFilings, times(1)).conceptsStrict(eq("FOO.XX"), any(FundamentalConcept[].class));
         verify(foreignFilings, never()).companyFactsStrict(any(), anyList());
     }
@@ -472,13 +477,23 @@ class AltmanZCalculatorTest {
 
     /** Proves the symbol shape is no longer the router: a suffixed symbol resolved
      *  {@code US_CONFIRMED} takes the US path, and an unsuffixed symbol resolved
-     *  {@code FOREIGN_SUFFIXED} takes the concept path. */
+     *  {@code FOREIGN_SUFFIXED} takes the concept path. "ACME.DE" is stubbed with the SAME
+     *  healthy bulk facts as the plain "ACME" golden fixture, so the assertion is a genuine
+     *  behavior statement (the US path computes the correct 3.40) rather than an artifact of a
+     *  missing stub. */
     @Test
     void symbolShapeNoLongerRoutes() {
         stubHealthyConcepts();
+        when(filings.companyFactsStrict(eq("ACME.DE"), anyList())).thenAnswer(inv -> {
+            List<String> tags = inv.getArgument(1);
+            Map<String, ConceptSeries> out = new LinkedHashMap<>();
+            for (String tag : tags) out.put(tag, stubbed.getOrDefault(tag, ConceptSeries.empty(tag)));
+            return out;
+        });
         AltmanZCalculator.AltmanZ suffixedButUs =
                 calculator.zScore("ACME.DE", 900.0, "USD", ListingResolution.US_CONFIRMED);
-        assertThat(suffixedButUs.available()).isFalse(); // no stub for "ACME.DE" -> empty bulk map
+        assertThat(suffixedButUs.available()).isTrue();
+        assertThat(suffixedButUs.zScore()).isEqualByComparingTo("3.40"); // US path, correctly computed
         verify(filings, times(1)).companyFactsStrict(eq("ACME.DE"), anyList());
         verify(filings, never()).conceptsStrict(eq("ACME.DE"), any(FundamentalConcept[].class));
 
@@ -489,6 +504,7 @@ class AltmanZCalculatorTest {
         AltmanZCalculator.AltmanZ unsuffixedButForeign = foreignCalculator.zScore(
                 "BARE", 900.0, "XTS", ListingResolution.FOREIGN_SUFFIXED);
         assertThat(unsuffixedButForeign.available()).isTrue();
+        assertThat(unsuffixedButForeign.zScore()).isEqualByComparingTo("3.40"); // concept path, correctly computed
         verify(foreignFilings, times(1)).conceptsStrict(eq("BARE"), any(FundamentalConcept[].class));
         verify(foreignFilings, never()).companyFactsStrict(any(), anyList());
     }

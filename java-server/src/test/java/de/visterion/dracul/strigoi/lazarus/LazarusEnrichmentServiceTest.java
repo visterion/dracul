@@ -340,6 +340,24 @@ class LazarusEnrichmentServiceTest {
         verify(altmanZ).zScore(eq("ACME"), eq(900.0), any(), any()); // the candidate's Finnhub marketCap (USD millions)
     }
 
+    /** Pins {@code LazarusEnrichmentService} to actually forward {@code c.listingResolution()}
+     *  as the calculator's 4th argument — not a hardcoded value, and not a stale pre-T5 3-arg
+     *  call restored by a merge/refactor. Every other test in this class stubs/verifies the 4th
+     *  argument as {@code any()}, so a regression here (e.g. hardcoding US_CONFIRMED, or a
+     *  merge that silently drops the argument) would stay green everywhere except this test. */
+    @Test
+    void passesTheCandidatesListingResolutionThroughToTheCalculator() {
+        when(filings.fundamentalScoreStrict("ACME")).thenReturn(GOOD_SCORE);
+        LazarusCandidate foreign = candidate("ACME").withListing(ListingResolution.FOREIGN_SUFFIXED);
+        when(altmanZ.zScore(eq("ACME"), eq(900.0), any(), eq(ListingResolution.FOREIGN_SUFFIXED)))
+                .thenReturn(new AltmanZCalculator.AltmanZ(new BigDecimal("3.40"), true));
+
+        EnrichedLazarusCandidate e = service.enrich(List.of(foreign)).candidates().get(0);
+
+        assertThat(e.zScore()).isEqualByComparingTo("3.40");
+        verify(altmanZ).zScore(eq("ACME"), eq(900.0), any(), eq(ListingResolution.FOREIGN_SUFFIXED));
+    }
+
     @Test
     void zAttemptedEvenWhenFundamentalScoreUnavailable() {
         when(filings.fundamentalScoreStrict("NODATA")).thenReturn(FundamentalScore.unavailable());

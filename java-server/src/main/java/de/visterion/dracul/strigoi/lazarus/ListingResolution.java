@@ -8,7 +8,7 @@ package de.visterion.dracul.strigoi.lazarus;
  * {@code reportingCurrency != null} — never the shape of the ticker symbol, and never the
  * currency value itself. A non-null {@code reportingCurrency} means foreign REGARDLESS of
  * which currency it names: 0005.HK reports in USD and is still a foreign listing. Suffix
- * lists ({@code InstrumentClassifier} and friends) tell you how a symbol is spelled, not
+ * lists (like the former {@code InstrumentClassifier}) tell you how a symbol is spelled, not
  * which listing its fundamentals describe; treating them as interchangeable is the bug this
  * enum exists to prevent from recurring.
  *

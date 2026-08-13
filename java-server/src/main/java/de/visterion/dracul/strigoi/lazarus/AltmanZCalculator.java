@@ -102,21 +102,6 @@ public class AltmanZCalculator {
     private record Dated(LocalDate end, BigDecimal value) {}
 
     /**
-     * US-symbol convenience overload, fixed to {@link ListingResolution#US_CONFIRMED} (no
-     * reporting currency — US filings are USD/USD, so the non-US currency guard never applies).
-     * Callers that hold an actual {@link ListingResolution} (i.e. every candidate that went
-     * through the listing resolver) MUST use {@link #zScore(String, Double, String,
-     * ListingResolution)} instead — this overload exists only for call sites (and this test
-     * suite's US golden fixtures) that never see a non-US or unresolved listing.
-     *
-     * @param marketCapMillions Finnhub market cap in USD MILLIONS (converted to USD here);
-     *                          null or non-positive → unavailable without any remote call.
-     */
-    public AltmanZ zScore(String symbol, Double marketCapMillions) {
-        return zScore(symbol, marketCapMillions, null, ListingResolution.US_CONFIRMED);
-    }
-
-    /**
      * Z-score of one symbol on the path chosen by the resolved {@link ListingResolution} —
      * NEVER by the shape of {@code symbol}. A ticker's suffix tells you how it is spelled, not
      * which listing its fundamentals describe (0005.HK reports in USD and is still foreign); an
