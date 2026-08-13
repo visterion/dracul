@@ -7,6 +7,7 @@ import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
@@ -64,11 +65,14 @@ class StrigoiLazarus52WeekSourceFailureTest {
         var preyRepo = mock(PreyRepository.class);
         var cache = new ToolFetchCache(new AgentToolCatalog(List.of()), 0);
 
+        var listingResolver = new LazarusListingResolver(companyData, 40);
+        var fx = mock(FxService.class);
+
         // universe-source=watchlist keeps the index/pre-filter out of the picture: the only losses
         // this suite may see are the ones the fundamentals stage produces.
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, screener, enrichment, preyRepo, cache,
-                mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
+                "tok", watchlist, companyData, screener, enrichment, listingResolver, fx, preyRepo,
+                cache, mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION,
                 "default",
                 0.10, 3.0, 2.0, 20, 100_000.0, "AAPL",

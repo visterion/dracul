@@ -11,6 +11,7 @@ import de.visterion.dracul.hunting.agora.IndexConstituent;
 import de.visterion.dracul.hunting.agora.PriceRange;
 import de.visterion.dracul.hunting.agora.PriceRangeMocks;
 import de.visterion.dracul.hunting.agora.RangeProbe;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
@@ -51,6 +52,8 @@ class StrigoiLazarusMarketUniverseTest {
     private AgoraIndexConstituents index;
     private AgoraPriceRange priceRange;
     private LazarusEnrichmentService enrichment;
+    private LazarusListingResolver listingResolver;
+    private FxService fx;
 
     private StrigoiLazarusWebhookController controller;
 
@@ -73,9 +76,11 @@ class StrigoiLazarusMarketUniverseTest {
         when(companyData.fundamentals(anyString())).thenReturn(null);
         when(companyData.fundamentalsResult(anyString()))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        listingResolver = new LazarusListingResolver(companyData, 40);
+        fx = mock(FxService.class);
 
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, new LazarusScreener(), enrichment,
+                "tok", watchlist, companyData, new LazarusScreener(), enrichment, listingResolver, fx,
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
@@ -329,7 +334,7 @@ class StrigoiLazarusMarketUniverseTest {
     @Test
     void aUniverseCappedByUniverseMaxIsReportedAsTruncated() {
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, new LazarusScreener(), enrichment,
+                "tok", watchlist, companyData, new LazarusScreener(), enrichment, listingResolver, fx,
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
@@ -349,7 +354,7 @@ class StrigoiLazarusMarketUniverseTest {
     @Test
     void aFundamentalsBudgetThatBitesIsReportedAsTruncated() {
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, new LazarusScreener(), enrichment,
+                "tok", watchlist, companyData, new LazarusScreener(), enrichment, listingResolver, fx,
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
@@ -399,7 +404,7 @@ class StrigoiLazarusMarketUniverseTest {
     @Test
     void watchlistUniverseSourceSkipsTheIndexEntirely() {
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, new LazarusScreener(), enrichment,
+                "tok", watchlist, companyData, new LazarusScreener(), enrichment, listingResolver, fx,
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
@@ -420,7 +425,7 @@ class StrigoiLazarusMarketUniverseTest {
     @Test
     void watchlistUniverseSourceWithAnEmptyWatchlistIsUnavailable() {
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, new LazarusScreener(), enrichment,
+                "tok", watchlist, companyData, new LazarusScreener(), enrichment, listingResolver, fx,
                 mock(PreyRepository.class), new ToolFetchCache(new AgentToolCatalog(List.of()), 0),
                 mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",

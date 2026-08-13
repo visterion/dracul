@@ -39,13 +39,14 @@ import java.math.BigDecimal;
  *  they can never diverge. When {@code revisionsAvailable} is false all three fields are
  *  null (no trend at all — unknown, never a judgement).
  *
- *  <p>{@code marketCapUsdMillions} is {@link LazarusCandidate#marketCap()} normalised to USD
- *  millions by {@link LazarusEnrichmentService}: unchanged for a null/{@code "USD"}
- *  {@code reportingCurrency}, converted via {@link de.visterion.dracul.marketdata.FxService}
- *  for any other currency. {@code marketCapAvailable} is false — and {@code marketCapUsdMillions}
- *  null — whenever the raw market cap is absent OR the reporting currency is non-USD and no
- *  cached FX rate is available; a missing/unconvertible size is always unknown, **never** read
- *  as small. */
+ *  <p>{@code marketCapUsdMillions} / {@code marketCapAvailable} are
+ *  {@link LazarusCandidate#marketCapUsdMillions()} / {@link LazarusCandidate#marketCapAvailable()}
+ *  passed through unchanged — {@link LazarusEnrichmentService} does not compute them itself.
+ *  {@link StrigoiLazarusWebhookController} is the only stage that converts: it knows the
+ *  candidate's resolved {@link ListingResolution} (US-confirmed figures are already USD; a
+ *  foreign-suffixed figure is converted via {@link de.visterion.dracul.marketdata.FxService}
+ *  only when a cached rate is available; an unresolved listing stays unavailable). A
+ *  missing/unconvertible/unresolved size is always unknown, **never** read as small. */
 public record EnrichedLazarusCandidate(
         String symbol,
         String companyName,

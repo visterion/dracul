@@ -5,7 +5,6 @@ import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.AgoraUnavailableException.Scope;
-import de.visterion.dracul.marketdata.FxService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -50,7 +49,7 @@ class LazarusEnrichmentScopeTest {
         AgoraCompanyData companyData = mock(AgoraCompanyData.class); // empty trend -> no revisions
         when(altmanZ.zScore(anyString(), any(), any())).thenReturn(AltmanZCalculator.AltmanZ.unavailable());
         service = new LazarusEnrichmentService(filings, marketData, altmanZ, companyData,
-                new de.visterion.dracul.strigoi.echo.RevisionsProxy(), mock(FxService.class));
+                new de.visterion.dracul.strigoi.echo.RevisionsProxy());
     }
 
     private static LazarusCandidate candidate(String symbol, double pctAboveLow) {

@@ -7,6 +7,7 @@ import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.AgoraPriceRange;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
 import de.visterion.dracul.research.ResearchMemoryLinkRepository;
@@ -52,13 +53,15 @@ class StrigoiLazarusProbeTest {
         var priceRange = mock(AgoraPriceRange.class);
         var preyRepo = mock(PreyRepository.class);
         var cache = new ToolFetchCache(new AgentToolCatalog(List.of()), 0);
+        var listingResolver = new LazarusListingResolver(companyData, 40);
+        var fx = mock(FxService.class);
 
         when(companyData.fundamentals(anyString())).thenReturn(null);
         when(heldPositionService.openPositions(CONNECTION)).thenReturn(List.of());
 
         controller = new StrigoiLazarusWebhookController(
-                "tok", watchlist, companyData, screener, enrichment, preyRepo, cache,
-                mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
+                "tok", watchlist, companyData, screener, enrichment, listingResolver, fx, preyRepo,
+                cache, mock(HiveMemResearchService.class), mock(ResearchMemoryLinkRepository.class),
                 heldPositionService, index, new LazarusUniverseService(priceRange), CONNECTION, "",
                 0.10, 3.0, 2.0, 20, 100_000.0, CANARY,
                 "watchlist", 600, 0.25, 150_000L, 10, 60);

@@ -63,7 +63,8 @@ public class LazarusScreener {
                     f.roaTtm(), f.currentRatio(), f.debtToEquity(),
                     f.grossMargin(), f.netMargin(), f.revenueGrowthYoy(),
                     f.epsGrowthYoy(), f.priceToBook(), f.peTtm(), f.fcfPerShare(),
-                    f.marketCap(), f.reportingCurrency(), cheapGatePassed, ListingResolution.UNKNOWN));
+                    f.marketCap(), f.reportingCurrency(), cheapGatePassed, ListingResolution.UNKNOWN,
+                    null, false));
         }
         return new ScreenResult(out, implausibleRange);
     }

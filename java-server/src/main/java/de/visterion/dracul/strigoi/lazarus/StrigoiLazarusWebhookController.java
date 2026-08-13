@@ -7,6 +7,7 @@ import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraIndexConstituents;
 import de.visterion.dracul.hunting.agora.IndexConstituent;
+import de.visterion.dracul.marketdata.FxService;
 import de.visterion.dracul.position.HeldPosition;
 import de.visterion.dracul.position.HeldPositionService;
 import de.visterion.dracul.prey.PreyRepository;
@@ -20,6 +21,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -96,6 +98,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private final AgoraCompanyData companyData;
     private final LazarusScreener screener;
     private final LazarusEnrichmentService enrichment;
+    private final LazarusListingResolver listingResolver;
+    private final FxService fx;
     private final HeldPositionService heldPositionService;
     private final AgoraIndexConstituents indexConstituents;
     private final LazarusUniverseService universeService;
@@ -140,6 +144,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
             AgoraCompanyData companyData,
             LazarusScreener screener,
             LazarusEnrichmentService enrichment,
+            LazarusListingResolver listingResolver,
+            FxService fx,
             PreyRepository preyRepo,
             ToolFetchCache cache,
             HiveMemResearchService memory,
@@ -172,6 +178,8 @@ public class StrigoiLazarusWebhookController extends HuntController {
         this.companyData = companyData;
         this.screener = screener;
         this.enrichment = enrichment;
+        this.listingResolver = listingResolver;
+        this.fx = fx;
         this.heldPositionService = heldPositionService;
         this.indexConstituents = indexConstituents;
         this.universeService = universeService;
@@ -307,16 +315,65 @@ public class StrigoiLazarusWebhookController extends HuntController {
             }
             raws.add(new LazarusRaw(p.symbol(), p.companyName(), p.currentPrice(), f));
         }
-        // megaCapUsdMillions is no longer passed into the screener — the size decision now happens
-        // downstream of listing resolution (Task 3/4); the field stays on this controller for that.
         var screenResult = screener.screen(raws, maxAboveLow, maxDebtEquity, maxPriceToBook, maxPFcf);
-        var screened = screenResult.candidates();
+
+        // Listing resolution (Task 3): the screener cannot know which listing a candidate's
+        // marketCap/reportingCurrency describe — that call happens here, once, for the survivors.
+        var resolvedResult = listingResolver.resolve(screenResult.candidates());
+
+        // Warm once per distinct non-USD reporting currency BEFORE converting: warm() never throws
+        // (it logs and keeps the last-known rate), and hasRate() afterwards is the sole availability
+        // signal — convert() cannot serve that role, since it silently returns the unconverted
+        // amount on a cache miss (FxService:35).
+        resolvedResult.candidates().stream()
+                .map(LazarusCandidate::reportingCurrency)
+                .filter(c -> c != null && !"USD".equalsIgnoreCase(c))
+                .distinct()
+                .forEach(c -> fx.warm(c, "USD"));
+
+        // USD normalisation + the size decision, the single place both happen now (Task 4). A
+        // candidate that cleared the cheapness gate on its own needs no size at all; everyone else
+        // needs a USD figure at or above megaCapUsdMillions, and megaCapUsdMillions == 0 is the
+        // documented off switch (a bare >= comparison would silently give every priced candidate
+        // the exemption once size stops being a filter).
+        List<LazarusCandidate> screened = new ArrayList<>();
+        for (LazarusCandidate c : resolvedResult.candidates()) {
+            Double usdMillions = null;
+            boolean marketCapAvailable = false;
+            if (c.marketCap() != null) {
+                switch (c.listingResolution()) {
+                    case FOREIGN_SUFFIXED -> {
+                        String currency = c.reportingCurrency();
+                        if (fx.hasRate(currency, "USD")) {
+                            usdMillions = fx.convert(BigDecimal.valueOf(c.marketCap()), currency, "USD")
+                                    .doubleValue();
+                            marketCapAvailable = true;
+                        }
+                    }
+                    case US_CONFIRMED -> {
+                        usdMillions = c.marketCap();
+                        marketCapAvailable = true;
+                    }
+                    case UNKNOWN -> {
+                        // no size can be trusted for an unresolved listing — stays unavailable.
+                    }
+                }
+            }
+            LazarusCandidate withUsd = c.withMarketCapUsd(usdMillions, marketCapAvailable);
+            boolean keep = withUsd.cheapGatePassed()
+                    || (marketCapAvailable && usdMillions >= megaCapUsdMillions && megaCapUsdMillions > 0);
+            if (keep) screened.add(withUsd);
+        }
+
         var batch = enrichment.enrich(screened);
         var enriched = batch.candidates();
         // Two DIFFERENT losses, deliberately on two counters: enrichmentDropped are candidates that
         // are GONE (accruals hard-drop, enrichment cap) — a size difference; degradedCandidates are
         // candidates still in the list that came back missing a source, which a size difference
-        // cannot see.
+        // cannot see. Computed against `screened` (the list that actually entered enrich()), never
+        // screenResult.candidates(): a size hope that was correctly filtered out above is not a
+        // loss during enrichment, and counting it here would make `partial` permanent noise every
+        // night the screener finds an uncheap, unconvertible or too-small candidate.
         int enrichmentDropped = screened.size() - enriched.size();
 
         // notEligible sits next to probeFailed on purpose: the two numbers used to be one, and an
@@ -325,18 +382,19 @@ public class StrigoiLazarusWebhookController extends HuntController {
         log.info("strigoi-lazarus universe: source={} universe={} screened={} shortlist={} "
                         + "watchlist={} fundamentals={} candidates={} (probeFailed={} notEligible={} "
                         + "noFundamentals={} no52wLow={} no52wLowSourceFailed={} "
-                        + "implausibleRange={} "
+                        + "implausibleRange={} foreignListing={} listingUnknown={} "
                         + "enrichmentDropped={} enrichmentDegraded={} "
                         + "unscreened={} sourceDown={})",
                 universeSource, universe.size(), scan.screened(), scan.shortlist().size(),
                 watchItems.size(), targets.size(), enriched.size(), scan.probeFailed(),
                 scan.notEligible(), fundamentalsMissing, week52Missing, week52SourceFailed,
-                screenResult.implausibleRange(),
+                screenResult.implausibleRange(), resolvedResult.foreignListing(),
+                resolvedResult.listingUnknown(),
                 enrichmentDropped, batch.degradedCandidates(), scan.unscreened(), scan.sourceDown());
 
         return new DataSourceResult<>(enriched, health(indexDetail, scan, universeCapDropped,
                 fundamentalsCapDropped, fundamentalsMissing, week52SourceFailed,
-                enrichmentDropped, batch.degradedCandidates()));
+                resolvedResult.listingUnknown(), enrichmentDropped, batch.degradedCandidates()));
     }
 
     /**
@@ -349,7 +407,7 @@ public class StrigoiLazarusWebhookController extends HuntController {
     private DataSourceHealth health(String indexDetail, LazarusUniverseService.Scan scan,
                                     int universeCapDropped, int fundamentalsCapDropped,
                                     int fundamentalsMissing, int week52SourceFailed,
-                                    int enrichmentDropped, int enrichmentDegraded) {
+                                    int listingUnknown, int enrichmentDropped, int enrichmentDegraded) {
         DataSourceHealth h = DataSourceHealth.healthy(SOURCE);
         if (indexDetail != null) {
             h = DataSourceHealth.degradedWith(h,
@@ -402,6 +460,22 @@ public class StrigoiLazarusWebhookController extends HuntController {
         if (week52SourceFailed > 0) {
             h = DataSourceHealth.degradedWith(h,
                     week52SourceFailed + " symbols dropped: 52-week range source unavailable",
+                    true, false);
+        }
+        // foreignListing (a profile whose ticker names a different listing) is deliberately NOT
+        // folded in here, for the same reason week52Missing and scan.notEligible() are not: it is
+        // a PERMANENT property of the instrument (BRK.B trades under a different profile ticker
+        // every night), not a lookup failure, and folding it in would turn `partial` into noise
+        // that fires forever. It stays in the log line above.
+        //
+        // listingUnknown IS a degradation: the profile lookup failed, was capped, or the guard was
+        // already tripped, so this candidate's size could not be established. Both consequences are
+        // named — no size exemption AND no Altman-Z, since Task 5 gates Z on the same resolution —
+        // so the reasoning agent reading one detail string understands the full blast radius.
+        if (listingUnknown > 0) {
+            h = DataSourceHealth.degradedWith(h,
+                    listingUnknown + " candidates have an unresolved listing (no size exemption, "
+                            + "no Altman-Z)",
                     true, false);
         }
         if (enrichmentDropped > 0) {

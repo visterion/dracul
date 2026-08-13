@@ -10,7 +10,13 @@ package de.visterion.dracul.strigoi.lazarus;
  *  listing behind {@code marketCap}/{@code reportingCurrency} has been resolved yet — the
  *  screener itself can never resolve it (pure, I/O-free) and always sets
  *  {@link ListingResolution#UNKNOWN}; a later stage replaces the value once it has called out
- *  to resolve the listing. */
+ *  to resolve the listing. {@code marketCapUsdMillions} / {@code marketCapAvailable} are the
+ *  USD-normalised counterparts of {@code marketCap}, set by
+ *  {@link de.visterion.dracul.strigoi.lazarus.StrigoiLazarusWebhookController} once the listing
+ *  is resolved — the only stage allowed to convert, since the conversion depends on
+ *  {@code listingResolution}. {@code marketCap}/{@code reportingCurrency} are NOT replaced by
+ *  this: {@link de.visterion.dracul.strigoi.lazarus.AltmanZCalculator} still needs the raw,
+ *  un-normalised figures. */
 public record LazarusCandidate(
         String symbol,
         String companyName,
@@ -31,7 +37,9 @@ public record LazarusCandidate(
         Double marketCap,
         String reportingCurrency,
         boolean cheapGatePassed,
-        ListingResolution listingResolution
+        ListingResolution listingResolution,
+        Double marketCapUsdMillions,
+        boolean marketCapAvailable
 ) {
     /** Back-compat convenience for US callers/tests with no reporting currency and no
      *  gate/listing state (defaults: reportingCurrency null, cheapGatePassed false,
@@ -48,7 +56,8 @@ public record LazarusCandidate(
             Double marketCap) {
         this(symbol, companyName, currentPrice, week52Low, week52High, pctAboveLow, roaTtm,
                 currentRatio, debtToEquity, grossMargin, netMargin, revenueGrowthYoy, epsGrowthYoy,
-                priceToBook, peTtm, fcfPerShare, marketCap, null, false, ListingResolution.UNKNOWN);
+                priceToBook, peTtm, fcfPerShare, marketCap, null, false, ListingResolution.UNKNOWN,
+                null, false);
     }
 
     /** Back-compat convenience for callers that set reportingCurrency but not the gate/listing
@@ -64,7 +73,7 @@ public record LazarusCandidate(
         this(symbol, companyName, currentPrice, week52Low, week52High, pctAboveLow, roaTtm,
                 currentRatio, debtToEquity, grossMargin, netMargin, revenueGrowthYoy, epsGrowthYoy,
                 priceToBook, peTtm, fcfPerShare, marketCap, reportingCurrency, false,
-                ListingResolution.UNKNOWN);
+                ListingResolution.UNKNOWN, null, false);
     }
 
     /** A copy with {@code listingResolution} replaced; every other field unchanged. Used by
@@ -74,6 +83,17 @@ public record LazarusCandidate(
         return new LazarusCandidate(symbol, companyName, currentPrice, week52Low, week52High,
                 pctAboveLow, roaTtm, currentRatio, debtToEquity, grossMargin, netMargin,
                 revenueGrowthYoy, epsGrowthYoy, priceToBook, peTtm, fcfPerShare, marketCap,
-                reportingCurrency, cheapGatePassed, listing);
+                reportingCurrency, cheapGatePassed, listing, marketCapUsdMillions, marketCapAvailable);
+    }
+
+    /** A copy with {@code marketCapUsdMillions}/{@code marketCapAvailable} replaced; every other
+     *  field, including the raw {@code marketCap}/{@code reportingCurrency}, unchanged. Used by
+     *  {@link de.visterion.dracul.strigoi.lazarus.StrigoiLazarusWebhookController}, the only
+     *  stage that knows the resolved listing and may therefore convert. */
+    public LazarusCandidate withMarketCapUsd(Double usdMillions, boolean available) {
+        return new LazarusCandidate(symbol, companyName, currentPrice, week52Low, week52High,
+                pctAboveLow, roaTtm, currentRatio, debtToEquity, grossMargin, netMargin,
+                revenueGrowthYoy, epsGrowthYoy, priceToBook, peTtm, fcfPerShare, marketCap,
+                reportingCurrency, cheapGatePassed, listingResolution, usdMillions, available);
     }
 }
