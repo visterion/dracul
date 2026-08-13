@@ -166,7 +166,7 @@ public class LazarusEnrichmentService {
             // exception would.
             if (!concepts.isDown()) {
                 try {
-                    z = altmanZ.zScore(c.symbol(), c.marketCap(), c.reportingCurrency());
+                    z = altmanZ.zScore(c.symbol(), c.marketCap(), c.reportingCurrency(), c.listingResolution());
                     concepts.recordSuccess();
                 } catch (RuntimeException e) {
                     concepts.recordFailure(e);

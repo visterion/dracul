@@ -26,8 +26,7 @@ class AltmanZConceptPickingTest {
     private static AltmanZCalculator calculatorFor(JsonNode conceptsPayload) {
         AgoraClient client = mock(AgoraClient.class);
         when(client.callTool(eq("get_fundamental_concepts"), any())).thenReturn(conceptsPayload);
-        return new AltmanZCalculator(new AgoraFilings(client),
-                new InstrumentClassifier(List.of("DE", "T", "HK")));
+        return new AltmanZCalculator(new AgoraFilings(client));
     }
 
     private static JsonNode fixture() {
@@ -46,7 +45,7 @@ class AltmanZConceptPickingTest {
     @Test void computesZFromRealSapDeConcepts() {
         AltmanZCalculator calc = calculatorFor(fixture());
 
-        AltmanZCalculator.AltmanZ z = calc.zScore("SAP.DE", 100_000.0, "EUR");
+        AltmanZCalculator.AltmanZ z = calc.zScore("SAP.DE", 100_000.0, "EUR", ListingResolution.FOREIGN_SUFFIXED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("4.39");
@@ -56,13 +55,13 @@ class AltmanZConceptPickingTest {
         AltmanZCalculator calc = calculatorFor(fixture());
 
         // liabilities are in EUR; a USD cap must not be divided into EUR liabilities
-        assertThat(calc.zScore("SAP.DE", 100_000.0, "USD").available()).isFalse();
+        assertThat(calc.zScore("SAP.DE", 100_000.0, "USD", ListingResolution.FOREIGN_SUFFIXED).available()).isFalse();
     }
 
     @Test void nullReportingCurrencyYieldsUnavailableOnTheConceptPath() {
         AltmanZCalculator calc = calculatorFor(fixture());
 
-        assertThat(calc.zScore("SAP.DE", 100_000.0, null).available()).isFalse();
+        assertThat(calc.zScore("SAP.DE", 100_000.0, null, ListingResolution.FOREIGN_SUFFIXED).available()).isFalse();
     }
 
     @Test void missingTotalLiabilitiesYieldsUnavailable() {
@@ -71,7 +70,7 @@ class AltmanZConceptPickingTest {
         AltmanZCalculator calc = calculatorFor(payload);
 
         // no derivation fallback on the concept path -> unavailable, not a guess
-        assertThat(calc.zScore("SAP.DE", 100_000.0, "EUR").available()).isFalse();
+        assertThat(calc.zScore("SAP.DE", 100_000.0, "EUR", ListingResolution.FOREIGN_SUFFIXED).available()).isFalse();
     }
 
     /** Latest-filed dedup + latest-instant anchor on the Yahoo shape: an EARLIER-filed
@@ -89,7 +88,7 @@ class AltmanZConceptPickingTest {
                 .put("filed", "2000-01-01");
         AltmanZCalculator calc = calculatorFor(payload);
 
-        AltmanZCalculator.AltmanZ z = calc.zScore("SAP.DE", 100_000.0, "EUR");
+        AltmanZCalculator.AltmanZ z = calc.zScore("SAP.DE", 100_000.0, "EUR", ListingResolution.FOREIGN_SUFFIXED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("4.39"); // real later-filed value, not the 1-EUR stub

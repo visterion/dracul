@@ -35,8 +35,7 @@ class AltmanZDualPathTest {
     @BeforeEach
     void setUp() {
         filings = mock(AgoraFilings.class);
-        calculator = new AltmanZCalculator(filings,
-                new InstrumentClassifier(List.of("DE", "T", "HK")));
+        calculator = new AltmanZCalculator(filings);
     }
 
     private static ConceptSeries.Point instant(long v) {
@@ -64,7 +63,8 @@ class AltmanZDualPathTest {
             return out;
         });
 
-        AltmanZCalculator.AltmanZ z = calculator.zScore("ACME", 900.0, "USD");
+        AltmanZCalculator.AltmanZ z =
+                calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
 
         // byte-identical to the US golden hand calculation
         assertThat(z.available()).isTrue();
@@ -77,7 +77,7 @@ class AltmanZDualPathTest {
         when(filings.conceptsStrict(eq("SAP.DE"), any(FundamentalConcept[].class))).thenReturn(multi(
                 600_000_000L, 900.0)); // liabilities 600M EUR, arbitrary healthy rest below
 
-        calculator.zScore("SAP.DE", 900.0, "EUR");
+        calculator.zScore("SAP.DE", 900.0, "EUR", ListingResolution.FOREIGN_SUFFIXED);
 
         verify(filings, times(1)).conceptsStrict(eq("SAP.DE"), any(FundamentalConcept[].class));
         verify(filings, never()).companyFactsStrict(any(), anyList());

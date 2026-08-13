@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.lazarus;
 
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.ConceptSeries;
+import de.visterion.dracul.hunting.agora.FundamentalConcept;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -47,9 +50,9 @@ class AltmanZCalculatorTest {
             for (String tag : tags) out.put(tag, stubbed.getOrDefault(tag, ConceptSeries.empty(tag)));
             return out;
         });
-        // "ACME" has no venue suffix -> the classifier routes it to the US get_company_facts path,
-        // so every case in this (US golden) suite exercises the byte-identical original code.
-        calculator = new AltmanZCalculator(filings, new InstrumentClassifier(List.of("DE", "T", "HK")));
+        // Routing is now purely on ListingResolution (never the symbol shape), so this whole
+        // (US golden) suite drives the 2-param overload, which is fixed to US_CONFIRMED.
+        calculator = new AltmanZCalculator(filings);
     }
 
     private void stubInstant(String tag, long usd) { stubInstant(tag, BS_DATE, usd); }
@@ -405,5 +408,116 @@ class AltmanZCalculatorTest {
 
         assertThatThrownBy(() -> calculator.zScore("ACME", 900.0))
                 .isInstanceOf(AgoraUnavailableException.class);
+    }
+
+    // ---- Task T5: routing on ListingResolution, not the symbol shape -----------------------
+
+    /** {@code UNKNOWN} means the currency of {@code marketCapMillions} is itself unknown: both
+     *  the US and the concept path would risk mixing units in X4, so the score must be
+     *  unavailable WITHOUT any remote call at all — not even the bulk fetch. */
+    @Test
+    void unknownListingIsUnavailableWithoutAnyRemoteCall() {
+        AltmanZCalculator.AltmanZ z =
+                calculator.zScore("ACME", 900.0, "USD", ListingResolution.UNKNOWN);
+
+        assertThat(z.available()).isFalse();
+        verifyNoInteractions(filings);
+    }
+
+    @Test
+    void usConfirmedTakesTheUsPath() {
+        stubHealthyConcepts();
+
+        AltmanZCalculator.AltmanZ z =
+                calculator.zScore("ACME", 900.0, "USD", ListingResolution.US_CONFIRMED);
+
+        assertThat(z.available()).isTrue();
+        assertThat(z.zScore()).isEqualByComparingTo("3.40");
+        verify(filings, times(1)).companyFactsStrict(eq("ACME"), anyList());
+    }
+
+    /** The regression anchor against the Z silently going unavailable for a foreign listing: a
+     *  suffixed symbol with a matching concept unit stays AVAILABLE on the concept path, even
+     *  though its currency ("XTS") is neither USD nor one this suite otherwise stubs — proving
+     *  the gate is {@code reportingCurrency != null}, not a specific currency value. */
+    @Test
+    void foreignSuffixedTakesTheConceptPath() {
+        AgoraFilings foreignFilings = mock(AgoraFilings.class);
+        when(foreignFilings.conceptsStrict(eq("FOO.XX"), any(FundamentalConcept[].class)))
+                .thenReturn(healthyConceptsIn("XTS"));
+        AltmanZCalculator foreignCalculator = new AltmanZCalculator(foreignFilings);
+
+        AltmanZCalculator.AltmanZ z = foreignCalculator.zScore(
+                "FOO.XX", 900.0, "XTS", ListingResolution.FOREIGN_SUFFIXED);
+
+        assertThat(z.available()).isTrue();
+        verify(foreignFilings, times(1)).conceptsStrict(eq("FOO.XX"), any(FundamentalConcept[].class));
+        verify(foreignFilings, never()).companyFactsStrict(any(), anyList());
+    }
+
+    /** Same foreign listing, but the concept liabilities are quoted in a DIFFERENT unit than
+     *  {@code reportingCurrency} -> the X4 currency guard (unchanged) still trips. */
+    @Test
+    void foreignSuffixedWithMismatchedUnitStaysUnavailable() {
+        AgoraFilings foreignFilings = mock(AgoraFilings.class);
+        when(foreignFilings.conceptsStrict(eq("FOO.XX"), any(FundamentalConcept[].class)))
+                .thenReturn(healthyConceptsIn("XTX"));
+        AltmanZCalculator foreignCalculator = new AltmanZCalculator(foreignFilings);
+
+        AltmanZCalculator.AltmanZ z = foreignCalculator.zScore(
+                "FOO.XX", 900.0, "XTS", ListingResolution.FOREIGN_SUFFIXED);
+
+        assertThat(z.available()).isFalse();
+    }
+
+    /** Proves the symbol shape is no longer the router: a suffixed symbol resolved
+     *  {@code US_CONFIRMED} takes the US path, and an unsuffixed symbol resolved
+     *  {@code FOREIGN_SUFFIXED} takes the concept path. */
+    @Test
+    void symbolShapeNoLongerRoutes() {
+        stubHealthyConcepts();
+        AltmanZCalculator.AltmanZ suffixedButUs =
+                calculator.zScore("ACME.DE", 900.0, "USD", ListingResolution.US_CONFIRMED);
+        assertThat(suffixedButUs.available()).isFalse(); // no stub for "ACME.DE" -> empty bulk map
+        verify(filings, times(1)).companyFactsStrict(eq("ACME.DE"), anyList());
+        verify(filings, never()).conceptsStrict(eq("ACME.DE"), any(FundamentalConcept[].class));
+
+        AgoraFilings foreignFilings = mock(AgoraFilings.class);
+        when(foreignFilings.conceptsStrict(eq("BARE"), any(FundamentalConcept[].class)))
+                .thenReturn(healthyConceptsIn("XTS"));
+        AltmanZCalculator foreignCalculator = new AltmanZCalculator(foreignFilings);
+        AltmanZCalculator.AltmanZ unsuffixedButForeign = foreignCalculator.zScore(
+                "BARE", 900.0, "XTS", ListingResolution.FOREIGN_SUFFIXED);
+        assertThat(unsuffixedButForeign.available()).isTrue();
+        verify(foreignFilings, times(1)).conceptsStrict(eq("BARE"), any(FundamentalConcept[].class));
+        verify(foreignFilings, never()).companyFactsStrict(any(), anyList());
+    }
+
+    /** A healthy seven-concept batch (same hand-checkable inputs as {@link #stubHealthyConcepts()}),
+     *  every concept quoted in {@code unit}. */
+    private static ConceptSeries.MultiConcept healthyConceptsIn(String unit) {
+        Map<FundamentalConcept, ConceptSeries> s = new EnumMap<>(FundamentalConcept.class);
+        Map<FundamentalConcept, String> u = new EnumMap<>(FundamentalConcept.class);
+        s.put(FundamentalConcept.TOTAL_ASSETS, series("TOTAL_ASSETS", instant(1_000_000_000L)));
+        s.put(FundamentalConcept.CURRENT_ASSETS, series("CURRENT_ASSETS", instant(400_000_000L)));
+        s.put(FundamentalConcept.CURRENT_LIABILITIES, series("CURRENT_LIABILITIES", instant(250_000_000L)));
+        s.put(FundamentalConcept.TOTAL_LIABILITIES, series("TOTAL_LIABILITIES", instant(600_000_000L)));
+        s.put(FundamentalConcept.RETAINED_EARNINGS, series("RETAINED_EARNINGS", instant(300_000_000L)));
+        s.put(FundamentalConcept.EBIT, series("EBIT", annualPoint(120_000_000L)));
+        s.put(FundamentalConcept.REVENUE, series("REVENUE", annualPoint(1_500_000_000L)));
+        for (FundamentalConcept c : FundamentalConcept.values()) u.put(c, unit);
+        return new ConceptSeries.MultiConcept(s, u);
+    }
+
+    private static ConceptSeries.Point instant(long v) {
+        return new ConceptSeries.Point(null, BS_DATE, BigDecimal.valueOf(v));
+    }
+
+    private static ConceptSeries.Point annualPoint(long v) {
+        return new ConceptSeries.Point(BS_DATE.minusDays(364), BS_DATE, BigDecimal.valueOf(v));
+    }
+
+    private static ConceptSeries series(String tag, ConceptSeries.Point p) {
+        return new ConceptSeries(tag, List.of(p));
     }
 }

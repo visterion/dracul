@@ -49,11 +49,11 @@ class LazarusEnrichmentLatchTest {
     @Test void zAttemptedEvenWhenFundamentalScoreUnavailable() {
         // F-score unavailable (available()==false) — a sparse non-US name — must NOT block Z
         when(filings.fundamentalScoreStrict("SPARSE")).thenReturn(FundamentalScore.unavailable());
-        when(altmanZ.zScore(anyString(), any(), any())).thenReturn(Z_OK);
+        when(altmanZ.zScore(anyString(), any(), any(), any())).thenReturn(Z_OK);
 
         EnrichedLazarusCandidate e = service.enrich(List.of(candidate("SPARSE"))).candidates().get(0);
 
-        verify(altmanZ, times(1)).zScore(eq("SPARSE"), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("SPARSE"), any(), any(), any());
         assertThat(e.zScoreAvailable()).isTrue();
         assertThat(e.zScore()).isEqualByComparingTo("2.00");
         assertThat(e.fScore()).isZero(); // F-score still unavailable, only Z rode through
@@ -62,30 +62,30 @@ class LazarusEnrichmentLatchTest {
     @Test void okEmptyConceptsMidBatchDoNotDisableZForLaterCandidates() {
         when(filings.fundamentalScoreStrict(anyString())).thenReturn(FundamentalScore.unavailable());
         // post-A2: a data-less symbol returns ok-empty -> zScore is unavailable() but does NOT throw
-        when(altmanZ.zScore(eq("EMPTY"), any(), any()))
+        when(altmanZ.zScore(eq("EMPTY"), any(), any(), any()))
                 .thenReturn(AltmanZCalculator.AltmanZ.unavailable());
-        when(altmanZ.zScore(eq("LATER"), any(), any())).thenReturn(Z_OK);
+        when(altmanZ.zScore(eq("LATER"), any(), any(), any())).thenReturn(Z_OK);
 
         List<EnrichedLazarusCandidate> out =
                 service.enrich(List.of(candidate("EMPTY"), candidate("LATER"))).candidates();
 
         // an ok-empty (non-throwing) unavailable must not trip the source-down latch
-        verify(altmanZ, times(1)).zScore(eq("EMPTY"), any(), any());
-        verify(altmanZ, times(1)).zScore(eq("LATER"), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("EMPTY"), any(), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("LATER"), any(), any(), any());
         assertThat(out.get(0).zScoreAvailable()).isFalse();
         assertThat(out.get(1).zScoreAvailable()).isTrue();
     }
 
     @Test void exactlyOneConceptCallPerCandidate() {
         when(filings.fundamentalScoreStrict(anyString())).thenReturn(FundamentalScore.unavailable());
-        when(altmanZ.zScore(anyString(), any(), any()))
+        when(altmanZ.zScore(anyString(), any(), any(), any()))
                 .thenReturn(AltmanZCalculator.AltmanZ.unavailable());
 
         service.enrich(List.of(candidate("A"), candidate("B"), candidate("C")));
 
-        verify(altmanZ, times(1)).zScore(eq("A"), any(), any());
-        verify(altmanZ, times(1)).zScore(eq("B"), any(), any());
-        verify(altmanZ, times(1)).zScore(eq("C"), any(), any());
-        verify(altmanZ, times(3)).zScore(anyString(), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("A"), any(), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("B"), any(), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("C"), any(), any(), any());
+        verify(altmanZ, times(3)).zScore(anyString(), any(), any(), any());
     }
 }

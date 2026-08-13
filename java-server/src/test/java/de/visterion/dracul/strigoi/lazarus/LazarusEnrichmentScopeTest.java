@@ -47,7 +47,7 @@ class LazarusEnrichmentScopeTest {
         AgoraMarketData marketData = mock(AgoraMarketData.class);    // empty bars -> no timing
         altmanZ = mock(AltmanZCalculator.class);
         AgoraCompanyData companyData = mock(AgoraCompanyData.class); // empty trend -> no revisions
-        when(altmanZ.zScore(anyString(), any(), any())).thenReturn(AltmanZCalculator.AltmanZ.unavailable());
+        when(altmanZ.zScore(anyString(), any(), any(), any())).thenReturn(AltmanZCalculator.AltmanZ.unavailable());
         service = new LazarusEnrichmentService(filings, marketData, altmanZ, companyData,
                 new de.visterion.dracul.strigoi.echo.RevisionsProxy());
     }
@@ -79,14 +79,14 @@ class LazarusEnrichmentScopeTest {
     @Test
     void oneRequestScopedConceptFailureDoesNotDisableTheConceptSource() {
         when(filings.fundamentalScoreStrict(anyString())).thenReturn(GOOD_SCORE);
-        when(altmanZ.zScore(eq("SYNA"), any(), any())).thenThrow(perRequest("no CIK for SYNA"));
-        when(altmanZ.zScore(eq("SYNB"), any(), any())).thenReturn(Z_OK);
+        when(altmanZ.zScore(eq("SYNA"), any(), any(), any())).thenThrow(perRequest("no CIK for SYNA"));
+        when(altmanZ.zScore(eq("SYNB"), any(), any(), any())).thenReturn(Z_OK);
 
         EnrichedLazarusBatch batch =
                 service.enrich(List.of(candidate("SYNA", 0.01), candidate("SYNB", 0.02)));
 
-        verify(altmanZ, times(1)).zScore(eq("SYNA"), any(), any());
-        verify(altmanZ, times(1)).zScore(eq("SYNB"), any(), any());   // source NOT disabled
+        verify(altmanZ, times(1)).zScore(eq("SYNA"), any(), any(), any());
+        verify(altmanZ, times(1)).zScore(eq("SYNB"), any(), any(), any());   // source NOT disabled
         assertThat(batch.candidates().get(0).zScoreAvailable()).isFalse();
         assertThat(batch.candidates().get(1).zScore()).isEqualByComparingTo("2.00");
         assertThat(batch.degradedCandidates()).isEqualTo(1);
@@ -109,12 +109,12 @@ class LazarusEnrichmentScopeTest {
     @Test
     void threeConsecutiveRequestScopedConceptFailuresTripTheGuard() {
         when(filings.fundamentalScoreStrict(anyString())).thenReturn(GOOD_SCORE);
-        when(altmanZ.zScore(anyString(), any(), any())).thenThrow(perRequest("no CIK"));
+        when(altmanZ.zScore(anyString(), any(), any(), any())).thenThrow(perRequest("no CIK"));
 
         service.enrich(List.of(candidate("SYNA", 0.01), candidate("SYNB", 0.02),
                 candidate("SYNC", 0.03), candidate("SYND", 0.04)));
 
-        verify(altmanZ, times(3)).zScore(anyString(), any(), any());
+        verify(altmanZ, times(3)).zScore(anyString(), any(), any(), any());
     }
 
     /** A success in between breaks the run, so the counter never reaches three. */

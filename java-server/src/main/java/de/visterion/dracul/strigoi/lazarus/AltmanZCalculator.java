@@ -89,11 +89,9 @@ public class AltmanZCalculator {
             FundamentalConcept.RETAINED_EARNINGS, FundamentalConcept.EBIT, FundamentalConcept.REVENUE};
 
     private final AgoraFilings filings;
-    private final InstrumentClassifier classifier;
 
-    public AltmanZCalculator(AgoraFilings filings, InstrumentClassifier classifier) {
+    public AltmanZCalculator(AgoraFilings filings) {
         this.filings = filings;
-        this.classifier = classifier;
     }
 
     /** Z-score of one symbol; {@code zScore} is scale-2 and null unless {@code available}. */
@@ -104,37 +102,59 @@ public class AltmanZCalculator {
     private record Dated(LocalDate end, BigDecimal value) {}
 
     /**
-     * US-symbol convenience overload (no reporting currency — US filings are USD/USD, so the
-     * non-US currency guard never applies). Delegates to {@link #zScore(String, Double, String)}.
+     * US-symbol convenience overload, fixed to {@link ListingResolution#US_CONFIRMED} (no
+     * reporting currency — US filings are USD/USD, so the non-US currency guard never applies).
+     * Callers that hold an actual {@link ListingResolution} (i.e. every candidate that went
+     * through the listing resolver) MUST use {@link #zScore(String, Double, String,
+     * ListingResolution)} instead — this overload exists only for call sites (and this test
+     * suite's US golden fixtures) that never see a non-US or unresolved listing.
      *
      * @param marketCapMillions Finnhub market cap in USD MILLIONS (converted to USD here);
      *                          null or non-positive → unavailable without any remote call.
      */
     public AltmanZ zScore(String symbol, Double marketCapMillions) {
-        return zScore(symbol, marketCapMillions, null);
+        return zScore(symbol, marketCapMillions, null, ListingResolution.US_CONFIRMED);
     }
 
     /**
-     * Z-score of one symbol on the path chosen by {@link InstrumentClassifier}:
+     * Z-score of one symbol on the path chosen by the resolved {@link ListingResolution} —
+     * NEVER by the shape of {@code symbol}. A ticker's suffix tells you how it is spelled, not
+     * which listing its fundamentals describe (0005.HK reports in USD and is still foreign); an
+     * ADR trading on a US suffix but backed by non-USD fundamentals is exactly the case this
+     * routing on the resolution (not the symbol) fixes.
      * <ul>
-     *   <li>US → the byte-identical us-gaap {@code get_company_facts} route (unchanged; the
-     *       {@code reportingCurrency} argument is ignored — US filings are USD).</li>
-     *   <li>non-US → the currency-aware {@code get_fundamental_concepts} route, where the market
-     *       cap arrives in {@code reportingCurrency} MILLIONS and the concept liabilities in their
-     *       own reporting {@code unit}; the two must agree (the X4 currency guard) or the score is
-     *       unavailable.</li>
+     *   <li>{@link ListingResolution#US_CONFIRMED} → the byte-identical us-gaap
+     *       {@code get_company_facts} route (unchanged; {@code reportingCurrency} is ignored —
+     *       US filings are USD).</li>
+     *   <li>{@link ListingResolution#FOREIGN_SUFFIXED} → the currency-aware
+     *       {@code get_fundamental_concepts} route, where the market cap arrives in
+     *       {@code reportingCurrency} MILLIONS and the concept liabilities in their own
+     *       reporting {@code unit}; the two must agree (the X4 currency guard) or the score is
+     *       unavailable. This path stays available even when {@code marketCapAvailable} on the
+     *       candidate is false (no cached FX rate) — the X4 guard here works off the RAW,
+     *       reporting-currency values, not the USD-normalized market cap.</li>
+     *   <li>{@link ListingResolution#UNKNOWN} → unavailable without any remote call: the
+     *       currency of {@code marketCapMillions} is itself unknown, so both paths would risk
+     *       mixing units in X4.</li>
      * </ul>
      *
      * @param marketCapMillions market cap in MILLIONS of the symbol's reporting currency (USD for
      *                          US); null or non-positive → unavailable without any remote call.
      * @param reportingCurrency ISO-4217 code the (non-US) market cap and concept values are
      *                          expected to share; ignored on the US path, null-safe.
+     * @param listing the resolved listing; determines the path (never the symbol shape).
      */
-    public AltmanZ zScore(String symbol, Double marketCapMillions, String reportingCurrency) {
+    public AltmanZ zScore(String symbol, Double marketCapMillions, String reportingCurrency,
+            ListingResolution listing) {
         if (marketCapMillions == null || marketCapMillions <= 0) return AltmanZ.unavailable();
-        return classifier.isNonUs(symbol)
-                ? zScoreNonUs(symbol, marketCapMillions, reportingCurrency)
-                : zScoreUs(symbol, marketCapMillions);
+        return switch (listing) {
+            case US_CONFIRMED -> zScoreUs(symbol, marketCapMillions);
+            case FOREIGN_SUFFIXED -> zScoreNonUs(symbol, marketCapMillions, reportingCurrency);
+            // The listing is unknown, so the currency of marketCapMillions is unknown too. Both
+            // paths would mix units in X4 (market value of equity / total liabilities). An
+            // unavailable score is the honest state; the enrichment already degrades fail-soft.
+            case UNKNOWN -> AltmanZ.unavailable();
+        };
     }
 
     /** US path: the original us-gaap {@code get_company_facts} computation — unchanged, and the

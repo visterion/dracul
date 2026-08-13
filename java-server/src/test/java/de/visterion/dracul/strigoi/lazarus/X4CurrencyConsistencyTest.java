@@ -49,10 +49,10 @@ class X4CurrencyConsistencyTest {
         AgoraFilings filings = mock(AgoraFilings.class);
         when(filings.conceptsStrict(eq("EUR.DE"), any(FundamentalConcept[].class)))
                 .thenReturn(new ConceptSeries.MultiConcept(s, u));
-        AltmanZCalculator calc = new AltmanZCalculator(filings,
-                new InstrumentClassifier(List.of("DE")));
+        AltmanZCalculator calc = new AltmanZCalculator(filings);
 
-        AltmanZCalculator.AltmanZ z = calc.zScore("EUR.DE", 600.0, "EUR");
+        AltmanZCalculator.AltmanZ z =
+                calc.zScore("EUR.DE", 600.0, "EUR", ListingResolution.FOREIGN_SUFFIXED);
 
         assertThat(z.available()).isTrue();
         assertThat(z.zScore()).isEqualByComparingTo("0.60");
