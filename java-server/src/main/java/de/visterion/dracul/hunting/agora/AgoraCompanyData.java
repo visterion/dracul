@@ -260,4 +260,14 @@ public class AgoraCompanyData {
             return null;
         }
     }
+
+    /** RAW provider profile blob (opaque); null when the provider has no profile for the symbol.
+     *  Unlike {@link #profile(String)} an Agora outage is NOT swallowed — the caller needs to tell
+     *  "this symbol has no profile" apart from "Agora did not answer" to drive its source guard. */
+    public JsonNode profileStrict(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode p = agora.callTool("get_company_profile", args).path("profile");
+        return (p.isMissingNode() || p.isNull()) ? null : p;
+    }
 }

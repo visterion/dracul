@@ -66,4 +66,14 @@ public record LazarusCandidate(
                 priceToBook, peTtm, fcfPerShare, marketCap, reportingCurrency, false,
                 ListingResolution.UNKNOWN);
     }
+
+    /** A copy with {@code listingResolution} replaced; every other field unchanged. Used by
+     *  {@link LazarusListingResolver}, the only stage that is allowed to move a candidate off
+     *  {@link ListingResolution#UNKNOWN}. */
+    public LazarusCandidate withListing(ListingResolution listing) {
+        return new LazarusCandidate(symbol, companyName, currentPrice, week52Low, week52High,
+                pctAboveLow, roaTtm, currentRatio, debtToEquity, grossMargin, netMargin,
+                revenueGrowthYoy, epsGrowthYoy, priceToBook, peTtm, fcfPerShare, marketCap,
+                reportingCurrency, cheapGatePassed, listing);
+    }
 }
