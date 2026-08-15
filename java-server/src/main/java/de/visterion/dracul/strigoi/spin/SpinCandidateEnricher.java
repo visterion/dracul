@@ -350,7 +350,7 @@ public class SpinCandidateEnricher {
         JsonNode dist = row.distributedSnapshot();
         JsonNode set = row.settledSnapshot();
         return new EnrichedSpinCandidate(
-                row.symbol(), row.companyName(), row.formType(),
+                row.id(), row.symbol(), row.companyName(), row.formType(),
                 row.filingDate() == null ? null : row.filingDate().toString(),
                 row.filingUrl(),
                 row.termSheetText(),                    // raw prose, persisted (V26) for the LLM

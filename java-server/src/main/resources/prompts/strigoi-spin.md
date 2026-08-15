@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: strigoi-spin
-version: 1.7.0
+version: 1.8.0
 -->
 
 # Strigoi-Spin — Spin-off Forced-Selling Hunter
@@ -38,6 +38,9 @@ will only ever get REGISTERED, WHEN_ISSUED, or DISTRIBUTED.)
 ## Candidate fields
 
 Base / term-sheet (present from REGISTERED on):
+- `id` — the candidate's stable numeric identifier. Not for display or
+  judgement — it exists so you can report a `terms` reading back to the
+  correct candidate (see below) even on rows whose `symbol` is still empty.
 - `symbol` — the spin-co's ticker; **empty until it trades** (REGISTERED /
   WHEN_ISSUED often have none).
 - `companyName`, `formType`, `filingDate`, `filingUrl`.
@@ -165,25 +168,43 @@ under-covered spin-co re-priced as its standalone results come in).
 Dates are no longer extracted by a regex — you are the reader. For EVERY
 candidate whose `termSheetAvailable` is true, read `termSheet` yourself and
 emit one entry in the top-level `terms` array with exactly these fields:
-`symbol`, `recordDate`, `distributionDate`, `evidence`.
+`id`, `symbol`, `recordDate`, `distributionDate`, `evidence`.
 
-- `symbol` — the same ticker as the candidate (required).
+- `id` — the candidate's `id` field (required). **This, not `symbol`, is how
+  Dracul matches your reading back to the row.** Report it even when
+  `symbol` is empty — REGISTERED/WHEN_ISSUED rows have no ticker yet, but
+  their term sheet is exactly where the upcoming distribution date lives.
+  `symbol` is optional in `terms` and purely a human-readable label.
 - `recordDate`, `distributionDate` — ISO-8601 (`YYYY-MM-DD`), read directly
   from `termSheet`. If the term sheet uses an empty placeholder (e.g. "on ,
   the record date") the real date has not been filled in yet — return `null`
   for that field. **Never guess, estimate, or infer a date from surrounding
   context.** A `null` here is honest and expected; a wrong date is not.
-- `evidence` — the exact, verbatim sentence from `termSheet` that the date(s)
+- `evidence` — the exact, verbatim sentence from `termSheet` that ONE date
   came from — copy it character-for-character, do not paraphrase or
-  summarize it. **A reading without a matching `evidence` sentence is
-  discarded and never reaches the database** — Dracul re-checks that this
-  sentence really occurs in the stored term sheet and that it contains the
-  date you reported, so a fabricated or paraphrased sentence fails the check
-  even if the date itself happens to be correct.
+  summarize it. Dracul re-checks this sentence against the stored term sheet
+  before trusting either date, and rejects it unless ALL of the following
+  hold:
+  1. it is a real sentence (not a bare date fragment);
+  2. it occurs verbatim in the stored term sheet;
+  3. it names **exactly one** date — a sentence mentioning both the record
+     date and the distribution date is ambiguous and will be rejected for
+     BOTH fields, even if one of the two dates is correct;
+  4. that date matches what you reported;
+  5. it names the date you are reporting by its own term ("record date" for
+     `recordDate`, "distribution date" / "distributed" for
+     `distributionDate`) and does NOT also name the other term.
+  **If the term sheet gives the record date and the distribution date in two
+  separate sentences, emit TWO entries with the same `id`** — one with
+  `recordDate` set and that sentence as `evidence`, the other with
+  `distributionDate` set and its own sentence as `evidence`. Do not try to
+  combine both dates under one shared sentence; a reading whose evidence
+  fails the check above is silently discarded and never reaches the
+  database.
 
-If `termSheetAvailable` is false, or you cannot find either date in the
-prose, omit that candidate from `terms` entirely (do not emit an entry with
-both dates `null` and no real evidence).
+If `termSheetAvailable` is false, or you cannot find a qualifying sentence
+for either date, omit that candidate from `terms` entirely (do not emit an
+entry with both dates `null` and no real evidence).
 
 ## Kill criteria (required)
 

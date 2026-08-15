@@ -15,6 +15,12 @@ import java.math.BigDecimal;
  * SETTLED valuation block is usually null here.
  *
  * <ul>
+ *   <li><b>{@code id}</b> — the tracked candidate's stable numeric identifier ({@code
+ *       spin_candidate.id}). Not for display: {@code symbol} stays the human-readable ticker (and
+ *       is often empty pre-distribution). {@code id} is what the agent reports back in the D5
+ *       {@code terms} block, because {@code symbol} is blank on exactly the REGISTERED /
+ *       WHEN_ISSUED rows whose term sheet carries the most valuable reading — the UPCOMING
+ *       distribution date.</li>
  *   <li><b>Base / term-sheet</b> — {@code symbol} (empty until the spin-co trades), {@code companyName},
  *       {@code formType}, {@code filingDate}, {@code filingUrl}, {@code termSheetAvailable}, and the
  *       server-extracted {@code distributionRatio}/{@code recordDate}/{@code distributionDate}. The raw
@@ -40,6 +46,7 @@ import java.math.BigDecimal;
  * </ul>
  */
 public record EnrichedSpinCandidate(
+        long id,
         String symbol,
         String companyName,
         String formType,

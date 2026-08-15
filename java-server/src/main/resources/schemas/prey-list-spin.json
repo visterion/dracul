@@ -24,9 +24,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["symbol", "evidence"],
+        "required": ["id", "evidence"],
         "additionalProperties": false,
         "properties": {
+          "id":               {"type": "integer"},
           "symbol":           {"type": "string"},
           "recordDate":       {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
           "distributionDate": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},

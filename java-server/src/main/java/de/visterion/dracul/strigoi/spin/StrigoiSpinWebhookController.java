@@ -126,6 +126,14 @@ public class StrigoiSpinWebhookController extends HuntController {
      * sentence. Applied here, before the inherited {@link HuntController#complete} runs its
      * prey processing — "terms" and "prey" are two independent parts of the same payload, and
      * the terms guard must run regardless of whether this delivery happens to carry any prey.
+     *
+     * <p><b>Fail-soft (fix-round-1, I-1).</b> Every other side effect on this path — {@link
+     * #afterPersist}, the memory write-back in {@link HuntController#complete} — is deliberately
+     * fail-soft: a best-effort annotation must never cost a whole night's prey. {@code
+     * applyTerms} talks to the database ({@code findById}/{@code storeVerifiedDates}) and parses
+     * caller-supplied dates, both of which can throw; a transient failure here is caught and
+     * logged rather than turning into a 500 that makes Vistierie discard every prey this
+     * completion would otherwise have persisted.
      */
     @Override
     @PostMapping("/complete")
@@ -134,17 +142,29 @@ public class StrigoiSpinWebhookController extends HuntController {
             @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
             @RequestBody JsonNode body) {
         if (!authorized(auth)) return ResponseEntity.status(401).build();
-        applyTerms(body, runId);
+        try {
+            applyTerms(body, runId);
+        } catch (RuntimeException e) {
+            log.warn("strigoi-spin run {} terms application failed unexpectedly — prey processing "
+                    + "continues regardless: {}", runId, e.toString(), e);
+        }
         return super.complete(auth, runId, body);
     }
 
     /**
      * Verifies and persists every entry of {@code output.terms} (schema:
-     * {@code prey-list-spin.json}). Only entries whose evidence passes
-     * {@link TermEvidenceVerifier#supports} are written, per date field independently — a
-     * candidate whose {@code symbol} matches no tracked row is skipped with no write at all
-     * (untracked/unknown ticker). No-op unless the run's status is {@code done}/{@code
-     * succeeded}, mirroring the gate the inherited {@code complete} applies to prey.
+     * {@code prey-list-spin.json}). Only entries whose evidence passes ALL FIVE
+     * {@link TermEvidenceVerifier#supports} rules are written, per date field independently — a
+     * candidate whose {@code id} matches no tracked row is skipped with no write at all.
+     * No-op unless the run's status is {@code done}/{@code succeeded}, mirroring the gate the
+     * inherited {@code complete} applies to prey.
+     *
+     * <p><b>Joined on {@code id}, not {@code symbol} (fix-round-1, I-2).</b> {@code
+     * EnrichedSpinCandidate.symbol} is empty until the spin-co trades, yet REGISTERED /
+     * WHEN_ISSUED rows are in the payload by design and the prompt asks the model for terms on
+     * every candidate with {@code termSheetAvailable} — exactly those rows carry the most
+     * valuable reading, the UPCOMING distribution date, and a symbol-only join could never
+     * deliver it. {@code symbol} is kept in the payload/logs purely as a human-readable label.
      */
     private void applyTerms(JsonNode body, String runId) {
         String status = body.path("status").asText("");
@@ -154,43 +174,64 @@ public class StrigoiSpinWebhookController extends HuntController {
 
         int accepted = 0;
         int rejected = 0;
+        int skippedNoText = 0;
         for (JsonNode term : terms) {
-            String symbol = term.path("symbol").asText(null);
-            if (symbol == null || symbol.isBlank()) continue;
-            var rowOpt = spinRepo.findActiveBySymbol(symbol);
+            Long id = longOrNull(term, "id");
+            String label = term.path("symbol").asText("?");
+            if (id == null) {
+                log.info("strigoi-spin run {} terms: entry for {} has no usable id — ignored", runId, label);
+                continue;
+            }
+            var rowOpt = spinRepo.findById(id);
             if (rowOpt.isEmpty()) {
-                log.info("strigoi-spin run {} terms: symbol {} matches no tracked candidate — ignored",
-                        runId, symbol);
+                log.info("strigoi-spin run {} terms: id {} ({}) matches no tracked candidate — ignored",
+                        runId, id, label);
                 continue;
             }
             SpinCandidateRow row = rowOpt.get();
             String evidence = term.path("evidence").asText(null);
 
+            // M-2: "no term sheet text to verify against" (a capture/source gap) must never share
+            // a counter or a log line with "the evidence didn't check out" (the model made
+            // something up) — the two mean completely different things for diagnosing this
+            // feature, exactly like this project's data-source-health counters never share "no
+            // data" with "source failed".
+            if (row.termSheetText() == null || row.termSheetText().isBlank()) {
+                skippedNoText++;
+                log.info("strigoi-spin run {} terms: id {} ({}) has no term_sheet_text on file yet — "
+                                + "reading cannot be verified (not a rejection; capture may not have "
+                                + "completed)",
+                        runId, id, label);
+                continue;
+            }
+
             LocalDate recordDate = null;
             String recordDateIso = isoOrNull(term, "recordDate");
             if (recordDateIso != null) {
-                if (TermEvidenceVerifier.supports(row.termSheetText(), evidence, recordDateIso)) {
-                    recordDate = LocalDate.parse(recordDateIso);
-                    accepted++;
+                if (TermEvidenceVerifier.supports(row.termSheetText(), evidence, recordDateIso,
+                        TermEvidenceVerifier.Field.RECORD_DATE)) {
+                    recordDate = parseIsoOrNull(recordDateIso);
+                    if (recordDate != null) accepted++;
                 } else {
                     rejected++;
-                    log.warn("strigoi-spin run {} rejected recordDate={} for {} ({}): evidence not "
+                    log.warn("strigoi-spin run {} rejected recordDate={} for id {} ({}): evidence not "
                                     + "verified against the stored term sheet",
-                            runId, recordDateIso, symbol, row.id());
+                            runId, recordDateIso, id, label);
                 }
             }
 
             LocalDate distributionDate = null;
             String distributionDateIso = isoOrNull(term, "distributionDate");
             if (distributionDateIso != null) {
-                if (TermEvidenceVerifier.supports(row.termSheetText(), evidence, distributionDateIso)) {
-                    distributionDate = LocalDate.parse(distributionDateIso);
-                    accepted++;
+                if (TermEvidenceVerifier.supports(row.termSheetText(), evidence, distributionDateIso,
+                        TermEvidenceVerifier.Field.DISTRIBUTION_DATE)) {
+                    distributionDate = parseIsoOrNull(distributionDateIso);
+                    if (distributionDate != null) accepted++;
                 } else {
                     rejected++;
-                    log.warn("strigoi-spin run {} rejected distributionDate={} for {} ({}): evidence "
+                    log.warn("strigoi-spin run {} rejected distributionDate={} for id {} ({}): evidence "
                                     + "not verified against the stored term sheet",
-                            runId, distributionDateIso, symbol, row.id());
+                            runId, distributionDateIso, id, label);
                 }
             }
 
@@ -198,8 +239,9 @@ public class StrigoiSpinWebhookController extends HuntController {
                 spinRepo.storeVerifiedDates(row.id(), recordDate, distributionDate);
             }
         }
-        if (accepted > 0 || rejected > 0) {
-            log.info("strigoi-spin run {} terms: accepted={} rejected={}", runId, accepted, rejected);
+        if (accepted > 0 || rejected > 0 || skippedNoText > 0) {
+            log.info("strigoi-spin run {} terms: accepted={} rejected={} skippedNoText={}",
+                    runId, accepted, rejected, skippedNoText);
         }
     }
 
@@ -210,6 +252,36 @@ public class StrigoiSpinWebhookController extends HuntController {
         if (v == null || v.isNull()) return null;
         String s = v.asText(null);
         return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /** {@code null} for a missing/explicit-null/non-numeric {@code id} field. A JSON number is
+     *  the schema-valid shape; a numeric string is accepted too, defensively, the same way
+     *  {@link HuntController#lookbackDays} accepts a stringified tool argument. */
+    private static Long longOrNull(JsonNode term, String field) {
+        JsonNode v = term.get(field);
+        if (v == null || v.isNull()) return null;
+        if (v.canConvertToLong()) return v.asLong();
+        if (v.isTextual()) {
+            try {
+                return Long.parseLong(v.asString().trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** M-1 defensive: {@link TermEvidenceVerifier#supports} already rejects a calendar-impossible
+     *  ISO string (e.g. {@code 2026-02-30}) before this is ever called with {@code true}, but
+     *  {@code LocalDate.parse} is guarded here too rather than trusted blindly — a parse failure
+     *  is treated exactly like a rejection (nothing written, no field silently defaulted), not as
+     *  an uncaught exception that would otherwise be caught by the outer fail-soft wrapper. */
+    private static LocalDate parseIsoOrNull(String iso) {
+        try {
+            return LocalDate.parse(iso);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**

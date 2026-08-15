@@ -369,30 +369,6 @@ public class SpinCandidateRepository {
     }
 
     /**
-     * The non-terminal row carrying this symbol — the lookup used by
-     * {@link StrigoiSpinWebhookController} to match a {@code terms} entry from the completion
-     * payload back to its tracked candidate (D5, #47). Unlike {@link #findPromotableBySymbol}
-     * this is NOT restricted to {@code DISTRIBUTED}: term readings can arrive for a REGISTERED
-     * or WHEN_ISSUED row too, wherever the agent's payload already carried a resolved symbol.
-     * Terminal rows (SETTLED/ABANDONED) are excluded — nothing writes new terms to a row whose
-     * lifecycle is already closed. Newest-discovered first for determinism if two tracked rows
-     * ever shared a symbol. Blank symbol yields empty.
-     */
-    public Optional<SpinCandidateRow> findActiveBySymbol(String symbol) {
-        if (symbol == null || symbol.isBlank()) return Optional.empty();
-        return jdbc.sql("SELECT " + COLS + """
-                FROM spin_candidate
-                WHERE symbol = :symbol AND status NOT IN (:terminal)
-                ORDER BY discovered_at DESC
-                LIMIT 1
-                """)
-                .param("symbol", symbol)
-                .param("terminal", TERMINAL_STATUSES)
-                .query(this::mapRow)
-                .optional();
-    }
-
-    /**
      * Writes ONLY the term-evidence-verified dates (D5, #47) — the counterpart to
      * {@link #storeTerms}, which persists the server-parsed terms wholesale. Each parameter that
      * is {@code null} leaves its column UNCHANGED (via {@code COALESCE(:param, column)}), it
