@@ -89,46 +89,56 @@ public class SpinCandidateEnricher {
     /** Non-terminal scan bound for the work queue (spin-offs are rare). */
     private static final int SCAN_LIMIT = 1000;
     /** Rows returned to the LLM per fetch. A full page is reported as truncated (see
-     *  {@link #payload(LocalDate)}) — the cap must never look like "that was all there was". */
-    static final int RESPONSE_LIMIT = 50;
+     *  {@link #payload(LocalDate)}) — the cap must never look like "that was all there was".
+     *
+     *  <p>Lowered from 50 to 25 (fix-round-2, C-1 rework): 25 already matches {@link #MAX}, the
+     *  enrichment cap — a steady-state run was never going to freshly enrich more than 25 rows
+     *  anyway, so 50 was never reachable in practice, only in the worst-case arithmetic. Halving
+     *  it roughly halves the structured-fields floor that {@code SpinPayloadBudgetTest} measures
+     *  (~48 150 &rarr; ~24 000 chars for {@link #RESPONSE_LIMIT} rows of structured fields alone),
+     *  which is what makes the term-sheet-prose budget below affordable without hugging the
+     *  bridge's hard ceiling. */
+    static final int RESPONSE_LIMIT = 25;
     /** How often {@link #captureTerms} retries a row whose term sheet is still due — the throttle
      *  that keeps a batch from re-fetching the same filing on every single enrichment run. */
     static final long TERMS_RECHECK_DAYS = 7;
 
     /**
-     * Total character budget for {@code termSheet} prose across the WHOLE response — the fix for
-     * the C-1 finding: since the spin hunter started reading the EX-99.1 information statement
-     * (a ~200-page document) instead of the Form-10 shell, {@code term_sheet_text} fills Agora's
-     * full 24 000-char {@code get_filing_text} window per row, where before it was 10-12 kB. Nine
-     * tracked rows shipped raw would be 216 000 chars; at {@link #RESPONSE_LIMIT} rows it is
-     * 1 200 000 — this is the exact failure documented in {@code MergerPayloadBudgetTest} /
-     * {@link de.visterion.dracul.strigoi.merger.TermSheetDigest}, which already happened once on
-     * the merger hunter: the Claude-Max bridge cuts an MCP tool result mid-JSON above 100 000
-     * chars (and only provably leaves it alone at or below the 50 000-char safe zone — see
+     * Per-row term-sheet prose slice, for the (at most {@link #MAX_PROSE_ROWS_PER_RUN}) rows
+     * selected by {@link #selectProseRecipients} — the fix for the C-1 finding: since the spin
+     * hunter started reading the EX-99.1 information statement (a ~200-page document) instead of
+     * the Form-10 shell, {@code term_sheet_text} fills Agora's full 24 000-char
+     * {@code get_filing_text} window per row, where before it was 10-12 kB. Shipped raw across
+     * {@link #RESPONSE_LIMIT} rows that would be up to 600 000 chars — this is the exact failure
+     * documented in {@code MergerPayloadBudgetTest} / {@link
+     * de.visterion.dracul.strigoi.merger.TermSheetDigest}, which already happened once on the
+     * merger hunter: the Claude-Max bridge cuts an MCP tool result mid-JSON above 100 000 chars
+     * (and only provably leaves it alone at or below the 50 000-char safe zone — see
      * {@code SpinPayloadBudgetTest}), the model answers {@code {"prey": []}}, {@code status=done},
      * and nothing in the log says why.
      *
-     * <p><b>Why this targets the hard ceiling, not the safe zone (unlike the merger fix).</b>
-     * {@link EnrichedSpinCandidate} carries ~26 structured fields (vs. the merger candidate's
-     * fewer, denser ones) — {@link #RESPONSE_LIMIT} rows of structured fields ALONE already
-     * measure close to the full 50 000-char safe zone before a single term-sheet character is
-     * added (see {@code SpinPayloadBudgetTest}). Fitting under the safe zone at full
-     * {@link #RESPONSE_LIMIT} saturation is therefore not achievable without also shrinking
-     * {@link #RESPONSE_LIMIT} (out of scope for this fix; the row cap is what the D11 window fix
-     * calibrated). This budget instead guarantees the payload stays well clear of the 100 000-char
-     * HARD ceiling — the number that actually causes the mid-JSON cut — with the arithmetic pinned
-     * in {@code SpinPayloadBudgetTest}.
+     * <p><b>Full-size slices for a few rows, not thin slices for all (fix-round-2 rework).</b> The
+     * first version of this fix divided a fixed total budget evenly across every row still
+     * needing a reading, which degrades to useless slices under load — and "useless" is
+     * measurable, not a guess: across four real EX-99.1 information statements the distribution
+     * ratio sits at offsets 1 550-2 800 and the record date at 2 113-7 291. A slice under ~7 000
+     * chars can miss the record date entirely, so a thin-slice-for-everyone budget would
+     * confidently ship rows of prose that provably cannot answer the question — worse than
+     * sending fewer rows properly. {@code 8 000} covers the measured record-date offsets (up to
+     * 7 291) with a ~700-char margin.
      */
-    static final int TERM_SHEET_BUDGET_TOTAL_CHARS = 45_000;
+    static final int TERM_SHEET_SLICE_CHARS = 8_000;
 
-    /** Hard per-row cap: no single term sheet — however small the rest of the batch is — may eat
-     *  the whole budget. */
-    static final int TERM_SHEET_PER_ROW_CAP_CHARS = 3_000;
-
-    /** Below this many characters, a term-sheet slice carries so little prose it is not worth the
-     *  bytes; the row gets {@code null} instead (same signal {@code termSheetAvailable} already
-     *  gives the model — a near-empty slice would only look like a broken fetch). */
-    static final int TERM_SHEET_FLOOR_CHARS = 300;
+    /**
+     * How many rows per run get a full {@link #TERM_SHEET_SLICE_CHARS} slice — see
+     * {@link #selectProseRecipients}. Rows beyond this many, and rows whose dates are already
+     * verified, get {@code null} prose this run; the {@value #TERMS_RECHECK_DAYS}-day
+     * {@code terms_checked_at} throttle is unrelated to this cap (it governs re-fetching from
+     * EDGAR, not re-showing already-fetched prose to the model) — what makes EVERY needy row
+     * eventually get read is the oldest-first rotation in {@link #selectProseRecipients}, applied
+     * run over run.
+     */
+    static final int MAX_PROSE_ROWS_PER_RUN = 5;
 
     private final SpinCandidateRepository repo;
     private final SpinLifecycleReconciler reconciler;
@@ -390,24 +400,36 @@ public class SpinCandidateEnricher {
         if (truncated) {
             log.info("spin payload: response capped at {} rows since {}", RESPONSE_LIMIT, since);
         }
-        int perRowChars = termSheetCharsPerNeedyRow(rows);
-        return new SpinPayload(rows.stream().map(r -> toWire(r, perRowChars)).toList(), truncated);
+        long needy = rows.stream().filter(SpinCandidateEnricher::needsReading).count();
+        java.util.Set<Long> proseRecipients = selectProseRecipients(rows);
+        // A row silently waiting several runs for its rotation turn must be visible — this is the
+        // only place that logs it (I-3 sibling: the same "log the count, always" principle C-1's
+        // rework applies to prose selection, not just the terms-verification counters).
+        log.info("spin payload: {} of {} candidate(s) still need a reading (recordDate/"
+                        + "distributionDate both null); {} selected for term-sheet prose this run (cap {})",
+                needy, rows.size(), proseRecipients.size(), MAX_PROSE_ROWS_PER_RUN);
+        return new SpinPayload(rows.stream().map(r -> toWire(r, proseRecipients.contains(r.id()))).toList(),
+                truncated);
     }
 
     /**
-     * Splits {@link #TERM_SHEET_BUDGET_TOTAL_CHARS} evenly across the rows that still NEED a
-     * reading — {@link #needsReading} — capped per row at {@link #TERM_SHEET_PER_ROW_CAP_CHARS}
-     * and floored at {@link #TERM_SHEET_FLOOR_CHARS} (a share too thin to be worth sending becomes
-     * {@code 0}, i.e. {@code null} prose). A row whose dates are already verified needs none of
-     * its prose re-sent — see {@link #needsReading} — which is what keeps the budget comfortable
-     * rather than starved: in the common case only a handful of the {@link #RESPONSE_LIMIT} rows
-     * are still unread.
+     * Picks at most {@link #MAX_PROSE_ROWS_PER_RUN} rows — among those still {@link #needsReading
+     * needing a reading} — to receive a full {@link #TERM_SHEET_SLICE_CHARS} prose slice this run,
+     * oldest-{@code termsCheckedAt}-first (nulls — never yet captured — sort first). This is the
+     * rotation that makes coverage complete OVER TIME rather than per run: a needy row not picked
+     * this time has an older (or null) {@code termsCheckedAt} than whatever displaces it, so it
+     * sorts earlier next run — the same clock {@link #captureTerms} itself uses for the 7-day
+     * throttle, not {@code last_checked_at} (which every row in the enrichment queue gets bumped
+     * to "now" on nearly every run, collapsing exactly the ordering this rotation needs).
      */
-    private static int termSheetCharsPerNeedyRow(List<SpinCandidateRow> rows) {
-        long needy = rows.stream().filter(SpinCandidateEnricher::needsReading).count();
-        if (needy == 0) return 0;
-        int share = (int) Math.min(TERM_SHEET_PER_ROW_CAP_CHARS, TERM_SHEET_BUDGET_TOTAL_CHARS / needy);
-        return share < TERM_SHEET_FLOOR_CHARS ? 0 : share;
+    private static java.util.Set<Long> selectProseRecipients(List<SpinCandidateRow> rows) {
+        return rows.stream()
+                .filter(SpinCandidateEnricher::needsReading)
+                .sorted(Comparator.comparing(SpinCandidateRow::termsCheckedAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .limit(MAX_PROSE_ROWS_PER_RUN)
+                .map(SpinCandidateRow::id)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
     }
 
     /** A row whose {@code recordDate}/{@code distributionDate} are both still unresolved needs its
@@ -417,7 +439,7 @@ public class SpinCandidateEnricher {
         return row.recordDate() == null && row.distributionDate() == null;
     }
 
-    private EnrichedSpinCandidate toWire(SpinCandidateRow row, int termSheetCharsPerNeedyRow) {
+    private EnrichedSpinCandidate toWire(SpinCandidateRow row, boolean sendProse) {
         JsonNode reg = row.registeredSnapshot();
         JsonNode dist = row.distributedSnapshot();
         JsonNode set = row.settledSnapshot();
@@ -425,7 +447,7 @@ public class SpinCandidateEnricher {
                 row.id(), row.symbol(), row.companyName(), row.formType(),
                 row.filingDate() == null ? null : row.filingDate().toString(),
                 row.filingUrl(),
-                needsReading(row) ? headOf(row.termSheetText(), termSheetCharsPerNeedyRow) : null,
+                sendProse ? headOf(row.termSheetText(), TERM_SHEET_SLICE_CHARS) : null,
                 row.termSheetAvailable(),
                 row.distributionRatio(),
                 row.recordDate() == null ? null : row.recordDate().toString(),
