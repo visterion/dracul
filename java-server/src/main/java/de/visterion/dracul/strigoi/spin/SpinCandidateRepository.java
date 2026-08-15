@@ -368,6 +368,55 @@ public class SpinCandidateRepository {
         return rows > 0;
     }
 
+    /**
+     * The non-terminal row carrying this symbol — the lookup used by
+     * {@link StrigoiSpinWebhookController} to match a {@code terms} entry from the completion
+     * payload back to its tracked candidate (D5, #47). Unlike {@link #findPromotableBySymbol}
+     * this is NOT restricted to {@code DISTRIBUTED}: term readings can arrive for a REGISTERED
+     * or WHEN_ISSUED row too, wherever the agent's payload already carried a resolved symbol.
+     * Terminal rows (SETTLED/ABANDONED) are excluded — nothing writes new terms to a row whose
+     * lifecycle is already closed. Newest-discovered first for determinism if two tracked rows
+     * ever shared a symbol. Blank symbol yields empty.
+     */
+    public Optional<SpinCandidateRow> findActiveBySymbol(String symbol) {
+        if (symbol == null || symbol.isBlank()) return Optional.empty();
+        return jdbc.sql("SELECT " + COLS + """
+                FROM spin_candidate
+                WHERE symbol = :symbol AND status NOT IN (:terminal)
+                ORDER BY discovered_at DESC
+                LIMIT 1
+                """)
+                .param("symbol", symbol)
+                .param("terminal", TERMINAL_STATUSES)
+                .query(this::mapRow)
+                .optional();
+    }
+
+    /**
+     * Writes ONLY the term-evidence-verified dates (D5, #47) — the counterpart to
+     * {@link #storeTerms}, which persists the server-parsed terms wholesale. Each parameter that
+     * is {@code null} leaves its column UNCHANGED (via {@code COALESCE(:param, column)}), it
+     * does NOT null the column out. This is exactly the guarantee the plan requires: a rejected
+     * or absent reading for one field (e.g. {@code distributionDate}) must never overwrite an
+     * already-stored date for that field, while an accepted reading for the other field
+     * ({@code recordDate}) still gets written in the same call. Both parameters null is a
+     * harmless no-op write. Returns whether the row exists.
+     */
+    public boolean storeVerifiedDates(long id, LocalDate recordDate, LocalDate distributionDate) {
+        int rows = jdbc.sql("""
+                UPDATE spin_candidate
+                   SET record_date = COALESCE(:recordDate::date, record_date),
+                       distribution_date = COALESCE(:distributionDate::date, distribution_date),
+                       last_checked_at = now()
+                 WHERE id = :id
+                """)
+                .param("recordDate", recordDate)
+                .param("distributionDate", distributionDate)
+                .param("id", id)
+                .update();
+        return rows > 0;
+    }
+
     /** Single row by id (test/verification helper; also useful for the promotion path). */
     public Optional<SpinCandidateRow> findById(long id) {
         return jdbc.sql("SELECT " + COLS + " FROM spin_candidate WHERE id = :id")

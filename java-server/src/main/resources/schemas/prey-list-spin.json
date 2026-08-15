@@ -19,6 +19,20 @@
           "kill_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5}
         }
       }
+    },
+    "terms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["symbol", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "symbol":           {"type": "string"},
+          "recordDate":       {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+          "distributionDate": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+          "evidence":         {"type": "string"}
+        }
+      }
     }
   }
 }

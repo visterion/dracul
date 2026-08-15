@@ -121,6 +121,98 @@ public class StrigoiSpinWebhookController extends HuntController {
     }
 
     /**
+     * D5 (#47): a completion's {@code output.terms} block carries the agent's OWN reading of
+     * {@code recordDate}/{@code distributionDate}, each backed by a verbatim {@code evidence}
+     * sentence. Applied here, before the inherited {@link HuntController#complete} runs its
+     * prey processing — "terms" and "prey" are two independent parts of the same payload, and
+     * the terms guard must run regardless of whether this delivery happens to carry any prey.
+     */
+    @Override
+    @PostMapping("/complete")
+    public ResponseEntity<Void> complete(
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String auth,
+            @RequestHeader(value = "X-Vistierie-Run-Id", required = false) String runId,
+            @RequestBody JsonNode body) {
+        if (!authorized(auth)) return ResponseEntity.status(401).build();
+        applyTerms(body, runId);
+        return super.complete(auth, runId, body);
+    }
+
+    /**
+     * Verifies and persists every entry of {@code output.terms} (schema:
+     * {@code prey-list-spin.json}). Only entries whose evidence passes
+     * {@link TermEvidenceVerifier#supports} are written, per date field independently — a
+     * candidate whose {@code symbol} matches no tracked row is skipped with no write at all
+     * (untracked/unknown ticker). No-op unless the run's status is {@code done}/{@code
+     * succeeded}, mirroring the gate the inherited {@code complete} applies to prey.
+     */
+    private void applyTerms(JsonNode body, String runId) {
+        String status = body.path("status").asText("");
+        if (!"done".equals(status) && !"succeeded".equals(status)) return;
+        JsonNode terms = body.path("output").path("terms");
+        if (!terms.isArray()) return;
+
+        int accepted = 0;
+        int rejected = 0;
+        for (JsonNode term : terms) {
+            String symbol = term.path("symbol").asText(null);
+            if (symbol == null || symbol.isBlank()) continue;
+            var rowOpt = spinRepo.findActiveBySymbol(symbol);
+            if (rowOpt.isEmpty()) {
+                log.info("strigoi-spin run {} terms: symbol {} matches no tracked candidate — ignored",
+                        runId, symbol);
+                continue;
+            }
+            SpinCandidateRow row = rowOpt.get();
+            String evidence = term.path("evidence").asText(null);
+
+            LocalDate recordDate = null;
+            String recordDateIso = isoOrNull(term, "recordDate");
+            if (recordDateIso != null) {
+                if (TermEvidenceVerifier.supports(row.termSheetText(), evidence, recordDateIso)) {
+                    recordDate = LocalDate.parse(recordDateIso);
+                    accepted++;
+                } else {
+                    rejected++;
+                    log.warn("strigoi-spin run {} rejected recordDate={} for {} ({}): evidence not "
+                                    + "verified against the stored term sheet",
+                            runId, recordDateIso, symbol, row.id());
+                }
+            }
+
+            LocalDate distributionDate = null;
+            String distributionDateIso = isoOrNull(term, "distributionDate");
+            if (distributionDateIso != null) {
+                if (TermEvidenceVerifier.supports(row.termSheetText(), evidence, distributionDateIso)) {
+                    distributionDate = LocalDate.parse(distributionDateIso);
+                    accepted++;
+                } else {
+                    rejected++;
+                    log.warn("strigoi-spin run {} rejected distributionDate={} for {} ({}): evidence "
+                                    + "not verified against the stored term sheet",
+                            runId, distributionDateIso, symbol, row.id());
+                }
+            }
+
+            if (recordDate != null || distributionDate != null) {
+                spinRepo.storeVerifiedDates(row.id(), recordDate, distributionDate);
+            }
+        }
+        if (accepted > 0 || rejected > 0) {
+            log.info("strigoi-spin run {} terms: accepted={} rejected={}", runId, accepted, rejected);
+        }
+    }
+
+    /** {@code null} for a missing field, an explicit JSON null, or a blank string — never the
+     *  literal text {@code "null"}. */
+    private static String isoOrNull(JsonNode term, String field) {
+        JsonNode v = term.get(field);
+        if (v == null || v.isNull()) return null;
+        String s = v.asText(null);
+        return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /**
      * Promotion (candidate &rarr; prey): stamp the originating {@code spin_candidate} row promoted
      * for every newly-persisted prey. Called from {@link HuntController#complete} after prey
      * insertion, with only the prey actually written this delivery.
