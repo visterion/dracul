@@ -8,13 +8,17 @@ class SpinTermsParserTest {
     private final SpinTermsParser parser = new SpinTermsParser();
 
     @Test
-    void parsesRatioAndDates() {
-        SpinTerms t = parser.parse("...one share of NewCo common stock for every three shares of "
-                + "Parent common stock held as of the record date of March 15, 2026, with the "
-                + "distribution expected to occur on April 1, 2026...");
-        assertThat(t.distributionRatio()).contains("one share").contains("every three shares");
-        assertThat(t.recordDate()).isEqualTo("2026-03-15");
-        assertThat(t.distributionDate()).isEqualTo("2026-04-01");
+    void parsesWholeShareRatio() {
+        SpinTerms t = parser.parse("...holders will receive one share of NewCo common stock for every "
+                + "two shares of Parent common stock held as of the record date...");
+        assertThat(t.distributionRatio()).contains("one share").contains("every two shares");
+    }
+
+    @Test
+    void parsesFractionalRatio() {
+        SpinTerms t = parser.parse("...shareholders will receive 0.25 shares of SpinCo common stock "
+                + "for each share of Parent common stock they hold...");
+        assertThat(t.distributionRatio()).contains("0.25 shares").contains("for each share");
     }
 
     @Test
@@ -34,29 +38,9 @@ class SpinTermsParserTest {
     }
 
     @Test
-    void unparseableYieldsNulls() {
+    void unparseableYieldsNullRatio() {
         SpinTerms t = parser.parse("registration statement without ratio language");
         assertThat(t.distributionRatio()).isNull();
-        assertThat(t.recordDate()).isNull();
-    }
-
-    @Test
-    void unparseableTextYieldsNullDistributionDate() {
-        SpinTerms t = parser.parse("registration statement without ratio language");
-        assertThat(t.distributionDate()).isNull();
-    }
-
-    @Test
-    void parsesFractionalRatio() {
-        SpinTerms t = parser.parse("...shareholders will receive 0.25 shares of SpinCo common stock "
-                + "for each share of Parent common stock they hold...");
-        assertThat(t.distributionRatio()).contains("0.25 shares").contains("for each share");
-    }
-
-    @Test
-    void parsesDistributedOnPhrasing() {
-        SpinTerms t = parser.parse("...the shares will be distributed on June 30, 2026 to holders of record...");
-        assertThat(t.distributionDate()).isEqualTo("2026-06-30");
     }
 
     @Test
@@ -67,40 +51,25 @@ class SpinTermsParserTest {
         assertThat(t.distributionDate()).isNull();
     }
 
+    /** Counter-proof for the four-round regex removal (see {@link SpinTermsParser} class javadoc):
+     *  even a well-formed, unambiguous date sentence must NOT populate either date field anymore —
+     *  the parser no longer attempts date extraction at all, regardless of how clean the sentence is.
+     *  Dates now come exclusively from the model's belegpflichtig (evidence-verified) reading via
+     *  the webhook. */
     @Test
-    void neverThrowsOnMalformedDateText() {
-        // "record date" followed by garbage that matches the month-name pattern loosely but
-        // fails DateTimeFormatter parsing (e.g. an invalid day) must degrade to null, not throw.
-        SpinTerms t = parser.parse("the record date is expected to be set in February 30, 2026 pending approval");
+    void wellFormedDateSentenceStillYieldsNullDates() {
+        SpinTerms t = parser.parse("The record date for the distribution will be March 2, 2026.");
         assertThat(t.recordDate()).isNull();
-    }
-
-    @Test
-    void distributionKeywordDoesNotCrossBindOntoRecordDate() {
-        // "distribution will" opens a distribution-date trigger, but the only date in the
-        // sentence belongs to the record date — the gap must refuse to cross "record date".
-        SpinTerms t = parser.parse("The distribution will follow the record date of March 15, 2026.");
-        assertThat(t.recordDate()).isEqualTo("2026-03-15");
         assertThat(t.distributionDate()).isNull();
     }
 
     @Test
-    void recordDateKeywordDoesNotCrossBindOntoDistributionDate() {
-        // Mirror case: "record date" opens a record-date trigger, but the date belongs to the
-        // distribution date — the gap must refuse to cross "distribution".
-        SpinTerms t = parser.parse("the record date follows the distribution date of April 1, 2026.");
-        assertThat(t.distributionDate()).isEqualTo("2026-04-01");
+    void crossBindingSentenceYieldsNullDates() {
+        // The exact shape that broke every prior regex attempt (design doc §4.1, round 4): the
+        // record-date clause names the distribution date in a subordinate clause before the date.
+        SpinTerms t = parser.parse(
+                "The record date, which precedes the distribution date, will be June 15, 2026.");
         assertThat(t.recordDate()).isNull();
-    }
-
-    @Test
-    void genericProxyBoilerplateDoesNotFalselyMatchRecordDate() {
-        // Generic proxy-instruction boilerplate mentions "record date" without ever stating an
-        // actual date nearby — must not throw and must yield null rather than grabbing an
-        // unrelated date from elsewhere in the text via runaway context.
-        SpinTerms t = parser.parse("Only shareholders of record date will be entitled to vote at the "
-                + "annual meeting. Please consult your broker for further instructions regarding "
-                + "proxy materials and voting procedures under applicable state law.");
-        assertThat(t.recordDate()).isNull();
+        assertThat(t.distributionDate()).isNull();
     }
 }
