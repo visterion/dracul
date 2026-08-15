@@ -3,16 +3,17 @@ package de.visterion.dracul.strigoi.spin;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.FilingText;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -32,6 +33,10 @@ import static org.mockito.Mockito.when;
 class SpinCandidateEnricherTest {
 
     private static final LocalDate TODAY = LocalDate.parse("2026-08-15");
+    /** The 7-day due-check is anchored on the {@code today} seam (fix-round-1, Minor 3), not on
+     *  wall-clock {@link Instant#now()} — so termsCheckedAt fixtures are relative to THIS, not to
+     *  real time, or the test would be flaky depending on when it happens to run. */
+    private static final Instant TODAY_START_UTC = TODAY.atStartOfDay(ZoneOffset.UTC).toInstant();
 
     private final SpinCandidateRepository repo = mock(SpinCandidateRepository.class);
     private final SpinLifecycleReconciler reconciler = mock(SpinLifecycleReconciler.class);
@@ -61,8 +66,14 @@ class SpinCandidateEnricherTest {
     }
 
     private void queue(SpinCandidateRow... rows) {
-        when(repo.findNonTerminalOldestCheckedFirst(org.mockito.ArgumentMatchers.anyInt()))
-                .thenReturn(List.of(rows));
+        when(repo.findNonTerminalOldestCheckedFirst(anyInt())).thenReturn(List.of(rows));
+    }
+
+    /** Stubs the DISTRIBUTED-stage switch dependencies so a row's status processing doesn't throw
+     *  and pollute the assertions this test actually cares about. */
+    private void distributedSwitchIsHarmless(SpinCandidateRow row) {
+        when(filings.conceptStrict(eq(row.symbol()), eq(row.cik()), eq("Assets")))
+                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
     }
 
     @Test
@@ -73,14 +84,39 @@ class SpinCandidateEnricherTest {
                 .thenReturn(new FilingText("prose", true, FilingText.Failure.NONE, "EX-99.1"));
         when(termsParser.parse(any())).thenReturn(new SpinTerms("one for two", null, null));
         when(termsParser.parentTicker(any())).thenReturn(null);
-        // DISTRIBUTED-stage switch dependencies, so the run doesn't throw on the rest of the row.
-        when(filings.conceptStrict(any(), any(), eq("Assets")))
-                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
+        distributedSwitchIsHarmless(r);
 
         enricher.enrich(noTransitions(), TODAY);
 
         verify(filings).filingText(eq(r.filingUrl()), eq("EX-99.1"), eq("LEADING"));
         verify(repo).storeTerms(1L, "one for two", null, null, true, "prose", null);
+    }
+
+    /**
+     * fix-round-1, Important 2: the shape of the five actual production rows (ADIG, HONA, MFP,
+     * MBGL, BSEM) — DISTRIBUTED, ALREADY has {@code term_sheet_available=true} and a non-null
+     * ratio, no parsed dates. Every other test in this file with {@code termSheetAvailable=true}
+     * asserts a NEGATIVE path (storeTerms must NOT fire); none of them would catch a regression
+     * that made {@link SpinCandidateEnricher#captureTerms} inert again for exactly this shape
+     * (e.g. resurrecting the old {@code !row.termSheetAvailable()} clause). This test is the one
+     * that actually pins the POSITIVE case this task exists for: once D1 lands and the fetch
+     * resolves the requested EX-99.1 exhibit, the row's stale term sheet IS replaced.
+     */
+    @Test
+    void capturesTheNewExhibitForAProdShapedDistributedRowWithExistingRatioAndText() {
+        SpinCandidateRow r = row(1, SpinStatus.DISTRIBUTED, "one for two", true, "stale Form-10 shell text", null);
+        queue(r);
+        when(filings.filingText(eq(r.filingUrl()), eq("EX-99.1"), eq("LEADING")))
+                .thenReturn(new FilingText("fresh EX-99.1 information statement prose", true,
+                        FilingText.Failure.NONE, "EX-99.1"));
+        when(termsParser.parse(any())).thenReturn(new SpinTerms("one for three", null, null));
+        when(termsParser.parentTicker(any())).thenReturn(null);
+        distributedSwitchIsHarmless(r);
+
+        enricher.enrich(noTransitions(), TODAY);
+
+        verify(repo).storeTerms(1L, "one for three", null, null, true,
+                "fresh EX-99.1 information statement prose", null);
     }
 
     @Test
@@ -89,12 +125,11 @@ class SpinCandidateEnricherTest {
         queue(r);
         when(filings.filingText(eq(r.filingUrl()), eq("EX-99.1"), eq("LEADING")))
                 .thenThrow(new RuntimeException("agora down"));
-        when(filings.conceptStrict(any(), any(), eq("Assets")))
-                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
+        distributedSwitchIsHarmless(r);
 
         enricher.enrich(noTransitions(), TODAY);
 
-        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), anyBoolean(), any(), any());
         verify(repo).touchTermsChecked(1L);
     }
 
@@ -104,12 +139,11 @@ class SpinCandidateEnricherTest {
         queue(r);
         when(filings.filingText(eq(r.filingUrl()), eq("EX-99.1"), eq("LEADING")))
                 .thenReturn(new FilingText("shell text", true, FilingText.Failure.NONE, null));
-        when(filings.conceptStrict(any(), any(), eq("Assets")))
-                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
+        distributedSwitchIsHarmless(r);
 
         enricher.enrich(noTransitions(), TODAY);
 
-        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), anyBoolean(), any(), any());
         verify(repo).touchTermsChecked(1L);
     }
 
@@ -121,8 +155,7 @@ class SpinCandidateEnricherTest {
                 .thenReturn(new FilingText("shell text", true, FilingText.Failure.NONE, null));
         when(termsParser.parse(any())).thenReturn(new SpinTerms(null, null, null));
         when(termsParser.parentTicker(any())).thenReturn(null);
-        when(filings.conceptStrict(any(), any(), eq("Assets")))
-                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
+        distributedSwitchIsHarmless(r);
 
         enricher.enrich(noTransitions(), TODAY);
 
@@ -132,10 +165,9 @@ class SpinCandidateEnricherTest {
     @Test
     void skipsCaptureWithinSevenDaysOfTheLastAttempt() {
         SpinCandidateRow fresh = row(1, SpinStatus.DISTRIBUTED, null, false, null,
-                Instant.now().minus(3, ChronoUnit.DAYS));
+                TODAY_START_UTC.minus(3, ChronoUnit.DAYS));
         queue(fresh);
-        when(filings.conceptStrict(any(), any(), eq("Assets")))
-                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
+        distributedSwitchIsHarmless(fresh);
 
         enricher.enrich(noTransitions(), TODAY);
 
@@ -145,43 +177,61 @@ class SpinCandidateEnricherTest {
     @Test
     void retriesCaptureAfterSevenDays() {
         SpinCandidateRow stale = row(1, SpinStatus.DISTRIBUTED, null, false, null,
-                Instant.now().minus(8, ChronoUnit.DAYS));
+                TODAY_START_UTC.minus(8, ChronoUnit.DAYS));
         queue(stale);
         when(filings.filingText(eq(stale.filingUrl()), eq("EX-99.1"), eq("LEADING")))
                 .thenReturn(FilingText.unavailable());
-        when(filings.conceptStrict(any(), any(), eq("Assets")))
-                .thenReturn(de.visterion.dracul.hunting.agora.ConceptSeries.empty("Assets"));
+        distributedSwitchIsHarmless(stale);
 
         enricher.enrich(noTransitions(), TODAY);
 
         verify(filings).filingText(eq(stale.filingUrl()), eq("EX-99.1"), eq("LEADING"));
     }
 
+    /**
+     * fix-round-1, Important 1: a THREE-row probe, not two — with only two rows the gap is
+     * invisible (row 1 trips the guard, row 2 happens to still get captured because the OLD
+     * {@code break} only ever skipped what came strictly AFTER the row that flipped
+     * {@code health.skipAll()} — but a two-row queue has no "after" left to skip). Row 3 is the
+     * row that actually proves the loop kept going rather than terminating early.
+     */
     @Test
     void capturesEvenWhenBothStrictSourcesAreDown() {
-        // Two DISTRIBUTED rows: the first trips BOTH strict-source guards (concept AND owner
-        // history down), the second must still get its term captured despite health.skipAll().
         SpinCandidateRow first = row(1, SpinStatus.DISTRIBUTED, "ratio", true, "already has text", null);
         SpinCandidateRow second = row(2, SpinStatus.DISTRIBUTED, null, false, null, null);
-        queue(first, second);
+        SpinCandidateRow third = row(3, SpinStatus.DISTRIBUTED, null, false, null, null);
+        queue(first, second, third);
+
         // First row: term capture is a no-op (already has text, fetch unavailable is fine too),
-        // but its settlement probe throws AgoraUnavailableException to mark the concept source down.
+        // but its settlement probe throws AgoraUnavailableException to mark the concept source
+        // down, and the owner-history fetch throws to mark that one down too — BOTH strict
+        // sources are now down after this row.
         when(filings.filingText(eq(first.filingUrl()), eq("EX-99.1"), eq("LEADING")))
                 .thenReturn(FilingText.unavailable());
         when(filings.conceptStrict(eq(first.symbol()), eq(first.cik()), eq("Assets")))
                 .thenThrow(new de.visterion.dracul.marketdata.AgoraUnavailableException("down"));
         when(distribution.snapshot(any(), any(), any(), any(), any()))
                 .thenThrow(new de.visterion.dracul.marketdata.AgoraUnavailableException("down"));
-        // Second row: term fetch should still be attempted even though both strict sources are down.
+
+        // Second and third row: term fetch should still be attempted for BOTH even though both
+        // strict sources are already down when the loop reaches them.
         when(filings.filingText(eq(second.filingUrl()), eq("EX-99.1"), eq("LEADING")))
-                .thenReturn(new FilingText("captured", true, FilingText.Failure.NONE, "EX-99.1"));
-        when(termsParser.parse(any())).thenReturn(new SpinTerms("ratio2", null, null));
+                .thenReturn(new FilingText("captured2", true, FilingText.Failure.NONE, "EX-99.1"));
+        when(filings.filingText(eq(third.filingUrl()), eq("EX-99.1"), eq("LEADING")))
+                .thenReturn(new FilingText("captured3", true, FilingText.Failure.NONE, "EX-99.1"));
+        when(termsParser.parse(any())).thenReturn(new SpinTerms("some ratio", null, null));
         when(termsParser.parentTicker(any())).thenReturn(null);
 
         enricher.enrich(noTransitions(), TODAY);
 
         verify(filings).filingText(eq(second.filingUrl()), eq("EX-99.1"), eq("LEADING"));
-        verify(repo).storeTerms(2L, "ratio2", null, null, true, "captured", null);
+        verify(filings).filingText(eq(third.filingUrl()), eq("EX-99.1"), eq("LEADING"));
+        verify(repo).storeTerms(2L, "some ratio", null, null, true, "captured2", null);
+        verify(repo).storeTerms(3L, "some ratio", null, null, true, "captured3", null);
+        // The strict-source work itself must actually be skipped for both — not merely "still
+        // ends up false somehow" — or this test would pass for the wrong reason.
+        verify(filings, never()).conceptStrict(eq(second.symbol()), any(), eq("Assets"));
+        verify(filings, never()).conceptStrict(eq(third.symbol()), any(), eq("Assets"));
     }
 
     @Test
@@ -197,6 +247,6 @@ class SpinCandidateEnricherTest {
 
         verify(repo).touchTermsChecked(1L);
         verify(repo).touchLastChecked(1L);
-        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), anyBoolean(), any(), any());
     }
 }

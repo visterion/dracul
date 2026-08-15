@@ -13,6 +13,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,11 +27,15 @@ import java.util.List;
  * (non-terminal rows due for a re-check), freshly-transitioned first then oldest-checked, capped at
  * {@link #MAX} to hold the webhook latency budget.
  *
- * <p><b>Term capture</b> ({@link #captureTerms}) runs FIRST for every row in the queue — REGISTERED,
- * WHEN_ISSUED and DISTRIBUTED alike — before the strict-source guard and before the per-status
- * switch below. Five production rows (DISTRIBUTED with a stale term sheet from the Form-10 shell)
- * were never captured at all under the old REGISTERED-only precondition; this is the fix. See
- * {@link #captureTerms} for the due-check, the fallback-vs-good-text guard and the throttle.
+ * <p><b>Term capture</b> ({@link #captureTerms}) runs FIRST for EVERY row in the queue — REGISTERED,
+ * WHEN_ISSUED and DISTRIBUTED alike, regardless of strict-source health — before the per-status
+ * switch below. The strict-source guard ({@code health.skipAll()}) only skips that per-status
+ * switch for the rest of the batch; it must never stop the loop itself, or an XBRL/EDGAR outage
+ * would silently cost term capture for every queued row behind the one that tripped it — the same
+ * source/term-sheet coupling this task exists to undo. Five production rows (DISTRIBUTED with a
+ * stale term sheet from the Form-10 shell) were never captured at all under the old
+ * REGISTERED-only precondition; this is the fix. See {@link #captureTerms} for the due-check, the
+ * fallback-vs-good-text guard and the throttle.
  *
  * <p>Then, per row, by current status:
  * <ul>
@@ -132,16 +137,29 @@ public class SpinCandidateEnricher {
     void enrich(SpinLifecycleReconciler.ReconcileResult reconcile, LocalDate today) {
         List<SpinCandidateRow> queue = selectQueue(reconcile);
         SourceHealth health = new SourceHealth();
+        // Logged once, not once per row, so a long-running outage doesn't spam the log — but the
+        // loop itself must NOT stop: see the fix-round-1 finding below.
+        boolean loggedSkipAll = false;
         for (SpinCandidateRow row : queue) {
             try {
                 // Term capture runs for EVERY row, unconditionally of source health — it does not
                 // touch the strict XBRL/owner-history sources at all, so a batch that already gave
-                // up on those must not give up on this too (Fix 3, capturesEvenWhenBothStrictSourcesAreDown).
-                captureTerms(row);
+                // up on those must not give up on this too (capturesEvenWhenBothStrictSourcesAreDown).
+                captureTerms(row, today);
 
+                // ONLY the strict-source status switch is skipped once both sources are down — the
+                // loop itself keeps going, so term capture still reaches every later row. Fix-round-1
+                // finding: a `break` here (the plan's original wording) silently cost term capture
+                // for every row behind the one that tripped the guard, up to MAX-1 rows on an
+                // XBRL/EDGAR outage — the exact source/term-sheet coupling this task exists to undo.
                 if (health.skipAll()) {
-                    log.info("spin enrichment: both strict sources down, skipping remaining rows");
-                    break;
+                    if (!loggedSkipAll) {
+                        log.info("spin enrichment: both strict sources down, skipping their status-specific "
+                                + "work for the rest of this batch (term capture keeps running per row)");
+                        loggedSkipAll = true;
+                    }
+                    repo.touchLastChecked(row.id());
+                    continue;
                 }
                 switch (row.status()) {
                     case REGISTERED, WHEN_ISSUED -> enrichPreDistribution(row, health);
@@ -178,11 +196,14 @@ public class SpinCandidateEnricher {
      * "no answer". Both cases still stamp {@code terms_checked_at} via
      * {@link SpinCandidateRepository#touchTermsChecked} so the throttle arms regardless of outcome.
      * A row with no text yet DOES accept the shell fallback (better than nothing).
+     *
+     * <p>{@code today} is the injected date seam (same one {@link #enrich} takes) rather than
+     * {@link Instant#now()} directly, so the 7-day due-check is deterministic under test.
      */
-    private void captureTerms(SpinCandidateRow row) {
+    private void captureTerms(SpinCandidateRow row, LocalDate today) {
+        Instant cutoff = today.atStartOfDay(ZoneOffset.UTC).toInstant().minus(TERMS_RECHECK_DAYS, ChronoUnit.DAYS);
         boolean due = row.recordDate() == null && row.distributionDate() == null
-                && (row.termsCheckedAt() == null
-                    || row.termsCheckedAt().isBefore(Instant.now().minus(TERMS_RECHECK_DAYS, ChronoUnit.DAYS)));
+                && (row.termsCheckedAt() == null || row.termsCheckedAt().isBefore(cutoff));
         if (!due) return;
 
         FilingText ft = safeFilingText(row.filingUrl());
@@ -198,10 +219,14 @@ public class SpinCandidateEnricher {
         }
 
         String text = ft.text();
+        // A "successful" fetch that came back blank must not permanently mark the row as having a
+        // term sheet — that would then block the shell-fallback guard above forever, for a row that
+        // in truth has no usable text at all (pre-existing defect, fixed alongside this task).
+        boolean hasText = text != null && !text.isBlank();
         SpinTerms terms = termsParser.parse(text);
         String parent = resolveParent(termsParser.parentTicker(text), row.symbol());
         repo.storeTerms(row.id(), terms.distributionRatio(), terms.recordDate(),
-                terms.distributionDate(), true, text, parent);
+                terms.distributionDate(), hasText, text, parent);
     }
 
     /** (transitioned this run) first, then non-terminal rows oldest-checked, deduped, capped. */
