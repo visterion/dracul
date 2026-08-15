@@ -95,6 +95,41 @@ public class SpinCandidateEnricher {
      *  that keeps a batch from re-fetching the same filing on every single enrichment run. */
     static final long TERMS_RECHECK_DAYS = 7;
 
+    /**
+     * Total character budget for {@code termSheet} prose across the WHOLE response — the fix for
+     * the C-1 finding: since the spin hunter started reading the EX-99.1 information statement
+     * (a ~200-page document) instead of the Form-10 shell, {@code term_sheet_text} fills Agora's
+     * full 24 000-char {@code get_filing_text} window per row, where before it was 10-12 kB. Nine
+     * tracked rows shipped raw would be 216 000 chars; at {@link #RESPONSE_LIMIT} rows it is
+     * 1 200 000 — this is the exact failure documented in {@code MergerPayloadBudgetTest} /
+     * {@link de.visterion.dracul.strigoi.merger.TermSheetDigest}, which already happened once on
+     * the merger hunter: the Claude-Max bridge cuts an MCP tool result mid-JSON above 100 000
+     * chars (and only provably leaves it alone at or below the 50 000-char safe zone — see
+     * {@code SpinPayloadBudgetTest}), the model answers {@code {"prey": []}}, {@code status=done},
+     * and nothing in the log says why.
+     *
+     * <p><b>Why this targets the hard ceiling, not the safe zone (unlike the merger fix).</b>
+     * {@link EnrichedSpinCandidate} carries ~26 structured fields (vs. the merger candidate's
+     * fewer, denser ones) — {@link #RESPONSE_LIMIT} rows of structured fields ALONE already
+     * measure close to the full 50 000-char safe zone before a single term-sheet character is
+     * added (see {@code SpinPayloadBudgetTest}). Fitting under the safe zone at full
+     * {@link #RESPONSE_LIMIT} saturation is therefore not achievable without also shrinking
+     * {@link #RESPONSE_LIMIT} (out of scope for this fix; the row cap is what the D11 window fix
+     * calibrated). This budget instead guarantees the payload stays well clear of the 100 000-char
+     * HARD ceiling — the number that actually causes the mid-JSON cut — with the arithmetic pinned
+     * in {@code SpinPayloadBudgetTest}.
+     */
+    static final int TERM_SHEET_BUDGET_TOTAL_CHARS = 45_000;
+
+    /** Hard per-row cap: no single term sheet — however small the rest of the batch is — may eat
+     *  the whole budget. */
+    static final int TERM_SHEET_PER_ROW_CAP_CHARS = 3_000;
+
+    /** Below this many characters, a term-sheet slice carries so little prose it is not worth the
+     *  bytes; the row gets {@code null} instead (same signal {@code termSheetAvailable} already
+     *  gives the model — a near-empty slice would only look like a broken fetch). */
+    static final int TERM_SHEET_FLOOR_CHARS = 300;
+
     private final SpinCandidateRepository repo;
     private final SpinLifecycleReconciler reconciler;
     private final SpinBalanceSheetSnapshotter balanceSheet;
@@ -197,6 +232,14 @@ public class SpinCandidateEnricher {
      * {@link SpinCandidateRepository#touchTermsChecked} so the throttle arms regardless of outcome.
      * A row with no text yet DOES accept the shell fallback (better than nothing).
      *
+     * <p><b>Transient vs. permanent unavailability (I-2 fix).</b> {@link FilingText#failure()}
+     * distinguishes {@link FilingText.Failure#TOO_LARGE} (a property of this one filing — it will
+     * fail every retry, so the 7-day throttle should arm) from
+     * {@link FilingText.Failure#UNAVAILABLE} (a transient source problem — an EDGAR 503 during the
+     * nightly sweep). Stamping {@code terms_checked_at} for a transient failure would cost every
+     * row in that batch seven days of no retry for a problem that may already be gone by the next
+     * run; only {@code TOO_LARGE} (and the wrong-document case above) arms the throttle here.
+     *
      * <p>{@code today} is the injected date seam (same one {@link #enrich} takes) rather than
      * {@link Instant#now()} directly, so the 7-day due-check is deterministic under test.
      */
@@ -208,7 +251,12 @@ public class SpinCandidateEnricher {
 
         FilingText ft = safeFilingText(row.filingUrl());
         if (!ft.available()) {
-            repo.touchTermsChecked(row.id());
+            // TOO_LARGE is a property of this filing (every retry fails the same way) — arm the
+            // throttle. UNAVAILABLE is a transient source problem — leave terms_checked_at alone
+            // so the very next enrichment run retries instead of waiting out a week.
+            if (ft.failure() == FilingText.Failure.TOO_LARGE) {
+                repo.touchTermsChecked(row.id());
+            }
             return;
         }
         if (row.termSheetAvailable() && ft.resolvedExhibit() == null) {
@@ -342,10 +390,34 @@ public class SpinCandidateEnricher {
         if (truncated) {
             log.info("spin payload: response capped at {} rows since {}", RESPONSE_LIMIT, since);
         }
-        return new SpinPayload(rows.stream().map(this::toWire).toList(), truncated);
+        int perRowChars = termSheetCharsPerNeedyRow(rows);
+        return new SpinPayload(rows.stream().map(r -> toWire(r, perRowChars)).toList(), truncated);
     }
 
-    private EnrichedSpinCandidate toWire(SpinCandidateRow row) {
+    /**
+     * Splits {@link #TERM_SHEET_BUDGET_TOTAL_CHARS} evenly across the rows that still NEED a
+     * reading — {@link #needsReading} — capped per row at {@link #TERM_SHEET_PER_ROW_CAP_CHARS}
+     * and floored at {@link #TERM_SHEET_FLOOR_CHARS} (a share too thin to be worth sending becomes
+     * {@code 0}, i.e. {@code null} prose). A row whose dates are already verified needs none of
+     * its prose re-sent — see {@link #needsReading} — which is what keeps the budget comfortable
+     * rather than starved: in the common case only a handful of the {@link #RESPONSE_LIMIT} rows
+     * are still unread.
+     */
+    private static int termSheetCharsPerNeedyRow(List<SpinCandidateRow> rows) {
+        long needy = rows.stream().filter(SpinCandidateEnricher::needsReading).count();
+        if (needy == 0) return 0;
+        int share = (int) Math.min(TERM_SHEET_PER_ROW_CAP_CHARS, TERM_SHEET_BUDGET_TOTAL_CHARS / needy);
+        return share < TERM_SHEET_FLOOR_CHARS ? 0 : share;
+    }
+
+    /** A row whose {@code recordDate}/{@code distributionDate} are both still unresolved needs its
+     *  prose sent so the model has a chance to read them; a row that already carries agent-verified
+     *  dates (D5) does not — re-sending its prose would only spend budget for no new information. */
+    private static boolean needsReading(SpinCandidateRow row) {
+        return row.recordDate() == null && row.distributionDate() == null;
+    }
+
+    private EnrichedSpinCandidate toWire(SpinCandidateRow row, int termSheetCharsPerNeedyRow) {
         JsonNode reg = row.registeredSnapshot();
         JsonNode dist = row.distributedSnapshot();
         JsonNode set = row.settledSnapshot();
@@ -353,7 +425,7 @@ public class SpinCandidateEnricher {
                 row.id(), row.symbol(), row.companyName(), row.formType(),
                 row.filingDate() == null ? null : row.filingDate().toString(),
                 row.filingUrl(),
-                row.termSheetText(),                    // raw prose, persisted (V26) for the LLM
+                needsReading(row) ? headOf(row.termSheetText(), termSheetCharsPerNeedyRow) : null,
                 row.termSheetAvailable(),
                 row.distributionRatio(),
                 row.recordDate() == null ? null : row.recordDate().toString(),
@@ -381,6 +453,24 @@ public class SpinCandidateEnricher {
             log.debug("spin enrichment: filing text unavailable for {}: {}", url, e.getMessage());
             return FilingText.unavailable();
         }
+    }
+
+    /**
+     * Trims term-sheet prose to {@code maxChars} from the END, keeping the HEAD. Measured across
+     * four real EX-99.1 information statements, the {@code LEADING}-mode extract's ratio and
+     * record-date language sits at offsets 1 550-6 200 from the start — the head is exactly the
+     * part carrying what the model needs; a synopsis's tail is signature blocks, exhibit indices
+     * and boilerplate. Cuts on a word boundary so the kept fragment never ends mid-token.
+     * {@code null}/blank text or a non-positive budget yields {@code null} (not {@code ""}) — a
+     * near-empty string would look like a broken fetch, and {@code termSheetAvailable} is already
+     * the "is there a term sheet" signal.
+     */
+    private static String headOf(String text, int maxChars) {
+        if (text == null || text.isBlank() || maxChars <= 0) return null;
+        if (text.length() <= maxChars) return text;
+        String head = text.substring(0, maxChars);
+        int lastSpace = head.lastIndexOf(' ');
+        return lastSpace > maxChars - 40 ? head.substring(0, lastSpace) : head;
     }
 
     /** A parent ticker only counts when it is present AND not the spin-co's own symbol (the

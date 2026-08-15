@@ -361,15 +361,48 @@ the Acme Spinco board of directors."}
         verifyNoInteractions(spinRepo);
     }
 
+    /**
+     * I-3 (fix round): a completion whose {@code output.terms} is missing/not an array used to
+     * return silently — no log, no counter — which is exactly what the C-1 truncated-payload
+     * symptom looks like from the log: {@code status=done}, nothing else. This must now log a
+     * line naming the 0-entry count, so a run with no terms at all is distinguishable from a run
+     * that was never checked.
+     */
     @Test
-    void missingTermsBlockIsANoOp() throws Exception {
+    void missingTermsBlockIsANoOpButIsLogged() throws Exception {
         controller = newController();
+        startLogCapture();
 
         controller.complete(BEARER, "run-12", json("""
                 {"status":"done","output":{"prey":[]}}
                 """));
 
         verify(spinRepo, never()).storeVerifiedDates(anyLong(), any(), any());
+        assertThat(appender.list)
+                .as("a log line naming that 0 terms entries came back, not silence")
+                .anyMatch(e -> e.getFormattedMessage().contains("run-12")
+                        && e.getFormattedMessage().contains("0 entries"));
+    }
+
+    /** Same fix, the other shape: {@code terms} present but an empty array. Must log the count
+     *  (0) via the unconditional summary line, not stay silent because every counter is 0. */
+    @Test
+    void emptyTermsArrayIsLoggedWithZeroCounts() throws Exception {
+        controller = newController();
+        startLogCapture();
+
+        controller.complete(BEARER, "run-13", json("""
+                {"status":"done","output":{"prey":[],"terms":[]}}
+                """));
+
+        verify(spinRepo, never()).storeVerifiedDates(anyLong(), any(), any());
+        assertThat(appender.list)
+                .as("the summary line must fire even when every counter is 0")
+                .anyMatch(e -> e.getFormattedMessage().contains("run-13")
+                        && e.getFormattedMessage().contains("0 entries returned")
+                        && e.getFormattedMessage().contains("accepted=0")
+                        && e.getFormattedMessage().contains("rejected=0")
+                        && e.getFormattedMessage().contains("skippedNoText=0"));
     }
 
     // ================================================================================

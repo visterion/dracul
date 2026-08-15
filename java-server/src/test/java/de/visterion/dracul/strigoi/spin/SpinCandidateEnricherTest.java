@@ -119,12 +119,38 @@ class SpinCandidateEnricherTest {
                 "fresh EX-99.1 information statement prose", null);
     }
 
+    /**
+     * I-2 (fix round): {@code safeFilingText} turns an unexpected exception into a plain
+     * {@code FilingText.unavailable()} — {@code Failure.UNAVAILABLE}, a transient source problem
+     * indistinguishable here from an EDGAR 503 during the nightly sweep. Stamping
+     * {@code terms_checked_at} for that would arm the 7-day throttle for every row in the batch
+     * over a problem that may already be gone by the next run — so this must NOT touch the clock.
+     * (Contrast {@link #doesNotOverwriteExistingTermsWhenTheDocumentIsPermanentlyTooLarge}, which
+     * DOES touch it, because {@code TOO_LARGE} is a property of the filing itself.)
+     */
     @Test
-    void doesNotOverwriteExistingTermsWhenTheFetchFailed() {
+    void doesNotOverwriteExistingTermsWhenTheFetchFailedTransiently() {
         SpinCandidateRow r = row(1, SpinStatus.DISTRIBUTED, "ratio", true, "existing text", null);
         queue(r);
         when(filings.filingText(eq(r.filingUrl()), eq("EX-99.1"), eq("LEADING")))
                 .thenThrow(new RuntimeException("agora down"));
+        distributedSwitchIsHarmless(r);
+
+        enricher.enrich(noTransitions(), TODAY);
+
+        verify(repo, never()).storeTerms(eq(1L), any(), any(), any(), anyBoolean(), any(), any());
+        verify(repo, never()).touchTermsChecked(1L);
+    }
+
+    /** I-2: {@code TOO_LARGE} IS a reason to arm the throttle — the document exceeds Agora's size
+     *  cap, a property of that filing that will fail identically on every retry, unlike a
+     *  transient outage. */
+    @Test
+    void doesNotOverwriteExistingTermsWhenTheDocumentIsPermanentlyTooLarge() {
+        SpinCandidateRow r = row(1, SpinStatus.DISTRIBUTED, "ratio", true, "existing text", null);
+        queue(r);
+        when(filings.filingText(eq(r.filingUrl()), eq("EX-99.1"), eq("LEADING")))
+                .thenReturn(FilingText.tooLarge());
         distributedSwitchIsHarmless(r);
 
         enricher.enrich(noTransitions(), TODAY);

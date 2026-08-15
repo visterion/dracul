@@ -314,6 +314,36 @@ class SpinCandidateRepositoryIT {
         assertThat(row.parentSymbol()).isEqualTo("PARENT");
     }
 
+    /** I-4 (fix round): {@code storeTerms} unconditionally overwrote {@code record_date} /
+     *  {@code distribution_date} with whatever the parser returned this time — and since D2 the
+     *  parser always returns null for both, so a re-capture silently wiped any date the D5 terms
+     *  webhook had already verified and written via {@link SpinCandidateRepository#storeVerifiedDates}.
+     *  Must {@code COALESCE} exactly like {@code storeVerifiedDates} already does. */
+    @Test
+    void storeTermsDoesNotEraseAlreadyVerifiedDates() {
+        repo.upsertRegistered(candidate("0000000503", "VER", "Repo Verified Dates Co"));
+        long id = idByCompany("Repo Verified Dates Co");
+
+        repo.storeVerifiedDates(id, java.time.LocalDate.parse("2026-08-01"),
+                java.time.LocalDate.parse("2026-08-10"));
+        SpinCandidateRow before = repo.findById(id).orElseThrow();
+        assertThat(before.recordDate()).isEqualTo(java.time.LocalDate.parse("2026-08-01"));
+        assertThat(before.distributionDate()).isEqualTo(java.time.LocalDate.parse("2026-08-10"));
+
+        // a re-capture of the term sheet always passes null dates (D2: the parser no longer
+        // extracts them) — this must not erase the agent-verified ones above.
+        assertThat(repo.storeTerms(id, "one for two", null, null, true, "fresh prose", "PARENT")).isTrue();
+
+        SpinCandidateRow after = repo.findById(id).orElseThrow();
+        assertThat(after.recordDate())
+                .as("re-capture must not erase an already-verified record date")
+                .isEqualTo(java.time.LocalDate.parse("2026-08-01"));
+        assertThat(after.distributionDate())
+                .as("re-capture must not erase an already-verified distribution date")
+                .isEqualTo(java.time.LocalDate.parse("2026-08-10"));
+        assertThat(after.termSheetText()).isEqualTo("fresh prose");
+    }
+
     @Test
     void touchTermsCheckedStampsOnlyTheTimestampNeverTheTermFields() {
         repo.upsertRegistered(candidate("0000000502", "TCH", "Repo TouchTerms Co"));

@@ -177,6 +177,14 @@ public class SpinCandidateRepository {
      * ({@link #touchTermsChecked}), or the very next enrichment run would re-fetch immediately —
      * since D2, {@code record_date}/{@code distribution_date} never become non-null on their own,
      * so this stamp is the only thing that ever makes the capture precondition false again.
+     *
+     * <p><b>{@code record_date}/{@code distribution_date} are {@code COALESCE}d, not overwritten
+     * (I-4 fix).</b> Since D2 the parser passes null for both on every call, so an unconditional
+     * assignment would silently erase whatever {@link StrigoiSpinWebhookController#applyTerms}
+     * (D5) had already verified and written via {@link #storeVerifiedDates} the moment the row
+     * comes due for a re-capture — the {@code due} precondition in {@link SpinCandidateEnricher}
+     * only stops re-capture from being attempted in the first place, it does nothing once this
+     * method actually runs. Mirrors {@link #storeVerifiedDates}, which already gets this right.
      * Returns whether the row exists.
      */
     public boolean storeTerms(long id, String distributionRatio, String recordDate,
@@ -185,8 +193,8 @@ public class SpinCandidateRepository {
         int rows = jdbc.sql("""
                 UPDATE spin_candidate
                    SET distribution_ratio = :ratio,
-                       record_date = :recordDate::date,
-                       distribution_date = :distributionDate::date,
+                       record_date = COALESCE(:recordDate::date, record_date),
+                       distribution_date = COALESCE(:distributionDate::date, distribution_date),
                        term_sheet_available = :available,
                        term_sheet_text = :text,
                        parent_symbol = :parent,

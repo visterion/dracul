@@ -542,14 +542,10 @@ public class AgoraFilings {
      * {@code FilingText.resolvedExhibit()} carries back which exhibit Agora actually found, or
      * {@code null} when it fell back to the primary document.
      *
-     * <p><b>Minimal by design.</b> This overload exists so Task D3 (#45, spin term capture) can
-     * compile and call {@code get_filing_text} with the two new tool parameters; the full
-     * exhibit-resolution wiring on the Agora side (index-page lookup, cache key including mode,
-     * {@code resolved_exhibit} in the tool response) is Task D1's (#43) deliverable — see
-     * {@code docs/superpowers/plans/2026-08-15-spin-information-statement.md}. Until D1 lands,
-     * {@code exhibitType}/{@code extractMode} are sent but Agora may not yet act on them, and
-     * {@code resolved_exhibit} may not yet be present in the response (read as {@code null} then,
-     * same as "fell back to the primary document").
+     * <p>Agora resolves the named exhibit off the filing's index page and returns
+     * {@code resolved_exhibit} in the tool response; when the exhibit is not present it falls
+     * back to the primary document and {@code resolved_exhibit} is read as {@code null} (see
+     * {@link FilingText#resolvedExhibit()}).
      */
     public FilingText filingText(String url, String exhibitType, String extractMode) {
         if (url == null || url.isBlank()) return FilingText.unavailable();

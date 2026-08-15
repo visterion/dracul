@@ -27,7 +27,8 @@ import java.time.temporal.ChronoUnit;
  *   <li><b>sizeRatio</b> = spincoMarketCap / parentMarketCap (scale-4), the small-spin-off effect;
  *       null unless both caps are present and the parent's is positive.</li>
  *   <li><b>daysSinceDistribution</b> = whole days from the effective distribution date to
- *       {@code today}. That date is the term-sheet {@code distribution_date} when known; otherwise
+ *       {@code today}, per {@link SpinLifecycleReconciler#promotionAnchorDate}: the term-sheet
+ *       {@code distribution_date} when known, else the {@code record_date} when known; otherwise
  *       it falls back to {@code distributed_at}, which is when {@link SpinLifecycleReconciler}
  *       first OBSERVED the spin-co trading — not the market event itself, and for a row whose
  *       DISTRIBUTED transition happened well after the real distribution (e.g. a backfill run) this
@@ -68,13 +69,11 @@ public class SpinDistributionSnapshotter {
             AnchorSource anchorSource,
             Boolean postSpinInsiderBuying,
             boolean marketCapAvailable,
-            boolean insiderAvailable) {
-
-        static SpinDistributionSnapshot unavailable() {
-            return new SpinDistributionSnapshot(null, null, null, null, false,
-                    AnchorSource.DETECTED, null, false, false);
-        }
-    }
+            boolean insiderAvailable) {}
+    // No unavailable()/all-null factory: unlike the market-cap/insider fields (which degrade to
+    // null per-field on their own swallowing facades), this snapshot has no all-sources-down call
+    // site — enrichDistributed() only invokes SpinDistributionSnapshotter.snapshot() when the
+    // owner-history source is confirmed up, so a fully-unavailable snapshot never needs building.
 
     /**
      * @param spincoSymbol     the now-trading spin-off ticker.

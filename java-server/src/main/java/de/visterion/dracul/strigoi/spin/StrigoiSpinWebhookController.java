@@ -98,7 +98,16 @@ public class StrigoiSpinWebhookController extends HuntController {
         // answer. It previously reached only the search while the payload was read back from the
         // whole active table, which made the parameter decorative.
         SpinPayload payload = enricher.payload(since);
+        // I-3: logged here (not only in applyTerms) so a run whose model comes back with ZERO
+        // terms entries can be told apart from a genuinely quiet night — compare this count
+        // against the "N entries returned" line applyTerms always logs on completion.
+        log.info("strigoi-spin payload: {} of {} candidates have termSheetAvailable=true",
+                termSheetAvailableCount(payload), payload.candidates().size());
         return new DataSourceResult<>(payload.candidates(), mergeHealth(raw.health(), payload));
+    }
+
+    private static long termSheetAvailableCount(SpinPayload payload) {
+        return payload.candidates().stream().filter(EnrichedSpinCandidate::termSheetAvailable).count();
     }
 
     /** ORs the response row cap into the ingest search's health. Two independent losses (Agora cut
@@ -165,12 +174,28 @@ public class StrigoiSpinWebhookController extends HuntController {
      * every candidate with {@code termSheetAvailable} — exactly those rows carry the most
      * valuable reading, the UPCOMING distribution date, and a symbol-only join could never
      * deliver it. {@code symbol} is kept in the payload/logs purely as a human-readable label.
+     *
+     * <p><b>Always logs, even at zero (I-3 fix).</b> {@code output.terms} missing/not-an-array
+     * used to return here silently, and the summary below only logged when a counter was
+     * non-zero — so a run where the model returned no {@code terms} at all (the C-1 symptom: a
+     * truncated tool result read as {@code {"prey": []}}) left NOTHING in the log, indistinguishable
+     * from a quiet night. Both paths below log unconditionally now — see
+     * {@link #termSheetAvailableCount} for the other half of the correlation (logged at hunt time,
+     * from the same run, so an operator can compare "N rows had a term sheet" against "0 terms
+     * entries came back").
      */
     private void applyTerms(JsonNode body, String runId) {
         String status = body.path("status").asText("");
         if (!"done".equals(status) && !"succeeded".equals(status)) return;
         JsonNode terms = body.path("output").path("terms");
-        if (!terms.isArray()) return;
+        if (!terms.isArray()) {
+            log.info("strigoi-spin run {} terms: output.terms is missing or not an array — 0 "
+                            + "entries returned (a hunt whose payload had termSheetAvailable=true "
+                            + "candidates but comes back with no terms at all is the C-1 symptom: "
+                            + "the tool result may have been truncated)",
+                    runId);
+            return;
+        }
 
         int accepted = 0;
         int rejected = 0;
@@ -239,10 +264,10 @@ public class StrigoiSpinWebhookController extends HuntController {
                 spinRepo.storeVerifiedDates(row.id(), recordDate, distributionDate);
             }
         }
-        if (accepted > 0 || rejected > 0 || skippedNoText > 0) {
-            log.info("strigoi-spin run {} terms: accepted={} rejected={} skippedNoText={}",
-                    runId, accepted, rejected, skippedNoText);
-        }
+        // Unconditional (I-3 fix): a run whose model returned an empty terms array used to log
+        // nothing here, reading identically to a healthy quiet night.
+        log.info("strigoi-spin run {} terms: {} entries returned, accepted={} rejected={} skippedNoText={}",
+                runId, terms.size(), accepted, rejected, skippedNoText);
     }
 
     /** {@code null} for a missing field, an explicit JSON null, or a blank string — never the
@@ -337,7 +362,8 @@ public class StrigoiSpinWebhookController extends HuntController {
      *  fields the LLM saw). A missing snapshot / missing fields fails the gate.
      *
      *  <p><b>Why the confirmed check (2026-08-08/09).</b> {@code daysSinceDistribution} is measured
-     *  from the term-sheet distribution date when known, otherwise it falls back to
+     *  from {@link SpinLifecycleReconciler#promotionAnchorDate}: the term-sheet distribution
+     *  date when known, else the record date when known, otherwise it falls back to
      *  {@code distributed_at} — the timestamp Dracul first OBSERVED the spin-co trading, not the
      *  market event. For a row whose DISTRIBUTED transition happened long after the real
      *  distribution (a backfill run, e.g. the 2026-08-08 ticker-backfill that stamped HONA, BSEM,
@@ -367,7 +393,10 @@ public class StrigoiSpinWebhookController extends HuntController {
         if (dist == null) return false;
         if (!dist.path("spincoMarketCapMillions").isNumber()) return false;
         JsonNode days = dist.path("daysSinceDistribution");
-        if (!(days.isNumber() && days.asInt() <= promotionWindowDays)) return false;
+        // >= 0 alongside the upper bound: a record-date anchor (see promotionAnchorDate) makes a
+        // negative value theoretically reachable (a row processed before its own anchor date),
+        // and a negative "days since" is not a forced-selling window that has started yet.
+        if (!(days.isNumber() && days.asInt() >= 0 && days.asInt() <= promotionWindowDays)) return false;
         if (!dist.path("distributionDateConfirmed").asBoolean(false)) {
             log.info("strigoi-spin candidate {} ({}) would promote (cap resolved, {} days within the "
                             + "{}-day window) but distributionDateConfirmed=false — deliberately held back, "
