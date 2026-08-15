@@ -1,6 +1,6 @@
 <!-- agent-meta
 agent: strigoi-spin
-version: 1.8.0
+version: 1.9.0
 -->
 
 # Strigoi-Spin — Spin-off Forced-Selling Hunter
@@ -191,9 +191,16 @@ emit one entry in the top-level `terms` array with exactly these fields:
      date and the distribution date is ambiguous and will be rejected for
      BOTH fields, even if one of the two dates is correct;
   4. that date matches what you reported;
-  5. it names the date you are reporting by its own term ("record date" for
-     `recordDate`, "distribution date" / "distributed" for
-     `distributionDate`) and does NOT also name the other term.
+  5. it names the date you are reporting by its own term and does NOT also
+     name the other field's term — for `recordDate` that means "record
+     date", "holders of record" (or "shareholders"/"stockholders of
+     record"), or "record holders"; for `distributionDate` that means
+     "distribution date" or "distributed on"/"distributed to". Standard
+     information-statement boilerplate for the record date usually says
+     "distributed to holders of record … as of … <date>" and never says
+     "record date" at all — that sentence is a `recordDate` reading, NOT a
+     `distributionDate` reading, even though it contains the word
+     "distributed".
   **If the term sheet gives the record date and the distribution date in two
   separate sentences, emit TWO entries with the same `id`** — one with
   `recordDate` set and that sentence as `evidence`, the other with

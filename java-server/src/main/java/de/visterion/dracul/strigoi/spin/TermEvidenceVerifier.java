@@ -4,6 +4,7 @@ import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -33,14 +34,46 @@ import java.util.regex.Pattern;
  *       NOT matched by {@code \s}) and compared case-insensitively (SEC cover pages are often
  *       ALL CAPS).</li>
  *   <li>The evidence contains EXACTLY ONE date. Two dates in the same sentence is the exact
- *       cross-binding shape above — ambiguous, rejected.</li>
+ *       cross-binding shape above — ambiguous, rejected. Dates are counted as DISTINCT calendar
+ *       values (via a {@code Set<LocalDate>}), so the same date written twice — even in two
+ *       different spellings, e.g. "August 3, 2026 (i.e. 2026-08-03)" — counts once, not twice.
+ *       This is deliberate, not a bug: it is still one fact stated once. A date RANGE ("March
+ *       2-6, 2026") matches neither endpoint against the single-date patterns below and so
+ *       yields ZERO dates — a conservative false negative that is fine as-is.</li>
  *   <li>That one date equals the date the model reported.</li>
- *   <li>The evidence carries the FULL keyword of the field being verified ({@code record\s+date}
- *       for {@link Field#RECORD_DATE}, {@code distribution\s+date} or {@code distributed} for
- *       {@link Field#DISTRIBUTION_DATE}) and does NOT carry the full keyword of the OTHER field.
+ *   <li>The evidence carries at least one of the field's OWN keywords and NONE of the OTHER
+ *       field's keywords (fix-round-2, N-1/N-2). Each keyword is matched with {@code \b} word
+ *       boundaries — without them {@code distributed} would match inside {@code undistributed},
+ *       misreading a sentence about retained earnings as a distribution date.
+ *       <table border="1">
+ *       <caption>Keyword sets (all patterns case-insensitive)</caption>
+ *       <tr><th>Field</th><th>Own keywords</th><th>Opposing keywords</th></tr>
+ *       <tr><td>{@link Field#RECORD_DATE}</td>
+ *           <td>{@code \brecord\s+date\b}, {@code \b(?:hold|sharehold|stockhold)ers\s+of\s+record\b},
+ *               {@code \brecord\s+holders\b}</td>
+ *           <td>{@code \bdistribution\s+date\b}, {@code \bdistributed\s+(?:on|to)\b}</td></tr>
+ *       <tr><td>{@link Field#DISTRIBUTION_DATE}</td>
+ *           <td>{@code \bdistribution\s+date\b}, {@code \bdistributed\s+(?:on|to)\b}</td>
+ *           <td>{@code \brecord\s+date\b}, {@code \b(?:hold|sharehold|stockhold)ers\s+of\s+record\b},
+ *               {@code \brecord\s+holders\b}</td></tr>
+ *       </table>
  *       "Full keyword", not the bare word: "The record date for the <b>distribution</b> will be
- *       July 20, 2026" passes as a record date (no "distribution date"/"distributed" substring);
- *       "…precede the <b>distribution date</b> of April 1, 2026" does not pass as a record date.</li>
+ *       July 20, 2026" passes as a record date (no "distribution date"/"distributed on/to"
+ *       substring); "…precede the <b>distribution date</b> of April 1, 2026" does not pass as a
+ *       record date.
+ *       <p><b>The "holders of record" family is mandatory</b> (D5 re-review): the most common
+ *       record-date phrasing in real information statements never says "record date" at all —
+ *       "…will be <b>distributed to holders of record</b> … as of the close of business on July
+ *       20, 2026." Without this family, that sentence has exactly one date and the bare word
+ *       "distributed", and used to wrongly pass as a DISTRIBUTION_DATE reading — the record
+ *       date would land in {@code distribution_date}, {@code anchorSource} would become
+ *       {@code DISTRIBUTION_DATE}, and the promotion window would open 1-2 weeks early. Exactly
+ *       the cross-binding harm this whole class exists to stop. Because that same idiom also
+ *       contains "distributed to" (the DISTRIBUTION_DATE own keyword), the "distributed to"
+ *       pattern excludes a directly-following "holders/shareholders/stockholders of record" /
+ *       "record holders" via negative lookahead — otherwise the idiom would trip BOTH fields'
+ *       own keyword at once and its own "opposing keyword present" check would reject itself as
+ *       a RECORD_DATE reading too.</li>
  * </ol>
  *
  * <p><b>Date spelling.</b> The model is instructed to return ISO-8601, but SEC prose spells dates
@@ -82,10 +115,31 @@ public final class TermEvidenceVerifier {
             Map.entry("may", 5), Map.entry("jun", 6), Map.entry("jul", 7), Map.entry("aug", 8),
             Map.entry("sep", 9), Map.entry("oct", 10), Map.entry("nov", 11), Map.entry("dec", 12));
 
-    private static final Pattern RECORD_DATE_KEYWORD =
-            Pattern.compile("record\\s+date", Pattern.CASE_INSENSITIVE);
-    private static final Pattern DISTRIBUTION_DATE_KEYWORD =
-            Pattern.compile("distribution\\s+date|distributed", Pattern.CASE_INSENSITIVE);
+    /** The "holders of record" family — "holders"/"shareholders"/"stockholders of record", or
+     *  "record holders" — reused both as {@link #RECORD_DATE_KEYWORDS}' own pattern AND as an
+     *  idiom guard on {@link #DISTRIBUTION_DATE_KEYWORDS} below. */
+    private static final String RECORD_HOLDER_PHRASE =
+            "(?:(?:hold|sharehold|stockhold)ers\\s+of\\s+record|record\\s+holders)";
+
+    /** Rule 5 keyword sets (fix-round-2, N-1/N-2) — see the table in the class javadoc. Every
+     *  pattern is {@code \b}-bounded so {@code distributed} cannot match inside
+     *  {@code undistributed}. */
+    private static final List<Pattern> RECORD_DATE_KEYWORDS = List.of(
+            Pattern.compile("\\brecord\\s+date\\b", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("\\b" + RECORD_HOLDER_PHRASE + "\\b", Pattern.CASE_INSENSITIVE));
+
+    /** Idiom guard: "distributed to <b>holders of record</b>/<b>shareholders of record</b>/
+     *  <b>stockholders of record</b>/<b>record holders</b>" is standard information-statement
+     *  boilerplate for the RECORD date, not an announcement of the distribution event —
+     *  "distributed" here is the passive verb inside the record-date phrase, not the noun phrase
+     *  "distribution date". Without excluding it, that idiom would match BOTH fields' own keyword
+     *  at once (it also matches {@link #RECORD_DATE_KEYWORDS}), and the resulting mutual "opposing
+     *  keyword present" would reject rule 5 for EITHER field on the exact sentence N-1 exists to
+     *  accept as RECORD_DATE. */
+    private static final List<Pattern> DISTRIBUTION_DATE_KEYWORDS = List.of(
+            Pattern.compile("\\bdistribution\\s+date\\b", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("\\bdistributed\\s+(?:on|to)\\b(?!\\s+" + RECORD_HOLDER_PHRASE + ")",
+                    Pattern.CASE_INSENSITIVE));
 
     private TermEvidenceVerifier() {}
 
@@ -109,10 +163,16 @@ public final class TermEvidenceVerifier {
         if (datesInEvidence.size() != 1) return false; // rule 3
         if (!datesInEvidence.contains(submitted)) return false; // rule 4
 
-        Pattern ownKeyword = field == Field.RECORD_DATE ? RECORD_DATE_KEYWORD : DISTRIBUTION_DATE_KEYWORD;
-        Pattern otherKeyword = field == Field.RECORD_DATE ? DISTRIBUTION_DATE_KEYWORD : RECORD_DATE_KEYWORD;
-        return ownKeyword.matcher(normalizedEvidence).find()
-                && !otherKeyword.matcher(normalizedEvidence).find(); // rule 5
+        List<Pattern> ownKeywords = field == Field.RECORD_DATE ? RECORD_DATE_KEYWORDS : DISTRIBUTION_DATE_KEYWORDS;
+        List<Pattern> otherKeywords = field == Field.RECORD_DATE ? DISTRIBUTION_DATE_KEYWORDS : RECORD_DATE_KEYWORDS;
+        return anyMatches(ownKeywords, normalizedEvidence) && !anyMatches(otherKeywords, normalizedEvidence); // rule 5
+    }
+
+    private static boolean anyMatches(List<Pattern> patterns, String text) {
+        for (Pattern p : patterns) {
+            if (p.matcher(text).find()) return true;
+        }
+        return false;
     }
 
     /** Every distinct calendar date mentioned in {@code text}, in any of the recognised spellings

@@ -241,4 +241,113 @@ class TermEvidenceVerifierTest {
 
         assertThat(TermEvidenceVerifier.supports(text, text, "2026-02-30", DISTRIBUTION_DATE)).isFalse();
     }
+
+    // ================================================================================
+    // Fix-round-2, N-1 (C-1 still reachable): standard information-statement boilerplate never
+    // says "record date" -- it says "holders of record". Without the "holders of record" keyword
+    // family, that sentence has exactly one date and the bare word "distributed", so it wrongly
+    // passed as a DISTRIBUTION_DATE reading -- the record date lands in distribution_date,
+    // anchorSource becomes DISTRIBUTION_DATE, distributionDateConfirmed becomes true, and the
+    // promotion window opens 1-2 weeks early. Exactly the harm C-1 named.
+    // ================================================================================
+
+    @Test
+    void holdersOfRecordSentenceIsRejectedAsDistributionDateButAcceptedAsRecordDate() {
+        String text = "Shares of NewCo common stock will be distributed to holders of record of "
+                + "Acme common stock as of the close of business on July 20, 2026.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", DISTRIBUTION_DATE))
+                .as("this is the RECORD date wearing distribution-flavoured prose around it -- "
+                        + "must not pass as DISTRIBUTION_DATE")
+                .isFalse();
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", RECORD_DATE))
+                .as("'holders of record ... as of ... July 20, 2026' IS the record date reading")
+                .isTrue();
+    }
+
+    @Test
+    void shareholdersOfRecordSentenceIsAcceptedAsRecordDate() {
+        String text = "NewCo common stock will be issued to shareholders of record of Acme common "
+                + "stock as of the close of business on July 20, 2026.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", RECORD_DATE)).isTrue();
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", DISTRIBUTION_DATE)).isFalse();
+    }
+
+    @Test
+    void recordHoldersSentenceIsAcceptedAsRecordDate() {
+        String text = "NewCo shares will be issued to record holders of Acme common stock as of the "
+                + "close of business on July 20, 2026.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", RECORD_DATE)).isTrue();
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", DISTRIBUTION_DATE)).isFalse();
+    }
+
+    // ================================================================================
+    // Fix-round-2, N-2: keyword regexes need word boundaries, or "distributed" matches inside
+    // "undistributed" and a sentence about retained earnings is read as a distribution date.
+    // ================================================================================
+
+    @Test
+    void undistributedEarningsSentenceIsNotADistributionDateReading() {
+        String text = "Acme's undistributed earnings were measured as of July 20, 2026 by the "
+                + "auditors for the information statement.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", DISTRIBUTION_DATE)).isFalse();
+    }
+
+    // ================================================================================
+    // Fix-round-2 regression guard: the canonical ADIG sentence -- the one that motivated the
+    // whole feature -- must still pass as RECORD_DATE after narrowing the keyword sets. This one
+    // matters most: if it breaks, the feature is inert on the very filing it was built for.
+    // ================================================================================
+
+    @Test
+    void theCanonicalAdigRecordDateSentenceStillPasses() {
+        String text = "The record date for the distribution will be July 20, 2026, as fixed by the "
+                + "Acme Spinco board of directors.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-07-20", RECORD_DATE)).isTrue();
+    }
+
+    @Test
+    void aGenuineDistributionSentenceIsAcceptedAsDistributionDateOnly() {
+        String text = "The shares will be distributed on August 3, 2026, to holders as of the "
+                + "record date.";
+        // Trimmed to a genuine distribution-only sentence for the DISTRIBUTION_DATE assertion
+        // (the sentence above also names "record date" and would rightly fail rule 5 for either
+        // field -- see the ambiguous-sentence tests already in this suite).
+        String distributionOnly = "The shares will be distributed on August 3, 2026, as previously "
+                + "announced by the Acme Spinco board.";
+
+        assertThat(TermEvidenceVerifier.supports(distributionOnly, distributionOnly, "2026-08-03",
+                DISTRIBUTION_DATE)).isTrue();
+        assertThat(TermEvidenceVerifier.supports(distributionOnly, distributionOnly, "2026-08-03",
+                RECORD_DATE)).isFalse();
+    }
+
+    // ================================================================================
+    // Fix-round-2 re-review note: rule 3 counts DISTINCT dates via a Set<LocalDate>, so the same
+    // calendar date written twice (even in two different spellings) counts once, not twice -- this
+    // is deliberate, not a bug, and is exercised here so the next reader doesn't "fix" it.
+    // ================================================================================
+
+    @Test
+    void theSameDateRepeatedInTwoSpellingsCountsAsOneDateNotTwo() {
+        String text = "The distribution date will be August 3, 2026 (i.e. 2026-08-03), as fixed by "
+                + "the Acme Spinco board.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-08-03", DISTRIBUTION_DATE)).isTrue();
+    }
+
+    /** A date RANGE yields zero dates (neither endpoint matches the single-date patterns as
+     *  written) and is rejected -- a conservative false negative, deliberately left as-is. */
+    @Test
+    void aDateRangeYieldsNoDatesAndIsRejected() {
+        String text = "The distribution date will fall between March 2-6, 2026, subject to final "
+                + "board approval.";
+
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-03-02", DISTRIBUTION_DATE)).isFalse();
+        assertThat(TermEvidenceVerifier.supports(text, text, "2026-03-06", DISTRIBUTION_DATE)).isFalse();
+    }
 }
