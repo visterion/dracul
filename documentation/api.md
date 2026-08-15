@@ -1654,15 +1654,23 @@ Response:
 ] } }
 ```
 
-`termSheet` / `termSheetAvailable` are advisory annotations — the cleaned
-summary-term-sheet text of the filing (via Agora's `get_filing_text`, fetched
-by `AgoraFilings.filingText(filingUrl)`) and whether it was available.
-`distributionRatio` / `recordDate` / `distributionDate` are deterministically
-parsed from `termSheet` by `SpinTermsParser` (`null` when the pattern isn't
-found in the text — the LLM still extracts parent/ratio/record-date/size from
-the raw `termSheet` as a fallback); fail-soft (`termSheetAvailable = false`,
-empty text) on any Agora failure — no candidate is dropped for it.
-`output_schema` (the final verdict) is unchanged.
+`termSheet` / `termSheetAvailable` are advisory annotations — the cleaned text
+of the filing's **EX-99.1 Information Statement** (via Agora's
+`get_filing_text` with `exhibit_type=EX-99.1`, `extract_mode=LEADING`, fetched
+by `AgoraFilings.filingText(filingUrl, "EX-99.1", "LEADING")`; falls back to
+the primary document when the exhibit isn't found) and whether it was
+available. `distributionRatio` is deterministically parsed from `termSheet` by
+`SpinTermsParser` (`null` when the pattern isn't found in the text).
+`recordDate` / `distributionDate` are **not** parsed by regex — the parser
+always returns `null` for both; the LLM reads them itself from `termSheet`
+prose and must submit them in a separate `output.terms[]` block, joined back
+to the row by the candidate's `id` (not `symbol` — a `REGISTERED` row has no
+symbol yet), each date accompanied by a verbatim `evidence` sentence.
+`TermEvidenceVerifier` checks that evidence against the stored `termSheet`
+before Dracul accepts the date (rejected readings are dropped, never written,
+and counted separately from rows that had no term sheet to check against).
+Fail-soft (`termSheetAvailable = false`, empty text) on any Agora failure — no
+candidate is dropped for it. `output_schema` (the final verdict) is unchanged.
 
 ### `POST /api/strigoi-spin/complete`
 

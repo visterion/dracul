@@ -45,7 +45,7 @@ runs any direct-fetch adapters for EDGAR, Finnhub, Yahoo, or Wikipedia.
 
 | Strigoi | Facade + Agora tool(s) |
 |---|---|
-| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B; the spin-co's registrant CIK is parsed from the filing URL via `CikExtractor.fromFilingUrl` and preserved on `SpinoffFiling.cik`) + `AgoraFilings.filingText` (`get_filing_text`, term-sheet capture) + `SpinTermsParser` (regex-based distribution ratio / record date / distribution date / best-effort parent ticker). **Lifecycle enrichment (2026-07-12):** `AgoraMarketData.quotes` (batched distribution-detection price probe) + `AgoraFilings.conceptStrict` (`get_company_concept` **by CIK** — pre-distribution balance sheet + settlement `Assets`/`filed` probe + settled-stage valuation, a ticker not yet existing at 10-12B time) + `EquityMetricsExtractor` (Finnhub market caps for spin-co and parent → `sizeRatio`) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, post-spin open-market insider buying) + `AgoraCompanyData.fundamentals`/`profile` (settled-stage P/B, FCF yield, industry) |
+| strigoi-spin | `AgoraFilings.searchSpinoffs` (`search_filings` 10-12B; the spin-co's registrant CIK is parsed from the filing URL via `CikExtractor.fromFilingUrl` and preserved on `SpinoffFiling.cik`) + `AgoraFilings.filingText` (`get_filing_text` with `exhibit_type=EX-99.1`, `extract_mode=LEADING` — reads the Information Statement, not the Form 10 shell) + `SpinTermsParser` (regex-based distribution ratio / best-effort parent ticker **only**; record date and distribution date are no longer regex-extracted — see "Strigoi-Spin" in `documentation/strigoi.md` for why and how the model reads them instead). **Lifecycle enrichment (2026-07-12):** `AgoraMarketData.quotes` (batched distribution-detection price probe) + `AgoraFilings.conceptStrict` (`get_company_concept` **by CIK** — pre-distribution balance sheet + settlement `Assets`/`filed` probe + settled-stage valuation, a ticker not yet existing at 10-12B time) + `EquityMetricsExtractor` (Finnhub market caps for spin-co and parent → `sizeRatio`) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, post-spin open-market insider buying) + `AgoraCompanyData.fundamentals`/`profile` (settled-stage P/B, FCF yield, industry) |
 | strigoi-insider | `AgoraFilings.recentForm4` (`get_form4_transactions`, cluster screen) + `AgoraFilings.ownerHistoryStrict` (`get_form4_owner_history`, routine/opportunistic classification — one call per cluster) + `EquityMetricsExtractor` / `AgoraMarketData.dailyOhlcHistory` / `AgoraCompanyData.recommendationsStrict` / `AgoraEarnings` (context enrichment) |
 | strigoi-echo | `AgoraEarnings.recent` (`get_earnings_window`) + `AgoraFilings.epsHistory` (`get_eps_history`) + `AgoraFilings.concept` (`get_company_concept`) + `AgoraCompanyData` (news/recommendations/fundamentals/profile) + `AgoraEarnings.nextEarningsDate` + Agora prices/OHLC |
 | strigoi-lazarus | `AgoraIndexConstituents.constituents` (`get_index_constituents`, S&P 500 universe) + `AgoraPriceRange.range52wBatch` (`get_indicators_batch` `52w_range`, one cheap pre-filter call per chunk of `LAZARUS_PROBE_CHUNK_SIZE` universe symbols) + the watchlist (US + non-US: XETRA `.DE`, Tokyo `.T`, Hong Kong `.HK`, always screened on top) + `AgoraCompanyData.fundamentals` (`get_fundamentals`) + `AgoraFilings.fundamentalScoreStrict` (`get_fundamental_score`) + `AgoraFilings.conceptStrict` (`get_company_concept`, US Altman-Z XBRL inputs) + `get_fundamental_concepts` (**non-US** Altman-Z inputs, Yahoo-backed) + Agora daily OHLC (timing signals) |
@@ -182,19 +182,34 @@ consumed through five neutral domain facades in
   the Altman-Z balance-sheet/flow inputs for the lazarus non-US path in place of
   `get_company_concept`),
   `filingText`
-  (`get_filing_text` — fetches a filing's primary document as cleaned
+  (`get_filing_text` — fetches a filing document as cleaned
   summary-term-sheet text; consumed via `AgoraFilings.filingText(url)` →
-  `FilingText(text, available, failure)` by strigoi-merger and strigoi-spin,
-  fail-soft to `available = false` on any Agora failure. `failure` distinguishes
-  `UNAVAILABLE` (outage) from `TOO_LARGE` — Agora refuses a document exceeding
-  `agora.data.edgar.max-filing-bytes` (32 MiB) with an error message opening on
-  the stable token `filing_too_large:`, which a genuine outage never carries.
-  Dracul branches on that token in one place
+  `FilingText(text, available, failure, resolvedExhibit)` by strigoi-merger and
+  strigoi-spin, fail-soft to `available = false` on any Agora failure. `failure`
+  distinguishes `UNAVAILABLE` (outage) from `TOO_LARGE` — Agora refuses a document
+  exceeding `agora.data.edgar.max-filing-bytes` (32 MiB) with an error message
+  opening on the stable token `filing_too_large:`, which a genuine outage never
+  carries. Dracul branches on that token in one place
   (`AgoraUnavailableException.filingTooLarge()`), used both by `AgoraClient` —
   which logs `Agora refused an oversized document for <tool>` rather than
   `Agora unreachable for <tool>`, so a too-big filing does not inflate the
   outage count — and by the merger enrichment, which reports the two causes
   separately in `data_source_health.detail`).
+  **Exhibit resolution and extract mode (2026-08-15):** the tool takes two
+  optional parameters, `exhibit_type` and `extract_mode` (`SECTION` | `LEADING`).
+  With `exhibit_type` set, Agora loads the filing's index page first, resolves the
+  named exhibit's own URL, and reads from there instead of the primary document —
+  the response's `resolved_exhibit` field names which exhibit was actually found,
+  or is absent if the index had none and Agora fell back to the primary document
+  (not an error). `extract_mode=LEADING` returns a window from character 0 instead
+  of seeking a heading, for documents whose relevant prose sits ahead of any
+  section title. `AgoraFilings.filingText(url, exhibitType, extractMode)` carries
+  both through; the single-argument overload is unchanged (`exhibitType = null`,
+  `extractMode = SECTION`). Strigoi-spin uses this to read a spin-off's **EX-99.1
+  Information Statement** — the document that actually carries the record/
+  distribution dates — instead of the Form 10 registration shell, with
+  `extract_mode=LEADING` since the Information Statement's terms sit before any
+  heading.
   **Note for strigoi-merger (2026-08-04):** the fetched text is used server-side
   (by `DealTermsParser`) but no longer travels to the model. `MergerEnrichmentService`
   reduces it to `termSheetDigest` — at most
