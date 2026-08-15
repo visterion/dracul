@@ -389,4 +389,62 @@ class AgoraFilingsTest {
                         () -> new AgoraFilings(client).ownerHistoryStrict("AAPL"))
                 .isInstanceOf(AgoraUnavailableException.class);
     }
+
+    /** D1 (#43): the three-arg overload must send Agora's exact wire field names —
+     *  {@code exhibit_type} and {@code extract_mode}, not a renamed or differently-cased variant
+     *  — and must read {@code resolved_exhibit} back into {@link FilingText#resolvedExhibit()}.
+     *  A silent name mismatch on either side would drop the parameter/response and no test would
+     *  ever notice unless it asserts on the literal field names, which is the entire point of
+     *  this test. */
+    @Test void passesExhibitTypeAndModeToTheToolAndReadsResolvedExhibit() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_filing_text"), any())).thenReturn(json(
+                "{\"text\":\"Holders of Parent common stock will receive one share of NewCo " +
+                "common stock for every two shares held.\",\"resolved_exhibit\":\"EX-99.1\"}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        FilingText result = filings.filingText("http://sec/synthetic-filing.htm", "EX-99.1", "LEADING");
+
+        assertThat(result.available()).isTrue();
+        assertThat(result.text()).contains("one share of NewCo");
+        assertThat(result.resolvedExhibit()).isEqualTo("EX-99.1");
+
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        Mockito.verify(client).callTool(eq("get_filing_text"), args.capture());
+        assertThat(args.getValue().path("url").asString()).isEqualTo("http://sec/synthetic-filing.htm");
+        assertThat(args.getValue().path("exhibit_type").asString()).isEqualTo("EX-99.1");
+        assertThat(args.getValue().path("extract_mode").asString()).isEqualTo("LEADING");
+    }
+
+    /** The old one-arg signature must stay bit-for-bit unchanged (merger enrichment call site
+     *  depends on it): neither {@code exhibit_type} nor {@code extract_mode} is sent, and
+     *  {@code resolvedExhibit} comes back null even when the tool happens to return one. */
+    @Test void oneArgFilingTextSendsNeitherExhibitTypeNorExtractMode() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_filing_text"), any())).thenReturn(json(
+                "{\"text\":\"Form 10 shell text.\",\"resolved_exhibit\":\"EX-99.1\"}"));
+        AgoraFilings filings = new AgoraFilings(client);
+
+        FilingText result = filings.filingText("http://sec/synthetic-filing.htm");
+
+        assertThat(result.available()).isTrue();
+        assertThat(result.resolvedExhibit()).isNull();   // one-arg form never requested an exhibit
+
+        ArgumentCaptor<JsonNode> args = ArgumentCaptor.forClass(JsonNode.class);
+        Mockito.verify(client).callTool(eq("get_filing_text"), args.capture());
+        assertThat(args.getValue().has("url")).isTrue();
+        assertThat(args.getValue().has("exhibit_type")).isFalse();
+        assertThat(args.getValue().has("extract_mode")).isFalse();
+    }
+
+    @Test void filingTextUnavailableAndTooLargeCarryNullResolvedExhibit() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        assertThat(FilingText.unavailable().resolvedExhibit()).isNull();
+        assertThat(FilingText.tooLarge().resolvedExhibit()).isNull();
+
+        when(client.callTool(eq("get_filing_text"), any())).thenThrow(new AgoraUnavailableException("down"));
+        FilingText r = new AgoraFilings(client).filingText("http://sec/synthetic-filing.htm", "EX-99.1", "LEADING");
+        assertThat(r.available()).isFalse();
+        assertThat(r.resolvedExhibit()).isNull();
+    }
 }
