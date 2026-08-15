@@ -208,4 +208,68 @@ class SpinLifecycleReconcilerTest {
         assertThat(reconciler.advanceToSettled(7)).isTrue();
         verify(repo).advanceStatus(7, SpinStatus.DISTRIBUTED, SpinStatus.SETTLED);
     }
+
+    // --- D4 (#46): promotion anchor must not leak into the settlement threshold ---
+
+    /**
+     * THE REGRESSION THIS TASK EXISTS TO PREVENT. Real SEC XBRL (measured 2026-08-15) has HONA
+     * with Assets {@code periodEnd=2026-06-27, filed=2026-08-05} and MBGL identically shaped —
+     * both AFTER their {@code record_date=2026-06-15}. {@code effectiveDistributionDate} must
+     * keep ignoring {@code recordDate} and anchor on {@code distributedAt} instead, or this row
+     * would flip to terminal SETTLED the moment it is first observed trading — never promotable.
+     */
+    @Test
+    void isSettledIgnoresTheRecordDate() {
+        SpinCandidateRow row = row(1, SpinStatus.DISTRIBUTED, "HONA",
+                LocalDate.of(2026, 6, 15), null, "2026-05-01T00:00:00Z", "2026-08-08T00:00:00Z");
+        ConceptSeries assets = new ConceptSeries("Assets", List.of(
+                new ConceptSeries.Point(null, LocalDate.of(2026, 6, 27), new BigDecimal("100"),
+                        LocalDate.of(2026, 8, 5))));
+
+        assertThat(reconciler.isSettled(row, assets, TODAY)).isFalse();
+    }
+
+    @Test
+    void promotionAnchorPrefersDistributionThenRecordThenDetection() {
+        SpinCandidateRow distributionKnown = row(1, SpinStatus.DISTRIBUTED, "A",
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 20), "2026-05-01T00:00:00Z",
+                "2026-06-21T00:00:00Z");
+        assertThat(SpinLifecycleReconciler.promotionAnchorDate(distributionKnown))
+                .isEqualTo(LocalDate.of(2026, 6, 20));
+
+        SpinCandidateRow recordOnly = row(2, SpinStatus.DISTRIBUTED, "B",
+                LocalDate.of(2026, 6, 1), null, "2026-05-01T00:00:00Z", "2026-06-21T00:00:00Z");
+        assertThat(SpinLifecycleReconciler.promotionAnchorDate(recordOnly))
+                .isEqualTo(LocalDate.of(2026, 6, 1));
+
+        SpinCandidateRow detectionOnly = row(3, SpinStatus.DISTRIBUTED, "C",
+                null, null, "2026-05-01T00:00:00Z", "2026-06-21T00:00:00Z");
+        assertThat(SpinLifecycleReconciler.promotionAnchorDate(detectionOnly))
+                .isEqualTo(LocalDate.of(2026, 6, 21));
+    }
+
+    @Test
+    void anchorSourceIsDetectedWithoutAnyParsedDate() {
+        SpinCandidateRow row = row(1, SpinStatus.DISTRIBUTED, "C",
+                null, null, "2026-05-01T00:00:00Z", "2026-06-21T00:00:00Z");
+        assertThat(SpinLifecycleReconciler.anchorSourceFor(row))
+                .isEqualTo(SpinLifecycleReconciler.AnchorSource.DETECTED);
+    }
+
+    @Test
+    void anchorSourceIsRecordDateWithOnlyARecordDate() {
+        SpinCandidateRow row = row(1, SpinStatus.DISTRIBUTED, "B",
+                LocalDate.of(2026, 6, 1), null, "2026-05-01T00:00:00Z", "2026-06-21T00:00:00Z");
+        assertThat(SpinLifecycleReconciler.anchorSourceFor(row))
+                .isEqualTo(SpinLifecycleReconciler.AnchorSource.RECORD_DATE);
+    }
+
+    @Test
+    void anchorSourceIsDistributionDateWhenKnown() {
+        SpinCandidateRow row = row(1, SpinStatus.DISTRIBUTED, "A",
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 20), "2026-05-01T00:00:00Z",
+                "2026-06-21T00:00:00Z");
+        assertThat(SpinLifecycleReconciler.anchorSourceFor(row))
+                .isEqualTo(SpinLifecycleReconciler.AnchorSource.DISTRIBUTION_DATE);
+    }
 }

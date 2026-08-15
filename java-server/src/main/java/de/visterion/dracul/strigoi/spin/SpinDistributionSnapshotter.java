@@ -4,6 +4,7 @@ import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.Form4OwnerHistory;
 import de.visterion.dracul.strigoi.echo.EquityMetrics;
 import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
+import de.visterion.dracul.strigoi.spin.SpinLifecycleReconciler.AnchorSource;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -64,23 +65,30 @@ public class SpinDistributionSnapshotter {
             Double sizeRatio,
             Integer daysSinceDistribution,
             boolean distributionDateConfirmed,
+            AnchorSource anchorSource,
             Boolean postSpinInsiderBuying,
             boolean marketCapAvailable,
             boolean insiderAvailable) {
 
         static SpinDistributionSnapshot unavailable() {
-            return new SpinDistributionSnapshot(null, null, null, null, false, null, false, false);
+            return new SpinDistributionSnapshot(null, null, null, null, false,
+                    AnchorSource.DETECTED, null, false, false);
         }
     }
 
     /**
      * @param spincoSymbol     the now-trading spin-off ticker.
      * @param parentSymbol     the parent ticker, or blank/null when it could not be resolved.
-     * @param distributionDate the EFFECTIVE distribution date used for the calendar/insider math —
-     *                         see {@link SpinLifecycleReconciler#effectiveDistributionDate}. Null
-     *                         degrades the calendar and insider fields to null.
-     * @param distributionDateConfirmed whether {@code distributionDate} is the real, term-sheet
-     *                         distribution date (true) or the {@code distributed_at} fallback — the
+     * @param distributionDate the PROMOTION-WINDOW anchor date used for the calendar/insider math —
+     *                         see {@link SpinLifecycleReconciler#promotionAnchorDate} (deliberately
+     *                         NOT {@code effectiveDistributionDate}, which is the settlement
+     *                         threshold — see that method's javadoc for why the two must not be
+     *                         merged). Null degrades the calendar and insider fields to null.
+     * @param anchorSource     which source backed {@code distributionDate} — see
+     *                         {@link SpinLifecycleReconciler#anchorSourceFor}. {@code
+     *                         distributionDateConfirmed} on the returned snapshot is true exactly
+     *                         when this is not {@link AnchorSource#DETECTED}; {@code DETECTED} means
+     *                         {@code distributionDate} is the {@code distributed_at} fallback — the
      *                         date Dracul first OBSERVED the spin-co trading, which can lag the real
      *                         event by weeks to months for a row transitioned late (e.g. a backfill).
      *                         Carried through to {@code daysSinceDistribution} so the caller never
@@ -88,7 +96,7 @@ public class SpinDistributionSnapshotter {
      * @param today            the reconciliation date (passed in for deterministic testing).
      */
     public SpinDistributionSnapshot snapshot(String spincoSymbol, String parentSymbol,
-                                             LocalDate distributionDate, boolean distributionDateConfirmed,
+                                             LocalDate distributionDate, AnchorSource anchorSource,
                                              LocalDate today) {
         Double spincoCap = marketCapMillions(spincoSymbol);
         Double parentCap = marketCapMillions(parentSymbol);
@@ -113,8 +121,9 @@ public class SpinDistributionSnapshotter {
             insiderAvailable = true;
         }
 
+        boolean distributionDateConfirmed = anchorSource != AnchorSource.DETECTED && daysSinceDistribution != null;
         return new SpinDistributionSnapshot(spincoCap, parentCap, sizeRatio,
-                daysSinceDistribution, distributionDateConfirmed && daysSinceDistribution != null,
+                daysSinceDistribution, distributionDateConfirmed, anchorSource,
                 postSpinInsiderBuying, marketCapAvailable, insiderAvailable);
     }
 

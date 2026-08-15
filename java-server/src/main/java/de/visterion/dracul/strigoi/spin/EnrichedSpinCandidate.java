@@ -25,14 +25,17 @@ import java.math.BigDecimal;
  *       (pre-distribution XBRL balance-sheet anchors, raw USD) and {@code industry}.</li>
  *   <li><b>DISTRIBUTED</b> — {@code spincoMarketCapMillions}, {@code parentMarketCapMillions},
  *       {@code sizeRatio}, {@code daysSinceDistribution}, {@code distributionDateConfirmed},
- *       {@code postSpinInsiderBuying}. The parent fields / {@code sizeRatio} are null when the
- *       parent could not be resolved (see {@link SpinCandidateEnricher}). {@code
+ *       {@code anchorSource}, {@code postSpinInsiderBuying}. The parent fields / {@code sizeRatio}
+ *       are null when the parent could not be resolved (see {@link SpinCandidateEnricher}). {@code
  *       distributionDateConfirmed} is true only when {@code daysSinceDistribution} is measured from
- *       the real term-sheet {@code distributionDate}; when false (including when {@code
- *       distributionDate} above is null) it is measured from the date Dracul first OBSERVED the
- *       spin-co trading instead — which can lag the actual event by weeks to months (e.g. a row
+ *       a parsed term-sheet date ({@code anchorSource} {@code DISTRIBUTION_DATE} or {@code
+ *       RECORD_DATE}); when false (including when {@code distributionDate} above is null) it is
+ *       measured from the date Dracul first OBSERVED the spin-co trading instead ({@code
+ *       anchorSource DETECTED}) — which can lag the actual event by weeks to months (e.g. a row
  *       transitioned by a backfill run) — so a small {@code daysSinceDistribution} is NOT reliable
- *       freshness evidence in that case.</li>
+ *       freshness evidence in that case. {@code anchorSource} additionally distinguishes a real
+ *       {@code distributionDate} from the earlier, more conservative {@code recordDate} fallback —
+ *       see {@link SpinLifecycleReconciler#promotionAnchorDate}.</li>
  *   <li><b>SETTLED</b> — {@code priceToBook}, {@code evToEbit}, {@code fcfYield}.</li>
  * </ul>
  */
@@ -60,6 +63,7 @@ public record EnrichedSpinCandidate(
         Double sizeRatio,
         Integer daysSinceDistribution,
         boolean distributionDateConfirmed,
+        String anchorSource,
         Boolean postSpinInsiderBuying,
         // SETTLED stage
         Double priceToBook,

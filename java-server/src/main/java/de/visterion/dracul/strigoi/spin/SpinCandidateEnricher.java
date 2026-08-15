@@ -226,11 +226,12 @@ public class SpinCandidateEnricher {
             // term sheet, so the parent/size fields degrade to null; see class javadoc).
             if (!health.ownerHistoryDown) {
                 try {
-                    LocalDate dist = SpinLifecycleReconciler.effectiveDistributionDate(row);
-                    // Whether `dist` is the real term-sheet distribution date, or the fallback
-                    // detection (distributed_at) date — see SpinDistributionSnapshotter#snapshot.
-                    boolean distConfirmed = row.distributionDate() != null;
-                    var snap = distribution.snapshot(row.symbol(), row.parentSymbol(), dist, distConfirmed, today);
+                    // The PROMOTION-WINDOW anchor, not the settlement threshold — see
+                    // SpinLifecycleReconciler#promotionAnchorDate javadoc for why the two anchors
+                    // must never be merged (HONA/MBGL regression).
+                    LocalDate dist = SpinLifecycleReconciler.promotionAnchorDate(row);
+                    SpinLifecycleReconciler.AnchorSource anchorSource = SpinLifecycleReconciler.anchorSourceFor(row);
+                    var snap = distribution.snapshot(row.symbol(), row.parentSymbol(), dist, anchorSource, today);
                     repo.storeSnapshot(row.id(), SpinStatus.DISTRIBUTED, mapper.valueToTree(snap));
                     touched = true;
                 } catch (AgoraUnavailableException e) {
@@ -289,6 +290,7 @@ public class SpinCandidateEnricher {
                 dbl(dist, "spincoMarketCapMillions"), dbl(dist, "parentMarketCapMillions"),
                 dbl(dist, "sizeRatio"), integer(dist, "daysSinceDistribution"),
                 boolOrFalse(dist, "distributionDateConfirmed"),
+                text(dist, "anchorSource"),
                 bool(dist, "postSpinInsiderBuying"),
                 // SETTLED
                 dbl(set, "priceToBook"), dbl(set, "evToEbit"), dbl(set, "fcfYield"));

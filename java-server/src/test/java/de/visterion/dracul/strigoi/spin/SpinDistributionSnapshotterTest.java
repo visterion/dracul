@@ -20,6 +20,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.visterion.dracul.strigoi.spin.SpinLifecycleReconciler.AnchorSource;
+
 class SpinDistributionSnapshotterTest {
 
     private static final LocalDate DIST = LocalDate.of(2026, 6, 1);
@@ -59,13 +61,14 @@ class SpinDistributionSnapshotterTest {
         when(filings.ownerHistoryStrict("SPN"))
                 .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));   // open-market buy after DIST
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.DISTRIBUTION_DATE, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isEqualTo(300.0);
         assertThat(s.parentMarketCapMillions()).isEqualTo(1500.0);
         assertThat(s.sizeRatio()).isEqualTo(0.2);                 // 300 / 1500
         assertThat(s.daysSinceDistribution()).isEqualTo(30);
         assertThat(s.distributionDateConfirmed()).isTrue();
+        assertThat(s.anchorSource()).isEqualTo(AnchorSource.DISTRIBUTION_DATE);
         assertThat(s.postSpinInsiderBuying()).isTrue();
         assertThat(s.marketCapAvailable()).isTrue();
         assertThat(s.insiderAvailable()).isTrue();
@@ -79,16 +82,31 @@ class SpinDistributionSnapshotterTest {
         when(filings.ownerHistoryStrict("SPN"))
                 .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, false, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.DETECTED, TODAY);
 
         assertThat(s.daysSinceDistribution()).isEqualTo(30);
         assertThat(s.distributionDateConfirmed()).isFalse();
+        assertThat(s.anchorSource()).isEqualTo(AnchorSource.DETECTED);
+    }
+
+    /** The invariant §4.4 requires: {@code distributionDateConfirmed} is exactly
+     *  {@code anchorSource != DETECTED} (with a measurable {@code daysSinceDistribution}). */
+    @Test void distributionDateConfirmedMatchesAnchorSourceNotDetected() {
+        when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
+
+        var recordAnchored = snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.RECORD_DATE, TODAY);
+        assertThat(recordAnchored.distributionDateConfirmed()).isTrue();
+        assertThat(recordAnchored.anchorSource()).isEqualTo(AnchorSource.RECORD_DATE);
+
+        var detected = snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.DETECTED, TODAY);
+        assertThat(detected.distributionDateConfirmed()).isFalse();
+        assertThat(detected.anchorSource()).isEqualTo(AnchorSource.DETECTED);
     }
 
     @Test void blankParentLeavesParentFieldsAndRatioNull() {
         when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
 
-        var s = snapshotter.snapshot("SPN", "", DIST, true, TODAY);
+        var s = snapshotter.snapshot("SPN", "", DIST, AnchorSource.DISTRIBUTION_DATE, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isEqualTo(300.0);
         assertThat(s.parentMarketCapMillions()).isNull();
@@ -102,7 +120,7 @@ class SpinDistributionSnapshotterTest {
         when(filings.ownerHistoryStrict("SPN"))
                 .thenReturn(history(tx(LocalDate.of(2026, 6, 15), "P")));
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.DISTRIBUTION_DATE, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isNull();
         assertThat(s.parentMarketCapMillions()).isNull();
@@ -118,7 +136,7 @@ class SpinDistributionSnapshotterTest {
                 tx(LocalDate.of(2026, 5, 20), "P"),               // purchase BEFORE distribution
                 tx(LocalDate.of(2026, 6, 20), "S")));             // post-distribution SALE, not a buy
 
-        var s = snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.DISTRIBUTION_DATE, TODAY);
 
         assertThat(s.postSpinInsiderBuying()).isFalse();
         assertThat(s.insiderAvailable()).isTrue();
@@ -127,7 +145,7 @@ class SpinDistributionSnapshotterTest {
     @Test void nullDistributionDateDegradesCalendarAndInsiderFields() {
         when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
 
-        var s = snapshotter.snapshot("SPN", "PAR", null, false, TODAY);
+        var s = snapshotter.snapshot("SPN", "PAR", null, AnchorSource.DETECTED, TODAY);
 
         assertThat(s.spincoMarketCapMillions()).isEqualTo(300.0); // market cap unaffected
         assertThat(s.daysSinceDistribution()).isNull();
@@ -141,7 +159,7 @@ class SpinDistributionSnapshotterTest {
         when(equityMetrics.metricsWithoutSector("SPN")).thenReturn(cap(300.0));
         when(filings.ownerHistoryStrict("SPN")).thenThrow(new AgoraUnavailableException("down"));
 
-        assertThatThrownBy(() -> snapshotter.snapshot("SPN", "PAR", DIST, true, TODAY))
+        assertThatThrownBy(() -> snapshotter.snapshot("SPN", "PAR", DIST, AnchorSource.DISTRIBUTION_DATE, TODAY))
                 .isInstanceOf(AgoraUnavailableException.class);
     }
 }

@@ -192,11 +192,54 @@ public class SpinLifecycleReconciler {
         return repo.advanceStatus(id, SpinStatus.DISTRIBUTED, SpinStatus.SETTLED);
     }
 
-    /** The best-available distribution date: the parsed term-sheet date, else the detection
-     *  (quote-probe) timestamp's date. Null when neither is known. */
+    /**
+     * The SETTLEMENT THRESHOLD used by {@link #isSettled} — NOT the promotion-window anchor (see
+     * {@link #promotionAnchorDate} for that). Deliberately falls back to {@code distributed_at}
+     * (the quote-probe detection date) rather than {@code record_date}, even though the record
+     * date is known earlier and would look like a "better" anchor.
+     *
+     * <p>Reason, pinned down against real production data (SEC XBRL {@code companyconcept/Assets},
+     * measured 2026-08-15): HONA has an Assets datapoint {@code periodEnd=2026-06-27,
+     * filed=2026-08-05}, and MBGL is shaped identically — both dates fall AFTER their
+     * {@code record_date=2026-06-15}. A record-date anchor here would make {@link #isSettled}
+     * return {@code true} for both the moment they are first observed DISTRIBUTED, flipping them
+     * straight to the terminal {@link SpinStatus#SETTLED} — exactly the rows a record-date-aware
+     * fix is supposed to free up, destroyed instead. The record date sits BEFORE the actual
+     * distribution, so anchoring settlement on it makes settlement fire too easily; anchoring the
+     * promotion window on it (see {@link #promotionAnchorDate}) makes the window open too early —
+     * the same date is safe in one role and destructive in the other. Do not "simplify" these two
+     * anchors into one.
+     */
     static LocalDate effectiveDistributionDate(SpinCandidateRow row) {
         if (row.distributionDate() != null) return row.distributionDate();
         return dateOf(row.distributedAt());
+    }
+
+    /**
+     * The PROMOTION-WINDOW anchor consumed by {@link SpinDistributionSnapshotter} — NOT the
+     * settlement threshold (see {@link #effectiveDistributionDate} for that one, and its javadoc
+     * for why the two must stay separate). Preference order: the term-sheet
+     * {@code distribution_date} when known, else the term-sheet {@code record_date} (which
+     * precedes the real distribution, so the window opens/closes conservatively early rather than
+     * late), else the {@code distributed_at} detection date as the final fallback.
+     */
+    static LocalDate promotionAnchorDate(SpinCandidateRow row) {
+        if (row.distributionDate() != null) return row.distributionDate();
+        if (row.recordDate() != null) return row.recordDate();
+        return dateOf(row.distributedAt());
+    }
+
+    /** Which of {@link #promotionAnchorDate}'s three sources actually supplied the date, so the
+     *  caller can label a record-date-anchored window instead of presenting it as confirmed.
+     *  Public: it is a field type on {@link SpinDistributionSnapshotter.SpinDistributionSnapshot},
+     *  which is read from outside this package (e.g. {@code StrigoiSpinWebhookControllerIT}). */
+    public enum AnchorSource { DISTRIBUTION_DATE, RECORD_DATE, DETECTED }
+
+    /** The {@link AnchorSource} backing {@link #promotionAnchorDate} for this row. */
+    static AnchorSource anchorSourceFor(SpinCandidateRow row) {
+        if (row.distributionDate() != null) return AnchorSource.DISTRIBUTION_DATE;
+        if (row.recordDate() != null) return AnchorSource.RECORD_DATE;
+        return AnchorSource.DETECTED;
     }
 
     /** ISO timestamp/date string -> LocalDate; null on null/blank/unparsable (fail-soft). */
