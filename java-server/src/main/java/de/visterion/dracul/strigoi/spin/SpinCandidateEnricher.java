@@ -11,7 +11,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -22,13 +24,18 @@ import java.util.List;
  * <p><b>ENRICH</b> ({@link #enrich}) fetches stage-appropriate data for a bounded set of rows and
  * persists it as per-stage JSONB snapshots. The set is (rows that reached a new stage this run) ∪
  * (non-terminal rows due for a re-check), freshly-transitioned first then oldest-checked, capped at
- * {@link #MAX} to hold the webhook latency budget. Per row, by current status:
+ * {@link #MAX} to hold the webhook latency budget.
+ *
+ * <p><b>Term capture</b> ({@link #captureTerms}) runs FIRST for every row in the queue — REGISTERED,
+ * WHEN_ISSUED and DISTRIBUTED alike — before the strict-source guard and before the per-status
+ * switch below. Five production rows (DISTRIBUTED with a stale term sheet from the Form-10 shell)
+ * were never captured at all under the old REGISTERED-only precondition; this is the fix. See
+ * {@link #captureTerms} for the due-check, the fallback-vs-good-text guard and the throttle.
+ *
+ * <p>Then, per row, by current status:
  * <ul>
- *   <li><b>REGISTERED / WHEN_ISSUED</b> — capture the term sheet once (fetch + parse +
- *       {@link SpinCandidateRepository#storeTerms}, retried while the term sheet stays unfetched) so
- *       the calendar reconciler and payload get {@code record_date}/{@code distribution_date}; then
- *       the pre-distribution balance sheet via {@link SpinBalanceSheetSnapshotter} &rarr;
- *       {@code registered_snapshot}.</li>
+ *   <li><b>REGISTERED / WHEN_ISSUED</b> — the pre-distribution balance sheet via
+ *       {@link SpinBalanceSheetSnapshotter} &rarr; {@code registered_snapshot}.</li>
  *   <li><b>DISTRIBUTED</b> — a settlement probe (ONE {@code conceptStrict(cik,"Assets")} call, fed to
  *       {@link SpinLifecycleReconciler#detectSettled}); if it settles, the SETTLED valuation via
  *       {@link SpinValuationSnapshotter} &rarr; {@code settled_snapshot}; otherwise the distribution
@@ -79,6 +86,9 @@ public class SpinCandidateEnricher {
     /** Rows returned to the LLM per fetch. A full page is reported as truncated (see
      *  {@link #payload(LocalDate)}) — the cap must never look like "that was all there was". */
     static final int RESPONSE_LIMIT = 50;
+    /** How often {@link #captureTerms} retries a row whose term sheet is still due — the throttle
+     *  that keeps a batch from re-fetching the same filing on every single enrichment run. */
+    static final long TERMS_RECHECK_DAYS = 7;
 
     private final SpinCandidateRepository repo;
     private final SpinLifecycleReconciler reconciler;
@@ -123,22 +133,75 @@ public class SpinCandidateEnricher {
         List<SpinCandidateRow> queue = selectQueue(reconcile);
         SourceHealth health = new SourceHealth();
         for (SpinCandidateRow row : queue) {
-            if (health.skipAll()) {
-                log.info("spin enrichment: both strict sources down, skipping remaining rows");
-                break;
-            }
             try {
+                // Term capture runs for EVERY row, unconditionally of source health — it does not
+                // touch the strict XBRL/owner-history sources at all, so a batch that already gave
+                // up on those must not give up on this too (Fix 3, capturesEvenWhenBothStrictSourcesAreDown).
+                captureTerms(row);
+
+                if (health.skipAll()) {
+                    log.info("spin enrichment: both strict sources down, skipping remaining rows");
+                    break;
+                }
                 switch (row.status()) {
                     case REGISTERED, WHEN_ISSUED -> enrichPreDistribution(row, health);
                     case DISTRIBUTED -> enrichDistributed(row, today, health);
                     default -> repo.touchLastChecked(row.id());
                 }
             } catch (RuntimeException e) {
-                // Belt-and-braces: an unforeseen failure degrades one row, never the run.
+                // Belt-and-braces: an unforeseen failure degrades one row, never the run. Stamps
+                // BOTH clocks — terms_checked_at too, so a row whose capture attempt itself threw
+                // (e.g. the 20.5 MB exhibit) still arms the 7-day throttle instead of being retried
+                // on every subsequent run.
                 log.debug("spin enrichment: row {} failed: {}", row.id(), e.getMessage());
                 repo.touchLastChecked(row.id());
+                repo.touchTermsChecked(row.id());
             }
         }
+    }
+
+    /**
+     * Captures the term-sheet text + parsed ratio + best-effort parent ticker once per
+     * {@code TERMS_RECHECK_DAYS} window, for REGISTERED, WHEN_ISSUED and DISTRIBUTED rows alike.
+     *
+     * <p><b>Due check.</b> {@code recordDate()}/{@code distributionDate()} being null is no longer a
+     * useful precondition by itself: since D2, {@link SpinTermsParser} always returns null for both,
+     * so on its own this clause would never turn false again. {@code termsCheckedAt} is what actually
+     * throttles the retry to once every {@link #TERMS_RECHECK_DAYS} days.
+     *
+     * <p><b>Two guards against destroying good data (Fix 2/3 traps).</b> A fetch failure must never
+     * call {@link SpinCandidateRepository#storeTerms} — that method overwrites ratio, text AND
+     * parent_symbol unconditionally, so a transient EDGAR outage would null out a row that already
+     * had good data. Likewise, a fetch that SUCCEEDS but resolves to the Form-10 shell instead of the
+     * requested exhibit (no {@code EX-99.1} on the index page) must not overwrite a row that already
+     * holds real term-sheet text — that is a successful fetch carrying the wrong document, not
+     * "no answer". Both cases still stamp {@code terms_checked_at} via
+     * {@link SpinCandidateRepository#touchTermsChecked} so the throttle arms regardless of outcome.
+     * A row with no text yet DOES accept the shell fallback (better than nothing).
+     */
+    private void captureTerms(SpinCandidateRow row) {
+        boolean due = row.recordDate() == null && row.distributionDate() == null
+                && (row.termsCheckedAt() == null
+                    || row.termsCheckedAt().isBefore(Instant.now().minus(TERMS_RECHECK_DAYS, ChronoUnit.DAYS)));
+        if (!due) return;
+
+        FilingText ft = safeFilingText(row.filingUrl());
+        if (!ft.available()) {
+            repo.touchTermsChecked(row.id());
+            return;
+        }
+        if (row.termSheetAvailable() && ft.resolvedExhibit() == null) {
+            // Successful fetch, wrong document: the row already has real text, don't clobber it
+            // with the Form-10 shell.
+            repo.touchTermsChecked(row.id());
+            return;
+        }
+
+        String text = ft.text();
+        SpinTerms terms = termsParser.parse(text);
+        String parent = resolveParent(termsParser.parentTicker(text), row.symbol());
+        repo.storeTerms(row.id(), terms.distributionRatio(), terms.recordDate(),
+                terms.distributionDate(), true, text, parent);
     }
 
     /** (transitioned this run) first, then non-terminal rows oldest-checked, deduped, capped. */
@@ -154,19 +217,7 @@ public class SpinCandidateEnricher {
     private void enrichPreDistribution(SpinCandidateRow row, SourceHealth health) {
         boolean touched = false;
 
-        // Term capture (once, while still unfetched): feeds the calendar reconciler + payload.
-        // The raw prose is persisted so the LLM can read the spin rationale (Fix 1) and a
-        // best-effort parent ticker is extracted for the DISTRIBUTED-stage sizeRatio (Fix 2).
-        if (row.recordDate() == null && row.distributionDate() == null
-                && row.distributionRatio() == null && !row.termSheetAvailable()) {
-            FilingText ft = safeFilingText(row.filingUrl());
-            String text = ft.available() ? ft.text() : null;
-            SpinTerms terms = termsParser.parse(text);
-            String parent = resolveParent(termsParser.parentTicker(text), row.symbol());
-            repo.storeTerms(row.id(), terms.distributionRatio(), terms.recordDate(),
-                    terms.distributionDate(), ft.available(), text, parent);
-            touched = true;
-        }
+        // Term capture now happens once per row, up front in enrich() — see captureTerms().
 
         // Pre-distribution balance sheet (XBRL by CIK; strict concept source).
         if (hasIdentifier(row) && !health.conceptDown) {
@@ -296,9 +347,11 @@ public class SpinCandidateEnricher {
                 dbl(set, "priceToBook"), dbl(set, "evToEbit"), dbl(set, "fcfYield"));
     }
 
+    /** Reads the EX-99.1 information statement (Fix, D3), not the Form-10 shell — see
+     *  {@link AgoraFilings#filingText(String, String, String)}. */
     private FilingText safeFilingText(String url) {
         try {
-            return filings.filingText(url);
+            return filings.filingText(url, "EX-99.1", "LEADING");
         } catch (RuntimeException e) {
             log.debug("spin enrichment: filing text unavailable for {}: {}", url, e.getMessage());
             return FilingText.unavailable();

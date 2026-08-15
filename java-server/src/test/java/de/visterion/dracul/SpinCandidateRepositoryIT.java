@@ -294,4 +294,39 @@ class SpinCandidateRepositoryIT {
         assertThat(row.registeredSnapshot().path("totalAssets").asInt()).isEqualTo(1234);
         assertThat(row.distributedSnapshot()).isNull();
     }
+
+    // --- terms_checked_at (V44, D3 #45) ---
+
+    @Test
+    void storeTermsStampsTermsCheckedAt() {
+        repo.upsertRegistered(candidate("0000000501", "TRM", "Repo Terms Co"));
+        long id = idByCompany("Repo Terms Co");
+        assertThat(repo.findById(id).orElseThrow().termsCheckedAt()).isNull();
+
+        assertThat(repo.storeTerms(id, "one for two", null, null, true, "prose", "PARENT")).isTrue();
+
+        SpinCandidateRow row = repo.findById(id).orElseThrow();
+        assertThat(row.termsCheckedAt())
+                .as("a successful capture must arm the 7-day throttle too, or the next run refetches immediately")
+                .isNotNull();
+        assertThat(row.distributionRatio()).isEqualTo("one for two");
+        assertThat(row.termSheetText()).isEqualTo("prose");
+        assertThat(row.parentSymbol()).isEqualTo("PARENT");
+    }
+
+    @Test
+    void touchTermsCheckedStampsOnlyTheTimestampNeverTheTermFields() {
+        repo.upsertRegistered(candidate("0000000502", "TCH", "Repo TouchTerms Co"));
+        long id = idByCompany("Repo TouchTerms Co");
+        repo.storeTerms(id, "existing ratio", null, null, true, "existing text", "EXIST");
+        var before = repo.findById(id).orElseThrow();
+
+        assertThat(repo.touchTermsChecked(id)).isTrue();
+
+        var after = repo.findById(id).orElseThrow();
+        assertThat(after.termsCheckedAt()).isAfterOrEqualTo(before.termsCheckedAt());
+        assertThat(after.distributionRatio()).isEqualTo("existing ratio");
+        assertThat(after.termSheetText()).isEqualTo("existing text");
+        assertThat(after.parentSymbol()).isEqualTo("EXIST");
+    }
 }

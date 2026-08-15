@@ -41,7 +41,7 @@ public class SpinCandidateRepository {
             term_sheet_text, parent_symbol,
             status, registered_snapshot, distributed_snapshot, settled_snapshot,
             promoted_at, promoted_prey_id, discovered_at, last_checked_at,
-            distributed_at, settled_at, abandoned_at
+            distributed_at, settled_at, abandoned_at, terms_checked_at
             """;
 
     private final JdbcClient jdbc;
@@ -172,7 +172,12 @@ public class SpinCandidateRepository {
      * carries the structured terms. The raw {@code term_sheet_text} prose and the best-effort
      * {@code parent_symbol} are persisted alongside so the LLM gets the spin rationale and the
      * DISTRIBUTED-stage sizeRatio has a parent to key on. Dates are ISO strings cast to
-     * {@code date} (null when the parser found none). Returns whether the row exists.
+     * {@code date} (null when the parser found none). Also stamps {@code terms_checked_at} (V44):
+     * a successful capture must arm the 7-day throttle exactly like a failed one
+     * ({@link #touchTermsChecked}), or the very next enrichment run would re-fetch immediately —
+     * since D2, {@code record_date}/{@code distribution_date} never become non-null on their own,
+     * so this stamp is the only thing that ever makes the capture precondition false again.
+     * Returns whether the row exists.
      */
     public boolean storeTerms(long id, String distributionRatio, String recordDate,
                               String distributionDate, boolean termSheetAvailable,
@@ -185,7 +190,8 @@ public class SpinCandidateRepository {
                        term_sheet_available = :available,
                        term_sheet_text = :text,
                        parent_symbol = :parent,
-                       last_checked_at = now()
+                       last_checked_at = now(),
+                       terms_checked_at = now()
                  WHERE id = :id
                 """)
                 .param("ratio", emptyToNull(distributionRatio))
@@ -267,6 +273,19 @@ public class SpinCandidateRepository {
     /** Bumps {@code last_checked_at} without any state change (checked, nothing moved). */
     public boolean touchLastChecked(long id) {
         return jdbc.sql("UPDATE spin_candidate SET last_checked_at = now() WHERE id = :id")
+                .param("id", id)
+                .update() > 0;
+    }
+
+    /**
+     * Stamps {@code terms_checked_at} (V44) ALONE — no term fields change. Used by
+     * {@link SpinCandidateEnricher} for every term-capture attempt that did NOT call
+     * {@link #storeTerms} (fetch failed, or the resolved document was not the requested exhibit
+     * while the row already held good text): the 7-day throttle must still arm, or the row would
+     * be re-fetched on the very next run. See the trap this guards against in {@link #storeTerms}.
+     */
+    public boolean touchTermsChecked(long id) {
+        return jdbc.sql("UPDATE spin_candidate SET terms_checked_at = now() WHERE id = :id")
                 .param("id", id)
                 .update() > 0;
     }
@@ -382,7 +401,8 @@ public class SpinCandidateRepository {
                 rs.getString("last_checked_at"),
                 rs.getString("distributed_at"),
                 rs.getString("settled_at"),
-                rs.getString("abandoned_at"));
+                rs.getString("abandoned_at"),
+                rs.getTimestamp("terms_checked_at") == null ? null : rs.getTimestamp("terms_checked_at").toInstant());
     }
 
     private JsonNode readJson(String json) {

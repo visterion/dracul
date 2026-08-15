@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.spin;
 
 import tools.jackson.databind.JsonNode;
 
+import java.time.Instant;
 import java.time.LocalDate;
 
 /**
@@ -15,6 +16,13 @@ import java.time.LocalDate;
  * blueprint's lean-table preference so the LLM can read the parent/size/forced-selling rationale
  * that lives only in prose, and so {@code termSheetAvailable} stays truthful). {@code parentSymbol}
  * is the best-effort parent ticker extracted from that prose (null when only a name appears).
+ *
+ * <p>{@code termsCheckedAt} (V44) is the one {@code TIMESTAMPTZ} column surfaced as {@link Instant}
+ * rather than an ISO string, by design: {@link SpinCandidateEnricher} does arithmetic on it (the
+ * 7-day term-capture throttle) every enrichment pass, and since D2 removed date extraction from
+ * {@link SpinTermsParser}, {@code recordDate}/{@code distributionDate} can never again turn the old
+ * capture precondition false — this column is the only thing standing between a DISTRIBUTED row
+ * and a term-sheet re-fetch on every single run.
  */
 public record SpinCandidateRow(
         long id,
@@ -40,4 +48,5 @@ public record SpinCandidateRow(
         String lastCheckedAt,
         String distributedAt,
         String settledAt,
-        String abandonedAt) {}
+        String abandonedAt,
+        Instant termsCheckedAt) {}

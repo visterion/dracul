@@ -31,7 +31,7 @@ class SpinCandidateEnricherPayloadWindowTest {
                 LocalDate.parse("2026-07-01"), "https://sec/" + symbol,
                 null, null, null, false, null, null,
                 SpinStatus.REGISTERED, null, null, null,
-                null, null, "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z", null, null, null);
+                null, null, "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z", null, null, null, null);
     }
 
     private static SpinCandidateRow distributedRow(String symbol, tools.jackson.databind.JsonNode distributedSnapshot) {
@@ -39,7 +39,7 @@ class SpinCandidateEnricherPayloadWindowTest {
                 LocalDate.parse("2026-07-01"), "https://sec/" + symbol,
                 null, null, null, false, null, null,
                 SpinStatus.DISTRIBUTED, null, distributedSnapshot, null,
-                null, null, "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z", "2026-08-08T00:00:00Z", null, null);
+                null, null, "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z", "2026-08-08T00:00:00Z", null, null, null);
     }
 
     private SpinCandidateEnricher enricher(SpinCandidateRepository repo) {

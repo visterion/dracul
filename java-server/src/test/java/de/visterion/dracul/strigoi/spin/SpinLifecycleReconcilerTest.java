@@ -35,7 +35,7 @@ class SpinLifecycleReconcilerTest {
                                         String discoveredAt, String distributedAt) {
         return new SpinCandidateRow(id, "cik" + id, symbol, "Co " + id, "10-12B", null, null,
                 null, recordDate, distributionDate, false, null, null, status,
-                null, null, null, null, null, discoveredAt, discoveredAt, distributedAt, null, null);
+                null, null, null, null, null, discoveredAt, discoveredAt, distributedAt, null, null, null);
     }
 
     private void nonTerminal(SpinCandidateRow... rows) {

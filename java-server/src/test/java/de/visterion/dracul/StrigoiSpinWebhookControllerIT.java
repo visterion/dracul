@@ -85,8 +85,14 @@ class StrigoiSpinWebhookControllerIT {
 
         // ENRICH: default term-sheet fetch unavailable; REG's is available with a parent ticker so
         // the raw prose + best-effort parent are persisted (Fix 1/2). Settlement probe: no facts.
+        // D3: term capture now reads the EX-99.1 exhibit via the 3-arg overload for every
+        // REGISTERED/WHEN_ISSUED/DISTRIBUTED row (SPN included, once it reaches DISTRIBUTED
+        // within this same run), so both the legacy 1-arg and the 3-arg call are stubbed.
         when(filings.filingText(any())).thenReturn(FilingText.unavailable());
         when(filings.filingText(eq("http://sec/reg"))).thenReturn(new FilingText(
+                "Registered Co will be separated from Big Parent Corporation (NYSE: BPC).", true));
+        when(filings.filingText(any(), any(), any())).thenReturn(FilingText.unavailable());
+        when(filings.filingText(eq("http://sec/reg"), any(), any())).thenReturn(new FilingText(
                 "Registered Co will be separated from Big Parent Corporation (NYSE: BPC).", true));
         when(filings.conceptStrict(any(), any(), eq("Assets"))).thenReturn(ConceptSeries.empty("Assets"));
         when(balanceSheet.snapshot(any(), any())).thenReturn(

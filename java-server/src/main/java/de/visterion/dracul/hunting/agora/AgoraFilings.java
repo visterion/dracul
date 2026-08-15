@@ -536,6 +536,37 @@ public class AgoraFilings {
         }
     }
 
+    /**
+     * Like {@link #filingText(String)} but asks Agora to resolve a named exhibit off the filing's
+     * index page (e.g. {@code "EX-99.1"}) and to extract in the given mode (e.g. {@code "LEADING"}).
+     * {@code FilingText.resolvedExhibit()} carries back which exhibit Agora actually found, or
+     * {@code null} when it fell back to the primary document.
+     *
+     * <p><b>Minimal by design.</b> This overload exists so Task D3 (#45, spin term capture) can
+     * compile and call {@code get_filing_text} with the two new tool parameters; the full
+     * exhibit-resolution wiring on the Agora side (index-page lookup, cache key including mode,
+     * {@code resolved_exhibit} in the tool response) is Task D1's (#43) deliverable — see
+     * {@code docs/superpowers/plans/2026-08-15-spin-information-statement.md}. Until D1 lands,
+     * {@code exhibitType}/{@code extractMode} are sent but Agora may not yet act on them, and
+     * {@code resolved_exhibit} may not yet be present in the response (read as {@code null} then,
+     * same as "fell back to the primary document").
+     */
+    public FilingText filingText(String url, String exhibitType, String extractMode) {
+        if (url == null || url.isBlank()) return FilingText.unavailable();
+        try {
+            ObjectNode args = mapper.createObjectNode();
+            args.put("url", url);
+            if (exhibitType != null && !exhibitType.isBlank()) args.put("exhibit_type", exhibitType);
+            if (extractMode != null && !extractMode.isBlank()) args.put("extract_mode", extractMode);
+            JsonNode res = agora.callTool("get_filing_text", args);
+            JsonNode resolved = res.path("resolved_exhibit");
+            String resolvedExhibit = resolved.isTextual() ? resolved.asString() : null;
+            return new FilingText(res.path("text").asString(""), true, FilingText.Failure.NONE, resolvedExhibit);
+        } catch (AgoraUnavailableException e) {
+            return e.filingTooLarge() ? FilingText.tooLarge() : FilingText.unavailable();
+        }
+    }
+
     /** Multi-year Form-4 owner history for one company (Agora {@code get_form4_owner_history}),
      *  grouped per reporting owner, for the routine/opportunistic classification. Propagates
      *  {@link AgoraUnavailableException} (strict, mirroring {@link #conceptStrict} /
