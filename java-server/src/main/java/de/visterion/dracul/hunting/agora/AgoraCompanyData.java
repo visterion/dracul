@@ -75,11 +75,27 @@ public class AgoraCompanyData {
             // changes is that the outage is no longer invisible: without this line a source
             // failure and "this symbol genuinely has no news" leave identical traces, and
             // several callers read the empty result as a positive statement ("clean").
-            log.warn("agora source unavailable: tool={} subject={} — {}",
-                    "get_company_news", symbol, e.getMessage());
+            logSwallowed(e, "get_company_news", symbol);
             return List.of();
         }
         return parseNews(res, symbol);
+    }
+
+    /**
+     * Logs a swallowed {@link AgoraUnavailableException} at WARN, choosing the prefix from the
+     * exception's {@link AgoraUnavailableException.Scope}. {@code Scope.SOURCE} means Agora never
+     * answered — a genuine outage, worth the {@code agora source unavailable} prefix that later
+     * becomes an alarm source. {@code Scope.REQUEST} means Agora DID answer, and the answer was
+     * an error envelope about this one request (unknown symbol, unresolvable CIK, an oversized
+     * EDGAR document via {@code filing_too_large:}) — evidence about the request, not the
+     * source's health. Folding both into one prefix would make the outage prefix worthless: a
+     * single "too large" filing would then read exactly like a dead source.
+     */
+    private static void logSwallowed(AgoraUnavailableException e, String tool, String subject) {
+        String prefix = e.scope() == AgoraUnavailableException.Scope.SOURCE
+                ? "agora source unavailable"
+                : "agora request failed";
+        log.warn("{}: tool={} subject={} — {}", prefix, tool, subject, e.getMessage());
     }
 
     /**
@@ -193,8 +209,7 @@ public class AgoraCompanyData {
             recommendationsCache.put(symbol, res, RECOMMENDATIONS_TTL);
             return res;
         } catch (AgoraUnavailableException e) {
-            log.warn("agora source unavailable: tool={} subject={} — {}",
-                    "get_analyst_estimates", symbol, e.getMessage());
+            logSwallowed(e, "get_analyst_estimates", symbol);
             return List.of();
         }
     }
@@ -234,8 +249,7 @@ public class AgoraCompanyData {
             JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
             return (m.isMissingNode() || m.isNull()) ? null : m;
         } catch (AgoraUnavailableException e) {
-            log.warn("agora source unavailable: tool={} subject={} — {}",
-                    "get_fundamentals", symbol, e.getMessage());
+            logSwallowed(e, "get_fundamentals", symbol);
             return null;
         }
     }
@@ -267,8 +281,7 @@ public class AgoraCompanyData {
             JsonNode p = agora.callTool("get_company_profile", args).path("profile");
             return (p.isMissingNode() || p.isNull()) ? null : p;
         } catch (AgoraUnavailableException e) {
-            log.warn("agora source unavailable: tool={} subject={} — {}",
-                    "get_company_profile", symbol, e.getMessage());
+            logSwallowed(e, "get_company_profile", symbol);
             return null;
         }
     }
