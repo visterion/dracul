@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,6 +29,22 @@ class ConfounderScreenTest {
         when(d.newsResult(eq("ACME"), any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", headlines));
         return d;
+    }
+
+    private List<String> warningsWhile(Class<?> loggerClass, Runnable body) {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            body.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
     }
 
     @Test void flagsDistinctCategoriesFromHeadlineAndSummary() {
@@ -101,6 +118,42 @@ class ConfounderScreenTest {
 
         assertThat(probe.unknown()).isFalse();
         assertThat(probe.flags()).isEmpty();
+    }
+
+    @Test
+    void sourceDownLogsAWarningSoTheOutageLeavesATrace() {
+        // AgoraCompanyData#newsResult (unlike the swallowing #news) does not log itself, so without
+        // a line here the source-down case would leave NO trace at all — less visible than before
+        // this class started reading health instead of calling the swallowing facade.
+        AgoraCompanyData companyData = mock(AgoraCompanyData.class);
+        when(companyData.newsResult(eq("ACME"), any(), any()))
+                .thenReturn(DataSourceResult.unavailable("agora", "boom"));
+        var screen = new ConfounderScreen(companyData);
+
+        var probe = new AtomicReference<ConfounderProbe>();
+        var warnings = warningsWhile(ConfounderScreen.class,
+                () -> probe.set(screen.confounders("ACME", LocalDate.now().minusDays(30))));
+
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0)).isEqualTo(
+                "confounder screen unknown: symbol=ACME — news source unavailable, "
+                        + "absence of confounders NOT established");
+        assertThat(probe.get().unknown()).isTrue();
+    }
+
+    @Test
+    void healthySourceLogsNothingEvenWhenTheScanFindsNothing() {
+        // The healthy/empty case must stay quiet — a WARN on every clean scan would drown the
+        // real alarm signal (the source-down line above) in noise.
+        AgoraCompanyData companyData = mock(AgoraCompanyData.class);
+        when(companyData.newsResult(eq("ACME"), any(), any()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        var screen = new ConfounderScreen(companyData);
+
+        var warnings = warningsWhile(ConfounderScreen.class,
+                () -> screen.confounders("ACME", LocalDate.now().minusDays(30)));
+
+        assertThat(warnings).isEmpty();
     }
 
     // --- T1.5: pure overload over an already-fetched headline list (spec §5.3/§7) ---

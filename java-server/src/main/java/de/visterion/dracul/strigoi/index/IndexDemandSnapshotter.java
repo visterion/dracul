@@ -129,7 +129,9 @@ public class IndexDemandSnapshotter {
             boolean available) {
 
         static IndexDemandSnapshot unavailable() {
-            return new IndexDemandSnapshot(null, null, null, null, null, null, null, List.of(), false, false);
+            // confoundersUnknown=true, not false: this is "nothing was even attempted", which
+            // must not read as "checked and clean" any more than a real source outage does.
+            return new IndexDemandSnapshot(null, null, null, null, null, null, null, List.of(), true, false);
         }
     }
 

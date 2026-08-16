@@ -106,7 +106,10 @@ public class AgoraCompanyData {
      * {@code data_source_health.status = "unavailable"} rather than silently reporting zero
      * items as if the symbol simply had none — {@link #news(String, LocalDate, LocalDate)}
      * keeps its existing empty-list-on-any-failure contract for its other callers (echo
-     * enrichment, confounder screen, renfield, daywalker), which never inspect health here.
+     * enrichment, renfield, daywalker), which never inspect health here. The fetch-and-scan
+     * confounder screen ({@code ConfounderScreen#confounders(String, LocalDate)}) calls THIS
+     * health-aware variant instead, precisely so a source outage does not get persisted as
+     * "no confounders found" — it is no longer one of the swallowing-contract callers above.
      * Shares request-building ({@link #newsArgs}) and row-parsing ({@link #parseNews}) with
      * {@link #news(String, LocalDate, LocalDate)} so the two variants cannot silently diverge.
      */

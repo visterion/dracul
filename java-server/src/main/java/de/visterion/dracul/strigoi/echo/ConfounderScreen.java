@@ -5,6 +5,8 @@ import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import de.visterion.dracul.hunting.news.NewsEventTagger;
 import de.visterion.dracul.hunting.news.NewsEventType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -35,6 +37,8 @@ import java.util.Set;
 @Component
 public class ConfounderScreen {
 
+    private static final Logger log = LoggerFactory.getLogger(ConfounderScreen.class);
+
     private final AgoraCompanyData companyData;
     private final NewsEventTagger tagger = new NewsEventTagger();
 
@@ -46,11 +50,16 @@ public class ConfounderScreen {
      * returns {@link ConfounderProbe#sourceDown()} (with {@link ConfounderProbe#unknown()} true)
      * rather than an empty (= "clean") result, because
      * this value is persisted (see {@code IndexDemandSnapshotter}) and an outage read back as
-     * "no confounders" would be the exact inversion of the truth.
+     * "no confounders" would be the exact inversion of the truth. The source-down case is also
+     * logged at WARN here: {@link AgoraCompanyData#newsResult} does not log (unlike the swallowing
+     * {@link AgoraCompanyData#news}), so without this line the outage would leave NO trace at all —
+     * strictly less visible than before this class started reading health.
      */
     public ConfounderProbe confounders(String symbol, LocalDate since) {
         DataSourceResult<NewsHeadline> result = companyData.newsResult(symbol, since, LocalDate.now());
         if (!result.health().isHealthy()) {
+            log.warn("confounder screen unknown: symbol={} — news source unavailable, "
+                    + "absence of confounders NOT established", symbol);
             return ConfounderProbe.sourceDown();
         }
         return ConfounderProbe.of(confounders(result.items()));
