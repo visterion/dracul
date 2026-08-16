@@ -120,11 +120,16 @@ public class MaintenancePipeline {
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();
         Set<String> withoutIndicators = new LinkedHashSet<>();
-        int checkedTotal = 0;
+        // Both n and total must count the same thing — distinct SYMBOLS, matching the word in
+        // the message — not positions. Two filled positions sharing one unavailable symbol is
+        // one unavailable symbol out of however many distinct symbols were checked, not "1 of 2":
+        // the line feeds an alarm rule later and a positions/symbols mismatch would understate
+        // severity exactly when a shared symbol is the one that is down.
+        Set<String> checkedSymbols = new LinkedHashSet<>();
         for (ExecutorPosition p : survivors) {
             ExecutorIndicators.Levels lv = indicators.levels(p.symbol(), atrPeriod, swingPeriod);
             boolean wasGoingToBeChecked = !uncheckedIds.contains(p.id());
-            if (wasGoingToBeChecked) checkedTotal++;
+            if (wasGoingToBeChecked) checkedSymbols.add(p.symbol());
             if (!lv.available()) {
                 if (wasGoingToBeChecked) withoutIndicators.add(p.symbol());
                 continue;
@@ -141,7 +146,7 @@ public class MaintenancePipeline {
         // it, and order stays stable for a deterministic message.
         if (!withoutIndicators.isEmpty()) {
             log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
-                    withoutIndicators.size(), checkedTotal,
+                    withoutIndicators.size(), checkedSymbols.size(),
                     String.join(",", withoutIndicators));
         }
 

@@ -467,7 +467,10 @@ class MaintenancePipelineTest {
     @Test
     void duplicatePositionsOnTheSameSymbol_reportedOnce() {
         // Two open positions on the same unavailable symbol must not double-count it — the
-        // warning names distinct SYMBOLS, not positions.
+        // warning names distinct SYMBOLS, not positions. And n and total must count the SAME
+        // thing: 3 positions on 2 distinct symbols, one of which (DARK) is fully unavailable,
+        // is "1 of 2 symbols" (100% of the checked symbols), not "1 of 3" (positions) — the
+        // latter would understate severity exactly when a shared symbol is the one that is down.
         ExecutorPosition dark1 = openPosition(1L, "DARK", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         ExecutorPosition dark2 = openPosition(2L, "DARK", new BigDecimal("95"),
@@ -491,7 +494,7 @@ class MaintenancePipelineTest {
 
         assertThat(warnings).hasSize(1);
         assertThat(warnings.get(0))
-                .isEqualTo("maintenance indicators unavailable: 1 of 3 symbols — DARK");
+                .isEqualTo("maintenance indicators unavailable: 1 of 2 symbols — DARK");
     }
 
     @Test
@@ -531,6 +534,41 @@ class MaintenancePipelineTest {
 
         when(reconcile.reconcile("c", "run1")).thenReturn(
                 new ReconcileService.ReconcileResult(survivors, Set.of(2L)));
+        when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(indicators.levels(eq("OTHER"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(hardTrigger.apply(any(), any(), eq("run1"))).thenAnswer(inv -> inv.getArgument(0));
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        var warnings = warningsWhile(MaintenancePipeline.class,
+                () -> pipeline.run("c", "run1"));
+
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .isEqualTo("maintenance indicators unavailable: 1 of 1 symbols — DARK");
+    }
+
+    @Test
+    void pendingExitPositionWithUnavailableIndicators_notCountedOrNamedInWarning() {
+        // Mirrors the unfilled-position case above for the OTHER half of the same restriction
+        // (MaintenancePipeline.java run(): `p.pendingExitReason() == null`). A position already
+        // carrying a pendingExitReason has already submitted its one flatten/close order for
+        // this exit and is excluded from hard-trigger/ratchet just like an unfilled entry — so a
+        // missing indicator for it is likewise not a skipped check. Without this test, removing
+        // the `|| p.pendingExitReason() != null` half of the restriction would stay green.
+        ExecutorPosition dark = openPosition(1L, "DARK", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition pendingExit = new ExecutorPosition(2L, "c", "OTHER", "BUY",
+                BigDecimal.TEN, new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"),
+                1, null, List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
+                new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null,
+                "stop-1", null, null, null, null, 0, null, null, null,
+                "HARD_STOP", null, null, false);
+        List<ExecutorPosition> survivors = List.of(dark, pendingExit);
+
+        when(reconcile.reconcile("c", "run1")).thenReturn(
+                new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels(eq("OTHER"), anyInt(), anyInt()))
