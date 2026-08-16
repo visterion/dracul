@@ -409,6 +409,55 @@ class MaintenancePipelineTest {
         verify(positionRepo, org.mockito.Mockito.never()).updateAdverseExtreme(anyLong(), any());
     }
 
+    private List<String> warningsWhile(Class<?> loggerClass, Runnable body) {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            body.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
+    }
+
+    @Test
+    void logsOneLineNamingEverySymbolWhoseIndicatorsAreUnavailable() {
+        ExecutorPosition good = openPosition(1L, "GOOD", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition dark = openPosition(2L, "DARK", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(good, dark);
+
+        when(reconcile.reconcile("c", "run1")).thenReturn(
+                new ReconcileService.ReconcileResult(survivors, Set.of()));
+        // one healthy, one unavailable
+        when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
+                        new BigDecimal("90"), new BigDecimal("100")));
+        when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        // Entry point is `public List<EnrichedPosition> run(String connection, String runId)`
+        // (MaintenancePipeline.java:88). Stubbed the repositories the same way the existing
+        // tests in this class already do so that `survivors` contains exactly GOOD and DARK.
+        var warnings = warningsWhile(MaintenancePipeline.class,
+                () -> pipeline.run("c", "run1"));
+
+        // ONE line, not one per symbol: a total outage must not produce a line per position.
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .startsWith("maintenance indicators unavailable: 1 of 2 symbols")
+                .contains("DARK")
+                .doesNotContain("GOOD");
+    }
+
     @Test
     void tranche2Eligible_surfacesReinforcingSignal_fromPendingsFetchedOnce() {
         ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),

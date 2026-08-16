@@ -1,6 +1,8 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.criteria.KillCriteriaEvaluator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -41,6 +43,8 @@ import java.util.Set;
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class MaintenancePipeline {
+
+    private static final Logger log = LoggerFactory.getLogger(MaintenancePipeline.class);
 
     private final ReconcileService reconcile;
     private final EntryExpiryService entryExpiry;
@@ -102,11 +106,25 @@ public class MaintenancePipeline {
 
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();
+        List<String> withoutIndicators = new ArrayList<>();
         for (ExecutorPosition p : survivors) {
             ExecutorIndicators.Levels lv = indicators.levels(p.symbol(), atrPeriod, swingPeriod);
-            if (!lv.available()) continue;
+            if (!lv.available()) {
+                withoutIndicators.add(p.symbol());
+                continue;
+            }
             if (lv.referencePrice() != null) closeBySymbol.put(p.symbol(), lv.referencePrice());
             if (lv.atr() != null) atrBySymbol.put(p.symbol(), lv.atr());
+        }
+        // A symbol missing here is missing from BOTH maps, which disables the stop ratchet AND
+        // the hard-trigger evaluation for that position for this entire run. The skip itself is
+        // correct — without an ATR there is nothing to compute — but it used to be invisible,
+        // so a provider outage looked exactly like a quiet pass. ONE line, not one per symbol:
+        // a total outage would otherwise emit a line per position and drown the signal.
+        if (!withoutIndicators.isEmpty()) {
+            log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
+                    withoutIndicators.size(), survivors.size(),
+                    String.join(",", withoutIndicators));
         }
 
         // Hard triggers and stop ratcheting act on broker holdings — a position whose GTD
