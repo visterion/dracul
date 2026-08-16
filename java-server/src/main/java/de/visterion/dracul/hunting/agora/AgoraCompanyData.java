@@ -71,6 +71,12 @@ public class AgoraCompanyData {
         try {
             res = agora.callTool("get_company_news", newsArgs(symbol, from, to));
         } catch (AgoraUnavailableException e) {
+            // The empty return is the documented contract for this variant and stays. What
+            // changes is that the outage is no longer invisible: without this line a source
+            // failure and "this symbol genuinely has no news" leave identical traces, and
+            // several callers read the empty result as a positive statement ("clean").
+            log.warn("agora source unavailable: tool={} subject={} — {}",
+                    "get_company_news", symbol, e.getMessage());
             return List.of();
         }
         return parseNews(res, symbol);
@@ -187,6 +193,8 @@ public class AgoraCompanyData {
             recommendationsCache.put(symbol, res, RECOMMENDATIONS_TTL);
             return res;
         } catch (AgoraUnavailableException e) {
+            log.warn("agora source unavailable: tool={} subject={} — {}",
+                    "get_analyst_estimates", symbol, e.getMessage());
             return List.of();
         }
     }
@@ -226,6 +234,8 @@ public class AgoraCompanyData {
             JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
             return (m.isMissingNode() || m.isNull()) ? null : m;
         } catch (AgoraUnavailableException e) {
+            log.warn("agora source unavailable: tool={} subject={} — {}",
+                    "get_fundamentals", symbol, e.getMessage());
             return null;
         }
     }
@@ -257,6 +267,8 @@ public class AgoraCompanyData {
             JsonNode p = agora.callTool("get_company_profile", args).path("profile");
             return (p.isMissingNode() || p.isNull()) ? null : p;
         } catch (AgoraUnavailableException e) {
+            log.warn("agora source unavailable: tool={} subject={} — {}",
+                    "get_company_profile", symbol, e.getMessage());
             return null;
         }
     }
