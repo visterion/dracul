@@ -71,7 +71,7 @@ class StrigoiIndexWebhookControllerIT {
         when(demandSnapshotter.snapshot(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new de.visterion.dracul.strigoi.index.IndexDemandSnapshotter.IndexDemandSnapshot(
-                        null, null, null, null, null, null, null, List.of(), false));
+                        null, null, null, null, null, null, null, List.of(), false, false));
         when(driftSnapshotter.snapshot(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any()))
@@ -187,7 +187,7 @@ class StrigoiIndexWebhookControllerIT {
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new de.visterion.dracul.strigoi.index.IndexDemandSnapshotter.IndexDemandSnapshot(
                         java.math.BigDecimal.valueOf(100000), 6000.0, 1000L, 0.02, 5000.0, 11500.0,
-                        11500.0, List.of("dilution"), true));
+                        11500.0, List.of("dilution"), false, true));
 
         JsonNode resp = rest.post().uri("/api/strigoi-index/tools/fetch-candidates")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer test-index-token")

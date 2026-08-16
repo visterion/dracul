@@ -50,7 +50,7 @@ class IndexEventEnricherTest {
     private static IndexDemandSnapshotter.IndexDemandSnapshot demandSnap() {
         return new IndexDemandSnapshotter.IndexDemandSnapshot(
                 BigDecimal.valueOf(100000), 6000.0, 1000L, 0.02, 5000.0, 11500.0, 11500.0,
-                List.of("dilution"), true);
+                List.of("dilution"), false, true);
     }
 
     private static IndexDriftSnapshotter.IndexDriftSnapshot driftSnap() {

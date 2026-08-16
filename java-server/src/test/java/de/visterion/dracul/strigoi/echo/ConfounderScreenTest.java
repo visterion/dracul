@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.NewsHeadline;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,8 @@ class ConfounderScreenTest {
 
     private static AgoraCompanyData companyData(List<NewsHeadline> headlines) {
         AgoraCompanyData d = mock(AgoraCompanyData.class);
-        when(d.news(eq("ACME"), any(LocalDate.class), any(LocalDate.class))).thenReturn(headlines);
+        when(d.newsResult(eq("ACME"), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(DataSourceResult.healthy("agora", headlines));
         return d;
     }
 
@@ -33,18 +35,23 @@ class ConfounderScreenTest {
                 news("Acme agrees to merger with MegaCorp", ""),
                 news("Acme announces takeover defense", ""),                      // same category, deduped
                 news("Quarterly report", "company will restate prior results")))); // summary scanned too
-        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5)))
-                .containsExactly("m&a", "restatement");
+        var probe = screen.confounders("ACME", LocalDate.now().minusDays(5));
+        assertThat(probe.unknown()).isFalse();
+        assertThat(probe.flags()).containsExactly("m&a", "restatement");
     }
 
     @Test void cleanNewsYieldsEmptyList() {
         var screen = new ConfounderScreen(companyData(List.of(news("Acme wins award", "nice quarter"))));
-        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5))).isEmpty();
+        var probe = screen.confounders("ACME", LocalDate.now().minusDays(5));
+        assertThat(probe.unknown()).isFalse();
+        assertThat(probe.flags()).isEmpty();
     }
 
     @Test void noNewsYieldsEmptyList() {
         var screen = new ConfounderScreen(companyData(List.of()));
-        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5))).isEmpty();
+        var probe = screen.confounders("ACME", LocalDate.now().minusDays(5));
+        assertThat(probe.unknown()).isFalse();
+        assertThat(probe.flags()).isEmpty();
     }
 
     @Test void earningsMissAndMacroHeadlinesProduceNoFlag() {
@@ -52,7 +59,7 @@ class ConfounderScreenTest {
         var screen = new ConfounderScreen(companyData(List.of(
                 news("Acme misses estimates", "profit warning issued"),
                 news("Fed raises rates", "tariffs and recession fears weigh"))));
-        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5))).isEmpty();
+        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5)).flags()).isEmpty();
     }
 
     @Test void flagsAreInHeadlineEncounterOrderNotEnumOrder() {
@@ -62,14 +69,44 @@ class ConfounderScreenTest {
         var screen = new ConfounderScreen(companyData(List.of(
                 news("Acme announces secondary offering", ""),
                 news("Acme agrees to merger with MegaCorp", ""))));
-        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5)))
+        assertThat(screen.confounders("ACME", LocalDate.now().minusDays(5)).flags())
                 .containsExactly("dilution", "m&a");
+    }
+
+    // --- T3: source-down must read as "unknown", never as "clean" (empty) ---
+
+    @Test
+    void reportsUnknownRatherThanCleanWhenTheNewsSourceIsDown() {
+        AgoraCompanyData companyData = mock(AgoraCompanyData.class);
+        when(companyData.newsResult(eq("ACME"), any(), any()))
+                .thenReturn(DataSourceResult.unavailable("agora", "boom"));
+        var screen = new ConfounderScreen(companyData);
+
+        var probe = screen.confounders("ACME", LocalDate.now().minusDays(30));
+
+        // "source was down" must NOT read as "no confounders found" — that is the exact
+        // inversion this task exists to remove.
+        assertThat(probe.unknown()).isTrue();
+        assertThat(probe.flags()).isEmpty();
+    }
+
+    @Test
+    void reportsCleanWhenTheSourceIsHealthyAndNothingMatched() {
+        AgoraCompanyData companyData = mock(AgoraCompanyData.class);
+        when(companyData.newsResult(eq("ACME"), any(), any()))
+                .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        var screen = new ConfounderScreen(companyData);
+
+        var probe = screen.confounders("ACME", LocalDate.now().minusDays(30));
+
+        assertThat(probe.unknown()).isFalse();
+        assertThat(probe.flags()).isEmpty();
     }
 
     // --- T1.5: pure overload over an already-fetched headline list (spec §5.3/§7) ---
 
     @Test void pureOverloadScansAGivenHeadlineListWithoutFetching() {
-        AgoraCompanyData d = mock(AgoraCompanyData.class); // deliberately unstubbed for .news()
+        AgoraCompanyData d = mock(AgoraCompanyData.class); // deliberately unstubbed for .news()/.newsResult()
         var screen = new ConfounderScreen(d);
 
         var flags = screen.confounders(List.of(news("Acme agrees to merger with MegaCorp", "")));
