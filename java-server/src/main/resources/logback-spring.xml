@@ -21,8 +21,14 @@
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_DIR}/dracul.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <fileNamePattern>${LOG_DIR}/dracul.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/dracul.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <!-- Bounds the ACTIVE file too, not just the archives: without this, a
+                 retry loop or stack-trace storm (Agora unreachable, a stuck broker
+                 token — both documented recurring states) can grow today's dracul.log
+                 without limit until midnight, since totalSizeCap below only counts
+                 already-rotated .gz files. -->
+            <maxFileSize>100MB</maxFileSize>
             <maxHistory>14</maxHistory>
             <!-- Runaway guard, not a space constraint: the host had plenty of free
                  disk. NOTE when this cap bites, Logback drops the OLDEST files and

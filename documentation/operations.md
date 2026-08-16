@@ -678,16 +678,18 @@ columns to `prey`). Standard Postgres backup / restore is sufficient.
 - **Vistierie cost dashboard**: proxied through Dracul's Vistierie view
   (`/vistierie`) — shows per-agent token usage and budget status.
 - **Run history**: Vistierie's Run History API (`/api/cost/runs`).
-- **Application logs**: structured JSON to stdout; collect via Docker log
-  driver. Key events: Strigoi run start/end, Prey written, Verdict
-  created, Daywalker trigger, Telegram notification sent.
+- **Application logs**: plain-text pattern to stdout (not structured JSON);
+  collect via Docker log driver. Key events: Strigoi run start/end, Prey
+  written, Verdict created, Daywalker trigger, Telegram notification sent.
 
 ### Log retention (14 days)
 
 Alongside stdout, the app also writes to a rolling log file: the active day's
-`dracul.log` is plain text, and each day it rotates into a gzip-compressed
-`dracul.<date>.log.gz`, kept for 14 days subject to a 2 GB total cap across
-all of them — if the cap is reached, the oldest rotated files are dropped
+`dracul.log` is plain text, capped at 100 MB — once it hits that size it
+rotates within the same day into a gzip-compressed
+`dracul.<date>.<index>.log.gz` (the index starts at 0 and increments per
+same-day rollover), kept for 14 days subject to a 2 GB total cap across all
+of them — if the cap is reached, the oldest rotated files are dropped
 first, so retention can fall below 14 days sooner than the 14-day figure
 alone suggests. The directory is named by `DRACUL_LOG_DIR` (default `logs`;
 see [configuration.md](./configuration.md#logging)). In production this

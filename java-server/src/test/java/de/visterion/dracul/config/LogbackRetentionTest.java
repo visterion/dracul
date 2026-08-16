@@ -3,8 +3,11 @@ package de.visterion.dracul.config;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.joran.JoranConfigurator;
 import ch.qos.logback.core.rolling.RollingFileAppender;
-import ch.qos.logback.core.rolling.TimeBasedRollingPolicy;
+import ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy;
+import ch.qos.logback.core.util.FileSize;
 import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Field;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,6 +27,18 @@ class LogbackRetentionTest {
         return context;
     }
 
+    /**
+     * Neither {@code totalSizeCap} nor {@code maxFileSize} has a public getter on
+     * {@link SizeAndTimeBasedRollingPolicy} / its {@code TimeBasedRollingPolicy} parent,
+     * so this reads the (protected/package-private) field directly.
+     */
+    private static FileSize readFileSizeField(Class<?> declaringClass, Object target, String fieldName)
+            throws Exception {
+        Field field = declaringClass.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return (FileSize) field.get(target);
+    }
+
     @Test
     void keepsFourteenDaysOfDailyFiles() throws Exception {
         LoggerContext context = configure();
@@ -31,10 +46,22 @@ class LogbackRetentionTest {
         var appender = (RollingFileAppender<?>) context.getLogger("ROOT").getAppender("FILE");
         assertThat(appender).as("appender FILE must exist").isNotNull();
 
-        var policy = (TimeBasedRollingPolicy<?>) appender.getRollingPolicy();
+        var policy = (SizeAndTimeBasedRollingPolicy<?>) appender.getRollingPolicy();
         assertThat(policy.getMaxHistory()).isEqualTo(14);
-        // Daily, gzipped: the %d without a pattern means one file per day.
-        assertThat(policy.getFileNamePattern()).contains("%d{yyyy-MM-dd}").endsWith(".log.gz");
+        // Daily, gzipped, with a size-driven %i index within each day.
+        assertThat(policy.getFileNamePattern())
+                .contains("%d{yyyy-MM-dd}")
+                .contains("%i")
+                .endsWith(".log.gz");
+        // Pinned so a "tidy up the cap" edit can't silently drop retention below 14
+        // days (totalSizeCap governs the archives) or let the active file grow
+        // unbounded until midnight (maxFileSize governs today's dracul.log).
+        FileSize totalSizeCap = readFileSizeField(
+                SizeAndTimeBasedRollingPolicy.class.getSuperclass(), policy, "totalSizeCap");
+        assertThat(totalSizeCap.getSize()).isEqualTo(FileSize.valueOf("2GB").getSize());
+        FileSize maxFileSize = readFileSizeField(
+                SizeAndTimeBasedRollingPolicy.class, policy, "maxFileSize");
+        assertThat(maxFileSize.getSize()).isEqualTo(FileSize.valueOf("100MB").getSize());
     }
 
     @Test

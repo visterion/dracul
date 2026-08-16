@@ -34,6 +34,5 @@ chronicle/.env*.local
 # decision-doc served at runtime, never committed
 decision-doc.md
 
-# Lokale Logdateien des File-Appenders (in Prod liegt das auf einem Bind-Mount)
+# Local log files from the file appender (in prod this is a bind mount)
 logs/
-java-server/logs/

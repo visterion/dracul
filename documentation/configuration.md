@@ -238,6 +238,13 @@ The `yahooRestClient` bean and the keys below remain in use for FX only
 |---|---|---|
 | `DRACUL_LOG_DIR` | `logs` | Directory for the rotating log files. In production it is intended to be mounted onto a host directory, so the logs survive the container being recreated — see the deployment step in [operations.md](./operations.md#log-retention-14-days). |
 
+Because the project ships its own `logback-spring.xml`, Spring Boot's own
+logging properties (`logging.structured.format.console`, `logging.file.name`,
+`LOGBACK_ROLLINGPOLICY_*` and similar) no longer take effect — Spring Boot
+only applies them when it generates the Logback config itself. Before this
+file existed they did; setting any of them now is silently inert, which is
+worth knowing before spending time debugging why one "isn't working".
+
 ## Notifications
 
 | Variable | Default | Purpose |
