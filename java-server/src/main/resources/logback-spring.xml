@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Two appenders on purpose.
+
+  CONSOLE stays exactly as Spring Boot had it, because `docker logs dracul` is a live
+  input of the evening analysis (fetch_dracul_log_flags reads five fixed markers).
+  Replacing it instead of adding to it would blind that report.
+
+  FILE is the one that answers the actual requirement: `docker logs` belongs to the
+  container and dies when `docker compose up -d` recreates it on every deploy. Measured
+  on 2026-08-16: the production log reached back 69 lines, to the deploy 16 hours
+  earlier. A bind-mounted directory on the host outlives the container.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!-- Default `logs` keeps local runs and tests inside the (gitignored) working
+         directory; production overrides it to the bind mount. One path, one config. -->
+    <property name="LOG_DIR" value="${DRACUL_LOG_DIR:-logs}"/>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/dracul.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/dracul.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>14</maxHistory>
+            <!-- Runaway guard, not a space constraint: the host had plenty of free
+                 disk. NOTE when this cap bites, Logback drops the OLDEST files and
+                 retention silently falls below 14 days — hence the mandatory size
+                 check after one and three weeks in the runbook. -->
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>
