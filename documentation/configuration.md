@@ -236,7 +236,7 @@ The `yahooRestClient` bean and the keys below remain in use for FX only
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DRACUL_LOG_DIR` | `logs` | Directory for the rotating log files. In production it is mounted onto a host directory, so the logs survive the container being recreated. |
+| `DRACUL_LOG_DIR` | `logs` | Directory for the rotating log files. In production it is intended to be mounted onto a host directory, so the logs survive the container being recreated — see the deployment step in [operations.md](./operations.md#log-retention-14-days). |
 
 ## Notifications
 
