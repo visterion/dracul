@@ -688,18 +688,18 @@ Alongside stdout, the app also writes to a rolling log file: the active day's
 `dracul.log` is plain text, capped at 100 MB — once it hits that size it
 rotates within the same day into a gzip-compressed
 `dracul.<date>.<index>.log.gz` (the index starts at 0 and increments per
-same-day rollover), kept for 14 days subject to a 2 GB total cap across all
-of them — if the cap is reached, the oldest rotated files are dropped
-first, so retention can fall below 14 days sooner than the 14-day figure
-alone suggests. The directory is named by `DRACUL_LOG_DIR` (default `logs`;
-see [configuration.md](./configuration.md#logging)). In production this
-directory is intended to be a directory on the host, mounted into the
-container, so the log history survives the container being recreated
-(redeploys, crash-restarts) — unlike `docker logs`, which is scoped to the
-current container's lifetime and is lost the moment the container is
-replaced. That host mount is a separate deployment step and is not yet in
-place; until it lands, the file lives only inside the container like any
-other unmounted path.
+same-day rollover). Rotation is triggered by two independent conditions: the
+100 MB size cap described above, and a daily rollover at midnight (visible
+in the `<date>` component of the rotated filename) regardless of size. Rotated
+files are kept for 14 days subject to a 2 GB total cap across all of them —
+if the cap is reached, the oldest rotated files are dropped first, so
+retention can fall below 14 days sooner than the 14-day figure alone
+suggests. The directory is named by `DRACUL_LOG_DIR` (default `logs`; see
+[configuration.md](./configuration.md#logging)). In production this
+directory is a directory on the host, mounted into the container, so the
+log history survives the container being recreated (redeploys,
+crash-restarts) — unlike `docker logs`, which is scoped to the current
+container's lifetime and is lost the moment the container is replaced.
 
 `docker logs` keeps working exactly as before for live tailing; the file is
 the durable, restart-surviving source to reach for when a postmortem needs to
