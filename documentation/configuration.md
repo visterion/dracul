@@ -232,6 +232,12 @@ The `yahooRestClient` bean and the keys below remain in use for FX only
 | `DRACUL_MARKETDATA_FX_REFRESH_INITIAL_DELAY_MS` (`dracul.marketdata.fx-refresh.initial-delay-ms`) | `0` | Delay (ms) before the first FX warm-up run after startup. |
 | `DRACUL_MARKETDATA_FX_REFRESH_FIXED_DELAY_MS` (`dracul.marketdata.fx-refresh.fixed-delay-ms`) | `1800000` | Interval (ms) between FX warm-up runs (30 min). |
 
+## Logging
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DRACUL_LOG_DIR` | `logs` | Directory for the rotating log files. In production it is mounted onto a host directory, so the logs survive the container being recreated. |
+
 ## Notifications
 
 | Variable | Default | Purpose |

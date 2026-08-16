@@ -682,6 +682,21 @@ columns to `prey`). Standard Postgres backup / restore is sufficient.
   driver. Key events: Strigoi run start/end, Prey written, Verdict
   created, Daywalker trigger, Telegram notification sent.
 
+### Log retention (14 days)
+
+Alongside stdout, the app also writes to a rolling log file: one
+gzip-compressed file per day, kept for 14 days, under the directory named by
+`DRACUL_LOG_DIR` (default `logs`; see
+[configuration.md](./configuration.md#logging)). In production this directory
+is a directory on the host, mounted into the container, so the log history
+survives the container being recreated (redeploys, crash-restarts) — unlike
+`docker logs`, which is scoped to the current container's lifetime and is
+lost the moment the container is replaced.
+
+`docker logs` keeps working exactly as before for live tailing; the file is
+the durable, restart-surviving source to reach for when a postmortem needs to
+look further back than the currently running container's lifetime.
+
 ### Reading the log while Agora restarts
 
 Restarting Agora cuts the MCP sessions Dracul is holding. That is expected and
