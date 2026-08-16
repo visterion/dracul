@@ -16,6 +16,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -104,13 +105,28 @@ public class MaintenancePipeline {
                     .toList();
         }
 
+        // Only positions that will actually be evaluated below (filled, no pending exit) can
+        // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an
+        // unfilled or already-pending-exit position was never going to be checked this run
+        // regardless (see the gating below), so a missing indicator for it must not be reported
+        // as a skipped safety check. Computed here, before the maps, only to know which symbols
+        // are eligible to be named in the warning below — it does not change which survivors the
+        // maps are built from.
+        Set<Long> uncheckedIds = new HashSet<>();
+        for (ExecutorPosition p : survivors) {
+            if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null) uncheckedIds.add(p.id());
+        }
+
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();
-        List<String> withoutIndicators = new ArrayList<>();
+        Set<String> withoutIndicators = new LinkedHashSet<>();
+        int checkedTotal = 0;
         for (ExecutorPosition p : survivors) {
             ExecutorIndicators.Levels lv = indicators.levels(p.symbol(), atrPeriod, swingPeriod);
+            boolean wasGoingToBeChecked = !uncheckedIds.contains(p.id());
+            if (wasGoingToBeChecked) checkedTotal++;
             if (!lv.available()) {
-                withoutIndicators.add(p.symbol());
+                if (wasGoingToBeChecked) withoutIndicators.add(p.symbol());
                 continue;
             }
             if (lv.referencePrice() != null) closeBySymbol.put(p.symbol(), lv.referencePrice());
@@ -120,10 +136,12 @@ public class MaintenancePipeline {
         // the hard-trigger evaluation for that position for this entire run. The skip itself is
         // correct — without an ATR there is nothing to compute — but it used to be invisible,
         // so a provider outage looked exactly like a quiet pass. ONE line, not one per symbol:
-        // a total outage would otherwise emit a line per position and drown the signal.
+        // a total outage would otherwise emit a line per position and drown the signal. A
+        // LinkedHashSet, not a list: two open positions sharing a symbol must not double-count
+        // it, and order stays stable for a deterministic message.
         if (!withoutIndicators.isEmpty()) {
             log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
-                    withoutIndicators.size(), survivors.size(),
+                    withoutIndicators.size(), checkedTotal,
                     String.join(",", withoutIndicators));
         }
 

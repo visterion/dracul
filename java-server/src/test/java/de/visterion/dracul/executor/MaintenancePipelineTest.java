@@ -427,35 +427,123 @@ class MaintenancePipelineTest {
 
     @Test
     void logsOneLineNamingEverySymbolWhoseIndicatorsAreUnavailable() {
+        // Two unavailable symbols (not one): with only one unavailable symbol, an
+        // implementation that logged one line PER symbol would also produce exactly one line
+        // here, and hasSize(1) alone could not tell the two apart.
         ExecutorPosition good = openPosition(1L, "GOOD", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
         ExecutorPosition dark = openPosition(2L, "DARK", new BigDecimal("95"),
                 new BigDecimal("110"), new BigDecimal("1.6"), 0);
-        List<ExecutorPosition> survivors = List.of(good, dark);
+        ExecutorPosition dark2 = openPosition(3L, "DARK2", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(good, dark, dark2);
 
         when(reconcile.reconcile("c", "run1")).thenReturn(
                 new ReconcileService.ReconcileResult(survivors, Set.of()));
-        // one healthy, one unavailable
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
                         new BigDecimal("90"), new BigDecimal("100")));
         when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(indicators.levels(eq("DARK2"), anyInt(), anyInt()))
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(survivors);
 
         // Entry point is `public List<EnrichedPosition> run(String connection, String runId)`
         // (MaintenancePipeline.java:88). Stubbed the repositories the same way the existing
-        // tests in this class already do so that `survivors` contains exactly GOOD and DARK.
+        // tests in this class already do so that `survivors` contains exactly GOOD, DARK, DARK2.
         var warnings = warningsWhile(MaintenancePipeline.class,
                 () -> pipeline.run("c", "run1"));
 
         // ONE line, not one per symbol: a total outage must not produce a line per position.
+        // The full message is pinned (isEqualTo, not startsWith/contains): the format — the
+        // em dash, the comma join, the exact counts — is contract, not incidental wording.
         assertThat(warnings).hasSize(1);
         assertThat(warnings.get(0))
-                .startsWith("maintenance indicators unavailable: 1 of 2 symbols")
-                .contains("DARK")
-                .doesNotContain("GOOD");
+                .isEqualTo("maintenance indicators unavailable: 2 of 3 symbols — DARK,DARK2");
+    }
+
+    @Test
+    void duplicatePositionsOnTheSameSymbol_reportedOnce() {
+        // Two open positions on the same unavailable symbol must not double-count it — the
+        // warning names distinct SYMBOLS, not positions.
+        ExecutorPosition dark1 = openPosition(1L, "DARK", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition dark2 = openPosition(2L, "DARK", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition good = openPosition(3L, "GOOD", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(dark1, dark2, good);
+
+        when(reconcile.reconcile("c", "run1")).thenReturn(
+                new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
+                        new BigDecimal("90"), new BigDecimal("100")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        var warnings = warningsWhile(MaintenancePipeline.class,
+                () -> pipeline.run("c", "run1"));
+
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .isEqualTo("maintenance indicators unavailable: 1 of 3 symbols — DARK");
+    }
+
+    @Test
+    void allIndicatorsAvailable_logsNothing() {
+        // The counterpart property to the outage line: when nothing is unavailable, the run
+        // must stay silent. This is the difference between a usable alarm signal and daily noise.
+        ExecutorPosition good = openPosition(1L, "GOOD", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(good);
+
+        when(reconcile.reconcile("c", "run1")).thenReturn(
+                new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
+                        new BigDecimal("90"), new BigDecimal("100")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        var warnings = warningsWhile(MaintenancePipeline.class,
+                () -> pipeline.run("c", "run1"));
+
+        assertThat(warnings).isEmpty();
+    }
+
+    @Test
+    void unfilledPositionWithUnavailableIndicators_notCountedOrNamedInWarning() {
+        // A position whose GTD entry never filled is excluded from hard-trigger/ratchet below
+        // regardless of indicator availability (see MaintenancePipeline.java run(), the
+        // filledSurvivors gating) — no safety check was ever going to run on it this pass, so a
+        // missing indicator for it is not a skipped check and must not inflate the warning: not
+        // in the numerator, not in the denominator, not named.
+        ExecutorPosition dark = openPosition(1L, "DARK", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition unfilled = openPosition(2L, "OTHER", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(dark, unfilled);
+
+        when(reconcile.reconcile("c", "run1")).thenReturn(
+                new ReconcileService.ReconcileResult(survivors, Set.of(2L)));
+        when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(indicators.levels(eq("OTHER"), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+        when(hardTrigger.apply(any(), any(), eq("run1"))).thenAnswer(inv -> inv.getArgument(0));
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        var warnings = warningsWhile(MaintenancePipeline.class,
+                () -> pipeline.run("c", "run1"));
+
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .isEqualTo("maintenance indicators unavailable: 1 of 1 symbols — DARK");
     }
 
     @Test
