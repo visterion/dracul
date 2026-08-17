@@ -460,10 +460,12 @@ scope, one of two stable prefixes:
   an unknown symbol, an unresolvable CIK, a document over the filing-size cap.
   This says nothing about the source's health.
 
-**The same failure now produces TWO WARN lines** — `AgoraClient`'s tool-wide one and
-the facade's subject/scope-carrying one. A log-based count or alert built on either
-prefix must not also count the old `Agora unreachable for` line, or it double-counts
-every outage. The gain from the new line is the subject and the scope, not the mere
+**The same failure now produces TWO WARN lines on the facade paths** — `AgoraClient`'s
+tool-wide one and the facade's subject/scope-carrying one — and **THREE on the echo
+price-screen path**, where `EnrichmentSourceGuard` adds its own `echo enrichment: price
+quote source down (...)` (the wording says "enrichment" although the caller is a screen).
+A log-based count or alert built on any of these prefixes must not also count the others,
+or it multiplies every single outage. The gain from the new line is the subject and the scope, not the mere
 existence of a trace. **Only the `agora source unavailable:` prefix is an outage
 signal** — folding it together with `agora request failed:` fires on routine
 per-request misses that have nothing to do with Agora being down. The return contract
