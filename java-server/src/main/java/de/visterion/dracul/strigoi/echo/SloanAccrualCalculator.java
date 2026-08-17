@@ -21,8 +21,9 @@ import java.time.temporal.ChronoUnit;
  * Dracul's. Graceful: any missing concept / parse gap → {@link AccrualMetrics#unavailable()}.
  * Uses {@link AgoraFilings#conceptStrict} rather than the swallowing {@link
  * AgoraFilings#concept}: an Agora/EDGAR outage now reaches this class as a thrown {@link
- * AgoraUnavailableException} (logged at WARN) instead of silently coming back as an empty
- * series indistinguishable from "concept not filed".
+ * AgoraUnavailableException} instead of silently coming back as an empty series
+ * indistinguishable from "concept not filed" — see {@link #fetchConcept} for the scope-aware
+ * logging that replaces what {@code concept()} used to do internally.
  */
 @Component
 public class SloanAccrualCalculator {
@@ -39,11 +40,17 @@ public class SloanAccrualCalculator {
     private record Dated(LocalDate end, BigDecimal value) {}
 
     public AccrualMetrics accruals(String symbol) {
+        ConceptSeries niSeries = fetchConcept(symbol, "NetIncomeLoss");
+        if (niSeries == null) return AccrualMetrics.unavailable();
+        ConceptSeries ocfSeries = fetchConcept(symbol, "NetCashProvidedByUsedInOperatingActivities");
+        if (ocfSeries == null) return AccrualMetrics.unavailable();
+        ConceptSeries assetsSeries = fetchConcept(symbol, "Assets");
+        if (assetsSeries == null) return AccrualMetrics.unavailable();
+
         try {
-            Dated netIncome = latestAnnualDuration(filings.conceptStrict(symbol, "NetIncomeLoss"));
-            Dated opCashFlow = latestAnnualDuration(
-                    filings.conceptStrict(symbol, "NetCashProvidedByUsedInOperatingActivities"));
-            BigDecimal assets = latestInstant(filings.conceptStrict(symbol, "Assets"));
+            Dated netIncome = latestAnnualDuration(niSeries);
+            Dated opCashFlow = latestAnnualDuration(ocfSeries);
+            BigDecimal assets = latestInstant(assetsSeries);
 
             if (netIncome == null || opCashFlow == null || assets == null || assets.signum() == 0
                     || !netIncome.end().equals(opCashFlow.end())) {  // both flows must cover the same fiscal period
@@ -52,22 +59,41 @@ public class SloanAccrualCalculator {
             BigDecimal ratio = netIncome.value().subtract(opCashFlow.value())
                     .divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
             return new AccrualMetrics(ratio, true);
-        } catch (AgoraUnavailableException e) {
-            // Switched from the swallowing concept() to conceptStrict() so this catch can
-            // actually fire: concept() used to absorb the outage itself and log it as
-            // "agora source unavailable" on AgoraFilings' behalf, which meant this class never
-            // saw a thrown exception at all. WARN (not DEBUG): a missing/unfiled XBRL tag comes
-            // back as an empty ConceptSeries and never reaches this branch, so landing here means
-            // Agora/EDGAR itself did not answer — the same "agora source unavailable" contract
-            // AgoraFilings itself used to log.
-            log.warn("agora source unavailable: tool=get_company_concept subject={} — {}",
-                    symbol, e.getMessage());
-            return AccrualMetrics.unavailable();
         } catch (RuntimeException e) {
-            // Anything else (a malformed datapoint, an unexpected null) is a parsing/shape
-            // problem, not a source outage; keep it at DEBUG as before.
+            // A malformed datapoint / unexpected null is a parsing/shape problem, not a source
+            // outage; keep it at DEBUG as before.
             log.debug("accruals failed for {}: {}", symbol, e.getMessage());
             return AccrualMetrics.unavailable();
+        }
+    }
+
+    /**
+     * Fetches one concept via {@link AgoraFilings#conceptStrict} instead of the swallowing {@link
+     * AgoraFilings#concept}, so an Agora/EDGAR outage reaches this class instead of silently
+     * coming back as an empty series indistinguishable from "concept not filed" — {@code
+     * concept()} used to absorb it and log it as {@code agora source unavailable} on {@code
+     * AgoraFilings}' own behalf, which this switch removes, so it is re-emitted here.
+     *
+     * <p>Branches on {@link AgoraUnavailableException.Scope} exactly like {@code AgoraFilings}'
+     * own {@code logSwallowed}: {@code Scope.SOURCE} (Agora never answered) is a genuine outage,
+     * worth the {@code agora source unavailable} prefix; {@code Scope.REQUEST} (Agora answered
+     * with an error envelope about this one request — e.g. an unresolvable CIK) is evidence about
+     * the request, not the source, and gets {@code agora request failed} instead — folding both
+     * into one prefix would make the outage prefix worthless for alarming. The subject is {@code
+     * symbol:tag}, not just {@code symbol}, because {@code accruals} makes three of these calls
+     * per symbol and the tag is the only way to tell which one failed.
+     *
+     * @return the series, or {@code null} (having already logged) on any Agora failure.
+     */
+    private ConceptSeries fetchConcept(String symbol, String tag) {
+        try {
+            return filings.conceptStrict(symbol, tag);
+        } catch (AgoraUnavailableException e) {
+            String prefix = e.scope() == AgoraUnavailableException.Scope.SOURCE
+                    ? "agora source unavailable"
+                    : "agora request failed";
+            log.warn("{}: tool=get_company_concept subject={}:{} — {}", prefix, symbol, tag, e.getMessage());
+            return null;
         }
     }
 

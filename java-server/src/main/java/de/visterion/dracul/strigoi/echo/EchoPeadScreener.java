@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.echo;
 
+import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import org.slf4j.Logger;
@@ -93,23 +94,32 @@ public class EchoPeadScreener {
         List<PeadCandidate> out = new ArrayList<>();
         boolean priceSourceUnavailable = false;
         for (EarningsObservation e : shortlist) {
-            if (priceSourceUnavailable) {
-                // The sole strict price source is down; every remaining shortlisted symbol
-                // needs it too — same skip-the-rest-of-the-batch discipline as
-                // IndexEventEnricher.enrich for the same MarketDataException.Kind#UNAVAILABLE.
-                break;
-            }
             BigDecimal price;
             try {
                 price = marketData.resolve(e.symbol()).currentPrice();
             } catch (MarketDataException ex) {
-                if (ex.kind() == MarketDataException.Kind.UNAVAILABLE) {
+                // AgoraMarketData.resolve wraps every AgoraUnavailableException in a
+                // MarketDataException(UNAVAILABLE, message, cause), so the wrapper's Kind alone
+                // cannot be trusted — it collapses a genuine outage (Scope.SOURCE) and a single
+                // REQUEST-scoped per-request error (an unknown symbol) into the same Kind. Read
+                // the scope back off the cause, exactly as EnrichmentSourceGuard#recordFailure
+                // does for the same wrapper: a REQUEST-scoped cause means Agora ANSWERED about
+                // this one symbol and must not disable the source, precisely the "one 404 disabled
+                // a whole source" misjudgment that guard's javadoc names as the 2026-08-06
+                // incident.
+                AgoraUnavailableException agora = AgoraUnavailableException.unwrap(ex);
+                boolean requestScoped = agora != null && agora.scope() == AgoraUnavailableException.Scope.REQUEST;
+                boolean sourceDown = ex.kind() == MarketDataException.Kind.UNAVAILABLE && !requestScoped;
+                if (sourceDown) {
                     priceSourceUnavailable = true;
                     log.warn("agora source unavailable: tool=get_quote subject={} — {}",
                             e.symbol(), ex.getMessage());
-                } else {
-                    log.debug("echo pead screen: price lookup failed for {}: {}", e.symbol(), ex.getMessage());
+                    // The sole strict price source is down; every remaining shortlisted symbol
+                    // needs it too — same skip-the-rest-of-the-batch discipline as
+                    // IndexEventEnricher.enrich for the same MarketDataException.Kind#UNAVAILABLE.
+                    break;
                 }
+                log.debug("echo pead screen: price lookup failed for {}: {}", e.symbol(), ex.getMessage());
                 continue;                                                          // liquidity unverifiable
             }
             if (price.compareTo(minPrice) < 0) continue;

@@ -102,9 +102,11 @@ class SloanAccrualCalculatorTest {
     /** Before this task, {@code SloanAccrualCalculator} called the swallowing {@code concept()},
      *  whose own catch block absorbed an {@link AgoraUnavailableException} and returned an empty
      *  series — this class's try/catch could never see the exception, so the outage produced no
-     *  WARN line of its own. Now it calls {@code conceptStrict()}, so the outage reaches this
-     *  class's catch and logs the established "agora source unavailable" contract line. */
-    @Test void logsOnAgoraOutageInsteadOfSwallowingSilently() {
+     *  WARN line of its own. Now it calls {@code conceptStrict()}, so a SOURCE-scoped outage
+     *  reaches {@code fetchConcept} and logs the established "agora source unavailable" contract
+     *  line, with the tag folded into the subject ({@code SYM:tag}) since three concepts are
+     *  fetched per symbol and the tag is the only way to tell which one failed. */
+    @Test void logsAgoraSourceUnavailableOnASourceScopedOutage() {
         AgoraFilings f = mock(AgoraFilings.class);
         when(f.conceptStrict("ACME", "NetIncomeLoss"))
                 .thenThrow(new AgoraUnavailableException("Agora unreachable"));
@@ -117,6 +119,27 @@ class SloanAccrualCalculatorTest {
         ILoggingEvent event = events.get(0);
         assertThat(event.getLevel()).isEqualTo(Level.WARN);
         assertThat(event.getFormattedMessage())
-                .isEqualTo("agora source unavailable: tool=get_company_concept subject=ACME — Agora unreachable");
+                .isEqualTo("agora source unavailable: tool=get_company_concept subject=ACME:NetIncomeLoss — Agora unreachable");
+    }
+
+    /** A REQUEST-scoped failure (Agora answered — an error envelope about this one request, e.g.
+     *  an unresolvable CIK) must NOT log under the "agora source unavailable" prefix: that prefix
+     *  is reserved for a genuine outage and becomes an alarm source, so a single unresolvable
+     *  issuer logging under it would be a false alarm. Mirrors {@code AgoraFilings}' own {@code
+     *  logSwallowed} branch on {@link AgoraUnavailableException.Scope}. */
+    @Test void logsAgoraRequestFailedOnARequestScopedFailure() {
+        AgoraFilings f = mock(AgoraFilings.class);
+        when(f.conceptStrict("ACME", "NetIncomeLoss")).thenThrow(new AgoraUnavailableException(
+                AgoraUnavailableException.Scope.REQUEST, "Agora tool error: no CIK for ACME", null));
+        var calc = new SloanAccrualCalculator(f);
+
+        List<ILoggingEvent> events = warningsWhile(() ->
+                assertThat(calc.accruals("ACME").available()).isFalse());
+
+        assertThat(events).hasSize(1);
+        ILoggingEvent event = events.get(0);
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(event.getFormattedMessage()).isEqualTo(
+                "agora request failed: tool=get_company_concept subject=ACME:NetIncomeLoss — Agora tool error: no CIK for ACME");
     }
 }

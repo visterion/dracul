@@ -4,6 +4,9 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import de.visterion.dracul.marketdata.AgoraUnavailableException;
+import de.visterion.dracul.marketdata.MarketData;
+import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.StubMarketDataPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,7 +15,10 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -105,11 +111,10 @@ class EchoPeadScreenerTest {
         marketData.register("AAA", "AAA Inc.", 50.0); // never queried: the outage below hits BBB first
         var counting = new StubMarketDataPort() {
             private boolean failed = false;
-            @Override public de.visterion.dracul.marketdata.MarketData resolve(String symbol) {
+            @Override public MarketData resolve(String symbol) {
                 if ("BBB".equals(symbol)) {
                     failed = true;
-                    throw new de.visterion.dracul.marketdata.MarketDataException(
-                            de.visterion.dracul.marketdata.MarketDataException.Kind.UNAVAILABLE, "outage");
+                    throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "outage");
                 }
                 if (failed) throw new AssertionError("resolve() called for " + symbol + " after the source went down");
                 return super.resolve(symbol);
@@ -139,6 +144,38 @@ class EchoPeadScreenerTest {
         assertThat(warnings.get(0).getFormattedMessage())
                 .isEqualTo("agora source unavailable: tool=get_quote subject=AAA — stub unavailable");
     }
+
+    /** {@code AgoraMarketData.resolve} wraps EVERY {@code AgoraUnavailableException} in a {@code
+     *  MarketDataException(UNAVAILABLE, ...)}, so the wrapper's Kind alone cannot tell a genuine
+     *  outage apart from a single unresolvable symbol Agora answered about — the exact "one 404
+     *  disabled a whole source" misjudgment {@code EnrichmentSourceGuard}'s javadoc names as the
+     *  2026-08-06 incident. A REQUEST-scoped cause must therefore behave like a per-symbol miss:
+     *  that one candidate is dropped, the source stays up, and the next (weaker) candidate is
+     *  still resolved. */
+    @Test void doesNotTripPriceSourceDownOnARequestScopedFailure() {
+        var requestScoped = new StubMarketDataPort() {
+            @Override public MarketData resolve(String symbol) {
+                if ("BBB".equals(symbol)) {
+                    throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE,
+                            "Agora tool error: no such symbol",
+                            new AgoraUnavailableException(AgoraUnavailableException.Scope.REQUEST,
+                                    "Agora tool error: no such symbol", null));
+                }
+                return super.resolve(symbol);
+            }
+        };
+        requestScoped.register("CCC", "CCC Inc.", 50.0);
+        var svc = new EchoPeadScreener(requestScoped, new BigDecimal("5.0"), new BigDecimal("5.0"), MAX_CANDIDATES);
+
+        // BBB (strongest surprise) fails REQUEST-scoped; CCC (weaker, resolved next) must still
+        // be tried and must still succeed.
+        var result = svc.screen(List.of(
+                ev("BBB", 1.00, 1.30, 20.0),
+                ev("CCC", 1.00, 1.20, 10.0)));
+
+        assertThat(result.priceSourceUnavailable()).isFalse();
+        assertThat(result.candidates()).extracting(PeadCandidate::symbol).containsExactly("CCC");
+    }
     @Test void dropsWhenEpsMissing() {
         marketData.register("NEW", "New Issue", 30.0);
         var noEps = new EarningsObservation("NEW", "New Issue", LocalDate.of(2026, 5, 20),
@@ -167,7 +204,7 @@ class EchoPeadScreenerTest {
         // The 40 STRONGEST survive (i = 49 down to i = 10), not the first 40 in input order.
         assertThat(result.candidates()).extracting(PeadCandidate::symbol)
                 .containsExactlyElementsOf(
-                        java.util.stream.IntStream.rangeClosed(10, MAX_CANDIDATES + 9)
+                        IntStream.rangeClosed(10, MAX_CANDIDATES + 9)
                                 .map(i -> MAX_CANDIDATES + 19 - i)      // descending
                                 .mapToObj(i -> String.format("SYM%02d", i))
                                 .toList());
@@ -186,7 +223,7 @@ class EchoPeadScreenerTest {
 
         var first = screener.screen(tied);
         var reversed = new ArrayList<>(tied);
-        java.util.Collections.reverse(reversed);
+        Collections.reverse(reversed);
         var second = screener.screen(reversed);
 
         assertThat(first.candidates()).extracting(PeadCandidate::symbol)
@@ -215,9 +252,9 @@ class EchoPeadScreenerTest {
      *  to throw most away would be paid for on every run. */
     @Test
     void resolvesPricesOnlyForTheShortlist() {
-        var resolves = new java.util.concurrent.atomic.AtomicInteger();
+        var resolves = new AtomicInteger();
         var counting = new StubMarketDataPort() {
-            @Override public de.visterion.dracul.marketdata.MarketData resolve(String symbol) {
+            @Override public MarketData resolve(String symbol) {
                 resolves.incrementAndGet();
                 return super.resolve(symbol);
             }

@@ -1,7 +1,6 @@
 package de.visterion.dracul.strigoi.insider;
 
 import de.visterion.dracul.hunting.DataSourceHealth;
-import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
@@ -89,7 +88,7 @@ class InsiderEnrichmentDegradationTest {
         AgoraCompanyData m = mock(AgoraCompanyData.class);
         when(m.recommendationsStrict(anyString())).thenReturn(TREND);
         JsonNode node = MAPPER.readTree("{\"marketCapitalization\":850.0}");
-        when(m.fundamentalsResult(anyString())).thenReturn(DataSourceResult.healthy("agora", List.of(node)));
+        when(m.fundamentalsStrict(anyString())).thenReturn(node);
         return m;
     }
 

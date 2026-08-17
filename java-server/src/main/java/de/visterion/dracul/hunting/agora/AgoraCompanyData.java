@@ -25,9 +25,9 @@ import java.util.List;
  * get_fundamentals / get_company_profile over MCP). fundamentals/profile are returned as the
  * RAW provider blobs (opaque JsonNode) — key extraction is a consumer-side concern. Never
  * throws: Agora failure degrades to an empty list / null (the replaced adapters' contracts) —
- * except the health-aware variants ({@link #fundamentalsResult}, {@link #recommendationsStrict}
- * and {@link #newsResult}), which exist precisely so guard-carrying callers can tell
- * an Agora outage apart from "no data for this symbol".
+ * except the health-aware variants ({@link #fundamentalsResult}, {@link #fundamentalsStrict},
+ * {@link #recommendationsStrict} and {@link #newsResult}), which exist precisely so
+ * guard-carrying callers can tell an Agora outage apart from "no data for this symbol".
  */
 @Component
 public class AgoraCompanyData {
@@ -274,6 +274,31 @@ public class AgoraCompanyData {
         } catch (AgoraUnavailableException e) {
             return DataSourceResult.unavailable("agora", "agora: " + e.getMessage());
         }
+    }
+
+    /**
+     * Strict variant of {@link #fundamentals(String)}: propagates {@link
+     * AgoraUnavailableException} — WITH its {@link AgoraUnavailableException.Scope} intact —
+     * instead of degrading to null, so callers with a per-batch source-down guard (insider
+     * enrichment) can tell "Agora is down" apart from "no fundamentals for this symbol" and stop
+     * burning a dead ~16s remote call per remaining candidate. Same split as {@link
+     * #recommendationsStrict}.
+     *
+     * <p>Deliberately NOT the same thing as {@link #fundamentalsResult}: that method collapses
+     * every {@link AgoraUnavailableException.Scope} into one {@code "unavailable"} health status
+     * for its own (non-guard) callers, which is fine for a single yes/no health flag but wrong
+     * for {@code EnrichmentSourceGuard#recordFailure} — that guard trips down IMMEDIATELY on a
+     * SOURCE-scoped failure but only after several consecutive REQUEST-scoped ones (an unknown
+     * symbol, an unresolvable issuer), precisely to avoid disabling a whole batch's metrics
+     * enrichment over one bad ticker. Losing the scope here would silently reproduce the
+     * 2026-08-06 production incident {@link de.visterion.dracul.strigoi.EnrichmentSourceGuard}'s
+     * own javadoc describes, for metrics instead of OHLC/owner-history.
+     */
+    public JsonNode fundamentalsStrict(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
+        return (m.isMissingNode() || m.isNull()) ? null : m;
     }
 
     /** RAW provider profile blob (opaque); null when unavailable or absent. */

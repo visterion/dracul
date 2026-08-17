@@ -1,7 +1,6 @@
 package de.visterion.dracul.strigoi.insider;
 
 import de.visterion.dracul.hunting.DataSourceHealth;
-import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
@@ -134,18 +133,13 @@ class InsiderEnrichmentServiceTest {
         };
     }
 
-    /** Health-aware fundamentals stub matching {@link AgoraCompanyData#fundamentalsResult}'s real
-     *  contract: {@code marketCap == null} is a SUCCESSFUL call with no data for the symbol
-     *  (healthy, empty items) — the same "no fundamentals" case the old {@code
-     *  EquityMetrics.unavailable()} fixture stood in for, NOT an Agora outage. */
-    private static DataSourceResult<JsonNode> fundamentalsHealthy(Double marketCap) {
-        if (marketCap == null) return DataSourceResult.healthy("agora", List.of());
-        JsonNode node = MAPPER.readTree("{\"marketCapitalization\":" + marketCap + "}");
-        return DataSourceResult.healthy("agora", List.of(node));
-    }
-
-    private static DataSourceResult<JsonNode> fundamentalsUnavailable() {
-        return DataSourceResult.unavailable("agora", "agora: Agora unreachable");
+    /** Stub matching {@link AgoraCompanyData#fundamentalsStrict}'s real contract: {@code
+     *  marketCap == null} is a SUCCESSFUL call with no data for the symbol (returns {@code null},
+     *  never throws) — the same "no fundamentals" case the old {@code EquityMetrics.unavailable()}
+     *  fixture stood in for, NOT an Agora outage. */
+    private static JsonNode fundamentalsHealthy(Double marketCap) {
+        if (marketCap == null) return null;
+        return MAPPER.readTree("{\"marketCapitalization\":" + marketCap + "}");
     }
 
     /** @param marketCap {@code null} means "fundamentals call succeeded, no data for this
@@ -153,7 +147,7 @@ class InsiderEnrichmentServiceTest {
     private static AgoraCompanyData companyData(List<RecommendationTrend> trend, Double marketCap) {
         AgoraCompanyData m = mock(AgoraCompanyData.class);
         when(m.recommendationsStrict(anyString())).thenReturn(trend);
-        when(m.fundamentalsResult(anyString())).thenReturn(fundamentalsHealthy(marketCap));
+        when(m.fundamentalsStrict(anyString())).thenReturn(fundamentalsHealthy(marketCap));
         return m;
     }
 
@@ -191,8 +185,10 @@ class InsiderEnrichmentServiceTest {
         assertThat(e.earningsDateAvailable()).isTrue();
     }
 
+    /** A successful fundamentals call with no data for the symbol (not an outage) still leaves the
+     *  metrics group available via OHLC's {@code adv}. */
     @Test
-    void degradesMetricsOnlyWhenEquityMetricsUnavailable() {
+    void degradesMarketCapOnlyWhenFundamentalsHaveNoDataForTheSymbol() {
         var svc = enrichmentService(marketDataReturning(bars()),
                 companyData(TREND, null), earnings(Optional.of(LocalDate.now().plusDays(30))));
 
@@ -255,9 +251,9 @@ class InsiderEnrichmentServiceTest {
     void degradesEverythingButNeverTheCluster() {
         AgoraCompanyData throwingCompanyData = mock(AgoraCompanyData.class);
         when(throwingCompanyData.recommendationsStrict(anyString())).thenThrow(new RuntimeException("boom"));
-        // no fundamentals data for the symbol (healthy, empty) — not an outage, matches the
-        // pre-fix EquityMetrics.unavailable() fixture this test used.
-        when(throwingCompanyData.fundamentalsResult(anyString())).thenReturn(fundamentalsHealthy(null));
+        // no fundamentals data for the symbol (successful call, null) — not an outage, matches
+        // the pre-fix EquityMetrics.unavailable() fixture this test used.
+        when(throwingCompanyData.fundamentalsStrict(anyString())).thenReturn(fundamentalsHealthy(null));
         AgoraEarnings throwingEarnings = mock(AgoraEarnings.class);
         when(throwingEarnings.nextEarningsDate(anyString())).thenThrow(new RuntimeException("boom"));
 
@@ -314,23 +310,28 @@ class InsiderEnrichmentServiceTest {
         assertThat(e.ytdReturnAvailable()).isFalse();
     }
 
+    /** A REQUEST-scoped failure (Agora answered — an error envelope about ONE unresolvable symbol,
+     *  e.g. "no CIK for N/A") must NOT disable the source for the rest of the batch — only a
+     *  SOURCE-scoped failure, or {@value EnrichmentSourceGuard#MAX_CONSECUTIVE_REQUEST_FAILURES}
+     *  REQUEST-scoped ones in a row, does that (see {@link EnrichmentSourceGuard}).
+     *  {@code AgoraClient} throws {@code Scope.REQUEST} tool-independently for any error-envelope
+     *  response, {@code get_fundamentals} included — this is the scenario {@code
+     *  fundamentalsStrict} exists to make distinguishable from a SOURCE outage. */
     @Test
     void symbolSpecificFailureDoesNotDisableTheSource() {
-        // "no fundamentals for AAA" (healthy, empty) is the only per-symbol miss fundamentalsResult
-        // can produce — unlike OHLC/coverage there is no NOT_FOUND-style per-item error envelope
-        // for get_fundamentals, so this exercises the benign path rather than a guard-trip decision.
         AgoraCompanyData cd = mock(AgoraCompanyData.class);
         when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
-        when(cd.fundamentalsResult("AAA")).thenReturn(fundamentalsHealthy(null));
-        when(cd.fundamentalsResult("BBB")).thenReturn(fundamentalsHealthy(850.0));
+        when(cd.fundamentalsStrict("AAA")).thenThrow(new AgoraUnavailableException(
+                AgoraUnavailableException.Scope.REQUEST, "Agora tool error: no such symbol", null));
+        when(cd.fundamentalsStrict("BBB")).thenReturn(fundamentalsHealthy(850.0));
 
         var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
 
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
-        // both symbols are still queried — a per-symbol miss never disables the source
-        verify(cd, times(1)).fundamentalsResult("AAA");
-        verify(cd, times(1)).fundamentalsResult("BBB");
+        // both symbols are still queried — a per-symbol REQUEST failure never disables the source
+        verify(cd, times(1)).fundamentalsStrict("AAA");
+        verify(cd, times(1)).fundamentalsStrict("BBB");
         var a = out.stream().filter(x -> x.ticker().equals("AAA")).findFirst().orElseThrow();
         var b = out.stream().filter(x -> x.ticker().equals("BBB")).findFirst().orElseThrow();
         assertThat(a.marketCap()).isNull();
@@ -342,7 +343,7 @@ class InsiderEnrichmentServiceTest {
     void availabilityFailureSkipsThatSourceForRemainingClusters() {
         AgoraCompanyData cd = mock(AgoraCompanyData.class);
         when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
-        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsUnavailable());
+        when(cd.fundamentalsStrict(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
         AgoraEarnings earn = earnings(Optional.empty());
 
         var svc = enrichmentService(marketDataReturning(bars()), cd, earn);
@@ -350,7 +351,7 @@ class InsiderEnrichmentServiceTest {
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
         // the down source is queried exactly once, then skipped for the rest of the batch
-        verify(cd, times(1)).fundamentalsResult(anyString());
+        verify(cd, times(1)).fundamentalsStrict(anyString());
         // the other sources keep serving every cluster
         verify(cd, times(2)).recommendationsStrict(anyString());
         verify(earn, times(2)).nextEarningsDate(anyString());
@@ -371,7 +372,7 @@ class InsiderEnrichmentServiceTest {
     void totalFundamentalsOutageTripsTheGuardAndCountsEveryTouchedClusterAsDegraded() {
         AgoraCompanyData cd = mock(AgoraCompanyData.class);
         when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
-        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsUnavailable());
+        when(cd.fundamentalsStrict(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
 
         var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
 
@@ -379,7 +380,7 @@ class InsiderEnrichmentServiceTest {
 
         // the source is queried once, found down, and skipped for every remaining cluster —
         // it never reports "up" through the outage.
-        verify(cd, times(1)).fundamentalsResult(anyString());
+        verify(cd, times(1)).fundamentalsStrict(anyString());
         assertThat(batch.degradedClusters()).isEqualTo(3);
         assertThat(batch.degraded()).isTrue();
         assertThat(batch.clusters()).allSatisfy(e -> assertThat(e.marketCap()).isNull());
@@ -397,7 +398,7 @@ class InsiderEnrichmentServiceTest {
         // default recommendations() would return an empty list and never trip the guard)
         AgoraCompanyData cd = mock(AgoraCompanyData.class);
         when(cd.recommendationsStrict(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
-        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsHealthy(850.0));
+        when(cd.fundamentalsStrict(anyString())).thenReturn(fundamentalsHealthy(850.0));
 
         var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
 
@@ -418,7 +419,7 @@ class InsiderEnrichmentServiceTest {
     void twoSourcesDownSkipEnrichmentForRemainingClusters() {
         AgoraCompanyData cd = mock(AgoraCompanyData.class);
         when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
-        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsUnavailable());
+        when(cd.fundamentalsStrict(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
         AgoraEarnings earn = earnings(Optional.of(LocalDate.now().plusDays(30)));
 
         var svc = enrichmentService(marketDataThrowing(), cd, earn);
@@ -426,7 +427,7 @@ class InsiderEnrichmentServiceTest {
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB"), cluster("CCC")));
 
         // metrics + ohlc are marked down during cluster 1 -> no source is queried again at all
-        verify(cd, times(1)).fundamentalsResult(anyString());
+        verify(cd, times(1)).fundamentalsStrict(anyString());
         verify(cd, times(1)).recommendationsStrict(anyString());
         verify(earn, times(1)).nextEarningsDate(anyString());
         assertThat(out).hasSize(3);
