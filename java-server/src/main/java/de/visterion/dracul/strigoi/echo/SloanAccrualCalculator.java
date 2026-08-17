@@ -40,14 +40,14 @@ public class SloanAccrualCalculator {
     private record Dated(LocalDate end, BigDecimal value) {}
 
     public AccrualMetrics accruals(String symbol) {
-        ConceptSeries niSeries = fetchConcept(symbol, "NetIncomeLoss");
-        if (niSeries == null) return AccrualMetrics.unavailable();
-        ConceptSeries ocfSeries = fetchConcept(symbol, "NetCashProvidedByUsedInOperatingActivities");
-        if (ocfSeries == null) return AccrualMetrics.unavailable();
-        ConceptSeries assetsSeries = fetchConcept(symbol, "Assets");
-        if (assetsSeries == null) return AccrualMetrics.unavailable();
-
         try {
+            ConceptSeries niSeries = fetchConcept(symbol, "NetIncomeLoss");
+            if (niSeries == null) return AccrualMetrics.unavailable();
+            ConceptSeries ocfSeries = fetchConcept(symbol, "NetCashProvidedByUsedInOperatingActivities");
+            if (ocfSeries == null) return AccrualMetrics.unavailable();
+            ConceptSeries assetsSeries = fetchConcept(symbol, "Assets");
+            if (assetsSeries == null) return AccrualMetrics.unavailable();
+
             Dated netIncome = latestAnnualDuration(niSeries);
             Dated opCashFlow = latestAnnualDuration(ocfSeries);
             BigDecimal assets = latestInstant(assetsSeries);
@@ -60,8 +60,14 @@ public class SloanAccrualCalculator {
                     .divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
             return new AccrualMetrics(ratio, true);
         } catch (RuntimeException e) {
-            // A malformed datapoint / unexpected null is a parsing/shape problem, not a source
-            // outage; keep it at DEBUG as before.
+            // Wraps the whole body (fetches + arithmetic), restoring this method's original
+            // protection scope: fetchConcept only catches the specific AgoraUnavailableException
+            // (handled there, scope-aware, at WARN — see its own javadoc), but conceptStrict can
+            // in principle throw something else (a malformed response) that fetchConcept does not
+            // catch. Without this outer catch such a failure would propagate out of accruals()
+            // uncaught, contradicting the class javadoc's "any missing concept / parse gap ->
+            // unavailable()" promise. A malformed datapoint / unexpected null in the arithmetic
+            // below lands here too; keep it at DEBUG as before, since it says nothing about Agora.
             log.debug("accruals failed for {}: {}", symbol, e.getMessage());
             return AccrualMetrics.unavailable();
         }

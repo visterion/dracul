@@ -176,6 +176,48 @@ class EchoPeadScreenerTest {
         assertThat(result.priceSourceUnavailable()).isFalse();
         assertThat(result.candidates()).extracting(PeadCandidate::symbol).containsExactly("CCC");
     }
+
+    /** The actual shape of the 2026-08-06 incident: Agora ANSWERED for every symbol, each time
+     *  with a per-request error envelope (a Yahoo 404, an unresolvable issuer) — never a
+     *  transport failure. A single-evidence guard (SOURCE-only) misses this entirely: every
+     *  candidate is dropped one by one via {@code continue} and {@code priceSourceUnavailable}
+     *  stays {@code false} — a screen that looks like a quiet night. The two-evidence guard
+     *  (mirroring {@code EnrichmentSourceGuard}'s own SOURCE-immediate / REQUEST-run rule) must
+     *  trip after the third consecutive REQUEST-scoped failure with no success in between, stop
+     *  resolving the rest, and report the outage. */
+    @Test void reportsOutageWhenEverySymbolAnswersWithARequestScopedEnvelope() {
+        var resolves = new AtomicInteger();
+        var alwaysRequestScoped = new StubMarketDataPort() {
+            @Override public MarketData resolve(String symbol) {
+                resolves.incrementAndGet();
+                throw new MarketDataException(MarketDataException.Kind.UNAVAILABLE,
+                        "Agora tool error: no such symbol",
+                        new AgoraUnavailableException(AgoraUnavailableException.Scope.REQUEST,
+                                "Agora tool error: no such symbol", null));
+            }
+        };
+        var svc = new EchoPeadScreener(alwaysRequestScoped, new BigDecimal("5.0"), new BigDecimal("5.0"),
+                MAX_CANDIDATES);
+        List<EarningsObservation> events = List.of(
+                ev("AAA", 1.00, 1.50, 50.0), ev("BBB", 1.00, 1.40, 40.0), ev("CCC", 1.00, 1.30, 30.0),
+                ev("DDD", 1.00, 1.20, 20.0), ev("EEE", 1.00, 1.10, 10.0));
+
+        var resultHolder = new ScreenResult[1];
+        List<ILoggingEvent> logEvents = logsWhile(() -> resultHolder[0] = svc.screen(events));
+        var result = resultHolder[0];
+
+        assertThat(result.priceSourceUnavailable()).isTrue();
+        assertThat(result.candidates()).isEmpty();
+        // the guard trips after the 3rd consecutive REQUEST-scoped failure (mirrors
+        // EnrichmentSourceGuard's own, non-public MAX_CONSECUTIVE_REQUEST_FAILURES = 3):
+        // AAA, BBB, CCC are tried; DDD and EEE (weaker, later in STRONGEST_FIRST order) are not.
+        assertThat(resolves.get()).isEqualTo(3);
+        var warnings = logEvents.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0).getFormattedMessage())
+                .isEqualTo("agora source unavailable: tool=get_quote subject=CCC — Agora tool error: no such symbol");
+    }
+
     @Test void dropsWhenEpsMissing() {
         marketData.register("NEW", "New Issue", 30.0);
         var noEps = new EarningsObservation("NEW", "New Issue", LocalDate.of(2026, 5, 20),

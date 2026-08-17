@@ -1,8 +1,8 @@
 package de.visterion.dracul.strigoi.echo;
 
-import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
+import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -93,35 +93,34 @@ public class EchoPeadScreener {
 
         List<PeadCandidate> out = new ArrayList<>();
         boolean priceSourceUnavailable = false;
+        // One instance per screen() call (one batch): the same "SOURCE trips immediately, three
+        // consecutive REQUEST-scoped failures with no success in between trips too" two-evidence
+        // rule InsiderEnrichmentService's sources already use — reusing the guard rather than a
+        // second, hand-rolled implementation is what keeps the two from drifting apart. Without
+        // the REQUEST-run half of this rule, an Agora that answers with a per-request error
+        // envelope for EVERY symbol (the 2026-08-06 incident's actual shape — the Yahoo 404 came
+        // back as a REQUEST-scoped envelope) would silently drop every candidate while reporting
+        // priceSourceUnavailable=false: a screen that looks like a quiet night.
+        EnrichmentSourceGuard priceGuard = EnrichmentSourceGuard.forSource("echo", "candidates", "price quote");
         for (EarningsObservation e : shortlist) {
             BigDecimal price;
             try {
                 price = marketData.resolve(e.symbol()).currentPrice();
             } catch (MarketDataException ex) {
-                // AgoraMarketData.resolve wraps every AgoraUnavailableException in a
-                // MarketDataException(UNAVAILABLE, message, cause), so the wrapper's Kind alone
-                // cannot be trusted — it collapses a genuine outage (Scope.SOURCE) and a single
-                // REQUEST-scoped per-request error (an unknown symbol) into the same Kind. Read
-                // the scope back off the cause, exactly as EnrichmentSourceGuard#recordFailure
-                // does for the same wrapper: a REQUEST-scoped cause means Agora ANSWERED about
-                // this one symbol and must not disable the source, precisely the "one 404 disabled
-                // a whole source" misjudgment that guard's javadoc names as the 2026-08-06
-                // incident.
-                AgoraUnavailableException agora = AgoraUnavailableException.unwrap(ex);
-                boolean requestScoped = agora != null && agora.scope() == AgoraUnavailableException.Scope.REQUEST;
-                boolean sourceDown = ex.kind() == MarketDataException.Kind.UNAVAILABLE && !requestScoped;
-                if (sourceDown) {
+                if (priceGuard.recordFailure(ex)) {
                     priceSourceUnavailable = true;
                     log.warn("agora source unavailable: tool=get_quote subject={} — {}",
                             e.symbol(), ex.getMessage());
-                    // The sole strict price source is down; every remaining shortlisted symbol
-                    // needs it too — same skip-the-rest-of-the-batch discipline as
-                    // IndexEventEnricher.enrich for the same MarketDataException.Kind#UNAVAILABLE.
+                    // The price source is down (immediately on a SOURCE-scoped failure, or after
+                    // a run of REQUEST-scoped ones with no success in between); every remaining
+                    // shortlisted symbol needs the same dead source — same skip-the-rest-of-the-
+                    // batch discipline as IndexEventEnricher.enrich.
                     break;
                 }
                 log.debug("echo pead screen: price lookup failed for {}: {}", e.symbol(), ex.getMessage());
                 continue;                                                          // liquidity unverifiable
             }
+            priceGuard.recordSuccess();
             if (price.compareTo(minPrice) < 0) continue;
             out.add(new PeadCandidate(
                     e.symbol(), e.companyName(), e.reportDate(),

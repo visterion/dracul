@@ -247,10 +247,7 @@ public class AgoraCompanyData {
     /** RAW provider metrics blob (opaque); null when unavailable or absent. */
     public JsonNode fundamentals(String symbol) {
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol);
-            JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
-            return (m.isMissingNode() || m.isNull()) ? null : m;
+            return fundamentalsStrict(symbol);
         } catch (AgoraUnavailableException e) {
             logSwallowed(e, "get_fundamentals", symbol);
             return null;
@@ -266,10 +263,7 @@ public class AgoraCompanyData {
      */
     public DataSourceResult<JsonNode> fundamentalsResult(String symbol) {
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol);
-            JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
-            JsonNode value = (m.isMissingNode() || m.isNull()) ? null : m;
+            JsonNode value = fundamentalsStrict(symbol);
             return DataSourceResult.healthy("agora", value == null ? List.of() : List.of(value));
         } catch (AgoraUnavailableException e) {
             return DataSourceResult.unavailable("agora", "agora: " + e.getMessage());

@@ -327,7 +327,13 @@ class InsiderEnrichmentServiceTest {
 
         var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
 
-        var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
+        // AAA gets a strictly LARGER totalDollarValue than BBB so it sorts first by the real
+        // ranking key (enrich() sorts descending by totalDollarValue) rather than by incidental
+        // input-order/sort-stability — this test is the only guard against C1's regression, so
+        // its processing order must be forced by the fixture, not inherited from list order.
+        var out = enrich(svc, List.of(
+                cluster("AAA", BigDecimal.valueOf(2_000_000)),
+                cluster("BBB", BigDecimal.valueOf(1_000_000))));
 
         // both symbols are still queried — a per-symbol REQUEST failure never disables the source
         verify(cd, times(1)).fundamentalsStrict("AAA");
