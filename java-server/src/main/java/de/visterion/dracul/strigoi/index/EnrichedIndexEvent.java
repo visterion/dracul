@@ -29,8 +29,12 @@ import java.util.List;
  *   <li><b>ANNOUNCED (demand)</b> — {@code adv} (avg daily dollar volume, 20d), {@code marketCap},
  *       {@code avgVolume20d} (avg daily share volume, 20d; carried over from the old enrichment),
  *       {@code idiosyncraticVol}, {@code freeFloatProxyMillions}, {@code demandToAdvRatioEstimate}
- *       (all coarse proxies/estimates, so named), and {@code confounders} (dilution/M&amp;A/etc.
- *       overlaps from the confounder screen; null/empty until G5).</li>
+ *       (all coarse proxies/estimates, so named), {@code confounders} (dilution/M&amp;A/etc.
+ *       overlaps from the confounder screen; null/empty until G5), and {@code confoundersUnknown}
+ *       (true when the confounder screen's news source did not answer — an EMPTY
+ *       {@code confounders} list must NOT be read as "clean" while this is true; see
+ *       {@link IndexEventEnricher}'s {@code confoundersUnknown} reader for the null/true split on
+ *       a missing snapshot key).</li>
  *   <li><b>EFFECTIVE / POST (drift)</b> — {@code runUpPct} (announcement&rarr;effective),
  *       {@code postEffectivePct} (effective&rarr;latest), {@code reversalObserved} (opposite signs
  *       past a noise threshold), {@code daysSinceEffective}.</li>
@@ -53,6 +57,7 @@ public record EnrichedIndexEvent(
         Double freeFloatProxyMillions,
         Double demandToAdvRatioEstimate,
         List<String> confounders,
+        Boolean confoundersUnknown,
         // EFFECTIVE / POST (drift) stage
         Double runUpPct,
         Double postEffectivePct,

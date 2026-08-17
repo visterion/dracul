@@ -124,6 +124,8 @@ class IndexEventEnricherTest {
     }
 
     @Test void payloadMapsPersistedSnapshotFieldsToWire() {
+        // No "confoundersUnknown" key: this pins the pre-T3-fix-round-2 snapshot shape. A missing
+        // key must NOT read as "confirmed clean" — see confoundersUnknownDefaultsTrueOnALegacySnapshot.
         JsonNode ann = mapper.readTree(
                 "{\"adv\":100000,\"marketCap\":6000.0,\"avgVolume20d\":1000,\"idiosyncraticVol\":0.02,"
                 + "\"freeFloatProxyMillions\":5000.0,\"demandToAdvRatioEstimate\":11500.0,"
@@ -147,5 +149,58 @@ class IndexEventEnricherTest {
         assertThat(e.demandToAdvRatioEstimate()).isEqualTo(11500.0);
         assertThat(e.confounders()).containsExactly("dilution");
         assertThat(e.runUpPct()).isNull();                            // no post snapshot yet
+    }
+
+    // --- T3 fix round 2: confoundersUnknown must survive to the wire, in all three shapes ---
+
+    @Test void confoundersUnknownDefaultsTrueOnALegacySnapshot() {
+        // A snapshot written before the confoundersUnknown flag existed carries no such key. The
+        // key's absence must default to "unknown" (true), never to "confirmed clean" (false) — the
+        // true state of the news source at write time was simply never recorded.
+        JsonNode ann = mapper.readTree("{\"confounders\":[]}");
+        IndexEventRow persisted = new IndexEventRow(7, "LEGACY", "Legacy Co", "sp500", "add", "sp_press",
+                TODAY.minusDays(5), TODAY.plusDays(10), IndexEventStatus.ANNOUNCED,
+                ann, null, null, null, null, null, null, null, null);
+        when(repo.findActiveUnpromoted(anyInt())).thenReturn(List.of(persisted));
+
+        EnrichedIndexEvent e = enricher.payload().get(0);
+
+        assertThat(e.confounders()).isEmpty();
+        assertThat(e.confoundersUnknown()).isTrue();
+    }
+
+    @Test void confoundersUnknownIsNullWhenTheAnnouncedStageHasNotBeenEnrichedYet() {
+        // No ANNOUNCED snapshot at all (row not yet enriched): null, matching every other
+        // stage-gated field's "not yet available" convention — NOT "unknown".
+        IndexEventRow persisted = new IndexEventRow(7, "FRESH", "Fresh Co", "sp500", "add", "sp_press",
+                TODAY.minusDays(5), TODAY.plusDays(10), IndexEventStatus.ANNOUNCED,
+                null, null, null, null, null, null, null, null, null);
+        when(repo.findActiveUnpromoted(anyInt())).thenReturn(List.of(persisted));
+
+        EnrichedIndexEvent e = enricher.payload().get(0);
+
+        assertThat(e.confounders()).isNull();
+        assertThat(e.confoundersUnknown()).isNull();
+    }
+
+    @Test void confoundersUnknownReadsThroughWhenTheSnapshotSetsItExplicitly() {
+        JsonNode annUnknown = mapper.readTree("{\"confounders\":[],\"confoundersUnknown\":true}");
+        JsonNode annScanned = mapper.readTree("{\"confounders\":[\"dilution\"],\"confoundersUnknown\":false}");
+        IndexEventRow down = new IndexEventRow(7, "DOWN", "Down Co", "sp500", "add", "sp_press",
+                TODAY.minusDays(5), TODAY.plusDays(10), IndexEventStatus.ANNOUNCED,
+                annUnknown, null, null, null, null, null, null, null, null);
+        IndexEventRow up = new IndexEventRow(8, "UP", "Up Co", "sp500", "add", "sp_press",
+                TODAY.minusDays(5), TODAY.plusDays(10), IndexEventStatus.ANNOUNCED,
+                annScanned, null, null, null, null, null, null, null, null);
+        when(repo.findActiveUnpromoted(anyInt())).thenReturn(List.of(down, up));
+
+        List<EnrichedIndexEvent> payload = enricher.payload();
+
+        EnrichedIndexEvent downEvent = payload.stream().filter(e -> e.symbol().equals("DOWN")).findFirst().get();
+        EnrichedIndexEvent upEvent = payload.stream().filter(e -> e.symbol().equals("UP")).findFirst().get();
+        assertThat(downEvent.confoundersUnknown()).isTrue();
+        assertThat(downEvent.confounders()).isEmpty();
+        assertThat(upEvent.confoundersUnknown()).isFalse();
+        assertThat(upEvent.confounders()).containsExactly("dilution");
     }
 }

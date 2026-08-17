@@ -149,9 +149,28 @@ public class IndexEventEnricher {
                 bd(ann, "adv"), dbl(ann, "marketCap"), lng(ann, "avgVolume20d"),
                 dbl(ann, "idiosyncraticVol"), dbl(ann, "freeFloatProxyMillions"),
                 dbl(ann, "demandToAdvRatioEstimate"), stringList(ann, "confounders"),
+                confoundersUnknown(ann),
                 // EFFECTIVE / POST (drift) stage
                 dbl(post, "runUpPct"), dbl(post, "postEffectivePct"),
                 bool(post, "reversalObserved"), integer(post, "daysSinceEffective"));
+    }
+
+    /**
+     * Reads the ANNOUNCED snapshot's {@code confoundersUnknown} degradation flag, with a
+     * deliberately DIFFERENT default than every other field reader below: a missing key must NOT
+     * be read as "confirmed clean". Two cases share an absent key: (1) the ANNOUNCED stage has
+     * not been enriched yet at all ({@code node == null}) — here {@code null} is correct, matching
+     * every other stage-gated field's "not yet available" convention; (2) the snapshot WAS written,
+     * but by a build that predates this flag (before the T3 fix that added it) — here the true
+     * state of the news source at write time is simply unrecorded, so this returns {@code TRUE}
+     * (unknown) rather than {@code null}/{@code false}, until the next enrichment pass overwrites
+     * the snapshot with a build that sets the key. Silently defaulting a pre-flag row to "known
+     * clean" would resurrect exactly the inversion this task exists to remove, one layer up.
+     */
+    private static Boolean confoundersUnknown(JsonNode node) {
+        if (node == null) return null;
+        JsonNode n = node.path("confoundersUnknown");
+        return n.isBoolean() ? n.asBoolean() : Boolean.TRUE;
     }
 
     // --- snapshot JSON readers (nullable, defensive; mirror SpinCandidateEnricher) ---
