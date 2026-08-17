@@ -2036,7 +2036,7 @@ Response:
     "announcementDate": "2026-05-15", "effectiveDate": "2026-05-22", "status": "ANNOUNCED",
     "adv": 48250000.00, "marketCap": 12500000000.0, "avgVolume20d": 950000,
     "idiosyncraticVol": 0.018, "freeFloatProxyMillions": 8200.0,
-    "demandToAdvRatioEstimate": 3.4, "confounders": [],
+    "demandToAdvRatioEstimate": 3.4, "confounders": [], "confoundersUnknown": false,
     "runUpPct": null, "postEffectivePct": null, "reversalObserved": null,
     "daysSinceEffective": null }
 ] } }
@@ -2053,6 +2053,16 @@ volume), `idiosyncraticVol`, `freeFloatProxyMillions`, `demandToAdvRatioEstimate
 `postEffectivePct` (effective→latest), `reversalObserved`, `daysSinceEffective` — are all
 coarse proxies/observations (so named), used as prompt-side confidence signals, not gates. Any
 may be `null` per-row on a data-source failure (fail-soft); no event is dropped for it.
+
+`confoundersUnknown` (boolean, ANNOUNCED stage) is the one field in that block that is NOT a
+plain proxy: it is `true` when the confounder screen's news source did not answer for this
+symbol, and an empty `confounders` array is only a positive "scanned, nothing matched"
+statement when `confoundersUnknown` is `false`. A row whose ANNOUNCED stage has not been
+enriched yet reads `confoundersUnknown: null`, matching every other stage-gated field's
+"not yet available" convention; a row enriched by a build older than this flag also reads
+`true` (unknown), never `false` — the true state at write time is simply unrecorded, and
+defaulting that case to "known clean" would resurrect the exact inversion the flag exists to
+prevent. See `documentation/strigoi.md`, "Strigoi-Index".
 
 ### `POST /api/strigoi-index/complete`
 

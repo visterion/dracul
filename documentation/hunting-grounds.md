@@ -441,6 +441,39 @@ an unavailable bundle, `EntryContextAssembler` names the indicator in
 `missing` so the DATA_UNAVAILABLE pre-veto fires, and `AgoraResearch` maps it
 to a null value with a false availability flag so no exit rule can fire on it.
 
+### Swallowing facades now log the outage
+
+Every facade method that swallows an Agora failure into its existing return
+contract (empty list/map, `null`, `false`) also logs it at WARN now, instead
+of leaving no trace at all. The prefix is one of two stable strings, chosen at
+the throw site (`AgoraUnavailableException.Scope`, see `AgoraClient`):
+
+- `agora source unavailable: tool=<toolName> subject=<symbol|url|tag> — <message>`
+  — Agora produced no answer at all (`Scope.SOURCE`): transport failure,
+  empty body, unparseable body. This is the source itself being down.
+- `agora request failed: tool=<toolName> subject=<symbol|url|tag> — <message>`
+  — Agora answered, and the error is about this one request (`Scope.REQUEST`):
+  an unknown symbol, an unresolvable CIK, a document over the filing-size cap.
+  This says nothing about the source's health.
+
+**Only the first prefix is an outage signal.** Folding both into one count
+(for a future alert, or a log grep) fires on routine per-request misses that
+have nothing to do with Agora being down. The return contract of these
+methods is unchanged by this — an empty list still means "empty" to the
+caller; the WARN line is the only new thing.
+
+Where an empty/null return must not be read as a statement — because the
+caller persists it, gates on it, or otherwise treats "empty" as "checked,
+found nothing" — use the reporting variant instead: the `*Strict` methods
+(`AgoraFilings.conceptStrict`, `AgoraFilings.fundamentalScoreStrict`,
+`AgoraFilings.ownerHistoryStrict`, `AgoraCompanyData.recommendationsStrict`,
+`AgoraCompanyData.fundamentalsStrict`, `AgoraPriceRange`) throw
+`AgoraUnavailableException` instead of degrading, and the `*Result` methods
+(`AgoraCompanyData.newsResult`, `AgoraEarnings.recent`) return a
+`DataSourceResult` whose `health().isHealthy()` is `false` on failure. Both
+let the caller tell "the source could not be checked" apart from "checked,
+found nothing" — the swallowing default cannot.
+
 ### Known limitations (v1)
 
 - **Agora unavailability is uniform:** since 7c, all hunting Strigoi report
