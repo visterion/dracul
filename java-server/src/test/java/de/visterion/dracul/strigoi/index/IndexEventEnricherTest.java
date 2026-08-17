@@ -3,6 +3,7 @@ package de.visterion.dracul.strigoi.index;
 import de.visterion.dracul.marketdata.MarketDataException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -71,7 +72,19 @@ class IndexEventEnricherTest {
         enricher.enrich(noneTransitioned(), TODAY);
 
         verify(demand).snapshot(eq("SYM1"), eq("sp500"), eq(TODAY.minusDays(5)));
-        verify(repo).storeSnapshot(eq(1L), eq(IndexEventStatus.ANNOUNCED), any(JsonNode.class));
+        ArgumentCaptor<JsonNode> stored = ArgumentCaptor.forClass(JsonNode.class);
+        verify(repo).storeSnapshot(eq(1L), eq(IndexEventStatus.ANNOUNCED), stored.capture());
+        // Pins the WRITE side of the T3 legacy-detection chain (fix round 3): a freshly written
+        // snapshot must carry the confoundersUnknown key even when it is false (demandSnap() below
+        // has confoundersUnknown=false). If a future change (e.g. a global @JsonInclude(NON_DEFAULT),
+        // or boxing the record component from boolean to Boolean without care) ever drops a false
+        // value from serialization, every HEALTHY row would silently read back as "unknown" on the
+        // next enrichment pass — the inversion this task removed, now hitting every clean row
+        // instead of only the down ones, and nothing would go red without this assertion.
+        assertThat(stored.getValue().path("confoundersUnknown").isBoolean())
+                .as("a freshly stored ANNOUNCED snapshot must serialize confoundersUnknown even when false")
+                .isTrue();
+        assertThat(stored.getValue().path("confoundersUnknown").asBoolean()).isFalse();
         verify(drift, never()).snapshot(any(), any(), any(), any());
     }
 
