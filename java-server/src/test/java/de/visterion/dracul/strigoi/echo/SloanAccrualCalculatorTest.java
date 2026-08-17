@@ -1,8 +1,14 @@
 package de.visterion.dracul.strigoi.echo;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.ConceptSeries;
+import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -14,6 +20,22 @@ import static org.mockito.Mockito.when;
 
 class SloanAccrualCalculatorTest {
 
+    /** Captures WARN/INFO log output from {@link SloanAccrualCalculator} while {@code action}
+     *  runs; mirrors the {@code ListAppender} idiom used across the other outage-visibility
+     *  tests in this branch. */
+    private static List<ILoggingEvent> warningsWhile(Runnable action) {
+        Logger logger = (Logger) LoggerFactory.getLogger(SloanAccrualCalculator.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list;
+    }
+
     private static ConceptSeries.Point duration(String start, String end, String value) {
         return new ConceptSeries.Point(LocalDate.parse(start), LocalDate.parse(end), new BigDecimal(value));
     }
@@ -24,9 +46,9 @@ class SloanAccrualCalculatorTest {
 
     private static AgoraFilings filings(ConceptSeries ni, ConceptSeries ocf, ConceptSeries assets) {
         AgoraFilings f = mock(AgoraFilings.class);
-        when(f.concept("ACME", "NetIncomeLoss")).thenReturn(ni);
-        when(f.concept("ACME", "NetCashProvidedByUsedInOperatingActivities")).thenReturn(ocf);
-        when(f.concept("ACME", "Assets")).thenReturn(assets);
+        when(f.conceptStrict("ACME", "NetIncomeLoss")).thenReturn(ni);
+        when(f.conceptStrict("ACME", "NetCashProvidedByUsedInOperatingActivities")).thenReturn(ocf);
+        when(f.conceptStrict("ACME", "Assets")).thenReturn(assets);
         return f;
     }
 
@@ -75,5 +97,26 @@ class SloanAccrualCalculatorTest {
                         List.of(duration("2025-01-01", "2025-12-31", "700"))),
                 new ConceptSeries("Assets", List.of(instant("2025-12-31", "0"))));
         assertThat(new SloanAccrualCalculator(zero).accruals("ACME").available()).isFalse();
+    }
+
+    /** Before this task, {@code SloanAccrualCalculator} called the swallowing {@code concept()},
+     *  whose own catch block absorbed an {@link AgoraUnavailableException} and returned an empty
+     *  series — this class's try/catch could never see the exception, so the outage produced no
+     *  WARN line of its own. Now it calls {@code conceptStrict()}, so the outage reaches this
+     *  class's catch and logs the established "agora source unavailable" contract line. */
+    @Test void logsOnAgoraOutageInsteadOfSwallowingSilently() {
+        AgoraFilings f = mock(AgoraFilings.class);
+        when(f.conceptStrict("ACME", "NetIncomeLoss"))
+                .thenThrow(new AgoraUnavailableException("Agora unreachable"));
+        var calc = new SloanAccrualCalculator(f);
+
+        List<ILoggingEvent> events = warningsWhile(() ->
+                assertThat(calc.accruals("ACME").available()).isFalse());
+
+        assertThat(events).hasSize(1);
+        ILoggingEvent event = events.get(0);
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(event.getFormattedMessage())
+                .isEqualTo("agora source unavailable: tool=get_company_concept subject=ACME — Agora unreachable");
     }
 }

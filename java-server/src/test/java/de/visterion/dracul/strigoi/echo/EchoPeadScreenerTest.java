@@ -1,8 +1,13 @@
 package de.visterion.dracul.strigoi.echo;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.visterion.dracul.marketdata.StubMarketDataPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -37,6 +42,21 @@ class EchoPeadScreenerTest {
         return screener.screen(events).candidates();
     }
 
+    /** Mirrors the {@code ListAppender} idiom used across this branch's other outage-visibility
+     *  tests: capture WARN/DEBUG output from {@link EchoPeadScreener} while {@code action} runs. */
+    private static List<ILoggingEvent> logsWhile(Runnable action) {
+        Logger logger = (Logger) LoggerFactory.getLogger(EchoPeadScreener.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list;
+    }
+
     @Test
     void keepsPositiveSurpriseAboveThresholdAndCarriesRevenue() {
         marketData.register("AAPL", "Apple Inc.", 190.0);
@@ -61,7 +81,63 @@ class EchoPeadScreenerTest {
         assertThat(screen(List.of(ev("PENNY", 0.10, 0.20, 100.0)))).isEmpty();
     }
     @Test void dropsWhenPriceUnavailable() {
-        assertThat(screen(List.of(ev("GHOST", 1.00, 1.20, 20.0)))).isEmpty();
+        var result = screener.screen(List.of(ev("GHOST", 1.00, 1.20, 20.0)));
+        assertThat(result.candidates()).isEmpty();
+        // an unregistered symbol is StubMarketDataPort's NOT_FOUND, a per-symbol miss — not a
+        // source outage, so it must NOT trip the price-source-down flag.
+        assertThat(result.priceSourceUnavailable()).isFalse();
+    }
+
+    /** The AUSFALL path this task exists to fix: before, a price-resolution outage dropped every
+     *  remaining candidate silently and {@link ScreenResult} still reported an empty list with
+     *  {@code truncated=false} — indistinguishable from a quiet night with no qualifying beats.
+     *  Now the outage stops the screen early and is reported via {@code priceSourceUnavailable}. */
+    @Test void reportsPriceSourceDownInsteadOfAnEmptyCleanList() {
+        marketData.forceUnavailable();
+        var result = screener.screen(List.of(ev("AAA", 1.00, 1.20, 20.0), ev("BBB", 1.00, 1.30, 15.0)));
+
+        assertThat(result.candidates()).isEmpty();
+        assertThat(result.priceSourceUnavailable()).isTrue();
+        assertThat(result.truncated()).isFalse();
+    }
+
+    @Test void stopsResolvingFurtherSymbolsOncePriceSourceIsDown() {
+        marketData.register("AAA", "AAA Inc.", 50.0); // never queried: the outage below hits BBB first
+        var counting = new StubMarketDataPort() {
+            private boolean failed = false;
+            @Override public de.visterion.dracul.marketdata.MarketData resolve(String symbol) {
+                if ("BBB".equals(symbol)) {
+                    failed = true;
+                    throw new de.visterion.dracul.marketdata.MarketDataException(
+                            de.visterion.dracul.marketdata.MarketDataException.Kind.UNAVAILABLE, "outage");
+                }
+                if (failed) throw new AssertionError("resolve() called for " + symbol + " after the source went down");
+                return super.resolve(symbol);
+            }
+        };
+        counting.register("CCC", "CCC Inc.", 50.0);
+        var svc = new EchoPeadScreener(counting, new BigDecimal("5.0"), new BigDecimal("5.0"), MAX_CANDIDATES);
+
+        // BBB has the strongest surprise and is resolved first (STRONGEST_FIRST); its outage must
+        // stop CCC (a weaker, later candidate) from ever being queried.
+        var result = svc.screen(List.of(
+                ev("BBB", 1.00, 1.30, 20.0),
+                ev("CCC", 1.00, 1.20, 10.0)));
+
+        assertThat(result.priceSourceUnavailable()).isTrue();
+        assertThat(result.candidates()).isEmpty();
+    }
+
+    @Test void logsAgoraSourceUnavailableOnPriceOutage() {
+        marketData.forceUnavailable();
+
+        List<ILoggingEvent> events = logsWhile(() ->
+                screener.screen(List.of(ev("AAA", 1.00, 1.20, 20.0))));
+
+        var warnings = events.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0).getFormattedMessage())
+                .isEqualTo("agora source unavailable: tool=get_quote subject=AAA — stub unavailable");
     }
     @Test void dropsWhenEpsMissing() {
         marketData.register("NEW", "New Issue", 30.0);

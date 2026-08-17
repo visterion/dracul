@@ -70,34 +70,35 @@ public class StrigoiEchoWebhookController extends HuntController {
         var raw = earnings.recent(to.minusDays(lookback), to);
         var screened = screener.screen(raw.items());
         var enriched = enrichment.enrich(screened.candidates());
-        return new DataSourceResult<>(enriched, mergeHealth(raw.health(), screened.truncated()));
+        return new DataSourceResult<>(enriched, mergeHealth(raw.health(), screened));
     }
 
     /**
-     * ORs the screener's own truncation into Agora's health. Two independent sources of
-     * incompleteness meet here — Agora may have returned a partial/truncated earnings window, and
-     * the screener may have cut the candidate list at its payload cap — and neither may overwrite
-     * the other, or the run looks clean while half its input is missing.
+     * ORs the screener's own degradations into Agora's health. THREE independent sources of
+     * incompleteness meet here — Agora may have returned a partial/truncated earnings window, the
+     * screener may have cut the candidate list at its payload cap, and the screener's own price
+     * resolution may have lost its source partway through — and none may overwrite another, or
+     * the run looks clean while half its input is missing.
      *
      * <p>An {@code unavailable} status is passed through untouched: {@link
      * DataSourceHealth#degraded} always yields {@code "healthy"}, so building a degraded health
      * out of a real outage would upgrade a total failure into a usable one and defeat the
      * "return exactly {@code {"prey": []}}" clause every hunter prompt carries.
      */
-    static DataSourceHealth mergeHealth(DataSourceHealth agora, boolean screenTruncated) {
-        if (!agora.isHealthy()) return agora;
-        if (!screenTruncated) return agora;
-
-        String detail = agora.detail() == null || agora.detail().isBlank()
-                ? CANDIDATE_CAP_DETAIL
-                : agora.detail() + "; " + CANDIDATE_CAP_DETAIL;
-        return DataSourceHealth.degraded(agora.source(), detail,
-                agora.partial(), true);
+    static DataSourceHealth mergeHealth(DataSourceHealth agora, ScreenResult screened) {
+        DataSourceHealth merged = DataSourceHealth.degradedWith(
+                agora, CANDIDATE_CAP_DETAIL, false, screened.truncated());
+        return DataSourceHealth.degradedWith(
+                merged, PRICE_SOURCE_DOWN_DETAIL, screened.priceSourceUnavailable(), false);
     }
 
     private static final String CANDIDATE_CAP_DETAIL =
             "candidate list capped at dracul.strigoi.echo.max-candidates "
                     + "(strongest EPS surprises kept)";
+
+    private static final String PRICE_SOURCE_DOWN_DETAIL =
+            "price source unavailable during liquidity screening; remaining candidates were "
+                    + "dropped without a price check";
 
     @PostMapping("/tools/fetch-candidates")
     public ResponseEntity<Map<String, Object>> fetchCandidates(

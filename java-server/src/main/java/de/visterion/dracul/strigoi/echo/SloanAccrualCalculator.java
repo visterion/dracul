@@ -2,6 +2,7 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.hunting.agora.AgoraFilings;
 import de.visterion.dracul.hunting.agora.ConceptSeries;
+import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,10 @@ import java.time.temporal.ChronoUnit;
  * recent annual (350-380d) income/cash-flow durations and the latest total-assets instant.
  * Relocated from the deleted EdgarFundamentals adapter — fetch is Agora's, interpretation is
  * Dracul's. Graceful: any missing concept / parse gap → {@link AccrualMetrics#unavailable()}.
+ * Uses {@link AgoraFilings#conceptStrict} rather than the swallowing {@link
+ * AgoraFilings#concept}: an Agora/EDGAR outage now reaches this class as a thrown {@link
+ * AgoraUnavailableException} (logged at WARN) instead of silently coming back as an empty
+ * series indistinguishable from "concept not filed".
  */
 @Component
 public class SloanAccrualCalculator {
@@ -35,10 +40,10 @@ public class SloanAccrualCalculator {
 
     public AccrualMetrics accruals(String symbol) {
         try {
-            Dated netIncome = latestAnnualDuration(filings.concept(symbol, "NetIncomeLoss"));
+            Dated netIncome = latestAnnualDuration(filings.conceptStrict(symbol, "NetIncomeLoss"));
             Dated opCashFlow = latestAnnualDuration(
-                    filings.concept(symbol, "NetCashProvidedByUsedInOperatingActivities"));
-            BigDecimal assets = latestInstant(filings.concept(symbol, "Assets"));
+                    filings.conceptStrict(symbol, "NetCashProvidedByUsedInOperatingActivities"));
+            BigDecimal assets = latestInstant(filings.conceptStrict(symbol, "Assets"));
 
             if (netIncome == null || opCashFlow == null || assets == null || assets.signum() == 0
                     || !netIncome.end().equals(opCashFlow.end())) {  // both flows must cover the same fiscal period
@@ -47,7 +52,20 @@ public class SloanAccrualCalculator {
             BigDecimal ratio = netIncome.value().subtract(opCashFlow.value())
                     .divide(assets, MC).setScale(6, RoundingMode.HALF_UP);
             return new AccrualMetrics(ratio, true);
-        } catch (Exception e) {
+        } catch (AgoraUnavailableException e) {
+            // Switched from the swallowing concept() to conceptStrict() so this catch can
+            // actually fire: concept() used to absorb the outage itself and log it as
+            // "agora source unavailable" on AgoraFilings' behalf, which meant this class never
+            // saw a thrown exception at all. WARN (not DEBUG): a missing/unfiled XBRL tag comes
+            // back as an empty ConceptSeries and never reaches this branch, so landing here means
+            // Agora/EDGAR itself did not answer — the same "agora source unavailable" contract
+            // AgoraFilings itself used to log.
+            log.warn("agora source unavailable: tool=get_company_concept subject={} — {}",
+                    symbol, e.getMessage());
+            return AccrualMetrics.unavailable();
+        } catch (RuntimeException e) {
+            // Anything else (a malformed datapoint, an unexpected null) is a parsing/shape
+            // problem, not a source outage; keep it at DEBUG as before.
             log.debug("accruals failed for {}: {}", symbol, e.getMessage());
             return AccrualMetrics.unavailable();
         }

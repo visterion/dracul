@@ -1,5 +1,6 @@
 package de.visterion.dracul.strigoi.insider;
 
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
@@ -10,11 +11,10 @@ import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import de.visterion.dracul.strigoi.echo.AnalystCoverage;
-import de.visterion.dracul.strigoi.echo.EquityMetrics;
-import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -52,11 +52,15 @@ import java.util.Optional;
  *  loses a source is counted into {@link EnrichedInsiderBatch#degradedClusters} so the fetch
  *  health can report it as {@code partial}. The coverage
  *  fetch uses {@link AgoraCompanyData#recommendationsStrict} (propagates outages) so its
- *  guard is real; the metrics fetch (via the swallowing {@code fundamentals()}) and the
- *  earnings facade still absorb outages internally (degrading to null/empty), so OHLC and
- *  coverage are the exception-based canaries in production. A full Agora outage is already
- *  gated upstream by the Form-4 feed's {@code data_source_health}
- *  (no clusters reach enrichment at all). */
+ *  guard is real; the metrics fetch now uses {@link AgoraCompanyData#fundamentalsResult} (health-aware,
+ *  distinguishes an Agora outage from "no fundamentals for this symbol") for the same reason —
+ *  before this task it went through the swallowing {@code fundamentals()}, which meant a TOTAL
+ *  Agora outage still called {@code recordSuccess()} every cluster, so the guard read "up" through
+ *  it while every market cap silently fell to null. The earnings facade still absorbs outages
+ *  internally (degrading to {@code Optional.empty()}) and is therefore NOT a real canary — a known
+ *  remaining gap, out of this task's scope. OHLC, coverage and metrics are the exception-based
+ *  canaries in production. A full Agora outage is already gated upstream by the Form-4 feed's
+ *  {@code data_source_health} (no clusters reach enrichment at all). */
 @Component
 public class InsiderEnrichmentService {
 
@@ -67,20 +71,17 @@ public class InsiderEnrichmentService {
     private static final int HISTORY_BUFFER_DAYS = 10;
 
     private final AgoraMarketData marketData;
-    private final EquityMetricsExtractor equityMetrics;
     private final AgoraCompanyData companyData;
     private final AgoraEarnings earnings;
     private final AgoraFilings filings;
     private final RoutineClassifier routineClassifier;
 
     public InsiderEnrichmentService(AgoraMarketData marketData,
-                                    EquityMetricsExtractor equityMetrics,
                                     AgoraCompanyData companyData,
                                     AgoraEarnings earnings,
                                     AgoraFilings filings,
                                     RoutineClassifier routineClassifier) {
         this.marketData = marketData;
-        this.equityMetrics = equityMetrics;
         this.companyData = companyData;
         this.earnings = earnings;
         this.filings = filings;
@@ -141,14 +142,20 @@ public class InsiderEnrichmentService {
 
         Double marketCap = null;
         if (!health.metrics.isDown()) {
-            try {
-                EquityMetrics em = equityMetrics.metricsWithoutSector(c.ticker());
-                if (em.available()) marketCap = em.marketCap();
+            DataSourceResult<JsonNode> fundamentals = companyData.fundamentalsResult(c.ticker());
+            if (fundamentals.health().isHealthy()) {
+                if (!fundamentals.items().isEmpty()) marketCap = marketCapitalization(fundamentals.items().get(0));
                 health.metrics.recordSuccess();
-            } catch (RuntimeException e) {
-                health.metrics.recordFailure(e);
+            } else {
+                // fundamentalsResult collapses SOURCE- and REQUEST-scoped Agora failures into one
+                // "unavailable" status (see AgoraCompanyData#fundamentalsResult) and does not keep
+                // the original exception, so the scope cannot be recovered here; default to
+                // Scope.SOURCE, the same conservative default AgoraUnavailableException documents
+                // for an unclassified failure.
+                health.metrics.recordFailure(new AgoraUnavailableException(fundamentals.health().detail()));
                 degraded = true;
-                log.debug("insider enrichment: equity metrics unavailable for {}: {}", c.ticker(), e.getMessage());
+                log.debug("insider enrichment: equity metrics unavailable for {}: {}",
+                        c.ticker(), fundamentals.health().detail());
             }
         } else {
             degraded = true;
@@ -384,5 +391,14 @@ public class InsiderEnrichmentService {
         BigDecimal last = thisYear.get(thisYear.size() - 1).close();
         if (first == null || last == null || first.signum() <= 0) return null;
         return last.subtract(first).divide(first, 4, RoundingMode.HALF_UP);
+    }
+
+    /** Same key {@link de.visterion.dracul.strigoi.echo.EquityMetricsExtractor} reads off the raw
+     *  fundamentals blob; duplicated here (rather than routed through the extractor) because this
+     *  class needs {@link AgoraCompanyData#fundamentalsResult}'s health signal, which the
+     *  extractor does not expose. */
+    private static Double marketCapitalization(JsonNode metrics) {
+        JsonNode n = metrics.path("marketCapitalization");
+        return n.isNumber() ? n.asDouble() : null;
     }
 }

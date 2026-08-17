@@ -1,6 +1,7 @@
 package de.visterion.dracul.strigoi.insider;
 
 import de.visterion.dracul.hunting.DataSourceHealth;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
@@ -11,9 +12,9 @@ import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
-import de.visterion.dracul.strigoi.echo.EquityMetrics;
-import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -82,16 +83,13 @@ class InsiderEnrichmentDegradationTest {
         };
     }
 
-    private static EquityMetricsExtractor equityMetrics() {
-        EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metricsWithoutSector(anyString()))
-                .thenReturn(new EquityMetrics(1.0, 850.0, 100.0, 200.0, "Technology", true));
-        return m;
-    }
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static AgoraCompanyData companyData() {
         AgoraCompanyData m = mock(AgoraCompanyData.class);
         when(m.recommendationsStrict(anyString())).thenReturn(TREND);
+        JsonNode node = MAPPER.readTree("{\"marketCapitalization\":850.0}");
+        when(m.fundamentalsResult(anyString())).thenReturn(DataSourceResult.healthy("agora", List.of(node)));
         return m;
     }
 
@@ -106,7 +104,7 @@ class InsiderEnrichmentDegradationTest {
     }
 
     private static InsiderEnrichmentService service(AgoraMarketData md, AgoraFilings filings) {
-        return new InsiderEnrichmentService(md, equityMetrics(), companyData(), earnings(),
+        return new InsiderEnrichmentService(md, companyData(), earnings(),
                 filings, new RoutineClassifier());
     }
 

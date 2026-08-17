@@ -9,7 +9,8 @@ import java.util.List;
  *  against real numbers instead of guessing. All enrichment is fail-soft: each group of
  *  fields carries its own availability flag; a {@code false} flag means the sibling values
  *  are null (data source down or no data) — never a judgement about the cluster itself.
- *  {@code marketCap} comes from {@link de.visterion.dracul.strigoi.echo.EquityMetricsExtractor}
+ *  {@code marketCap} comes from the raw fundamentals blob fetched via
+ *  {@link de.visterion.dracul.hunting.agora.AgoraCompanyData#fundamentalsResult}
  *  (provider units, USD millions); {@code adv} = average daily dollar volume (close x volume)
  *  over the last 20 trading days. {@code metricsAvailable} is false only when ALL of
  *  {@code marketCap}/{@code adv} are null — the two come from different lookups, so a true

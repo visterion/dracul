@@ -2,6 +2,8 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +22,8 @@ import java.util.List;
  */
 @Component
 public class EchoPeadScreener {
+
+    private static final Logger log = LoggerFactory.getLogger(EchoPeadScreener.class);
 
     /** Deterministic candidate order: strongest EPS surprise first, {@code symbol} as tiebreak so
      *  two candidates with an identical surprise value never swap places between runs. Without
@@ -87,11 +91,25 @@ public class EchoPeadScreener {
                 truncated ? qualifying.subList(0, maxCandidates) : qualifying;
 
         List<PeadCandidate> out = new ArrayList<>();
+        boolean priceSourceUnavailable = false;
         for (EarningsObservation e : shortlist) {
+            if (priceSourceUnavailable) {
+                // The sole strict price source is down; every remaining shortlisted symbol
+                // needs it too — same skip-the-rest-of-the-batch discipline as
+                // IndexEventEnricher.enrich for the same MarketDataException.Kind#UNAVAILABLE.
+                break;
+            }
             BigDecimal price;
             try {
                 price = marketData.resolve(e.symbol()).currentPrice();
             } catch (MarketDataException ex) {
+                if (ex.kind() == MarketDataException.Kind.UNAVAILABLE) {
+                    priceSourceUnavailable = true;
+                    log.warn("agora source unavailable: tool=get_quote subject={} — {}",
+                            e.symbol(), ex.getMessage());
+                } else {
+                    log.debug("echo pead screen: price lookup failed for {}: {}", e.symbol(), ex.getMessage());
+                }
                 continue;                                                          // liquidity unverifiable
             }
             if (price.compareTo(minPrice) < 0) continue;
@@ -100,6 +118,6 @@ public class EchoPeadScreener {
                     e.epsActual(), e.epsEstimate(), e.epsSurprisePercent(),
                     e.revenueActual(), e.revenueEstimate(), price));
         }
-        return new ScreenResult(out, truncated);
+        return new ScreenResult(out, truncated, priceSourceUnavailable);
     }
 }

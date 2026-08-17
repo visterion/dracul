@@ -1,5 +1,7 @@
 package de.visterion.dracul.strigoi.insider;
 
+import de.visterion.dracul.hunting.DataSourceHealth;
+import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.hunting.agora.AgoraEarnings;
 import de.visterion.dracul.hunting.agora.AgoraFilings;
@@ -10,9 +12,9 @@ import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.marketdata.MarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
-import de.visterion.dracul.strigoi.echo.EquityMetrics;
-import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -28,6 +30,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class InsiderEnrichmentServiceTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** The enriched clusters only — most assertions here predate {@link EnrichedInsiderBatch}
      *  and care about the clusters, not the batch's degradation accounting. */
@@ -54,9 +58,9 @@ class InsiderEnrichmentServiceTest {
      *  {@link RoutineClassifier} and an AgoraFilings that returns an EMPTY (successful) owner
      *  history, so classification is available-but-all-UNKNOWN and never trips the source-down
      *  guard — keeping the pre-classification context assertions in these tests untouched. */
-    private static InsiderEnrichmentService enrichmentService(AgoraMarketData md, EquityMetricsExtractor em,
-                                                              AgoraCompanyData cd, AgoraEarnings ea) {
-        return new InsiderEnrichmentService(md, em, cd, ea, ownerHistoryEmpty(), new RoutineClassifier());
+    private static InsiderEnrichmentService enrichmentService(AgoraMarketData md, AgoraCompanyData cd,
+                                                              AgoraEarnings ea) {
+        return new InsiderEnrichmentService(md, cd, ea, ownerHistoryEmpty(), new RoutineClassifier());
     }
 
     private static AgoraFilings ownerHistoryEmpty() {
@@ -130,17 +134,26 @@ class InsiderEnrichmentServiceTest {
         };
     }
 
-    private static EquityMetricsExtractor equityMetrics(Double marketCap, boolean available) {
-        EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metricsWithoutSector(anyString())).thenReturn(
-                available ? new EquityMetrics(1.0, marketCap, 100.0, 200.0, "Technology", true)
-                        : EquityMetrics.unavailable());
-        return m;
+    /** Health-aware fundamentals stub matching {@link AgoraCompanyData#fundamentalsResult}'s real
+     *  contract: {@code marketCap == null} is a SUCCESSFUL call with no data for the symbol
+     *  (healthy, empty items) — the same "no fundamentals" case the old {@code
+     *  EquityMetrics.unavailable()} fixture stood in for, NOT an Agora outage. */
+    private static DataSourceResult<JsonNode> fundamentalsHealthy(Double marketCap) {
+        if (marketCap == null) return DataSourceResult.healthy("agora", List.of());
+        JsonNode node = MAPPER.readTree("{\"marketCapitalization\":" + marketCap + "}");
+        return DataSourceResult.healthy("agora", List.of(node));
     }
 
-    private static AgoraCompanyData companyData(List<RecommendationTrend> trend) {
+    private static DataSourceResult<JsonNode> fundamentalsUnavailable() {
+        return DataSourceResult.unavailable("agora", "agora: Agora unreachable");
+    }
+
+    /** @param marketCap {@code null} means "fundamentals call succeeded, no data for this
+     *        symbol" (see {@link #fundamentalsHealthy}) — never an outage. */
+    private static AgoraCompanyData companyData(List<RecommendationTrend> trend, Double marketCap) {
         AgoraCompanyData m = mock(AgoraCompanyData.class);
         when(m.recommendationsStrict(anyString())).thenReturn(trend);
+        when(m.fundamentalsResult(anyString())).thenReturn(fundamentalsHealthy(marketCap));
         return m;
     }
 
@@ -157,7 +170,7 @@ class InsiderEnrichmentServiceTest {
     void enrichesAllContextFields() {
         LocalDate nextEarnings = LocalDate.now().plusDays(8);
         var svc = enrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.of(nextEarnings)));
+                companyData(TREND, 850.0), earnings(Optional.of(nextEarnings)));
 
         var out = enrich(svc, List.of(cluster("AAA")));
 
@@ -181,8 +194,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void degradesMetricsOnlyWhenEquityMetricsUnavailable() {
         var svc = enrichmentService(marketDataReturning(bars()),
-                equityMetrics(null, false), companyData(TREND),
-                earnings(Optional.of(LocalDate.now().plusDays(30))));
+                companyData(TREND, null), earnings(Optional.of(LocalDate.now().plusDays(30))));
 
         var e = enrich(svc, List.of(cluster("BBB"))).get(0);
 
@@ -198,8 +210,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void degradesAdvAndYtdWhenOhlcUnavailable() {
         var svc = enrichmentService(marketDataThrowing(),
-                equityMetrics(850.0, true), companyData(TREND),
-                earnings(Optional.of(LocalDate.now().plusDays(30))));
+                companyData(TREND, 850.0), earnings(Optional.of(LocalDate.now().plusDays(30))));
 
         var e = enrich(svc, List.of(cluster("CCC"))).get(0);
 
@@ -216,8 +227,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void degradesCoverageWhenNoRecommendationTrend() {
         var svc = enrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(List.of()),
-                earnings(Optional.of(LocalDate.now().plusDays(30))));
+                companyData(List.of(), 850.0), earnings(Optional.of(LocalDate.now().plusDays(30))));
 
         var e = enrich(svc, List.of(cluster("DDD"))).get(0);
 
@@ -231,7 +241,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void degradesEarningsWhenNoNextDate() {
         var svc = enrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
+                companyData(TREND, 850.0), earnings(Optional.empty()));
 
         var e = enrich(svc, List.of(cluster("EEE"))).get(0);
 
@@ -245,11 +255,13 @@ class InsiderEnrichmentServiceTest {
     void degradesEverythingButNeverTheCluster() {
         AgoraCompanyData throwingCompanyData = mock(AgoraCompanyData.class);
         when(throwingCompanyData.recommendationsStrict(anyString())).thenThrow(new RuntimeException("boom"));
+        // no fundamentals data for the symbol (healthy, empty) — not an outage, matches the
+        // pre-fix EquityMetrics.unavailable() fixture this test used.
+        when(throwingCompanyData.fundamentalsResult(anyString())).thenReturn(fundamentalsHealthy(null));
         AgoraEarnings throwingEarnings = mock(AgoraEarnings.class);
         when(throwingEarnings.nextEarningsDate(anyString())).thenThrow(new RuntimeException("boom"));
 
-        var svc = enrichmentService(marketDataThrowing(),
-                equityMetrics(null, false), throwingCompanyData, throwingEarnings);
+        var svc = enrichmentService(marketDataThrowing(), throwingCompanyData, throwingEarnings);
 
         var out = enrich(svc, List.of(cluster("FFF")));
 
@@ -277,7 +289,7 @@ class InsiderEnrichmentServiceTest {
         // only 10 bars this year: too thin for the 20-day ADV window, but enough for YTD
         var svc = enrichmentService(
                 marketDataReturning(barsOn(LocalDate.now().minusDays(9), 10)),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
+                companyData(TREND, 850.0), earnings(Optional.empty()));
 
         var e = enrich(svc, List.of(cluster("GGG"))).get(0);
 
@@ -293,7 +305,7 @@ class InsiderEnrichmentServiceTest {
         // ADV is computable, YTD is not.
         var svc = enrichmentService(
                 marketDataReturning(barsOn(LocalDate.of(LocalDate.now().getYear() - 1, 11, 1), 25)),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
+                companyData(TREND, 850.0), earnings(Optional.empty()));
 
         var e = enrich(svc, List.of(cluster("HHH"))).get(0);
 
@@ -304,19 +316,21 @@ class InsiderEnrichmentServiceTest {
 
     @Test
     void symbolSpecificFailureDoesNotDisableTheSource() {
-        EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metricsWithoutSector("AAA")).thenThrow(
-                new MarketDataException(MarketDataException.Kind.NOT_FOUND, "no such symbol"));
-        when(m.metricsWithoutSector("BBB")).thenReturn(new EquityMetrics(1.0, 850.0, 100.0, 200.0, "Technology", true));
+        // "no fundamentals for AAA" (healthy, empty) is the only per-symbol miss fundamentalsResult
+        // can produce — unlike OHLC/coverage there is no NOT_FOUND-style per-item error envelope
+        // for get_fundamentals, so this exercises the benign path rather than a guard-trip decision.
+        AgoraCompanyData cd = mock(AgoraCompanyData.class);
+        when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
+        when(cd.fundamentalsResult("AAA")).thenReturn(fundamentalsHealthy(null));
+        when(cd.fundamentalsResult("BBB")).thenReturn(fundamentalsHealthy(850.0));
 
-        var svc = enrichmentService(marketDataReturning(bars()),
-                m, companyData(TREND), earnings(Optional.empty()));
+        var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
 
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
-        // NOT_FOUND is symbol-specific: AAA degrades, BBB is still queried and fully enriched
-        verify(m, times(1)).metricsWithoutSector("AAA");
-        verify(m, times(1)).metricsWithoutSector("BBB");
+        // both symbols are still queried — a per-symbol miss never disables the source
+        verify(cd, times(1)).fundamentalsResult("AAA");
+        verify(cd, times(1)).fundamentalsResult("BBB");
         var a = out.stream().filter(x -> x.ticker().equals("AAA")).findFirst().orElseThrow();
         var b = out.stream().filter(x -> x.ticker().equals("BBB")).findFirst().orElseThrow();
         assertThat(a.marketCap()).isNull();
@@ -326,17 +340,17 @@ class InsiderEnrichmentServiceTest {
 
     @Test
     void availabilityFailureSkipsThatSourceForRemainingClusters() {
-        EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metricsWithoutSector(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
-        AgoraCompanyData cd = companyData(TREND);
+        AgoraCompanyData cd = mock(AgoraCompanyData.class);
+        when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
+        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsUnavailable());
         AgoraEarnings earn = earnings(Optional.empty());
 
-        var svc = enrichmentService(marketDataReturning(bars()), m, cd, earn);
+        var svc = enrichmentService(marketDataReturning(bars()), cd, earn);
 
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
         // the down source is queried exactly once, then skipped for the rest of the batch
-        verify(m, times(1)).metricsWithoutSector(anyString());
+        verify(cd, times(1)).fundamentalsResult(anyString());
         // the other sources keep serving every cluster
         verify(cd, times(2)).recommendationsStrict(anyString());
         verify(earn, times(2)).nextEarningsDate(anyString());
@@ -347,15 +361,45 @@ class InsiderEnrichmentServiceTest {
         });
     }
 
+    /** The AUSFALL path this task exists to fix: before, a TOTAL fundamentals outage never threw
+     *  (it went through the swallowing {@code fundamentals()}), so {@code recordSuccess()} was
+     *  called for every cluster, {@link EnrichmentSourceGuard#isDown} stayed false for the whole
+     *  batch, {@code degradedClusters} never counted the loss, and every market cap silently went
+     *  null while the fetch health still read healthy. Now the outage is real: the guard trips
+     *  down after the first cluster, and every cluster it touches is counted as degraded. */
+    @Test
+    void totalFundamentalsOutageTripsTheGuardAndCountsEveryTouchedClusterAsDegraded() {
+        AgoraCompanyData cd = mock(AgoraCompanyData.class);
+        when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
+        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsUnavailable());
+
+        var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
+
+        var batch = svc.enrich(List.of(cluster("AAA"), cluster("BBB"), cluster("CCC")));
+
+        // the source is queried once, found down, and skipped for every remaining cluster —
+        // it never reports "up" through the outage.
+        verify(cd, times(1)).fundamentalsResult(anyString());
+        assertThat(batch.degradedClusters()).isEqualTo(3);
+        assertThat(batch.degraded()).isTrue();
+        assertThat(batch.clusters()).allSatisfy(e -> assertThat(e.marketCap()).isNull());
+
+        var health = StrigoiInsiderWebhookController.mergeHealth(
+                DataSourceHealth.healthy("agora-edgar"), batch);
+        assertThat(health.partial()).isTrue();
+        assertThat(health.status()).isEqualTo("healthy"); // usable-but-incomplete, per DataSourceHealth's contract
+        assertThat(health.detail()).contains("3 cluster(s) lost at least one enrichment source");
+    }
+
     @Test
     void availabilityFailureSkipsRecommendationsForRemainingClusters() {
         // real short-circuit: recommendationsStrict propagates the outage (the swallowing
         // default recommendations() would return an empty list and never trip the guard)
         AgoraCompanyData cd = mock(AgoraCompanyData.class);
         when(cd.recommendationsStrict(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
+        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsHealthy(850.0));
 
-        var svc = enrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), cd, earnings(Optional.empty()));
+        var svc = enrichmentService(marketDataReturning(bars()), cd, earnings(Optional.empty()));
 
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
 
@@ -372,17 +416,17 @@ class InsiderEnrichmentServiceTest {
 
     @Test
     void twoSourcesDownSkipEnrichmentForRemainingClusters() {
-        EquityMetricsExtractor m = mock(EquityMetricsExtractor.class);
-        when(m.metricsWithoutSector(anyString())).thenThrow(new AgoraUnavailableException("Agora unreachable"));
-        AgoraCompanyData cd = companyData(TREND);
+        AgoraCompanyData cd = mock(AgoraCompanyData.class);
+        when(cd.recommendationsStrict(anyString())).thenReturn(TREND);
+        when(cd.fundamentalsResult(anyString())).thenReturn(fundamentalsUnavailable());
         AgoraEarnings earn = earnings(Optional.of(LocalDate.now().plusDays(30)));
 
-        var svc = enrichmentService(marketDataThrowing(), m, cd, earn);
+        var svc = enrichmentService(marketDataThrowing(), cd, earn);
 
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB"), cluster("CCC")));
 
         // metrics + ohlc are marked down during cluster 1 -> no source is queried again at all
-        verify(m, times(1)).metricsWithoutSector(anyString());
+        verify(cd, times(1)).fundamentalsResult(anyString());
         verify(cd, times(1)).recommendationsStrict(anyString());
         verify(earn, times(1)).nextEarningsDate(anyString());
         assertThat(out).hasSize(3);
@@ -399,7 +443,7 @@ class InsiderEnrichmentServiceTest {
     @Test
     void capsAtTwentyFiveClustersKeepingTheLargestByDollarValue() {
         var svc = enrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()));
+                companyData(TREND, 850.0), earnings(Optional.empty()));
 
         List<InsiderCluster> clusters = new ArrayList<>();
         for (int i = 0; i < 30; i++) clusters.add(cluster("SYM" + i, BigDecimal.valueOf(500_000 + i * 1000)));
@@ -433,7 +477,7 @@ class InsiderEnrichmentServiceTest {
         var history = new Form4OwnerHistory("CIK", null, null, List.of(alice, carol, bob), false);
 
         var svc = new InsiderEnrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
+                companyData(TREND, 850.0), earnings(Optional.empty()),
                 filingsReturning(history), new RoutineClassifier());
 
         var e = enrich(svc, List.of(cluster("AAA"))).get(0);
@@ -470,7 +514,7 @@ class InsiderEnrichmentServiceTest {
         var history = new Form4OwnerHistory("CIK", null, null, List.of(carol), true); // truncated!
 
         var svc = new InsiderEnrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
+                companyData(TREND, 850.0), earnings(Optional.empty()),
                 filingsReturning(history), new RoutineClassifier());
 
         var e = enrich(svc, List.of(cluster("AAA"))).get(0);
@@ -483,7 +527,7 @@ class InsiderEnrichmentServiceTest {
     void ownerHistoryDownDegradesClassificationOnlyAndShortCircuitsRestOfBatch() {
         AgoraFilings filings = ownerHistoryThrowing();
         var svc = new InsiderEnrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
+                companyData(TREND, 850.0), earnings(Optional.empty()),
                 filings, new RoutineClassifier());
 
         var out = enrich(svc, List.of(cluster("AAA"), cluster("BBB")));
@@ -514,7 +558,7 @@ class InsiderEnrichmentServiceTest {
         var history = new Form4OwnerHistory("CIK", null, null, List.of(stranger), false);
 
         var svc = new InsiderEnrichmentService(marketDataReturning(bars()),
-                equityMetrics(850.0, true), companyData(TREND), earnings(Optional.empty()),
+                companyData(TREND, 850.0), earnings(Optional.empty()),
                 filingsReturning(history), new RoutineClassifier());
 
         var e = enrich(svc, List.of(cluster("AAA"))).get(0);
