@@ -2,6 +2,9 @@ package de.visterion.dracul.strigoi.echo;
 
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.AgoraMarketData;
+import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +23,8 @@ import java.util.List;
  */
 @Component
 public class EchoPeadScreener {
+
+    private static final Logger log = LoggerFactory.getLogger(EchoPeadScreener.class);
 
     /** Deterministic candidate order: strongest EPS surprise first, {@code symbol} as tiebreak so
      *  two candidates with an identical surprise value never swap places between runs. Without
@@ -87,19 +92,41 @@ public class EchoPeadScreener {
                 truncated ? qualifying.subList(0, maxCandidates) : qualifying;
 
         List<PeadCandidate> out = new ArrayList<>();
+        boolean priceSourceUnavailable = false;
+        // One instance per screen() call (one batch): the same "SOURCE trips immediately, three
+        // consecutive REQUEST-scoped failures with no success in between trips too" two-evidence
+        // rule InsiderEnrichmentService's sources already use — reusing the guard rather than a
+        // second, hand-rolled implementation is what keeps the two from drifting apart. Without
+        // the REQUEST-run half of this rule, an Agora that answers with a per-request error
+        // envelope for EVERY symbol (the 2026-08-06 incident's actual shape — the Yahoo 404 came
+        // back as a REQUEST-scoped envelope) would silently drop every candidate while reporting
+        // priceSourceUnavailable=false: a screen that looks like a quiet night.
+        EnrichmentSourceGuard priceGuard = EnrichmentSourceGuard.forSource("echo", "candidates", "price quote");
         for (EarningsObservation e : shortlist) {
             BigDecimal price;
             try {
                 price = marketData.resolve(e.symbol()).currentPrice();
             } catch (MarketDataException ex) {
+                if (priceGuard.recordFailure(ex)) {
+                    priceSourceUnavailable = true;
+                    log.warn("agora source unavailable: tool=get_quote subject={} — {}",
+                            e.symbol(), ex.getMessage());
+                    // The price source is down (immediately on a SOURCE-scoped failure, or after
+                    // a run of REQUEST-scoped ones with no success in between); every remaining
+                    // shortlisted symbol needs the same dead source — same skip-the-rest-of-the-
+                    // batch discipline as IndexEventEnricher.enrich.
+                    break;
+                }
+                log.debug("echo pead screen: price lookup failed for {}: {}", e.symbol(), ex.getMessage());
                 continue;                                                          // liquidity unverifiable
             }
+            priceGuard.recordSuccess();
             if (price.compareTo(minPrice) < 0) continue;
             out.add(new PeadCandidate(
                     e.symbol(), e.companyName(), e.reportDate(),
                     e.epsActual(), e.epsEstimate(), e.epsSurprisePercent(),
                     e.revenueActual(), e.revenueEstimate(), price));
         }
-        return new ScreenResult(out, truncated);
+        return new ScreenResult(out, truncated, priceSourceUnavailable);
     }
 }

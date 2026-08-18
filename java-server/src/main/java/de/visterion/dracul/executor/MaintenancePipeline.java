@@ -1,6 +1,8 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.criteria.KillCriteriaEvaluator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -14,6 +16,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,6 +44,8 @@ import java.util.Set;
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class MaintenancePipeline {
+
+    private static final Logger log = LoggerFactory.getLogger(MaintenancePipeline.class);
 
     private final ReconcileService reconcile;
     private final EntryExpiryService entryExpiry;
@@ -100,13 +105,49 @@ public class MaintenancePipeline {
                     .toList();
         }
 
+        // Only positions that will actually be evaluated below (filled, no pending exit) can
+        // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an
+        // unfilled or already-pending-exit position was never going to be checked this run
+        // regardless (see the gating below), so a missing indicator for it must not be reported
+        // as a skipped safety check. Computed here, before the maps, only to know which symbols
+        // are eligible to be named in the warning below — it does not change which survivors the
+        // maps are built from.
+        Set<Long> uncheckedIds = new HashSet<>();
+        for (ExecutorPosition p : survivors) {
+            if (unfilledIds.contains(p.id()) || p.pendingExitReason() != null) uncheckedIds.add(p.id());
+        }
+
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();
+        Set<String> withoutIndicators = new LinkedHashSet<>();
+        // Both n and total must count the same thing — distinct SYMBOLS, matching the word in
+        // the message — not positions. Two filled positions sharing one unavailable symbol is
+        // one unavailable symbol out of however many distinct symbols were checked, not "1 of 2":
+        // the line feeds an alarm rule later and a positions/symbols mismatch would understate
+        // severity exactly when a shared symbol is the one that is down.
+        Set<String> checkedSymbols = new LinkedHashSet<>();
         for (ExecutorPosition p : survivors) {
             ExecutorIndicators.Levels lv = indicators.levels(p.symbol(), atrPeriod, swingPeriod);
-            if (!lv.available()) continue;
+            boolean wasGoingToBeChecked = !uncheckedIds.contains(p.id());
+            if (wasGoingToBeChecked) checkedSymbols.add(p.symbol());
+            if (!lv.available()) {
+                if (wasGoingToBeChecked) withoutIndicators.add(p.symbol());
+                continue;
+            }
             if (lv.referencePrice() != null) closeBySymbol.put(p.symbol(), lv.referencePrice());
             if (lv.atr() != null) atrBySymbol.put(p.symbol(), lv.atr());
+        }
+        // A symbol missing here is missing from BOTH maps, which disables the stop ratchet AND
+        // the hard-trigger evaluation for that position for this entire run. The skip itself is
+        // correct — without an ATR there is nothing to compute — but it used to be invisible,
+        // so a provider outage looked exactly like a quiet pass. ONE line, not one per symbol:
+        // a total outage would otherwise emit a line per position and drown the signal. A
+        // LinkedHashSet, not a list: two open positions sharing a symbol must not double-count
+        // it, and order stays stable for a deterministic message.
+        if (!withoutIndicators.isEmpty()) {
+            log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
+                    withoutIndicators.size(), checkedSymbols.size(),
+                    String.join(",", withoutIndicators));
         }
 
         // Hard triggers and stop ratcheting act on broker holdings — a position whose GTD

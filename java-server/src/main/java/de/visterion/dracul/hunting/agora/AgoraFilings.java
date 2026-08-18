@@ -5,6 +5,8 @@ import de.visterion.dracul.hunting.DataSourceResult;
 import de.visterion.dracul.marketdata.AgoraClient;
 import de.visterion.dracul.marketdata.AgoraUnavailableException;
 import de.visterion.dracul.strigoi.lazarus.FundamentalScore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -26,6 +28,7 @@ import java.util.List;
 @Component
 public class AgoraFilings {
 
+    private static final Logger log = LoggerFactory.getLogger(AgoraFilings.class);
     private static final String SOURCE = "agora";
 
     /** {@code get_form4_transactions} and {@code search_filings} both default to 100 rows, and a
@@ -380,8 +383,28 @@ public class AgoraFilings {
         try {
             return conceptStrict(symbol, tag);
         } catch (AgoraUnavailableException e) {
+            // Same rationale as AgoraCompanyData.news: the empty series is the kept contract,
+            // the log line is what makes a source outage distinguishable from "not filed".
+            logSwallowed(e, "get_company_concept", symbol + ":" + tag);
             return ConceptSeries.empty(tag);
         }
+    }
+
+    /**
+     * Logs a swallowed {@link AgoraUnavailableException} at WARN, choosing the prefix from the
+     * exception's {@link AgoraUnavailableException.Scope}. {@code Scope.SOURCE} means Agora never
+     * answered — a genuine outage, worth the {@code agora source unavailable} prefix that later
+     * becomes an alarm source. {@code Scope.REQUEST} means Agora DID answer, and the answer was
+     * an error envelope about this one request (unknown symbol, unresolvable CIK, an oversized
+     * EDGAR document via {@code filing_too_large:}) — evidence about the request, not the
+     * source's health. Folding both into one prefix would make the outage prefix worthless: a
+     * single "too large" filing would then read exactly like a dead source.
+     */
+    private static void logSwallowed(AgoraUnavailableException e, String tool, String subject) {
+        String prefix = e.scope() == AgoraUnavailableException.Scope.SOURCE
+                ? "agora source unavailable"
+                : "agora request failed";
+        log.warn("{}: tool={} subject={} — {}", prefix, tool, subject, e.getMessage());
     }
 
     /** Like {@link #concept} but propagates {@link AgoraUnavailableException} instead of
@@ -483,6 +506,7 @@ public class AgoraFilings {
             args.put("symbol", symbol);
             res = agora.callTool("get_eps_history", args);
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_eps_history", symbol);
             return ConceptSeries.empty("eps");
         }
         return series("eps", res.path("eps"));
@@ -493,6 +517,7 @@ public class AgoraFilings {
         try {
             return fundamentalScoreStrict(symbol);
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_fundamental_score", symbol);
             return FundamentalScore.unavailable();
         }
     }
@@ -532,6 +557,7 @@ public class AgoraFilings {
             JsonNode res = agora.callTool("get_filing_text", args);
             return new FilingText(res.path("text").asString(""), true);
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_filing_text", url);
             return e.filingTooLarge() ? FilingText.tooLarge() : FilingText.unavailable();
         }
     }
@@ -559,6 +585,7 @@ public class AgoraFilings {
             String resolvedExhibit = resolved.isTextual() ? resolved.asString() : null;
             return new FilingText(res.path("text").asString(""), true, FilingText.Failure.NONE, resolvedExhibit);
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_filing_text", url);
             return e.filingTooLarge() ? FilingText.tooLarge() : FilingText.unavailable();
         }
     }

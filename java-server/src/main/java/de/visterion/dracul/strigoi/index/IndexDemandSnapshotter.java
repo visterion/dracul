@@ -4,6 +4,7 @@ import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.strigoi.echo.ConfounderProbe;
 import de.visterion.dracul.strigoi.echo.ConfounderScreen;
 import de.visterion.dracul.strigoi.echo.EquityMetrics;
 import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
@@ -51,7 +52,14 @@ import java.util.Map;
  *       is missing or non-positive.</li>
  *   <li><b>confounders</b> — dilution / M&amp;A / restatement / guidance-cut / investigation flags
  *       from company news since the announcement date, via the reused {@link ConfounderScreen} (the
- *       same screen the echo hunter uses). Never throws; empty = clean.</li>
+ *       same screen the echo hunter uses). Never throws; empty means "scanned, nothing matched" ONLY
+ *       when {@code confoundersUnknown} is false — see below.</li>
+ *   <li><b>confoundersUnknown</b> — true when the news source did not answer for the confounder
+ *       scan. This is the one field in this snapshot that is NOT a swallowing-facade degradation:
+ *       {@link ConfounderScreen#confounders(String, java.time.LocalDate)} returns a
+ *       {@link ConfounderProbe} precisely so an outage lands here as "unknown" instead of silently
+ *       inside an empty {@code confounders} list, which downstream would otherwise read as "no
+ *       overlapping corporate event" — the exact inversion of "the source could not be checked".</li>
  * </ul>
  *
  * <p><b>Source-down signalling.</b> The single strict source is the price feed
@@ -117,10 +125,13 @@ public class IndexDemandSnapshotter {
             Double passiveAumTrackingBillions,
             Double demandToAdvRatioEstimate,
             List<String> confounders,
+            boolean confoundersUnknown,
             boolean available) {
 
         static IndexDemandSnapshot unavailable() {
-            return new IndexDemandSnapshot(null, null, null, null, null, null, null, List.of(), false);
+            // confoundersUnknown=true, not false: this is "nothing was even attempted", which
+            // must not read as "checked and clean" any more than a real source outage does.
+            return new IndexDemandSnapshot(null, null, null, null, null, null, null, List.of(), true, false);
         }
     }
 
@@ -169,12 +180,13 @@ public class IndexDemandSnapshotter {
         Double demandToAdvRatioEstimate =
                 demandToAdvRatioEstimate(adv, freeFloatProxyMillions, passiveAum, indexName);
 
-        List<String> confounders = confounderScreen.confounders(
+        ConfounderProbe confounderProbe = confounderScreen.confounders(
                 symbol, announcementDate == null ? LocalDate.now() : announcementDate);
 
         boolean available = adv != null || idiosyncraticVol != null || freeFloatProxyMillions != null;
         return new IndexDemandSnapshot(adv, marketCap, avgVolume20d, idiosyncraticVol,
-                freeFloatProxyMillions, passiveAum, demandToAdvRatioEstimate, confounders, available);
+                freeFloatProxyMillions, passiveAum, demandToAdvRatioEstimate,
+                confounderProbe.flags(), confounderProbe.unknown(), available);
     }
 
     /** Sample stddev of the last ~idioVolLookback daily residual returns; null when too few resolve. */

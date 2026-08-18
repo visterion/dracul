@@ -441,6 +441,66 @@ an unavailable bundle, `EntryContextAssembler` names the indicator in
 `missing` so the DATA_UNAVAILABLE pre-veto fires, and `AgoraResearch` maps it
 to a null value with a false availability flag so no exit rule can fire on it.
 
+### Swallowing facades now log the outage
+
+`AgoraClient` already logged a WARN for every terminal `AgoraUnavailableException`
+before this — `Agora unreachable for {tool}: {message}` (or the oversized-document
+wording) — so a failure was never entirely traceless. That line is **tool-wide**: it
+names the tool, not the symbol/URL/tag the call was about, and it does not carry the
+`Scope` distinction below. Nine specific swallowing call sites — in `AgoraCompanyData`
+and `AgoraFilings` only, the two facades whose fail-soft methods route through a
+shared `logSwallowed` helper — now ALSO log their own WARN with the subject and the
+scope, one of two stable prefixes:
+
+- `agora source unavailable: tool=<toolName> subject=<symbol|url|tag> — <message>`
+  — Agora produced no answer at all (`Scope.SOURCE`): transport failure,
+  empty body, unparseable body. This is the source itself being down.
+- `agora request failed: tool=<toolName> subject=<symbol|url|tag> — <message>`
+  — Agora answered, and the error is about this one request (`Scope.REQUEST`):
+  an unknown symbol, an unresolvable CIK, a document over the filing-size cap.
+  This says nothing about the source's health.
+
+**The same failure now produces TWO WARN lines on the facade paths** — `AgoraClient`'s
+tool-wide one and the facade's subject/scope-carrying one — and **THREE on the echo
+price-screen path**, where `EnrichmentSourceGuard` adds its own `echo enrichment: price
+quote source down (...)` (the wording says "enrichment" although the caller is a screen).
+A log-based count or alert built on any of these prefixes must not also count the others,
+or it multiplies every single outage. The gain from the new line is the subject and the scope, not the mere
+existence of a trace. **Only the `agora source unavailable:` prefix is an outage
+signal** — folding it together with `agora request failed:` fires on routine
+per-request misses that have nothing to do with Agora being down. The return contract
+of these nine call sites is unchanged — an empty list still means "empty" to the caller.
+
+**Not every swallowing call site logs yet.** `AgoraEarnings.nextEarningsDate` still
+swallows an Agora failure to `Optional.empty()` without a line, and
+`AgoraMarketData.quotes` still degrades silently to its stored values — an operator
+grepping for `tool=get_earnings_calendar` or `tool=get_quote` in this new form finds
+nothing and can wrongly read that as a healthy source. It is these nine named call
+sites in `AgoraCompanyData`/`AgoraFilings`, not "every swallowing call site".
+
+Where an empty/null return must not be read as a statement — because the
+caller persists it, gates on it, or otherwise treats "empty" as "checked,
+found nothing" — use the reporting variant instead: the `*Strict` methods
+(`AgoraFilings.conceptStrict`, `AgoraFilings.fundamentalScoreStrict`,
+`AgoraFilings.ownerHistoryStrict`, `AgoraCompanyData.recommendationsStrict`,
+`AgoraCompanyData.fundamentalsStrict`) throw `AgoraUnavailableException`
+instead of degrading; the `*Result` methods (`AgoraCompanyData.newsResult`,
+`AgoraEarnings.recent`) return a `DataSourceResult` whose `health().isHealthy()`
+is `false` on failure; and `AgoraPriceRange` — a facade class, not a method —
+has no swallowing variant at all, it always propagates `AgoraUnavailableException`
+(see "Data-source health" → `AgoraPriceRange` above for why). All three let the
+caller tell "the source could not be checked" apart from "checked, found nothing"
+— the swallowing default cannot.
+
+The prefix above is chosen by `Scope` at each facade's own swallowing catch site.
+One caller picks the prefix differently: `EchoPeadScreener`'s price-resolution guard
+(see `documentation/strigoi.md`, "Price-source outage now aborts the screen") emits
+`agora source unavailable:` not only on a raw `Scope.SOURCE` failure but also once
+its own `EnrichmentSourceGuard` has escalated three consecutive `Scope.REQUEST`
+failures to a source-down verdict — there it is the guard's verdict, not the raw
+`Scope`, that decides. The core statement still holds: the first prefix is only ever
+emitted once something has actually been judged an outage.
+
 ### Known limitations (v1)
 
 - **Agora unavailability is uniform:** since 7c, all hunting Strigoi report

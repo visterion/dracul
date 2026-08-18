@@ -260,6 +260,48 @@ class HardTriggerServiceTest {
                 .isEqualTo(7L);
     }
 
+    private List<String> warningsWhile(Class<?> loggerClass, Runnable body) {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            body.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
+    }
+
+    @Test
+    void warnsWhenAPositionSurvivesUnevaluatedBecauseItsCloseIsMissing() {
+        ExecutorPosition dark = openPosition(11L, "DARK", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null);
+        // entry=90, stop=85, mfeR=2.0, close=100 -> currentR = (100-90)/(90-85) = 2.0, above the
+        // giveback threshold (2.0 * 0.65 = 1.3): GOOD runs through all three detect* branches
+        // (stop-breach, kill-criteria, giveback) and survives on its own merits, not because a
+        // branch bailed out early on a null mfeR.
+        ExecutorPosition ok = openPosition(12L, "GOOD", "BUY", new BigDecimal("90"),
+                new BigDecimal("85"), new BigDecimal("85"), new BigDecimal("2.0"));
+
+        var survivors = new java.util.concurrent.atomic.AtomicReference<List<ExecutorPosition>>();
+        var warnings = warningsWhile(HardTriggerService.class, () -> survivors.set(
+                service.apply(List.of(dark, ok), Map.of("GOOD", new BigDecimal("100")), "run1")));
+
+        // Behaviour is UNCHANGED: the position still survives.
+        assertThat(survivors.get()).extracting(ExecutorPosition::symbol)
+                .containsExactlyInAnyOrder("DARK", "GOOD");
+        // But it is no longer silent that it survived UNEVALUATED. The full message is pinned
+        // (isEqualTo, not contains): the format is contract, not incidental wording.
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .isEqualTo("hard trigger skipped: position=11 symbol=DARK — no close price, "
+                        + "stop breach and kill criteria NOT evaluated this run");
+    }
+
     @Test
     void brokerUnavailableOnFlatten_escalatesKeepsPosition() {
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),

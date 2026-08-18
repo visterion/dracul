@@ -4,6 +4,8 @@ import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -38,6 +40,8 @@ import java.util.Map;
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class HardTriggerService {
+
+    private static final Logger log = LoggerFactory.getLogger(HardTriggerService.class);
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -98,6 +102,15 @@ public class HardTriggerService {
         for (ExecutorPosition p : openPositions) {
             BigDecimal close = currentCloseBySymbol.get(p.symbol());
             if (close == null) {
+                // Deliberately UNCHANGED behaviour: the position survives. But it survives
+                // WITHOUT its stop breach and kill criteria having been evaluated, on the
+                // code-enforced hard-exit path the LLM may never override — and until this
+                // line, that was indistinguishable from a position that was evaluated and
+                // simply did not trigger. Usually caused upstream by MaintenancePipeline
+                // dropping the symbol when its indicators were unavailable.
+                log.warn("hard trigger skipped: position={} symbol={} — no close price, "
+                        + "stop breach and kill criteria NOT evaluated this run",
+                        p.id(), p.symbol());
                 survivors.add(p);
                 continue;
             }

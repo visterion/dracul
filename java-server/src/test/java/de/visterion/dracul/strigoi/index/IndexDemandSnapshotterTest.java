@@ -4,6 +4,7 @@ import de.visterion.dracul.hunting.agora.AgoraCompanyData;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import de.visterion.dracul.strigoi.echo.ConfounderProbe;
 import de.visterion.dracul.strigoi.echo.ConfounderScreen;
 import de.visterion.dracul.strigoi.echo.EquityMetrics;
 import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
@@ -55,7 +56,7 @@ class IndexDemandSnapshotterTest {
         when(marketData.dailyOhlcHistory(eq(PROXY), anyInt())).thenReturn(flatBars(30, 200, 1));
         when(equityMetrics.metricsWithoutSector(SYM)).thenReturn(new EquityMetrics(1.0, 6000.0, null, null, null, true));
         when(companyData.fundamentals(SYM)).thenReturn(mapper.readTree("{\"shareOutstanding\":50}"));
-        when(confounderScreen.confounders(anyString(), any())).thenReturn(List.of("dilution"));
+        when(confounderScreen.confounders(anyString(), any())).thenReturn(ConfounderProbe.of(List.of("dilution")));
 
         snapshotter = new IndexDemandSnapshotter(marketData, equityMetrics, companyData, confounderScreen,
                 PROXY, IDIO_LOOKBACK, 11500, 700, 350, 50000, 57000, 3500);
@@ -84,6 +85,7 @@ class IndexDemandSnapshotterTest {
         // (11500e9 * (5000e6 / 50000e9)) / 100000 = 11500 days
         assertThat(s.demandToAdvRatioEstimate()).isEqualTo(11500.0);
         assertThat(s.confounders()).containsExactly("dilution");
+        assertThat(s.confoundersUnknown()).isFalse();
         assertThat(s.available()).isTrue();
     }
 
@@ -158,6 +160,21 @@ class IndexDemandSnapshotterTest {
         assertThat(s.demandToAdvRatioEstimate()).isNull();    // needs free float
         assertThat(s.adv()).isEqualByComparingTo("100000");
         assertThat(s.marketCap()).isEqualTo(6000.0);
+    }
+
+    @Test void newsSourceDownRecordsUnknownConfoundersNotAnEmptyCleanList() {
+        // T3: the confounder screen reports the news source as down. The snapshot must persist
+        // that as "unknown", not as an empty confounders list — an empty list here would be
+        // stored verbatim in the ANNOUNCED snapshot and later read back as "no dilution, M&A,
+        // restatement or guidance cut found", the exact inversion of "could not be checked".
+        when(confounderScreen.confounders(anyString(), any())).thenReturn(ConfounderProbe.sourceDown());
+
+        var s = snapshotter.snapshot(SYM, "sp500", ANN);
+
+        assertThat(s.confoundersUnknown()).isTrue();
+        assertThat(s.confounders()).isEmpty();
+        // Unrelated price-derived fields still resolve independently.
+        assertThat(s.adv()).isEqualByComparingTo("100000");
     }
 
     @Test void unconfiguredIndexLeavesAumAndDemandRatioNull() {

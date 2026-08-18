@@ -25,9 +25,9 @@ import java.util.List;
  * get_fundamentals / get_company_profile over MCP). fundamentals/profile are returned as the
  * RAW provider blobs (opaque JsonNode) — key extraction is a consumer-side concern. Never
  * throws: Agora failure degrades to an empty list / null (the replaced adapters' contracts) —
- * except the health-aware variants ({@link #fundamentalsResult}, {@link #recommendationsStrict}
- * and {@link #newsResult}), which exist precisely so guard-carrying callers can tell
- * an Agora outage apart from "no data for this symbol".
+ * except the health-aware variants ({@link #fundamentalsResult}, {@link #fundamentalsStrict},
+ * {@link #recommendationsStrict} and {@link #newsResult}), which exist precisely so
+ * guard-carrying callers can tell an Agora outage apart from "no data for this symbol".
  */
 @Component
 public class AgoraCompanyData {
@@ -71,9 +71,31 @@ public class AgoraCompanyData {
         try {
             res = agora.callTool("get_company_news", newsArgs(symbol, from, to));
         } catch (AgoraUnavailableException e) {
+            // The empty return is the documented contract for this variant and stays. What
+            // changes is that the outage is no longer invisible: without this line a source
+            // failure and "this symbol genuinely has no news" leave identical traces, and
+            // several callers read the empty result as a positive statement ("clean").
+            logSwallowed(e, "get_company_news", symbol);
             return List.of();
         }
         return parseNews(res, symbol);
+    }
+
+    /**
+     * Logs a swallowed {@link AgoraUnavailableException} at WARN, choosing the prefix from the
+     * exception's {@link AgoraUnavailableException.Scope}. {@code Scope.SOURCE} means Agora never
+     * answered — a genuine outage, worth the {@code agora source unavailable} prefix that later
+     * becomes an alarm source. {@code Scope.REQUEST} means Agora DID answer, and the answer was
+     * an error envelope about this one request (unknown symbol, unresolvable CIK, an oversized
+     * EDGAR document via {@code filing_too_large:}) — evidence about the request, not the
+     * source's health. Folding both into one prefix would make the outage prefix worthless: a
+     * single "too large" filing would then read exactly like a dead source.
+     */
+    private static void logSwallowed(AgoraUnavailableException e, String tool, String subject) {
+        String prefix = e.scope() == AgoraUnavailableException.Scope.SOURCE
+                ? "agora source unavailable"
+                : "agora request failed";
+        log.warn("{}: tool={} subject={} — {}", prefix, tool, subject, e.getMessage());
     }
 
     /**
@@ -84,7 +106,10 @@ public class AgoraCompanyData {
      * {@code data_source_health.status = "unavailable"} rather than silently reporting zero
      * items as if the symbol simply had none — {@link #news(String, LocalDate, LocalDate)}
      * keeps its existing empty-list-on-any-failure contract for its other callers (echo
-     * enrichment, confounder screen, renfield, daywalker), which never inspect health here.
+     * enrichment, renfield, daywalker), which never inspect health here. The fetch-and-scan
+     * confounder screen ({@code ConfounderScreen#confounders(String, LocalDate)}) calls THIS
+     * health-aware variant instead, precisely so a source outage does not get persisted as
+     * "no confounders found" — it is no longer one of the swallowing-contract callers above.
      * Shares request-building ({@link #newsArgs}) and row-parsing ({@link #parseNews}) with
      * {@link #news(String, LocalDate, LocalDate)} so the two variants cannot silently diverge.
      */
@@ -187,6 +212,7 @@ public class AgoraCompanyData {
             recommendationsCache.put(symbol, res, RECOMMENDATIONS_TTL);
             return res;
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_analyst_estimates", symbol);
             return List.of();
         }
     }
@@ -221,11 +247,9 @@ public class AgoraCompanyData {
     /** RAW provider metrics blob (opaque); null when unavailable or absent. */
     public JsonNode fundamentals(String symbol) {
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol);
-            JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
-            return (m.isMissingNode() || m.isNull()) ? null : m;
+            return fundamentalsStrict(symbol);
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_fundamentals", symbol);
             return null;
         }
     }
@@ -239,14 +263,36 @@ public class AgoraCompanyData {
      */
     public DataSourceResult<JsonNode> fundamentalsResult(String symbol) {
         try {
-            ObjectNode args = mapper.createObjectNode();
-            args.put("symbol", symbol);
-            JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
-            JsonNode value = (m.isMissingNode() || m.isNull()) ? null : m;
+            JsonNode value = fundamentalsStrict(symbol);
             return DataSourceResult.healthy("agora", value == null ? List.of() : List.of(value));
         } catch (AgoraUnavailableException e) {
             return DataSourceResult.unavailable("agora", "agora: " + e.getMessage());
         }
+    }
+
+    /**
+     * Strict variant of {@link #fundamentals(String)}: propagates {@link
+     * AgoraUnavailableException} — WITH its {@link AgoraUnavailableException.Scope} intact —
+     * instead of degrading to null, so callers with a per-batch source-down guard (insider
+     * enrichment) can tell "Agora is down" apart from "no fundamentals for this symbol" and stop
+     * burning a dead ~16s remote call per remaining candidate. Same split as {@link
+     * #recommendationsStrict}.
+     *
+     * <p>Deliberately NOT the same thing as {@link #fundamentalsResult}: that method collapses
+     * every {@link AgoraUnavailableException.Scope} into one {@code "unavailable"} health status
+     * for its own (non-guard) callers, which is fine for a single yes/no health flag but wrong
+     * for {@code EnrichmentSourceGuard#recordFailure} — that guard trips down IMMEDIATELY on a
+     * SOURCE-scoped failure but only after several consecutive REQUEST-scoped ones (an unknown
+     * symbol, an unresolvable issuer), precisely to avoid disabling a whole batch's metrics
+     * enrichment over one bad ticker. Losing the scope here would silently reproduce the
+     * 2026-08-06 production incident {@link de.visterion.dracul.strigoi.EnrichmentSourceGuard}'s
+     * own javadoc describes, for metrics instead of OHLC/owner-history.
+     */
+    public JsonNode fundamentalsStrict(String symbol) {
+        ObjectNode args = mapper.createObjectNode();
+        args.put("symbol", symbol);
+        JsonNode m = agora.callTool("get_fundamentals", args).path("metrics");
+        return (m.isMissingNode() || m.isNull()) ? null : m;
     }
 
     /** RAW provider profile blob (opaque); null when unavailable or absent. */
@@ -257,6 +303,7 @@ public class AgoraCompanyData {
             JsonNode p = agora.callTool("get_company_profile", args).path("profile");
             return (p.isMissingNode() || p.isNull()) ? null : p;
         } catch (AgoraUnavailableException e) {
+            logSwallowed(e, "get_company_profile", symbol);
             return null;
         }
     }

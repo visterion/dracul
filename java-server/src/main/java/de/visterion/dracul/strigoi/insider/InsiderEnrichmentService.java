@@ -10,11 +10,10 @@ import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
 import de.visterion.dracul.strigoi.EnrichmentSourceGuard;
 import de.visterion.dracul.strigoi.echo.AnalystCoverage;
-import de.visterion.dracul.strigoi.echo.EquityMetrics;
-import de.visterion.dracul.strigoi.echo.EquityMetricsExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -51,12 +50,20 @@ import java.util.Optional;
  *  enrichment is skipped entirely for the rest of the batch (flags false). Every cluster that
  *  loses a source is counted into {@link EnrichedInsiderBatch#degradedClusters} so the fetch
  *  health can report it as {@code partial}. The coverage
- *  fetch uses {@link AgoraCompanyData#recommendationsStrict} (propagates outages) so its
- *  guard is real; the metrics fetch (via the swallowing {@code fundamentals()}) and the
- *  earnings facade still absorb outages internally (degrading to null/empty), so OHLC and
- *  coverage are the exception-based canaries in production. A full Agora outage is already
- *  gated upstream by the Form-4 feed's {@code data_source_health}
- *  (no clusters reach enrichment at all). */
+ *  fetch uses {@link AgoraCompanyData#recommendationsStrict} (propagates outages, scope intact)
+ *  so its guard is real; the metrics fetch now uses {@link AgoraCompanyData#fundamentalsStrict}
+ *  for the same reason — before this task it went through the swallowing {@code fundamentals()},
+ *  which meant a TOTAL Agora outage still called {@code recordSuccess()} every cluster, so the
+ *  guard read "up" through it while every market cap silently fell to null. {@code
+ *  fundamentalsStrict} (not the health-aware {@link AgoraCompanyData#fundamentalsResult}, used
+ *  elsewhere by strigoi-lazarus) keeps the {@link AgoraUnavailableException.Scope} on the thrown
+ *  exception, so this branch's guard behaves exactly like its four siblings: a SOURCE-scoped
+ *  failure trips it immediately, a run of REQUEST-scoped ones (an unresolvable symbol) does not.
+ *  The earnings facade still absorbs outages internally (degrading to {@code Optional.empty()})
+ *  and is therefore NOT a real canary — a known remaining gap, out of this task's scope. OHLC,
+ *  coverage, metrics and owner-history are the exception-based canaries in production. A full
+ *  Agora outage is already gated upstream by the Form-4 feed's {@code data_source_health} (no
+ *  clusters reach enrichment at all). */
 @Component
 public class InsiderEnrichmentService {
 
@@ -67,20 +74,17 @@ public class InsiderEnrichmentService {
     private static final int HISTORY_BUFFER_DAYS = 10;
 
     private final AgoraMarketData marketData;
-    private final EquityMetricsExtractor equityMetrics;
     private final AgoraCompanyData companyData;
     private final AgoraEarnings earnings;
     private final AgoraFilings filings;
     private final RoutineClassifier routineClassifier;
 
     public InsiderEnrichmentService(AgoraMarketData marketData,
-                                    EquityMetricsExtractor equityMetrics,
                                     AgoraCompanyData companyData,
                                     AgoraEarnings earnings,
                                     AgoraFilings filings,
                                     RoutineClassifier routineClassifier) {
         this.marketData = marketData;
-        this.equityMetrics = equityMetrics;
         this.companyData = companyData;
         this.earnings = earnings;
         this.filings = filings;
@@ -142,8 +146,13 @@ public class InsiderEnrichmentService {
         Double marketCap = null;
         if (!health.metrics.isDown()) {
             try {
-                EquityMetrics em = equityMetrics.metricsWithoutSector(c.ticker());
-                if (em.available()) marketCap = em.marketCap();
+                // fundamentalsStrict (not fundamentalsResult) so a REQUEST-scoped failure — one
+                // unresolvable symbol — reaches recordFailure with its scope intact, exactly like
+                // the OHLC/coverage/earnings/owner-history branches below. fundamentalsResult
+                // collapses SOURCE and REQUEST into one "unavailable" status, which would trip
+                // this guard immediately on a single bad ticker.
+                JsonNode m = companyData.fundamentalsStrict(c.ticker());
+                if (m != null) marketCap = marketCapitalization(m);
                 health.metrics.recordSuccess();
             } catch (RuntimeException e) {
                 health.metrics.recordFailure(e);
@@ -384,5 +393,14 @@ public class InsiderEnrichmentService {
         BigDecimal last = thisYear.get(thisYear.size() - 1).close();
         if (first == null || last == null || first.signum() <= 0) return null;
         return last.subtract(first).divide(first, 4, RoundingMode.HALF_UP);
+    }
+
+    /** Same key {@link de.visterion.dracul.strigoi.echo.EquityMetricsExtractor} reads off the raw
+     *  fundamentals blob; duplicated here (rather than routed through the extractor) because this
+     *  class needs {@link AgoraCompanyData#fundamentalsStrict}'s scope-preserving exception, which
+     *  the extractor does not expose. */
+    private static Double marketCapitalization(JsonNode metrics) {
+        JsonNode n = metrics.path("marketCapitalization");
+        return n.isNumber() ? n.asDouble() : null;
     }
 }
