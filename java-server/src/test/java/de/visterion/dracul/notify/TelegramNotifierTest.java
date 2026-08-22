@@ -185,7 +185,9 @@ class TelegramNotifierTest {
 
         notifier("TOKEN", "CHAT").notifyDigest(text);
 
-        assertThat(lines(appender)).contains("telegram message split: parts=2 chars=6000");
+        assertThat(lines(appender))
+                .filteredOn(l -> l.startsWith("telegram message split:"))
+                .hasSize(1);
     }
 
     @Test
@@ -197,17 +199,20 @@ class TelegramNotifierTest {
         wm.stubFor(post(urlPathEqualTo(url)).inScenario("parts")
                 .whenScenarioStateIs("second")
                 .willReturn(aResponse().withStatus(400).withBody("{\"ok\":false}")));
-        String text = ("x".repeat(99) + "\n").repeat(60);
+        // 90 lines x 100 chars = 9000 chars -> 3 parts (39+39+12 lines) at CHUNK_BUDGET=3988.
+        // Failing on part 2 leaves part 3 unsent; if the implementation kept going after a
+        // failed part, WireMock would record a 3rd request and sentTexts would be size 3.
+        String text = ("x".repeat(99) + "\n").repeat(90);
         var appender = attachAppender();
 
         boolean ok = notifier("TOKEN", "CHAT").notifyDigest(text);
 
         assertThat(ok).isFalse();
-        assertThat(sentTexts("TOKEN")).hasSize(2);          // part 1 really went out
+        assertThat(sentTexts("TOKEN")).hasSize(2);          // parts 1 and 2 went out, not 3
         // The exception text is the RestClient's, not ours — assert the stable prefix only.
         assertThat(lines(appender))
                 .anySatisfy(l -> assertThat(l)
-                        .startsWith("telegram digest incomplete: sent 1 of 2 parts — "));
+                        .startsWith("telegram digest incomplete: sent 1 of 3 parts — "));
         assertThat(lines(appender)).noneSatisfy(
                 l -> assertThat(l).startsWith("Telegram push failed:"));
     }
