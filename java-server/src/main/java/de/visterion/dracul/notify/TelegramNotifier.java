@@ -27,6 +27,18 @@ public class TelegramNotifier {
     private final String botToken;
     private final String chatId;
 
+    /** Telegram rejects a sendMessage body over 4096 characters with HTTP 400. */
+    private static final int TELEGRAM_LIMIT = 4096;
+    /** Room for the "[i/n]\n" marker; 12 covers "[99/99]\n" with slack. */
+    private static final int MARKER_RESERVE = 12;
+    /**
+     * Payload per part. Deliberately 4000 rather than {@link #TELEGRAM_LIMIT}: Java's
+     * {@code length()} counts UTF-16 units and so does Telegram, but the margin costs
+     * nothing and a miscount here reproduces exactly the silent loss this code exists to
+     * prevent — on 2026-08-17/18/19 every Renfield digest (4053-6657 chars) was dropped.
+     */
+    static final int CHUNK_BUDGET = 4000 - MARKER_RESERVE;
+
     @Autowired
     public TelegramNotifier(
             @Value("${dracul.telegram.bot-token:}") String botToken,
@@ -60,18 +72,6 @@ public class TelegramNotifier {
         return send(text);
     }
 
-    /** Telegram rejects a sendMessage body over 4096 characters with HTTP 400. */
-    private static final int TELEGRAM_LIMIT = 4096;
-    /** Room for the "[i/n]\n" marker; 12 covers "[99/99]\n" with slack. */
-    private static final int MARKER_RESERVE = 12;
-    /**
-     * Payload per part. Deliberately 4000 rather than {@link #TELEGRAM_LIMIT}: Java's
-     * {@code length()} counts UTF-16 units and so does Telegram, but the margin costs
-     * nothing and a miscount here reproduces exactly the silent loss this code exists to
-     * prevent — on 2026-08-17/18/19 every Renfield digest (4053-6657 chars) was dropped.
-     */
-    static final int CHUNK_BUDGET = 4000 - MARKER_RESERVE;
-
     /**
      * Splits at line boundaries into parts of at most {@code budget} characters.
      *
@@ -82,8 +82,15 @@ public class TelegramNotifier {
      *
      * <p>A single line longer than the budget is hard-split rather than dropped. A
      * truncated rationale is bad; a missing one is worse.
+     *
+     * @throws IllegalArgumentException if {@code budget} is not positive — a non-positive
+     *     budget cannot make progress (0 loops forever appending empty parts; negative
+     *     throws inside the substring call), and the only production caller passes the
+     *     fixed {@link #CHUNK_BUDGET}, so a caller with a bad budget is a test/programming
+     *     error, not a runtime condition to degrade gracefully from.
      */
     static List<String> split(String text, int budget) {
+        if (budget < 1) throw new IllegalArgumentException("budget must be >= 1");
         List<String> parts = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
         int i = 0;

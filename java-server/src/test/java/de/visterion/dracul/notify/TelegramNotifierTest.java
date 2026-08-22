@@ -127,11 +127,16 @@ class TelegramNotifierTest {
     @Test
     void messageUnderTheBudgetIsSentUnchangedAsOnePart() {
         wm.stubFor(post(urlPathEqualTo("/botTOKEN/sendMessage")).willReturn(okJson("{\"ok\":true}")));
+        var appender = attachAppender();
 
         boolean ok = notifier("TOKEN", "CHAT").notifyDigest("Morgen-Report\nAAA HOLD\n");
 
         assertThat(ok).isTrue();
         assertThat(sentTexts("TOKEN")).containsExactly("Morgen-Report\nAAA HOLD\n");
+        // A single-part send must stay silent about splitting — the "n > 1" guard is the
+        // only thing separating this from polluting every ordinary alert's logs.
+        assertThat(lines(appender)).noneSatisfy(
+                l -> assertThat(l).startsWith("telegram message split:"));
     }
 
     @Test
@@ -175,6 +180,28 @@ class TelegramNotifierTest {
         assertThat(parts.get(0)).hasSize(TelegramNotifier.CHUNK_BUDGET);
         assertThat(parts.get(1)).hasSize(TelegramNotifier.CHUNK_BUDGET);
         assertThat(String.join("", parts)).isEqualTo(text);
+    }
+
+    @Test
+    void bufferedShortLinesAreFlushedBeforeAHardSplitLineNotAfter() {
+        // "ab\n" is buffered (short), then a 26-char line blows the budget and gets
+        // hard-split. The buffered "ab\n" must be flushed as its own part BEFORE the
+        // hard-split chunks, or the digest arrives with its content reordered.
+        String text = "ab\n" + "y".repeat(25) + "\ncd\n";
+
+        List<String> parts = TelegramNotifier.split(text, 10);
+
+        assertThat(parts).containsExactly(
+                "ab\n", "yyyyyyyyyy", "yyyyyyyyyy", "yyyyy\ncd\n");
+        assertThat(String.join("", parts)).isEqualTo(text);
+    }
+
+    @Test
+    void nonPositiveBudgetIsRejectedRatherThanHangingOrThrowingObscurely() {
+        assertThatThrownBy(() -> TelegramNotifier.split("x", 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> TelegramNotifier.split("x", -1))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
