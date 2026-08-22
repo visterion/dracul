@@ -612,6 +612,30 @@ ts}`), not one event per proposal.
 Renfield also requires a Vistierie budget (same procedure as daywalker —
 see Agent budget guard section below).
 
+**Long digests are split, not dropped.** Telegram rejects any message over
+4096 characters. `TelegramNotifier` therefore splits a long message at line
+boundaries — a single line longer than the budget is hard-split rather than
+dropped — into parts of at most 3988 characters, and sends them in order.
+Multi-part messages are marked `[1/2]`, `[2/2]`, … so a missing tail is
+visible in the chat rather than looking like a message that simply ended. A
+message that fits is sent unchanged and unmarked. A multi-part send announces
+itself in the log:
+
+    telegram message split: parts=2 chars=6000                       (INFO)
+
+If a part fails, the send stops there — a gap in the middle would be worse
+than a clean end — and the run logs how far it got:
+
+    telegram digest incomplete: sent 1 of 2 parts — <error>          (WARN)
+
+Renfield's own digest is the regular producer of multi-part messages: eleven
+of the twelve runs before 2026-08-22 rendered between 4053 and 6657
+characters, and every one of those over 4096 was lost outright; the loss is
+confirmed in the production log for 2026-08-17, -18 and -19. This splitting
+applies to every Telegram push Dracul sends (`send()` is shared by
+`notifyAlert` and `notifyDigest`), not just Renfield's — see the Morning
+report digest and Stop-proximity watcher sections below.
+
 ## Rollout order (critical)
 
 **The bootstrap is insert-if-absent**: agent definitions are not
@@ -787,6 +811,9 @@ To enable the daily Telegram morning-report digest:
 
 The digest is a **Dracul-internal cron** — it does **not** register a Vistierie agent. No Vistierie budget change or agent reset is required (unlike a new scheduled Strigoi or Gropar itself).
 
+A digest over Telegram's 4096-character limit is split rather than dropped;
+see "Long digests are split, not dropped" under Renfield above.
+
 ## Stop-proximity watcher
 
 To enable the intraday stop-proximity watcher in production:
@@ -803,6 +830,9 @@ Optionally tune the proximity band width and Telegram verbosity:
     DRACUL_STOPGUARD_NOTIFY_LEVEL=WARNING       # WARNING = both proximity + breach; CRITICAL = breach only
 
 See [configuration.md](./configuration.md) for the full knob reference.
+
+A push over Telegram's 4096-character limit is split rather than dropped;
+see "Long digests are split, not dropped" under Renfield above.
 
 ## Pattern gates (T3.3)
 
