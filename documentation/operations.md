@@ -612,6 +612,24 @@ ts}`), not one event per proposal.
 Renfield also requires a Vistierie budget (same procedure as daywalker —
 see Agent budget guard section below).
 
+**Long digests are split, not dropped.** Telegram rejects any message over
+4096 characters. `TelegramNotifier` therefore splits a long message at line
+boundaries into parts of at most 3988 characters and sends them in order.
+Multi-part messages are marked `[1/2]`, `[2/2]`, … so a missing tail is
+visible in the chat rather than looking like a message that simply ended. A
+message that fits is sent unchanged and unmarked. If a part fails, the send
+stops there — a gap in the middle would be worse than a clean end — and the
+run logs how far it got:
+
+    telegram message split: parts=2 chars=6000                       (INFO)
+    telegram digest incomplete: sent 1 of 2 parts — <error>          (WARN)
+
+Renfield's own digest is the regular producer of multi-part messages: eleven
+of the twelve runs before 2026-08-22 rendered between 4053 and 6657
+characters, and every one of those over 4096 was lost outright — confirmed
+in the production log on 2026-08-17, -18 and -19 — before this splitting
+behaviour existed.
+
 ## Rollout order (critical)
 
 **The bootstrap is insert-if-absent**: agent definitions are not
