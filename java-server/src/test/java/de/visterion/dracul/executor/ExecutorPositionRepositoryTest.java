@@ -278,6 +278,38 @@ class ExecutorPositionRepositoryTest {
     }
 
     @Test
+    void clearStopLegNullsOnlyTheColumnNamingThatOrderAndTouchesNothingElse() {
+        // A reconcile trim closes the tranche whose stop just filled; the column naming that
+        // order must be nulled, or StopRatchetService addresses a dead id by name next run.
+        long id = repo.insert(openPositionWithStops("CLEARSTOP" + System.nanoTime(), "old-1", "old-2"));
+        repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
+                new BigDecimal("104"), "old-1");
+        ExecutorPosition before = repo.findById(id);
+
+        repo.clearStopLeg(id, "old-1");
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isNull();
+        assertThat(found.tranche2StopOrderId()).isEqualTo("old-2");
+        assertThat(found.qty()).isEqualByComparingTo(before.qty());
+        assertThat(found.trimCount()).isEqualTo(before.trimCount());
+        assertThat(found.softConfirmCount()).isEqualTo(3);
+    }
+
+    @Test
+    void clearStopLegClearsTheTranche2ColumnAndIgnoresAnUnknownId() {
+        long id = repo.insert(openPositionWithStops("CLEARSTOP2" + System.nanoTime(), "old-1", "old-2"));
+
+        repo.clearStopLeg(id, "old-2");
+        repo.clearStopLeg(id, "not-a-leg-of-this-position");
+        repo.clearStopLeg(id, null);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopOrderId()).isEqualTo("old-1");
+        assertThat(found.tranche2StopOrderId()).isNull();
+    }
+
+    @Test
     void repointStopLegsRepointsAMatchedLegAndLeavesQtyTrimCountSoftConfirmAlone() {
         long id = repo.insert(openPositionWithStops("REPOINTONLY" + System.nanoTime(), "old-1", "old-2"));
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,

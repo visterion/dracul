@@ -59,13 +59,19 @@ import java.util.Set;
  *       CLOSED as {@code RECONCILE_GONE} and the row takes the unchanged RECONCILE_GONE close
  *       path (which still recovers real fills from {@code closedPositions}).</li>
  *   <li><b>The broker still holds the symbol but at a quantity the legs do not account for, and
- *       no fill explains the difference</b> → {@code ESCALATE TRANCHE2_DESYNC}, carrying book,
+ *       no fill explains the difference</b> → {@code ESCALATE LEG_QTY_DESYNC}, carrying book,
  *       leg and broker quantities in the {@code inputs_snapshot}, row left OPEN. This is the
- *       only remaining case that needs an operator.</li>
+ *       only remaining case that needs an operator. One shortfall is exempt because it IS
+ *       attributable: a single open leg holding more than the broker syncs down through the
+ *       ordinary {@code QTY_SYNC} path instead.</li>
  * </ol>
  * Anything else is an ordinary still-open position and falls through to
  * {@link #updateMaintenance}. No path here closes a position on a guess: it takes either an
  * observed fill or the broker's confirmed disappearance of the position.
+ *
+ * <p>Because finding 1 closes on fills alone, the orphan scan runs a second time after the loop,
+ * against the survivors: a holding the broker still reports for a row that just closed is flagged
+ * in the same pass rather than a full cycle later.
  *
  * <p>A position with no leg rows at all (placed before the leg table existed and not covered by
  * its backfill) keeps the previous single-row behaviour verbatim, including the
@@ -204,19 +210,10 @@ public class ReconcileService {
         // entry was placed but never persisted (crash / DB failure after placeBracket) —
         // unmanaged capital. Escalate only; NEVER auto-flatten (operator-in-the-loop). Runs on
         // the pre-loop `open` list, so a position about to be closed this run is still "known"
-        // (no false orphan).
-        for (BrokerPosition bp : brokerPositions) {
-            boolean known = open.stream().anyMatch(p -> p.symbol().equals(bp.symbol()));
-            if (!known) {
-                decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                        "MAINTENANCE", null, null, null, bp.symbol(), null, null,
-                        "ESCALATE", "ORPHAN_POSITION", null,
-                        "broker position " + bp.symbol() + " has no open book row — unmanaged capital, operator attention required",
-                        null, null, null));
-                telegram.notifyAlert(bp.symbol(), "ORPHAN_POSITION", "CRITICAL",
-                        "broker holds " + bp.symbol() + " with no executor book row — check ORPHANED_ORDER decisions / reconcile manually");
-            }
-        }
+        // (no false orphan) — the second pass below covers the ones that actually did close.
+        Set<String> orphansReported = new HashSet<>();
+        escalateOrphans(brokerPositions, open, orphansReported, runId,
+                "has no open book row — unmanaged capital, operator attention required");
 
         List<ExecutorPosition> survivors = new ArrayList<>();
         Set<Long> unfilledIds = new HashSet<>();
@@ -261,7 +258,36 @@ public class ReconcileService {
                 survivors.add(updateMaintenance(p, bp, runId));
             }
         }
+
+        // Second orphan pass, against the SURVIVORS: a row this pass closed while the broker still
+        // reported a holding leaves shares nobody is managing. Closing on observed fills is right
+        // — requiring the position feed to agree would push a genuinely stopped-out position back
+        // into an escalation whenever that feed lags the fill feed by one poll, which is the
+        // original bug — but the leftover has to be reported in THIS pass. Without this it is only
+        // seen a full cycle later, once the closed row has dropped out of findOpen().
+        escalateOrphans(brokerPositions, survivors, orphansReported, runId,
+                "is still reported by the broker after its book row was closed this run — "
+                        + "unmanaged capital, verify the holding is really gone");
+
         return new ReconcileResult(survivors, unfilledIds);
+    }
+
+    /** Escalates every broker holding that no position in {@code known} accounts for, skipping
+     *  symbols already reported in {@code reported} (and adding the ones it reports to it), so the
+     *  pre-loop and post-loop passes can never alarm twice on the same symbol. */
+    private void escalateOrphans(List<BrokerPosition> brokerPositions, List<ExecutorPosition> known,
+            Set<String> reported, String runId, String detail) {
+        for (BrokerPosition bp : brokerPositions) {
+            if (reported.contains(bp.symbol())) continue;
+            if (known.stream().anyMatch(p -> p.symbol().equals(bp.symbol()))) continue;
+            reported.add(bp.symbol());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, bp.symbol(), null, null,
+                    "ESCALATE", "ORPHAN_POSITION", null,
+                    "broker position " + bp.symbol() + " " + detail, null, null, null));
+            telegram.notifyAlert(bp.symbol(), "ORPHAN_POSITION", "CRITICAL",
+                    "broker holds " + bp.symbol() + " with no executor book row — check ORPHANED_ORDER decisions / reconcile manually");
+        }
     }
 
     /** True while the position's ENTRY order ({@code brokerOrderId}) is still reported by the
@@ -394,12 +420,45 @@ public class ReconcileService {
                 legRepo.closeLeg(leg.id(), resolved.exitPrice(), resolved.exitReason(), closedAt);
             }
             bookClose(p, resolved, connection, runId);
+        } else if (brokerShortfallAttributableToOneLeg(legs, bp)) {
+            survivors.add(syncSingleLegDown(p, legs.getFirst(), bp, runId));
         } else if (brokerQtyUnaccountedFor(legs, bp)) {
             escalateLegQtyDesync(p, legs, bp, runId);
             survivors.add(p);
         } else {
             survivors.add(updateMaintenance(p, bp, runId));
         }
+    }
+
+    /**
+     * True when the broker holds LESS than the book and there is exactly one open leg to charge
+     * the difference to.
+     *
+     * <p>Without this, a position that has legs could never sync its quantity down again: any
+     * mismatch would hit {@link #escalateLegQtyDesync}, which precedes {@link #updateMaintenance},
+     * and the prod-verified QTY_SYNC path (2026-08-06: book claimed 12, broker held 6, and every
+     * quantity-based veto computed on the phantom half) would be unreachable. With exactly one
+     * open leg the leg IS the position, so the shortfall is unambiguously that leg's — a
+     * tranche-2 limit that never filled, or a partially filled entry. Nothing is guessed: the
+     * broker's own number is written.
+     *
+     * <p>Deliberately one-directional. MORE shares than the book knows about cannot be charged to
+     * a leg — that is capital from somewhere the book has no record of, and it escalates.
+     */
+    private boolean brokerShortfallAttributableToOneLeg(List<ExecutorPositionLeg> legs, BrokerPosition bp) {
+        if (legs.size() != 1) return false;
+        BigDecimal brokerQty = bp.qty();
+        BigDecimal legQty = legs.getFirst().qty();
+        if (brokerQty == null || brokerQty.signum() <= 0 || legQty == null) return false;
+        return brokerQty.compareTo(legQty) < 0;
+    }
+
+    /** Converges the one open leg to the broker's holding, then hands the position to the ordinary
+     *  maintenance path, which syncs the row's own qty (QTY_SYNC) and ratchets as usual. */
+    private ExecutorPosition syncSingleLegDown(ExecutorPosition p, ExecutorPositionLeg leg,
+            BrokerPosition bp, String runId) {
+        recordLegQtySync(p, leg, bp.qty(), runId);
+        return updateMaintenance(p, bp, runId);
     }
 
     /**
@@ -412,9 +471,15 @@ public class ReconcileService {
      * exactly the way the position's did (prod 2026-08-06), and every downstream figure computed
      * from them — the trim remainder below, the desync check — would inherit the drift.
      *
-     * <p>Only a WORKING stop counts. A PARTIALLY_FILLED stop means part of the tranche has already
-     * exited and its {@code qty} is the order's total, not the shares still held; reading it as a
-     * holding would book a quantity that is knowably wrong. A non-positive broker quantity is
+     * <p>Only a WORKING stop counts, and its {@code qty} really is shares HELD — verified against
+     * production on 2026-08-25, where the working stop quantities of all three live positions sum
+     * exactly to what the broker reports as held (6+6 against 12, 12+34 against 46, 7 against 7).
+     * The mechanism is that the stop is an IfDone child: it only starts working once its own entry
+     * has filled, so it can only ever measure filled shares, never ordered ones.
+     *
+     * <p>A PARTIALLY_FILLED stop does not count. There part of the tranche has already exited and
+     * the order's {@code qty} is its total, not the shares still held; reading it as a holding
+     * would book a quantity that is knowably wrong. A non-positive broker quantity is
      * ignored rather than written: {@code executor_position_leg} carries {@code CHECK (qty > 0)},
      * and a leg that really reached zero has to be CLOSED by one of the fill paths, not resized.
      */
@@ -434,24 +499,31 @@ public class ReconcileService {
                 continue;
             }
 
-            legRepo.syncLegQty(leg.id(), brokerQty);
-
-            ObjectNode inputs = mapper.createObjectNode();
-            inputs.put("leg_id", leg.id());
-            inputs.put("tranche", leg.tranche());
-            inputs.put("old_qty", leg.qty());
-            inputs.put("new_qty", brokerQty);
-            ObjectNode orderJson = mapper.createObjectNode();
-            orderJson.put("position_id", p.id());
-            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
-                    "SYNC", "LEG_QTY_SYNC", orderJson, null, null, null, null));
+            recordLegQtySync(p, leg, brokerQty, runId);
 
             synced.add(new ExecutorPositionLeg(leg.id(), leg.positionId(), leg.tranche(),
                     leg.entryOrderId(), leg.stopOrderId(), brokerQty, leg.status(),
                     leg.exitPrice(), leg.exitReason(), leg.closedAt()));
         }
         return synced;
+    }
+
+    /** Writes the broker's quantity onto a leg and records it. Never called with a non-positive
+     *  quantity — {@code executor_position_leg} carries {@code CHECK (qty > 0)}. */
+    private void recordLegQtySync(ExecutorPosition p, ExecutorPositionLeg leg,
+            BigDecimal brokerQty, String runId) {
+        legRepo.syncLegQty(leg.id(), brokerQty);
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("leg_id", leg.id());
+        inputs.put("tranche", leg.tranche());
+        inputs.put("old_qty", leg.qty());
+        inputs.put("new_qty", brokerQty);
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "SYNC", "LEG_QTY_SYNC", orderJson, null, null, null, null));
     }
 
     /**
@@ -572,6 +644,11 @@ public class ReconcileService {
         Instant closedAt = clock.instant();
         for (LegFill f : fills) {
             legRepo.closeLeg(f.leg().id(), f.price(), f.exitReason(), closedAt);
+            // The stop that just filled is gone at the broker, but the 3-arg recordTrim below
+            // does not touch the stop columns, so the column naming it would stay behind as a
+            // dead id. StopRatchetService then addresses that leg by name, gets LEG_NOT_FOUND,
+            // and the position spends a maintenance cycle in an escalation we caused ourselves.
+            positionRepo.clearStopLeg(p.id(), f.leg().stopOrderId());
         }
 
         Set<Long> closedLegIds = fills.stream().map(f -> f.leg().id()).collect(java.util.stream.Collectors.toSet());
@@ -586,6 +663,25 @@ public class ReconcileService {
         positionRepo.recordTrim(p.id(), qtyRemaining, newTrimCount);
 
         BigDecimal price = weightedFillPrice(fills);
+        if (price == null) {
+            // The trim still happens. The shares are gone whether or not the broker told us what
+            // they went for, and leaving the book claiming them is exactly the phantom-position
+            // bug this change exists to kill — the quantity is known, only the price is not.
+            //
+            // But the price stays null rather than falling back to a mark estimate the way
+            // closePositionFromLegs does. That path MUST produce an exit price (the row is being
+            // closed and needs one), so it labels its estimate MARK. Here a substituted price
+            // would be silently multiplied by qty_closed into a fabricated realized R for this
+            // leg. OutcomeBatchJob is built for exactly this: a missing price sets computable =
+            // false and it falls back to the position's own realized_r rather than inventing a
+            // weighted figure. Dropping the leg from the weighted R beats faking it — but it must
+            // never happen quietly, hence the warning and the explicit inputs flag.
+            log.warn("position {} (id {}): {} leg(s) filled with no usable fill price reported — "
+                    + "trimming on the known quantity ({} shares), booking the TRIM without a "
+                    + "price; its weighted realized R will fall back to the final leg",
+                    p.symbol(), p.id(), fills.size(), qtyClosed);
+        }
+
         ObjectNode orderJson = mapper.createObjectNode();
         orderJson.put("qty_closed", qtyClosed);
         orderJson.put("qty_remaining", qtyRemaining);
@@ -601,6 +697,7 @@ public class ReconcileService {
         inputs.put("book_qty", p.qty());
         inputs.put("legs_closed", fills.size());
         inputs.put("legs_remaining", legs.size() - fills.size());
+        inputs.put("fill_price_available", price != null);
 
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
@@ -614,7 +711,9 @@ public class ReconcileService {
                         + " shares at " + price + ") — book trimmed to " + qtyRemaining
                         + " shares, position stays open");
 
-        return withTrim(p, qtyRemaining, newTrimCount);
+        Set<String> deadStopIds = fills.stream().map(f -> f.leg().stopOrderId())
+                .filter(id -> id != null).collect(java.util.stream.Collectors.toSet());
+        return withTrim(p, qtyRemaining, newTrimCount, deadStopIds);
     }
 
     /** True when the broker holds a quantity the OPEN legs do not account for. A missing or
@@ -633,6 +732,12 @@ public class ReconcileService {
      * observed fill explains. Nothing may be closed on that: it records the escalation with book,
      * leg and broker quantities side by side and leaves the row OPEN for an operator. Capital
      * protection meanwhile comes from the broker-held stops, not from this book row.
+     *
+     * <p>Deliberately NOT the legacy {@code TRANCHE2_DESYNC} code, which the legless path still
+     * emits: that one fires when a two-bracket row saw an exit leg fill it cannot attribute, this
+     * one when a broker holding cannot be reconciled to the legs. Two different conditions sharing
+     * one alarm name is what makes an alarm unreadable. Nothing outside the Java code keys on
+     * either name — the daily analysis alarms generically on {@code action='ESCALATE'}.
      */
     private void escalateLegQtyDesync(ExecutorPosition p, List<ExecutorPositionLeg> legs,
             BrokerPosition bp, String runId) {
@@ -650,22 +755,28 @@ public class ReconcileService {
 
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
-                "ESCALATE", "TRANCHE2_DESYNC", orderJson,
+                "ESCALATE", "LEG_QTY_DESYNC", orderJson,
                 "position " + p.symbol() + " (id " + p.id() + "): broker holds " + bp.qty()
                         + " but the " + legs.size() + " open leg(s) account for " + legsQty
-                        + " and no observed fill explains the difference — TRANCHE2_DESYNC — "
+                        + " and no observed fill explains the difference — LEG_QTY_DESYNC — "
                         + "operator attention required", null, null, null));
     }
 
-    /** Copy of {@code p} after a trim: the surviving quantity, the bumped trim count, and the
-     *  soft-confirm streak reset that {@link ExecutorPositionRepository#recordTrim} persists. */
-    private static ExecutorPosition withTrim(ExecutorPosition p, BigDecimal qty, int trimCount) {
+    /** Copy of {@code p} after a trim: the surviving quantity, the bumped trim count, the
+     *  soft-confirm streak reset that {@link ExecutorPositionRepository#recordTrim} persists, and
+     *  the stop-leg columns of the filled tranches cleared, so the survivor handed on to the rest
+     *  of THIS pass no longer names an order the broker has already filled. */
+    private static ExecutorPosition withTrim(ExecutorPosition p, BigDecimal qty, int trimCount,
+            Set<String> deadStopIds) {
+        String stopOrderId = deadStopIds.contains(p.stopOrderId()) ? null : p.stopOrderId();
+        String tranche2StopOrderId = deadStopIds.contains(p.tranche2StopOrderId())
+                ? null : p.tranche2StopOrderId();
         return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), qty,
                 p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
                 p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
                 p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), 0,
-                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
-                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), stopOrderId,
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), tranche2StopOrderId,
                 trimCount, p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
     }

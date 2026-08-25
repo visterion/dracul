@@ -1151,6 +1151,7 @@ class ReconcileServiceTest {
         verify(legRepo).closeLeg(eq(10L), any(), eq("HARD_STOP"), any());
         verify(legRepo).closeLeg(eq(11L), any(), eq("HARD_STOP"), any());
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("LEG_QTY_DESYNC"));
         assertThat(survivors).isEmpty();
     }
 
@@ -1184,7 +1185,8 @@ class ReconcileServiceTest {
         assertThat(trim.orderJson().path("fraction").asDouble()).isEqualTo(0.5);
         assertThat(trim.orderJson().path("position_id").asLong()).isEqualTo(1L);
         assertThat(captor.getAllValues()).noneMatch(
-                d -> "TRANCHE2_DESYNC".equals(d.reasonCode()));
+                d -> "TRANCHE2_DESYNC".equals(d.reasonCode())
+                        || "LEG_QTY_DESYNC".equals(d.reasonCode()));
 
         // The row stays OPEN and is handed on carrying the surviving quantity, not the stale one.
         assertThat(survivors).hasSize(1);
@@ -1210,6 +1212,7 @@ class ReconcileServiceTest {
         verify(legRepo).closeLeg(eq(10L), any(), eq("RECONCILE_GONE"), any());
         verify(legRepo).closeLeg(eq(11L), any(), eq("RECONCILE_GONE"), any());
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("LEG_QTY_DESYNC"));
         assertThat(survivors).isEmpty();
     }
 
@@ -1229,8 +1232,11 @@ class ReconcileServiceTest {
         ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo, atLeastOnce()).insert(captor.capture());
         DecisionLog esc = captor.getAllValues().stream()
-                .filter(d -> "TRANCHE2_DESYNC".equals(d.reasonCode())).findFirst().orElseThrow();
+                .filter(d -> "LEG_QTY_DESYNC".equals(d.reasonCode())).findFirst().orElseThrow();
         assertThat(esc.action()).isEqualTo("ESCALATE");
+        // The legacy legless path keeps TRANCHE2_DESYNC: two different conditions must not share
+        // one alarm name.
+        assertThat(captor.getAllValues()).noneMatch(d -> "TRANCHE2_DESYNC".equals(d.reasonCode()));
         assertThat(esc.inputsSnapshot().path("book_qty").asInt()).isEqualTo(20);
         assertThat(esc.inputsSnapshot().path("broker_qty").asInt()).isEqualTo(15);
         assertThat(esc.inputsSnapshot().path("legs_qty").asInt()).isEqualTo(20);
@@ -1263,13 +1269,171 @@ class ReconcileServiceTest {
         verify(legRepo).syncLegQty(eq(10L), argThatComparesTo("8"));
         verify(legRepo, never()).syncLegQty(eq(11L), any());
         // Legs now sum to the broker's 18 -> no desync escalation.
-        verify(decisionRepo, never()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("LEG_QTY_DESYNC"));
     }
 
     private static BigDecimal argThatComparesTo(String expected) {
         BigDecimal e = new BigDecimal(expected);
         return org.mockito.ArgumentMatchers.argThat(
                 (BigDecimal actual) -> actual != null && actual.compareTo(e) == 0);
+    }
+
+
+    @Test
+    void singleOpenLegBrokerHoldsLess_syncsQtyInsteadOfEscalating() {
+        // Regression guard for the prod-verified QTY_SYNC path (2026-08-06: book claims 12, broker
+        // holds 6) once the position HAS legs. With exactly one open leg the leg IS the position,
+        // so the broker's smaller holding is unambiguously attributable -- syncing is right and
+        // escalating would make the fixed bug unfixable again. Pinned WITH a leg present on
+        // purpose: the older regression test only passes because its leg list is empty.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("12"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("12"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo).syncQty(1L, new BigDecimal("6"));
+        verify(legRepo).syncLegQty(eq(10L), argThatComparesTo("6"));
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("LEG_QTY_DESYNC"));
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().qty()).isEqualByComparingTo("6");
+    }
+
+    @Test
+    void singleOpenLegBrokerHoldsMore_stillEscalates() {
+        // Only a SMALLER broker holding is attributable to the leg (a tranche that never filled,
+        // a partial). More shares than the book knows about is unexplained capital -- escalate.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("6"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("12"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        service.reconcile("c", "run-1");
+
+        verify(decisionRepo, atLeastOnce()).insert(argThatReasonCodeIs("LEG_QTY_DESYNC"));
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+    }
+
+    @Test
+    void legQtySyncIgnoresNonPositiveBrokerQty() {
+        // executor_position_leg carries CHECK (qty > 0): writing 0 aborts the transaction. A leg
+        // that really reached zero has to be CLOSED by a fill path, never resized to nothing.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.WORKING, BigDecimal.ZERO, BigDecimal.ZERO, null, "ord-1"));
+
+        service.reconcile("c", "run-1");
+
+        verify(legRepo, never()).syncLegQty(anyLong(), any());
+    }
+
+    @Test
+    void reconcileTrim_nullsTheFilledTranchesStopColumn() {
+        // The 3-arg recordTrim does not touch the stop columns, so the column for the tranche that
+        // just filled would keep naming an order the broker no longer has -- and the ratchet would
+        // then address it by name and escalate on a state we created ourselves.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo).clearStopLeg(1L, "stop-1");
+        // The survivor handed on in the same pass must not still name the dead leg either.
+        assertThat(survivors.getFirst().stopOrderId()).isNull();
+        assertThat(survivors.getFirst().tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
+    void legFilledWithoutUsablePrice_stillTrimsAndRecordsANullPrice() {
+        // The shares are gone whether or not the broker reported what they went for. Leaving the
+        // book claiming them is the phantom-position bug; a fabricated price would fabricate a
+        // realized R. So: trim on the known quantity, record price null, warn.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), null));
+
+        service.reconcile("c", "run-1");
+
+        verify(positionRepo).recordTrim(eq(1L), argThatComparesTo("10"), eq(1));
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeastOnce()).insert(captor.capture());
+        DecisionLog trim = captor.getAllValues().stream()
+                .filter(d -> "TRIM".equals(d.action())).findFirst().orElseThrow();
+        assertThat(trim.orderJson().path("qty_closed").asInt()).isEqualTo(10);
+        assertThat(trim.orderJson().path("price").isNull()).isTrue();
+        assertThat(trim.inputsSnapshot().has("fill_price_available")).isTrue();
+        assertThat(trim.inputsSnapshot().path("fill_price_available").asBoolean()).isFalse();
+    }
+
+    @Test
+    void allLegsFilledWhileBrokerStillHoldsShares_escalatesOrphanInTheSamePass() {
+        // The row closes on observed fills (that is the whole point -- a lagging position feed
+        // must not push a stopped-out position back into an escalation), but a holding the broker
+        // still reports is unmanaged capital and has to be flagged in THIS pass, not one full
+        // cycle later once the row has left `findOpen`.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+        gateway.seedOrder(filled("stop-2", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo).close(eq(1L), any(), any(), eq("HARD_STOP"), eq("FILL"), any());
+        verify(decisionRepo, atLeastOnce()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
+        verify(telegram).notifyAlert(eq("ACME"), eq("ORPHAN_POSITION"), eq("CRITICAL"), any());
+        assertThat(survivors).isEmpty();
+    }
+
+    @Test
+    void survivingPositionIsNotReportedAsAnOrphan() {
+        // Idempotence guard for the post-loop scan: a position that stays OPEN is still known.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+
+        service.reconcile("c", "run-1");
+
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
+        verify(telegram, never()).notifyAlert(any(), eq("ORPHAN_POSITION"), any(), any());
     }
 
 }

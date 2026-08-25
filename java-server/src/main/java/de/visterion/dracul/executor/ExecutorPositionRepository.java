@@ -314,6 +314,33 @@ public class ExecutorPositionRepository {
     }
 
     /**
+     * Nulls whichever stop-leg column names {@code stopOrderId}, for a leg the broker has already
+     * filled. Touches nothing else — no qty, no trim count, no soft-confirm streak.
+     *
+     * <p>A stale id is worse than a null one: {@link StopRatchetService} addresses the leg by name
+     * and gets LEG_NOT_FOUND back, so the position spends a whole maintenance cycle in an
+     * escalation caused by our own trim. A null column is a visible protection gap instead —
+     * the same reasoning {@link #repointStopLegs} already applies to unmatched ids.
+     *
+     * <p>Written as a conditional UPDATE rather than read-modify-write so it cannot race another
+     * writer between the SELECT and the UPDATE. A {@code stopOrderId} that matches neither column
+     * is a no-op.
+     */
+    public void clearStopLeg(long id, String stopOrderId) {
+        if (stopOrderId == null) return;
+        jdbc.sql("""
+                UPDATE executor_position
+                SET stop_order_id = CASE WHEN stop_order_id = :sid THEN NULL ELSE stop_order_id END,
+                    tranche2_stop_order_id = CASE WHEN tranche2_stop_order_id = :sid
+                                                  THEN NULL ELSE tranche2_stop_order_id END
+                WHERE id = :id
+                """)
+                .param("sid", stopOrderId)
+                .param("id", id)
+                .update();
+    }
+
+    /**
      * Repoints ONLY the stop-leg id columns, for a rejected trim whose rollback still changed
      * broker state (new leg ids, or a leg irrecoverably cancelled). Unlike {@link
      * #recordTrim(long, BigDecimal, int, List, boolean)}, this must never touch {@code qty},
