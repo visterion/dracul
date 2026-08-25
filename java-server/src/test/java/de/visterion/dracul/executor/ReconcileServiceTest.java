@@ -1026,8 +1026,47 @@ class ReconcileServiceTest {
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
-        verify(decisionRepo).insert(argThatReasonCodeIs("FILL_HISTORY_UNAVAILABLE"));
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        DecisionLog esc = captor.getValue();
+        assertThat(esc.action()).isEqualTo("ESCALATE");
+        assertThat(esc.reasonCode()).isEqualTo("FILL_HISTORY_UNAVAILABLE");
+        assertThat(esc.inputsSnapshot().path("withheld").asText()).isEqualTo("RECONCILE_GONE");
+        assertThat(esc.inputsSnapshot().path("book_qty").asInt()).isEqualTo(10);
+        assertThat(esc.inputsSnapshot().has("legs_qty")).isFalse();
+        assertThat(esc.inputsSnapshot().has("broker_qty")).isFalse();
         assertThat(survivors).extracting(ExecutorPosition::id).containsExactly(52L);
+    }
+
+    @Test
+    void filledOrderHistoryUnavailable_doesNotSyncQtyDownOnTheLegacyChain() {
+        // Same evidence gap, reached from the legacy (legless) chain's shrink case: a smaller
+        // broker holding used to fall through the final `else` into updateMaintenance, which
+        // syncs qty down unconditionally and books a bare QTY_SYNC row -- no TRIM, no realized R
+        // for the missing shares. With the fill history broken that shortfall cannot be told
+        // apart from an unobserved stop fill, so it must escalate instead, exactly like the
+        // leg-path shortfall gate.
+        ExecutorPosition p = openPosition(53L, "SYNA", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "2000000007", "2000000008", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("SYNA", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.filledOrdersThrows = new RuntimeException("history endpoint down");
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        DecisionLog esc = captor.getValue();
+        assertThat(esc.action()).isEqualTo("ESCALATE");
+        assertThat(esc.reasonCode()).isEqualTo("FILL_HISTORY_UNAVAILABLE");
+        assertThat(esc.inputsSnapshot().path("withheld").asText()).isEqualTo("QTY_SYNC_SHORTFALL");
+        assertThat(esc.inputsSnapshot().path("book_qty").asInt()).isEqualTo(10);
+        assertThat(esc.inputsSnapshot().has("legs_qty")).isFalse();
+        assertThat(esc.inputsSnapshot().path("broker_qty").asInt()).isEqualTo(6);
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().qty()).isEqualByComparingTo("10");
     }
 
     // -------------------------------------------------------------------
@@ -1240,8 +1279,18 @@ class ReconcileServiceTest {
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
-        verify(decisionRepo).insert(argThat(d -> "ESCALATE".equals(d.action())
-                && "FILL_HISTORY_UNAVAILABLE".equals(d.reasonCode())));
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        DecisionLog esc = captor.getValue();
+        assertThat(esc.action()).isEqualTo("ESCALATE");
+        assertThat(esc.reasonCode()).isEqualTo("FILL_HISTORY_UNAVAILABLE");
+        // The discriminator between "would have closed" and "would have resized" must be
+        // queryable, not buried in the reasoning prose -- same field name convention as
+        // escalateLegQtyDesync's book/legs/broker quantities.
+        assertThat(esc.inputsSnapshot().path("withheld").asText()).isEqualTo("RECONCILE_GONE");
+        assertThat(esc.inputsSnapshot().path("book_qty").asInt()).isEqualTo(20);
+        assertThat(esc.inputsSnapshot().path("legs_qty").asInt()).isEqualTo(20);
+        assertThat(esc.inputsSnapshot().has("broker_qty")).isFalse();
         assertThat(survivors).extracting(ExecutorPosition::id).containsExactly(1L);
     }
 
@@ -1354,11 +1403,49 @@ class ReconcileServiceTest {
 
         verify(positionRepo, never()).syncQty(anyLong(), any());
         verify(legRepo, never()).syncLegQty(anyLong(), any());
-        verify(decisionRepo).insert(argThat(d -> "ESCALATE".equals(d.action())
-                && "FILL_HISTORY_UNAVAILABLE".equals(d.reasonCode())));
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        DecisionLog esc = captor.getValue();
+        assertThat(esc.action()).isEqualTo("ESCALATE");
+        assertThat(esc.reasonCode()).isEqualTo("FILL_HISTORY_UNAVAILABLE");
+        assertThat(esc.inputsSnapshot().path("withheld").asText()).isEqualTo("QTY_SYNC_SHORTFALL");
+        assertThat(esc.inputsSnapshot().path("book_qty").asInt()).isEqualTo(12);
+        assertThat(esc.inputsSnapshot().path("legs_qty").asInt()).isEqualTo(12);
+        assertThat(esc.inputsSnapshot().path("broker_qty").asInt()).isEqualTo(6);
         assertThat(survivors).extracting(ExecutorPosition::qty)
                 .usingElementComparator(BigDecimal::compareTo)
                 .containsExactly(new BigDecimal("12"));
+    }
+
+    @Test
+    void fillHistoryUnavailable_doesNotResizeLegFromItsWorkingStopQtyEither() {
+        // syncLegQuantities runs before any fillHistoryAvailable gate and resizes a leg straight
+        // from its WORKING stop order's reported quantity -- but a stop that partially filled
+        // reports a reduced working quantity, which is indistinguishable from an unobserved
+        // partial fill when the history call failed. Left ungated, this would silently shrink the
+        // leg (SYNC/LEG_QTY_SYNC) in the very same pass that then escalates
+        // FILL_HISTORY_UNAVAILABLE -- and it would also erase the evidence the shortfall gate
+        // needs: once the leg is resynced to the broker's smaller number, brokerShortfallAttributableToOneLeg
+        // sees no shortfall left to report.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("12"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("12"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.WORKING, new BigDecimal("6"), BigDecimal.ZERO, null, "ord-1"));
+        gateway.filledOrdersThrows = new RuntimeException("history endpoint down");
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(legRepo, never()).syncLegQty(anyLong(), any());
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+        verify(decisionRepo).insert(argThat(d -> "ESCALATE".equals(d.action())
+                && "FILL_HISTORY_UNAVAILABLE".equals(d.reasonCode())));
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().qty()).isEqualByComparingTo("12");
     }
 
     @Test

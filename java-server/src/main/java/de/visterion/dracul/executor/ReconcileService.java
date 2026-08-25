@@ -73,15 +73,23 @@ import java.util.Set;
  * observed fill or the broker's confirmed disappearance of the position.
  *
  * <p><b>Missing fill history is not evidence of absence.</b> {@code filledOrdersSince} is fetched
- * once per pass and fails soft — a failure never aborts reconcile — but findings 3 and the
- * shortfall exemption above both reason from "no fill was observed", and that reasoning is only
- * sound when the history call actually ran. When it throws, {@code fillHistoryAvailable} is false
- * for the rest of the pass and every position that would otherwise be CLOSED as
- * {@code RECONCILE_GONE} or synced down through the one-shortfall exemption is left completely
- * untouched instead, with an {@code ESCALATE FILL_HISTORY_UNAVAILABLE} row
- * ({@link #escalateMissingEvidence}) recording that the evidence, not the position, is what went
- * missing. The legless chain applies the same rule to its own RECONCILE_GONE branch. An empty but
- * successfully-fetched history is unaffected — that is a fact about the world, not a failure.
+ * once per pass and fails soft — a failure never aborts reconcile — but finding 3, the
+ * one-shortfall exemption above, and {@link #syncLegQuantities}'s per-leg WORKING-stop
+ * convergence all reason from "no fill was observed" (directly, or indirectly: a WORKING stop
+ * reporting a smaller qty than the leg's is exactly what an unobserved partial fill looks like),
+ * and that reasoning is only sound when the history call actually ran. When it throws,
+ * {@code fillHistoryAvailable} is false for the rest of the pass and: (1) {@link
+ * #syncLegQuantities} skips its per-leg convergence entirely rather than risk pre-resizing a leg
+ * on a guess and erasing the shortfall the next two checks need to see; (2) every position that
+ * would otherwise be CLOSED as {@code RECONCILE_GONE} is left OPEN with its legs untouched
+ * instead; (3) the one-shortfall exemption's sync is withheld the same way. All three record an
+ * {@code ESCALATE FILL_HISTORY_UNAVAILABLE} row ({@link #escalateMissingEvidence}) carrying a
+ * {@code withheld} discriminator (RECONCILE_GONE vs. QTY_SYNC_SHORTFALL) plus the book/leg/broker
+ * quantities in {@code inputs_snapshot}, so the distinction is queryable, not just prose. The
+ * legless chain applies the identical rule to its own RECONCILE_GONE branch and to the
+ * quantity-shrink case {@link #updateMaintenance} would otherwise sync unconditionally (see
+ * {@link #legacyBrokerQtyShrank}). An empty but successfully-fetched history is unaffected — that
+ * is a fact about the world, not a failure.
  *
  * <p>Because finding 1 closes on fills alone, the orphan scan runs a second time after the loop,
  * against the survivors: a holding the broker still reports for a row that just closed is flagged
@@ -279,10 +287,22 @@ public class ReconcileService {
                 // would book an estimated exit for a position we have no real evidence closed at
                 // all. Missing evidence is not evidence of absence: leave the row OPEN and let an
                 // operator look, rather than have it silently degrade into the estimate.
-                escalateMissingEvidence(p, runId, "broker no longer reports the position");
+                escalateMissingEvidence(p, runId, "broker no longer reports the position",
+                        "RECONCILE_GONE", p.qty(), null, null);
                 survivors.add(p);
             } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, connection, runId);
+            } else if (!fillHistoryAvailable && legacyBrokerQtyShrank(p, bp)) {
+                // Symmetric to the leg path's one-shortfall gate: updateMaintenance below would
+                // otherwise sync p.qty() down to the broker's smaller number unconditionally and
+                // book a bare QTY_SYNC row -- no TRIM, no realized R for the missing shares. With
+                // the fill history broken that shortfall cannot be told apart from an unobserved
+                // stop fill, so it escalates instead of guessing.
+                escalateMissingEvidence(p, runId,
+                        "broker reports fewer shares than the book accounts for, with no fill "
+                                + "observed to explain it",
+                        "QTY_SYNC_SHORTFALL", p.qty(), null, bp.qty());
+                survivors.add(p);
             } else {
                 survivors.add(updateMaintenance(p, bp, runId));
             }
@@ -329,6 +349,18 @@ public class ReconcileService {
                 .filter(o -> p.brokerOrderId().equals(o.orderId()))
                 .anyMatch(o -> o.status() == OrderStatus.WORKING
                         || o.status() == OrderStatus.PARTIALLY_FILLED);
+    }
+
+    /** True when the broker holds fewer shares than a legless (single-row) position's book qty.
+     *  The legacy-chain counterpart of {@link #brokerShortfallAttributableToOneLeg}: with no legs
+     *  to attribute the shortfall to, the single row IS the position, so any smaller broker
+     *  quantity is unambiguously that row's -- ordinarily synced through {@link #updateMaintenance}.
+     *  Used only to gate that sync behind {@code fillHistoryAvailable}; it does not by itself
+     *  decide anything. */
+    private boolean legacyBrokerQtyShrank(ExecutorPosition p, BrokerPosition bp) {
+        BigDecimal brokerQty = bp.qty();
+        if (brokerQty == null || brokerQty.signum() <= 0 || p.qty() == null) return false;
+        return brokerQty.compareTo(p.qty()) < 0;
     }
 
     /**
@@ -419,14 +451,18 @@ public class ReconcileService {
 
     /**
      * Reconciles one position against its OPEN legs. Quantities are converged to the broker
-     * first, then the four findings of the class javadoc are evaluated in order.
+     * first (unless {@code fillHistoryAvailable} is false, in which case that convergence is
+     * skipped entirely — see {@link #syncLegQuantities}), then the four findings of the class
+     * javadoc are evaluated in order.
      */
     private void reconcileByLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
             BrokerPosition bp, List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders,
             String connection, String runId, List<ExecutorPosition> survivors,
             Set<Long> unfilledIds, boolean fillHistoryAvailable) {
-        legs = syncLegQuantities(p, legs, openOrders, runId);
+        legs = syncLegQuantities(p, legs, openOrders, runId, fillHistoryAvailable);
         List<LegFill> fills = matchLegFills(legs, filledOrders);
+        BigDecimal legsQty = legs.stream().map(ExecutorPositionLeg::qty)
+                .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         if (!fills.isEmpty() && fills.size() == legs.size()) {
             closePositionFromLegs(p, fills, bp, connection, runId);
@@ -444,7 +480,8 @@ public class ReconcileService {
             // "we could not ask". Booking RECONCILE_GONE here would close every open leg on an
             // estimate for shares whose fate is genuinely unknown this pass. Leave the row (and
             // its legs) OPEN and escalate instead.
-            escalateMissingEvidence(p, runId, "broker no longer reports the position");
+            escalateMissingEvidence(p, runId, "broker no longer reports the position",
+                    "RECONCILE_GONE", p.qty(), legsQty, null);
             survivors.add(p);
         } else if (bp == null) {
             // Confirmed disappearance with no observed fill: same RECONCILE_GONE close as a
@@ -467,7 +504,8 @@ public class ReconcileService {
             // for those shares. Escalate instead of guessing which one it is.
             escalateMissingEvidence(p, runId,
                     "broker reports fewer shares than the open leg(s) account for, with no fill "
-                            + "observed to explain it");
+                            + "observed to explain it",
+                    "QTY_SYNC_SHORTFALL", p.qty(), legsQty, bp.qty());
             survivors.add(p);
         } else if (brokerShortfallAttributableToOneLeg(legs, bp)) {
             survivors.add(syncSingleLegDown(p, legs.getFirst(), bp, runId));
@@ -486,13 +524,36 @@ public class ReconcileService {
      * vanished/shrunk position cannot be told apart from one that genuinely exited at a price we
      * never saw, and booking that guess would invent a realized R. The row is left completely
      * untouched (not even a qty sync) and an operator has to look.
+     *
+     * <p>{@code withheld} is the discriminator between the two findings this can preempt --
+     * {@code RECONCILE_GONE} (would have closed) or {@code QTY_SYNC_SHORTFALL} (would have synced
+     * a quantity down) -- carried in {@code inputs_snapshot} rather than left to the {@code
+     * reasoning} prose, alongside the same book/legs/broker quantities {@link
+     * #escalateLegQtyDesync} already surfaces for its sibling alarm. One reason code
+     * ({@code FILL_HISTORY_UNAVAILABLE}) covers both: the root cause is singular (the evidence
+     * channel failed), only the withheld action differs, unlike {@code LEG_QTY_DESYNC} vs.
+     * {@code TRANCHE2_DESYNC} where two genuinely different conditions used to share one name.
+     * {@code legsQty}/{@code brokerQty} are omitted from the snapshot (not written as null) when
+     * not applicable to the withheld finding -- the legless chain has no legs, and a vanished
+     * position has no broker quantity to report.
      */
-    private void escalateMissingEvidence(ExecutorPosition p, String runId, String detail) {
+    private void escalateMissingEvidence(ExecutorPosition p, String runId, String detail,
+            String withheld, BigDecimal bookQty, BigDecimal legsQty, BigDecimal brokerQty) {
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("withheld", withheld);
+        inputs.put("book_qty", bookQty);
+        if (legsQty != null) {
+            inputs.put("legs_qty", legsQty);
+        }
+        if (brokerQty != null) {
+            inputs.put("broker_qty", brokerQty);
+        }
+
         ObjectNode orderJson = mapper.createObjectNode();
         orderJson.put("position_id", p.id());
 
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                "MAINTENANCE", null, null, null, p.symbol(), null, null,
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
                 "ESCALATE", "FILL_HISTORY_UNAVAILABLE", orderJson,
                 "position " + p.symbol() + " (id " + p.id() + "): " + detail
                         + " — the fill-order history was unavailable this pass, so it was left "
@@ -552,9 +613,24 @@ public class ReconcileService {
      * would book a quantity that is knowably wrong. A non-positive broker quantity is
      * ignored rather than written: {@code executor_position_leg} carries {@code CHECK (qty > 0)},
      * and a leg that really reached zero has to be CLOSED by one of the fill paths, not resized.
+     *
+     * <p>A no-op entirely when {@code fillHistoryAvailable} is false. A WORKING stop's reported
+     * qty can shrink not only because the stop order was modified but because part of the tranche
+     * partially filled -- and that is exactly the kind of unobserved fill the fill history exists
+     * to confirm. Resizing a leg from it while that channel is broken would (a) silently shrink
+     * the leg with no TRIM row and no realized R for the missing shares, and (b) erase the
+     * evidence {@link #brokerShortfallAttributableToOneLeg} and {@link #brokerQtyUnaccountedFor}
+     * need downstream: once the leg is pre-converged to the broker's smaller number, both checks
+     * see no shortfall left to escalate on. Declining the sync here, not just gating the close/
+     * resize findings later, is what keeps {@link #escalateMissingEvidence}'s "left completely
+     * untouched" claim true on the leg path.
      */
     private List<ExecutorPositionLeg> syncLegQuantities(ExecutorPosition p,
-            List<ExecutorPositionLeg> legs, List<BrokerOrder> openOrders, String runId) {
+            List<ExecutorPositionLeg> legs, List<BrokerOrder> openOrders, String runId,
+            boolean fillHistoryAvailable) {
+        if (!fillHistoryAvailable) {
+            return legs;
+        }
         List<ExecutorPositionLeg> synced = new ArrayList<>(legs.size());
         for (ExecutorPositionLeg leg : legs) {
             BigDecimal brokerQty = leg.stopOrderId() == null ? null : openOrders.stream()
