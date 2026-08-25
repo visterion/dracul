@@ -297,6 +297,27 @@ class ExecutorPositionRepositoryTest {
     }
 
     @Test
+    void markStopLegsCollapsedSetsOnlyTheFlag() {
+        // The pair of writes a reconcile trim makes: null the dead leg, then explain the null.
+        long id = repo.insert(openPositionWithStops("COLLAPSEFLAG" + System.nanoTime(), "old-1", "old-2"));
+        repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
+                new BigDecimal("104"), "old-1");
+        ExecutorPosition before = repo.findById(id);
+        assertThat(before.stopLegsCollapsed()).isFalse();
+
+        repo.clearStopLeg(id, "old-1");
+        repo.markStopLegsCollapsed(id);
+
+        ExecutorPosition found = repo.findById(id);
+        assertThat(found.stopLegsCollapsed()).isTrue();
+        assertThat(found.stopOrderId()).isNull();
+        assertThat(found.tranche2StopOrderId()).isEqualTo("old-2");
+        assertThat(found.qty()).isEqualByComparingTo(before.qty());
+        assertThat(found.trimCount()).isEqualTo(before.trimCount());
+        assertThat(found.softConfirmCount()).isEqualTo(3);
+    }
+
+    @Test
     void clearStopLegClearsTheTranche2ColumnAndIgnoresAnUnknownId() {
         long id = repo.insert(openPositionWithStops("CLEARSTOP2" + System.nanoTime(), "old-1", "old-2"));
 

@@ -1436,4 +1436,109 @@ class ReconcileServiceTest {
         verify(telegram, never()).notifyAlert(any(), eq("ORPHAN_POSITION"), any(), any());
     }
 
+
+    /** The route StopRatchetService takes for a position, expressed exactly as it computes it
+     *  (BUG-S13 comment block). Duplicated here on purpose: the point of the assertion is that a
+     *  reconcile trim leaves a survivor the REAL ratchet sends down the single-leg path. */
+    private static boolean ratchetWouldTakeTheTwoLegPath(ExecutorPosition p) {
+        boolean bothLegsNamed = p.stopOrderId() != null && p.tranche2StopOrderId() != null;
+        boolean expectsTwoLegs = p.tranche() >= 2
+                || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
+        return bothLegsNamed || (expectsTwoLegs && !p.stopLegsCollapsed());
+    }
+
+    @Test
+    void reconcileTrim_recordsTheStopLegCollapseSoTheSurvivorRatchetsOnOneLeg() {
+        // Nulling the dead stop id is only half the bookkeeping. Without the collapse flag the
+        // survivor reads as "expects two legs, only one named, no explanation", which is exactly
+        // the state ratchetTwoLegs escalates as TRANCHE_RATCHET_UNSUPPORTED -- every run, on a
+        // state our own trim created. MaintenancePipeline feeds these survivors into the same
+        // pass, so it would fire immediately.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo).markStopLegsCollapsed(1L);
+        assertThat(ratchetWouldTakeTheTwoLegPath(p)).isTrue();          // before the trim
+        assertThat(survivors.getFirst().stopLegsCollapsed()).isTrue();
+        assertThat(ratchetWouldTakeTheTwoLegPath(survivors.getFirst())).isFalse();
+    }
+
+    @Test
+    void reconcileTrim_doesNotRecordACollapseWhileBothStopLegsAreStillNamed() {
+        // The flag has exactly one job: explain why a two-tranche position names only one stop
+        // leg. A trim that leaves both columns populated has nothing to explain, and claiming a
+        // collapse would send a genuinely two-legged position down the single-leg ratchet.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", null, new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        // Leg 1 has no stop id of its own; its fill is matched through its entry order instead,
+        // so neither stop column is cleared.
+        gateway.seedOrder(new BrokerOrder("tp-1", "ref-1", "ACME", OrderRole.TAKE_PROFIT,
+                OrderStatus.FILLED, new BigDecimal("10"), new BigDecimal("10"),
+                new BigDecimal("112"), "ord-1"));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo).recordTrim(eq(1L), argThatComparesTo("10"), eq(1));
+        verify(positionRepo, never()).markStopLegsCollapsed(anyLong());
+        assertThat(survivors.getFirst().stopLegsCollapsed()).isFalse();
+        assertThat(survivors.getFirst().stopOrderId()).isEqualTo("stop-1");
+        assertThat(survivors.getFirst().tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
+    void pricelessTrim_telegramTextDoesNotInterpolateNull() {
+        // Operator-facing text: "(10 shares at null)" is noise that reads like a bug in the alert.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), null));
+
+        service.reconcile("c", "run-1");
+
+        ArgumentCaptor<String> thesis = ArgumentCaptor.forClass(String.class);
+        verify(telegram).notifyAlert(eq("ACME"), eq("POSITION_TRIMMED"), eq("INFO"), thesis.capture());
+        assertThat(thesis.getValue()).doesNotContain("null");
+        assertThat(thesis.getValue()).contains("10 shares");
+        assertThat(thesis.getValue()).contains("no fill price");
+    }
+
+    @Test
+    void trimWithAFillPriceStillNamesItInTheTelegramText() {
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        service.reconcile("c", "run-1");
+
+        ArgumentCaptor<String> thesis = ArgumentCaptor.forClass(String.class);
+        verify(telegram).notifyAlert(eq("ACME"), eq("POSITION_TRIMMED"), eq("INFO"), thesis.capture());
+        assertThat(thesis.getValue()).contains("10 shares at 95");
+    }
+
 }

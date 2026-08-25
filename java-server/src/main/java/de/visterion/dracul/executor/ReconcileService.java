@@ -53,8 +53,11 @@ import java.util.Set;
  *   <li><b>Some legs have a fill</b> → the position shrank on its own. The filled legs are
  *       CLOSED, the row is TRIMmed to the surviving legs' quantity (staying OPEN) and a TRIM
  *       decision is written in the same shape as the webhook partial-exit path, so
- *       {@code OutcomeBatchJob}'s weighted realized R still counts it. An INFO Telegram note
- *       goes out — a position that shrank without an instruction is worth knowing about.</li>
+ *       {@code OutcomeBatchJob}'s weighted realized R still counts it. The filled tranche's
+ *       stop-leg column is nulled and, when that leaves a two-tranche row naming a single leg,
+ *       the collapse is recorded — otherwise the ratchet escalates on every run over a state this
+ *       trim created. An INFO Telegram note goes out too: a position that shrank without an
+ *       instruction is worth knowing about.</li>
  *   <li><b>The broker no longer reports the position and no fill was observed</b> → the legs are
  *       CLOSED as {@code RECONCILE_GONE} and the row takes the unchanged RECONCILE_GONE close
  *       path (which still recovers real fills from {@code closedPositions}).</li>
@@ -706,14 +709,36 @@ public class ReconcileService {
                         + legs.size() + " legs exited at the broker — trimmed to " + qtyRemaining
                         + " shares, row stays OPEN", null, null, null));
 
+        String closedText = price == null
+                ? qtyClosed + " shares, no fill price reported by the broker"
+                : qtyClosed + " shares at " + price;
         telegram.notifyAlert(p.symbol(), "POSITION_TRIMMED", "INFO",
-                "one of " + p.symbol() + "'s broker tranches exited on its own (" + qtyClosed
-                        + " shares at " + price + ") — book trimmed to " + qtyRemaining
+                "one of " + p.symbol() + "'s broker tranches exited on its own (" + closedText
+                        + ") — book trimmed to " + qtyRemaining
                         + " shares, position stays open");
 
         Set<String> deadStopIds = fills.stream().map(f -> f.leg().stopOrderId())
                 .filter(id -> id != null).collect(java.util.stream.Collectors.toSet());
-        return withTrim(p, qtyRemaining, newTrimCount, deadStopIds);
+        String stopOrderId = deadStopIds.contains(p.stopOrderId()) ? null : p.stopOrderId();
+        String tranche2StopOrderId = deadStopIds.contains(p.tranche2StopOrderId())
+                ? null : p.tranche2StopOrderId();
+
+        // Nulling the dead id is only half the bookkeeping. A two-tranche row that now names one
+        // stop leg and does not say why is precisely the state ratchetTwoLegs escalates as
+        // TRANCHE_RATCHET_UNSUPPORTED — on every maintenance run, on a state this trim created,
+        // and immediately, because MaintenancePipeline feeds these survivors into the same pass.
+        // Recording the collapse routes the survivor down the single-leg ratchet instead, which is
+        // what it now is. Only when fewer than two legs are actually named: the flag explains a
+        // missing id, it must never be used to decide how many legs there are (BUG-S13).
+        boolean expectsTwoLegs = p.tranche() >= 2 || p.tranche2OrderId() != null
+                || p.tranche2StopOrderId() != null;
+        boolean bothLegsNamed = stopOrderId != null && tranche2StopOrderId != null;
+        boolean collapsed = p.stopLegsCollapsed() || (expectsTwoLegs && !bothLegsNamed);
+        if (collapsed && !p.stopLegsCollapsed()) {
+            positionRepo.markStopLegsCollapsed(p.id());
+        }
+
+        return withTrim(p, qtyRemaining, newTrimCount, stopOrderId, tranche2StopOrderId, collapsed);
     }
 
     /** True when the broker holds a quantity the OPEN legs do not account for. A missing or
@@ -762,15 +787,14 @@ public class ReconcileService {
                         + "operator attention required", null, null, null));
     }
 
-    /** Copy of {@code p} after a trim: the surviving quantity, the bumped trim count, the
-     *  soft-confirm streak reset that {@link ExecutorPositionRepository#recordTrim} persists, and
-     *  the stop-leg columns of the filled tranches cleared, so the survivor handed on to the rest
-     *  of THIS pass no longer names an order the broker has already filled. */
+    /** Copy of {@code p} after a trim, carrying everything this pass wrote to the row: the
+     *  surviving quantity, the bumped trim count, the soft-confirm streak reset that
+     *  {@link ExecutorPositionRepository#recordTrim} persists, the stop-leg columns of the filled
+     *  tranches cleared, and the collapse flag that explains a cleared one. The rest of THIS pass
+     *  reads this record, so anything missing here is a stale value the maintenance pipeline acts
+     *  on before the next reconcile run corrects it. */
     private static ExecutorPosition withTrim(ExecutorPosition p, BigDecimal qty, int trimCount,
-            Set<String> deadStopIds) {
-        String stopOrderId = deadStopIds.contains(p.stopOrderId()) ? null : p.stopOrderId();
-        String tranche2StopOrderId = deadStopIds.contains(p.tranche2StopOrderId())
-                ? null : p.tranche2StopOrderId();
+            String stopOrderId, String tranche2StopOrderId, boolean collapsed) {
         return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), qty,
                 p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
                 p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
@@ -778,7 +802,7 @@ public class ReconcileService {
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), stopOrderId,
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), tranche2StopOrderId,
                 trimCount, p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), collapsed);
     }
 
     /**

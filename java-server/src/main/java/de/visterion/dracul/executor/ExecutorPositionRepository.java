@@ -341,6 +341,25 @@ public class ExecutorPositionRepository {
     }
 
     /**
+     * Records that this position's two stop legs have collapsed to one, without touching anything
+     * else. For a trim that removed the tranche whose stop had already filled: {@link
+     * #clearStopLeg} nulls the dead id, and this explains the null.
+     *
+     * <p>{@code stop_legs_collapsed} has exactly one job (BUG-S13): it tells {@link
+     * StopRatchetService} why a two-tranche position names only one stop leg, and so separates a
+     * legitimately single-legged survivor (ratchet the one leg) from a book whose second id is
+     * merely unknown (escalate {@code TRANCHE_RATCHET_UNSUPPORTED}). Without it, a reconcile trim
+     * would leave a survivor in the second state — an escalation on every maintenance run, caused
+     * by our own bookkeeping. Set it only when fewer than two stop legs are actually named; the
+     * flag must never be used to decide how MANY legs there are.
+     */
+    public void markStopLegsCollapsed(long id) {
+        jdbc.sql("UPDATE executor_position SET stop_legs_collapsed = true WHERE id = :id")
+                .param("id", id)
+                .update();
+    }
+
+    /**
      * Repoints ONLY the stop-leg id columns, for a rejected trim whose rollback still changed
      * broker state (new leg ids, or a leg irrecoverably cancelled). Unlike {@link
      * #recordTrim(long, BigDecimal, int, List, boolean)}, this must never touch {@code qty},
