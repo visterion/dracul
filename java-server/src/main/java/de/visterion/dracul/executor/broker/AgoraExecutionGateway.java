@@ -232,23 +232,24 @@ public class AgoraExecutionGateway implements ExecutionGateway {
      * <p>The Saxo values arrive lower-cased straight off the wire (Agora passes
      * {@code Status} through verbatim), so the terminal names have to be listed
      * here explicitly. Observed in production: {@code working}, {@code open},
-     * {@code changed}, {@code finalfill}, {@code notworking}. {@code partialfill}
+     * {@code changed}, {@code finalfill}. {@code notworking} seen once, as an
+     * embedded OCO child copy under a Working parent. {@code partialfill}
      * comes from the Saxo docs and has not been seen on our account yet.
      *
      * <p>An unrecognised status stays WORKING — the conservative choice, because a
-     * non-terminal guess can never fabricate a close — but it is logged. The silent
-     * default this replaces is what kept the whole fill-detection path dead: an
-     * unmapped {@code finalfill} looked exactly like a live order.
+     * non-terminal guess can never fabricate a close, but it can fabricate a
+     * live order — but it is logged. The silent default this replaces is what kept
+     * the whole fill-detection path dead: an unmapped {@code finalfill} looked
+     * exactly like a live order.
      */
     private OrderStatus toStatus(String status) {
         if (status == null) return OrderStatus.WORKING;
-        return switch (status.toLowerCase()) {
+        return switch (status.toLowerCase(java.util.Locale.ROOT)) {
             case "filled", "finalfill" -> OrderStatus.FILLED;
             case "partially_filled", "partial", "partialfill" -> OrderStatus.PARTIALLY_FILLED;
             case "cancelled", "canceled" -> OrderStatus.CANCELLED;
             case "rejected" -> OrderStatus.REJECTED;
-            case "working", "open", "changed", "new", "accepted", "pending_new", "held",
-                 "notworking" -> OrderStatus.WORKING;
+            case "working", "open", "changed", "new", "accepted", "pending_new", "held" -> OrderStatus.WORKING;
             default -> {
                 log.warn("unmapped broker order status '{}' — treating it as WORKING; "
                         + "a terminal status hiding here makes fills unobservable", status);

@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor.broker;
 
 import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -17,6 +18,27 @@ class AgoraExecutionGatewayTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private JsonNode json(String s) { return mapper.readTree(s); }
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>
+            attachAppender() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(AgoraExecutionGateway.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    @AfterEach
+    void detachAppenders() {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraExecutionGateway.class))
+                .detachAndStopAllAppenders();
+    }
+
+    private static List<String> logLines(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> a) {
+        return a.list.stream().map(e -> e.getFormattedMessage()).toList();
+    }
 
     /** Capturing subclass: stubs the HTTP seam, records the last (tool, args) call. */
     private static class CapturingGateway extends AgoraExecutionGateway {
@@ -483,6 +505,47 @@ class AgoraExecutionGatewayTest {
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().orderId()).isEqualTo("stop-1");
         assertThat(result.getFirst().avgFillPrice()).isEqualByComparingTo("95");
+    }
+
+    @Test void unknownStatusMapsToWorkingAndLogsWarning() {
+        // The default branch must stay logged, not silent. This test pins that regression
+        // cannot happen: an unknown status maps to WORKING and emits the warning.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"ord-weird","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"weirdstatus","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":null}
+                ]}}
+                """);
+        var appender = attachAppender();
+
+        List<BrokerOrder> result = gw.orders("depot-1");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(logLines(appender))
+                .anySatisfy(l -> assertThat(l)
+                        .contains("unmapped broker order status 'weirdstatus'")
+                        .contains("treating it as WORKING")
+                        .contains("terminal status hiding here makes fills unobservable"));
+    }
+
+    @Test void partialfillMapsToPartiallyFilled() {
+        // partialfill is documented in Saxo docs but never observed on our account.
+        // Pinning the mapping ensures the correct behaviour is at least covered.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"ord-partial","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"partialfill","qty":"10","filledQty":"6","avgFillPrice":"95","parentId":null}
+                ]}}
+                """);
+
+        List<BrokerOrder> result = gw.orders("depot-1");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status()).isEqualTo(OrderStatus.PARTIALLY_FILLED);
+        assertThat(result.get(0).filledQty()).isEqualByComparingTo("6");
     }
 
     @Test void modifyBracketThrowsOnRejection() {
