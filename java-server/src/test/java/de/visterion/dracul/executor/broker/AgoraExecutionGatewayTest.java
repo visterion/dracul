@@ -448,6 +448,43 @@ class AgoraExecutionGatewayTest {
                 .isInstanceOf(BrokerUnavailableException.class);
     }
 
+    @Test void ordersMapsRealSaxoStatusVocabulary() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"ord-fill","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"finalfill","qty":"10","filledQty":"10","avgFillPrice":"95","parentId":null},
+                    {"brokerOrderId":"ord-work","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"working","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":null},
+                    {"brokerOrderId":"ord-chg","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"changed","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":null}
+                ]}}
+                """);
+
+        List<BrokerOrder> result = gw.orders("depot-1");
+
+        assertThat(result.get(0).status()).isEqualTo(OrderStatus.FILLED);
+        assertThat(result.get(1).status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(result.get(2).status()).isEqualTo(OrderStatus.WORKING);
+    }
+
+    @Test void filledOrdersSinceKeepsFinalFill() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"stop-1","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"finalfill","qty":"10","filledQty":"10","avgFillPrice":"95","parentId":null}
+                ]}}
+                """);
+
+        List<BrokerOrder> result =
+                gw.filledOrdersSince("depot-1", java.time.Instant.parse("2026-01-01T00:00:00Z"));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().orderId()).isEqualTo("stop-1");
+        assertThat(result.getFirst().avgFillPrice()).isEqualByComparingTo("95");
+    }
+
     @Test void modifyBracketThrowsOnRejection() {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":false,\"rejectReason\":\"unknown order\"}}");

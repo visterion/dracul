@@ -1,5 +1,7 @@
 package de.visterion.dracul.executor.broker;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -25,6 +27,8 @@ import java.util.Optional;
 @Component
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class AgoraExecutionGateway implements ExecutionGateway {
+
+    private static final Logger log = LoggerFactory.getLogger(AgoraExecutionGateway.class);
 
     private final String token;
     private final ObjectMapper mapper;
@@ -222,16 +226,34 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         };
     }
 
-    /** Anything not explicitly terminal/working-named (new/accepted/pending_new/held/working/open/…)
-     *  maps to WORKING — brokers vary in their exact working-state vocabulary. */
+    /**
+     * Maps the broker's status vocabulary onto {@link OrderStatus}.
+     *
+     * <p>The Saxo values arrive lower-cased straight off the wire (Agora passes
+     * {@code Status} through verbatim), so the terminal names have to be listed
+     * here explicitly. Observed in production: {@code working}, {@code open},
+     * {@code changed}, {@code finalfill}, {@code notworking}. {@code partialfill}
+     * comes from the Saxo docs and has not been seen on our account yet.
+     *
+     * <p>An unrecognised status stays WORKING — the conservative choice, because a
+     * non-terminal guess can never fabricate a close — but it is logged. The silent
+     * default this replaces is what kept the whole fill-detection path dead: an
+     * unmapped {@code finalfill} looked exactly like a live order.
+     */
     private OrderStatus toStatus(String status) {
         if (status == null) return OrderStatus.WORKING;
         return switch (status.toLowerCase()) {
-            case "filled" -> OrderStatus.FILLED;
-            case "partially_filled", "partial" -> OrderStatus.PARTIALLY_FILLED;
+            case "filled", "finalfill" -> OrderStatus.FILLED;
+            case "partially_filled", "partial", "partialfill" -> OrderStatus.PARTIALLY_FILLED;
             case "cancelled", "canceled" -> OrderStatus.CANCELLED;
             case "rejected" -> OrderStatus.REJECTED;
-            default -> OrderStatus.WORKING;
+            case "working", "open", "changed", "new", "accepted", "pending_new", "held",
+                 "notworking" -> OrderStatus.WORKING;
+            default -> {
+                log.warn("unmapped broker order status '{}' — treating it as WORKING; "
+                        + "a terminal status hiding here makes fills unobservable", status);
+                yield OrderStatus.WORKING;
+            }
         };
     }
 
