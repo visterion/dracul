@@ -37,7 +37,10 @@ class AgoraExecutionGatewayTest {
 
     private static List<String> logLines(
             ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> a) {
-        return a.list.stream().map(e -> e.getFormattedMessage()).toList();
+        return a.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(e -> e.getFormattedMessage())
+                .toList();
     }
 
     /** Capturing subclass: stubs the HTTP seam, records the last (tool, args) call. */
@@ -526,6 +529,30 @@ class AgoraExecutionGatewayTest {
         assertThat(logLines(appender))
                 .anySatisfy(l -> assertThat(l)
                         .contains("unmapped broker order status 'weirdstatus'")
+                        .contains("treating it as WORKING")
+                        .contains("terminal status hiding here makes fills unobservable"));
+    }
+
+    @Test void notworkingStatusMapsToWorkingAndLogsWarning() {
+        // notworking is deliberately unmapped so it falls through to the logged default.
+        // This test ensures the warning is preserved and someone cannot accidentally
+        // add a case for notworking without being caught.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                    {"brokerOrderId":"ord-notworking","clientRef":"r","symbol":"ACME","role":"other",
+                     "status":"notworking","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":null}
+                ]}}
+                """);
+        var appender = attachAppender();
+
+        List<BrokerOrder> result = gw.orders("depot-1");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(logLines(appender))
+                .anySatisfy(l -> assertThat(l)
+                        .contains("unmapped broker order status 'notworking'")
                         .contains("treating it as WORKING")
                         .contains("terminal status hiding here makes fills unobservable"));
     }
