@@ -703,61 +703,61 @@ class ReconcileServiceTest {
 
     @Test
     void reconcileGone_withClosedPositionMatch_booksRealFillsAndSourceFill() {
-        // Verified prod incident (ISRG 2026-07-17): a bracket filled at a gapped-down open and
+        // Verified prod incident (SYNG 2026-07-17): a bracket filled at a gapped-down open and
         // stopped out entirely between two reconcile cycles. The book never saw it OPEN, so the
         // reconciler previously booked placeholders (submitted limit as entry, stop as exit,
         // exit_price_source=null). Now a real closed-position match must book the real fill.
-        ExecutorPosition p = openPosition(20L, "ISRG", "BUY", new BigDecimal("402.57"),
-                new BigDecimal("370.54"), "brk-20", "stop-20", null, null);
+        ExecutorPosition p = openPosition(20L, "SYNG", "BUY", new BigDecimal("100.00"),
+                new BigDecimal("67.97"), "brk-20", "stop-20", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
-        gateway.seedClosedPosition(new BrokerClosedPosition("ISRG", new BigDecimal("364.35"),
-                new BigDecimal("364.10"), new BigDecimal("-0.25"), "sig-1"));
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNG", new BigDecimal("61.78"),
+                new BigDecimal("61.53"), new BigDecimal("-0.25"), "sig-1"));
 
         service.reconcile("c", "run1");
 
-        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("364.35"));
+        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("61.78"));
 
         // R must be measured against the ORIGINAL planned risk (planned entry vs initial stop),
         // NOT the synced real entry vs stop -- a gapped-down fill lands below its stop, which
         // would flip the entry-stop denominator negative and turn this ~0.25-loss into a
-        // positive R (see the ISRG incident this fix addresses).
-        BigDecimal expectedR = new BigDecimal("364.10").subtract(new BigDecimal("364.35"))
-                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP); // ~ -0.007805
+        // positive R (see the SYNG incident this fix addresses).
+        BigDecimal expectedR = new BigDecimal("61.53").subtract(new BigDecimal("61.78"))
+                .divide(new BigDecimal("100.00").subtract(new BigDecimal("67.97")), 6, RoundingMode.HALF_UP); // ~ -0.007805
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(20L), eq(new BigDecimal("364.10")), realizedRCaptor.capture(),
+        verify(positionRepo).close(eq(20L), eq(new BigDecimal("61.53")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("FILL"), rValueCaptor.capture());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
         assertThat(realizedRCaptor.getValue().signum()).isLessThan(0);
-        // r_value here must be the PLANNED-risk denominator (402.57 - 370.54), NOT the live
+        // r_value here must be the PLANNED-risk denominator (100.00 - 67.97), NOT the live
         // entry/stop denominator computeR would have used -- same reason realizedR is measured
         // against planned risk (see realizedRAgainstPlannedRisk()).
         assertThat(rValueCaptor.getValue()).isEqualByComparingTo("32.03");
         assertThat(realizedRCaptor.getValue())
-                .isEqualByComparingTo(new BigDecimal("364.10").subtract(new BigDecimal("364.35"))
+                .isEqualByComparingTo(new BigDecimal("61.53").subtract(new BigDecimal("61.78"))
                         .divide(rValueCaptor.getValue(), 6, RoundingMode.HALF_UP));
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
     }
 
     @Test
     void reconcileGone_matchWithBigAdverseGap_booksNegativeRNotPositive() {
-        // Gapped-down fill 364.35 then closes far below at 350.00 -- a real ~0.45R LOSS. The OLD
+        // Gapped-down fill 61.78 then closes far below at 47.43 -- a real ~0.45R LOSS. The OLD
         // (buggy) entry-stop denominator would report +2.32R (a win). Pin it strictly negative.
-        ExecutorPosition p = openPosition(22L, "ISRG", "BUY", new BigDecimal("402.57"),
-                new BigDecimal("370.54"), "brk-22", "stop-22", null, null);
+        ExecutorPosition p = openPosition(22L, "SYNG", "BUY", new BigDecimal("100.00"),
+                new BigDecimal("67.97"), "brk-22", "stop-22", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        gateway.seedClosedPosition(new BrokerClosedPosition("ISRG", new BigDecimal("364.35"),
-                new BigDecimal("350.00"), new BigDecimal("-14.35"), "sig-1"));
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNG", new BigDecimal("61.78"),
+                new BigDecimal("47.43"), new BigDecimal("-14.35"), "sig-1"));
 
         service.reconcile("c", "run1");
 
-        BigDecimal expectedR = new BigDecimal("350.00").subtract(new BigDecimal("364.35"))
-                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP); // ~ -0.448
+        BigDecimal expectedR = new BigDecimal("47.43").subtract(new BigDecimal("61.78"))
+                .divide(new BigDecimal("100.00").subtract(new BigDecimal("67.97")), 6, RoundingMode.HALF_UP); // ~ -0.448
 
         ArgumentCaptor<BigDecimal> cap = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(22L), eq(new BigDecimal("350.00")), cap.capture(),
+        verify(positionRepo).close(eq(22L), eq(new BigDecimal("47.43")), cap.capture(),
                 eq("RECONCILE_GONE"), eq("FILL"), any());
         assertThat(cap.getValue()).isEqualByComparingTo(expectedR);
         assertThat(cap.getValue().signum()).isLessThan(0); // sharpest anti-sign-flip assertion
@@ -765,8 +765,8 @@ class ReconcileServiceTest {
 
     @Test
     void reconcileGone_noClosedPositionMatch_labelsSourceReconcileGone() {
-        ExecutorPosition p = openPosition(21L, "ISRG", "BUY", new BigDecimal("402.57"),
-                new BigDecimal("370.54"), "brk-21", "stop-21", null, null);
+        ExecutorPosition p = openPosition(21L, "SYNG", "BUY", new BigDecimal("100.00"),
+                new BigDecimal("67.97"), "brk-21", "stop-21", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         // No closedPositions seeded -> FakeExecutionGateway returns an empty list.
 
@@ -774,11 +774,11 @@ class ReconcileServiceTest {
 
         verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
 
-        BigDecimal expectedR = new BigDecimal("370.54").subtract(new BigDecimal("402.57"))
-                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP);
+        BigDecimal expectedR = new BigDecimal("67.97").subtract(new BigDecimal("100.00"))
+                .divide(new BigDecimal("100.00").subtract(new BigDecimal("67.97")), 6, RoundingMode.HALF_UP);
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(21L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
+        verify(positionRepo).close(eq(21L), eq(new BigDecimal("67.97")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("RECONCILE_GONE"), any());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
     }
@@ -788,22 +788,22 @@ class ReconcileServiceTest {
         // Guard against a malformed upstream fill (Saxo field-mapping bug): a matched closed
         // position with a non-positive/null open price must be treated as unusable, not booked
         // as a real fill (entry=0/exit=0 would corrupt realizedR far worse than the estimate).
-        ExecutorPosition p = openPosition(22L, "ISRG", "BUY", new BigDecimal("402.57"),
-                new BigDecimal("370.54"), "brk-22", "stop-22", null, null);
+        ExecutorPosition p = openPosition(22L, "SYNG", "BUY", new BigDecimal("100.00"),
+                new BigDecimal("67.97"), "brk-22", "stop-22", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
-        gateway.seedClosedPosition(new BrokerClosedPosition("ISRG", BigDecimal.ZERO,
-                new BigDecimal("364.10"), new BigDecimal("-0.25"), "sig-1"));
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNG", BigDecimal.ZERO,
+                new BigDecimal("61.53"), new BigDecimal("-0.25"), "sig-1"));
 
         service.reconcile("c", "run1");
 
         verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
 
-        BigDecimal expectedR = new BigDecimal("370.54").subtract(new BigDecimal("402.57"))
-                .divide(new BigDecimal("402.57").subtract(new BigDecimal("370.54")), 6, RoundingMode.HALF_UP);
+        BigDecimal expectedR = new BigDecimal("67.97").subtract(new BigDecimal("100.00"))
+                .divide(new BigDecimal("100.00").subtract(new BigDecimal("67.97")), 6, RoundingMode.HALF_UP);
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(22L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
+        verify(positionRepo).close(eq(22L), eq(new BigDecimal("67.97")), realizedRCaptor.capture(),
                 eq("RECONCILE_GONE"), eq("RECONCILE_GONE"), any());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo(expectedR);
     }
@@ -875,7 +875,7 @@ class ReconcileServiceTest {
         //
         // plannedRisk <= 0 here comes from the book's entry_price already sitting BELOW the
         // initial stop (365 < 370) -- exactly what a prior run's syncEntryPrice can leave behind
-        // on a gapped-down fill (the ISRG scenario this whole branch exists for), not from
+        // on a gapped-down fill (the SYNG scenario this whole branch exists for), not from
         // entry_price == initial_stop.
         ExecutorPosition p = openPosition(65L, "GAPFAIL", "BUY", new BigDecimal("365"),
                 new BigDecimal("370"), "brk-65", "stop-65", null, null);
@@ -898,23 +898,23 @@ class ReconcileServiceTest {
     }
 
     @Test
-    void hardStop_isrgShapedFill_persistsLiveEntryStopDenominator() {
+    void hardStop_syngShapedFill_persistsLiveEntryStopDenominator() {
         // Normal computeR path (not RECONCILE_GONE): r_value must be the live entry/stop
         // denominator, matching whatever realized_r was actually divided by.
-        // entry 402.57, stop 370.54 -> denominator 32.03; stopped out exactly at the stop
+        // entry 100.00, stop 67.97 -> denominator 32.03; stopped out exactly at the stop
         // -> realized_r -1.000000.
-        ExecutorPosition p = openPosition(62L, "ISRGX", "BUY", new BigDecimal("402.57"),
-                new BigDecimal("370.54"), "brk-62", "stop-62", null, null);
+        ExecutorPosition p = openPosition(62L, "SYNGX", "BUY", new BigDecimal("100.00"),
+                new BigDecimal("67.97"), "brk-62", "stop-62", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
-        gateway.seedOrder(new BrokerOrder("stop-62", "ref-62", "ISRGX", OrderRole.STOP_LOSS,
-                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("370.54"), "brk-62"));
+        gateway.seedOrder(new BrokerOrder("stop-62", "ref-62", "SYNGX", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("67.97"), "brk-62"));
 
         service.reconcile("c", "run1");
 
         ArgumentCaptor<BigDecimal> realizedRCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> rValueCaptor = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(positionRepo).close(eq(62L), eq(new BigDecimal("370.54")), realizedRCaptor.capture(),
+        verify(positionRepo).close(eq(62L), eq(new BigDecimal("67.97")), realizedRCaptor.capture(),
                 eq("HARD_STOP"), eq("FILL"), rValueCaptor.capture());
         assertThat(realizedRCaptor.getValue()).isEqualByComparingTo("-1.000000");
         assertThat(rValueCaptor.getValue()).isEqualByComparingTo("32.03");
