@@ -25,6 +25,7 @@ class StopRatchetServiceTest {
 
     private final FakeExecutionGateway gateway = new FakeExecutionGateway();
     private final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
+    private final ExecutorPositionLegRepository legRepo = mock(ExecutorPositionLegRepository.class);
     private final DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
@@ -37,10 +38,11 @@ class StopRatchetServiceTest {
         final List<Long> backoffs = new java.util.ArrayList<>();
 
         RecordingStopRatchetService(FakeExecutionGateway gateway, ExecutorPositionRepository positionRepo,
+                ExecutorPositionLegRepository legRepo,
                 DecisionLogRepository decisionRepo, RuleVersionProvider ruleVersions,
                 StopRatchetGuard guard, ObjectMapper mapper, ExecutorNotifier notifier,
                 double chandelierMult, int retryAttempts, long retryBackoffMs, long retryBudgetMs) {
-            super(gateway, positionRepo, decisionRepo, ruleVersions, guard, mapper, notifier,
+            super(gateway, positionRepo, legRepo, decisionRepo, ruleVersions, guard, mapper, notifier,
                     chandelierMult, retryAttempts, retryBackoffMs, retryBudgetMs);
         }
 
@@ -57,8 +59,22 @@ class StopRatchetServiceTest {
     }
 
     private RecordingStopRatchetService newService(int attempts, long backoffMs, long budgetMs) {
-        return new RecordingStopRatchetService(gateway, positionRepo, decisionRepo, ruleVersions,
+        return new RecordingStopRatchetService(gateway, positionRepo, legRepo, decisionRepo, ruleVersions,
                 new StopRatchetGuard(), mapper, executorNotifier, 3.0, attempts, backoffMs, budgetMs);
+    }
+
+    /** An OPEN leg row exactly as {@code executor_position_leg} holds it. */
+    private ExecutorPositionLeg leg(long id, long positionId, int tranche, String entryOrderId,
+            String stopOrderId, BigDecimal qty) {
+        return new ExecutorPositionLeg(id, positionId, tranche, entryOrderId, stopOrderId, qty,
+                ExecutorPositionLeg.OPEN, null, null, null);
+    }
+
+    /** Stubs the leg book for a position. Every test that does NOT call this exercises the legacy
+     *  column path: the mock returns an empty leg list, which is what a position predating the
+     *  leg table looks like. */
+    private void withOpenLegs(long positionId, ExecutorPositionLeg... legs) {
+        when(legRepo.findOpenByPosition(positionId)).thenReturn(List.of(legs));
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal highestPrice,
@@ -399,6 +415,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailures = 1;
         gateway.failModifyForStopOrderId = "2000000002";
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order";
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
         service = newService(1, 0L, 0L);
 
         service.ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
@@ -413,8 +430,9 @@ class StopRatchetServiceTest {
         verify(decisionRepo, times(2)).insert(logCaptor.capture());
         List<DecisionLog> logs = logCaptor.getAllValues();
         // A stale book id fails LOUDLY once the leg is addressed by name — LEG_NOT_FOUND is a
-        // structural rejection, escalated on the first attempt, never retried.
-        assertThat(logs.get(0).reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        // structural rejection, escalated on the first attempt, never retried, and reported as
+        // what it is: the leg is missing, the broker is not down.
+        assertThat(logs.get(0).reasonCode()).isEqualTo("STOP_LEG_MISSING");
         assertThat(logs.get(0).reasoning()).contains("LEG_NOT_FOUND").contains("2000000002");
         assertThat(logs.get(1).action()).isEqualTo("ESCALATE");
         assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
@@ -892,6 +910,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
         gateway.modifyFailures = 99;
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no stop-loss leg";
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
@@ -900,7 +919,7 @@ class StopRatchetServiceTest {
         assertThat(service.backoffs).isEmpty();
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
-        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("STOP_LEG_MISSING");
         assertThat(logCaptor.getValue().reasoning()).contains("LEG_NOT_FOUND");
     }
 
@@ -939,5 +958,296 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).hasSize(1);
         assertThat(service.backoffs).isEmpty();
+    }
+
+    // -------------------------------------------------------------------
+    // The ratchet over executor_position_leg — one row per broker tranche
+    // -------------------------------------------------------------------
+
+    @Test
+    void ratchetsEveryOpenLegWithItsExplicitStopId() {
+        // BUG-S13. The broker holds each tranche as its own position with its own stop order.
+        // Every one of them has to be named: Agora's by-symbol fallback keeps only the LAST stop
+        // order on the instrument, so an unnamed modify with two live legs moves one of them —
+        // picked by the broker's scan order — while the book would record the new stop for both.
+        ExecutorPosition p = openPosition(60L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
+        withOpenLegs(60L,
+                leg(10L, 60L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 60L, 2, "ord-2", "stop-2", new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::stopOrderId)
+                .containsExactlyInAnyOrder("stop-1", "stop-2");
+        assertThat(gateway.modifyCalls).noneMatch(c -> c.stopOrderId() == null);
+        // Each leg is addressed through its OWN entry order id, not the position's bracket for both.
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::orderId)
+                .containsExactly("ord-1", "ord-2");
+        assertThat(gateway.modifyCalls).allSatisfy(
+                c -> assertThat(c.stop()).isEqualByComparingTo("104"));
+
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(60L),
+                any(), any(), any(Integer.class),
+                org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("104")) == 0),
+                org.mockito.ArgumentMatchers.isNull());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void legsOutrankTheTrancheColumns() {
+        // The columns say "one tranche, stop-1"; the leg table says two live legs. The legs win:
+        // they are the book's record of what the broker actually holds, and a column that has not
+        // caught up must never shrink the ratchet to one leg.
+        ExecutorPosition p = openPosition(61L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, null, null);
+        withOpenLegs(61L,
+                leg(10L, 61L, 1, null, "stop-1", new BigDecimal("10")),
+                leg(11L, 61L, 2, null, "stop-2", new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        // No entry order id on either leg -> the position's bracket id is the order id, and the
+        // leg id is still what selects the leg.
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::orderId)
+                .containsExactly("brk-1", "brk-1");
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::stopOrderId)
+                .containsExactly("stop-1", "stop-2");
+    }
+
+    @Test
+    void aFilledLegIsNeverAddressed_soTheOrdinaryCaseIsSilent() {
+        // Requirement for STOP_LEG_MISSING not to become noise: reconcile runs BEFORE the ratchet
+        // in the same pass and closes every leg whose stop it saw fill. The ratchet reads the OPEN
+        // legs fresh, so the filled leg is simply not in the list — one modify, for the survivor,
+        // and no escalation anywhere. The columns still name the dead leg (stop-1); that must not
+        // produce a single call.
+        ExecutorPosition p = openPosition(62L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
+        withOpenLegs(62L, leg(11L, 62L, 2, "ord-2", "stop-2", new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isEqualTo("stop-2");
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(62L),
+                any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void legNotFound_escalatesAsStopLegMissingNotBrokerUnavailable() {
+        // The book still holds this leg OPEN and the broker does not have it: that is the state
+        // that must be visible. It is a verdict, not an outage — BROKER_UNAVAILABLE has to keep
+        // meaning "no answer from the broker" or an operator cannot read either alarm.
+        ExecutorPosition p = openPosition(63L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 1, null, null);
+        withOpenLegs(63L, leg(10L, 63L, 1, "ord-1", "stop-1", new BigDecimal("10")));
+        gateway.modifyFailures = 99;
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-1";
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, org.mockito.Mockito.atLeastOnce()).insert(captor.capture());
+        assertThat(captor.getAllValues()).anyMatch(d -> "STOP_LEG_MISSING".equals(d.reasonCode()));
+        assertThat(captor.getAllValues()).noneMatch(d -> "BROKER_UNAVAILABLE".equals(d.reasonCode()));
+        assertThat(captor.getAllValues()).allSatisfy(d -> assertThat(d.action()).isEqualTo("ESCALATE"));
+        // Structural: one attempt, no backoff, and the book keeps the old stop.
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(service.backoffs).isEmpty();
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void aTransportFailureOnALegIsStillBrokerUnavailable() {
+        // The other half of the same distinction: no verdict from the broker at all keeps
+        // BROKER_UNAVAILABLE. Without this the new code would just be a rename.
+        ExecutorPosition p = openPosition(64L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 1, null, null);
+        withOpenLegs(64L, leg(10L, 64L, 1, "ord-1", "stop-1", new BigDecimal("10")));
+        gateway.modifyFailures = 99;
+        gateway.modifyFailureMessage = "agora trading call failed: modify_bracket — HTTP 503";
+        service = newService(1, 0L, 0L);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        assertThat(logCaptor.getValue().reasoning()).contains("stop-1");
+    }
+
+    @Test
+    void aRejectionThatIsNotLegNotFound_isReportedAsARejection() {
+        // Any accepted:false verdict is a rejection, not an outage — but nothing may claim the leg
+        // is gone on a code that does not say so.
+        ExecutorPosition p = openPosition(65L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 1, null, null);
+        withOpenLegs(65L, leg(10L, 65L, 1, "ord-1", "stop-1", new BigDecimal("10")));
+        gateway.modifyFailures = 99;
+        gateway.modifyRejectCode = "PRICE_OUT_OF_RANGE";
+        gateway.modifyFailureMessage = "agora order rejected [PRICE_OUT_OF_RANGE]: outside collar";
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("STOP_MODIFY_REJECTED");
+        assertThat(logCaptor.getValue().reasoning()).contains("PRICE_OUT_OF_RANGE").contains("stop-1");
+        assertThat(gateway.modifyCalls).hasSize(1);
+    }
+
+    @Test
+    void activeStopIsNotWrittenWhenOneLegFails() {
+        // Half a broker is not a book entry: leg 1 sits at 104, leg 2 still at 95, so the only
+        // level true of the WHOLE position is 95. stopguard reads that single column.
+        ExecutorPosition p = openPosition(66L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
+        withOpenLegs(66L,
+                leg(10L, 66L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 66L, 2, "ord-2", "stop-2", new BigDecimal("10")));
+        gateway.modifyFailures = 1;
+        gateway.failModifyForStopOrderId = "stop-2";
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-2";
+        service = newService(1, 0L, 0L);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
+                any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, times(2)).insert(logCaptor.capture());
+        List<DecisionLog> logs = logCaptor.getAllValues();
+        assertThat(logs.get(0).reasonCode()).isEqualTo("STOP_LEG_MISSING");
+        assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
+        assertThat(logs.get(1).orderJson().get("moved_stop_order_ids").get(0).asString())
+                .isEqualTo("stop-1");
+        assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("stop-2");
+        assertThat(logs.get(1).orderJson().get("active_stop").asDouble()).isEqualTo(95.0);
+        assertThat(logs.get(1).orderJson().get("attempted_stop").asDouble()).isEqualTo(104.0);
+        assertThat(logs.get(1).orderJson().get("position_id").asLong()).isEqualTo(66L);
+    }
+
+    @Test
+    void firstLegFails_isNotReportedAsAPartial() {
+        // Nothing moved at the broker, so this is an ordinary failed ratchet: one escalation, no
+        // second modify, and emphatically not a "partial".
+        ExecutorPosition p = openPosition(67L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
+        withOpenLegs(67L,
+                leg(10L, 67L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 67L, 2, "ord-2", "stop-2", new BigDecimal("10")));
+        gateway.modifyFailures = 99;
+        gateway.failModifyForStopOrderId = "stop-1";
+        service = newService(1, 0L, 0L);
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void twoOpenLegsWithOneUnnamedLeg_escalatesAndSendsNothing() {
+        // A leg that cannot be named cannot be moved while a sibling is live: an unnamed modify
+        // would land in the by-symbol fallback and patch the OTHER leg twice. Escalate, send
+        // nothing, leave every stop where it is.
+        ExecutorPosition p = openPosition(68L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", null);
+        withOpenLegs(68L,
+                leg(10L, 68L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 68L, 2, "ord-2", null, new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        assertThat(logCaptor.getValue().reasoning()).contains("tranche 2");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
+    void aSingleOpenLegWithNoStopIdStillRatchetsThroughTheBracket() {
+        // The one unnamed modify that stays legitimate: with a single stop live on the instrument
+        // "the last stop order found" and "the only stop order" are the same order. Escalating
+        // instead would leave a real position un-ratcheted for as long as the id is missing.
+        ExecutorPosition p = openPosition(69L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, null, null);
+        withOpenLegs(69L, leg(10L, 69L, 1, null, null, new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("brk-1");
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isNull();
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(69L),
+                any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void aLegWithNoAddressAtAll_escalatesNoBracketId() {
+        // No entry order id on the leg and no bracket id on the position: there is nothing to send
+        // the modify to. Escalate rather than call the gateway with a null order id.
+        ExecutorPosition p = openPosition(70L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, null, 1, null, null);
+        withOpenLegs(70L, leg(10L, 70L, 1, null, "stop-1", new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("NO_BRACKET_ID");
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void aTransientFailureOnALegIsStillRetried() {
+        // The retry contract is unchanged by the leg rewrite: a rate limit is "come back in a
+        // moment", and the second attempt confirms the leg.
+        ExecutorPosition p = openPosition(71L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 1, null, null);
+        withOpenLegs(71L, leg(10L, 71L, 1, "ord-1", "stop-1", new BigDecimal("10")));
+        gateway.modifyFailures = 1;
+        gateway.modifyFailureMessage = RATE_LIMITED;
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls).allSatisfy(
+                c -> assertThat(c.stopOrderId()).isEqualTo("stop-1"));
+        assertThat(service.backoffs).containsExactly(500L);
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(71L),
+                any(), any(), any(Integer.class), any(), any());
     }
 }

@@ -1,5 +1,6 @@
 package de.visterion.dracul.executor;
 
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -22,29 +24,41 @@ import java.util.Map;
  * is the single choke point enforcing that — this service must never call the gateway or update
  * the position book when the guard denies the move.
  *
- * <p><b>The gateway takes the BRACKET id, not a leg id</b> — passing {@code stopOrderId} instead
- * meant the ratchet never moved a single stop until this was fixed on 2026-07-26; see the comment
- * at the {@code modifyBracket} call site below for the full account before editing that call.
+ * <p><b>Which stops a position has is read off {@code executor_position_leg}</b>, one row per
+ * broker tranche, each with its own {@code stop_order_id} — see {@link #ratchetLegs}. Only legs
+ * the book still holds {@code OPEN} are addressed, and each is patched BY NAME. A position with no
+ * leg rows at all (nothing has backfilled or written them yet) falls back to the pre-leg
+ * column-based routing further down; that path is legacy and moves with the columns.
+ *
+ * <p><b>The gateway takes the BRACKET id as the order id, not a leg id</b> — passing
+ * {@code stopOrderId} as the order id instead meant the ratchet never moved a single stop until
+ * this was fixed on 2026-07-26; see the comment at the single-leg {@code modifyBracket} call site
+ * below for the full account before editing that call.
  *
  * <p>Beyond the two trivial skips for missing inputs (no {@code highestPrice} recorded yet, no ATR
- * for the symbol), four conditions stop a position short of the broker, in this order and each
- * with {@code continue} so one position never aborts the rest of the book:
+ * for the symbol), these conditions stop a position short of the broker, each with {@code continue}
+ * so one position never aborts the rest of the book:
  * <ul>
  *   <li>the guard denies a non-improving move — silent, the normal case;</li>
  *   <li>the rounded chandelier is on the wrong side of the last close (or no close is known) —
  *       silent, a regular "not yet" state owned by the soft trigger;</li>
- *   <li>a tranche 2 is open but one of its two stop legs has no id on the record, and no recorded
- *       collapse explains the missing one — {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}. A leg
- *       that cannot be NAMED cannot be moved without guessing, and a silent partial ratchet would
- *       leave the book claiming a stop half the position does not have. With both ids present,
- *       both legs are ratcheted to the same level instead — see {@link #ratchetTwoLegs}. How many
- *       legs exist is read off the two id columns, never off {@code stop_legs_collapsed};</li>
- *   <li>{@code brokerOrderId} is null — {@code ESCALATE / NO_BRACKET_ID}.</li>
+ *   <li>two or more open legs and at least one of them has no {@code stop_order_id} —
+ *       {@code ESCALATE / TRANCHE_RATCHET_UNSUPPORTED}. A leg that cannot be NAMED cannot be moved
+ *       without guessing, and the broker's by-symbol fallback would patch one leg twice;</li>
+ *   <li>no order id to address at all — {@code ESCALATE / NO_BRACKET_ID}.</li>
  * </ul>
  *
- * <p>A two-leg ratchet whose FIRST leg moved and whose second did not escalates
+ * <p>A multi-leg ratchet whose earlier legs moved and whose next one did not escalates
  * {@code PARTIAL_TRANCHE_RATCHET} and leaves {@code active_stop} at the OLD value — the only level
- * that is true of the whole position. Never report a partial as a success.
+ * that is true of the whole position. {@code active_stop} is written only when EVERY open leg was
+ * confirmed. Never report a partial as a success.
+ *
+ * <p><b>A failed modify is classified by what the broker actually said.</b>
+ * {@code BROKER_UNAVAILABLE} means the call got no verdict — transport failure, 5xx, timeout, or a
+ * rate limit that outlived its retries. A verdict that says "no" is a rejection and gets its own
+ * code: {@code STOP_LEG_MISSING} when the named leg no longer exists at the broker
+ * ({@code LEG_NOT_FOUND}), {@code STOP_MODIFY_REJECTED} for every other reject code. See
+ * {@link #escalateModifyFailure}.
  *
  * <p>Both escalations sit AFTER the guard and after the market-side check, so they repeat on every
  * maintenance run for as long as the condition holds AND a better stop is actually available —
@@ -70,8 +84,12 @@ public class StopRatchetService {
 
     private static final Logger log = LoggerFactory.getLogger(StopRatchetService.class);
 
+    /** Agora's reject code for "that leg is not at the broker (any more)". */
+    private static final String LEG_NOT_FOUND = "LEG_NOT_FOUND";
+
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
+    private final ExecutorPositionLegRepository legRepo;
     private final DecisionLogRepository decisionRepo;
     private final RuleVersionProvider ruleVersions;
     private final StopRatchetGuard guard;
@@ -85,6 +103,7 @@ public class StopRatchetService {
     public StopRatchetService(
             ExecutionGateway gateway,
             ExecutorPositionRepository positionRepo,
+            ExecutorPositionLegRepository legRepo,
             DecisionLogRepository decisionRepo,
             RuleVersionProvider ruleVersions,
             StopRatchetGuard guard,
@@ -96,6 +115,7 @@ public class StopRatchetService {
             @Value("${dracul.executor.ratchet-retry-budget-ms:5000}") long retryBudgetMs) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
+        this.legRepo = legRepo;
         this.decisionRepo = decisionRepo;
         this.ruleVersions = ruleVersions;
         this.guard = guard;
@@ -149,6 +169,30 @@ public class StopRatchetService {
             if (!safeSide) continue;
 
             BigDecimal oldStop = p.activeStop();
+
+            // How many protective legs the broker holds is read off executor_position_leg, the
+            // book's record of the broker's own tranches — not off the two id columns and never
+            // off stop_legs_collapsed. Read HERE, per position, so the list is the state left by
+            // this same pass's reconcile (MaintenancePipeline runs reconcile first): a leg whose
+            // stop filled has already been closed and is simply not in this list, which is why the
+            // ordinary "the leg is gone because it filled" case produces no escalation at all.
+            List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+            if (!legs.isEmpty()) {
+                if (!ratchetLegs(p, legs, chandelier, runId, budget)) continue;
+
+                // Every open leg confirmed — only now is the new level true of the whole position.
+                positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                        chandelier, null);
+                recordRatchet(p, atr, chandelier, runId);
+                executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
+                continue;
+            }
+
+            // ---------------------------------------------------------------------------
+            // Legacy, column-based routing for positions that have no leg rows yet. Kept
+            // unchanged until every position carries legs; it mirrors ReconcileService's own
+            // legless chain. Everything below this line reads the tranche columns.
+            // ---------------------------------------------------------------------------
 
             // "How many protective legs does the broker hold RIGHT NOW" and "were legs folded
             // together at some point" are two different questions, and gating the two-leg path on
@@ -225,6 +269,101 @@ public class StopRatchetService {
     }
 
     /**
+     * Ratchets every OPEN leg of a position to the same level, each addressed by its own
+     * {@code stop_order_id}. Returns true only when the broker confirmed EVERY one of them; false
+     * when the position was escalated and {@code active_stop} must not move.
+     *
+     * <p><b>One level, not one per leg.</b> A protective stop is a price level on the underlying,
+     * not a per-tranche quantity: {@link #computeChandelier} reads {@code highestPrice} and ATR and
+     * never the entry price, so there is no per-leg level to compute. That is also what keeps the
+     * book honest — {@code active_stop} is ONE column that stopguard reads for the whole position,
+     * and it can only be true of every share behind it if every share sits on the same level.
+     *
+     * <p><b>Every leg is addressed BY NAME, and an unnamed modify is never used to reach one of
+     * several legs.</b> Post-fill the entry ids are gone and Agora's {@code modifyBySymbolFallback}
+     * keeps only the LAST stop order it scans on the instrument, so an unnamed modify on a position
+     * with two live legs moves exactly one of them — chosen by the broker's scan order, not by us —
+     * while the book would record the new stop for both. That is BUG-S13: the book claiming
+     * protection the broker does not hold. A leg with no {@code stop_order_id} therefore cannot be
+     * moved at all while a sibling leg is live, and the position escalates
+     * {@code TRANCHE_RATCHET_UNSUPPORTED} instead of guessing.
+     *
+     * <p><b>The one unnamed modify that stays legitimate</b> is a position down to a SINGLE open
+     * leg whose id the book never recorded: with one stop live on the instrument, "the last stop
+     * order found" and "the only stop order" are the same order, so the broker-side resolution is
+     * unambiguous. Escalating that case instead would leave a real single-tranche position
+     * un-ratcheted for as long as the id is missing, which buys nothing.
+     *
+     * <p><b>Some legs moved, one did not, is reported as PARTIAL — and the book keeps the OLD
+     * stop.</b> Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure
+     * the position really is half-protected at the new level and half at the old one, so the only
+     * value true of all of it is the old stop. Writing the new one would make stopguard trust a
+     * protection part of the position does not have. The next maintenance pass re-sends every leg
+     * (a leg already at the price is idempotent) and recovers on its own once the broker
+     * cooperates. Remaining legs are NOT attempted after a failure: the book is staying at the old
+     * level either way, and one escalation row per pass is what an operator can read.
+     */
+    private boolean ratchetLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
+            BigDecimal chandelier, String runId, RetryBudget budget) {
+        List<ExecutorPositionLeg> unnamed = legs.stream()
+                .filter(l -> l.stopOrderId() == null).toList();
+        if (!unnamed.isEmpty() && legs.size() > 1) {
+            escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
+                    "stop ratchet unsupported while " + legs.size() + " legs are open: every leg "
+                            + "must be named to be moved unambiguously, but leg(s) "
+                            + unnamed.stream().map(l -> "tranche " + l.tranche()).toList()
+                            + " have no stop_order_id");
+            return false;
+        }
+
+        List<String> moved = new ArrayList<>();
+        for (ExecutorPositionLeg leg : legs) {
+            // Bracket ids are context only once a leg id is given, but the gateway still needs an
+            // order id: the leg's own entry order where it is recorded, the position's bracket id
+            // otherwise (post-fill the tranche's entry id may be gone or was never written).
+            String bracketId = leg.entryOrderId() != null ? leg.entryOrderId() : p.brokerOrderId();
+            if (bracketId == null) {
+                escalate(p, runId, "NO_BRACKET_ID",
+                        "stop ratchet cannot address tranche " + leg.tranche()
+                                + ": neither the leg's entry_order_id nor broker_order_id is known");
+                return false;
+            }
+            if (!modifyWithRetry(p, bracketId, leg.stopOrderId(), chandelier, runId, budget)) {
+                if (!moved.isEmpty()) {
+                    recordPartialRatchet(p, moved, leg.stopOrderId(), chandelier, runId);
+                }
+                return false;
+            }
+            moved.add(leg.stopOrderId());
+        }
+        return true;
+    }
+
+    /** The PARTIAL_TRANCHE_RATCHET row for the leg path: which legs moved, which one did not, to
+     *  what level, and the {@code active_stop} that stays because it is the only one true of the
+     *  whole position. {@code unmoved_stop_order_id} is null when the failing leg had no id — that
+     *  can only be the single-leg fallback, which never reaches this row. */
+    private void recordPartialRatchet(ExecutorPosition p, List<String> movedStopOrderIds,
+            String unmovedStopOrderId, BigDecimal chandelier, String runId) {
+        ObjectNode order = mapper.createObjectNode();
+        order.put("position_id", p.id());
+        var movedArray = order.putArray("moved_stop_order_ids");
+        movedStopOrderIds.forEach(movedArray::add);
+        order.put("unmoved_stop_order_id", unmovedStopOrderId);
+        order.put("attempted_stop", chandelier);
+        order.put("active_stop", p.activeStop());
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
+                "ESCALATE", "PARTIAL_TRANCHE_RATCHET", order,
+                "partial stop ratchet: leg(s) " + movedStopOrderIds + " moved to "
+                        + chandelier.toPlainString() + " but leg " + unmovedStopOrderId
+                        + " did not; active_stop stays at "
+                        + (p.activeStop() == null ? "null" : p.activeStop().toPlainString())
+                        + " because it must hold for the whole position",
+                null, null, null));
+    }
+
+    /**
      * Ratchets BOTH stop legs of a position that was built in two tranches. Returns true only when
      * the broker accepted both; false when the position was escalated and the book must not move.
      *
@@ -261,11 +400,10 @@ public class StopRatchetService {
      * <p><b>A named id that the broker no longer holds fails LOUDLY</b>, which is the second reason
      * to address by name: Agora rejects an unknown leg id with {@code LEG_NOT_FOUND} (see
      * {@code SaxoBrokerProvider.rejectUnusableLeg} / {@code AlpacaBrokerProvider}) rather than
-     * substituting some other order, and that arrives here as a non-transient
-     * {@link BrokerUnavailableException} which escalates on the first attempt with the reject code
-     * in the reasoning. A book pointing at a dead leg therefore becomes visible instead of silently
-     * re-pricing whichever stop the broker happened to scan last. No separate escalation code is
-     * needed for it, and none is invented here.
+     * substituting some other order, and that arrives here as a {@link BrokerRejectedException}
+     * which escalates {@code STOP_LEG_MISSING} on the first attempt — see
+     * {@link #escalateModifyFailure}. A book pointing at a dead leg therefore becomes visible
+     * instead of silently re-pricing whichever stop the broker happened to scan last.
      *
      * <p>The {@code TRANCHE_RATCHET_UNSUPPORTED} escalation below stays for the case it was written
      * for: two legs are expected, one id is unknown and no collapse explains it — a bug on the
@@ -365,14 +503,60 @@ public class StopRatchetService {
                     backoff(wait);
                     continue;
                 }
-                escalate(p, runId, "BROKER_UNAVAILABLE",
-                        "broker unavailable during stop-ratchet modify"
-                                + (stopOrderId == null ? "" : " of stop leg " + stopOrderId)
-                                + " after " + attempt
-                                + " attempt" + (attempt == 1 ? "" : "s") + ": " + e.getMessage());
+                escalateModifyFailure(p, stopOrderId, attempt, e, runId);
                 return false;
             }
         }
+    }
+
+    /**
+     * The one place that decides what a failed modify is CALLED, and it says only what the broker
+     * actually told us.
+     *
+     * <p><b>{@code BROKER_UNAVAILABLE} means the call never got a verdict</b> — transport failure,
+     * 5xx, timeout, or a rate limit that outlived its retries. It used to cover business
+     * rejections too, and that is what made the 2026-08-20 alarm unreadable: the same code once
+     * carried a real ratchet outage, so an operator could not tell "the broker is down" from "the
+     * broker said no". A rejection is a verdict, not an outage.
+     *
+     * <p><b>{@code STOP_LEG_MISSING}</b> is the structural one: {@code LEG_NOT_FOUND} means that
+     * leg is not at the broker any more — usually because it filled — and no number of retries can
+     * change that. It escalates only for a leg the book still holds OPEN: this pass's reconcile
+     * ran before the ratchet and closed every leg whose stop it saw fill, and {@link #ratchetLegs}
+     * addresses only open legs, so the ordinary filled-leg case is never sent and never escalates.
+     * What reaches here is a leg the book believes is live and the broker does not have — which is
+     * exactly the state that must be visible.
+     *
+     * <p><b>{@code STOP_MODIFY_REJECTED}</b> covers every other reject code (and a rejection whose
+     * code Agora omitted): still a verdict, still not an outage, but nothing here may claim to know
+     * that the leg is gone. The reject code and message go into the reasoning.
+     *
+     * <p>The transient check is repeated here on purpose: a rejection carrying a rate-limit
+     * signature that exhausted its retries is an outage by any useful definition and keeps
+     * {@code BROKER_UNAVAILABLE}.
+     */
+    private void escalateModifyFailure(ExecutorPosition p, String stopOrderId, int attempt,
+            BrokerUnavailableException e, String runId) {
+        String leg = stopOrderId == null ? "" : " of stop leg " + stopOrderId;
+        String attempts = " after " + attempt + " attempt" + (attempt == 1 ? "" : "s") + ": ";
+
+        if (e instanceof BrokerRejectedException rejected && !isTransient(e)) {
+            if (LEG_NOT_FOUND.equals(rejected.rejectCode())) {
+                escalate(p, runId, "STOP_LEG_MISSING",
+                        "stop leg " + stopOrderId + " no longer exists at the broker while the book "
+                                + "still holds it open, so the stop could not be moved: "
+                                + e.getMessage());
+                return;
+            }
+            escalate(p, runId, "STOP_MODIFY_REJECTED",
+                    "broker rejected the stop-ratchet modify" + leg + " ["
+                            + (rejected.rejectCode() == null ? "no reject code" : rejected.rejectCode())
+                            + "]" + attempts + e.getMessage());
+            return;
+        }
+
+        escalate(p, runId, "BROKER_UNAVAILABLE",
+                "broker unavailable during stop-ratchet modify" + leg + attempts + e.getMessage());
     }
 
     /**

@@ -53,6 +53,12 @@ public class FakeExecutionGateway implements ExecutionGateway {
      *  underlying {@code HttpClientErrorException$TooManyRequests} rather than describing it,
      *  so the status lives in the CAUSE and never in the top-level message. */
     public Throwable modifyFailureCause = null;
+    /** When set, an injected modify failure is a BUSINESS rejection carrying this reject code —
+     *  {@link BrokerRejectedException}, the shape {@code AgoraExecutionGateway.requireAccepted}
+     *  produces for {@code accepted:false}. Null = a plain {@link BrokerUnavailableException}, the
+     *  shape a transport failure or an {@code available:false} tool takes. The distinction is not
+     *  cosmetic: it is the only thing that tells an outage apart from a verdict the broker gave. */
+    public String modifyRejectCode = null;
     /** When set, only calls naming THIS stop leg consume a {@link #modifyFailures} budget — lets a
      *  test fail exactly one leg of a two-leg (two-tranche) ratchet. Null = any call may fail. */
     public String failModifyForStopOrderId = null;
@@ -176,6 +182,9 @@ public class FakeExecutionGateway implements ExecutionGateway {
                 || failModifyForStopOrderId.equals(stopOrderId);
         if (modifyFailures > 0 && legSelected) {
             modifyFailures--;
+            if (modifyRejectCode != null) {
+                throw new BrokerRejectedException(modifyFailureMessage, modifyRejectCode, List.of());
+            }
             throw modifyFailureCause == null
                     ? new BrokerUnavailableException(modifyFailureMessage)
                     : new BrokerUnavailableException(modifyFailureMessage, modifyFailureCause);

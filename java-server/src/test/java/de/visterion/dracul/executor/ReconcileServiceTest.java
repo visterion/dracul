@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -1581,23 +1582,12 @@ class ReconcileServiceTest {
     }
 
 
-    /** The route StopRatchetService takes for a position, expressed exactly as it computes it
-     *  (BUG-S13 comment block). Duplicated here on purpose: the point of the assertion is that a
-     *  reconcile trim leaves a survivor the REAL ratchet sends down the single-leg path. */
-    private static boolean ratchetWouldTakeTheTwoLegPath(ExecutorPosition p) {
-        boolean bothLegsNamed = p.stopOrderId() != null && p.tranche2StopOrderId() != null;
-        boolean expectsTwoLegs = p.tranche() >= 2
-                || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
-        return bothLegsNamed || (expectsTwoLegs && !p.stopLegsCollapsed());
-    }
-
     @Test
     void reconcileTrim_recordsTheStopLegCollapseSoTheSurvivorRatchetsOnOneLeg() {
-        // Nulling the dead stop id is only half the bookkeeping. Without the collapse flag the
-        // survivor reads as "expects two legs, only one named, no explanation", which is exactly
-        // the state ratchetTwoLegs escalates as TRANCHE_RATCHET_UNSUPPORTED -- every run, on a
-        // state our own trim created. MaintenancePipeline feeds these survivors into the same
-        // pass, so it would fire immediately.
+        // Nulling the dead stop id is only half the bookkeeping: a two-tranche row that names one
+        // stop leg and does not say why is a state our own trim created, and the legacy
+        // column-based ratchet path -- still live for positions that have no leg rows -- escalates
+        // exactly that as TRANCHE_RATCHET_UNSUPPORTED. Recording the collapse is what explains it.
         ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
                 new BigDecimal("100"), new BigDecimal("95"));
         when(positionRepo.findOpen()).thenReturn(List.of(p));
@@ -1611,9 +1601,55 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
 
         verify(positionRepo).markStopLegsCollapsed(1L);
-        assertThat(ratchetWouldTakeTheTwoLegPath(p)).isTrue();          // before the trim
+        assertThat(p.stopLegsCollapsed()).isFalse();                   // before the trim
         assertThat(survivors.getFirst().stopLegsCollapsed()).isTrue();
-        assertThat(ratchetWouldTakeTheTwoLegPath(survivors.getFirst())).isFalse();
+        assertThat(survivors.getFirst().stopOrderId()).isNull();       // the dead leg is unnamed
+        assertThat(survivors.getFirst().tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
+    void reconcileTrim_leavesASurvivorTheRealRatchetMovesOnItsSurvivingLegAlone() {
+        // Replaces a helper that re-implemented StopRatchetService's routing expression verbatim
+        // and then asserted against the copy. What matters is not which branch the ratchet picks
+        // but the OUTCOME on the real service: the trimmed position gets its surviving leg moved,
+        // by name, and nothing escalates. The leg reconcile just closed (stop-1) is not addressed
+        // at all -- that, and not a special case inside the ratchet, is why the ordinary "the leg
+        // is gone because it filled" case never produces a STOP_LEG_MISSING row.
+        ExecutorPosition p = new ExecutorPosition(1L, "c", "ACME", "BUY", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 2, null, List.of(),
+                "sig-1", "agent", "2026-07-01", null, "OPEN", "ord-1", new BigDecimal("110"),
+                BigDecimal.ZERO, 0, null, null, null, null, "stop-1", null, null, "ord-2", "stop-2",
+                0, null, null, null, null, null, null, false);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(legRepo).closeLeg(eq(10L), any(), eq("HARD_STOP"), any());
+        // The mocked repository does not apply that close, so the post-reconcile leg book is
+        // stated here: it is what a real repository would return to the ratchet's own
+        // findOpenByPosition call one pipeline step later, in this same pass.
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        org.mockito.Mockito.clearInvocations(decisionRepo);
+
+        StopRatchetService ratchet = new StopRatchetService(gateway, positionRepo, legRepo,
+                decisionRepo, ruleVersions, new StopRatchetGuard(), mapper, executorNotifier,
+                3.0, 1, 0L, 0L);
+        ratchet.ratchet(survivors, Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run-1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isEqualTo("stop-2");
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("104");
+        ArgumentCaptor<DecisionLog> ratchetLogs = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(ratchetLogs.capture());
+        assertThat(ratchetLogs.getValue().action()).isEqualTo("MODIFY_STOP");
     }
 
     @Test
