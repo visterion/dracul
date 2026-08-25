@@ -12,7 +12,7 @@ class AgoraDepotClientOrdersTest {
     @Test
     void depotOrderCarriesParentId() throws Exception {
         JsonNode o = mapper.readTree("""
-          {"brokerOrderId":"1","symbol":"STT","side":null,"qty":6,"type":"limit",
+          {"brokerOrderId":"1","symbol":"ACME","side":null,"qty":10,"type":"limit",
            "status":"notWorking","role":"take_profit","parentId":"P-1",
            "submittedAt":null,"filledAt":null,"avgFillPrice":null}
         """);
@@ -29,7 +29,7 @@ class AgoraDepotClientOrdersTest {
     @Test
     void parentIdAbsentInJsonMapsToNull() throws Exception {
         JsonNode o = mapper.readTree("""
-          {"brokerOrderId":"1","symbol":"STT","type":"market","status":"filled","role":"entry"}
+          {"brokerOrderId":"1","symbol":"ACME","type":"market","status":"filled","role":"entry"}
         """);
         assertThat(o.hasNonNull("parentId")).isFalse();
     }
@@ -59,7 +59,7 @@ class AgoraDepotClientOrdersTest {
     @Test
     void limitAndStopPriceAbsentInJsonMapToNull() throws Exception {
         JsonNode o = mapper.readTree("""
-          {"brokerOrderId":"1","symbol":"STT","type":"market","status":"filled","role":"entry"}
+          {"brokerOrderId":"1","symbol":"ACME","type":"market","status":"filled","role":"entry"}
         """);
         DepotOrder order = toDepotOrder(o);
         assertThat(order.limitPrice()).isNull();
