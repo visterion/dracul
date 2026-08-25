@@ -72,6 +72,17 @@ import java.util.Set;
  * {@link #updateMaintenance}. No path here closes a position on a guess: it takes either an
  * observed fill or the broker's confirmed disappearance of the position.
  *
+ * <p><b>Missing fill history is not evidence of absence.</b> {@code filledOrdersSince} is fetched
+ * once per pass and fails soft — a failure never aborts reconcile — but findings 3 and the
+ * shortfall exemption above both reason from "no fill was observed", and that reasoning is only
+ * sound when the history call actually ran. When it throws, {@code fillHistoryAvailable} is false
+ * for the rest of the pass and every position that would otherwise be CLOSED as
+ * {@code RECONCILE_GONE} or synced down through the one-shortfall exemption is left completely
+ * untouched instead, with an {@code ESCALATE FILL_HISTORY_UNAVAILABLE} row
+ * ({@link #escalateMissingEvidence}) recording that the evidence, not the position, is what went
+ * missing. The legless chain applies the same rule to its own RECONCILE_GONE branch. An empty but
+ * successfully-fetched history is unaffected — that is a fact about the world, not a failure.
+ *
  * <p>Because finding 1 closes on fills alone, the orphan scan runs a second time after the loop,
  * against the survivors: a holding the broker still reports for a row that just closed is flagged
  * in the same pass rather than a full cycle later.
@@ -196,17 +207,24 @@ public class ReconcileService {
         // HARD_STOP / TAKE_PROFIT distinction that drives cooldowns and the outcome book.
         //
         // Deliberately fail-soft and NOT part of the BROKER_UNAVAILABLE bail-out above: the
-        // history endpoint is a separate, slower call, and losing it must degrade reconcile to
-        // exactly its previous behaviour (the RECONCILE_GONE path, which recovers real fill
-        // prices from closedPositions) rather than abort the whole pass.
+        // history endpoint is a separate, slower call, and losing it must not abort the whole
+        // pass. It must also not be treated as "no fills happened" for anything that would use
+        // that absence to CLOSE or RESIZE the book, though: an empty filledOrders list is
+        // ambiguous between "the broker genuinely reports nothing" and "we could not ask", and
+        // only the former licenses the RECONCILE_GONE close / QTY_SYNC-from-shortfall paths.
+        // fillHistoryAvailable carries that distinction down into reconcileByLegs and the legless
+        // chain below, so a broken evidence channel escalates (FILL_HISTORY_UNAVAILABLE) instead
+        // of quietly booking an estimate or rewriting a quantity.
+        boolean fillHistoryAvailable = true;
         List<BrokerOrder> filledOrders;
         try {
             filledOrders = gateway.filledOrdersSince(connection,
                     clock.instant().minus(Duration.ofHours(FILL_LOOKBACK_HOURS)));
         } catch (RuntimeException e) {
             log.warn("filled-order history unavailable during reconcile ({}); "
-                    + "falling back to position-gone detection", e.getMessage());
+                    + "positions that vanished stay OPEN this pass", e.getMessage());
             filledOrders = List.of();
+            fillHistoryAvailable = false;
         }
 
         // Orphan scan (broker→DB): a live broker position with no open book row means an
@@ -237,7 +255,7 @@ public class ReconcileService {
             List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
             if (!legs.isEmpty()) {
                 reconcileByLegs(p, legs, bp, orders, filledOrders, connection, runId,
-                        survivors, unfilledIds);
+                        survivors, unfilledIds, fillHistoryAvailable);
                 continue;
             }
 
@@ -255,6 +273,14 @@ public class ReconcileService {
                 // the pipeline keeps hard triggers / ratcheting off it (no broker holdings).
                 survivors.add(p);
                 unfilledIds.add(p.id());
+            } else if (bp == null && filledLeg == null && !fillHistoryAvailable) {
+                // The broker no longer reports the position, but with the fill history broken we
+                // cannot tell "genuinely gone" apart from "we could not ask" -- and RECONCILE_GONE
+                // would book an estimated exit for a position we have no real evidence closed at
+                // all. Missing evidence is not evidence of absence: leave the row OPEN and let an
+                // operator look, rather than have it silently degrade into the estimate.
+                escalateMissingEvidence(p, runId, "broker no longer reports the position");
+                survivors.add(p);
             } else if (bp == null || filledLeg != null) {
                 closePosition(p, filledLeg, bp, connection, runId);
             } else {
@@ -398,7 +424,7 @@ public class ReconcileService {
     private void reconcileByLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
             BrokerPosition bp, List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders,
             String connection, String runId, List<ExecutorPosition> survivors,
-            Set<Long> unfilledIds) {
+            Set<Long> unfilledIds, boolean fillHistoryAvailable) {
         legs = syncLegQuantities(p, legs, openOrders, runId);
         List<LegFill> fills = matchLegFills(legs, filledOrders);
 
@@ -412,6 +438,14 @@ public class ReconcileService {
             // unfilled so hard triggers / ratcheting stay off it.
             survivors.add(p);
             unfilledIds.add(p.id());
+        } else if (bp == null && !fillHistoryAvailable) {
+            // Same evidence gap as the legless chain: the broker no longer reports the position,
+            // but with the fill history broken "no fill was observed" cannot be told apart from
+            // "we could not ask". Booking RECONCILE_GONE here would close every open leg on an
+            // estimate for shares whose fate is genuinely unknown this pass. Leave the row (and
+            // its legs) OPEN and escalate instead.
+            escalateMissingEvidence(p, runId, "broker no longer reports the position");
+            survivors.add(p);
         } else if (bp == null) {
             // Confirmed disappearance with no observed fill: same RECONCILE_GONE close as a
             // single-tranche position, with every leg booked out alongside the row. The exit is
@@ -423,6 +457,18 @@ public class ReconcileService {
                 legRepo.closeLeg(leg.id(), resolved.exitPrice(), resolved.exitReason(), closedAt);
             }
             bookClose(p, resolved, connection, runId);
+        } else if (!fillHistoryAvailable && brokerShortfallAttributableToOneLeg(legs, bp)) {
+            // The one-leg-shortfall fallback below exists precisely because a smaller broker
+            // quantity IS attributable to the single open leg -- an unobserved stop fill. That
+            // attribution depends on "no fill was observed" being a fact, not a guess born from a
+            // broken evidence channel. With the fill history unavailable this pass, a smaller
+            // broker holding could just as well be a stop fill we failed to see, and syncing the
+            // qty down here would silently converge the book with no TRIM row and no realized R
+            // for those shares. Escalate instead of guessing which one it is.
+            escalateMissingEvidence(p, runId,
+                    "broker reports fewer shares than the open leg(s) account for, with no fill "
+                            + "observed to explain it");
+            survivors.add(p);
         } else if (brokerShortfallAttributableToOneLeg(legs, bp)) {
             survivors.add(syncSingleLegDown(p, legs.getFirst(), bp, runId));
         } else if (brokerQtyUnaccountedFor(legs, bp)) {
@@ -431,6 +477,27 @@ public class ReconcileService {
         } else {
             survivors.add(updateMaintenance(p, bp, runId));
         }
+    }
+
+    /**
+     * Records that a finding which would otherwise close or resize the book on "the broker no
+     * longer accounts for these shares" evidence was withheld this pass because the fill-order
+     * history call failed. Missing evidence is not the same as evidence of absence: without it, a
+     * vanished/shrunk position cannot be told apart from one that genuinely exited at a price we
+     * never saw, and booking that guess would invent a realized R. The row is left completely
+     * untouched (not even a qty sync) and an operator has to look.
+     */
+    private void escalateMissingEvidence(ExecutorPosition p, String runId, String detail) {
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), null, null,
+                "ESCALATE", "FILL_HISTORY_UNAVAILABLE", orderJson,
+                "position " + p.symbol() + " (id " + p.id() + "): " + detail
+                        + " — the fill-order history was unavailable this pass, so it was left "
+                        + "OPEN and unbooked rather than closed or resized on a guess — "
+                        + "FILL_HISTORY_UNAVAILABLE — operator attention required", null, null, null));
     }
 
     /**

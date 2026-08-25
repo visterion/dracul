@@ -37,6 +37,11 @@ public class FakeExecutionGateway implements ExecutionGateway {
     /** When true, only the filled-order history call fails — lets a test drive the fail-soft
      *  degradation to position-gone detection without taking the whole broker down. */
     public boolean filledOrdersUnavailable = false;
+    /** When set, {@link #filledOrdersSince} throws exactly this exception instead of returning
+     *  fills. Distinct from {@link #filledOrdersUnavailable} so a test can pick an arbitrary
+     *  {@link RuntimeException} (not just {@link BrokerUnavailableException}) to prove the
+     *  missing-evidence handling reacts to the call failing at all, not to one specific type. */
+    public RuntimeException filledOrdersThrows = null;
 
     /** When &gt; 0, that many upcoming {@link #modifyBracket} calls fail with
      *  {@link #modifyFailureMessage} (one per call). The attempt is still recorded in
@@ -109,6 +114,9 @@ public class FakeExecutionGateway implements ExecutionGateway {
     public List<BrokerOrder> filledOrdersSince(String connection, java.time.Instant since) {
         checkAvailable();
         filledOrdersSinceArgs.add(since);
+        if (filledOrdersThrows != null) {
+            throw filledOrdersThrows;
+        }
         if (filledOrdersUnavailable) {
             throw new BrokerUnavailableException("fake filled-order history unavailable");
         }

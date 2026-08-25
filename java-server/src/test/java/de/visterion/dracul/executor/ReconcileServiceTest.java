@@ -22,6 +22,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -1007,10 +1008,12 @@ class ReconcileServiceTest {
     }
 
     @Test
-    void filledOrderHistoryUnavailable_degradesToPositionGoneDetection() {
-        // Fail-soft: the history call is a separate, slower endpoint. Losing it must leave
-        // reconcile at exactly its previous behaviour — close via the position-gone path, which
-        // still recovers real fill prices from closedPositions — never abort the pass.
+    void filledOrderHistoryUnavailable_leavesVanishedPositionOpenAndEscalates() {
+        // Missing evidence is not evidence of absence: without the fill history a vanished
+        // position cannot be told apart from one that closed at a price we never saw, so booking
+        // the RECONCILE_GONE estimate here would invent a realized R. The row must stay OPEN and
+        // an operator has to look — this used to fail-soft into exactly the close this test now
+        // forbids.
         ExecutorPosition p = openPosition(52L, "SYNA", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), "2000000005", "2000000006", null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
@@ -1019,10 +1022,12 @@ class ReconcileServiceTest {
         gateway.seedClosedPosition(new BrokerClosedPosition("SYNA", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("-50"), "sig-1"));
 
-        assertThat(service.reconcile("c", "run1").survivors()).isEmpty();
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).close(eq(52L), eq(new BigDecimal("95")), any(),
-                eq("RECONCILE_GONE"), eq("FILL"), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(decisionRepo).insert(argThatReasonCodeIs("FILL_HISTORY_UNAVAILABLE"));
+        assertThat(survivors).extracting(ExecutorPosition::id).containsExactly(52L);
     }
 
     // -------------------------------------------------------------------
@@ -1217,6 +1222,30 @@ class ReconcileServiceTest {
     }
 
     @Test
+    void fillHistoryUnavailable_doesNotCloseVanishedPosition() {
+        // Same principle as the legless path: without the fill history a vanished position
+        // cannot be told apart from one that closed at a price we never saw. Booking the
+        // RECONCILE_GONE estimate anyway would invent a realized R for shares whose fate is
+        // genuinely unknown this pass — the row stays OPEN and an operator has to look.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.filledOrdersThrows = new RuntimeException("history endpoint down");
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
+        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
+        verify(decisionRepo).insert(argThat(d -> "ESCALATE".equals(d.action())
+                && "FILL_HISTORY_UNAVAILABLE".equals(d.reasonCode())));
+        assertThat(survivors).extracting(ExecutorPosition::id).containsExactly(1L);
+    }
+
+    @Test
     void brokerQtyDisagreesWithoutFill_escalatesWithBothQuantities() {
         ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
                 new BigDecimal("100"), new BigDecimal("95"));
@@ -1302,6 +1331,34 @@ class ReconcileServiceTest {
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
         assertThat(survivors).hasSize(1);
         assertThat(survivors.getFirst().qty()).isEqualByComparingTo("6");
+    }
+
+    @Test
+    void singleOpenLegBrokerHoldsLessButFillHistoryUnavailable_escalatesInsteadOfSyncingDown() {
+        // Same broker state as singleOpenLegBrokerHoldsLess_syncsQtyInsteadOfEscalating (a single
+        // leg, broker holding less) but with the fill-history channel broken. Without that
+        // evidence a smaller broker quantity cannot be told apart from an unobserved stop fill,
+        // and syncing the qty down quietly would converge the book with no TRIM row and no
+        // realized R for the missing shares -- exactly the kind of silent rewrite this task
+        // exists to stop. Escalate and leave the leg/position quantities untouched instead.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("12"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("12"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.filledOrdersThrows = new RuntimeException("history endpoint down");
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+        verify(legRepo, never()).syncLegQty(anyLong(), any());
+        verify(decisionRepo).insert(argThat(d -> "ESCALATE".equals(d.action())
+                && "FILL_HISTORY_UNAVAILABLE".equals(d.reasonCode())));
+        assertThat(survivors).extracting(ExecutorPosition::qty)
+                .usingElementComparator(BigDecimal::compareTo)
+                .containsExactly(new BigDecimal("12"));
     }
 
     @Test
