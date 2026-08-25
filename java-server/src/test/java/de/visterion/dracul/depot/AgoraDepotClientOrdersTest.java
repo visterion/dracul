@@ -37,22 +37,22 @@ class AgoraDepotClientOrdersTest {
     @Test
     void entryOrderCarriesLimitPriceButNotStopPrice() throws Exception {
         JsonNode o = mapper.readTree("""
-          {"brokerOrderId":"5039279121","symbol":"STT","side":"buy","qty":6.0,"type":"limit",
-           "status":"working","role":"entry","limitPrice":182.53}
+          {"brokerOrderId":"ord-1","symbol":"ACME","side":"buy","qty":10.0,"type":"limit",
+           "status":"working","role":"entry","limitPrice":100.00}
         """);
         DepotOrder order = toDepotOrder(o);
-        assertThat(order.limitPrice()).isEqualByComparingTo(new BigDecimal("182.53"));
+        assertThat(order.limitPrice()).isEqualByComparingTo(new BigDecimal("100.00"));
         assertThat(order.stopPrice()).isNull();
     }
 
     @Test
     void stopLossOrderCarriesStopPriceButNotLimitPrice() throws Exception {
         JsonNode o = mapper.readTree("""
-          {"brokerOrderId":"5039279123","symbol":"STT","type":"stopiftraded","status":"notworking",
-           "role":"stop_loss","stopPrice":168.03,"parentId":"5039279121"}
+          {"brokerOrderId":"ord-2","symbol":"ACME","type":"stopiftraded","status":"notworking",
+           "role":"stop_loss","stopPrice":95.00,"parentId":"ord-1"}
         """);
         DepotOrder order = toDepotOrder(o);
-        assertThat(order.stopPrice()).isEqualByComparingTo(new BigDecimal("168.03"));
+        assertThat(order.stopPrice()).isEqualByComparingTo(new BigDecimal("95.00"));
         assertThat(order.limitPrice()).isNull();
     }
 
