@@ -118,17 +118,17 @@ class ReconcileServiceTest {
     @Test
     void reconcileDoesNotCloseWhileBrokerStillHoldsPosition() {
         // Verified prod incident (PSMT 2026-07-13): a hard trigger already flattened and stamped
-        // a pending exit, but the broker still reports the position held (5 shares) with a
+        // a pending exit, but the broker still reports the position held (7 shares) with a
         // working SELL exit order. Closing here would be the exact incident: wrong exit
         // price/R and a mismatched book vs. broker state. Must survive untouched instead.
-        ExecutorPosition p = pendingExitPosition(30L, "PSMT", new BigDecimal("193.87"),
-                new BigDecimal("190"), "stop-30", "HARD_STOP", "close-30", null);
+        ExecutorPosition p = pendingExitPosition(30L, "SYNP", new BigDecimal("100.00"),
+                new BigDecimal("96.13"), "stop-30", "HARD_STOP", "close-30", null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
-        gateway.seedPosition(new BrokerPosition("PSMT", "BUY", new BigDecimal("5"),
-                new BigDecimal("193.87"), new BigDecimal("180"), null));
-        gateway.seedOrder(new BrokerOrder("close-30", "ref-30", "PSMT", OrderRole.OTHER,
-                OrderStatus.WORKING, new BigDecimal("5"), BigDecimal.ZERO, null, null));
+        gateway.seedPosition(new BrokerPosition("SYNP", "BUY", new BigDecimal("7"),
+                new BigDecimal("100.00"), new BigDecimal("86.13"), null));
+        gateway.seedOrder(new BrokerOrder("close-30", "ref-30", "SYNP", OrderRole.OTHER,
+                OrderStatus.WORKING, new BigDecimal("7"), BigDecimal.ZERO, null, null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
@@ -249,14 +249,14 @@ class ReconcileServiceTest {
 
     @Test
     void reconcileFinalizesPendingExitWhenBrokerEmpty() {
-        ExecutorPosition p = pendingExitPosition(31L, "PSMT", new BigDecimal("193.87"),
-                new BigDecimal("190"), "stop-31", "HARD_STOP", "close-31", null);
+        ExecutorPosition p = pendingExitPosition(31L, "SYNP", new BigDecimal("100.00"),
+                new BigDecimal("96.13"), "stop-31", "HARD_STOP", "close-31", null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         // Broker no longer holds the position (not seeded), and the exit order now reports
         // FILLED (not WORKING/PARTIALLY_FILLED) -> finalization gate is satisfied.
-        gateway.seedOrder(new BrokerOrder("close-31", "ref-31", "PSMT", OrderRole.OTHER,
-                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("188.50"), null));
+        gateway.seedOrder(new BrokerOrder("close-31", "ref-31", "SYNP", OrderRole.OTHER,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, new BigDecimal("94.63"), null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
@@ -265,12 +265,12 @@ class ReconcileServiceTest {
         ArgumentCaptor<String> sourceCaptor = ArgumentCaptor.forClass(String.class);
         verify(positionRepo).close(eq(31L), exitPriceCaptor.capture(), realizedRCaptor.capture(),
                 eq("HARD_STOP"), sourceCaptor.capture(), any());
-        assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("188.50");
+        assertThat(exitPriceCaptor.getValue()).isEqualByComparingTo("94.63");
         assertThat(sourceCaptor.getValue()).isEqualTo("FILL");
         assertThat(realizedRCaptor.getValue()).isNotNull();
 
         ArgumentCaptor<Instant> expiryCaptor = ArgumentCaptor.forClass(Instant.class);
-        verify(cooldownRepo).add(eq("PSMT"), eq("HARD_STOP"), expiryCaptor.capture(), any());
+        verify(cooldownRepo).add(eq("SYNP"), eq("HARD_STOP"), expiryCaptor.capture(), any());
         assertThat(expiryCaptor.getValue()).isEqualTo(NOW.plus(java.time.Duration.ofDays(10)));
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -279,7 +279,7 @@ class ReconcileServiceTest {
         assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
         assertThat(log.action()).isEqualTo("LOG_HARD_EXIT");
         assertThat(log.reasonCode()).isEqualTo("HARD_STOP");
-        assertThat(log.symbol()).isEqualTo("PSMT");
+        assertThat(log.symbol()).isEqualTo("SYNP");
 
         assertThat(survivors).isEmpty();
         verify(executorNotifier).notifyExit(any(), any(), any(), any(), any());
@@ -377,27 +377,27 @@ class ReconcileServiceTest {
 
     @Test
     void maintenanceSyncsEntryPriceFromBrokerBasis() {
-        // Verified prod bug (PSMT): booked entry_price 193.88 (the submitted limit) never
-        // corrected to the broker's real fill 193.87 -> slippage always computed as 0.
-        ExecutorPosition p = new ExecutorPosition(20L, "c", "PSMT", "BUY", BigDecimal.TEN,
-                new BigDecimal("193.88"), new BigDecimal("190"), new BigDecimal("190"), 1, null,
+        // Verified prod bug (PSMT): booked entry_price 100.01 (the submitted limit) never
+        // corrected to the broker's real fill 100.00 -> slippage always computed as 0.
+        ExecutorPosition p = new ExecutorPosition(20L, "c", "SYNP", "BUY", BigDecimal.TEN,
+                new BigDecimal("100.01"), new BigDecimal("96.13"), new BigDecimal("96.13"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-20", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-20",
                 null, null, null, null, 0, null, null,
-                new BigDecimal("193.88"), null, null, null, false);
+                new BigDecimal("100.01"), null, null, null, false);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
-        gateway.seedPosition(new BrokerPosition("PSMT", "BUY", BigDecimal.TEN,
-                new BigDecimal("193.87"), new BigDecimal("195"), null));
+        gateway.seedPosition(new BrokerPosition("SYNP", "BUY", BigDecimal.TEN,
+                new BigDecimal("100.00"), new BigDecimal("101.13"), null));
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
-        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("193.87"));
+        verify(positionRepo).syncEntryPrice(20L, new BigDecimal("100.00"));
 
         assertThat(survivors).hasSize(1);
         ExecutorPosition survivor = survivors.get(0);
-        assertThat(survivor.entryPrice()).isEqualByComparingTo("193.87");
-        assertThat(survivor.submittedLimitPrice()).isEqualByComparingTo("193.88");
+        assertThat(survivor.entryPrice()).isEqualByComparingTo("100.00");
+        assertThat(survivor.submittedLimitPrice()).isEqualByComparingTo("100.01");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -405,11 +405,11 @@ class ReconcileServiceTest {
         assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
         assertThat(log.action()).isEqualTo("SYNC");
         assertThat(log.reasonCode()).isEqualTo("ENTRY_PRICE_SYNC");
-        assertThat(log.symbol()).isEqualTo("PSMT");
+        assertThat(log.symbol()).isEqualTo("SYNP");
         assertThat(log.inputsSnapshot().get("old_entry_price").decimalValue())
-                .isEqualByComparingTo("193.88");
+                .isEqualByComparingTo("100.01");
         assertThat(log.inputsSnapshot().get("new_entry_price").decimalValue())
-                .isEqualByComparingTo("193.87");
+                .isEqualByComparingTo("100.00");
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(20L);
     }
 
