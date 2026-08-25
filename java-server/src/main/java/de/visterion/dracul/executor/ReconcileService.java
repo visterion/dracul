@@ -35,19 +35,42 @@ import java.util.Set;
  * <p>On {@link BrokerUnavailableException} this deliberately does nothing to the book —
  * a transient broker outage must never be mistaken for positions closing.
  *
- * <p><b>Tranche-2 v1 limitation:</b> a position with a second bracket ({@code tranche2OrderId}/
- * {@code tranche2StopOrderId}) has two independent exit legs at the broker, but the book still
- * models it as a single row. When either bracket's exit leg fills (or the whole position vanishes)
- * this class cannot correctly TRIM the row to the surviving tranche's quantity, so it deliberately
- * neither closes nor silently keeps the row: it escalates ({@code TRANCHE2_DESYNC}) and leaves the
- * row OPEN for operator attention. Capital protection in that state comes from the broker-held
- * stops, not from this book row.
+ * <p><b>Multi-leg reconciliation (BUG-S11).</b> The broker holds each tranche of a position as
+ * its own position with its own stop order. The book mirrors that in {@code executor_position_leg}
+ * ({@link ExecutorPositionLeg}): one OPEN leg per live tranche, while {@code executor_position}
+ * stays the aggregate row every other consumer (MAX_POSITIONS, heat, cooldowns, outcome_log)
+ * reads. Reconcile therefore evaluates a position against its OPEN legs, not against a single
+ * bracket id. Before matching anything it converges each OPEN leg's {@code qty} to the broker's
+ * own number whenever that leg's stop order is still reported WORKING at a different size —
+ * {@code qty} means shares HELD, never shares intended, exactly as for the position row.
  *
- * <p><b>Multi-leg reconciliation is deliberately NOT implemented</b> (BUG-S11). This javadoc used
- * to promise that a partial close down to the surviving tranche "lands with TRIM support"; it
- * never did, and the 2026-08-05 partial-flatten design named it explicitly as a non-goal. The
- * promise was worse than silence — it invited the next reader to plan around a capability that
- * does not exist. Building it is a design decision, not a gap to be filled in passing.
+ * <p>Four findings, evaluated in this order:
+ * <ol>
+ *   <li><b>Every OPEN leg has an observed fill</b> → the whole position exited. Each leg is
+ *       CLOSED with its own fill, and the row is closed through the normal close path with a
+ *       quantity-weighted exit price and the exit reason the legs themselves report
+ *       (HARD_STOP / TAKE_PROFIT), so cooldown, notification and outcome_log are unchanged.</li>
+ *   <li><b>Some legs have a fill</b> → the position shrank on its own. The filled legs are
+ *       CLOSED, the row is TRIMmed to the surviving legs' quantity (staying OPEN) and a TRIM
+ *       decision is written in the same shape as the webhook partial-exit path, so
+ *       {@code OutcomeBatchJob}'s weighted realized R still counts it. An INFO Telegram note
+ *       goes out — a position that shrank without an instruction is worth knowing about.</li>
+ *   <li><b>The broker no longer reports the position and no fill was observed</b> → the legs are
+ *       CLOSED as {@code RECONCILE_GONE} and the row takes the unchanged RECONCILE_GONE close
+ *       path (which still recovers real fills from {@code closedPositions}).</li>
+ *   <li><b>The broker still holds the symbol but at a quantity the legs do not account for, and
+ *       no fill explains the difference</b> → {@code ESCALATE TRANCHE2_DESYNC}, carrying book,
+ *       leg and broker quantities in the {@code inputs_snapshot}, row left OPEN. This is the
+ *       only remaining case that needs an operator.</li>
+ * </ol>
+ * Anything else is an ordinary still-open position and falls through to
+ * {@link #updateMaintenance}. No path here closes a position on a guess: it takes either an
+ * observed fill or the broker's confirmed disappearance of the position.
+ *
+ * <p>A position with no leg rows at all (placed before the leg table existed and not covered by
+ * its backfill) keeps the previous single-row behaviour verbatim, including the
+ * {@code TRANCHE2_DESYNC} escalation for a two-bracket row — with no legs there is nothing to
+ * reconcile against, and inventing one would be exactly the guess this class must not make.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -78,6 +101,7 @@ public class ReconcileService {
     private final ExecutorNotifier executorNotifier;
     private final int cooldownDays;
     private final int pendingExitStaleHours;
+    private final ExecutorPositionLegRepository legRepo;
     private final Clock clock;
 
     @Autowired
@@ -91,9 +115,10 @@ public class ReconcileService {
             TelegramNotifier telegram,
             ExecutorNotifier executorNotifier,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
-            @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours) {
+            @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours,
+            ExecutorPositionLegRepository legRepo) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
-                executorNotifier, cooldownDays, pendingExitStaleHours, Clock.systemUTC());
+                executorNotifier, cooldownDays, pendingExitStaleHours, legRepo, Clock.systemUTC());
     }
 
     ReconcileService(
@@ -107,6 +132,7 @@ public class ReconcileService {
             ExecutorNotifier executorNotifier,
             int cooldownDays,
             int pendingExitStaleHours,
+            ExecutorPositionLegRepository legRepo,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -118,6 +144,7 @@ public class ReconcileService {
         this.executorNotifier = executorNotifier;
         this.cooldownDays = cooldownDays;
         this.pendingExitStaleHours = pendingExitStaleHours;
+        this.legRepo = legRepo;
         this.clock = clock;
     }
 
@@ -207,6 +234,14 @@ public class ReconcileService {
                 continue;
             }
 
+            List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
+            if (!legs.isEmpty()) {
+                reconcileByLegs(p, legs, bp, orders, filledOrders, connection, runId,
+                        survivors, unfilledIds);
+                continue;
+            }
+
+            // No leg rows for this position -> the pre-leg single-row behaviour, unchanged.
             BrokerOrder filledLeg = findFilledExitLeg(p, filledOrders);
 
             if (p.tranche2OrderId() != null && (bp == null || filledLeg != null)) {
@@ -312,6 +347,327 @@ public class ReconcileService {
                 "ESCALATE", "TRANCHE2_DESYNC", null,
                 "position " + p.symbol() + " (id " + p.id() + "): " + legDescription
                         + " — TRANCHE2_DESYNC — operator attention required", null, null, null));
+    }
+
+    // ===========================================================================================
+    // Leg-based reconciliation (see class javadoc)
+    // ===========================================================================================
+
+    /** One OPEN leg together with the broker fill that closed it and the exit reason that fill
+     *  stands for. {@code qty} is deliberately the LEG's quantity, not the order's: the leg row is
+     *  the book's record of how many shares this tranche held, and it is those shares that leave
+     *  the book. */
+    private record LegFill(ExecutorPositionLeg leg, BrokerOrder order, String exitReason) {
+        BigDecimal qty() { return leg.qty(); }
+        BigDecimal price() { return order.avgFillPrice(); }
+    }
+
+    /**
+     * Reconciles one position against its OPEN legs. Quantities are converged to the broker
+     * first, then the four findings of the class javadoc are evaluated in order.
+     */
+    private void reconcileByLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
+            BrokerPosition bp, List<BrokerOrder> openOrders, List<BrokerOrder> filledOrders,
+            String connection, String runId, List<ExecutorPosition> survivors,
+            Set<Long> unfilledIds) {
+        legs = syncLegQuantities(p, legs, openOrders, runId);
+        List<LegFill> fills = matchLegFills(legs, filledOrders);
+
+        if (!fills.isEmpty() && fills.size() == legs.size()) {
+            closePositionFromLegs(p, fills, bp, connection, runId);
+        } else if (!fills.isEmpty()) {
+            survivors.add(trimToSurvivingLegs(p, legs, fills, runId));
+        } else if (bp == null && entryStillPending(p, openOrders)) {
+            // The GTD limit ENTRY is still working, so "no broker position" is not "position
+            // gone". EntryExpiryService owns this lifecycle; keep the row untouched and flag it
+            // unfilled so hard triggers / ratcheting stay off it.
+            survivors.add(p);
+            unfilledIds.add(p.id());
+        } else if (bp == null) {
+            // Confirmed disappearance with no observed fill: same RECONCILE_GONE close as a
+            // single-tranche position, with every leg booked out alongside the row. The exit is
+            // resolved first so the legs carry whatever price that path recovered from the
+            // broker's closed positions, rather than a null the row does not have.
+            ResolvedExit resolved = resolveExit(p, null, null, connection);
+            Instant closedAt = clock.instant();
+            for (ExecutorPositionLeg leg : legs) {
+                legRepo.closeLeg(leg.id(), resolved.exitPrice(), resolved.exitReason(), closedAt);
+            }
+            bookClose(p, resolved, connection, runId);
+        } else if (brokerQtyUnaccountedFor(legs, bp)) {
+            escalateLegQtyDesync(p, legs, bp, runId);
+            survivors.add(p);
+        } else {
+            survivors.add(updateMaintenance(p, bp, runId));
+        }
+    }
+
+    /**
+     * Converges every OPEN leg's {@code qty} to the broker's own number, for the legs whose stop
+     * order the broker still reports WORKING at a different size. Returns the legs as they now
+     * stand.
+     *
+     * <p>Same rule the position row already follows in {@link #updateMaintenance}: {@code qty}
+     * means shares HELD, never shares intended. Without this the leg quantities would drift
+     * exactly the way the position's did (prod 2026-08-06), and every downstream figure computed
+     * from them — the trim remainder below, the desync check — would inherit the drift.
+     *
+     * <p>Only a WORKING stop counts. A PARTIALLY_FILLED stop means part of the tranche has already
+     * exited and its {@code qty} is the order's total, not the shares still held; reading it as a
+     * holding would book a quantity that is knowably wrong. A non-positive broker quantity is
+     * ignored rather than written: {@code executor_position_leg} carries {@code CHECK (qty > 0)},
+     * and a leg that really reached zero has to be CLOSED by one of the fill paths, not resized.
+     */
+    private List<ExecutorPositionLeg> syncLegQuantities(ExecutorPosition p,
+            List<ExecutorPositionLeg> legs, List<BrokerOrder> openOrders, String runId) {
+        List<ExecutorPositionLeg> synced = new ArrayList<>(legs.size());
+        for (ExecutorPositionLeg leg : legs) {
+            BigDecimal brokerQty = leg.stopOrderId() == null ? null : openOrders.stream()
+                    .filter(o -> leg.stopOrderId().equals(o.orderId()))
+                    .filter(o -> o.status() == OrderStatus.WORKING)
+                    .map(BrokerOrder::qty)
+                    .findFirst().orElse(null);
+
+            if (brokerQty == null || brokerQty.signum() <= 0 || leg.qty() == null
+                    || leg.qty().compareTo(brokerQty) == 0) {
+                synced.add(leg);
+                continue;
+            }
+
+            legRepo.syncLegQty(leg.id(), brokerQty);
+
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("leg_id", leg.id());
+            inputs.put("tranche", leg.tranche());
+            inputs.put("old_qty", leg.qty());
+            inputs.put("new_qty", brokerQty);
+            ObjectNode orderJson = mapper.createObjectNode();
+            orderJson.put("position_id", p.id());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                    "SYNC", "LEG_QTY_SYNC", orderJson, null, null, null, null));
+
+            synced.add(new ExecutorPositionLeg(leg.id(), leg.positionId(), leg.tranche(),
+                    leg.entryOrderId(), leg.stopOrderId(), brokerQty, leg.status(),
+                    leg.exitPrice(), leg.exitReason(), leg.closedAt()));
+        }
+        return synced;
+    }
+
+    /**
+     * The OPEN legs for which a FILLED exit order was observed, at most one order per leg and no
+     * order claimed twice.
+     *
+     * <p>A leg is matched primarily by the identity of its own {@code stop_order_id} — no role
+     * filter — for the reason {@link #findFilledExitLeg} already documents: the fill history
+     * carries no bracket structure, the gateway guesses the role from the order type, and an
+     * order that came back as {@code OTHER} would otherwise be dropped and the fill silently
+     * missed. Our own record of what that order is beats the broker's guess. An order matched only
+     * by its parent (the leg's entry order) still has to carry a STOP_LOSS/TAKE_PROFIT role, since
+     * a parent match alone does not say which leg it is.
+     */
+    private List<LegFill> matchLegFills(List<ExecutorPositionLeg> legs, List<BrokerOrder> filledOrders) {
+        List<LegFill> matched = new ArrayList<>();
+        Set<String> claimed = new HashSet<>();
+        for (ExecutorPositionLeg leg : legs) {
+            for (BrokerOrder o : filledOrders) {
+                if (o.status() != OrderStatus.FILLED || claimed.contains(o.orderId())) continue;
+                String exitReason = legExitReason(leg, o);
+                if (exitReason == null) continue;
+                claimed.add(o.orderId());
+                matched.add(new LegFill(leg, o, exitReason));
+                break;
+            }
+        }
+        return matched;
+    }
+
+    /** The exit reason {@code o} stands for on {@code leg}, or null if it is not this leg's exit. */
+    private String legExitReason(ExecutorPositionLeg leg, BrokerOrder o) {
+        if (leg.stopOrderId() != null && leg.stopOrderId().equals(o.orderId())) {
+            // It IS this leg's stop order. Only an explicit TAKE_PROFIT overrides that.
+            return o.role() == OrderRole.TAKE_PROFIT ? "TAKE_PROFIT" : "HARD_STOP";
+        }
+        if (leg.entryOrderId() != null && leg.entryOrderId().equals(o.parentId())) {
+            if (o.role() == OrderRole.STOP_LOSS) return "HARD_STOP";
+            if (o.role() == OrderRole.TAKE_PROFIT) return "TAKE_PROFIT";
+        }
+        return null;
+    }
+
+    /**
+     * Every leg exited: close each leg with its own fill, then book the position row through the
+     * unchanged close path so cooldown, notification and {@code outcome_log} stay identical to a
+     * single-tranche close. The row's exit price is the quantity-weighted average of the leg
+     * fills.
+     */
+    private void closePositionFromLegs(ExecutorPosition p, List<LegFill> fills,
+            BrokerPosition bp, String connection, String runId) {
+        Instant closedAt = clock.instant();
+        for (LegFill f : fills) {
+            legRepo.closeLeg(f.leg().id(), f.price(), f.exitReason(), closedAt);
+        }
+
+        String exitReason = aggregateExitReason(p, fills);
+        BigDecimal exitPrice = weightedFillPrice(fills);
+
+        if (exitPrice == null) {
+            // Every leg filled, but the broker reported no usable price on any of them. Fall back
+            // to the same estimate the RECONCILE_GONE path uses and label it MARK, never FILL —
+            // a made-up price must not be booked as an observed one.
+            log.warn("position {} (id {}): all {} legs filled but no usable fill price reported — "
+                    + "booking the close at the mark estimate", p.symbol(), p.id(), fills.size());
+            exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
+            bookClose(p, new ResolvedExit(exitReason, exitPrice, "MARK", p, null), connection, runId);
+            return;
+        }
+
+        bookClose(p, new ResolvedExit(exitReason, exitPrice, "FILL", p, null), connection, runId);
+    }
+
+    /** The exit reason for a whole-position close assembled from its leg fills. Legs that exited
+     *  for different reasons (one stopped out, one took profit) are booked as HARD_STOP: it is the
+     *  conservative reading — it applies the cooldown — and the split is logged rather than
+     *  averaged away. */
+    private String aggregateExitReason(ExecutorPosition p, List<LegFill> fills) {
+        boolean anyStop = fills.stream().anyMatch(f -> "HARD_STOP".equals(f.exitReason()));
+        boolean anyTarget = fills.stream().anyMatch(f -> "TAKE_PROFIT".equals(f.exitReason()));
+        if (anyStop && anyTarget) {
+            log.warn("position {} (id {}): legs exited for different reasons {} — booking the row "
+                    + "as HARD_STOP (the conservative reading); per-leg reasons stay on the legs",
+                    p.symbol(), p.id(), fills.stream().map(LegFill::exitReason).toList());
+        }
+        return anyStop ? "HARD_STOP" : "TAKE_PROFIT";
+    }
+
+    /** Quantity-weighted average price over the fills that reported a usable one, or null if none
+     *  did. Legs without a price are left out of both sides of the average rather than counted at
+     *  zero, which would drag the result toward a price nothing traded at. */
+    private BigDecimal weightedFillPrice(List<LegFill> fills) {
+        BigDecimal weighted = BigDecimal.ZERO;
+        BigDecimal totalQty = BigDecimal.ZERO;
+        for (LegFill f : fills) {
+            if (f.price() == null || f.price().signum() <= 0 || f.qty() == null || f.qty().signum() <= 0) {
+                continue;
+            }
+            weighted = weighted.add(f.price().multiply(f.qty()));
+            totalQty = totalQty.add(f.qty());
+        }
+        if (totalQty.signum() <= 0) return null;
+        return weighted.divide(totalQty, 6, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Some but not all legs exited: close the filled legs and shrink the row to the surviving
+     * legs' quantity, leaving it OPEN. Returns the survivor as it now stands, so the rest of the
+     * pipeline (hard triggers, exposure/heat, LLM context) sees the shares actually held.
+     *
+     * <p>The TRIM decision is written in the shape of the webhook partial-exit path
+     * ({@code ExecutorWebhookController}); {@code OutcomeBatchJob.weightedRealizedR} reads
+     * {@code qty_closed}/{@code price}/{@code position_id} out of it, and a differently shaped row
+     * would silently drop this leg out of the weighted realized R.
+     */
+    private ExecutorPosition trimToSurvivingLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
+            List<LegFill> fills, String runId) {
+        Instant closedAt = clock.instant();
+        for (LegFill f : fills) {
+            legRepo.closeLeg(f.leg().id(), f.price(), f.exitReason(), closedAt);
+        }
+
+        Set<Long> closedLegIds = fills.stream().map(f -> f.leg().id()).collect(java.util.stream.Collectors.toSet());
+        BigDecimal qtyClosed = fills.stream().map(LegFill::qty)
+                .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal qtyRemaining = legs.stream()
+                .filter(l -> !closedLegIds.contains(l.id()))
+                .map(ExecutorPositionLeg::qty)
+                .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        int newTrimCount = p.trimCount() + 1;
+        positionRepo.recordTrim(p.id(), qtyRemaining, newTrimCount);
+
+        BigDecimal price = weightedFillPrice(fills);
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("qty_closed", qtyClosed);
+        orderJson.put("qty_remaining", qtyRemaining);
+        if (p.qty() != null && p.qty().signum() > 0) {
+            orderJson.put("fraction", qtyClosed.divide(p.qty(), 4, RoundingMode.HALF_UP));
+        }
+        orderJson.put("price", price);
+        // Exact position linkage for the outcome batch job (decision_log has no position_id
+        // column; order_json carries it).
+        orderJson.put("position_id", p.id());
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("book_qty", p.qty());
+        inputs.put("legs_closed", fills.size());
+        inputs.put("legs_remaining", legs.size() - fills.size());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "TRIM", "RECONCILE_TRIM", orderJson,
+                "position " + p.symbol() + " (id " + p.id() + "): " + fills.size() + " of "
+                        + legs.size() + " legs exited at the broker — trimmed to " + qtyRemaining
+                        + " shares, row stays OPEN", null, null, null));
+
+        telegram.notifyAlert(p.symbol(), "POSITION_TRIMMED", "INFO",
+                "one of " + p.symbol() + "'s broker tranches exited on its own (" + qtyClosed
+                        + " shares at " + price + ") — book trimmed to " + qtyRemaining
+                        + " shares, position stays open");
+
+        return withTrim(p, qtyRemaining, newTrimCount);
+    }
+
+    /** True when the broker holds a quantity the OPEN legs do not account for. A missing or
+     *  non-positive broker quantity is not a disagreement — the same fail-soft rule
+     *  {@link #updateMaintenance} applies before it will sync a quantity. */
+    private boolean brokerQtyUnaccountedFor(List<ExecutorPositionLeg> legs, BrokerPosition bp) {
+        BigDecimal brokerQty = bp.qty();
+        if (brokerQty == null || brokerQty.signum() <= 0) return false;
+        BigDecimal legsQty = legs.stream().map(ExecutorPositionLeg::qty)
+                .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return legsQty.compareTo(brokerQty) != 0;
+    }
+
+    /**
+     * The broker still holds the symbol, but at a quantity the OPEN legs do not add up to and no
+     * observed fill explains. Nothing may be closed on that: it records the escalation with book,
+     * leg and broker quantities side by side and leaves the row OPEN for an operator. Capital
+     * protection meanwhile comes from the broker-held stops, not from this book row.
+     */
+    private void escalateLegQtyDesync(ExecutorPosition p, List<ExecutorPositionLeg> legs,
+            BrokerPosition bp, String runId) {
+        BigDecimal legsQty = legs.stream().map(ExecutorPositionLeg::qty)
+                .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("book_qty", p.qty());
+        inputs.put("legs_qty", legsQty);
+        inputs.put("broker_qty", bp.qty());
+        inputs.put("open_legs", legs.size());
+
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "ESCALATE", "TRANCHE2_DESYNC", orderJson,
+                "position " + p.symbol() + " (id " + p.id() + "): broker holds " + bp.qty()
+                        + " but the " + legs.size() + " open leg(s) account for " + legsQty
+                        + " and no observed fill explains the difference — TRANCHE2_DESYNC — "
+                        + "operator attention required", null, null, null));
+    }
+
+    /** Copy of {@code p} after a trim: the surviving quantity, the bumped trim count, and the
+     *  soft-confirm streak reset that {@link ExecutorPositionRepository#recordTrim} persists. */
+    private static ExecutorPosition withTrim(ExecutorPosition p, BigDecimal qty, int trimCount) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), qty,
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), 0,
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                trimCount, p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
     }
 
     /**
@@ -438,6 +794,18 @@ public class ReconcileService {
 
     private void closePosition(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp,
             String connection, String runId) {
+        bookClose(p, resolveExit(p, filledLeg, bp, connection), connection, runId);
+    }
+
+    /**
+     * Works out WHAT the exit was — reason, price and the provenance label for that price — for a
+     * position the broker no longer holds or whose exit leg was observed filled. Split out from
+     * {@link #bookClose} only so the leg-based close ({@link #closePositionFromLegs}) can supply
+     * its own aggregate finding and still book it through exactly the same path; the logic below
+     * is unchanged.
+     */
+    private ResolvedExit resolveExit(ExecutorPosition p, BrokerOrder filledLeg, BrokerPosition bp,
+            String connection) {
         String exitReason;
         BigDecimal exitPrice;
         String exitPriceSource = null;
@@ -509,6 +877,25 @@ public class ReconcileService {
         if (exitPrice == null) {
             exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
         }
+        return new ResolvedExit(exitReason, exitPrice, exitPriceSource, effective, rCalcOverride);
+    }
+
+    /** What a close is going to be booked as: the exit reason, the exit price and the label for
+     *  where that price came from, plus the position record the R math must use ({@code effective}
+     *  carries a synced real entry price) and an optional pre-computed R. */
+    private record ResolvedExit(String exitReason, BigDecimal exitPrice, String exitPriceSource,
+            ExecutorPosition effective, RCalc rCalcOverride) {
+    }
+
+    /** Books a resolved close: position row, cooldown, decision log and exit notification. Every
+     *  close in this class goes through here, so the four leg findings and the single-row path
+     *  produce byte-identical bookkeeping. */
+    private void bookClose(ExecutorPosition p, ResolvedExit resolved, String connection, String runId) {
+        String exitReason = resolved.exitReason();
+        BigDecimal exitPrice = resolved.exitPrice();
+        String exitPriceSource = resolved.exitPriceSource();
+        ExecutorPosition effective = resolved.effective();
+        RCalc rCalcOverride = resolved.rCalcOverride();
 
         // rCalcOverride is non-null whenever the RECONCILE_GONE matched-fill branch ran, even
         // when the planned-risk guard rejected the denominator (plannedRisk <= 0) and its .r()

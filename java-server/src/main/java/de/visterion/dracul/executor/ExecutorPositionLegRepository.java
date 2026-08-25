@@ -69,6 +69,17 @@ public class ExecutorPositionLegRepository {
                 .list();
     }
 
+    /** Converges a leg's quantity to the broker's own number. {@code qty} means shares HELD
+     *  (see {@link ExecutorPositionLeg}), so a leg whose stop order the broker still works with a
+     *  different size follows the broker. Never call this with a non-positive quantity: the table
+     *  carries {@code CHECK (qty > 0)} and a leg that reaches zero must be CLOSED, not resized. */
+    public void syncLegQty(long legId, BigDecimal brokerQty) {
+        jdbc.sql("UPDATE executor_position_leg SET qty = :qty WHERE id = :id")
+                .param("qty", brokerQty)
+                .param("id", legId)
+                .update();
+    }
+
     public void closeLeg(long legId, BigDecimal exitPrice, String exitReason, Instant closedAt) {
         jdbc.sql("""
                 UPDATE executor_position_leg

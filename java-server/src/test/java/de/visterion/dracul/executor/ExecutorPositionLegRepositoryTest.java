@@ -31,6 +31,17 @@ class ExecutorPositionLegRepositoryTest {
     @Autowired ExecutorPositionRepository positionRepo;
 
     @Test
+    void syncLegQtyConvergesTheLegToTheBroker() {
+        long positionId = insertTestPosition("ACME-" + UUID.randomUUID(), new BigDecimal("20"));
+        long legId = repo.insert(new ExecutorPositionLeg(null, positionId, 1, "ord-1", "stop-1",
+                new BigDecimal("10"), ExecutorPositionLeg.OPEN, null, null, null));
+
+        repo.syncLegQty(legId, new BigDecimal("8"));
+
+        assertThat(repo.findOpenByPosition(positionId).getFirst().qty()).isEqualByComparingTo("8");
+    }
+
+    @Test
     void insertAndFindOpenLegs() {
         long positionId = insertTestPosition("ACME-" + UUID.randomUUID(), new BigDecimal("20"));
 
