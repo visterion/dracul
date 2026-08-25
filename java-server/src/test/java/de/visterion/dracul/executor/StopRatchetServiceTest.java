@@ -298,7 +298,10 @@ class StopRatchetServiceTest {
         // A partial must be readable as a partial: which leg moved, which did not, and to what.
         assertThat(logs.get(1).reasoning()).contains("stop-1").contains("s2").contains("104");
         assertThat(logs.get(1).orderJson().get("position_id").asLong()).isEqualTo(9L);
-        assertThat(logs.get(1).orderJson().get("moved_stop_order_id").asString()).isEqualTo("stop-1");
+        // One reason code, one JSON shape: the legacy path writes the same one-element array the
+        // leg path writes.
+        assertThat(logs.get(1).orderJson().get("moved_stop_order_ids").get(0).asString())
+                .isEqualTo("stop-1");
         assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("s2");
     }
 
@@ -436,7 +439,8 @@ class StopRatchetServiceTest {
         assertThat(logs.get(0).reasoning()).contains("LEG_NOT_FOUND").contains("2000000002");
         assertThat(logs.get(1).action()).isEqualTo("ESCALATE");
         assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
-        assertThat(logs.get(1).orderJson().get("moved_stop_order_id").asString()).isEqualTo("2000000001");
+        assertThat(logs.get(1).orderJson().get("moved_stop_order_ids").get(0).asString())
+                .isEqualTo("2000000001");
         assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("2000000002");
         assertThat(logs.get(1).orderJson().get("active_stop").asDouble()).isEqualTo(95.0);
         assertThat(logs.get(1).orderJson().get("attempted_stop").asDouble()).isEqualTo(104.0);
@@ -1228,6 +1232,91 @@ class StopRatchetServiceTest {
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("NO_BRACKET_ID");
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void stopLegMissing_namesTheLegAndTheAttemptCount() {
+        // Operator-facing text, pinned: the previous version asserted only the reason code, which
+        // is exactly why a null-interpolating sentence shipped green. A named leg knows WHICH leg
+        // the broker no longer has, and the row says so, with the attempt count both sibling
+        // branches carry.
+        ExecutorPosition p = openPosition(72L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 1, null, null);
+        withOpenLegs(72L, leg(10L, 72L, 1, "ord-1", "stop-1", new BigDecimal("10")));
+        gateway.modifyFailures = 99;
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-1";
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        String reasoning = logCaptor.getValue().reasoning();
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("STOP_LEG_MISSING");
+        assertThat(reasoning).contains("stop leg stop-1")
+                .contains("no longer exists at the broker")
+                .contains("the book still holds it open")
+                .contains("after 1 attempt: ")
+                .contains("LEG_NOT_FOUND");
+    }
+
+    @Test
+    void stopLegMissing_onAnUnnamedModify_claimsOnlyWhatThatCaseKnows() {
+        // The single-tranche/bracket-addressed case: LEG_NOT_FOUND here means the broker resolved
+        // NO stop leg from the bracket. It does NOT mean "the leg the book names is gone" — the
+        // book names none — and the row must not assert it. It must also never read
+        // "stop leg null ...": this repo interpolates no nulls into operator text.
+        ExecutorPosition p = openPosition(73L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+        gateway.modifyFailures = 99;
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no stop-loss leg";
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        String reasoning = logCaptor.getValue().reasoning();
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("STOP_LEG_MISSING");
+        assertThat(reasoning).doesNotContain("null");
+        assertThat(reasoning).contains("resolved no stop leg for this bracket")
+                .contains("after 1 attempt: ")
+                .contains("LEG_NOT_FOUND");
+        // And it must not claim the stronger fact the named case has.
+        assertThat(reasoning).doesNotContain("still holds it open");
+    }
+
+    @Test
+    void anUnaddressableLegAfterAnEarlierOneMoved_isStillRecordedAsAPartial() {
+        // Half-moved is half-moved whatever stopped the second leg. The NO_BRACKET_ID row names
+        // the cause but not the state, so the partial row has to be written here too — otherwise
+        // the broker sits at two different stop levels with nothing in the log saying so.
+        ExecutorPosition p = openPosition(74L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, null, 2, null, "stop-2");
+        withOpenLegs(74L,
+                leg(10L, 74L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 74L, 2, null, "stop-2", new BigDecimal("10")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        // Leg 1 had an entry order id and moved; leg 2 has neither its own nor a bracket id.
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isEqualTo("stop-1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, times(2)).insert(logCaptor.capture());
+        List<DecisionLog> logs = logCaptor.getAllValues();
+        assertThat(logs.get(0).reasonCode()).isEqualTo("NO_BRACKET_ID");
+        assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
+        assertThat(logs.get(1).orderJson().get("moved_stop_order_ids").get(0).asString())
+                .isEqualTo("stop-1");
+        assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("stop-2");
+        assertThat(logs.get(1).orderJson().get("active_stop").asDouble()).isEqualTo(95.0);
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
     @Test

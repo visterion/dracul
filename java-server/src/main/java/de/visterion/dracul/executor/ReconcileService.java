@@ -792,8 +792,11 @@ public class ReconcileService {
             legRepo.closeLeg(f.leg().id(), f.price(), f.exitReason(), closedAt);
             // The stop that just filled is gone at the broker, but the 3-arg recordTrim below
             // does not touch the stop columns, so the column naming it would stay behind as a
-            // dead id. StopRatchetService then addresses that leg by name, gets LEG_NOT_FOUND,
-            // and the position spends a maintenance cycle in an escalation we caused ourselves.
+            // dead id. That still matters for a position with NO leg rows: StopRatchetService's
+            // legacy column path addresses that leg by name, gets LEG_NOT_FOUND, and the position
+            // spends a maintenance cycle in an escalation we caused ourselves. A legged position
+            // is no longer exposed to it — the ratchet reads the OPEN legs and this one is closed
+            // above — but the columns are still read elsewhere, so they are kept honest here.
             positionRepo.clearStopLeg(p.id(), f.leg().stopOrderId());
         }
 

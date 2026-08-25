@@ -322,13 +322,20 @@ public class StopRatchetService {
             // order id: the leg's own entry order where it is recorded, the position's bracket id
             // otherwise (post-fill the tranche's entry id may be gone or was never written).
             String bracketId = leg.entryOrderId() != null ? leg.entryOrderId() : p.brokerOrderId();
+            boolean confirmed;
             if (bracketId == null) {
                 escalate(p, runId, "NO_BRACKET_ID",
                         "stop ratchet cannot address tranche " + leg.tranche()
                                 + ": neither the leg's entry_order_id nor broker_order_id is known");
-                return false;
+                confirmed = false;
+            } else {
+                confirmed = modifyWithRetry(p, bracketId, leg.stopOrderId(), chandelier, runId, budget);
             }
-            if (!modifyWithRetry(p, bracketId, leg.stopOrderId(), chandelier, runId, budget)) {
+            // EVERY way of failing a leg leaves through here, so a half-moved position is recorded
+            // as a partial whatever stopped it. An unaddressable leg mid-loop is still a broker
+            // that has already moved earlier legs; the escalation naming the cause does not say
+            // that, and a row that leaves it unsaid is how a silent partial gets back in.
+            if (!confirmed) {
                 if (!moved.isEmpty()) {
                     recordPartialRatchet(p, moved, leg.stopOrderId(), chandelier, runId);
                 }
@@ -442,7 +449,9 @@ public class StopRatchetService {
         if (!modifyWithRetry(p, bracket2, leg2, chandelier, runId, budget)) {
             ObjectNode order = mapper.createObjectNode();
             order.put("position_id", p.id());
-            order.put("moved_stop_order_id", leg1);
+            // Same shape as the leg path's row (a one-element array here): one reason code must
+            // not mean two JSON shapes depending on which path wrote it.
+            order.putArray("moved_stop_order_ids").add(leg1);
             order.put("unmoved_stop_order_id", leg2);
             order.put("attempted_stop", chandelier);
             order.put("active_stop", p.activeStop());
@@ -542,10 +551,18 @@ public class StopRatchetService {
 
         if (e instanceof BrokerRejectedException rejected && !isTransient(e)) {
             if (LEG_NOT_FOUND.equals(rejected.rejectCode())) {
-                escalate(p, runId, "STOP_LEG_MISSING",
-                        "stop leg " + stopOrderId + " no longer exists at the broker while the book "
-                                + "still holds it open, so the stop could not be moved: "
-                                + e.getMessage());
+                // One reject code, two different facts, and the row must claim only the one this
+                // call actually has. Addressed BY NAME: the book points at a leg the broker does
+                // not have. Addressed by bracket (the single-leg fallback, no id on record): the
+                // broker resolved NO stop leg from the bracket — WHICH leg is missing is not
+                // something this case knows, and "stop leg null" is not a sentence to hand an
+                // operator either.
+                String what = stopOrderId == null
+                        ? "the broker resolved no stop leg for this bracket, so the stop could not "
+                                + "be moved"
+                        : "stop leg " + stopOrderId + " no longer exists at the broker while the "
+                                + "book still holds it open, so the stop could not be moved";
+                escalate(p, runId, "STOP_LEG_MISSING", what + attempts + e.getMessage());
                 return;
             }
             escalate(p, runId, "STOP_MODIFY_REJECTED",
