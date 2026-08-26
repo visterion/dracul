@@ -2068,4 +2068,74 @@ class ReconcileServiceTest {
         assertThat(thesis.getValue()).contains("10 shares at 95");
     }
 
+    // ---------------------------------------------------------------------------------------
+    // A stop fill no leg claims (UNCLAIMED_STOP_FILL). Seeding only ever sees a WORKING stop, so
+    // a tranche whose entry AND stop both fill between two nightly passes never becomes a leg --
+    // and matchLegFills iterates existing legs, so nothing would ever look at that fill.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void tranche2RoundTripInsideOnePass_escalatesInsteadOfEndingSilently() {
+        // Tranche 2's entry filled and its stop filled between two passes. Seeding sees no
+        // working stop for it, so no leg is created; leg 1 is untouched and agrees with the
+        // broker's holding. Before the leg rewrite this raised TRANCHE2_DESYNC; without this
+        // branch the pass ends at updateMaintenance with no TRIM, no realized R and no alarm.
+        // Book qty 12 (both tranches were booked), one open leg of 6, broker holds 6. Without
+        // the escalation branch this lands in updateMaintenance, which syncs qty 12 -> 6: six
+        // shares written out of the book with no TRIM row and no realized R.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("12"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("6"))));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("6"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
+        // The tranche-2 stop the position itself recorded, reported FILLED by the history.
+        gateway.seedOrder(filled("stop-2", "ACME", new BigDecimal("6"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog escalation = logCaptor.getAllValues().stream()
+                .filter(l -> "UNCLAIMED_STOP_FILL".equals(l.reasonCode()))
+                .findFirst().orElseThrow();
+        assertThat(escalation.action()).isEqualTo("ESCALATE");
+        assertThat(escalation.symbol()).isEqualTo("ACME");
+        // Queryable, not prose: which stop filled, and what the book still believes it holds.
+        assertThat(escalation.inputsSnapshot().path("filled_stop_order_ids").asString())
+                .isEqualTo("stop-2");
+        assertThat(escalation.inputsSnapshot().path("open_leg_count").asInt()).isEqualTo(1);
+        assertThat(escalation.inputsSnapshot().path("legs_qty").asInt()).isEqualTo(6);
+        assertThat(escalation.inputsSnapshot().path("book_qty").asInt()).isEqualTo(12);
+        assertThat(escalation.inputsSnapshot().path("broker_qty").asInt()).isEqualTo(6);
+
+        // The row is left completely untouched -- no close, no trim, and above all no qty sync
+        // computed from legs the evidence has just contradicted.
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
+        verify(positionRepo, never()).syncQty(anyLong(), any());
+        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
+        assertThat(survivors).containsExactly(p);
+    }
+
+    @Test
+    void stopFillItsOwnLegClaims_isNotReportedAsUnclaimed() {
+        // The negative half: the ordinary stop-out must not also raise UNCLAIMED_STOP_FILL, or
+        // the alarm means nothing. Same fill, but a leg names the order, so it is claimed.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 1L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+        gateway.seedOrder(filled("stop-2", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        service.reconcile("c", "run-1");
+
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("UNCLAIMED_STOP_FILL"));
+    }
 }

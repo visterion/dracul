@@ -73,6 +73,18 @@ import java.util.stream.Collectors;
  * {@link #updateMaintenance}. No path here closes a position on a guess: it takes either an
  * observed fill or the broker's confirmed disappearance of the position.
  *
+ * <p><b>A stop fill no leg claims is never silent</b> ({@link #unclaimedStopFills}). A tranche
+ * whose entry and whose stop both fill between two nightly passes never becomes a leg — seeding
+ * only ever sees a WORKING stop — and {@link #matchLegFills} iterates existing legs, so that fill
+ * would be looked at by nothing. The surviving legs then agree with the broker and the pass would
+ * end at {@link #updateMaintenance} with no TRIM, no realized R and no alarm for shares that
+ * demonstrably left; before the leg rewrite the same state raised {@code TRANCHE2_DESYNC}. A
+ * FILLED order carrying one of the position's OWN stop-order ids that no OPEN leg claimed
+ * therefore escalates {@code UNCLAIMED_STOP_FILL}. The escalation is written whatever else the
+ * pass decides (the extra fill is worth knowing about even while the position closes), and where
+ * the position would otherwise have stayed open it is left completely untouched instead — every
+ * quantity below that point is computed from legs the evidence has just contradicted.
+ *
  * <p><b>Missing fill history is not evidence of absence.</b> {@code filledOrdersSince} is fetched
  * once per pass and fails soft — a failure never aborts reconcile — but finding 3, the
  * one-shortfall exemption above, and {@link #syncLegQuantities}'s per-leg WORKING-stop
@@ -470,6 +482,10 @@ public class ReconcileService {
         List<LegFill> fills = matchLegFills(legs, filledOrders);
         BigDecimal legsQty = legs.stream().map(ExecutorPositionLeg::qty)
                 .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<BrokerOrder> unclaimedStopFills = unclaimedStopFills(p, filledOrders, fills);
+        if (!unclaimedStopFills.isEmpty()) {
+            escalateUnclaimedStopFill(p, legs, unclaimedStopFills, bp, runId);
+        }
 
         if (!fills.isEmpty() && fills.size() == legs.size()) {
             closePositionFromLegs(p, fills, bp, connection, runId);
@@ -501,6 +517,15 @@ public class ReconcileService {
                 legRepo.closeLeg(leg.id(), resolved.exitPrice(), resolved.exitReason(), closedAt);
             }
             bookClose(p, resolved, connection, runId);
+        } else if (!unclaimedStopFills.isEmpty()) {
+            // The broker still holds the symbol and a stop order THIS position placed filled, but
+            // no OPEN leg claimed it -- so the shares behind that fill left without a TRIM, a
+            // realized R, or any other record. Everything below would write the book on the
+            // assumption that the legs account for the holding, and updateMaintenance in
+            // particular would sync p.qty() down to the surviving legs' number: a quantity
+            // rewritten on evidence that has just been contradicted. Leave the row exactly as it
+            // is; the escalation above is already recorded.
+            survivors.add(p);
         } else if (!fillHistoryAvailable && brokerShortfallAttributableToOneLeg(legs, bp)) {
             // The one-leg-shortfall fallback below exists precisely because a smaller broker
             // quantity IS attributable to the single open leg -- an unobserved stop fill. That
@@ -522,6 +547,68 @@ public class ReconcileService {
         } else {
             survivors.add(updateMaintenance(p, bp, runId));
         }
+    }
+
+    /**
+     * FILLED orders that ARE one of this position's own recorded stop legs
+     * ({@code stop_order_id} / {@code tranche2_stop_order_id}) and that no OPEN leg claimed as its
+     * exit.
+     *
+     * <p>This is the hole the leg rewrite opened. A tranche whose entry AND whose stop both fill
+     * between two nightly passes never becomes a leg at all — {@link #seedLegsFromWorkingStops}
+     * only ever sees a WORKING stop, and by the next pass that stop is filled, not working — while
+     * {@link #matchLegFills} iterates the legs that DO exist and so can never look at the fill.
+     * The surviving legs then agree with the broker's holding and the pass ends at
+     * {@link #updateMaintenance}: no TRIM, no realized R, no escalation, for shares that
+     * demonstrably left. Before the legs existed the same state raised {@code TRANCHE2_DESYNC};
+     * silence is a regression, not a simplification.
+     *
+     * <p>Matched on the position's OWN stop-order ids only, never on {@code parentId} or role: a
+     * stop id is our own record of an order we placed for this position, and it is the one match
+     * that cannot be a coincidence. A leg that exits normally nulls its stop-leg column
+     * ({@code clearStopLeg}) or closes with the whole row, so a fill matched here is by
+     * construction one the book has not accounted for.
+     */
+    private List<BrokerOrder> unclaimedStopFills(ExecutorPosition p, List<BrokerOrder> filledOrders,
+            List<LegFill> fills) {
+        Set<String> claimed = fills.stream().map(f -> f.order().orderId())
+                .filter(id -> id != null).collect(Collectors.toSet());
+        return filledOrders.stream()
+                .filter(o -> o.status() == OrderStatus.FILLED)
+                .filter(o -> o.orderId() != null && !claimed.contains(o.orderId()))
+                .filter(o -> matchesKnownStopLeg(p, o))
+                .toList();
+    }
+
+    /** Escalates {@link #unclaimedStopFills}. The order ids and the legs the book does hold go
+     *  into {@code inputs_snapshot} so an operator can see immediately WHICH stop filled and what
+     *  the book still thinks it holds, rather than reading it out of the prose. */
+    private void escalateUnclaimedStopFill(ExecutorPosition p, List<ExecutorPositionLeg> legs,
+            List<BrokerOrder> unclaimed, BrokerPosition bp, String runId) {
+        String orderIds = unclaimed.stream().map(BrokerOrder::orderId)
+                .reduce((a, b) -> a + "," + b).orElse("");
+        BigDecimal legsQty = legs.stream().map(ExecutorPositionLeg::qty)
+                .filter(q -> q != null).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("filled_stop_order_ids", orderIds);
+        inputs.put("open_leg_count", legs.size());
+        inputs.put("book_qty", p.qty());
+        inputs.put("legs_qty", legsQty);
+        if (bp != null) {
+            inputs.put("broker_qty", bp.qty());
+        }
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "ESCALATE", "UNCLAIMED_STOP_FILL", orderJson,
+                "position " + p.symbol() + " (id " + p.id() + "): stop order(s) " + orderIds
+                        + " filled at the broker, but no open leg of this position claims them — "
+                        + "the shares behind that fill left the position without a TRIM or a "
+                        + "realized R. The row was left untouched — UNCLAIMED_STOP_FILL — "
+                        + "operator attention required", null, null, null));
     }
 
     /**
