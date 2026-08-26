@@ -88,7 +88,16 @@ public class FakeExecutionGateway implements ExecutionGateway {
         this.account = account;
     }
 
+    /** When set, every read/cancel below throws this instead of answering. Lets a test drive a
+     *  broker REJECTION (a verdict) through paths that previously only ever saw an outage --
+     *  BrokerRejectedException extends BrokerUnavailableException, so a caller that does not
+     *  distinguish them files the broker's explicit "no" as an outage. */
+    public RuntimeException rejectReadsWith = null;
+
     private void checkAvailable() {
+        if (rejectReadsWith != null) {
+            throw rejectReadsWith;
+        }
         if (unavailable) {
             throw new BrokerUnavailableException("fake unavailable");
         }
@@ -206,9 +215,16 @@ public class FakeExecutionGateway implements ExecutionGateway {
         return new ModifyResult(orderId, stop, target, true);
     }
 
+    /** When set, {@link #cancelOrder} throws this instead of cancelling -- so a test can reject
+     *  ONLY the cancel while the order read still answers. */
+    public RuntimeException rejectCancelWith = null;
+
     @Override
     public void cancelOrder(String connection, String orderId) {
         checkAvailable();
+        if (rejectCancelWith != null) {
+            throw rejectCancelWith;
+        }
         cancelledOrderIds.add(orderId);
     }
 }

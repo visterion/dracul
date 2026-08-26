@@ -384,6 +384,11 @@ class HardTriggerServiceTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
         assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
         assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        // One reason_code covering every rejection is only queryable if the code that
+        // distinguishes them is a FIELD, not prose -- same shape ExecutorWebhookController writes
+        // for the identical broker event.
+        assertThat(log.inputsSnapshot().path("reject_code").asString())
+                .isEqualTo("CLOSE_ALREADY_PENDING");
         assertThat(log.reasoning()).isEqualTo("broker rejected hard-trigger flatten "
                 + "[CLOSE_ALREADY_PENDING]: agora order rejected [CLOSE_ALREADY_PENDING]: a close "
                 + "of >= the requested size is already working");

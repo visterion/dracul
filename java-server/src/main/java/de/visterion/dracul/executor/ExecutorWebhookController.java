@@ -1287,19 +1287,34 @@ public class ExecutorWebhookController {
             // surfacing verbatim. A null reject code (Agora omitted the field) falls back to a
             // defined name rather than a null reason_code -- an escalation row nothing can query
             // for is as good as lost.
-            String flattenReasonCode;
-            if (AGORA_NO_POSITION.equals(e.rejectCode())) {
-                flattenReasonCode = "POSITION_ALREADY_GONE";
-            } else if (e.rejectCode() != null) {
-                flattenReasonCode = e.rejectCode();
-            } else {
-                flattenReasonCode = "BROKER_REJECTED";
-            }
-            String flattenReasoning = AGORA_NO_POSITION.equals(e.rejectCode())
+            // One vocabulary with HardTriggerService.flattenOrEscalate, which files the SAME
+            // rejections as BROKER_REJECTED. Writing Agora's wire code straight into reason_code
+            // here meant a query for BROKER_REJECTED found the hard-trigger half and missed this
+            // one, for the identical broker event. Two names, one condition.
+            //
+            // It also retires a string that had come to mean two opposite things: historical
+            // production rows with reason_code = 'NOT_FOUND' meant "the position is gone", while a
+            // generic 404 inside flatten says nothing about whether it exists. That case is now
+            // reason_code = BROKER_REJECTED with reject_code = NOT_FOUND in inputs_snapshot, so
+            // the old string is never written again and every surviving 'NOT_FOUND' row is
+            // unambiguously historical.
+            //
+            // The wire code is not lost, it moves to a queryable field (the pattern
+            // FILL_HISTORY_UNAVAILABLE's `withheld` established) and is named in the reasoning,
+            // exactly as the hard-trigger path already does. It stays load-bearing in Java where
+            // it always was -- the CRITICAL alert below still branches on
+            // LEG_RESTORE_FAILED_UNPROTECTED, and repointStopLegs on the three leg-restore codes.
+            boolean positionAlreadyGone = AGORA_NO_POSITION.equals(e.rejectCode());
+            String flattenReasonCode = positionAlreadyGone ? "POSITION_ALREADY_GONE" : "BROKER_REJECTED";
+            String flattenReasoning = positionAlreadyGone
                     ? "position already gone during soft-exit flatten: " + e.getMessage()
-                    : "broker rejected soft-exit flatten: " + e.getMessage();
+                    : "broker rejected soft-exit flatten ["
+                            + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
+                            + "]: " + e.getMessage();
+            ObjectNode rejectInputs = mapper.createObjectNode();
+            rejectInputs.put("reject_code", e.rejectCode());
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "SOFT_TRIGGER", null, null, null, symbol, null, null,
+                    "SOFT_TRIGGER", null, null, null, symbol, rejectInputs, null,
                     "ESCALATE", flattenReasonCode, null, flattenReasoning,
                     confidence, null, null));
             // Alert only on the unprotected case — a plain LEG_CANCEL_INCOMPLETE / restored-but-

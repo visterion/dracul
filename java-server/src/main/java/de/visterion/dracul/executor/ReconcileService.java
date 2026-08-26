@@ -3,6 +3,7 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.executor.broker.BrokerClosedPosition;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
@@ -217,6 +218,24 @@ public class ReconcileService {
         try {
             brokerPositions = gateway.positions(connection);
             orders = gateway.orders(connection);
+        } catch (BrokerRejectedException e) {
+            // A rejection is a VERDICT. BrokerRejectedException extends BrokerUnavailableException
+            // so that every pre-existing catch keeps compiling, which also meant this one filed
+            // the broker's explicit "no" as BROKER_UNAVAILABLE -- the one thing this branch
+            // defines that code as never meaning (no verdict at all). Agora's wire code goes into
+            // a queryable reject_code field and into the prose, the same shape HardTriggerService,
+            // ExecutorWebhookController and EntryExpiryService use.
+            ObjectNode rejectInputs = mapper.createObjectNode();
+            rejectInputs.put("reject_code", e.rejectCode());
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, null, rejectInputs, null,
+                    "ESCALATE", "BROKER_REJECTED", null,
+                    "broker rejected the position/order read during reconcile ["
+                            + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
+                            + "]: " + e.getMessage(), null, null, null));
+            // Same book-untouched outcome as an outage: without the broker's state there is
+            // nothing to reconcile against, and no id is flagged unfilled.
+            return new ReconcileResult(open, Set.of());
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "MAINTENANCE", null, null, null, null, null, null,

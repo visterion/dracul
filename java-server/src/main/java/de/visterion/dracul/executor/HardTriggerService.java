@@ -187,20 +187,34 @@ public class HardTriggerService {
      * separately: {@code POSITION_ALREADY_GONE} for the structural case Agora reports as reject
      * code {@code AGORA_NO_POSITION} (the position no longer exists at the broker — no retry helps),
      * {@code BROKER_REJECTED} for every other reject code, including a generic {@code NOT_FOUND}
-     * (still a verdict, but nothing here knows enough to say more than that).
+     * (still a verdict, but nothing here knows enough to say more than that). The wire code itself
+     * is carried in {@code inputs_snapshot.reject_code} so it stays queryable.
+     *
+     * <p>{@code ExecutorWebhookController}'s soft-exit flatten files the same rejections under the
+     * same two names and the same {@code reject_code} field. That is deliberate: they are the same
+     * broker event, and while the two paths named it differently, a query for
+     * {@code BROKER_REJECTED} found one of them and silently missed the other.
      */
     private CloseResult flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
         try {
             return gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE);
         } catch (BrokerRejectedException e) {
+            // The wire code also goes into inputs_snapshot, not only into the prose: one
+            // reason_code covering every rejection is only queryable if the code that
+            // distinguishes them is a field. Same shape ExecutorWebhookController writes for the
+            // identical broker event -- the two paths speak one vocabulary.
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("reject_code", e.rejectCode());
             if (AGORA_NO_POSITION.equals(e.rejectCode())) {
                 escalate(p, runId, "POSITION_ALREADY_GONE",
-                        "position already gone during hard-trigger flatten: " + e.getMessage());
+                        "position already gone during hard-trigger flatten: " + e.getMessage(),
+                        inputs);
             } else {
                 escalate(p, runId, "BROKER_REJECTED",
                         "broker rejected hard-trigger flatten ["
                                 + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
-                                + "]: " + e.getMessage());
+                                + "]: " + e.getMessage(),
+                        inputs);
             }
             return null;
         } catch (BrokerUnavailableException e) {
@@ -211,8 +225,13 @@ public class HardTriggerService {
     }
 
     private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
+        escalate(p, runId, reasonCode, reasoning, null);
+    }
+
+    private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning,
+            ObjectNode inputs) {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                "HARD_TRIGGER", null, null, null, p.symbol(), null, null,
+                "HARD_TRIGGER", null, null, null, p.symbol(), inputs, null,
                 "ESCALATE", reasonCode, null, reasoning, null, null, null));
     }
 

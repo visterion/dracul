@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.BrokerOrder;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderStatus;
@@ -96,6 +97,9 @@ public class EntryExpiryService {
         List<BrokerOrder> orders;
         try {
             orders = gateway.orders(connection);
+        } catch (BrokerRejectedException e) {
+            for (ExecutorPosition p : candidates) escalateBrokerRejected(p, runId, e, "order read");
+            return cancelledIds;
         } catch (BrokerUnavailableException e) {
             for (ExecutorPosition p : candidates) escalateBrokerUnavailable(p, runId, e);
             return cancelledIds;
@@ -130,6 +134,9 @@ public class EntryExpiryService {
     private boolean cancelFully(ExecutorPosition p, BrokerOrder entryOrder, String runId) {
         try {
             gateway.cancelOrder(p.connection(), entryOrder.orderId());
+        } catch (BrokerRejectedException e) {
+            escalateBrokerRejected(p, runId, e, "cancel of the expired entry");
+            return false;
         } catch (BrokerUnavailableException e) {
             escalateBrokerUnavailable(p, runId, e);
             return false;
@@ -154,6 +161,9 @@ public class EntryExpiryService {
     private void cancelRemainder(ExecutorPosition p, BrokerOrder entryOrder, String runId) {
         try {
             gateway.cancelOrder(p.connection(), entryOrder.orderId());
+        } catch (BrokerRejectedException e) {
+            escalateBrokerRejected(p, runId, e, "cancel of the expired entry remainder");
+            return;
         } catch (BrokerUnavailableException e) {
             escalateBrokerUnavailable(p, runId, e);
             return;
@@ -176,6 +186,32 @@ public class EntryExpiryService {
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
                 "CANCEL_EXPIRED", "SIGNAL_EXPIRED", orderJson, null, null, null, null));
+    }
+
+    /**
+     * A rejection is a VERDICT, not an outage. {@link BrokerRejectedException} extends
+     * {@link BrokerUnavailableException} so that every pre-existing catch keeps compiling, which
+     * also meant every catch here quietly filed the broker's explicit "no" as
+     * {@code BROKER_UNAVAILABLE} — the one thing this branch defines that code as never meaning
+     * ({@code BROKER_UNAVAILABLE} = no verdict at all; see {@code HardTriggerService}'s javadoc
+     * and {@code documentation/configuration.md}). Named separately, with Agora's wire code in a
+     * queryable {@code reject_code} field and in the prose, exactly as
+     * {@code HardTriggerService} and {@code ExecutorWebhookController} do for a rejected flatten.
+     *
+     * <p>The book is untouched either way — the distinction is what an operator is told, and
+     * whether retrying could possibly help.
+     */
+    private void escalateBrokerRejected(ExecutorPosition p, String runId,
+            BrokerRejectedException e, String what) {
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("reject_code", e.rejectCode());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), inputs, null,
+                "ESCALATE", "BROKER_REJECTED", null,
+                "broker rejected the " + what + " during entry expiry ["
+                        + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
+                        + "]: " + e.getMessage(), null, null, null));
     }
 
     private void escalateBrokerUnavailable(ExecutorPosition p, String runId, BrokerUnavailableException e) {

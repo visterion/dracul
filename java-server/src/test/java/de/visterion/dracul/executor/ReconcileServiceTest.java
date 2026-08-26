@@ -3,6 +3,7 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.executor.broker.BrokerClosedPosition;
 import de.visterion.dracul.executor.broker.BrokerOrder;
 import de.visterion.dracul.executor.broker.BrokerPosition;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
@@ -2211,5 +2212,47 @@ class ReconcileServiceTest {
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
         verify(decisionRepo, atLeastOnce()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+    }
+
+    // -------------------------------------------------------------------
+    // A rejection on the position/order read is a verdict, not an outage.
+    // -------------------------------------------------------------------
+
+    @Test
+    void aRejectedPositionRead_isFiledAsBrokerRejectedNotAsAnOutage() {
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.rejectReadsWith = new BrokerRejectedException(
+                "agora order rejected [UNKNOWN_CONNECTION]: no such connection",
+                "UNKNOWN_CONNECTION", List.of());
+
+        ReconcileService.ReconcileResult result = service.reconcile("c", "run1");
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
+        assertThat(log.inputsSnapshot().path("reject_code").asString())
+                .isEqualTo("UNKNOWN_CONNECTION");
+        // Same book-untouched outcome as an outage -- only the name an operator sees changes.
+        assertThat(result.survivors()).containsExactly(p);
+        assertThat(result.unfilledIds()).isEmpty();
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aRealOutageOnThePositionRead_stillFilesAsBrokerUnavailable() {
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.unavailable = true;
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
     }
 }

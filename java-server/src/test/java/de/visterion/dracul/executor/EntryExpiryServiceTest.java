@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.executor.broker.BrokerOrder;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderRole;
 import de.visterion.dracul.executor.broker.OrderStatus;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /** Verifies {@link EntryExpiryService}: cancels unfilled GTD entries past their expiry —
@@ -108,8 +110,12 @@ class EntryExpiryServiceTest {
 
         service.expire("c", "run1");
 
+        // verifyNoMoreInteractions rather than a never() on closeLeg: this service never calls
+        // closeLeg on any path, so pinning that one method could not fail. What CAN fail is any
+        // OTHER write to the leg table appearing here -- an exit price on a position that never
+        // held a share would invent a trade that did not happen.
         verify(legRepo).cancelOpenLegs(1L);
-        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
+        verifyNoMoreInteractions(legRepo);
     }
 
     @Test
@@ -234,5 +240,67 @@ class EntryExpiryServiceTest {
         assertThat(gateway.cancelledOrderIds).containsExactly("brk-1"); // exactly once
         verify(positionRepo, times(1)).clearEntryExpiry(8L);
         verify(decisionRepo, times(1)).insert(any());
+    }
+
+    // -------------------------------------------------------------------
+    // A rejection is a verdict, not an outage. BrokerRejectedException extends
+    // BrokerUnavailableException, so every catch here used to file the broker's explicit "no"
+    // as BROKER_UNAVAILABLE -- the one thing this branch defines that code as never meaning.
+    // -------------------------------------------------------------------
+
+    @Test
+    void aRejectedCancel_isFiledAsBrokerRejectedNotAsAnOutage() {
+        ExecutorPosition p = openPosition(1L, "ACME", "sig-1");
+        when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(p));
+        gateway.seedOrder(new BrokerOrder("brk-1", "sig-1", "ACME", OrderRole.ENTRY,
+                OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
+        // The order read succeeds; only the cancel is rejected.
+        gateway.rejectCancelWith = new BrokerRejectedException(
+                "agora order rejected [ORDER_ALREADY_FILLED]: nothing to cancel",
+                "ORDER_ALREADY_FILLED", List.of());
+
+        Set<Long> cancelled = service.expire("c", "run1");
+
+        assertThat(cancelled).isEmpty();
+        verify(positionRepo, never()).markCancelled(anyLong());
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
+        assertThat(log.inputsSnapshot().path("reject_code").asString())
+                .isEqualTo("ORDER_ALREADY_FILLED");
+        assertThat(log.reasoning()).contains("[ORDER_ALREADY_FILLED]");
+    }
+
+    @Test
+    void aRejectedOrderRead_isFiledAsBrokerRejectedNotAsAnOutage() {
+        ExecutorPosition p = openPosition(1L, "ACME", "sig-1");
+        when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(p));
+        gateway.rejectReadsWith = new BrokerRejectedException(
+                "agora order rejected [UNKNOWN_CONNECTION]: no such connection",
+                "UNKNOWN_CONNECTION", List.of());
+
+        service.expire("c", "run1");
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().reasonCode()).isEqualTo("BROKER_REJECTED");
+    }
+
+    @Test
+    void aRealOutage_stillFilesAsBrokerUnavailable() {
+        // The negative half: the split must not swallow the case the code is actually for.
+        ExecutorPosition p = openPosition(1L, "ACME", "sig-1");
+        when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(p));
+        gateway.unavailable = true;
+
+        service.expire("c", "run1");
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
     }
 }

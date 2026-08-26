@@ -3682,7 +3682,12 @@ class ExecutorWebhookControllerTest {
         verify(decisionLogRepo).insert(logCaptor.capture());
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
-        assertThat(log.reasonCode()).isEqualTo("LEG_RESTORE_FAILED_UNPROTECTED");
+        // One vocabulary with HardTriggerService: every rejection that is not "the position is
+        // already gone" is BROKER_REJECTED, and Agora's wire code lives in a queryable field.
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.inputsSnapshot().path("reject_code").asString())
+                .isEqualTo("LEG_RESTORE_FAILED_UNPROTECTED");
+        assertThat(log.reasoning()).contains("[LEG_RESTORE_FAILED_UNPROTECTED]");
     }
 
     @Test
@@ -3786,12 +3791,18 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
         DecisionLog log = logCaptor.getValue();
-        assertThat(log.reasonCode()).isEqualTo("NOT_FOUND");
+        // reason_code 'NOT_FOUND' is retired, deliberately: historical production rows carrying
+        // that string meant "the position is gone", while THIS case says nothing about whether it
+        // exists. The generic 404 now files as BROKER_REJECTED with the wire code in a queryable
+        // field, so the old string is never written again and every surviving row with it is
+        // unambiguously historical.
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
         assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        assertThat(log.inputsSnapshot().path("reject_code").asString()).isEqualTo("NOT_FOUND");
         // Full text pinned, not just a substring check (fix round 3: reason-code-plus-
         // doesNotContain is the same shape that let Task 5's null-interpolating sentence ship
         // green).
-        assertThat(log.reasoning()).isEqualTo("broker rejected soft-exit flatten: "
+        assertThat(log.reasoning()).isEqualTo("broker rejected soft-exit flatten [NOT_FOUND]: "
                 + "agora order rejected [NOT_FOUND]: Resource not found (HTTP 404)");
         assertThat(log.reasoning()).doesNotContain("null");
         assertThat(log.reasoning()).doesNotContain("already gone");
@@ -3819,8 +3830,9 @@ class ExecutorWebhookControllerTest {
         verify(decisionLogRepo).insert(logCaptor.capture());
         DecisionLog log = logCaptor.getValue();
         assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
-        // Full text pinned too (fix round 3).
-        assertThat(log.reasoning()).isEqualTo("broker rejected soft-exit flatten: "
+        assertThat(log.inputsSnapshot().path("reject_code").isNull()).isTrue();
+        // Full text pinned too (fix round 3). "no reject code" rather than an interpolated null.
+        assertThat(log.reasoning()).isEqualTo("broker rejected soft-exit flatten [no reject code]: "
                 + "agora order rejected: some unmapped reason");
         assertThat(log.reasoning()).doesNotContain("null");
     }
@@ -3862,7 +3874,9 @@ class ExecutorWebhookControllerTest {
         verify(decisionLogRepo).insert(logCaptor.capture());
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
-        assertThat(log.reasonCode()).isEqualTo("LEG_RESTORE_FAILED");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.inputsSnapshot().path("reject_code").asString())
+                .isEqualTo("LEG_RESTORE_FAILED");
     }
 
     @Test
@@ -3906,7 +3920,9 @@ class ExecutorWebhookControllerTest {
         verify(decisionLogRepo).insert(logCaptor.capture());
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
-        assertThat(log.reasonCode()).isEqualTo("CLOSE_ALREADY_PENDING");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.inputsSnapshot().path("reject_code").asString())
+                .isEqualTo("CLOSE_ALREADY_PENDING");
     }
 
     @Test
