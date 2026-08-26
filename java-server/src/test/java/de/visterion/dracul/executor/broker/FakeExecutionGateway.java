@@ -66,7 +66,7 @@ public class FakeExecutionGateway implements ExecutionGateway {
     /** When set, the next {@link #flatten} call throws this instead of closing the position, and
      *  is then cleared — one shot, so a test does not have to reset it after asserting the
      *  escalation. Lets a test hand in a real {@link BrokerRejectedException} carrying a typed
-     *  reject code (e.g. {@code "NoPosition"}), the same shape
+     *  reject code (e.g. {@code "NOT_FOUND"}), the same shape
      *  {@code AgoraExecutionGateway.requireAccepted} produces for an {@code accepted:false}
      *  flatten, so the caller can be shown to branch on the TYPE, never on matching text in the
      *  message. */

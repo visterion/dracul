@@ -401,12 +401,15 @@ class AgoraExecutionGatewayTest {
     }
 
     @Test void flattenThrowsOnRejection() {
+        // NOT_FOUND is the reject code Agora's FlattenTool actually emits when there is no open
+        // position to flatten (SaxoBrokerProvider.resolveNetPosition's NOT_FOUND, mapped by
+        // FlattenTool the same way CancelOrderTool maps its own NOT_FOUND) -- not a placeholder.
         CapturingGateway gw = new CapturingGateway(mapper);
-        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"NoPosition\"}}");
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"NOT_FOUND\"}}");
 
         assertThatThrownBy(() -> gw.flatten("depot-1", "AAPL", new BigDecimal("1")))
                 .isInstanceOf(BrokerUnavailableException.class)
-                .hasMessageContaining("NoPosition");
+                .hasMessageContaining("NOT_FOUND");
     }
 
     @Test void parsesRestoredLegsFromTheFlattenResponse() {

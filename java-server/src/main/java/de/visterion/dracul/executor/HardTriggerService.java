@@ -53,7 +53,7 @@ public class HardTriggerService {
      *  {@code AgoraExecutionGateway.requireAccepted} already threads through for {@code LEG_NOT_FOUND}
      *  (see {@code StopRatchetService}). Structural, not transient: no retry makes a gone position
      *  come back. */
-    private static final String NO_POSITION = "NoPosition";
+    private static final String NO_POSITION = "NOT_FOUND";
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -166,7 +166,7 @@ public class HardTriggerService {
      * <p>{@code BROKER_UNAVAILABLE} is reserved for a call that got no verdict at all: transport
      * failure, 5xx, timeout. A rejection is a verdict, and is named separately:
      * {@code POSITION_ALREADY_GONE} for the structural case Agora reports as reject code
-     * {@code NoPosition} (the position no longer exists at the broker — no retry helps),
+     * {@code NOT_FOUND} (the position no longer exists at the broker — no retry helps),
      * {@code BROKER_REJECTED} for every other reject code (still a verdict, but nothing here
      * knows enough to say more).
      */
@@ -176,8 +176,7 @@ public class HardTriggerService {
         } catch (BrokerRejectedException e) {
             if (NO_POSITION.equals(e.rejectCode())) {
                 escalate(p, runId, "POSITION_ALREADY_GONE",
-                        "position already gone during hard-trigger flatten: broker reports no "
-                                + "open position for " + p.symbol() + ": " + e.getMessage());
+                        "position already gone during hard-trigger flatten: " + e.getMessage());
             } else {
                 escalate(p, runId, "BROKER_REJECTED",
                         "broker rejected hard-trigger flatten ["

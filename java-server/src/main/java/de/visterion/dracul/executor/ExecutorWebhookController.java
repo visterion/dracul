@@ -71,7 +71,7 @@ public class ExecutorWebhookController {
      *  position back, and it must not be filed as {@code BROKER_UNAVAILABLE} — that is exactly
      *  the 2026-08-24 RGNX incident, where the broker had long stopped the position out but the
      *  book still held it OPEN. */
-    private static final String NO_POSITION = "NoPosition";
+    private static final String NO_POSITION = "NOT_FOUND";
 
     private final BearerTokenVerifier verifier;
     private final ExecutorSignalRepository signalRepo;
@@ -1257,14 +1257,13 @@ public class ExecutorWebhookController {
                 positionRepo.repointStopLegs(position.id(),
                         e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
             }
-            // NoPosition is named separately from every other reject code: it is the structural
+            // NOT_FOUND is named separately from every other reject code: it is the structural
             // case where the position is simply gone at the broker, not a business rejection
             // whose detail (LEG_RESTORE_FAILED_UNPROTECTED etc.) is worth surfacing verbatim.
             String flattenReasonCode = NO_POSITION.equals(e.rejectCode())
                     ? "POSITION_ALREADY_GONE" : e.rejectCode();
             String flattenReasoning = NO_POSITION.equals(e.rejectCode())
-                    ? "position already gone during soft-exit flatten: broker reports no open "
-                            + "position for " + symbol + ": " + e.getMessage()
+                    ? "position already gone during soft-exit flatten: " + e.getMessage()
                     : "broker rejected soft-exit flatten: " + e.getMessage();
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "SOFT_TRIGGER", null, null, null, symbol, null, null,

@@ -3636,13 +3636,16 @@ class ExecutorWebhookControllerTest {
         // Real incident (2026-08-24, RGNX): the broker had long since stopped the position out,
         // but the book still held it OPEN. The flatten call correctly reaches the broker and gets
         // an explicit verdict back -- "no open position" -- which must not be filed as an outage.
+        // NOT_FOUND is the reject code Agora's FlattenTool actually emits for this case
+        // (SaxoBrokerProvider.resolveNetPosition -> FlattenTool's NOT_FOUND mapping), not a code
+        // invented for this test.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
                 .thenThrow(new BrokerRejectedException(
-                        "agora order rejected [NoPosition]: no open position: ACME",
-                        "NoPosition", List.of()));
+                        "agora order rejected [NOT_FOUND]: no open position: ACME",
+                        "NOT_FOUND", List.of()));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3664,6 +3667,13 @@ class ExecutorWebhookControllerTest {
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("POSITION_ALREADY_GONE");
         assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
+        // The full wording is pinned, not just the code: Task 5 shipped a null-interpolating
+        // sentence past a reason-code-only test, so this one asserts the exact text and that it
+        // never claims an outage or interpolates a null.
+        assertThat(log.reasoning()).isEqualTo("position already gone during soft-exit flatten: "
+                + "agora order rejected [NOT_FOUND]: no open position: ACME");
+        assertThat(log.reasoning()).doesNotContain("null");
+        assertThat(log.reasoning()).doesNotContain("unavailable");
     }
 
     @Test

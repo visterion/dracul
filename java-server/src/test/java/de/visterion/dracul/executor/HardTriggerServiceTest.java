@@ -329,11 +329,13 @@ class HardTriggerServiceTest {
         // Real incident (2026-08-24, RGNX): the broker had long since stopped the position out,
         // but the book still held it OPEN. The flatten call correctly reaches the broker and gets
         // an explicit verdict back -- "no open position" -- which is not an outage and must not be
-        // filed as one (BUG family this task closes).
+        // filed as one (BUG family this task closes). NOT_FOUND is the reject code Agora's
+        // FlattenTool actually emits for this case (SaxoBrokerProvider.resolveNetPosition ->
+        // FlattenTool's NOT_FOUND mapping) -- not a code invented for this test.
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), null);
         gateway.rejectFlattenWith = new BrokerRejectedException(
-                "agora order rejected [NoPosition]: no open position: ACME", "NoPosition", List.of());
+                "agora order rejected [NOT_FOUND]: no open position: ACME", "NOT_FOUND", List.of());
 
         List<ExecutorPosition> survivors = service.apply(List.of(p),
                 Map.of("ACME", new BigDecimal("94")), "run1");
@@ -344,6 +346,13 @@ class HardTriggerServiceTest {
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("POSITION_ALREADY_GONE");
         assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
+        // The full wording is pinned, not just the code: Task 5 shipped a null-interpolating
+        // sentence past a reason-code-only test, so this one asserts the exact text and that it
+        // never claims an outage or interpolates a null.
+        assertThat(log.reasoning()).isEqualTo("position already gone during hard-trigger flatten: "
+                + "agora order rejected [NOT_FOUND]: no open position: ACME");
+        assertThat(log.reasoning()).doesNotContain("null");
+        assertThat(log.reasoning()).doesNotContain("unavailable");
 
         verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
         assertThat(survivors).containsExactly(p);
