@@ -39,6 +39,7 @@ class ExecutorWebhookControllerTest {
 
     private ExecutorSignalRepository signalRepo;
     private ExecutorPositionRepository positionRepo;
+    private ExecutorPositionLegRepository legRepo;
     private ExecutorDecisionRepository decisionRepo;
     private ExecutionGateway gateway;
     private ExecutorIndicators executorIndicators;
@@ -67,6 +68,7 @@ class ExecutorWebhookControllerTest {
     void setUp() {
         signalRepo = mock(ExecutorSignalRepository.class);
         positionRepo = mock(ExecutorPositionRepository.class);
+        legRepo = mock(ExecutorPositionLegRepository.class);
         decisionRepo = mock(ExecutorDecisionRepository.class);
         gateway = mock(ExecutionGateway.class);
         executorIndicators = mock(ExecutorIndicators.class);
@@ -92,7 +94,7 @@ class ExecutorWebhookControllerTest {
         when(assembler.assembleForSymbol(any())).thenReturn(happyContext());
 
         controller = new ExecutorWebhookController(
-                signalRepo, positionRepo, decisionRepo,
+                signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
@@ -311,7 +313,7 @@ class ExecutorWebhookControllerTest {
      *  {@link PositionSizer} never returns one; only a mock can simulate a broken server window). */
     private ExecutorWebhookController controllerWithSizer(PositionSizer customSizer) {
         return new ExecutorWebhookController(
-                signalRepo, positionRepo, decisionRepo,
+                signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, customSizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
@@ -326,7 +328,7 @@ class ExecutorWebhookControllerTest {
      *  be rescaled without changing whether the window is actually degenerate). */
     private ExecutorWebhookController controllerWithMinPrice(BigDecimal minPrice) {
         return new ExecutorWebhookController(
-                signalRepo, positionRepo, decisionRepo,
+                signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
@@ -341,7 +343,7 @@ class ExecutorWebhookControllerTest {
      *  stubs, which cannot prove the controller passes the RAW price into it). */
     private ExecutorWebhookController controllerWithRealTranche2Detector() {
         return new ExecutorWebhookController(
-                signalRepo, positionRepo, decisionRepo,
+                signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, new Tranche2Detector(), telegram, executorNotifier, positionContextRepo, patternRepo,
@@ -355,7 +357,7 @@ class ExecutorWebhookControllerTest {
      *  tick-rounded {@code newRiskAccountCcy} for a given price/stop pair. */
     private ExecutorWebhookController controllerWithHeatPct(double heatPct) {
         return new ExecutorWebhookController(
-                signalRepo, positionRepo, decisionRepo,
+                signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
@@ -3563,6 +3565,37 @@ class ExecutorWebhookControllerTest {
         controller.exitPosition(BEARER, "run-1", body);
 
         verify(positionRepo).recordTrim(eq(7L), eq(new BigDecimal("7")), eq(1), eq(legs), eq(true));
+    }
+
+    @Test
+    void aRejectedFlattenRepointsTheLegRowsToTheRestoredStopIds() {
+        // The leg rows carry the ids StopRatchetService actually addresses. A rollback that
+        // re-issued the protective legs must land on them too, or the ratchet keeps patching
+        // orders that no longer exist and fails LEG_NOT_FOUND on every run.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(legRepo.findOpenByPosition(7L)).thenReturn(List.of(
+                new ExecutorPositionLeg(10L, 7L, 1, "ord-1", "stop-1", new BigDecimal("6"),
+                        ExecutorPositionLeg.OPEN, null, null, null),
+                new ExecutorPositionLeg(11L, 7L, 2, "ord-2", "stop-2", new BigDecimal("4"),
+                        ExecutorPositionLeg.OPEN, null, null, null)));
+        // The rollback re-issued tranche 1's stop and reported nothing for tranche 2's.
+        List<RestoredLeg> legs = List.of(
+                new RestoredLeg("stop-1", "stop-1b", new BigDecimal("6"), new BigDecimal("90")));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerRejectedException("rollback left the position unprotected",
+                        "LEG_RESTORE_FAILED_UNPROTECTED", legs));
+
+        controller.exitPosition(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """));
+
+        // Claimed by a restored leg -> repointed to the new id.
+        verify(legRepo).repointLegStop(10L, "stop-1b");
+        // Unclaimed -> nulled, not left stale. A null id is a visible protection gap; a stale one
+        // looks live and silently patches an order the broker already cancelled.
+        verify(legRepo).repointLegStop(11L, null);
     }
 
     @Test

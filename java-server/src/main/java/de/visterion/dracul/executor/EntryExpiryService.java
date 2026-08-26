@@ -44,6 +44,7 @@ public class EntryExpiryService {
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
+    private final ExecutorPositionLegRepository legRepo;
     private final ExecutorSignalRepository signalRepo;
     private final DecisionLogRepository decisionRepo;
     private final RuleVersionProvider ruleVersions;
@@ -54,16 +55,19 @@ public class EntryExpiryService {
     public EntryExpiryService(
             ExecutionGateway gateway,
             ExecutorPositionRepository positionRepo,
+            ExecutorPositionLegRepository legRepo,
             ExecutorSignalRepository signalRepo,
             DecisionLogRepository decisionRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper) {
-        this(gateway, positionRepo, signalRepo, decisionRepo, ruleVersions, mapper, Clock.systemUTC());
+        this(gateway, positionRepo, legRepo, signalRepo, decisionRepo, ruleVersions, mapper,
+                Clock.systemUTC());
     }
 
     EntryExpiryService(
             ExecutionGateway gateway,
             ExecutorPositionRepository positionRepo,
+            ExecutorPositionLegRepository legRepo,
             ExecutorSignalRepository signalRepo,
             DecisionLogRepository decisionRepo,
             RuleVersionProvider ruleVersions,
@@ -71,6 +75,7 @@ public class EntryExpiryService {
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
+        this.legRepo = legRepo;
         this.signalRepo = signalRepo;
         this.decisionRepo = decisionRepo;
         this.ruleVersions = ruleVersions;
@@ -131,6 +136,11 @@ public class EntryExpiryService {
         }
 
         positionRepo.markCancelled(p.id());
+        // The entry was WORKING, so no share of this position was ever held and no leg can be
+        // carrying one. Any OPEN leg row left behind would keep claiming shares against a
+        // cancelled position, so it is CANCELLED (never CLOSED — nothing exited, and an exit
+        // price here would invent a trade that did not happen).
+        legRepo.cancelOpenLegs(p.id());
         // One-shot guard (harmless here — the row is CANCELLED and leaves the expiry query via
         // its status filter anyway, but clearing keeps both branches symmetric by construction).
         positionRepo.clearEntryExpiry(p.id());

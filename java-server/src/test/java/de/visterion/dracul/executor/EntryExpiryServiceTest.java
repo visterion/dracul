@@ -18,6 +18,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -32,6 +33,7 @@ class EntryExpiryServiceTest {
 
     private final FakeExecutionGateway gateway = new FakeExecutionGateway();
     private final ExecutorPositionRepository positionRepo = mock(ExecutorPositionRepository.class);
+    private final ExecutorPositionLegRepository legRepo = mock(ExecutorPositionLegRepository.class);
     private final ExecutorSignalRepository signalRepo = mock(ExecutorSignalRepository.class);
     private final DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
@@ -43,7 +45,7 @@ class EntryExpiryServiceTest {
     @BeforeEach
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.3");
-        service = new EntryExpiryService(gateway, positionRepo, signalRepo, decisionRepo,
+        service = new EntryExpiryService(gateway, positionRepo, legRepo, signalRepo, decisionRepo,
                 ruleVersions, mapper, clock);
     }
 
@@ -92,6 +94,37 @@ class EntryExpiryServiceTest {
 
         verify(positionRepo).markCancelled(2L);
         verify(signalRepo, never()).markStatus(any(), any());
+    }
+
+    @Test
+    void workingUnfilledEntry_cancelledLegsAreNotLeftOpen() {
+        // The entry never filled, so no share was ever held on this position. Any OPEN leg row
+        // would keep claiming shares against a CANCELLED position -- and CANCELLED, not CLOSED:
+        // nothing exited, so there is no exit price to book.
+        ExecutorPosition p = openPosition(1L, "ACME", "sig-1");
+        when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(p));
+        gateway.seedOrder(new BrokerOrder("brk-1", "sig-1", "ACME", OrderRole.ENTRY,
+                OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
+
+        service.expire("c", "run1");
+
+        verify(legRepo).cancelOpenLegs(1L);
+        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void partiallyFilledEntry_keepsItsLegsOpen() {
+        // The opposite case: part of the entry DID fill, the position stays OPEN and the broker
+        // holds those shares. Cancelling the legs here would drop a real holding out of the book.
+        ExecutorPosition p = openPosition(3L, "ACME", "sig-1");
+        when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(p));
+        gateway.seedOrder(new BrokerOrder("brk-1", "sig-1", "ACME", OrderRole.ENTRY,
+                OrderStatus.PARTIALLY_FILLED, BigDecimal.TEN, new BigDecimal("4"),
+                new BigDecimal("100"), null));
+
+        service.expire("c", "run1");
+
+        verify(legRepo, never()).cancelOpenLegs(anyLong());
     }
 
     @Test

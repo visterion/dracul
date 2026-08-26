@@ -308,10 +308,28 @@ public class StopRatchetService {
             BigDecimal chandelier, String runId, RetryBudget budget) {
         List<ExecutorPositionLeg> unnamed = legs.stream()
                 .filter(l -> l.stopOrderId() == null).toList();
-        if (!unnamed.isEmpty() && legs.size() > 1) {
+        // An unnamed leg may only be reached by an unnamed (bracket-addressed) modify when the
+        // broker can hold at most ONE stop on this instrument — that is the entire justification
+        // for the fallback, and it is a statement about the BROKER, not about how many rows the
+        // book happens to have.
+        //
+        // The book's leg count alone cannot carry it. Legs are seeded when reconcile observes a
+        // tranche's working stop, so between a tranche-2 fill and the next reconcile pass the book
+        // legitimately shows ONE open leg while the broker already works TWO stops. If that one
+        // leg is also unnamed (a flatten rollback can null a leg's id), an unnamed modify would
+        // resolve through Agora's by-symbol fallback, which keeps the LAST stop it scans — moving
+        // a stop we did not choose while the book recorded a full success for the whole position.
+        //
+        // So the position's own record of whether a second tranche exists decides, not the leg
+        // count: the same expression the legless path uses. A single-tranche position that never
+        // had a tranche 2 keeps the legitimate fallback.
+        boolean expectsTwoLegs = p.tranche() >= 2
+                || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
+        if (!unnamed.isEmpty() && (legs.size() > 1 || expectsTwoLegs)) {
             escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
-                    "stop ratchet unsupported while " + legs.size() + " legs are open: every leg "
-                            + "must be named to be moved unambiguously, but leg(s) "
+                    "stop ratchet unsupported: " + legs.size() + " leg(s) open on a position that "
+                            + (expectsTwoLegs ? "carries a second tranche" : "has several legs")
+                            + ", so every leg must be named to be moved unambiguously, but leg(s) "
                             + unnamed.stream().map(l -> "tranche " + l.tranche()).toList()
                             + " have no stop_order_id");
             return false;

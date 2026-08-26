@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Reconciles the executor's position book against the broker's actual state: detects
@@ -259,6 +260,12 @@ public class ReconcileService {
                 finalizePendingExitOrKeep(p, bp, orders, filledOrders, runId, survivors);
                 continue;
             }
+
+            // Learn the legs the broker actually holds BEFORE routing. Nothing else in
+            // production writes a leg row, so without this every position opened after the leg
+            // table shipped would stay legless forever and fall through to the legacy escalating
+            // path below.
+            seedLegsFromWorkingStops(p, bp, orders, runId);
 
             List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
             if (!legs.isEmpty()) {
@@ -625,6 +632,80 @@ public class ReconcileService {
      * resize findings later, is what keeps {@link #escalateMissingEvidence}'s "left completely
      * untouched" claim true on the leg path.
      */
+    /**
+     * Creates the leg rows for tranches the broker has CONFIRMED it holds, and only those.
+     *
+     * <p><b>A leg carries shares HELD, never shares ORDERED</b> — the same rule
+     * {@link ExecutorPosition#qty()} and {@link #syncLegQuantities} already follow. The quantity
+     * is therefore read off the tranche's own WORKING protective stop, never off the placement
+     * record. The two are not interchangeable: the original V45 backfill derived leg quantities
+     * from what the entry orders ASKED for and was wrong for a real two-tranche position: the
+     * broker's protective stops split the holding differently than the orders had requested,
+     * while summing to the same total, so no sum-based check could have caught it.
+     *
+     * <p>That a WORKING stop's qty means shares held is a property of the broker, not an
+     * assumption: the stop is an IfDone child and only starts working once its own entry has
+     * filled, verified against production on 2026-08-25, where the working stop quantities of
+     * every live position summed exactly to the shares the broker reported as held. This is what makes seeding
+     * safe for the case that motivated the rule — a tranche-2 limit that is still working and
+     * unfilled has no working stop of its own, so it contributes NO leg. Seeding it from the
+     * order would create an OPEN leg carrying shares the broker does not hold, the legs would
+     * claim more than the position, and the row would sit in a permanent LEG_QTY_DESYNC
+     * escalation while occupying a slot under the MAX_POSITIONS veto.
+     *
+     * <p>Requires the broker to report the position at all ({@code bp != null}): with no holding
+     * on the instrument there is nothing any leg could be carrying, whatever an order list says.
+     *
+     * <p>Re-entrant. Reconcile sees the same working stops on every pass, so the insert is
+     * conditional on the tranche being free ({@link ExecutorPositionLegRepository#insertIfAbsent})
+     * rather than on a prior read, and a tranche already occupied by a CLOSED or CANCELLED leg is
+     * never resurrected.
+     */
+    private void seedLegsFromWorkingStops(ExecutorPosition p, BrokerPosition bp,
+            List<BrokerOrder> openOrders, String runId) {
+        if (bp == null) return;
+
+        Set<Integer> taken = legRepo.findByPosition(p.id()).stream()
+                .map(ExecutorPositionLeg::tranche)
+                .collect(Collectors.toSet());
+
+        seedOneLeg(p, 1, p.brokerOrderId(), p.stopOrderId(), taken, openOrders, runId);
+        seedOneLeg(p, 2, p.tranche2OrderId(), p.tranche2StopOrderId(), taken, openOrders, runId);
+    }
+
+    /** One tranche of {@link #seedLegsFromWorkingStops}. Writes nothing unless a WORKING stop with
+     *  a positive quantity names this tranche's recorded stop order. */
+    private void seedOneLeg(ExecutorPosition p, int tranche, String entryOrderId,
+            String stopOrderId, Set<Integer> taken, List<BrokerOrder> openOrders, String runId) {
+        if (taken.contains(tranche) || stopOrderId == null) return;
+
+        BigDecimal heldQty = openOrders.stream()
+                .filter(o -> stopOrderId.equals(o.orderId()))
+                .filter(o -> o.status() == OrderStatus.WORKING)
+                .map(BrokerOrder::qty)
+                .findFirst().orElse(null);
+
+        // No working stop -> the tranche has not filled (or its stop is gone). Either way there is
+        // no confirmed holding to write, and guessing one is the failure this method exists to
+        // prevent. CHECK (qty > 0) also makes a non-positive quantity unwritable by construction.
+        if (heldQty == null || heldQty.signum() <= 0) return;
+
+        boolean inserted = legRepo.insertIfAbsent(new ExecutorPositionLeg(null, p.id(), tranche,
+                entryOrderId, stopOrderId, heldQty, ExecutorPositionLeg.OPEN, null, null, null));
+        if (!inserted) return;
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("tranche", tranche);
+        inputs.put("qty", heldQty);
+        inputs.put("stop_order_id", stopOrderId);
+        inputs.put("entry_order_id", entryOrderId);
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "SYNC", "LEG_SEEDED", orderJson, null, null, null, null));
+    }
+
     private List<ExecutorPositionLeg> syncLegQuantities(ExecutorPosition p,
             List<ExecutorPositionLeg> legs, List<BrokerOrder> openOrders, String runId,
             boolean fillHistoryAvailable) {

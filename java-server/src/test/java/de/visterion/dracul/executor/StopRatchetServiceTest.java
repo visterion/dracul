@@ -1217,6 +1217,31 @@ class StopRatchetServiceTest {
     }
 
     @Test
+    void aSingleUnnamedOpenLegOnATwoTranchePosition_escalatesInsteadOfGuessing() {
+        // Legs are seeded when reconcile OBSERVES a tranche's working stop, so between a
+        // tranche-2 fill and the next reconcile pass the book legitimately shows ONE open leg
+        // while the broker already works TWO stops. The book's leg count therefore cannot license
+        // the unnamed modify: Agora's by-symbol fallback keeps the LAST stop it scans, so this
+        // would move a stop we did not choose and record a full success for the whole position.
+        // The position's own record of a second tranche is what decides.
+        ExecutorPosition p = openPosition(71L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "ord-2", "stop-2");
+        withOpenLegs(71L, leg(10L, 71L, 1, null, null, new BigDecimal("6")));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        // active_stop must not move: the book may not claim a protection level the broker was
+        // never asked for.
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+    }
+
+    @Test
     void aLegWithNoAddressAtAll_escalatesNoBracketId() {
         // No entry order id on the leg and no bracket id on the position: there is nothing to send
         // the modify to. Escalate rather than call the gateway with a null order id.

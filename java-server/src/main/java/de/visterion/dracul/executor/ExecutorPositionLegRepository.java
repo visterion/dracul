@@ -46,6 +46,80 @@ public class ExecutorPositionLegRepository {
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
 
+    /**
+     * Inserts a leg only if {@code (position_id, tranche)} is not already taken, and reports
+     * whether the row was actually written.
+     *
+     * <p>The plain {@link #insert} would abort the surrounding transaction on a duplicate, and the
+     * callers that seed legs are all re-entrant by construction: reconcile runs on a schedule and
+     * may see the same working stop on many consecutive passes, and a re-delivered webhook can
+     * replay a placement. Making the duplicate a no-op at the SQL level — rather than a
+     * read-then-insert in Java — is what keeps a concurrent second pass from slipping between the
+     * check and the write and poisoning the transaction.
+     *
+     * <p>A leg that was CLOSED or CANCELLED also occupies its tranche, so it is never resurrected
+     * here: the conflict target is the tranche, not the tranche-and-status.
+     */
+    public boolean insertIfAbsent(ExecutorPositionLeg leg) {
+        String status = leg.status() != null ? leg.status() : ExecutorPositionLeg.OPEN;
+        int rows = jdbc.sql("""
+                INSERT INTO executor_position_leg
+                  (position_id, tranche, entry_order_id, stop_order_id, qty, status,
+                   exit_price, exit_reason, closed_at)
+                VALUES (:positionId, :tranche, :entryOrderId, :stopOrderId, :qty, :status,
+                        :exitPrice, :exitReason, CAST(:closedAt AS timestamptz))
+                ON CONFLICT (position_id, tranche) DO NOTHING
+                """)
+                .param("positionId", leg.positionId())
+                .param("tranche", leg.tranche())
+                .param("entryOrderId", leg.entryOrderId())
+                .param("stopOrderId", leg.stopOrderId())
+                .param("qty", leg.qty())
+                .param("status", status)
+                .param("exitPrice", leg.exitPrice())
+                .param("exitReason", leg.exitReason())
+                .param("closedAt", leg.closedAt())
+                .update();
+        return rows > 0;
+    }
+
+    /**
+     * Repoints one leg's protective stop order id, for a leg the broker re-issued during a
+     * flatten rollback. {@code newStopOrderId} may be null: an id the broker no longer reports as
+     * live is dead, and a null column is a visible protection gap, whereas a stale id looks live
+     * and fails the next ratchet run with LEG_NOT_FOUND — the same reasoning
+     * {@code ExecutorPositionRepository.repointStopLegs} applies to the position columns.
+     *
+     * <p>Touches only the id. The leg's {@code qty} still means shares HELD and is converged from
+     * the broker's own working stop by {@code ReconcileService.syncLegQuantities}, not from here.
+     */
+    public void repointLegStop(long legId, String newStopOrderId) {
+        jdbc.sql("UPDATE executor_position_leg SET stop_order_id = :sid WHERE id = :id")
+                .param("sid", newStopOrderId)
+                .param("id", legId)
+                .update();
+    }
+
+    /**
+     * Marks every still-OPEN leg of a position CANCELLED — for an entry that was cancelled before
+     * it ever filled, so no shares were ever held on it.
+     *
+     * <p>Distinct from {@link #closeLeg}: CLOSED means the shares left through a fill and carries
+     * an exit price; CANCELLED means they were never acquired. Writing an exit price here would
+     * invent a trade that did not happen, so none is written.
+     */
+    public int cancelOpenLegs(long positionId) {
+        return jdbc.sql("""
+                UPDATE executor_position_leg
+                SET status = :cancelled
+                WHERE position_id = :positionId AND status = :open
+                """)
+                .param("cancelled", ExecutorPositionLeg.CANCELLED)
+                .param("open", ExecutorPositionLeg.OPEN)
+                .param("positionId", positionId)
+                .update();
+    }
+
     public List<ExecutorPositionLeg> findByPosition(long positionId) {
         return jdbc.sql("""
                 SELECT * FROM executor_position_leg

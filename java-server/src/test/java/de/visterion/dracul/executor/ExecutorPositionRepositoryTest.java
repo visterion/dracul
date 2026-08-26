@@ -139,6 +139,24 @@ class ExecutorPositionRepositoryTest {
     }
 
     @Test
+    void updateTranche2ClearsTheCollapseFlag() {
+        // stop_legs_collapsed has exactly one job: explain why a two-tranche position names only
+        // ONE stop leg. A position that has just been given a second stop leg names two, so
+        // leaving the flag set would have the row assert a collapse its own columns contradict --
+        // and StopRatchetService reads the pair to tell a legitimately single-legged survivor from
+        // a book whose second id is merely unknown.
+        long id = repo.insert(openPosition("T2CF" + System.nanoTime()));
+        repo.markStopLegsCollapsed(id);
+        assertThat(repo.findById(id).stopLegsCollapsed()).isTrue();
+
+        repo.updateTranche2(id, new BigDecimal("20"), new BigDecimal("101.25"), "ord-2", "stop-2");
+
+        ExecutorPosition after = repo.findById(id);
+        assertThat(after.stopLegsCollapsed()).isFalse();
+        assertThat(after.tranche2StopOrderId()).isEqualTo("stop-2");
+    }
+
+    @Test
     void countEnteredSinceCountsOnlyRecentEntries() {
         Instant before = Instant.now().minusSeconds(5);
         long id = repo.insert(openPosition("CES" + System.nanoTime()));

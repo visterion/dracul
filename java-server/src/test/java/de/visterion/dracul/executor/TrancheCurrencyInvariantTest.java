@@ -46,6 +46,7 @@ class TrancheCurrencyInvariantTest {
 
     private ExecutorSignalRepository signalRepo;
     private ExecutorPositionRepository positionRepo;
+    private ExecutorPositionLegRepository legRepo;
     private ExecutorDecisionRepository decisionRepo;
     private ExecutionGateway gateway;
     private ExecutorIndicators executorIndicators;
@@ -66,6 +67,7 @@ class TrancheCurrencyInvariantTest {
     void setUp() {
         signalRepo = mock(ExecutorSignalRepository.class);
         positionRepo = mock(ExecutorPositionRepository.class);
+        legRepo = mock(ExecutorPositionLegRepository.class);
         decisionRepo = mock(ExecutorDecisionRepository.class);
         gateway = mock(ExecutionGateway.class);
         executorIndicators = mock(ExecutorIndicators.class);
@@ -86,7 +88,7 @@ class TrancheCurrencyInvariantTest {
         when(positionRepo.findOpen()).thenReturn(List.of());
 
         controller = new ExecutorWebhookController(
-                signalRepo, positionRepo, decisionRepo,
+                signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
                 assembler, new PositionSizer(), new SignalRanker(), tranche2Detector, telegram,

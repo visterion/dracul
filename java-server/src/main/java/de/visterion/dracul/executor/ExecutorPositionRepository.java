@@ -211,13 +211,20 @@ public class ExecutorPositionRepository {
      * when {@code ReconcileService} sees the broker's larger position, not when the order is sent.
      * The parameters stay on the signature because the columns must be written in the same
      * statement as the tranche flip.
+     *
+     * <p>{@code stop_legs_collapsed} is cleared here. Its one job is to explain why a two-tranche
+     * position names only ONE stop leg; a position that has just been given a second stop leg
+     * names two, so leaving the flag set would have the row assert a collapse its own columns
+     * contradict — and {@link StopRatchetService} reads the pair to tell a legitimately
+     * single-legged survivor from a book whose second id is merely unknown.
      */
     public void updateTranche2(long id, BigDecimal newQty, BigDecimal newEntryPrice,
                                String tranche2OrderId, String tranche2StopOrderId) {
         jdbc.sql("""
                 UPDATE executor_position
                 SET tranche = 2, qty = :qty, entry_price = :entryPrice,
-                    tranche2_order_id = :t2o, tranche2_stop_order_id = :t2s
+                    tranche2_order_id = :t2o, tranche2_stop_order_id = :t2s,
+                    stop_legs_collapsed = false
                 WHERE id = :id
                 """)
                 .param("qty", newQty).param("entryPrice", newEntryPrice)

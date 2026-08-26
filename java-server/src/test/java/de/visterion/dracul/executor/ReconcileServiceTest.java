@@ -1158,6 +1158,152 @@ class ReconcileServiceTest {
                 null, null, "ord-2", "stop-2", 0, null, null, null, null, null, null, false);
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Leg SEEDING. Nothing else in production writes a leg row, so these tests own the rule that
+    // makes the whole leg table trustworthy: a leg carries shares HELD at the broker, never
+    // shares ORDERED. The quantity comes from the tranche's own WORKING protective stop, which
+    // is an IfDone child and therefore only works once its entry has filled.
+    // ---------------------------------------------------------------------------------------
+
+    /** A protective stop as the OPEN-orders view reports it while it is live on a filled tranche. */
+    private BrokerOrder workingStop(String orderId, String symbol, BigDecimal qty) {
+        return new BrokerOrder(orderId, "ref-" + orderId, symbol, OrderRole.STOP_LOSS,
+                OrderStatus.WORKING, qty, BigDecimal.ZERO, null, null);
+    }
+
+    private ArgumentCaptor<ExecutorPositionLeg> captureSeededLegs() {
+        ArgumentCaptor<ExecutorPositionLeg> captor = ArgumentCaptor.forClass(ExecutorPositionLeg.class);
+        verify(legRepo, atLeastOnce()).insertIfAbsent(captor.capture());
+        return captor;
+    }
+
+    @Test
+    void filledTrancheOne_seedsALegCarryingTheWorkingStopQuantity() {
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("10")));
+
+        service.reconcile("c", "run1");
+
+        ExecutorPositionLeg seeded = captureSeededLegs().getValue();
+        assertThat(seeded.positionId()).isEqualTo(1L);
+        assertThat(seeded.tranche()).isEqualTo(1);
+        assertThat(seeded.entryOrderId()).isEqualTo("ord-1");
+        assertThat(seeded.stopOrderId()).isEqualTo("stop-1");
+        assertThat(seeded.qty()).isEqualByComparingTo("10");
+        assertThat(seeded.status()).isEqualTo(ExecutorPositionLeg.OPEN);
+    }
+
+    @Test
+    void workingButUnfilledTrancheTwo_seedsNoSecondLeg() {
+        // THE case the hard constraint exists for. The tranche-2 entry is a limit order that is
+        // still working: the broker has none of its shares. Seeding a leg from the ORDER would
+        // make the legs claim 6 + 15 against 6 shares actually held, no fill would explain the
+        // difference, and the position would sit in a permanent LEG_QTY_DESYNC escalation while
+        // occupying a slot under the MAX_POSITIONS veto.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
+        // The tranche-2 ENTRY is working with 22 ordered shares. Its stop is an IfDone child and
+        // is NOT working, because the entry has not filled.
+        gateway.seedOrder(new BrokerOrder("ord-2", "ref-ord-2", "ACME", OrderRole.ENTRY,
+                OrderStatus.WORKING, new BigDecimal("15"), BigDecimal.ZERO, null, null));
+
+        service.reconcile("c", "run1");
+
+        List<ExecutorPositionLeg> seeded = captureSeededLegs().getAllValues();
+        assertThat(seeded).hasSize(1);
+        assertThat(seeded.getFirst().tranche()).isEqualTo(1);
+        assertThat(seeded.getFirst().qty()).isEqualByComparingTo("6");
+        assertThat(seeded).noneMatch(l -> l.tranche() == 2);
+    }
+
+    @Test
+    void bothTranchesFilled_seedsEachLegWithItsOwnQuantityNotTheSum() {
+        // The shape that broke the original backfill: the entry ORDERS asked for one split, the
+        // broker's protective stops covered another, and the totals agreed so no sum-based check
+        // could see it. Each leg follows its own working stop.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
+        gateway.seedOrder(workingStop("stop-2", "ACME", new BigDecimal("14")));
+
+        service.reconcile("c", "run1");
+
+        List<ExecutorPositionLeg> seeded = captureSeededLegs().getAllValues();
+        assertThat(seeded).hasSize(2);
+        assertThat(seeded).anyMatch(l -> l.tranche() == 1 && l.qty().compareTo(new BigDecimal("6")) == 0
+                && "stop-1".equals(l.stopOrderId()));
+        assertThat(seeded).anyMatch(l -> l.tranche() == 2 && l.qty().compareTo(new BigDecimal("14")) == 0
+                && "stop-2".equals(l.stopOrderId()));
+        // The sum is never written onto a single leg.
+        assertThat(seeded).noneMatch(l -> l.qty().compareTo(new BigDecimal("20")) == 0);
+    }
+
+    @Test
+    void brokerDoesNotHoldThePosition_seedsNothing() {
+        // No holding on the instrument means no leg can be carrying shares, whatever an order
+        // list says.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("10")));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).insertIfAbsent(any());
+    }
+
+    @Test
+    void trancheAlreadyCarryingALeg_isNotSeededAgain() {
+        // Re-entrancy: reconcile sees the same working stops on every pass. A tranche that already
+        // has a row -- in ANY status -- is never re-seeded, so a CLOSED leg cannot be resurrected
+        // and the UNIQUE (position_id, tranche) constraint is never tested by a duplicate.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findByPosition(1L)).thenReturn(List.of(
+                new ExecutorPositionLeg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("6"),
+                        ExecutorPositionLeg.CLOSED, new BigDecimal("95"), "HARD_STOP", null)));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("14"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
+        gateway.seedOrder(workingStop("stop-2", "ACME", new BigDecimal("14")));
+
+        service.reconcile("c", "run1");
+
+        List<ExecutorPositionLeg> seeded = captureSeededLegs().getAllValues();
+        assertThat(seeded).hasSize(1);
+        assertThat(seeded.getFirst().tranche()).isEqualTo(2);
+    }
+
+    @Test
+    void stopReportedPartiallyFilled_seedsNoLeg() {
+        // A PARTIALLY_FILLED stop's qty is its ORIGINAL total, not the shares still held -- part
+        // of the tranche has already exited. Reading it as a holding would book a knowably wrong
+        // quantity, so only a WORKING stop is evidence.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("4"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(new BrokerOrder("stop-1", "ref-stop-1", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.PARTIALLY_FILLED, new BigDecimal("10"), new BigDecimal("6"), null, null));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).insertIfAbsent(any());
+    }
+
     private ExecutorPositionLeg leg(long id, long positionId, int tranche, String entryOrderId,
             String stopOrderId, BigDecimal qty) {
         return new ExecutorPositionLeg(id, positionId, tranche, entryOrderId, stopOrderId, qty,

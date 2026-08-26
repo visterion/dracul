@@ -9,6 +9,7 @@ import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
 import de.visterion.dracul.executor.broker.OrderStatus;
+import de.visterion.dracul.executor.broker.RestoredLeg;
 import de.visterion.dracul.executor.broker.PlacedBracket;
 import de.visterion.dracul.notify.TelegramNotifier;
 import de.visterion.dracul.pattern.PatternRepository;
@@ -91,6 +92,7 @@ public class ExecutorWebhookController {
     private final BearerTokenVerifier verifier;
     private final ExecutorSignalRepository signalRepo;
     private final ExecutorPositionRepository positionRepo;
+    private final ExecutorPositionLegRepository legRepo;
     private final ExecutorDecisionRepository decisionRepo;
     private final VetoService vetoService;
     private final OrderGuard orderGuard;
@@ -130,6 +132,7 @@ public class ExecutorWebhookController {
     public ExecutorWebhookController(
             ExecutorSignalRepository signalRepo,
             ExecutorPositionRepository positionRepo,
+            ExecutorPositionLegRepository legRepo,
             ExecutorDecisionRepository decisionRepo,
             VetoService vetoService,
             OrderGuard orderGuard,
@@ -172,7 +175,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.broker-attempt-window-hours:72}") int brokerAttemptWindowHours,
             @Value("${dracul.executor.max-broker-calls-per-run:2}") int maxBrokerCallsPerRun,
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
-        this(signalRepo, positionRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
+        this(signalRepo, positionRepo, legRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
@@ -187,6 +190,7 @@ public class ExecutorWebhookController {
     ExecutorWebhookController(
             ExecutorSignalRepository signalRepo,
             ExecutorPositionRepository positionRepo,
+            ExecutorPositionLegRepository legRepo,
             ExecutorDecisionRepository decisionRepo,
             VetoService vetoService,
             OrderGuard orderGuard,
@@ -233,6 +237,7 @@ public class ExecutorWebhookController {
 
         this.signalRepo = signalRepo;
         this.positionRepo = positionRepo;
+        this.legRepo = legRepo;
         this.decisionRepo = decisionRepo;
         this.vetoService = vetoService;
         this.orderGuard = orderGuard;
@@ -1269,8 +1274,12 @@ public class ExecutorWebhookController {
                     || "LEG_RESTORE_FAILED".equals(e.rejectCode())
                     || "LEG_RESTORE_FAILED_UNPROTECTED".equals(e.rejectCode());
             if (legCancelWasAttempted) {
-                positionRepo.repointStopLegs(position.id(),
-                        e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
+                List<RestoredLeg> restored = e.protectiveLegs() != null ? e.protectiveLegs() : List.of();
+                positionRepo.repointStopLegs(position.id(), restored);
+                // The leg rows carry the ids the stop ratchet actually addresses, so they need the
+                // same repoint the columns just got. Without it the ratchet keeps patching orders
+                // the rollback replaced and fails LEG_NOT_FOUND on every run.
+                repointLegStops(position.id(), restored);
             }
             // Agora's NO_POSITION reject code is named separately from every other reject code:
             // it is the structural case where the position is simply gone at the broker, not a
@@ -1445,6 +1454,33 @@ public class ExecutorWebhookController {
     // -------------------------------------------------------------------
     // add-tranche — code-verified tranche-2 adds to an open tranche-1 position
     // -------------------------------------------------------------------
+
+    /**
+     * Applies a flatten rollback's restored protective legs to the leg rows, mirroring
+     * {@link ExecutorPositionRepository#repointStopLegs} one table over.
+     *
+     * <p>Matching is by {@code replaces}: a restored leg names the id it took over from. An OPEN
+     * leg whose recorded stop id no restored leg claims has its id nulled rather than left alone —
+     * Agora's rollback can stop at the first failure and report fewer live legs than it cancelled,
+     * so an unclaimed id is dead, not stale. A null id is a visible protection gap that
+     * {@link StopRatchetService} reports; a stale one looks live and silently patches an order
+     * that no longer exists.
+     *
+     * <p>Only OPEN legs are touched: a CLOSED or CANCELLED leg's stop id is history, and the
+     * rollback has nothing to say about it.
+     */
+    private void repointLegStops(long positionId, List<RestoredLeg> restored) {
+        for (ExecutorPositionLeg leg : legRepo.findOpenByPosition(positionId)) {
+            if (leg.stopOrderId() == null) continue;
+            String replacement = restored.stream()
+                    .filter(r -> leg.stopOrderId().equals(r.replaces()))
+                    .map(RestoredLeg::orderId)
+                    .findFirst().orElse(null);
+            if (!leg.stopOrderId().equals(replacement)) {
+                legRepo.repointLegStop(leg.id(), replacement);
+            }
+        }
+    }
 
     @PostMapping("/tools/add-tranche")
     public ResponseEntity<Map<String, Object>> addTranche(
