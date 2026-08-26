@@ -54,11 +54,12 @@ import java.util.Map;
  * confirmed. Never report a partial as a success.
  *
  * <p><b>A failed modify is classified by what the broker actually said.</b>
- * {@code BROKER_UNAVAILABLE} means the call got no verdict — transport failure, 5xx, timeout, or a
- * rate limit that outlived its retries. A verdict that says "no" is a rejection and gets its own
- * code: {@code STOP_LEG_MISSING} when the named leg no longer exists at the broker
- * ({@code LEG_NOT_FOUND}), {@code STOP_MODIFY_REJECTED} for every other reject code. See
- * {@link #escalateModifyFailure}.
+ * {@code BROKER_UNAVAILABLE} means the call got no verdict at all — not just transport failure,
+ * 5xx, timeout, or a rate limit that outlived its retries, but any {@code available:false} tool
+ * result (an unknown/inactive connection, the tool's own argument validation, included). A
+ * verdict that says "no" is a rejection and gets its own code: {@code STOP_LEG_MISSING} when the
+ * named leg no longer exists at the broker ({@code LEG_NOT_FOUND}), {@code STOP_MODIFY_REJECTED}
+ * for every other reject code. See {@link #escalateModifyFailure}.
  *
  * <p>Both escalations sit AFTER the guard and after the market-side check, so they repeat on every
  * maintenance run for as long as the condition holds AND a better stop is actually available —
@@ -522,11 +523,13 @@ public class StopRatchetService {
      * The one place that decides what a failed modify is CALLED, and it says only what the broker
      * actually told us.
      *
-     * <p><b>{@code BROKER_UNAVAILABLE} means the call never got a verdict</b> — transport failure,
-     * 5xx, timeout, or a rate limit that outlived its retries. It used to cover business
-     * rejections too, and that is what made the 2026-08-20 alarm unreadable: the same code once
-     * carried a real ratchet outage, so an operator could not tell "the broker is down" from "the
-     * broker said no". A rejection is a verdict, not an outage.
+     * <p><b>{@code BROKER_UNAVAILABLE} means the call never got a verdict</b> — not just transport
+     * failure, 5xx, timeout, or a rate limit that outlived its retries, but any
+     * {@code available:false} tool result (an unknown/inactive connection, the tool's own
+     * argument validation, included). It used to cover business rejections too, and that is what
+     * made the 2026-08-20 alarm unreadable: the same code once carried a real ratchet outage, so
+     * an operator could not tell "the broker is down" from "the broker said no". A rejection is
+     * a verdict, not an outage.
      *
      * <p><b>{@code STOP_LEG_MISSING}</b> is the structural one: {@code LEG_NOT_FOUND} means that
      * leg is not at the broker any more — usually because it filled — and no number of retries can

@@ -3636,16 +3636,17 @@ class ExecutorWebhookControllerTest {
         // Real incident (2026-08-24, RGNX): the broker had long since stopped the position out,
         // but the book still held it OPEN. The flatten call correctly reaches the broker and gets
         // an explicit verdict back -- "no open position" -- which must not be filed as an outage.
-        // NOT_FOUND is the reject code Agora's FlattenTool actually emits for this case
-        // (SaxoBrokerProvider.resolveNetPosition -> FlattenTool's NOT_FOUND mapping), not a code
-        // invented for this test.
+        // NO_POSITION is the reject code Agora's FlattenTool actually emits for this definite case
+        // (SaxoBrokerProvider.resolveNetPosition -> FlattenTool's NO_POSITION mapping), not a code
+        // invented for this test. Distinct (fix round 2) from the generic NOT_FOUND -- see
+        // aGenericNotFoundRejection_isNotFiledAsAlreadyGone below.
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("10"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
                 .thenThrow(new BrokerRejectedException(
-                        "agora order rejected [NOT_FOUND]: no open position: ACME",
-                        "NOT_FOUND", List.of()));
+                        "agora order rejected [NO_POSITION]: no open position: ACME",
+                        "NO_POSITION", List.of()));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
@@ -3671,9 +3672,61 @@ class ExecutorWebhookControllerTest {
         // sentence past a reason-code-only test, so this one asserts the exact text and that it
         // never claims an outage or interpolates a null.
         assertThat(log.reasoning()).isEqualTo("position already gone during soft-exit flatten: "
-                + "agora order rejected [NOT_FOUND]: no open position: ACME");
+                + "agora order rejected [NO_POSITION]: no open position: ACME");
         assertThat(log.reasoning()).doesNotContain("null");
         assertThat(log.reasoning()).doesNotContain("unavailable");
+    }
+
+    @Test
+    void aGenericNotFoundRejection_isNotFiledAsAlreadyGone() {
+        // Fix round 2: a generic NOT_FOUND (an HTTP 404 on some OTHER read/write inside Agora's
+        // flatten -- e.g. the closing POST of this very partial close hitting safeWriteError on a
+        // 404) must NOT be folded into POSITION_ALREADY_GONE. It carries no reject code this
+        // codebase names, so it also proves the null-reason_code fallback: an unqueryable NULL
+        // reason_code is as good as losing the escalation row.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerRejectedException(
+                        "agora order rejected [NOT_FOUND]: Resource not found (HTTP 404)",
+                        "NOT_FOUND", List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        controller.exitPosition(BEARER, "run-1", body);
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("NOT_FOUND");
+        assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        assertThat(log.reasoning()).doesNotContain("already gone");
+    }
+
+    @Test
+    void aNullRejectCode_fallsBackToADefinedReasonCode() {
+        // Agora can omit rejectCode entirely (see StopRatchetService.escalateModifyFailure's own
+        // "no reject code" handling for the same gap on the ratchet path). A null reason_code on
+        // an ESCALATE row is unqueryable -- give it a defined name instead of losing the row.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerRejectedException(
+                        "agora order rejected: some unmapped reason", null, List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        controller.exitPosition(BEARER, "run-1", body);
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_REJECTED");
     }
 
     @Test

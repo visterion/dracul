@@ -401,15 +401,31 @@ class AgoraExecutionGatewayTest {
     }
 
     @Test void flattenThrowsOnRejection() {
-        // NOT_FOUND is the reject code Agora's FlattenTool actually emits when there is no open
-        // position to flatten (SaxoBrokerProvider.resolveNetPosition's NOT_FOUND, mapped by
-        // FlattenTool the same way CancelOrderTool maps its own NOT_FOUND) -- not a placeholder.
+        // NO_POSITION is the reject code Agora's FlattenTool actually emits when there is no open
+        // position to flatten (SaxoBrokerProvider.resolveNetPosition's definite determination) --
+        // not a placeholder. Deliberately distinct (fix round 2) from FlattenTool's generic
+        // NOT_FOUND, which covers an HTTP 404 reached elsewhere inside flatten and says nothing
+        // about whether the position exists -- see flattenThrowsOnGenericNotFoundToo below.
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"NO_POSITION\"}}");
+
+        assertThatThrownBy(() -> gw.flatten("depot-1", "AAPL", new BigDecimal("1")))
+                .isInstanceOf(BrokerUnavailableException.class)
+                .hasMessageContaining("NO_POSITION");
+    }
+
+    @Test void flattenThrowsOnGenericNotFoundToo() {
+        // The generic NOT_FOUND still crosses the boundary as a typed BrokerRejectedException --
+        // this gateway does not special-case any one reject code, that discrimination belongs to
+        // the caller (HardTriggerService / ExecutorWebhookController), which must NOT treat this
+        // one as "position already gone".
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("{\"output\":{\"accepted\":false,\"rejectCode\":\"NOT_FOUND\"}}");
 
         assertThatThrownBy(() -> gw.flatten("depot-1", "AAPL", new BigDecimal("1")))
-                .isInstanceOf(BrokerUnavailableException.class)
-                .hasMessageContaining("NOT_FOUND");
+                .isInstanceOf(BrokerRejectedException.class)
+                .satisfies(e -> assertThat(((BrokerRejectedException) e).rejectCode())
+                        .isEqualTo("NOT_FOUND"));
     }
 
     @Test void parsesRestoredLegsFromTheFlattenResponse() {

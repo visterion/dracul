@@ -329,13 +329,15 @@ class HardTriggerServiceTest {
         // Real incident (2026-08-24, RGNX): the broker had long since stopped the position out,
         // but the book still held it OPEN. The flatten call correctly reaches the broker and gets
         // an explicit verdict back -- "no open position" -- which is not an outage and must not be
-        // filed as one (BUG family this task closes). NOT_FOUND is the reject code Agora's
-        // FlattenTool actually emits for this case (SaxoBrokerProvider.resolveNetPosition ->
-        // FlattenTool's NOT_FOUND mapping) -- not a code invented for this test.
+        // filed as one (BUG family this task closes). NO_POSITION is the reject code Agora's
+        // FlattenTool actually emits for this definite case (SaxoBrokerProvider.resolveNetPosition
+        // -> FlattenTool's NO_POSITION mapping) -- not a code invented for this test. Distinct
+        // (fix round 2) from the generic NOT_FOUND, which a 404 elsewhere in flatten also emits
+        // and must NOT be treated as "already gone" -- see flattenOnGenericNotFound_isBrokerRejected.
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("95"), null);
         gateway.rejectFlattenWith = new BrokerRejectedException(
-                "agora order rejected [NOT_FOUND]: no open position: ACME", "NOT_FOUND", List.of());
+                "agora order rejected [NO_POSITION]: no open position: ACME", "NO_POSITION", List.of());
 
         List<ExecutorPosition> survivors = service.apply(List.of(p),
                 Map.of("ACME", new BigDecimal("94")), "run1");
@@ -350,11 +352,68 @@ class HardTriggerServiceTest {
         // sentence past a reason-code-only test, so this one asserts the exact text and that it
         // never claims an outage or interpolates a null.
         assertThat(log.reasoning()).isEqualTo("position already gone during hard-trigger flatten: "
-                + "agora order rejected [NOT_FOUND]: no open position: ACME");
+                + "agora order rejected [NO_POSITION]: no open position: ACME");
         assertThat(log.reasoning()).doesNotContain("null");
         assertThat(log.reasoning()).doesNotContain("unavailable");
 
         verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
         assertThat(survivors).containsExactly(p);
+    }
+
+    @Test
+    void flattenRejectedWithSomeOtherCode_escalatesAsBrokerRejected() {
+        // Genuinely reachable on a full flatten: a soft exit already placed a closing order for
+        // (at least) the requested size, then a hard trigger fires on the SAME position in a
+        // later run and tries to flatten it again -- SaxoBrokerProvider.flatten rejects that with
+        // CLOSE_ALREADY_PENDING (an ordinary sequence, not a contrived code). Still a verdict,
+        // not an outage, and not the "position already gone" case either -- a third, honestly
+        // named bucket.
+        ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null);
+        gateway.rejectFlattenWith = new BrokerRejectedException(
+                "agora order rejected [CLOSE_ALREADY_PENDING]: a close of >= the requested size "
+                        + "is already working", "CLOSE_ALREADY_PENDING", List.of());
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("94")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
+        assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        assertThat(log.reasoning()).isEqualTo("broker rejected hard-trigger flatten "
+                + "[CLOSE_ALREADY_PENDING]: agora order rejected [CLOSE_ALREADY_PENDING]: a close "
+                + "of >= the requested size is already working");
+        assertThat(log.reasoning()).doesNotContain("null");
+        assertThat(log.reasoning()).doesNotContain("already gone");
+
+        verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
+        assertThat(survivors).containsExactly(p);
+    }
+
+    @Test
+    void flattenOnGenericNotFound_isBrokerRejectedNotAlreadyGone() {
+        // Fix round 2: a generic NOT_FOUND (an HTTP 404 on some OTHER read/write inside Agora's
+        // flatten -- e.g. the closing POST of a partial close hitting safeWriteError) must NOT be
+        // folded into POSITION_ALREADY_GONE the way this task's first round wrongly would have --
+        // NOT_FOUND says nothing about whether the position exists, unlike the narrower
+        // NO_POSITION code asserted above.
+        ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null);
+        gateway.rejectFlattenWith = new BrokerRejectedException(
+                "agora order rejected [NOT_FOUND]: Resource not found (HTTP 404)",
+                "NOT_FOUND", List.of());
+
+        service.apply(List.of(p), Map.of("ACME", new BigDecimal("94")), "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        assertThat(log.reasoning()).doesNotContain("already gone");
     }
 }

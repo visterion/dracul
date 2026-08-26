@@ -65,13 +65,21 @@ public class ExecutorWebhookController {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutorWebhookController.class);
 
-    /** Agora's reject code for "there is no open position to flatten" — the same typed field
-     *  {@code AgoraExecutionGateway.requireAccepted} threads through for {@code LEG_NOT_FOUND}
-     *  (see {@code StopRatchetService}). Structural, not transient: no retry brings a gone
-     *  position back, and it must not be filed as {@code BROKER_UNAVAILABLE} — that is exactly
-     *  the 2026-08-24 RGNX incident, where the broker had long stopped the position out but the
-     *  book still held it OPEN. */
-    private static final String NO_POSITION = "NOT_FOUND";
+    /** Agora's reject code for the definite "there is no open position to flatten" verdict —
+     *  the same typed field {@code AgoraExecutionGateway.requireAccepted} threads through for
+     *  {@code LEG_NOT_FOUND} (see {@code StopRatchetService}). Structural, not transient: no
+     *  retry brings a gone position back, and it must not be filed as
+     *  {@code BROKER_UNAVAILABLE} — that is exactly the 2026-08-24 RGNX incident, where the
+     *  broker had long stopped the position out but the book still held it OPEN.
+     *
+     *  <p>Deliberately NOT {@code "NOT_FOUND"} (fix round 2): Agora's {@code FlattenTool} emits
+     *  the generic {@code NOT_FOUND} for an HTTP 404 reached elsewhere inside a flatten call (a
+     *  related-orders lookup, the closing POST itself on a partial close) — that says nothing
+     *  about whether the position exists. {@code NO_POSITION} is the narrower code Agora reserves
+     *  for the one definite determination. A plain {@code NOT_FOUND} rejection still falls
+     *  through to the generic branch below, named by its own raw reject code — a verdict,
+     *  honestly not claimed to mean the position is gone. */
+    private static final String NO_POSITION = "NO_POSITION";
 
     private final BearerTokenVerifier verifier;
     private final ExecutorSignalRepository signalRepo;
@@ -1257,11 +1265,20 @@ public class ExecutorWebhookController {
                 positionRepo.repointStopLegs(position.id(),
                         e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
             }
-            // NOT_FOUND is named separately from every other reject code: it is the structural
-            // case where the position is simply gone at the broker, not a business rejection
-            // whose detail (LEG_RESTORE_FAILED_UNPROTECTED etc.) is worth surfacing verbatim.
-            String flattenReasonCode = NO_POSITION.equals(e.rejectCode())
-                    ? "POSITION_ALREADY_GONE" : e.rejectCode();
+            // NO_POSITION is named separately from every other reject code: it is the
+            // structural case where the position is simply gone at the broker, not a business
+            // rejection whose detail (LEG_RESTORE_FAILED_UNPROTECTED etc.) is worth surfacing
+            // verbatim. A null reject code (Agora omitted the field) falls back to a defined
+            // name rather than a null reason_code -- an escalation row nothing can query for is
+            // as good as lost.
+            String flattenReasonCode;
+            if (NO_POSITION.equals(e.rejectCode())) {
+                flattenReasonCode = "POSITION_ALREADY_GONE";
+            } else if (e.rejectCode() != null) {
+                flattenReasonCode = e.rejectCode();
+            } else {
+                flattenReasonCode = "BROKER_REJECTED";
+            }
             String flattenReasoning = NO_POSITION.equals(e.rejectCode())
                     ? "position already gone during soft-exit flatten: " + e.getMessage()
                     : "broker rejected soft-exit flatten: " + e.getMessage();

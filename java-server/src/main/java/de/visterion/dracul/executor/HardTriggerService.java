@@ -40,8 +40,9 @@ import java.util.Map;
  * rejection is a broker VERDICT, not an outage, and {@code BROKER_UNAVAILABLE} must not carry
  * both meanings the way it did before the 2026-08-24 RGNX incident, where the position had long
  * been stopped out at the broker but the book still held it OPEN — the flatten call correctly
- * reached the broker and got "no open position" back, which is exactly the state this service
- * must be able to name, not a transport failure. See {@link #flattenOrEscalate}.
+ * reached the broker and got a definite "no open position" verdict back, which is exactly the
+ * state this service must be able to name, not a transport failure. See
+ * {@link #flattenOrEscalate}.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -49,11 +50,21 @@ public class HardTriggerService {
 
     private static final Logger log = LoggerFactory.getLogger(HardTriggerService.class);
 
-    /** Agora's reject code for "there is no open position to flatten" — the same typed field
-     *  {@code AgoraExecutionGateway.requireAccepted} already threads through for {@code LEG_NOT_FOUND}
-     *  (see {@code StopRatchetService}). Structural, not transient: no retry makes a gone position
-     *  come back. */
-    private static final String NO_POSITION = "NOT_FOUND";
+    /** Agora's reject code for the definite "there is no open position to flatten" verdict —
+     *  the same typed field {@code AgoraExecutionGateway.requireAccepted} already threads through
+     *  for {@code LEG_NOT_FOUND} (see {@code StopRatchetService}). Structural, not transient: no
+     *  retry makes a gone position come back.
+     *
+     *  <p>Deliberately NOT {@code "NOT_FOUND"} (fix round 2): Agora's {@code FlattenTool} emits
+     *  {@code NOT_FOUND} for a generic HTTP 404 reached elsewhere inside a flatten call (a
+     *  related-orders lookup, the closing POST itself on a partial close) — that says nothing
+     *  about whether the position exists, and folding it into "already gone" was the actual
+     *  defect this round fixes. {@code NO_POSITION} is the narrower code Agora reserves for the
+     *  one definite determination (a full scan of the broker's actual holdings coming back
+     *  empty). A plain {@code NOT_FOUND} rejection still reaches {@link #flattenOrEscalate}'s
+     *  {@code else} branch below and is named {@code BROKER_REJECTED} — a verdict, honestly not
+     *  claimed to mean the position is gone. */
+    private static final String NO_POSITION = "NO_POSITION";
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -163,12 +174,14 @@ public class HardTriggerService {
      * Attempts to flatten the position; on any failure, escalates via the decision log and
      * returns null so the book is left untouched — the broker is never replaced by a guess.
      *
-     * <p>{@code BROKER_UNAVAILABLE} is reserved for a call that got no verdict at all: transport
-     * failure, 5xx, timeout. A rejection is a verdict, and is named separately:
-     * {@code POSITION_ALREADY_GONE} for the structural case Agora reports as reject code
-     * {@code NOT_FOUND} (the position no longer exists at the broker — no retry helps),
-     * {@code BROKER_REJECTED} for every other reject code (still a verdict, but nothing here
-     * knows enough to say more).
+     * <p>{@code BROKER_UNAVAILABLE} is reserved for a call that got no verdict at all — not just
+     * transport failure, 5xx or timeout, but any {@code available:false} tool result: an
+     * unknown/inactive connection, the tool's own argument validation, a real outage. A
+     * rejection ({@code accepted:false}, {@code available:true}) is a verdict, and is named
+     * separately: {@code POSITION_ALREADY_GONE} for the structural case Agora reports as reject
+     * code {@code NO_POSITION} (the position no longer exists at the broker — no retry helps),
+     * {@code BROKER_REJECTED} for every other reject code, including a generic {@code NOT_FOUND}
+     * (still a verdict, but nothing here knows enough to say more than that).
      */
     private CloseResult flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
         try {
