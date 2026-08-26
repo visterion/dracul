@@ -99,13 +99,13 @@ class ExecutorSignalRepositoryTest {
                 INSERT INTO prey (id, symbol, company_name, anomaly_type, confidence, thesis,
                                   signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
                                   user_id, run_id)
-                VALUES (:id, 'AAPL', 'Apple', 'PEAD', 0.7, 'thesis',
+                VALUES (:id, 'ACME', 'Acme Corp', 'PEAD', 0.7, 'thesis',
                         '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'SWING', 'oracle', now(),
                         'default', 'run-xyz')
                 """)
                 .param("id", preyId)
                 .update();
-        var s = new ExecutorSignal("sig-run-1", "strigoi", "v1", "AAPL", "LONG", 0.7,
+        var s = new ExecutorSignal("sig-run-1", "strigoi", "v1", "ACME", "LONG", 0.7,
                 "PEAD", java.util.List.of(), "SWING", null, "PENDING", null, null, preyId.toString());
         repo.insert(s);
 
@@ -114,7 +114,7 @@ class ExecutorSignalRepositoryTest {
 
     @Test
     void findRunIdBySignalIdNullWhenNoPreyLink() {
-        var s = new ExecutorSignal("sig-run-2", "strigoi", "v1", "AAPL", "LONG", 0.7,
+        var s = new ExecutorSignal("sig-run-2", "strigoi", "v1", "ACME", "LONG", 0.7,
                 "PEAD", java.util.List.of(), "SWING", null, "PENDING", null);
         repo.insert(s);
 

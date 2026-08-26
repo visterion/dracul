@@ -95,7 +95,7 @@ class PreySignalMapperTest {
 
     @Test
     void mapSetsPreyIdToPreyIdAndKeepsRandomSignalId() {
-        Prey p = new Prey("11111111-1111-1111-1111-111111111111", "AAPL", "Apple", "pead",
+        Prey p = new Prey("11111111-1111-1111-1111-111111111111", "ACME", "Acme Corp", "pead",
                 0.8, "thesis", List.of(), List.of(), List.of("k1"),
                 "2w", "strigoi-echo", "2026-07-19T00:00:00Z");
         ExecutorSignal s = mapper.map(p);

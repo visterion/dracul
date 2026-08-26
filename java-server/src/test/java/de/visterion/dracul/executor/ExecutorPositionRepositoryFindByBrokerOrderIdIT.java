@@ -23,7 +23,7 @@ class ExecutorPositionRepositoryFindByBrokerOrderIdIT {
 
     @Test
     void findsByBrokerOrderId() {
-        repo.insert(new ExecutorPosition(null, "depot-1", "AAPL", "buy", new BigDecimal("10"),
+        repo.insert(new ExecutorPosition(null, "depot-1", "ACME", "buy", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, new BigDecimal("1"),
                 List.of("kc1"), "sig-xyz", "index-strigoi", null, null, "OPEN", "broker-abc",
                 null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false));
@@ -31,7 +31,7 @@ class ExecutorPositionRepositoryFindByBrokerOrderIdIT {
         var found = repo.findByBrokerOrderId("broker-abc");
 
         assertThat(found).isNotNull();
-        assertThat(found.symbol()).isEqualTo("AAPL");
+        assertThat(found.symbol()).isEqualTo("ACME");
         assertThat(found.sourceSignalId()).isEqualTo("sig-xyz");
         assertThat(repo.findByBrokerOrderId("does-not-exist")).isNull();
     }

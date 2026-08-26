@@ -109,7 +109,7 @@ describe('orderStateLabel', () => {
 })
 
 function ord(p: Partial<DepotOrderView>): DepotOrderView {
-  return { brokerOrderId: 'x', symbol: 'STT', side: null, qty: 6, type: 'limit',
+  return { brokerOrderId: 'x', symbol: 'ACME', side: null, qty: 8, type: 'limit',
     status: 'working', role: 'entry', parentId: null, limitPrice: null, stopPrice: null, ...p }
 }
 

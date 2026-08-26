@@ -84,38 +84,38 @@ describe('InstrumentOverlay', () => {
   it('renders the panel when openSymbol is set', async () => {
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
-    expect(w.find('[data-testid="io-symbol"]').text()).toContain('AAPL')
+    expect(w.find('[data-testid="io-symbol"]').text()).toContain('ACME')
     expect(w.find('[data-testid="ip-stub"]').exists()).toBe(true)
   })
 
   it('populates the header from the stubbed @header emit', async () => {
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
-    expect(w.find('[data-testid="io-header-name"]').text()).toBe('Name AAPL')
+    expect(w.find('[data-testid="io-header-name"]').text()).toBe('Name ACME')
     expect(w.find('[data-testid="io-header-price"]').text()).toBe('123,40')
   })
 
   it('shows the held banner when findHolding returns a hit', async () => {
-    getDepots.mockResolvedValue({ depots: [depot('depot-1', 'live', [pos('AAPL')])] })
+    getDepots.mockResolvedValue({ depots: [depot('depot-1', 'live', [pos('ACME')])] })
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     expect(w.find('[data-testid="io-banner"]').exists()).toBe(true)
   })
 
   it('hides the held banner when findHolding returns null', async () => {
-    getDepots.mockResolvedValue({ depots: [depot('depot-1', 'live', [pos('MSFT')])] })
+    getDepots.mockResolvedValue({ depots: [depot('depot-1', 'live', [pos('EXMPL')])] })
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     expect(w.find('[data-testid="io-banner"]').exists()).toBe(false)
@@ -125,7 +125,7 @@ describe('InstrumentOverlay', () => {
     getDepots.mockRejectedValue(new Error('boom'))
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     expect(w.find('[data-testid="io-banner"]').exists()).toBe(false)
@@ -139,30 +139,30 @@ describe('InstrumentOverlay', () => {
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
 
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
     // A's load is still pending — switch away before it resolves.
     store.close()
 
     getDepots.mockResolvedValueOnce({ depots: [] })
-    store.open('MSFT')
+    store.open('EXMPL')
     await flushPromises()
 
-    // Now let A's slow load resolve with an AAPL holding, after the user has
-    // already moved on to MSFT. The banner must stay keyed off the CURRENT
+    // Now let A's slow load resolve with an ACME holding, after the user has
+    // already moved on to EXMPL. The banner must stay keyed off the CURRENT
     // openSymbol (computed), never an imperative capture from when A opened.
-    resolveA({ depots: [depot('depot-1', 'live', [pos('AAPL')])] })
+    resolveA({ depots: [depot('depot-1', 'live', [pos('ACME')])] })
     await flushPromises()
 
-    expect(store.openSymbol).toBe('MSFT')
+    expect(store.openSymbol).toBe('EXMPL')
     expect(w.find('[data-testid="io-banner"]').exists()).toBe(false)
   })
 
   it('banner click routes to depot-position-detail with {connection, symbol} and closes the overlay', async () => {
-    getDepots.mockResolvedValue({ depots: [depot('depot-7', 'live', [pos('AAPL')])] })
+    getDepots.mockResolvedValue({ depots: [depot('depot-7', 'live', [pos('ACME')])] })
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     const banner = w.find('[data-testid="io-banner"]')
@@ -171,7 +171,7 @@ describe('InstrumentOverlay', () => {
     await flushPromises()
 
     expect(router.currentRoute.value.name).toBe('depot-position-detail')
-    expect(router.currentRoute.value.params).toEqual({ connection: 'depot-7', symbol: 'AAPL' })
+    expect(router.currentRoute.value.params).toEqual({ connection: 'depot-7', symbol: 'ACME' })
     expect(store.openSymbol).toBeNull()
   })
 
@@ -189,7 +189,7 @@ describe('InstrumentOverlay', () => {
   it('closes via the close button (aria-label)', async () => {
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     await w.find(`[aria-label="${de.instrument.close}"]`).trigger('click')
@@ -233,7 +233,7 @@ describe('InstrumentOverlay', () => {
     createWatchlistItem.mockRejectedValue(new ApiError('bad request', 400))
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     await w.get('[data-testid="io-add"]').trigger('click')
@@ -246,7 +246,7 @@ describe('InstrumentOverlay', () => {
     createWatchlistItem.mockRejectedValue(new ApiError('createWatchlistItem failed: HTTP 502', 502))
     const store = useInstrumentOverlayStore()
     const w = mountOverlay()
-    store.open('AAPL')
+    store.open('ACME')
     await flushPromises()
 
     await w.get('[data-testid="io-add"]').trigger('click')

@@ -710,7 +710,7 @@ is surfaced — the frontend must check it, not rely on a non-200 status.
   "entries": [
     {
       "source": "ORDER",
-      "symbol": "AAPL",
+      "symbol": "ACME",
       "side": "buy",
       "qty": 10,
       "entryPrice": null,
@@ -732,7 +732,7 @@ is surfaced — the frontend must check it, not rely on a non-200 status.
     },
     {
       "source": "CLOSED_POSITION",
-      "symbol": "SAP",
+      "symbol": "EXMPL",
       "side": null,
       "qty": null,
       "entryPrice": 100,
@@ -1470,7 +1470,7 @@ Request body:
 {
   "run_id": "...",
   "tool_name": "fetch_candidate_news",
-  "input": { "symbol": "AAPL", "since": "2026-05-20" }
+  "input": { "symbol": "ACME", "since": "2026-05-20" }
 }
 ```
 
