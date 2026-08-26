@@ -270,6 +270,21 @@ public class StopRatchetService {
     }
 
     /**
+     * True when the tranche that is NOT {@code openTranche} has a leg row that has already left
+     * the book (CLOSED or CANCELLED) — i.e. the position is a genuine single-leg survivor rather
+     * than one whose second leg is merely unknown.
+     *
+     * <p>Deliberately requires the row to EXIST. A tranche with no leg row at all has never been
+     * observed either way, and treating that silence as "no stop is working" is exactly the
+     * assumption that would move the wrong stop.
+     */
+    private boolean siblingTrancheClosed(ExecutorPosition p, int openTranche) {
+        return legRepo.findByPosition(p.id()).stream()
+                .filter(l -> l.tranche() != openTranche)
+                .anyMatch(l -> !l.isOpen());
+    }
+
+    /**
      * Ratchets every OPEN leg of a position to the same level, each addressed by its own
      * {@code stop_order_id}. Returns true only when the broker confirmed EVERY one of them; false
      * when the position was escalated and {@code active_stop} must not move.
@@ -313,19 +328,39 @@ public class StopRatchetService {
         // for the fallback, and it is a statement about the BROKER, not about how many rows the
         // book happens to have.
         //
-        // The book's leg count alone cannot carry it. Legs are seeded when reconcile observes a
-        // tranche's working stop, so between a tranche-2 fill and the next reconcile pass the book
-        // legitimately shows ONE open leg while the broker already works TWO stops. If that one
-        // leg is also unnamed (a flatten rollback can null a leg's id), an unnamed modify would
-        // resolve through Agora's by-symbol fallback, which keeps the LAST stop it scans — moving
-        // a stop we did not choose while the book recorded a full success for the whole position.
+        // The book's leg count alone cannot carry it. Reconcile runs before the ratchet in the
+        // same maintenance pass, so a leg that merely has not been seeded YET is not the hazard.
+        // Two other routes are, and neither is transient:
+        //
+        //   1. A position whose tranche2_stop_order_id was never recorded (or was nulled by a
+        //      rollback) can never have its second leg seeded, while the broker goes on working
+        //      two stops. The book shows one leg indefinitely.
+        //   2. The pendingExitReason branch in ReconcileService continues BEFORE seeding runs, so
+        //      a position with a pending exit that survives the pass reaches the ratchet with a
+        //      leg book reconcile never touched this run.
+        //
+        // If the one leg the book shows is also unnamed (a flatten rollback can null a leg's id),
+        // an unnamed modify would resolve through Agora's by-symbol fallback, which keeps the LAST
+        // stop it scans — moving a stop we did not choose while the book recorded a full success
+        // for the whole position.
         //
         // So the position's own record of whether a second tranche exists decides, not the leg
         // count: the same expression the legless path uses. A single-tranche position that never
         // had a tranche 2 keeps the legitimate fallback.
         boolean expectsTwoLegs = p.tranche() >= 2
                 || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
-        if (!unnamed.isEmpty() && (legs.size() > 1 || expectsTwoLegs)) {
+        // A two-tranche position that is genuinely DOWN to one leg is the collapsed survivor the
+        // legless path handles with stop_legs_collapsed, and escalating it every pass would be
+        // the same self-inflicted escalation loop as BUG-S13, one table over. The leg book
+        // answers it better than the flag ever did: if the sibling tranche has a row and that row
+        // is not OPEN, it exited, so the broker works exactly one stop and the fallback is
+        // unambiguous again.
+        //
+        // A MISSING sibling row is not evidence of a missing sibling stop — that is route 1 above
+        // — so absence keeps escalating.
+        boolean siblingDefinitelyGone = !unnamed.isEmpty() && legs.size() == 1 && expectsTwoLegs
+                && siblingTrancheClosed(p, legs.getFirst().tranche());
+        if (!unnamed.isEmpty() && (legs.size() > 1 || (expectsTwoLegs && !siblingDefinitelyGone))) {
             escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
                     "stop ratchet unsupported: " + legs.size() + " leg(s) open on a position that "
                             + (expectsTwoLegs ? "carries a second tranche" : "has several legs")

@@ -1242,6 +1242,48 @@ class StopRatchetServiceTest {
     }
 
     @Test
+    void aTwoTranchePositionDownToOneSurvivingLeg_stillRatchetsThroughTheBracket() {
+        // The collapsed survivor. Its sibling tranche has a leg row and that row is CLOSED, so
+        // the broker works exactly one stop and the by-symbol fallback is unambiguous again.
+        // Escalating here every pass would be the same self-inflicted loop as BUG-S13.
+        ExecutorPosition p = openPosition(72L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "ord-2", "stop-2");
+        withOpenLegs(72L, leg(10L, 72L, 1, null, null, new BigDecimal("6")));
+        when(legRepo.findByPosition(72L)).thenReturn(List.of(
+                leg(10L, 72L, 1, null, null, new BigDecimal("6")),
+                new ExecutorPositionLeg(11L, 72L, 2, "ord-2", "stop-2", new BigDecimal("4"),
+                        ExecutorPositionLeg.CLOSED, new BigDecimal("95"), "HARD_STOP", null)));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stopOrderId()).isNull();
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(72L),
+                any(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
+    void aTwoTranchePositionWhoseSiblingLegWasNeverRecorded_stillEscalates() {
+        // Absence of a leg row is NOT evidence the sibling stop is gone: a position whose
+        // tranche2_stop_order_id was never recorded can never have its second leg seeded while
+        // the broker goes on working two stops. Silence must keep escalating.
+        ExecutorPosition p = openPosition(73L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "ord-2", null);
+        withOpenLegs(73L, leg(10L, 73L, 1, null, null, new BigDecimal("6")));
+        when(legRepo.findByPosition(73L)).thenReturn(List.of(
+                leg(10L, 73L, 1, null, null, new BigDecimal("6"))));
+
+        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).isEmpty();
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+    }
+
+    @Test
     void aLegWithNoAddressAtAll_escalatesNoBracketId() {
         // No entry order id on the leg and no bracket id on the position: there is nothing to send
         // the modify to. Escalate rather than call the gateway with a null order id.

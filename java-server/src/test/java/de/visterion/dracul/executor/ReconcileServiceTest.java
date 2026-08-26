@@ -51,8 +51,39 @@ class ReconcileServiceTest {
 
     private ReconcileService service;
 
+    private ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender;
+
+    @org.junit.jupiter.api.AfterEach
+    void detachAppender() {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ReconcileService.class))
+                .detachAndStopAllAppenders();
+    }
+
+    /** WARN-level messages ReconcileService emitted during the call. Filtered to WARN so a test
+     *  asserting "this was reported" cannot be satisfied by an unrelated INFO/DEBUG line. */
+    private List<String> logLines() {
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
+    }
+
+    /** Every reason code written to the decision log during the call. Tolerates zero rows: a
+     *  test asserting that a code was NOT written must not fail merely because nothing was. */
+    private List<String> reasonCodes() {
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, org.mockito.Mockito.atLeast(0)).insert(captor.capture());
+        return captor.getAllValues().stream().map(DecisionLog::reasonCode).toList();
+    }
+
     @BeforeEach
     void setUp() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ReconcileService.class);
+        appender = new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
                 ruleVersions, mapper, telegram, executorNotifier, 10, 24, legRepo, clock);
@@ -1210,8 +1241,8 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
                 new BigDecimal("100"), new BigDecimal("104"), null));
         gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
-        // The tranche-2 ENTRY is working with 22 ordered shares. Its stop is an IfDone child and
-        // is NOT working, because the entry has not filled.
+        // The tranche-2 ENTRY is working with 15 ordered shares. Its stop is an IfDone child, so
+        // pre-fill it is not a top-level order at all and cannot appear in this view.
         gateway.seedOrder(new BrokerOrder("ord-2", "ref-ord-2", "ACME", OrderRole.ENTRY,
                 OrderStatus.WORKING, new BigDecimal("15"), BigDecimal.ZERO, null, null));
 
@@ -1302,6 +1333,176 @@ class ReconcileServiceTest {
         service.reconcile("c", "run1");
 
         verify(legRepo, never()).insertIfAbsent(any());
+    }
+
+    @Test
+    void seededLegsThatWouldClaimMoreThanTheBrokerHolds_areRefusedAndEscalated() {
+        // The held-qty ceiling. The production check that established "a WORKING stop's qty is
+        // shares HELD" only ever measured tranches that filled COMPLETELY. If a stop child is
+        // ever activated at its ORDERED size while its parent only partly filled, the stop
+        // over-reports -- and syncLegQuantities would converge to the same wrong number rather
+        // than catch it. The broker's own reported holding is the one figure that cannot be
+        // inflated that way, so it caps the sum and seeding is refused rather than guessed.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("4"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        // The stop claims the full ordered size; only 4 shares were actually bought.
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("10")));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).insertIfAbsent(any());
+        assertThat(reasonCodes()).contains("LEG_SEED_EXCEEDS_HOLDING");
+    }
+
+    @Test
+    void anExistingOpenLegCountsAgainstTheHeldQtyCeiling() {
+        // Seeding tranche 2 must not push the total past the holding just because tranche 1 was
+        // booked on an earlier pass.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("8"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        // 8 already booked + 5 candidate = 13 against 10 held.
+        gateway.seedOrder(workingStop("stop-2", "ACME", new BigDecimal("5")));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).insertIfAbsent(any());
+        assertThat(reasonCodes()).contains("LEG_SEED_EXCEEDS_HOLDING");
+    }
+
+    @Test
+    void seedingExactlyUpToTheBrokersHolding_isAllowed() {
+        // The ceiling is a ceiling, not a strict inequality: legs summing exactly to the holding
+        // is the normal, healthy two-tranche shape.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
+        gateway.seedOrder(workingStop("stop-2", "ACME", new BigDecimal("14")));
+        when(legRepo.insertIfAbsent(any())).thenReturn(true);
+
+        service.reconcile("c", "run1");
+
+        assertThat(captureSeededLegs().getAllValues()).hasSize(2);
+        assertThat(reasonCodes()).doesNotContain("LEG_SEED_EXCEEDS_HOLDING");
+        // The audit row is written for each leg actually inserted.
+        assertThat(reasonCodes()).filteredOn("LEG_SEEDED"::equals).hasSize(2);
+    }
+
+    @Test
+    void aWorkingStopOnAnotherInstrument_isNeverReadAsThisPositionsHolding() {
+        // Matching on the order id alone would let a stale or mis-booked id import a quantity
+        // from an unrelated instrument.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "OTHERCO", new BigDecimal("10")));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).insertIfAbsent(any());
+    }
+
+    @Test
+    void aHeldPositionThatCannotBeSeededAtAll_isReportedNotSilentlySkipped() {
+        // Degrading to the legacy path is acceptable; being silent about it is not -- an
+        // unreported version of this exact condition is why the original defect survived a
+        // quarter year. The book records a stop id, the broker holds the shares, and yet no
+        // WORKING stop matches it: the protective stop may be gone.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).insertIfAbsent(any());
+        assertThat(logLines()).anyMatch(l -> l.contains("cannot seed legs for ACME")
+                && l.contains("protective stop may be gone"));
+    }
+
+    @Test
+    void anUnfilledEntryIsNotReportedAsUnseedable() {
+        // The broker holds nothing: the ordinary pending-entry state. Warning here would fire on
+        // every unfilled entry on every pass, which is how a real signal gets buried.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedOrder(new BrokerOrder("ord-1", "ref-ord-1", "ACME", OrderRole.ENTRY,
+                OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
+
+        service.reconcile("c", "run1");
+
+        assertThat(logLines()).noneMatch(l -> l.contains("cannot seed legs"));
+    }
+
+    @Test
+    void aPositionWithTrancheOneBookedAndTrancheTwoUnfilled_isNotReportedAsUnseedable() {
+        // The ordinary two-tranche shape mid-flight. It has a leg, so it is not "legless on the
+        // legacy path" and must stay quiet.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("6"))));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("6"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
+
+        service.reconcile("c", "run1");
+
+        assertThat(logLines()).noneMatch(l -> l.contains("cannot seed legs"));
+    }
+
+    @Test
+    void pendingExitConfirmed_booksEveryLegOutWithTheRow() {
+        // A flatten exits the WHOLE position, so no leg can survive it. An OPEN leg on a CLOSED
+        // position would falsify the invariant this task exists to produce -- and seeding turns
+        // that from a backfill artefact into the normal outcome of every hard-trigger flatten
+        // and webhook FULL exit.
+        ExecutorPosition p = pendingExitPosition(50L, "ACME", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-1", "HARD_STOP", "exit-1", new BigDecimal("94"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(50L)).thenReturn(List.of(
+                leg(10L, 50L, 1, "ord-1", "stop-1", new BigDecimal("6")),
+                leg(11L, 50L, 2, "ord-2", "stop-2", new BigDecimal("4"))));
+        // Broker no longer holds it and the exit order is no longer working -> confirmed close.
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(50L), any(), any(), eq("HARD_STOP"), any(), any());
+        verify(legRepo).closeLeg(eq(10L), argThatComparesTo("94"), eq("HARD_STOP"), any());
+        verify(legRepo).closeLeg(eq(11L), argThatComparesTo("94"), eq("HARD_STOP"), any());
+    }
+
+    @Test
+    void pendingExitNotYetConfirmed_leavesTheLegsAlone() {
+        // The broker still holds the position: nothing has exited, so no leg may be booked out.
+        ExecutorPosition p = pendingExitPosition(51L, "ACME", new BigDecimal("100"),
+                new BigDecimal("95"), "stop-1", "HARD_STOP", "exit-1", new BigDecimal("94"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(51L)).thenReturn(List.of(
+                leg(10L, 51L, 1, "ord-1", "stop-1", new BigDecimal("6"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        service.reconcile("c", "run1");
+
+        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
     }
 
     private ExecutorPositionLeg leg(long id, long positionId, int tranche, String entryOrderId,

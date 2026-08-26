@@ -600,6 +600,216 @@ public class ReconcileService {
     }
 
     /**
+     * Creates the leg rows for tranches the broker has CONFIRMED it holds, and only those.
+     *
+     * <p><b>A leg carries shares HELD, never shares ORDERED</b> — the same rule
+     * {@link ExecutorPosition#qty()} and {@link #syncLegQuantities} already follow. The quantity
+     * is therefore read off the tranche's own WORKING protective stop, never off the placement
+     * record. The two are not interchangeable: the original V45 backfill derived leg quantities
+     * from what the entry orders ASKED for and was wrong for a real two-tranche position, where
+     * the broker's protective stops split the holding differently than the orders had requested
+     * while summing to the same total — so no sum-based check could have caught it.
+     *
+     * <p><b>Why an unfilled tranche contributes no leg, structurally.</b> The stop is an IfDone
+     * child: before its parent fills it is not a top-level order at all, but lives inside the
+     * parent's embedded RelatedOpenOrders (see {@link StopRatchetService}'s note on how Agora
+     * resolves a stop leg pre- and post-fill). {@code openOrders} is the top-level OPEN-orders
+     * view, so an unfilled tranche's stop cannot appear in it. That is what makes seeding safe
+     * for the case that motivated the whole rule — a tranche-2 limit still working and unfilled
+     * yields NO leg, rather than an OPEN leg carrying shares the broker does not hold that would
+     * park the position in a permanent {@code LEG_QTY_DESYNC} escalation while occupying a slot
+     * under the MAX_POSITIONS veto.
+     *
+     * <p><b>What production actually verified, and what it did not.</b> On 2026-08-25 the working
+     * stop quantities of every live position summed exactly to the shares the broker reported as
+     * held. Every one of those tranches had filled COMPLETELY, so that check confirms the rule
+     * for fully-filled tranches only. It says nothing about a PARTIALLY filled entry — a state
+     * that demonstrably occurs ({@link EntryExpiryService} has a dedicated branch for it) — where
+     * a stop child activated at its ordered size would report more shares than were ever bought.
+     * The held-qty ceiling below exists for exactly that unverified case: the broker's own
+     * reported holding caps the sum of the legs, and seeding is refused rather than guessed when
+     * the two disagree.
+     *
+     * <p>Requires the broker to report the position at all ({@code bp != null}): with no holding
+     * on the instrument there is nothing any leg could be carrying, whatever an order list says.
+     *
+     * <p>Re-entrant. Reconcile sees the same working stops on every pass, so the insert is
+     * conditional on the tranche being free ({@link ExecutorPositionLegRepository#insertIfAbsent})
+     * rather than on a prior read, and a tranche already occupied by a CLOSED or CANCELLED leg is
+     * never resurrected.
+     */
+    private void seedLegsFromWorkingStops(ExecutorPosition p, BrokerPosition bp,
+            List<BrokerOrder> openOrders, String runId) {
+        // No holding on the instrument -> nothing any leg could be carrying. This is also the
+        // ordinary state of an entry that has not filled yet, so it stays SILENT: warning here
+        // would fire on every pending entry on every pass.
+        if (bp == null) return;
+
+        List<ExecutorPositionLeg> existing = legRepo.findByPosition(p.id());
+        Set<Integer> taken = existing.stream()
+                .map(ExecutorPositionLeg::tranche)
+                .collect(Collectors.toSet());
+
+        List<ExecutorPositionLeg> candidates = new ArrayList<>();
+        addSeedCandidate(candidates, p, 1, p.brokerOrderId(), p.stopOrderId(), taken, openOrders);
+        addSeedCandidate(candidates, p, 2, p.tranche2OrderId(), p.tranche2StopOrderId(), taken, openOrders);
+
+        if (candidates.isEmpty()) {
+            warnNothingSeedable(p, existing);
+            return;
+        }
+
+        // The held-qty ceiling. Every seeded leg is evidence-backed on its own, but "a WORKING
+        // stop's qty is shares HELD" was verified in production only for tranches that filled
+        // COMPLETELY (2026-08-25). A partially filled entry is a real state -- EntryExpiryService
+        // has a dedicated PARTIALLY_FILLED branch for it -- and if the broker ever activates the
+        // IfDone stop child at its ORDERED size while the parent only partly filled, the stop
+        // would report more shares than exist. Seeding that number would put the position in the
+        // permanent LEG_QTY_DESYNC state this whole project exists to eliminate, and
+        // syncLegQuantities would converge to the same wrong figure rather than catch it.
+        //
+        // The broker's own reported holding is the one number that cannot be inflated that way,
+        // so it caps the sum. Legs that ALREADY exist count against the cap too: seeding tranche
+        // 2 must not push the total past the holding just because tranche 1 was booked earlier.
+        BigDecimal brokerQty = bp.qty();
+        if (brokerQty == null || brokerQty.signum() <= 0) {
+            // Without a holding figure there is no ceiling to check against, and a leg quantity
+            // that cannot be cross-checked is exactly what this guard refuses to write.
+            log.warn("cannot seed legs for {} (id {}): broker reports the position but no usable "
+                    + "quantity, so the seeded legs could not be checked against the holding",
+                    p.symbol(), p.id());
+            return;
+        }
+
+        BigDecimal openLegQty = existing.stream()
+                .filter(ExecutorPositionLeg::isOpen)
+                .map(ExecutorPositionLeg::qty)
+                .filter(q -> q != null)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal candidateQty = candidates.stream()
+                .map(ExecutorPositionLeg::qty)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (openLegQty.add(candidateQty).compareTo(brokerQty) > 0) {
+            escalateSeedExceedsHolding(p, candidates, openLegQty, candidateQty, brokerQty, runId);
+            return;
+        }
+
+        for (ExecutorPositionLeg candidate : candidates) {
+            if (legRepo.insertIfAbsent(candidate)) {
+                recordLegSeeded(p, candidate, runId);
+            }
+        }
+    }
+
+    /**
+     * Adds the leg one tranche would contribute, or nothing at all.
+     *
+     * <p>The quantity comes from the tranche's own WORKING protective stop and never from the
+     * placement record. The two are not interchangeable: the original V45 backfill derived leg
+     * quantities from what the entry orders ASKED for and was wrong for a real two-tranche
+     * position, where the broker's protective stops split the holding differently than the orders
+     * had requested while summing to the same total -- so no sum-based check could have caught it.
+     *
+     * <p>That a WORKING stop measures filled shares is structural, not merely observed: the stop
+     * is an IfDone child, and pre-fill it is not a top-level order at all but lives inside its
+     * parent's embedded RelatedOpenOrders (see {@link StopRatchetService}'s note on Agora's leg
+     * resolution). {@code openOrders} is the top-level OPEN-orders view, so an unfilled tranche's
+     * stop cannot appear in it and that tranche contributes NO leg -- rather than a leg carrying
+     * shares the broker does not hold.
+     *
+     * <p>Matched by order id AND symbol. The id alone is our own record and is normally enough,
+     * but a stale or mis-booked id would otherwise import a quantity from an unrelated
+     * instrument. The order's ROLE is deliberately not filtered on, for the reason
+     * {@link #matchLegFills} already documents: the role is the gateway's guess from the order
+     * type, and our own record of what that order is beats the broker's guess.
+     */
+    private void addSeedCandidate(List<ExecutorPositionLeg> candidates, ExecutorPosition p,
+            int tranche, String entryOrderId, String stopOrderId, Set<Integer> taken,
+            List<BrokerOrder> openOrders) {
+        if (taken.contains(tranche) || stopOrderId == null) return;
+
+        BigDecimal heldQty = openOrders.stream()
+                .filter(o -> stopOrderId.equals(o.orderId()))
+                .filter(o -> p.symbol().equals(o.symbol()))
+                .filter(o -> o.status() == OrderStatus.WORKING)
+                .map(BrokerOrder::qty)
+                .findFirst().orElse(null);
+
+        // No working stop -> the tranche has not filled (or its stop is gone). Either way there is
+        // no confirmed holding to write, and guessing one is the failure this method exists to
+        // prevent. CHECK (qty > 0) also makes a non-positive quantity unwritable by construction.
+        if (heldQty == null || heldQty.signum() <= 0) return;
+
+        candidates.add(new ExecutorPositionLeg(null, p.id(), tranche, entryOrderId, stopOrderId,
+                heldQty, ExecutorPositionLeg.OPEN, null, null, null));
+    }
+
+    /**
+     * Reports a position the broker holds but which no leg could be seeded for, and which
+     * therefore stays on the legacy escalating path indefinitely.
+     *
+     * <p>Degrading to pre-project behaviour is acceptable; being SILENT about it is not — an
+     * unreported version of exactly this condition is why the original defect survived a quarter
+     * year. Only positions that end up with NO leg row at all are reported: a position whose
+     * tranche 1 is booked and whose tranche-2 limit is merely unfilled is the ordinary case and
+     * must not become noise.
+     */
+    private void warnNothingSeedable(ExecutorPosition p, List<ExecutorPositionLeg> existing) {
+        if (!existing.isEmpty()) return;
+
+        if (p.stopOrderId() == null && p.tranche2StopOrderId() == null) {
+            log.warn("cannot seed legs for {} (id {}): the broker holds the position but the book "
+                    + "records no stop order id, so it stays on the legacy single-row path",
+                    p.symbol(), p.id());
+        } else {
+            // More alarming than a missing id: we know which order should be protecting these
+            // shares and the broker is not working it.
+            log.warn("cannot seed legs for {} (id {}): the broker holds the position but none of "
+                    + "the recorded stop orders ({}, {}) is working — the protective stop may be "
+                    + "gone; the position stays on the legacy single-row path",
+                    p.symbol(), p.id(), p.stopOrderId(), p.tranche2StopOrderId());
+        }
+    }
+
+    /** Records that seeding was refused because the candidate legs would have claimed more shares
+     *  than the broker reports holding — the partial-fill case the held-qty ceiling guards. */
+    private void escalateSeedExceedsHolding(ExecutorPosition p, List<ExecutorPositionLeg> candidates,
+            BigDecimal openLegQty, BigDecimal candidateQty, BigDecimal brokerQty, String runId) {
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("broker_qty", brokerQty);
+        inputs.put("open_leg_qty", openLegQty);
+        inputs.put("candidate_qty", candidateQty);
+        inputs.put("tranches", candidates.stream().map(l -> String.valueOf(l.tranche()))
+                .reduce((a, b) -> a + "," + b).orElse(""));
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "ESCALATE", "LEG_SEED_EXCEEDS_HOLDING", orderJson,
+                "refusing to seed legs for " + p.symbol() + " (id " + p.id() + "): the working "
+                        + "stops would claim " + openLegQty.add(candidateQty) + " shares against "
+                        + brokerQty + " the broker reports holding — a stop working at more than "
+                        + "its tranche actually filled. No leg written; operator attention required",
+                null, null, null));
+    }
+
+    /** The audit row for one seeded leg. */
+    private void recordLegSeeded(ExecutorPosition p, ExecutorPositionLeg leg, String runId) {
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("tranche", leg.tranche());
+        inputs.put("qty", leg.qty());
+        inputs.put("stop_order_id", leg.stopOrderId());
+        inputs.put("entry_order_id", leg.entryOrderId());
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("position_id", p.id());
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                "SYNC", "LEG_SEEDED", orderJson, null, null, null, null));
+    }
+
+    /**
      * Converges every OPEN leg's {@code qty} to the broker's own number, for the legs whose stop
      * order the broker still reports WORKING at a different size. Returns the legs as they now
      * stand.
@@ -632,80 +842,6 @@ public class ReconcileService {
      * resize findings later, is what keeps {@link #escalateMissingEvidence}'s "left completely
      * untouched" claim true on the leg path.
      */
-    /**
-     * Creates the leg rows for tranches the broker has CONFIRMED it holds, and only those.
-     *
-     * <p><b>A leg carries shares HELD, never shares ORDERED</b> — the same rule
-     * {@link ExecutorPosition#qty()} and {@link #syncLegQuantities} already follow. The quantity
-     * is therefore read off the tranche's own WORKING protective stop, never off the placement
-     * record. The two are not interchangeable: the original V45 backfill derived leg quantities
-     * from what the entry orders ASKED for and was wrong for a real two-tranche position: the
-     * broker's protective stops split the holding differently than the orders had requested,
-     * while summing to the same total, so no sum-based check could have caught it.
-     *
-     * <p>That a WORKING stop's qty means shares held is a property of the broker, not an
-     * assumption: the stop is an IfDone child and only starts working once its own entry has
-     * filled, verified against production on 2026-08-25, where the working stop quantities of
-     * every live position summed exactly to the shares the broker reported as held. This is what makes seeding
-     * safe for the case that motivated the rule — a tranche-2 limit that is still working and
-     * unfilled has no working stop of its own, so it contributes NO leg. Seeding it from the
-     * order would create an OPEN leg carrying shares the broker does not hold, the legs would
-     * claim more than the position, and the row would sit in a permanent LEG_QTY_DESYNC
-     * escalation while occupying a slot under the MAX_POSITIONS veto.
-     *
-     * <p>Requires the broker to report the position at all ({@code bp != null}): with no holding
-     * on the instrument there is nothing any leg could be carrying, whatever an order list says.
-     *
-     * <p>Re-entrant. Reconcile sees the same working stops on every pass, so the insert is
-     * conditional on the tranche being free ({@link ExecutorPositionLegRepository#insertIfAbsent})
-     * rather than on a prior read, and a tranche already occupied by a CLOSED or CANCELLED leg is
-     * never resurrected.
-     */
-    private void seedLegsFromWorkingStops(ExecutorPosition p, BrokerPosition bp,
-            List<BrokerOrder> openOrders, String runId) {
-        if (bp == null) return;
-
-        Set<Integer> taken = legRepo.findByPosition(p.id()).stream()
-                .map(ExecutorPositionLeg::tranche)
-                .collect(Collectors.toSet());
-
-        seedOneLeg(p, 1, p.brokerOrderId(), p.stopOrderId(), taken, openOrders, runId);
-        seedOneLeg(p, 2, p.tranche2OrderId(), p.tranche2StopOrderId(), taken, openOrders, runId);
-    }
-
-    /** One tranche of {@link #seedLegsFromWorkingStops}. Writes nothing unless a WORKING stop with
-     *  a positive quantity names this tranche's recorded stop order. */
-    private void seedOneLeg(ExecutorPosition p, int tranche, String entryOrderId,
-            String stopOrderId, Set<Integer> taken, List<BrokerOrder> openOrders, String runId) {
-        if (taken.contains(tranche) || stopOrderId == null) return;
-
-        BigDecimal heldQty = openOrders.stream()
-                .filter(o -> stopOrderId.equals(o.orderId()))
-                .filter(o -> o.status() == OrderStatus.WORKING)
-                .map(BrokerOrder::qty)
-                .findFirst().orElse(null);
-
-        // No working stop -> the tranche has not filled (or its stop is gone). Either way there is
-        // no confirmed holding to write, and guessing one is the failure this method exists to
-        // prevent. CHECK (qty > 0) also makes a non-positive quantity unwritable by construction.
-        if (heldQty == null || heldQty.signum() <= 0) return;
-
-        boolean inserted = legRepo.insertIfAbsent(new ExecutorPositionLeg(null, p.id(), tranche,
-                entryOrderId, stopOrderId, heldQty, ExecutorPositionLeg.OPEN, null, null, null));
-        if (!inserted) return;
-
-        ObjectNode inputs = mapper.createObjectNode();
-        inputs.put("tranche", tranche);
-        inputs.put("qty", heldQty);
-        inputs.put("stop_order_id", stopOrderId);
-        inputs.put("entry_order_id", entryOrderId);
-        ObjectNode orderJson = mapper.createObjectNode();
-        orderJson.put("position_id", p.id());
-        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
-                "SYNC", "LEG_SEEDED", orderJson, null, null, null, null));
-    }
-
     private List<ExecutorPositionLeg> syncLegQuantities(ExecutorPosition p,
             List<ExecutorPositionLeg> legs, List<BrokerOrder> openOrders, String runId,
             boolean fillHistoryAvailable) {
@@ -1089,6 +1225,15 @@ public class ReconcileService {
         String exitReason = p.pendingExitReason();
 
         positionRepo.close(p.id(), exitPrice, realizedR, exitReason, exitPriceSource, rCalc.denominator());
+        // Book every leg out with the row. A flatten exits the WHOLE position, so no leg can
+        // survive it, and an OPEN leg on a CLOSED position would falsify the one invariant the
+        // leg table exists to hold. Nothing reads those legs today (findOpenByPosition is only
+        // reached for open positions), but seeding turns leftovers from a backfill artefact into
+        // the normal outcome of every hard-trigger flatten and webhook FULL exit.
+        Instant legClosedAt = clock.instant();
+        for (ExecutorPositionLeg leg : legRepo.findOpenByPosition(p.id())) {
+            legRepo.closeLeg(leg.id(), exitPrice, exitReason, legClosedAt);
+        }
         cooldownRepo.add(p.symbol(), exitReason,
                 clock.instant().plus(Duration.ofDays(cooldownDays)), "fresh setup only");
 
