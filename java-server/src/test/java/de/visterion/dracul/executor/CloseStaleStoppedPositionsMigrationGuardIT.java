@@ -108,6 +108,51 @@ class CloseStaleStoppedPositionsMigrationGuardIT {
                 .hasMessageContaining("open legs sum to");
     }
 
+    @Test
+    void position12LegQuantityMismatchAbortsTheMigrationByName() throws Exception {
+        // Position 12's guard block is a DUPLICATE of position 7's, not a shared routine, and
+        // every other guard test drives position 7 -- so a copy-paste slip in 12's block (the
+        // wrong id in a WHERE, the wrong quantity constant, a comparison left as position 7's)
+        // would be invisible. This drives 12 down an abort path.
+        migrateToV45();
+        V46Facts.Position rgnx = V46Facts.positions().get(12L);
+        List<V46Facts.Leg> rgnxLegs = V46Facts.legsFor(12L);
+        try (Connection conn = connect()) {
+            insertPosition(conn, rgnx.id(), rgnx.symbol(), rgnx.qty());
+            insertLeg(conn, rgnxLegs.get(0).positionId(), rgnxLegs.get(0).tranche(),
+                    rgnxLegs.get(0).stopOrderId(), rgnxLegs.get(0).qty());
+            insertLeg(conn, rgnxLegs.get(1).positionId(), rgnxLegs.get(1).tranche(),
+                    rgnxLegs.get(1).stopOrderId(), rgnxLegs.get(1).qty().subtract(BigDecimal.ONE));
+        }
+
+        assertThatThrownBy(this::migrateToLatest)
+                .isInstanceOf(FlywayException.class)
+                .hasMessageContaining("V46")
+                .hasMessageContaining("position 12")
+                .hasMessageContaining("do not carry the broker-recorded quantities");
+    }
+
+    @Test
+    void anAlreadyClosedPositionWithDifferentExitValuesAbortsTheMigrationByName() throws Exception {
+        // The re-run branch: an id that is already CLOSED is a no-op ONLY when it carries exactly
+        // the expected exit values. Closed with anything else means something other than this
+        // migration booked it, and overwriting that would destroy a real record. The success
+        // no-op is covered by the main IT's second run; this is the other half of that branch,
+        // which nothing exercised.
+        migrateToV45();
+        V46Facts.Position ofg = V46Facts.positions().get(7L);
+        try (Connection conn = connect()) {
+            insertClosedPosition(conn, ofg.id(), ofg.symbol(), ofg.qty(),
+                    ofg.exitPrice().add(BigDecimal.ONE));
+        }
+
+        assertThatThrownBy(this::migrateToLatest)
+                .isInstanceOf(FlywayException.class)
+                .hasMessageContaining("V46")
+                .hasMessageContaining("position 7")
+                .hasMessageContaining("already CLOSED but not with the expected exit values");
+    }
+
     private void migrateToV45() {
         Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
@@ -141,6 +186,25 @@ class CloseStaleStoppedPositionsMigrationGuardIT {
             ps.setLong(1, id);
             ps.setString(2, symbol);
             ps.setBigDecimal(3, qty);
+            ps.executeUpdate();
+        }
+    }
+
+    /** A position already booked CLOSED, but at an exit price that is not the one V46 expects. */
+    private static void insertClosedPosition(Connection conn, long id, String symbol,
+            BigDecimal qty, BigDecimal exitPrice) throws Exception {
+        String sql = """
+                INSERT INTO executor_position
+                    (id, connection, symbol, side, qty, entry_price, initial_stop, active_stop,
+                     status, exit_price, exit_reason, exit_price_source, closed_at)
+                VALUES (?, 'depot-1', ?, 'BUY', ?, 100.00, 90.00, 95.00,
+                        'CLOSED', ?, 'HARD_STOP', 'FILL', TIMESTAMPTZ '2026-08-19 19:55:37+00')
+                """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ps.setString(2, symbol);
+            ps.setBigDecimal(3, qty);
+            ps.setBigDecimal(4, exitPrice);
             ps.executeUpdate();
         }
     }

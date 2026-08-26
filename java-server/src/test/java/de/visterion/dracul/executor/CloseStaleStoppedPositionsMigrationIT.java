@@ -36,6 +36,10 @@ class CloseStaleStoppedPositionsMigrationIT {
     private static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:18-alpine").withPrivilegedMode(true);
     private static final Duration COOLDOWN_DAYS = Duration.ofDays(10);
+    /** A position V46 must not touch at all. Id and symbol are synthetic and cannot collide with
+     *  the two the migration names. */
+    private static final long CONTROL_ID = 99L;
+    private static final String CONTROL_SYMBOL = "ACME";
 
     @BeforeAll
     static void startContainer() {
@@ -70,6 +74,13 @@ class CloseStaleStoppedPositionsMigrationIT {
                 insertLeg(conn, leg.positionId(), leg.tranche(), leg.stopOrderId(), leg.qty());
             }
 
+            // 2b) A CONTROL position with its own open leg. V46 narrows every read and every
+            // write to id 7 or id 12; without a row that must survive, a V46 whose WHERE
+            // narrowing broke -- or whose leg UPDATE lost its `position_id =` -- would close
+            // every open position in the book and this test would still pass.
+            insertPosition(conn, CONTROL_ID, CONTROL_SYMBOL, new BigDecimal("13"));
+            insertLeg(conn, CONTROL_ID, 1, "stop-control-1", new BigDecimal("13"));
+
             // 3) Migrate to latest -- runs V46.
             Flyway.configure()
                     .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
@@ -85,6 +96,8 @@ class CloseStaleStoppedPositionsMigrationIT {
                 V46Facts.Position owner = V46Facts.positions().get(leg.positionId());
                 assertLegClosed(conn, leg.positionId(), leg.stopOrderId(), owner.exitPrice());
             }
+
+            assertControlUntouched(conn);
 
             long cooldownCountBefore = countCooldowns(conn);
 
@@ -104,6 +117,9 @@ class CloseStaleStoppedPositionsMigrationIT {
             assertThat(countCooldowns(conn))
                     .as("re-run must not write a second cooldown row")
                     .isEqualTo(cooldownCountBefore);
+            // The control row must survive the re-run too: the no-op branch reads a position and
+            // must not fall through to any write.
+            assertControlUntouched(conn);
         }
     }
 
@@ -186,6 +202,49 @@ class CloseStaleStoppedPositionsMigrationIT {
                 assertThat(rs.getString("exception_condition")).isEqualTo("fresh setup only");
                 assertThat(rs.getTimestamp("expires_at").toInstant()).isEqualTo(expiresAt);
                 assertThat(rs.next()).as("exactly one cooldown row for %s", symbol).isFalse();
+            }
+        }
+    }
+
+    /** The control position and its leg are still exactly as inserted, and no cooldown was
+     *  written for it. */
+    private static void assertControlUntouched(Connection conn) throws Exception {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT status, exit_price, exit_reason, exit_price_source, realized_r, closed_at
+                FROM executor_position WHERE id = ?
+                """)) {
+            ps.setLong(1, CONTROL_ID);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).as("control position exists").isTrue();
+                assertThat(rs.getString("status")).as("control position must stay OPEN")
+                        .isEqualTo("OPEN");
+                assertThat(rs.getBigDecimal("exit_price")).isNull();
+                assertThat(rs.getString("exit_reason")).isNull();
+                assertThat(rs.getString("exit_price_source")).isNull();
+                assertThat(rs.getBigDecimal("realized_r")).isNull();
+                assertThat(rs.getTimestamp("closed_at")).isNull();
+            }
+        }
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT status, exit_price, exit_reason, closed_at FROM executor_position_leg
+                WHERE position_id = ?
+                """)) {
+            ps.setLong(1, CONTROL_ID);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertThat(rs.next()).as("control leg exists").isTrue();
+                assertThat(rs.getString("status")).as("control leg must stay OPEN").isEqualTo("OPEN");
+                assertThat(rs.getBigDecimal("exit_price")).isNull();
+                assertThat(rs.getString("exit_reason")).isNull();
+                assertThat(rs.getTimestamp("closed_at")).isNull();
+                assertThat(rs.next()).as("exactly one control leg").isFalse();
+            }
+        }
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT count(*) FROM cooldown WHERE symbol = ?")) {
+            ps.setString(1, CONTROL_SYMBOL);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                assertThat(rs.getLong(1)).as("no cooldown for the control symbol").isZero();
             }
         }
     }
