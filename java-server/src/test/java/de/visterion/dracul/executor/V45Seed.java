@@ -28,7 +28,14 @@ final class V45Seed {
     private static final Path MIGRATION = Path.of(
             "src/main/resources/db/migration/V45__executor_position_leg.sql");
 
-    /** {@code ('5039279123', 6),    -- STT   tranche 1, qty of the order ...} */
+    /**
+     * The shape of one seed line, shown with a deliberately SYNTHETIC id and quantity:
+     * {@code ('stop-1', 10),    -- ACME  tranche 1, qty of the order ...}
+     *
+     * <p>A real pair would illustrate the format no better and would put a real broker order id
+     * beside a real per-leg holding in the very file that exists so those live in V45 alone.
+     * (The pattern itself requires digits for the id; the example is about the SHAPE.)
+     */
     private static final Pattern SEED_LINE = Pattern.compile(
             "^\\('(\\d+)',\\s*([0-9.]+)\\)[,;]\\s*--\\s*(\\S+)\\s+tranche\\s+(\\d+)\\b.*$");
 
