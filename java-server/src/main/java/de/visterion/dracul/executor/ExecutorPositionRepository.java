@@ -16,7 +16,16 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 
-/** Persists the executor position book. */
+/**
+ * Persists the executor position book.
+ *
+ * <p>{@code stop_order_id}, {@code tranche2_order_id} and {@code tranche2_stop_order_id} are the
+ * tranche-binding key, not legacy columns awaiting removal: {@code ReconcileService} matches a
+ * working broker stop order against them to create the corresponding {@code
+ * executor_position_leg} row, and {@link #repointStopLegs} keeps them pointed at the broker's
+ * current order after a flatten rollback replaces it. See {@link ExecutorPosition}'s class doc for
+ * the full list of readers and the precondition for ever dropping them.
+ */
 @Repository
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class ExecutorPositionRepository {

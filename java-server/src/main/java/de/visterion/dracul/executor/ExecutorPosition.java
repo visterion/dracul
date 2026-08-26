@@ -15,6 +15,29 @@ import java.util.List;
  * quantity on every pass, the same way it converges {@code entryPrice} to the broker basis.
  * Intended-but-unfilled size is derivable from the tranche order ids and belongs in
  * notifications/display only.
+ *
+ * <p><b>{@code stopOrderId}, {@code tranche2OrderId} and {@code tranche2StopOrderId} are not
+ * legacy.</b> They are the only key that binds one of the broker's own tranches to a row here:
+ * {@code ReconcileService.seedLegsFromWorkingStops} matches a working stop order against these
+ * ids to create the corresponding {@code executor_position_leg} row in the first place, and
+ * {@code repointStopLegs}/{@code repointLegStops} (in {@link ExecutorPositionRepository} and
+ * {@code ExecutorWebhookController} respectively) keep both the columns and the leg rows pointed
+ * at the same live order after a flatten rollback replaces it. {@code StopRatchetService} also
+ * still reads {@code tranche()}, {@code tranche2OrderId} and {@code tranche2StopOrderId} to decide
+ * {@code expectsTwoLegs} for positions that have no leg rows yet. Dropping these columns removes
+ * the binding key and would silently strand every future leg-creation and repoint. They can only
+ * be dropped once leg creation sources per-tranche ids from the broker's bracket structure
+ * directly instead of from these columns — see the follow-up in {@code docs/bugfix-todo.md}.
+ *
+ * <p><b>{@code stopLegsCollapsed}</b> has exactly one job (BUG-S13): on the legless, column-based
+ * fallback routing in {@code StopRatchetService.ratchetLegs} and the equivalent trim path in
+ * {@code ReconcileService}, it distinguishes a two-tranche position that legitimately has only one
+ * live stop leg (ratchet it as one) from one whose second id is merely not yet known (escalate).
+ * It has exactly two genuine readers today — {@code StopRatchetService}'s {@code twoStopLegs} and
+ * {@code ReconcileService}'s {@code collapsed} — and both live entirely inside that legless
+ * fallback chain. It dies only when that fallback path itself is removed, which requires every
+ * position to carry {@code executor_position_leg} rows before the fallback is ever reached; that
+ * has not happened in this project and is not implied by anything built so far.
  */
 public record ExecutorPosition(
         Long id,
