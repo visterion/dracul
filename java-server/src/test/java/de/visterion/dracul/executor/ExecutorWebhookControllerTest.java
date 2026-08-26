@@ -3091,6 +3091,58 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void exitPosition_fullExitThatFillsImmediately_closesEveryOpenLegWithTheRow() {
+        // The fifth lifecycle point. A FULL exit the broker fills on the spot closes the row
+        // here, not through reconcile -- and used to leave its legs OPEN, so the book carried
+        // OPEN legs under a CLOSED position: exactly the state V45 established as impossible and
+        // V46 aborts on.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(legRepo.findOpenByPosition(7L)).thenReturn(List.of(
+                new ExecutorPositionLeg(10L, 7L, 1, "ord-1", "stop-1", new BigDecimal("4"),
+                        ExecutorPositionLeg.OPEN, null, null, null),
+                new ExecutorPositionLeg(11L, 7L, 2, "ord-2", "stop-2", new BigDecimal("6"),
+                        ExecutorPositionLeg.OPEN, null, null, null)));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.ONE)))
+                .thenReturn(new CloseResult(new BigDecimal("10"), BigDecimal.ZERO,
+                        new BigDecimal("112"), "close-1", List.of(), false));
+
+        controller.exitPosition(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7}
+                """));
+
+        verify(positionRepo).close(eq(7L), any(), any(), eq("SOFT_CHANDELIER"), eq("FILL"), any());
+        // Each leg carries the row's own exit price and reason -- the whole position exited at
+        // one fill, so there is no per-leg price to distinguish.
+        ArgumentCaptor<BigDecimal> legExitPrice = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(legRepo).closeLeg(eq(10L), legExitPrice.capture(), eq("SOFT_CHANDELIER"), any());
+        assertThat(legExitPrice.getValue()).isEqualByComparingTo("112");
+        verify(legRepo).closeLeg(eq(11L), any(), eq("SOFT_CHANDELIER"), any());
+    }
+
+    @Test
+    void exitPosition_partialTrim_leavesLegRowsToReconcile() {
+        // The stated counterpart of the test above: a PARTIAL close deliberately does NOT touch
+        // the legs. The broker spreads a partial across its own tranches and reports only a
+        // total, so any per-leg split written here would be our arithmetic, not the broker's --
+        // the exact defect the V45 backfill was rewritten to avoid. Reconcile converges each leg
+        // to its own working stop next pass. Pinned so the omission reads as a decision.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), any()))
+                .thenReturn(new CloseResult(new BigDecimal("3"), new BigDecimal("7"),
+                        new BigDecimal("112"), "close-1", List.of(), false));
+
+        controller.exitPosition(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"SOFT_CHANDELIER","confidence":0.7,"fraction":0.33}
+                """));
+
+        verify(positionRepo).recordTrim(eq(7L), any(), anyInt(), any(), anyBoolean());
+        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
+        verify(legRepo, never()).syncLegQty(anyLong(), any());
+    }
+
+    @Test
     void exitPosition_fullExitWithoutFillPrice_stampsPendingExitInsteadOfClosing() {
         // Verified prod incident (PSMT): a flatten that is merely accepted (no avgFillPrice yet)
         // must not be booked as closed here — that books a wrong exit price/R and can mismatch

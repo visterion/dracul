@@ -1337,6 +1337,19 @@ public class ExecutorWebhookController {
 
             positionRepo.recordTrim(position.id(), qtyRemaining, position.trimCount() + 1,
                     cr.protectiveLegs(), cr.legsCollapsed());
+            // The leg rows keep their pre-trim quantities here, deliberately. A partial close is
+            // spread across the broker's tranches by the broker itself, and this response says
+            // only how much was closed in total -- so any per-leg split written here would be our
+            // arithmetic, not the broker's, which is exactly the defect the V45 backfill was
+            // rewritten to avoid. The legs are stale until the next reconcile pass, where
+            // ReconcileService.syncLegQuantities converges each one to its own WORKING stop's
+            // reported qty (the broker's own number). Judged acceptable because nothing between
+            // the two reads a leg quantity: StopRatchetService reads leg IDs and moves a price
+            // level, never a quantity, and every quantity-based veto sizes off
+            // executor_position.qty, which recordTrim just wrote from the broker's own
+            // remainingQty. A leg that the trim drove to zero is likewise left to reconcile,
+            // which CLOSES it -- executor_position_leg carries CHECK (qty > 0), so a zero leg is
+            // unwritable by construction and must never be "updated" to nothing.
 
             ObjectNode orderJson = mapper.createObjectNode();
             orderJson.put("fraction", fraction);
@@ -1386,6 +1399,16 @@ public class ExecutorWebhookController {
         BigDecimal realizedR = rCalc.r();
 
         positionRepo.close(position.id(), exitPrice, realizedR, reason, "FILL", rCalc.denominator());
+        // Book every leg out with the row -- the fifth and last lifecycle point that closes a
+        // position (the other four are ReconcileService's closePositionFromLegs, its
+        // RECONCILE_GONE leg loop, finalizePendingExitOrKeep, and EntryExpiryService's
+        // cancelOpenLegs). This branch is a FULL exit that the broker filled immediately, so no
+        // leg can survive it, and an OPEN leg under a CLOSED row would falsify the invariant V45
+        // established and V46 checks.
+        Instant legClosedAt = clock.instant();
+        for (ExecutorPositionLeg leg : legRepo.findOpenByPosition(position.id())) {
+            legRepo.closeLeg(leg.id(), exitPrice, reason, legClosedAt);
+        }
         cooldownRepo.add(symbol, reason, clock.instant().plus(Duration.ofDays(cooldownDays)),
                 "fresh setup only");
 
