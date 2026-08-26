@@ -1718,7 +1718,7 @@ public class ExecutorWebhookController {
 
             // The BOOK keeps the held qty/entry_price untouched: `qty` means shares HELD (see
             // ExecutorPosition), and booking the intended total here is what let a flatten size on
-            // 12 shares while the broker held 6 (STT/OFG, 2026-08-06). Only the tranche flip and
+            // twice the shares the broker actually held (2026-08-06). Only the tranche flip and
             // the two leg ids are persisted now; ReconcileService.updateMaintenance() grows qty —
             // and converges entry_price to the real post-add broker basis — once the fill lands.
             positionRepo.updateTranche2(position.id(), position.qty(), position.entryPrice(),

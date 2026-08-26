@@ -574,8 +574,9 @@ public class ReconcileService {
      *
      * <p>Without this, a position that has legs could never sync its quantity down again: any
      * mismatch would hit {@link #escalateLegQtyDesync}, which precedes {@link #updateMaintenance},
-     * and the prod-verified QTY_SYNC path (2026-08-06: book claimed 12, broker held 6, and every
-     * quantity-based veto computed on the phantom half) would be unreachable. With exactly one
+     * and the prod-verified QTY_SYNC path (2026-08-06: the book claimed twice the shares the
+     * broker actually held, and every quantity-based veto computed on the phantom half)
+     * would be unreachable. With exactly one
      * open leg the leg IS the position, so the shortfall is unambiguously that leg's — a
      * tranche-2 limit that never filled, or a partially filled entry. Nothing is guessed: the
      * broker's own number is written.
@@ -819,11 +820,14 @@ public class ReconcileService {
      * exactly the way the position's did (prod 2026-08-06), and every downstream figure computed
      * from them — the trim remainder below, the desync check — would inherit the drift.
      *
-     * <p>Only a WORKING stop counts, and its {@code qty} really is shares HELD — verified against
-     * production on 2026-08-25, where the working stop quantities of all three live positions sum
-     * exactly to what the broker reports as held (6+6 against 12, 12+34 against 46, 7 against 7).
-     * The mechanism is that the stop is an IfDone child: it only starts working once its own entry
-     * has filled, so it can only ever measure filled shares, never ordered ones.
+     * <p>Only a WORKING stop counts, and its {@code qty} really is shares HELD. The structural
+     * reason is that the stop is an IfDone child: pre-fill it is not a top-level order at all but
+     * lives inside its parent's embedded RelatedOpenOrders (see {@link StopRatchetService}'s note
+     * on Agora's leg resolution), so an order in this OPEN-orders view can only ever measure
+     * filled shares, never ordered ones. Confirmed against the live account on 2026-08-25, where
+     * every live position's working stop quantities summed exactly to the shares the broker
+     * reported holding. The measured figures live in §1.6 of the design spec under {@code docs/}
+     * (gitignored) rather than here: a holding is account data and this repository is public.
      *
      * <p>A PARTIALLY_FILLED stop does not count. There part of the tranche has already exited and
      * the order's {@code qty} is its total, not the shares still held; reading it as a holding
@@ -1502,11 +1506,11 @@ public class ReconcileService {
         // Book = broker for QUANTITY too. `qty` means shares HELD (see ExecutorPosition), so the
         // broker's reported holding is the truth and the book follows it. This is what closes the
         // window in which a submitted-but-unfilled tranche-2 limit (or a partially filled entry)
-        // left the book claiming more shares than exist: prod 2026-08-06 had STT booked at 12
-        // against 6 held and OFG at 42 against 21, and every quantity-based action — the
-        // exit_position flatten remainder, the exposure/heat veto inputs — computed on the
-        // phantom half. Idempotent, logs only on an actual change; a null/non-positive broker qty
-        // is ignored rather than blanking a good book value.
+        // left the book claiming more shares than exist: on 2026-08-06 two live positions were
+        // each booked at twice the shares the broker actually held, and every
+        // quantity-based action — the exit_position flatten remainder, the exposure/heat veto
+        // inputs — computed on the phantom half. Idempotent, logs only on an actual change; a
+        // null/non-positive broker qty is ignored rather than blanking a good book value.
         BigDecimal brokerQty = bp.qty();
         if (brokerQty != null && brokerQty.signum() > 0
                 && p.qty() != null && p.qty().compareTo(brokerQty) != 0) {
