@@ -42,7 +42,11 @@ CREATE INDEX idx_position_leg_position ON executor_position_leg (position_id);
 --
 -- These are the only real broker order ids/quantities in this codebase, and they belong only
 -- here -- this migration is a data correction, the same as any other migration that carries
--- production values forward. They must not appear in tests or fixtures.
+-- production values forward. They must not appear in tests or fixtures. The two-tranche backfill
+-- tests do exercise these exact values, but they READ the VALUES lines below at test setup
+-- (V45Seed, same technique V46Facts uses for V46) rather than restating them, so this file stays
+-- the only place they are written down -- do not reformat the "('<id>', <qty>), -- <SYMBOL>
+-- tranche <n>" shape of those lines.
 --
 -- Every other position (tranche2_order_id IS NULL, i.e. single tranche) needs no seed: its
 -- one leg is p.qty directly, which already means shares held.
@@ -112,13 +116,24 @@ FROM executor_position p
 JOIN _leg_qty_seed s2 ON s2.stop_order_id = p.tranche2_stop_order_id
 WHERE p.tranche2_order_id IS NOT NULL;
 
--- Final cross-check of the invariants that can actually fail (the earlier version of this
--- migration only checked that legs sum to qty, which both INSERTs above satisfy by
--- construction and so could never fail): every position has exactly the expected number of
--- legs (1 for single tranche, 2 for two tranches), every leg qty is positive (also enforced
--- by the CHECK constraint above, re-asserted here as a second line of defense), and the legs
--- sum to the position's qty -- now a real check, since leg quantities come from the seed
--- above, independent of qty, rather than being derived from it.
+-- Final cross-check: every position has exactly the expected number of legs (1 for single
+-- tranche, 2 for two tranches) and its legs sum to its qty.
+--
+-- Be precise about what this can and cannot catch, because the previous version of this comment
+-- claimed more than the code delivers ("the invariants that can actually fail"). Given the guard
+-- above, NEITHER check can fail on any input this migration accepts: the guard has already
+-- refused every two-tranche row whose seeded quantities do not sum to qty, a single-tranche leg
+-- is p.qty by construction, and each INSERT writes exactly one row per position it selects
+-- (_leg_qty_seed's PRIMARY KEY makes both joins single-valued). These statements are therefore
+-- NOT a check on production data -- they are a tripwire on the two INSERTs above: an edit that
+-- changed a join, a CASE arm or the second INSERT's WHERE clause would break the correspondence
+-- and be caught here rather than in the book. Verified by mutation while the tests below were
+-- written: neutering the second INSERT's WHERE clause makes THIS block raise "1 position(s) whose
+-- legs do not sum to qty". The correspondence itself is covered directly by
+-- ExecutorPositionLegBackfillTwoTrancheIT (two-tranche split + a single-tranche control row that
+-- must not gain a leg), and the guard's two abort paths by ExecutorPositionLegBackfillGuardIT
+-- (ids not in the seed) and ExecutorPositionLegBackfillSumGuardIT (seeded ids, wrong sum).
+-- Leg positivity is enforced by the CHECK constraint on the table, not here.
 DO $$
 DECLARE bad_sum int;
 DECLARE bad_count int;
