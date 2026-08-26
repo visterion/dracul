@@ -206,6 +206,9 @@ class StopRatchetServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        // The COLUMN path, not the leg path -- the two are different conditions that happen to
+        // share a reason code, and they die at different times.
+        assertThat(log.inputsSnapshot().path("path").asString()).isEqualTo("COLUMN");
         assertThat(log.reasoning()).contains("tranche2_stop_order_id");
         assertThat(log.symbol()).isEqualTo("ACME");
         assertThat(log.orderJson()).isNotNull();
@@ -548,6 +551,8 @@ class StopRatchetServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        // This row has no leg rows at all, so it is the legacy COLUMN path.
+        assertThat(log.inputsSnapshot().path("path").asString()).isEqualTo("COLUMN");
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
@@ -597,6 +602,10 @@ class StopRatchetServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.reasonCode()).isEqualTo("NO_BRACKET_ID");
+        // Which id is missing, as a field: NO_BRACKET_ID also covers "this leg has neither its
+        // own entry id nor the position's", which is a different repair.
+        assertThat(log.inputsSnapshot().path("missing").asString())
+                .isEqualTo("POSITION_BROKER_ORDER_ID");
         assertThat(log.orderJson()).isNotNull();
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(9L);
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
@@ -1192,6 +1201,10 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
+        // The LEG path -- the same reason code as the legacy column path above, told apart by a
+        // field rather than by reading the prose. The two conditions are different and the column
+        // one dies when the legless fallback does.
+        assertThat(logCaptor.getValue().inputsSnapshot().path("path").asString()).isEqualTo("LEG");
         assertThat(logCaptor.getValue().reasoning()).contains("tranche 2");
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
@@ -1377,6 +1390,10 @@ class StopRatchetServiceTest {
         verify(decisionRepo, times(2)).insert(logCaptor.capture());
         List<DecisionLog> logs = logCaptor.getAllValues();
         assertThat(logs.get(0).reasonCode()).isEqualTo("NO_BRACKET_ID");
+        // The OTHER NO_BRACKET_ID condition, distinguished by a field rather than by prose.
+        assertThat(logs.get(0).inputsSnapshot().path("missing").asString())
+                .isEqualTo("LEG_ENTRY_ORDER_ID_AND_POSITION_BROKER_ORDER_ID");
+        assertThat(logs.get(0).inputsSnapshot().path("tranche").asInt()).isEqualTo(2);
         assertThat(logs.get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
         assertThat(logs.get(1).orderJson().get("moved_stop_order_ids").get(0).asString())
                 .isEqualTo("stop-1");

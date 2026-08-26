@@ -3912,6 +3912,12 @@ class ExecutorWebhookControllerTest {
         // The stop columns must stay exactly as they were -- repointStopLegs must never even be
         // called, let alone with an empty list that would null both columns.
         verify(positionRepo, never()).repointStopLegs(anyLong(), any());
+        // The leg table needs the same negative pairing as the columns. repointLegStops treats
+        // "not named by a restored leg" as "dead" and NULLS the id, so hoisting it out of the
+        // legCancelWasAttempted guard would orphan working stop orders on the leg rows exactly
+        // the way it would on the columns -- and with only the column assertion above, the suite
+        // would stay green while it happened.
+        verify(legRepo, never()).repointLegStop(anyLong(), any());
         verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
 
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());

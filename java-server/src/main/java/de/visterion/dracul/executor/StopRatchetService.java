@@ -255,7 +255,8 @@ public class StopRatchetService {
             String bracketId = p.brokerOrderId();
             if (bracketId == null) {
                 escalate(p, runId, "NO_BRACKET_ID",
-                        "stop ratchet cannot address the bracket: broker_order_id is null");
+                        "stop ratchet cannot address the bracket: broker_order_id is null",
+                        discriminator("missing", "POSITION_BROKER_ORDER_ID"));
                 continue;
             }
             if (!modifyWithRetry(p, bracketId, chandelier, runId, budget)) continue;
@@ -366,7 +367,8 @@ public class StopRatchetService {
                             + (expectsTwoLegs ? "carries a second tranche" : "has several legs")
                             + ", so every leg must be named to be moved unambiguously, but leg(s) "
                             + unnamed.stream().map(l -> "tranche " + l.tranche()).toList()
-                            + " have no stop_order_id");
+                            + " have no stop_order_id",
+                    discriminator("path", "LEG"));
             return false;
         }
 
@@ -380,7 +382,9 @@ public class StopRatchetService {
             if (bracketId == null) {
                 escalate(p, runId, "NO_BRACKET_ID",
                         "stop ratchet cannot address tranche " + leg.tranche()
-                                + ": neither the leg's entry_order_id nor broker_order_id is known");
+                                + ": neither the leg's entry_order_id nor broker_order_id is known",
+                        discriminator("missing", "LEG_ENTRY_ORDER_ID_AND_POSITION_BROKER_ORDER_ID",
+                                leg.tranche()));
                 confirmed = false;
             } else {
                 confirmed = modifyWithRetry(p, bracketId, leg.stopOrderId(), chandelier, runId, budget);
@@ -485,7 +489,8 @@ public class StopRatchetService {
             escalate(p, runId, "TRANCHE_RATCHET_UNSUPPORTED",
                     "stop ratchet unsupported while a tranche 2 is open: both stop legs must be named "
                             + "to be moved unambiguously, but stop_order_id=" + leg1
-                            + " and tranche2_stop_order_id=" + leg2);
+                            + " and tranche2_stop_order_id=" + leg2,
+                    discriminator("path", "COLUMN"));
             return false;
         }
 
@@ -495,7 +500,8 @@ public class StopRatchetService {
         String bracket2 = p.tranche2OrderId() != null ? p.tranche2OrderId() : p.brokerOrderId();
         if (bracket1 == null || bracket2 == null) {
             escalate(p, runId, "NO_BRACKET_ID",
-                    "stop ratchet cannot address the bracket: broker_order_id is null");
+                    "stop ratchet cannot address the bracket: broker_order_id is null",
+                    discriminator("missing", "POSITION_BROKER_ORDER_ID"));
             return false;
         }
 
@@ -775,11 +781,42 @@ public class StopRatchetService {
      * The decision-log alarm keys on it; without it a row cannot be attributed to a position.
      */
     private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
+        escalate(p, runId, reasonCode, reasoning, null);
+    }
+
+    /**
+     * As above, with a machine-readable discriminator in {@code inputs_snapshot}.
+     *
+     * <p>Both {@code NO_BRACKET_ID} and {@code TRANCHE_RATCHET_UNSUPPORTED} cover two genuinely
+     * different situations each, and until now the only thing telling them apart was the free-text
+     * reasoning — which no query can filter on. {@code NO_BRACKET_ID} is either "the position has
+     * no bracket id" or "this leg has neither its own entry id nor the position's";
+     * {@code TRANCHE_RATCHET_UNSUPPORTED} is either the leg-row path or the legacy column path,
+     * and those two die at different times (the column path goes when the legless fallback does).
+     * The field follows the pattern {@code FILL_HISTORY_UNAVAILABLE}'s {@code withheld}
+     * established: a discriminator belongs in a column, not in prose.
+     */
+    private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning,
+            ObjectNode inputs) {
         ObjectNode order = mapper.createObjectNode();
         order.put("position_id", p.id());
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
+                "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), inputs, null,
                 "ESCALATE", reasonCode, order, reasoning,
                 null, null, null));
+    }
+
+    /** {@code inputs_snapshot} carrying one discriminator field. */
+    private ObjectNode discriminator(String field, String value) {
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put(field, value);
+        return inputs;
+    }
+
+    /** As {@link #discriminator(String, String)}, plus the tranche the escalation is about. */
+    private ObjectNode discriminator(String field, String value, int tranche) {
+        ObjectNode inputs = discriminator(field, value);
+        inputs.put("tranche", tranche);
+        return inputs;
     }
 }

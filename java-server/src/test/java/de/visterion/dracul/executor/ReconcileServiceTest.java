@@ -678,6 +678,9 @@ class ReconcileServiceTest {
         assertThat(log.symbol()).isEqualTo("GHOST");
         assertThat(log.action()).isEqualTo("ESCALATE");
         assertThat(log.triggerType()).isEqualTo("MAINTENANCE");
+        // "the book never knew about this holding" -- the weaker of the two ORPHAN_POSITION
+        // conditions, and queryable apart from the post-loop one rather than only readable.
+        assertThat(log.inputsSnapshot().path("phase").asString()).isEqualTo("PRE_LOOP");
 
         verify(telegram).notifyAlert(eq("GHOST"), eq("ORPHAN_POSITION"), eq("CRITICAL"), any());
 
@@ -1323,10 +1326,17 @@ class ReconcileServiceTest {
         // A PARTIALLY_FILLED stop's qty is its ORIGINAL total, not the shares still held -- part
         // of the tranche has already exited. Reading it as a holding would book a knowably wrong
         // quantity, so only a WORKING stop is evidence.
+        //
+        // The broker is made to report the FULL 10 here, deliberately. With a smaller holding the
+        // held-qty ceiling would refuse the seed on its own and this test would pass without the
+        // WORKING filter existing at all -- which is what it did until this was noticed. At 10
+        // against 10 the ceiling cannot fire, so the status filter is the only thing left that
+        // can make it pass. (A position feed that has not yet caught up with a partial stop fill
+        // reports exactly this.)
         ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), "ord-1", "stop-1", new BigDecimal("100"), BigDecimal.ZERO);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
-        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("4"),
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("104"), null));
         gateway.seedOrder(new BrokerOrder("stop-1", "ref-stop-1", "ACME", OrderRole.STOP_LOSS,
                 OrderStatus.PARTIALLY_FILLED, new BigDecimal("10"), new BigDecimal("6"), null, null));
@@ -1334,6 +1344,8 @@ class ReconcileServiceTest {
         service.reconcile("c", "run1");
 
         verify(legRepo, never()).insertIfAbsent(any());
+        // ... and not because seeding was refused for a different reason.
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("LEG_SEED_EXCEEDS_HOLDING"));
     }
 
     @Test
@@ -1909,6 +1921,15 @@ class ReconcileServiceTest {
         verify(decisionRepo, atLeastOnce()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
         verify(telegram).notifyAlert(eq("ACME"), eq("ORPHAN_POSITION"), eq("CRITICAL"), any());
         assertThat(survivors).isEmpty();
+
+        // POST_LOOP, not PRE_LOOP: this is the much stronger signal -- a booking THIS run just
+        // made may be wrong, because the broker still reports shares for the row we closed.
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog orphan = logCaptor.getAllValues().stream()
+                .filter(l -> "ORPHAN_POSITION".equals(l.reasonCode()))
+                .findFirst().orElseThrow();
+        assertThat(orphan.inputsSnapshot().path("phase").asString()).isEqualTo("POST_LOOP");
     }
 
     @Test

@@ -280,7 +280,7 @@ public class ReconcileService {
         // the pre-loop `open` list, so a position about to be closed this run is still "known"
         // (no false orphan) — the second pass below covers the ones that actually did close.
         Set<String> orphansReported = new HashSet<>();
-        escalateOrphans(brokerPositions, open, orphansReported, runId,
+        escalateOrphans(brokerPositions, open, orphansReported, runId, "PRE_LOOP",
                 "has no open book row — unmanaged capital, operator attention required");
 
         List<ExecutorPosition> survivors = new ArrayList<>();
@@ -365,24 +365,36 @@ public class ReconcileService {
         // into an escalation whenever that feed lags the fill feed by one poll, which is the
         // original bug — but the leftover has to be reported in THIS pass. Without this it is only
         // seen a full cycle later, once the closed row has dropped out of findOpen().
-        escalateOrphans(brokerPositions, survivors, orphansReported, runId,
+        escalateOrphans(brokerPositions, survivors, orphansReported, runId, "POST_LOOP",
                 "is still reported by the broker after its book row was closed this run — "
                         + "unmanaged capital, verify the holding is really gone");
 
         return new ReconcileResult(survivors, unfilledIds);
     }
 
-    /** Escalates every broker holding that no position in {@code known} accounts for, skipping
-     *  symbols already reported in {@code reported} (and adding the ones it reports to it), so the
-     *  pre-loop and post-loop passes can never alarm twice on the same symbol. */
+    /**
+     * Escalates every broker holding that no position in {@code known} accounts for, skipping
+     * symbols already reported in {@code reported} (and adding the ones it reports to it), so the
+     * pre-loop and post-loop passes can never alarm twice on the same symbol.
+     *
+     * <p>{@code phase} is the discriminator between the two passes, in {@code inputs_snapshot}
+     * rather than in the free-text detail. The two are not the same alarm at different times:
+     * {@code PRE_LOOP} means the book never knew about this holding at all (a crash after
+     * placeBracket), while {@code POST_LOOP} means a booking THIS run just made may be wrong — the
+     * broker still reports shares for a row we closed. The second is a much stronger signal and an
+     * operator filtering the decision log has to be able to select it.
+     */
     private void escalateOrphans(List<BrokerPosition> brokerPositions, List<ExecutorPosition> known,
-            Set<String> reported, String runId, String detail) {
+            Set<String> reported, String runId, String phase, String detail) {
         for (BrokerPosition bp : brokerPositions) {
             if (reported.contains(bp.symbol())) continue;
             if (known.stream().anyMatch(p -> p.symbol().equals(bp.symbol()))) continue;
             reported.add(bp.symbol());
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("phase", phase);
+            inputs.put("broker_qty", bp.qty());
             decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "MAINTENANCE", null, null, null, bp.symbol(), null, null,
+                    "MAINTENANCE", null, null, null, bp.symbol(), inputs, null,
                     "ESCALATE", "ORPHAN_POSITION", null,
                     "broker position " + bp.symbol() + " " + detail, null, null, null));
             telegram.notifyAlert(bp.symbol(), "ORPHAN_POSITION", "CRITICAL",
