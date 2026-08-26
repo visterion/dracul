@@ -108,6 +108,13 @@ import java.util.stream.Collectors;
  * against the survivors: a holding the broker still reports for a row that just closed is flagged
  * in the same pass rather than a full cycle later.
  *
+ * <p><b>An interrupted close finishes itself</b> ({@link #completeInterruptedClose}). Nothing in
+ * the executor is transactional, and a crash between the leg loop and {@link #bookClose} would
+ * otherwise leave the legs CLOSED under an OPEN row — a state that escalates
+ * {@code TRANCHE2_DESYNC} on every run forever and can never be re-legged, because a CLOSED leg
+ * still occupies its tranche. An OPEN row whose legs are all terminal is therefore booked closed
+ * from what those legs already recorded, before the legless chain below is reached.
+ *
  * <p>A position with no leg rows at all (placed before the leg table existed and not covered by
  * its backfill) keeps the previous single-row behaviour verbatim, including the
  * {@code TRANCHE2_DESYNC} escalation for a two-bracket row — with no legs there is nothing to
@@ -283,6 +290,12 @@ public class ReconcileService {
             if (!legs.isEmpty()) {
                 reconcileByLegs(p, legs, bp, orders, filledOrders, connection, runId,
                         survivors, unfilledIds, fillHistoryAvailable);
+                continue;
+            }
+
+            // An OPEN row whose legs are ALL closed is a close that was interrupted between
+            // closeLeg and bookClose. Finish it here, or it is stuck forever (see the method).
+            if (completeInterruptedClose(p, bp, connection, runId)) {
                 continue;
             }
 
@@ -547,6 +560,83 @@ public class ReconcileService {
         } else {
             survivors.add(updateMaintenance(p, bp, runId));
         }
+    }
+
+    /**
+     * Finishes a close that was interrupted after its legs were booked out but before the row
+     * was: an OPEN position whose legs are ALL terminal, at least one of them CLOSED.
+     *
+     * <p><b>Why this exists.</b> There is no transactional boundary anywhere in the executor, and
+     * this branch introduced its first cross-table invariant. A crash between the
+     * {@link ExecutorPositionLegRepository#closeLeg} loop and {@link #bookClose} in
+     * {@link #closePositionFromLegs} leaves the legs CLOSED and the row OPEN. Without this method
+     * that state is PERMANENT: the next pass finds no OPEN leg, falls to the legacy legless chain
+     * and escalates {@code TRANCHE2_DESYNC} on every run forever, and it can never be re-legged
+     * either, because a CLOSED leg still occupies its tranche.
+     *
+     * <p><b>Why completion and not re-seeding.</b> Re-seeding was the obvious repair, and it does
+     * not work: {@link #seedLegsFromWorkingStops} returns immediately when the broker does not
+     * report the position ({@code bp == null}), and a position that stopped out — the only way to
+     * reach {@link #closePositionFromLegs} at all — is exactly a position the broker no longer
+     * reports. Seeding never gets as far as looking at which tranches are taken, so relaxing that
+     * check would repair nothing. Resurrecting a CLOSED leg would also overwrite a booked exit
+     * record, which is evidence, with a guess.
+     *
+     * <p><b>Nothing is invented.</b> The legs already carry what the interrupted close had
+     * resolved. Their quantity-weighted exit price is booked as {@code FILL} only when every
+     * closed leg carries a positive price AND a fill-derived reason (HARD_STOP / TAKE_PROFIT) —
+     * those two together mean the price came from the broker's own {@code avgFillPrice} through
+     * {@link #matchLegFills}. Anything else (a RECONCILE_GONE-reasoned leg, a leg the price
+     * fallback left without one) goes through {@link #resolveExit} instead, which re-derives the
+     * exit honestly and labels its own provenance. Legs that are merely CANCELLED book nothing:
+     * those shares were never held, so there is no close to complete.
+     *
+     * @return true when the row was closed, so the caller must not treat it as a survivor
+     */
+    private boolean completeInterruptedClose(ExecutorPosition p, BrokerPosition bp,
+            String connection, String runId) {
+        List<ExecutorPositionLeg> all = legRepo.findByPosition(p.id());
+        // A legless position is the ordinary pre-leg case, not an interrupted close.
+        if (all.isEmpty()) return false;
+        List<ExecutorPositionLeg> closed = all.stream()
+                .filter(l -> ExecutorPositionLeg.CLOSED.equals(l.status()))
+                .toList();
+        if (closed.isEmpty()) return false;
+
+        boolean everyLegFillDerived = closed.stream().allMatch(leg ->
+                leg.exitPrice() != null && leg.exitPrice().signum() > 0
+                        && leg.qty() != null && leg.qty().signum() > 0
+                        && ("HARD_STOP".equals(leg.exitReason())
+                            || "TAKE_PROFIT".equals(leg.exitReason())));
+
+        log.warn("position {} (id {}): OPEN row with {} closed leg(s) and no open leg — a close "
+                + "was interrupted after its legs were booked out; completing it now",
+                p.symbol(), p.id(), closed.size());
+
+        if (!everyLegFillDerived) {
+            // At least one leg's price/reason is not broker-fill provenance, so the row cannot
+            // claim FILL. resolveExit re-derives the exit and labels where its price came from.
+            bookClose(p, resolveExit(p, null, bp, connection), connection, runId);
+            return true;
+        }
+
+        String exitReason = aggregateExitReasonOf(p,
+                closed.stream().map(ExecutorPositionLeg::exitReason).toList());
+        bookClose(p, new ResolvedExit(exitReason, weightedLegExitPrice(closed), "FILL", p, null),
+                connection, runId);
+        return true;
+    }
+
+    /** Quantity-weighted exit price over already-CLOSED legs. Only reached once every leg has been
+     *  checked to carry a positive price and a positive qty, so the denominator cannot be zero. */
+    private BigDecimal weightedLegExitPrice(List<ExecutorPositionLeg> closed) {
+        BigDecimal weighted = BigDecimal.ZERO;
+        BigDecimal totalQty = BigDecimal.ZERO;
+        for (ExecutorPositionLeg leg : closed) {
+            weighted = weighted.add(leg.exitPrice().multiply(leg.qty()));
+            totalQty = totalQty.add(leg.qty());
+        }
+        return weighted.divide(totalQty, 6, RoundingMode.HALF_UP);
     }
 
     /**
@@ -1056,12 +1146,18 @@ public class ReconcileService {
      *  conservative reading — it applies the cooldown — and the split is logged rather than
      *  averaged away. */
     private String aggregateExitReason(ExecutorPosition p, List<LegFill> fills) {
-        boolean anyStop = fills.stream().anyMatch(f -> "HARD_STOP".equals(f.exitReason()));
-        boolean anyTarget = fills.stream().anyMatch(f -> "TAKE_PROFIT".equals(f.exitReason()));
+        return aggregateExitReasonOf(p, fills.stream().map(LegFill::exitReason).toList());
+    }
+
+    /** Same rule over bare reason strings, for a close assembled from leg ROWS rather than from
+     *  fresh fills ({@link #completeInterruptedClose}). */
+    private String aggregateExitReasonOf(ExecutorPosition p, List<String> reasons) {
+        boolean anyStop = reasons.stream().anyMatch("HARD_STOP"::equals);
+        boolean anyTarget = reasons.stream().anyMatch("TAKE_PROFIT"::equals);
         if (anyStop && anyTarget) {
             log.warn("position {} (id {}): legs exited for different reasons {} — booking the row "
                     + "as HARD_STOP (the conservative reading); per-leg reasons stay on the legs",
-                    p.symbol(), p.id(), fills.stream().map(LegFill::exitReason).toList());
+                    p.symbol(), p.id(), reasons);
         }
         return anyStop ? "HARD_STOP" : "TAKE_PROFIT";
     }

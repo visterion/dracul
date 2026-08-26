@@ -2138,4 +2138,78 @@ class ReconcileServiceTest {
 
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("UNCLAIMED_STOP_FILL"));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // An interrupted close finishes itself. Nothing in the executor is transactional, so a crash
+    // between closeLeg and bookClose leaves CLOSED legs under an OPEN row -- previously a
+    // permanent TRANCHE2_DESYNC loop that could never be re-legged either.
+    // ---------------------------------------------------------------------------------------
+
+    private ExecutorPositionLeg closedLeg(long id, long positionId, int tranche, String stopOrderId,
+            BigDecimal qty, BigDecimal exitPrice, String exitReason) {
+        return new ExecutorPositionLeg(id, positionId, tranche, "ord-" + tranche, stopOrderId, qty,
+                ExecutorPositionLeg.CLOSED, exitPrice, exitReason, "2026-07-08T11:00:00Z");
+    }
+
+    @Test
+    void openRowWithOnlyClosedLegs_completesTheCloseInsteadOfEscalatingForever() {
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // The broker no longer holds it -- which is precisely why re-seeding cannot repair this
+        // state: seedLegsFromWorkingStops returns on bp == null before it looks at any tranche.
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of());
+        when(legRepo.findByPosition(1L)).thenReturn(List.of(
+                closedLeg(10L, 1L, 1, "stop-1", new BigDecimal("10"), new BigDecimal("94"), "HARD_STOP"),
+                closedLeg(11L, 1L, 2, "stop-2", new BigDecimal("10"), new BigDecimal("96"), "HARD_STOP")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        ArgumentCaptor<BigDecimal> exitPrice = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(1L), exitPrice.capture(), any(), eq("HARD_STOP"),
+                eq("FILL"), any());
+        // Quantity-weighted over the legs' OWN recorded fills: (94*10 + 96*10) / 20.
+        assertThat(exitPrice.getValue()).isEqualByComparingTo("95");
+        // Nothing is re-closed and nothing is escalated -- the legs were already booked out.
+        verify(legRepo, never()).closeLeg(anyLong(), any(), any(), any());
+        verify(decisionRepo, never()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+        assertThat(survivors).isEmpty();
+        assertThat(logLines()).anyMatch(l -> l.contains("a close was interrupted"));
+    }
+
+    @Test
+    void openRowWithClosedLegsLackingFillProvenance_doesNotClaimFILL() {
+        // A leg closed as RECONCILE_GONE carries a resolved estimate, not a broker fill. The
+        // completed close must not relabel that as FILL -- it re-derives the exit instead.
+        ExecutorPosition p = twoTranchePosition(2L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(2L)).thenReturn(List.of());
+        when(legRepo.findByPosition(2L)).thenReturn(List.of(
+                closedLeg(20L, 2L, 1, "stop-1", new BigDecimal("20"), new BigDecimal("94"),
+                        "RECONCILE_GONE")));
+
+        service.reconcile("c", "run-1");
+
+        verify(positionRepo).close(eq(2L), any(), any(), eq("RECONCILE_GONE"),
+                eq("RECONCILE_GONE"), any());
+    }
+
+    @Test
+    void openRowWithOnlyCancelledLegs_isNotTreatedAsAnInterruptedClose() {
+        // CANCELLED means the shares were never held, so there is no close to complete. The row
+        // keeps the legacy legless behaviour rather than being booked out on nothing.
+        ExecutorPosition p = twoTranchePosition(3L, "ACME", new BigDecimal("20"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(3L)).thenReturn(List.of());
+        when(legRepo.findByPosition(3L)).thenReturn(List.of(
+                new ExecutorPositionLeg(30L, 3L, 1, "ord-1", "stop-1", new BigDecimal("20"),
+                        ExecutorPositionLeg.CANCELLED, null, null, null)));
+
+        service.reconcile("c", "run-1");
+
+        verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
+        verify(decisionRepo, atLeastOnce()).insert(argThatReasonCodeIs("TRANCHE2_DESYNC"));
+    }
 }
