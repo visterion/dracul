@@ -3632,6 +3632,41 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void vanishedPositionOnSoftExitFlatten_escalatesAsAlreadyGone() {
+        // Real incident (2026-08-24, RGNX): the broker had long since stopped the position out,
+        // but the book still held it OPEN. The flatten call correctly reaches the broker and gets
+        // an explicit verdict back -- "no open position" -- which must not be filed as an outage.
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("10"), 0);
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.33))))
+                .thenThrow(new BrokerRejectedException(
+                        "agora order rejected [NoPosition]: no open position: ACME",
+                        "NoPosition", List.of()));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.33}
+                """);
+
+        ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("exited")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+        verify(positionRepo, never()).recordTrim(anyLong(), any(), anyInt(), any(), anyBoolean());
+        verify(positionRepo, never()).repointStopLegs(anyLong(), any());
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.action()).isEqualTo("ESCALATE");
+        assertThat(log.reasonCode()).isEqualTo("POSITION_ALREADY_GONE");
+        assertThat(log.reasonCode()).isNotEqualTo("BROKER_UNAVAILABLE");
+    }
+
+    @Test
     void aRejectionThatRolledBackStillPersistsTheNewLegIds() {
         // LEG_RESTORE_FAILED (not the unprotected variant): the trim itself is rejected, so qty,
         // trim_count and soft_confirm_count must NOT change, but Agora rolled protection back and

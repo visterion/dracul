@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.criteria.KillCriteriaEvaluator;
+import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
 import de.visterion.dracul.executor.broker.ExecutionGateway;
@@ -35,13 +36,24 @@ import java.util.Map;
  *
  * <p>On {@link BrokerUnavailableException} while flattening, this deliberately does nothing
  * to the book — a transient broker outage must never be mistaken for a closed position — and
- * escalates via the decision log instead.
+ * escalates via the decision log instead. That includes a {@link BrokerRejectedException}: a
+ * rejection is a broker VERDICT, not an outage, and {@code BROKER_UNAVAILABLE} must not carry
+ * both meanings the way it did before the 2026-08-24 RGNX incident, where the position had long
+ * been stopped out at the broker but the book still held it OPEN — the flatten call correctly
+ * reached the broker and got "no open position" back, which is exactly the state this service
+ * must be able to name, not a transport failure. See {@link #flattenOrEscalate}.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class HardTriggerService {
 
     private static final Logger log = LoggerFactory.getLogger(HardTriggerService.class);
+
+    /** Agora's reject code for "there is no open position to flatten" — the same typed field
+     *  {@code AgoraExecutionGateway.requireAccepted} already threads through for {@code LEG_NOT_FOUND}
+     *  (see {@code StopRatchetService}). Structural, not transient: no retry makes a gone position
+     *  come back. */
+    private static final String NO_POSITION = "NoPosition";
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -147,18 +159,43 @@ public class HardTriggerService {
         return survivors;
     }
 
-    /** Attempts to flatten the position; on broker outage, escalates and returns null. */
+    /**
+     * Attempts to flatten the position; on any failure, escalates via the decision log and
+     * returns null so the book is left untouched — the broker is never replaced by a guess.
+     *
+     * <p>{@code BROKER_UNAVAILABLE} is reserved for a call that got no verdict at all: transport
+     * failure, 5xx, timeout. A rejection is a verdict, and is named separately:
+     * {@code POSITION_ALREADY_GONE} for the structural case Agora reports as reject code
+     * {@code NoPosition} (the position no longer exists at the broker — no retry helps),
+     * {@code BROKER_REJECTED} for every other reject code (still a verdict, but nothing here
+     * knows enough to say more).
+     */
     private CloseResult flattenOrEscalate(ExecutorPosition p, Trigger trigger, String runId) {
         try {
             return gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE);
+        } catch (BrokerRejectedException e) {
+            if (NO_POSITION.equals(e.rejectCode())) {
+                escalate(p, runId, "POSITION_ALREADY_GONE",
+                        "position already gone during hard-trigger flatten: broker reports no "
+                                + "open position for " + p.symbol() + ": " + e.getMessage());
+            } else {
+                escalate(p, runId, "BROKER_REJECTED",
+                        "broker rejected hard-trigger flatten ["
+                                + (e.rejectCode() == null ? "no reject code" : e.rejectCode())
+                                + "]: " + e.getMessage());
+            }
+            return null;
         } catch (BrokerUnavailableException e) {
-            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                    "HARD_TRIGGER", null, null, null, p.symbol(), null, null,
-                    "ESCALATE", "BROKER_UNAVAILABLE", null,
-                    "broker unavailable during hard-trigger flatten: " + e.getMessage(),
-                    null, null, null));
+            escalate(p, runId, "BROKER_UNAVAILABLE",
+                    "broker unavailable during hard-trigger flatten: " + e.getMessage());
             return null;
         }
+    }
+
+    private void escalate(ExecutorPosition p, String runId, String reasonCode, String reasoning) {
+        decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                "HARD_TRIGGER", null, null, null, p.symbol(), null, null,
+                "ESCALATE", reasonCode, null, reasoning, null, null, null));
     }
 
     /**

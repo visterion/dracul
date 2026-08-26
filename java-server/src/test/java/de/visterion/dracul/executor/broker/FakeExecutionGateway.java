@@ -63,6 +63,15 @@ public class FakeExecutionGateway implements ExecutionGateway {
      *  test fail exactly one leg of a two-leg (two-tranche) ratchet. Null = any call may fail. */
     public String failModifyForStopOrderId = null;
 
+    /** When set, the next {@link #flatten} call throws this instead of closing the position, and
+     *  is then cleared — one shot, so a test does not have to reset it after asserting the
+     *  escalation. Lets a test hand in a real {@link BrokerRejectedException} carrying a typed
+     *  reject code (e.g. {@code "NoPosition"}), the same shape
+     *  {@code AgoraExecutionGateway.requireAccepted} produces for an {@code accepted:false}
+     *  flatten, so the caller can be shown to branch on the TYPE, never on matching text in the
+     *  message. */
+    public RuntimeException rejectFlattenWith = null;
+
     public void seedPosition(BrokerPosition position) {
         positionsBySymbol.put(position.symbol(), position);
     }
@@ -151,6 +160,11 @@ public class FakeExecutionGateway implements ExecutionGateway {
         checkAvailable();
         flattenedSymbols.add(symbol);
         flattenFractions.add(fraction);
+        if (rejectFlattenWith != null) {
+            RuntimeException toThrow = rejectFlattenWith;
+            rejectFlattenWith = null;
+            throw toThrow;
+        }
         int n = counter.incrementAndGet();
 
         BrokerPosition position = positionsBySymbol.get(symbol);
