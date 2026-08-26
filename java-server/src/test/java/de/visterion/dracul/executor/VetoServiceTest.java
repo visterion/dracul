@@ -732,11 +732,11 @@ class VetoServiceTest {
 
     @Test
     void belowAnchor_pead_effectivePriceBelowReference_fails() {
-        // PEAD (drift) long: reference 196.71, entry (market & order) 193.88, ATR any → adverse 2.83 > 0×ATR
+        // PEAD (drift) long: reference 100.00, entry (market & order) 97.17, ATR any → adverse 2.83 > 0×ATR
         var signal = signalBuilder().mechanism("PEAD").direction("BUY")
-                .referencePrice(BigDecimal.valueOf(196.71)).build();
-        var ctx = ctx().price(BigDecimal.valueOf(193.88)).atr(BigDecimal.valueOf(4.59)).build();
-        var out = vetoService.evaluate(signal, ctx, sizing(), cfg(), BigDecimal.valueOf(193.88));
+                .referencePrice(BigDecimal.valueOf(100.00)).build();
+        var ctx = ctx().price(BigDecimal.valueOf(97.17)).atr(BigDecimal.valueOf(4.59)).build();
+        var out = vetoService.evaluate(signal, ctx, sizing(), cfg(), BigDecimal.valueOf(97.17));
         VetoResult r = out.results().stream().filter(v -> v.check().equals("BELOW_ANCHOR")).findFirst().orElseThrow();
         assertThat(r.passed()).isFalse();
         assertThat(out.firstFailure()).isEqualTo(RejectReason.BELOW_ANCHOR);
@@ -745,10 +745,10 @@ class VetoServiceTest {
 
     @Test
     void belowAnchor_pead_atOrAboveReference_passes() {
-        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(196.71)).build();
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(100.00)).build();
         // == reference (band 0, compare >=) and above both pass
-        assertThat(belowAnchorPasses(s, 196.71, 196.71, 4.59)).isTrue();
-        assertThat(belowAnchorPasses(s, 197.50, 197.50, 4.59)).isTrue();
+        assertThat(belowAnchorPasses(s, 100.00, 100.00, 4.59)).isTrue();
+        assertThat(belowAnchorPasses(s, 100.79, 100.79, 4.59)).isTrue();
     }
 
     @Test
@@ -760,14 +760,14 @@ class VetoServiceTest {
     @Test
     void belowAnchor_effectiveOrderPriceBelowAnchor_fails() {
         // market ABOVE anchor but resting limit BELOW → min picks the limit → fail (M1)
-        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(196.71)).build();
-        assertThat(belowAnchorPasses(s, /*market*/196.80, /*orderPrice*/193.50, 4.59)).isFalse();
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(100.00)).build();
+        assertThat(belowAnchorPasses(s, /*market*/100.09, /*orderPrice*/96.79, 4.59)).isFalse();
     }
 
     @Test
     void belowAnchor_minSelectsMarket_whenLimitAboveButMarketBelow_fails() {
-        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(196.71)).build();
-        assertThat(belowAnchorPasses(s, /*market*/193.00, /*orderPrice*/198.00, 4.59)).isFalse();
+        var s = signalBuilder().mechanism("PEAD").direction("BUY").referencePrice(BigDecimal.valueOf(100.00)).build();
+        assertThat(belowAnchorPasses(s, /*market*/96.29, /*orderPrice*/101.29, 4.59)).isFalse();
     }
 
     @Test

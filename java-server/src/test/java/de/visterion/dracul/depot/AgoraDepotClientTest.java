@@ -63,12 +63,12 @@ class AgoraDepotClientTest {
         CapturingClient client = new CapturingClient(mapper);
         client.canned = json("""
             {"output":{"asOf":"2026-07-11T06:00:00Z","positions":[
-              {"symbol":"PSMT","description":"PricesSmart Inc.","qty":10,"avgEntryPrice":100.5,
+              {"symbol":"ACME","description":"Acme Corp.","qty":10,"avgEntryPrice":100.5,
                "marketValue":1848.0,"unrealizedPl":843.0,"currency":"USD","assetType":"Stock",
                "valueDate":"2026-06-01"}]}}""");
         var snap = client.positions("depot-1");
         var p = snap.positions().getFirst();
-        assertThat(p.description()).isEqualTo("PricesSmart Inc.");
+        assertThat(p.description()).isEqualTo("Acme Corp.");
         assertThat(p.assetType()).isEqualTo("Stock");
         assertThat(p.valueDate()).isEqualTo("2026-06-01");
     }

@@ -38,12 +38,12 @@ class AgoraCompanyDataAnalystCacheTest {
     @Test void recommendationsCachesSuccessButStrictStillThrowsDuringOutage() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_analyst_estimates"), any())).thenReturn(json(
-                "{\"symbol\":\"STT\",\"recommendations\":[" +
+                "{\"symbol\":\"ACME\",\"recommendations\":[" +
                 "{\"period\":\"2026-07\",\"strongBuy\":3,\"buy\":2,\"hold\":1,\"sell\":0,\"strongSell\":0}]}"));
         AgoraCompanyData data = data(client, false);
 
         // Warm the cache via the swallowing entry point.
-        List<RecommendationTrend> first = data.recommendations("STT");
+        List<RecommendationTrend> first = data.recommendations("ACME");
         assertThat(first).hasSize(1);
 
         // Agora goes down.
@@ -51,11 +51,11 @@ class AgoraCompanyDataAnalystCacheTest {
                 .thenThrow(new AgoraUnavailableException("down"));
 
         // Strict variant must still propagate the outage — the cache must not intercept it.
-        assertThatThrownBy(() -> data.recommendationsStrict("STT"))
+        assertThatThrownBy(() -> data.recommendationsStrict("ACME"))
                 .isInstanceOf(AgoraUnavailableException.class);
 
         // Swallowing variant returns the cached (stale) value instead of throwing.
-        List<RecommendationTrend> cached = data.recommendations("STT");
+        List<RecommendationTrend> cached = data.recommendations("ACME");
         assertThat(cached).hasSize(1);
         assertThat(cached.get(0).period()).isEqualTo("2026-07");
     }
@@ -66,8 +66,8 @@ class AgoraCompanyDataAnalystCacheTest {
                 .thenThrow(new AgoraUnavailableException("down"));
         AgoraCompanyData data = data(client, false);
 
-        assertThat(data.recommendations("STT")).isEmpty();
-        assertThat(data.recommendations("STT")).isEmpty();
+        assertThat(data.recommendations("ACME")).isEmpty();
+        assertThat(data.recommendations("ACME")).isEmpty();
 
         verify(client, times(2)).callTool(eq("get_analyst_estimates"), any());
     }
@@ -75,12 +75,12 @@ class AgoraCompanyDataAnalystCacheTest {
     @Test void recommendationsCachesSuccessAndCallsAgoraOnlyOnce() {
         AgoraClient client = Mockito.mock(AgoraClient.class);
         when(client.callTool(eq("get_analyst_estimates"), any())).thenReturn(json(
-                "{\"symbol\":\"STT\",\"recommendations\":[" +
+                "{\"symbol\":\"ACME\",\"recommendations\":[" +
                 "{\"period\":\"2026-07\",\"strongBuy\":3,\"buy\":2,\"hold\":1,\"sell\":0,\"strongSell\":0}]}"));
         AgoraCompanyData data = data(client, false);
 
-        assertThat(data.recommendations("STT")).hasSize(1);
-        assertThat(data.recommendations("STT")).hasSize(1);
+        assertThat(data.recommendations("ACME")).hasSize(1);
+        assertThat(data.recommendations("ACME")).hasSize(1);
 
         verify(client, times(1)).callTool(eq("get_analyst_estimates"), any());
     }

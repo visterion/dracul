@@ -451,20 +451,20 @@ class ExecutorPositionRepositoryTest {
 
     @Test
     void syncEntryPriceUpdatesOnlyEntryPrice() {
-        String symbol = "PSMT-" + UUID.randomUUID();
-        long id = insertOpenPosition(symbol, "193.88");
+        String symbol = "ACME-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "100.02");
 
-        repo.syncEntryPrice(id, new BigDecimal("193.87"));
+        repo.syncEntryPrice(id, new BigDecimal("100.01"));
 
         ExecutorPosition p = repo.findById(id);
-        assertThat(p.entryPrice()).isEqualByComparingTo("193.87");
+        assertThat(p.entryPrice()).isEqualByComparingTo("100.01");
         assertThat(p.status()).isEqualTo("OPEN");
     }
 
     @Test
     void markPendingExitStampsWithoutClosing() {
-        String symbol = "PSMT-" + UUID.randomUUID();
-        long id = insertOpenPosition(symbol, "193.88");
+        String symbol = "ACME-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "100.02");
 
         repo.markPendingExit(id, "STOP_BREACH", "ord-9", null, Instant.parse("2026-07-16T15:00:00Z"));
 
@@ -476,17 +476,17 @@ class ExecutorPositionRepositoryTest {
 
     @Test
     void secondOpenRowForSameConnectionSymbolFails() {
-        String symbol = "PSMT-" + UUID.randomUUID();
-        insertOpenPosition(symbol, "193.88");
+        String symbol = "ACME-" + UUID.randomUUID();
+        insertOpenPosition(symbol, "100.02");
 
-        assertThatThrownBy(() -> insertOpenPosition(symbol.toLowerCase(), "193.90"))
+        assertThatThrownBy(() -> insertOpenPosition(symbol.toLowerCase(), "100.04"))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void findOpenBySymbolReturnsOpenPositionForConnectionAndSymbol() {
         String symbol = "FOBS-" + UUID.randomUUID();
-        long id = insertOpenPosition(symbol, "193.88");
+        long id = insertOpenPosition(symbol, "100.02");
 
         ExecutorPosition found = repo.findOpenBySymbol("depot-1", symbol);
 
@@ -506,7 +506,7 @@ class ExecutorPositionRepositoryTest {
     @Test
     void findOpenBySymbolIgnoresClosedPositions() {
         String symbol = "FOBS-CLOSED-" + UUID.randomUUID();
-        long id = insertOpenPosition(symbol, "193.88");
+        long id = insertOpenPosition(symbol, "100.02");
         repo.close(id, new BigDecimal("195"), new BigDecimal("0.2"), "TAKE_PROFIT", null);
 
         assertThat(repo.findOpenBySymbol("depot-1", symbol)).isNull();
@@ -514,10 +514,10 @@ class ExecutorPositionRepositoryTest {
 
     @Test
     void closeWithSourcePersistsExitPriceSource() {
-        String symbol = "PSMT-" + UUID.randomUUID();
-        long id = insertOpenPosition(symbol, "193.88");
+        String symbol = "ACME-" + UUID.randomUUID();
+        long id = insertOpenPosition(symbol, "100.02");
 
-        repo.close(id, new BigDecimal("191.20"), new BigDecimal("-0.5"), "HARD_STOP", "FILL", null);
+        repo.close(id, new BigDecimal("98.50"), new BigDecimal("-0.5"), "HARD_STOP", "FILL", null);
 
         ExecutorPosition p = repo.findById(id);
         assertThat(p.status()).isEqualTo("CLOSED");

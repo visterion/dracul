@@ -311,7 +311,7 @@ class DepotServiceTest {
         when(depotClient.account("depot-1")).thenReturn(new DepotAccount(new BigDecimal("1000"),
                 new BigDecimal("1000"), new BigDecimal("1000"), "USD", "ACTIVE", "2026-07-11T10:00:00Z"));
 
-        DepotPosition posA = new DepotPosition("PSMT", "PricesSmart Inc.", new BigDecimal("10"),
+        DepotPosition posA = new DepotPosition("ACME", "Acme Corp.", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("1200"), new BigDecimal("200"), "USD",
                 "Stock", "2026-06-01");
         when(depotClient.positions("depot-1")).thenReturn(new PositionsSnapshot(List.of(posA), "2026-07-11T10:05:00Z"));
@@ -322,7 +322,7 @@ class DepotServiceTest {
         List<DepotDto> result = service.depots("owner@example.com");
 
         DepotPositionDto posDto = result.getFirst().positions().getFirst();
-        assertThat(posDto.name()).isEqualTo("PricesSmart Inc.");
+        assertThat(posDto.name()).isEqualTo("Acme Corp.");
         assertThat(posDto.assetType()).isEqualTo("Stock");
         assertThat(posDto.valueDate()).isEqualTo("2026-06-01");
     }

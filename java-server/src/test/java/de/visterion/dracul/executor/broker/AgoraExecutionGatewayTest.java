@@ -96,7 +96,7 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
                 {"output":{"closedPositions":[
-                    {"symbol":"ISRG","openPrice":364.35,"closePrice":364.10,"profitLoss":-0.25,"clientRef":"sig-1"}
+                    {"symbol":"SYNG","openPrice":61.78,"closePrice":61.53,"profitLoss":-0.25,"clientRef":"sig-1"}
                 ]}}
                 """);
 
@@ -106,9 +106,9 @@ class AgoraExecutionGatewayTest {
         assertThat(gw.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
         assertThat(result).hasSize(1);
         BrokerClosedPosition p = result.get(0);
-        assertThat(p.symbol()).isEqualTo("ISRG");
-        assertThat(p.openPrice()).isEqualByComparingTo("364.35");
-        assertThat(p.closePrice()).isEqualByComparingTo("364.10");
+        assertThat(p.symbol()).isEqualTo("SYNG");
+        assertThat(p.openPrice()).isEqualByComparingTo("61.78");
+        assertThat(p.closePrice()).isEqualByComparingTo("61.53");
         assertThat(p.profitLoss()).isEqualByComparingTo("-0.25");
         assertThat(p.clientRef()).isEqualTo("sig-1");
     }
@@ -632,14 +632,14 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
                 {"output":{"positions":[
-                    {"symbol":"PSMT","qty":5,"avgEntryPrice":193.87,"marketPrice":192.56,
-                     "marketValue":962.80,"openOrdersCount":1}
+                    {"symbol":"ACME","qty":5,"avgEntryPrice":101.00,"marketPrice":100.00,
+                     "marketValue":500.00,"openOrdersCount":1}
                 ]}}
                 """);
 
         BrokerPosition p = gw.positions("depot-1").get(0);
 
-        assertThat(p.marketPrice()).isEqualByComparingTo("192.56"); // NEVER 962.80
+        assertThat(p.marketPrice()).isEqualByComparingTo("100.00"); // NEVER 500.00
         assertThat(p.openOrdersCount()).isEqualTo(1);
     }
 
@@ -648,13 +648,13 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
                 {"output":{"positions":[
-                    {"symbol":"PSMT","qty":5,"marketValue":962.80}
+                    {"symbol":"ACME","qty":5,"marketValue":500.00}
                 ]}}
                 """);
 
         BrokerPosition p = gw.positions("depot-1").get(0);
 
-        assertThat(p.marketPrice()).isEqualByComparingTo("192.56");
+        assertThat(p.marketPrice()).isEqualByComparingTo("100.00");
         assertThat(p.openOrdersCount()).isNull();
     }
 
@@ -663,7 +663,7 @@ class AgoraExecutionGatewayTest {
         CapturingGateway gw = new CapturingGateway(mapper);
         gw.canned = json("""
                 {"output":{"positions":[
-                    {"symbol":"PSMT","qty":0,"marketValue":0}
+                    {"symbol":"ACME","qty":0,"marketValue":0}
                 ]}}
                 """);
 

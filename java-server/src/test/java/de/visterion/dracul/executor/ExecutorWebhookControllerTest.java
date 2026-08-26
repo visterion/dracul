@@ -2645,7 +2645,7 @@ class ExecutorWebhookControllerTest {
     /**
      * BLOCKER 4 — {@code /tools/add-tranche} already inserts its own decision row
      * ({@code accepted=true}, rationale {@code "tranche 2 added: <reason>"}; prod row
-     * {@code id=107 | IMAX | accepted=t}). Letting the model ALSO submit an {@code ADD_TRANCHE}
+     * {@code id=107 | ACME | accepted=t}). Letting the model ALSO submit an {@code ADD_TRANCHE}
      * record here produced two rows per event, the second a phantom {@code accepted=false} that
      * contradicts the first — the same double-count the {@code ENTER} exclusion exists to
      * prevent. Exclude it identically.

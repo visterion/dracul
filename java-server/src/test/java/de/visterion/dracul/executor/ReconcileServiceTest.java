@@ -409,7 +409,7 @@ class ReconcileServiceTest {
 
     @Test
     void maintenanceSyncsEntryPriceFromBrokerBasis() {
-        // Verified prod bug (PSMT): booked entry_price 100.01 (the submitted limit) never
+        // Verified prod bug: booked entry_price 100.01 (the submitted limit) never
         // corrected to the broker's real fill 100.00 -> slippage always computed as 0.
         ExecutorPosition p = new ExecutorPosition(20L, "c", "SYNP", "BUY", BigDecimal.TEN,
                 new BigDecimal("100.01"), new BigDecimal("96.13"), new BigDecimal("96.13"), 1, null,
