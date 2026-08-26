@@ -63,8 +63,14 @@ public class HardTriggerService {
      *  one definite determination (a full scan of the broker's actual holdings coming back
      *  empty). A plain {@code NOT_FOUND} rejection still reaches {@link #flattenOrEscalate}'s
      *  {@code else} branch below and is named {@code BROKER_REJECTED} — a verdict, honestly not
-     *  claimed to mean the position is gone. */
-    private static final String NO_POSITION = "NO_POSITION";
+     *  claimed to mean the position is gone.
+     *
+     *  <p>Named {@code AGORA_NO_POSITION}, not just {@code NO_POSITION}: {@code RejectReason}
+     *  already declares a {@code NO_POSITION} value elsewhere in this package, meaning DRACUL's
+     *  own book has no matching open position (the entry/add-tranche path) — a completely
+     *  different check, on a completely different data source. One literal spelling, two
+     *  meanings, must not share one name. */
+    private static final String AGORA_NO_POSITION = "NO_POSITION";
 
     private final ExecutionGateway gateway;
     private final ExecutorPositionRepository positionRepo;
@@ -179,7 +185,7 @@ public class HardTriggerService {
      * unknown/inactive connection, the tool's own argument validation, a real outage. A
      * rejection ({@code accepted:false}, {@code available:true}) is a verdict, and is named
      * separately: {@code POSITION_ALREADY_GONE} for the structural case Agora reports as reject
-     * code {@code NO_POSITION} (the position no longer exists at the broker — no retry helps),
+     * code {@code AGORA_NO_POSITION} (the position no longer exists at the broker — no retry helps),
      * {@code BROKER_REJECTED} for every other reject code, including a generic {@code NOT_FOUND}
      * (still a verdict, but nothing here knows enough to say more than that).
      */
@@ -187,7 +193,7 @@ public class HardTriggerService {
         try {
             return gateway.flatten(p.connection(), p.symbol(), BigDecimal.ONE);
         } catch (BrokerRejectedException e) {
-            if (NO_POSITION.equals(e.rejectCode())) {
+            if (AGORA_NO_POSITION.equals(e.rejectCode())) {
                 escalate(p, runId, "POSITION_ALREADY_GONE",
                         "position already gone during hard-trigger flatten: " + e.getMessage());
             } else {

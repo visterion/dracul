@@ -414,6 +414,12 @@ class HardTriggerServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
         assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        // Full text pinned, not just a substring check (fix round 3: a reason-code-plus-
+        // doesNotContain test is the same shape that let Task 5's null-interpolating sentence
+        // ship green).
+        assertThat(log.reasoning()).isEqualTo("broker rejected hard-trigger flatten [NOT_FOUND]: "
+                + "agora order rejected [NOT_FOUND]: Resource not found (HTTP 404)");
+        assertThat(log.reasoning()).doesNotContain("null");
         assertThat(log.reasoning()).doesNotContain("already gone");
     }
 }

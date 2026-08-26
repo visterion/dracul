@@ -3703,6 +3703,12 @@ class ExecutorWebhookControllerTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.reasonCode()).isEqualTo("NOT_FOUND");
         assertThat(log.reasonCode()).isNotEqualTo("POSITION_ALREADY_GONE");
+        // Full text pinned, not just a substring check (fix round 3: reason-code-plus-
+        // doesNotContain is the same shape that let Task 5's null-interpolating sentence ship
+        // green).
+        assertThat(log.reasoning()).isEqualTo("broker rejected soft-exit flatten: "
+                + "agora order rejected [NOT_FOUND]: Resource not found (HTTP 404)");
+        assertThat(log.reasoning()).doesNotContain("null");
         assertThat(log.reasoning()).doesNotContain("already gone");
     }
 
@@ -3726,7 +3732,12 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo).insert(logCaptor.capture());
-        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_REJECTED");
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("BROKER_REJECTED");
+        // Full text pinned too (fix round 3).
+        assertThat(log.reasoning()).isEqualTo("broker rejected soft-exit flatten: "
+                + "agora order rejected: some unmapped reason");
+        assertThat(log.reasoning()).doesNotContain("null");
     }
 
     @Test

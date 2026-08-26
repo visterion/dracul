@@ -78,8 +78,15 @@ public class ExecutorWebhookController {
      *  about whether the position exists. {@code NO_POSITION} is the narrower code Agora reserves
      *  for the one definite determination. A plain {@code NOT_FOUND} rejection still falls
      *  through to the generic branch below, named by its own raw reject code — a verdict,
-     *  honestly not claimed to mean the position is gone. */
-    private static final String NO_POSITION = "NO_POSITION";
+     *  honestly not claimed to mean the position is gone.
+     *
+     *  <p>Named {@code AGORA_NO_POSITION}, not just {@code NO_POSITION}: {@link RejectReason}
+     *  already declares a {@code NO_POSITION} value in this very class (see
+     *  {@link RejectReason#NO_POSITION}, used a few hundred lines below), meaning DRACUL's own
+     *  book has no matching open position (the entry/add-tranche path) — a completely different
+     *  check, on a completely different data source, from this field's agora wire code. One
+     *  literal spelling, two meanings, must not share one name in the same file. */
+    private static final String AGORA_NO_POSITION = "NO_POSITION";
 
     private final BearerTokenVerifier verifier;
     private final ExecutorSignalRepository signalRepo;
@@ -1265,21 +1272,21 @@ public class ExecutorWebhookController {
                 positionRepo.repointStopLegs(position.id(),
                         e.protectiveLegs() != null ? e.protectiveLegs() : List.of());
             }
-            // NO_POSITION is named separately from every other reject code: it is the
-            // structural case where the position is simply gone at the broker, not a business
-            // rejection whose detail (LEG_RESTORE_FAILED_UNPROTECTED etc.) is worth surfacing
-            // verbatim. A null reject code (Agora omitted the field) falls back to a defined
-            // name rather than a null reason_code -- an escalation row nothing can query for is
-            // as good as lost.
+            // Agora's NO_POSITION reject code is named separately from every other reject code:
+            // it is the structural case where the position is simply gone at the broker, not a
+            // business rejection whose detail (LEG_RESTORE_FAILED_UNPROTECTED etc.) is worth
+            // surfacing verbatim. A null reject code (Agora omitted the field) falls back to a
+            // defined name rather than a null reason_code -- an escalation row nothing can query
+            // for is as good as lost.
             String flattenReasonCode;
-            if (NO_POSITION.equals(e.rejectCode())) {
+            if (AGORA_NO_POSITION.equals(e.rejectCode())) {
                 flattenReasonCode = "POSITION_ALREADY_GONE";
             } else if (e.rejectCode() != null) {
                 flattenReasonCode = e.rejectCode();
             } else {
                 flattenReasonCode = "BROKER_REJECTED";
             }
-            String flattenReasoning = NO_POSITION.equals(e.rejectCode())
+            String flattenReasoning = AGORA_NO_POSITION.equals(e.rejectCode())
                     ? "position already gone during soft-exit flatten: " + e.getMessage()
                     : "broker rejected soft-exit flatten: " + e.getMessage();
             decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
