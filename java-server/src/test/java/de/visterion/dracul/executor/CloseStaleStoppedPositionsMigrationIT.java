@@ -14,7 +14,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.time.OffsetDateTime;
+import java.time.Duration;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,13 +24,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * SQL): migrates to V45 (leg table exists, both synthetic positions still OPEN with their two
  * live legs), migrates to latest (runs V46), and asserts both positions, all four legs and both
  * cooldown rows land exactly as the broker's order-activity record demands. Also re-executes the
- * actual V46 file a second time to prove a re-run is a no-op. Only synthetic ids/quantities here
- * -- the real broker order ids/prices/quantities from Saxo's record live only in V46 itself.
+ * actual V46 file a second time to prove a re-run is a no-op.
+ *
+ * <p>Every id/quantity/price/R figure used below comes from {@link V46Facts}, which parses V46's
+ * own "-- FACT ..." comment lines at setup time -- none of it is retyped into this file. That
+ * keeps the real broker data quoted in exactly one place (the migration itself), matching the
+ * standing rule on this branch (see V45's ACME/stop-1 synthetic test data for the same convention).
  */
 class CloseStaleStoppedPositionsMigrationIT {
 
     private static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:18-alpine").withPrivilegedMode(true);
+    private static final Duration COOLDOWN_DAYS = Duration.ofDays(10);
 
     @BeforeAll
     static void startContainer() {
@@ -54,16 +60,15 @@ class CloseStaleStoppedPositionsMigrationIT {
         try (Connection conn = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
 
-            // 2) Insert the two synthetic OPEN positions (ids 7 / 12, matching V46's WHERE
-            // clauses) with their two live OPEN legs each, quantities summing to the position qty
-            // -- exactly the shape the real book was in before this migration ran in production.
-            insertPosition(conn, 7, "OFG", new BigDecimal("42"));
-            insertLeg(conn, 7, 1, "5039387855", new BigDecimal("21"));
-            insertLeg(conn, 7, 2, "5039471907", new BigDecimal("21"));
-
-            insertPosition(conn, 12, "RGNX", new BigDecimal("209"));
-            insertLeg(conn, 12, 1, "5039591743", new BigDecimal("107"));
-            insertLeg(conn, 12, 2, "5039676276", new BigDecimal("102"));
+            // 2) Insert the two OPEN positions (ids/symbols/quantities parsed off V46 itself) with
+            // their two live OPEN legs each -- exactly the shape the real book was in before this
+            // migration ran in production.
+            for (V46Facts.Position p : V46Facts.positions().values()) {
+                insertPosition(conn, p.id(), p.symbol(), p.qty());
+            }
+            for (V46Facts.Leg leg : V46Facts.legs()) {
+                insertLeg(conn, leg.positionId(), leg.tranche(), leg.stopOrderId(), leg.qty());
+            }
 
             // 3) Migrate to latest -- runs V46.
             Flyway.configure()
@@ -72,16 +77,14 @@ class CloseStaleStoppedPositionsMigrationIT {
                     .load()
                     .migrate();
 
-            assertPosition(conn, 7, "51.50", "-0.351", "2026-08-19T19:55:37Z");
-            assertPosition(conn, 12, "8.29", "-1.13", "2026-08-24T13:30:17Z");
-
-            assertLegClosed(conn, 7, "5039387855", "51.50");
-            assertLegClosed(conn, 7, "5039471907", "51.50");
-            assertLegClosed(conn, 12, "5039591743", "8.29");
-            assertLegClosed(conn, 12, "5039676276", "8.29");
-
-            assertCooldown(conn, "OFG", "2026-08-29T19:55:37Z");
-            assertCooldown(conn, "RGNX", "2026-09-03T13:30:17Z");
+            for (V46Facts.Position p : V46Facts.positions().values()) {
+                assertPosition(conn, p);
+                assertCooldown(conn, p.symbol(), p.closedAt().plus(COOLDOWN_DAYS));
+            }
+            for (V46Facts.Leg leg : V46Facts.legs()) {
+                V46Facts.Position owner = V46Facts.positions().get(leg.positionId());
+                assertLegClosed(conn, leg.positionId(), leg.stopOrderId(), owner.exitPrice());
+            }
 
             long cooldownCountBefore = countCooldowns(conn);
 
@@ -95,8 +98,9 @@ class CloseStaleStoppedPositionsMigrationIT {
                 stmt.execute(sql);
             }
 
-            assertPosition(conn, 7, "51.50", "-0.351", "2026-08-19T19:55:37Z");
-            assertPosition(conn, 12, "8.29", "-1.13", "2026-08-24T13:30:17Z");
+            for (V46Facts.Position p : V46Facts.positions().values()) {
+                assertPosition(conn, p);
+            }
             assertThat(countCooldowns(conn))
                     .as("re-run must not write a second cooldown row")
                     .isEqualTo(cooldownCountBefore);
@@ -133,28 +137,27 @@ class CloseStaleStoppedPositionsMigrationIT {
         }
     }
 
-    private static void assertPosition(Connection conn, long id, String exitPrice,
-            String realizedR, String closedAtIso) throws Exception {
+    private static void assertPosition(Connection conn, V46Facts.Position expected) throws Exception {
         try (PreparedStatement ps = conn.prepareStatement("""
-                SELECT status, exit_price, exit_reason, exit_price_source, realized_r, closed_at
+                SELECT status, exit_price, exit_reason, exit_price_source, realized_r, r_value, closed_at
                 FROM executor_position WHERE id = ?
                 """)) {
-            ps.setLong(1, id);
+            ps.setLong(1, expected.id());
             try (ResultSet rs = ps.executeQuery()) {
-                assertThat(rs.next()).as("position %d exists", id).isTrue();
+                assertThat(rs.next()).as("position %d exists", expected.id()).isTrue();
                 assertThat(rs.getString("status")).isEqualTo("CLOSED");
-                assertThat(rs.getBigDecimal("exit_price")).isEqualByComparingTo(exitPrice);
+                assertThat(rs.getBigDecimal("exit_price")).isEqualByComparingTo(expected.exitPrice());
                 assertThat(rs.getString("exit_reason")).isEqualTo("HARD_STOP");
                 assertThat(rs.getString("exit_price_source")).isEqualTo("FILL");
-                assertThat(rs.getBigDecimal("realized_r")).isEqualByComparingTo(realizedR);
-                assertThat(rs.getTimestamp("closed_at").toInstant())
-                        .isEqualTo(OffsetDateTime.parse(closedAtIso).toInstant());
+                assertThat(rs.getBigDecimal("realized_r")).isEqualByComparingTo(expected.realizedR());
+                assertThat(rs.getBigDecimal("r_value")).isEqualByComparingTo(expected.rValue());
+                assertThat(rs.getTimestamp("closed_at").toInstant()).isEqualTo(expected.closedAt());
             }
         }
     }
 
     private static void assertLegClosed(Connection conn, long positionId, String stopOrderId,
-            String exitPrice) throws Exception {
+            BigDecimal exitPrice) throws Exception {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT status, exit_price, exit_reason FROM executor_position_leg
                 WHERE position_id = ? AND stop_order_id = ?
@@ -171,7 +174,7 @@ class CloseStaleStoppedPositionsMigrationIT {
         }
     }
 
-    private static void assertCooldown(Connection conn, String symbol, String expiresAtIso)
+    private static void assertCooldown(Connection conn, String symbol, Instant expiresAt)
             throws Exception {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT reason, expires_at, exception_condition FROM cooldown WHERE symbol = ?
@@ -181,8 +184,7 @@ class CloseStaleStoppedPositionsMigrationIT {
                 assertThat(rs.next()).as("cooldown row for %s exists", symbol).isTrue();
                 assertThat(rs.getString("reason")).isEqualTo("HARD_STOP");
                 assertThat(rs.getString("exception_condition")).isEqualTo("fresh setup only");
-                assertThat(rs.getTimestamp("expires_at").toInstant())
-                        .isEqualTo(OffsetDateTime.parse(expiresAtIso).toInstant());
+                assertThat(rs.getTimestamp("expires_at").toInstant()).isEqualTo(expiresAt);
                 assertThat(rs.next()).as("exactly one cooldown row for %s", symbol).isFalse();
             }
         }

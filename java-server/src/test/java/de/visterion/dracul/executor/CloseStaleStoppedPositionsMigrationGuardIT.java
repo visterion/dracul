@@ -12,15 +12,23 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Validates V46__close_stale_stopped_positions.sql's fail-loud guards against the REAL migration
- * (not a copy of its SQL): if the book does not match the assumptions the migration is keyed on
- * -- position missing, or its legs not summing to its quantity -- it must abort by name rather
- * than write something approximate. Each scenario gets its own container: a failed migration
- * leaves Flyway's schema history dirty, mirroring ExecutorPositionLegBackfillGuardIT.
+ * (not a copy of its SQL): if a position id that already exists in the book does not match the
+ * broker record V46 is keyed on -- wrong symbol, legs that don't carry the exact recorded stop
+ * quantities, or legs that don't sum to the position's own qty -- it must abort by name rather
+ * than write something approximate. (A position id that is entirely absent is a deliberate no-op,
+ * not a guard case here -- every fresh Testcontainers/CI schema starts without ids 7/12, so
+ * requiring them to exist would make this migration untestable outside production; see V46's own
+ * header comment.) Each scenario gets its own container: a failed migration leaves Flyway's schema
+ * history dirty, mirroring ExecutorPositionLegBackfillGuardIT.
+ *
+ * <p>Real stop-order ids and quantities used to construct the "almost right" rows below come from
+ * {@link V46Facts}, parsed off V46's own comment lines -- not retyped here.
  */
 class CloseStaleStoppedPositionsMigrationGuardIT {
 
@@ -40,18 +48,11 @@ class CloseStaleStoppedPositionsMigrationGuardIT {
     @Test
     void positionIdPresentWithWrongSymbolAbortsTheMigrationByName() throws Exception {
         migrateToV45();
-        // Position 7 exists but under a different symbol than the broker record names --
-        // a from-scratch database missing the id entirely is a legitimate no-op (every fresh
-        // Testcontainers/CI schema starts that way), but an id that DOES exist and disagrees with
-        // the broker record must never be touched silently.
+        V46Facts.Position ofg = V46Facts.positions().get(7L);
+        // Position 7 exists but under a different symbol than the broker record names -- must
+        // never be touched silently just because the id matches.
         try (Connection conn = connect()) {
-            insertPosition(conn, 7, "NOTOFG", new BigDecimal("42"));
-            insertLeg(conn, 7, 1, "5039387855", new BigDecimal("21"));
-            insertLeg(conn, 7, 2, "5039471907", new BigDecimal("21"));
-
-            insertPosition(conn, 12, "RGNX", new BigDecimal("209"));
-            insertLeg(conn, 12, 1, "5039591743", new BigDecimal("107"));
-            insertLeg(conn, 12, 2, "5039676276", new BigDecimal("102"));
+            insertPosition(conn, ofg.id(), "NOTOFG", ofg.qty());
         }
 
         assertThatThrownBy(this::migrateToLatest)
@@ -62,18 +63,20 @@ class CloseStaleStoppedPositionsMigrationGuardIT {
     }
 
     @Test
-    void legsNotSummingToQtyAbortsTheMigrationByName() throws Exception {
+    void legQuantityMismatchAbortsTheMigrationByName() throws Exception {
         migrateToV45();
+        V46Facts.Position ofg = V46Facts.positions().get(7L);
+        List<V46Facts.Leg> ofgLegs = V46Facts.legsFor(7L);
+        // Both legs sit on the broker-recorded stop-order ids, but the second one carries the
+        // wrong quantity for that leg -- the exact per-leg check must catch this before the sum
+        // check ever runs (21+20=41 happens to not equal qty either, but that's not what this
+        // test is exercising).
         try (Connection conn = connect()) {
-            insertPosition(conn, 7, "OFG", new BigDecimal("42"));
-            // Wrong quantities on the expected stop-order ids -- sum (21+20=41) does not match
-            // the position's qty (42), and does not match the broker-recorded 21+21 either.
-            insertLeg(conn, 7, 1, "5039387855", new BigDecimal("21"));
-            insertLeg(conn, 7, 2, "5039471907", new BigDecimal("20"));
-
-            insertPosition(conn, 12, "RGNX", new BigDecimal("209"));
-            insertLeg(conn, 12, 1, "5039591743", new BigDecimal("107"));
-            insertLeg(conn, 12, 2, "5039676276", new BigDecimal("102"));
+            insertPosition(conn, ofg.id(), ofg.symbol(), ofg.qty());
+            insertLeg(conn, ofgLegs.get(0).positionId(), ofgLegs.get(0).tranche(),
+                    ofgLegs.get(0).stopOrderId(), ofgLegs.get(0).qty());
+            insertLeg(conn, ofgLegs.get(1).positionId(), ofgLegs.get(1).tranche(),
+                    ofgLegs.get(1).stopOrderId(), ofgLegs.get(1).qty().subtract(BigDecimal.ONE));
         }
 
         assertThatThrownBy(this::migrateToLatest)
@@ -81,6 +84,28 @@ class CloseStaleStoppedPositionsMigrationGuardIT {
                 .hasMessageContaining("V46")
                 .hasMessageContaining("position 7")
                 .hasMessageContaining("do not carry the broker-recorded quantities");
+    }
+
+    @Test
+    void legsNotSummingToPositionQtyAbortsTheMigrationByName() throws Exception {
+        migrateToV45();
+        V46Facts.Position ofg = V46Facts.positions().get(7L);
+        List<V46Facts.Leg> ofgLegs = V46Facts.legsFor(7L);
+        // Both legs carry exactly the broker-recorded stop-order id and quantity (passing the
+        // per-leg exact-quantity check), but the position's own qty is wrong -- one less than the
+        // legs' real sum -- so only the sum check can catch this.
+        try (Connection conn = connect()) {
+            insertPosition(conn, ofg.id(), ofg.symbol(), ofg.qty().subtract(BigDecimal.ONE));
+            for (V46Facts.Leg leg : ofgLegs) {
+                insertLeg(conn, leg.positionId(), leg.tranche(), leg.stopOrderId(), leg.qty());
+            }
+        }
+
+        assertThatThrownBy(this::migrateToLatest)
+                .isInstanceOf(FlywayException.class)
+                .hasMessageContaining("V46")
+                .hasMessageContaining("position 7")
+                .hasMessageContaining("open legs sum to");
     }
 
     private void migrateToV45() {
