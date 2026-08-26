@@ -2381,7 +2381,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"place_entry",
-                 "input":{"signal_id":"s1","symbol":"MRVL","side":"BUY","stop_price":95}}
+                 "input":{"signal_id":"s1","symbol":"ACME","side":"BUY","stop_price":95}}
                 """);
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, "r1", body);
@@ -3424,15 +3424,15 @@ class ExecutorWebhookControllerTest {
         // position qty 23, fraction 0.5: Dracul's own floor(23*0.5)=11, the broker floors the
         // other side and reports closedQty 11 / remainingQty 12 — the broker's numbers must win
         // everywhere: recordTrim, order_json and the response body.
-        ExecutorPosition open = openPosition(7L, "OHI", "BUY", new BigDecimal("100"),
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
                 new BigDecimal("95"), new BigDecimal("23"), 0);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
-        when(gateway.flatten(eq("depot-1"), eq("OHI"), eq(BigDecimal.valueOf(0.5))))
+        when(gateway.flatten(eq("depot-1"), eq("ACME"), eq(BigDecimal.valueOf(0.5))))
                 .thenReturn(new CloseResult(new BigDecimal("11"), new BigDecimal("12"),
                         new BigDecimal("40"), "close-1", List.of(), false));
 
         JsonNode body = json("""
-                {"symbol":"OHI","reason":"SCALE_OUT","fraction":0.5}
+                {"symbol":"ACME","reason":"SCALE_OUT","fraction":0.5}
                 """);
 
         ResponseEntity<?> resp = controller.exitPosition(BEARER, "run-1", body);

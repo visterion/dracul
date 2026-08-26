@@ -249,13 +249,13 @@ class EntryContextAssemblerTest {
                 new BigDecimal("101.00"), new BigDecimal("100.00")));
         when(sectorCascade.resolve("ACME")).thenReturn("Technology");
 
-        ExecutorPosition msft = openPosition("MSFT", BigDecimal.TEN, new BigDecimal("300.00"),
+        ExecutorPosition msft = openPosition("BETA", BigDecimal.TEN, new BigDecimal("300.00"),
                 new BigDecimal("290.00"), "sig-1");
-        ExecutorPosition aapl = openPosition("AAPL", new BigDecimal("5"), new BigDecimal("150.00"),
+        ExecutorPosition aapl = openPosition("GAMMA", new BigDecimal("5"), new BigDecimal("150.00"),
                 new BigDecimal("145.00"), "sig-2");
         when(positionRepo.findOpen()).thenReturn(List.of(msft, aapl));
 
-        ExecutorSignal spinoffSignal = new ExecutorSignal("sig-1", "strigoi-spin", "v1", "MSFT", "BUY", 0.8,
+        ExecutorSignal spinoffSignal = new ExecutorSignal("sig-1", "strigoi-spin", "v1", "BETA", "BUY", 0.8,
                 "SPINOFF", List.of(), "swing", new BigDecimal("300.00"), "PENDING", "2026-07-01T00:00:00Z");
         when(signalRepo.findById("sig-1")).thenReturn(spinoffSignal);
         when(signalRepo.findById("sig-2")).thenReturn(null);
@@ -266,7 +266,7 @@ class EntryContextAssemblerTest {
 
         assertThat(ctx.openExposure()).isEqualByComparingTo("3750.00"); // 10*300.00 + 5*150.00
         assertThat(ctx.openHeat()).isEqualByComparingTo("125.00");
-        assertThat(ctx.openMechanisms()).containsExactly(java.util.Map.entry("MSFT", "SPINOFF"));
+        assertThat(ctx.openMechanisms()).containsExactly(java.util.Map.entry("BETA", "SPINOFF"));
     }
 
     @Test

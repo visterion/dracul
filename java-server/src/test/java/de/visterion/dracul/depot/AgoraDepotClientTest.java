@@ -78,7 +78,7 @@ class AgoraDepotClientTest {
         CapturingClient client = new CapturingClient(mapper);
         client.canned = json("""
             {"output":{"positions":[
-              {"symbol":"AAPL","qty":1,"avgEntryPrice":100.0,"marketValue":100.0,
+              {"symbol":"ACME","qty":1,"avgEntryPrice":100.0,"marketValue":100.0,
                "unrealizedPl":0.0,"currency":"USD"}]}}""");
         var snap = client.positions("depot-1");
         var p = snap.positions().getFirst();
@@ -159,7 +159,7 @@ class AgoraDepotClientTest {
         CapturingClient client = new CapturingClient(mapper);
         client.canned = json("""
             {"output":{"orders":[
-              {"brokerOrderId":"ord-2","symbol":"AAPL","side":"buy","qty":3,
+              {"brokerOrderId":"ord-2","symbol":"ACME","side":"buy","qty":3,
                "type":"market","status":"new","role":"entry"}]}}""");
 
         List<DepotOrder> result = client.orders("depot-1");
@@ -173,7 +173,7 @@ class AgoraDepotClientTest {
         CapturingClient client = new CapturingClient(mapper);
         client.canned = json("""
             {"output":{"orders":[
-              {"brokerOrderId":"abc","symbol":"AAPL","side":"buy","qty":"10","type":"market",
+              {"brokerOrderId":"abc","symbol":"ACME","side":"buy","qty":"10","type":"market",
                "status":"filled","role":"entry","submittedAt":"2026-07-01T10:00:00Z",
                "filledAt":"2026-07-01T10:00:03Z","avgFillPrice":"191.20"}]}}""");
 
@@ -199,7 +199,7 @@ class AgoraDepotClientTest {
         CapturingClient c2 = new CapturingClient(mapper);
         c2.canned = json("""
             {"output":{"closedPositions":[
-              {"symbol":"NOVO","openPrice":"100","closePrice":"110","profitLoss":"10",
+              {"symbol":"BETA","openPrice":"100","closePrice":"110","profitLoss":"10",
                "clientRef":"sig-42","openTime":"2026-06-10T09:00:00Z","closeTime":"2026-06-20T15:00:00Z"}]}}""");
 
         List<DepotClosedPosition> res = c2.closedPositions("depot-1", null, null);

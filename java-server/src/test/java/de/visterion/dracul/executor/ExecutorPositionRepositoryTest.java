@@ -185,7 +185,7 @@ class ExecutorPositionRepositoryTest {
 
     @Test
     void recordTrimWritesTheBrokerQuantityNotOurArithmetic() {
-        // 23-share position, e.g. OHI @ fraction 0.5: Dracul's own arithmetic floors to 11, but
+        // 23-share position at fraction 0.5: Dracul's own arithmetic floors to 11, but
         // the broker (Agora) floors the other side and reports 12. The broker's number must win.
         long id = repo.insert(openPosition("BROKERQTY" + System.nanoTime()));
 

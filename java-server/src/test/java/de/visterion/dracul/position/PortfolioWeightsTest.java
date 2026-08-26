@@ -97,20 +97,20 @@ class PortfolioWeightsTest {
         when(settings.getDisplayCurrency()).thenReturn("USD");
         var w = new PortfolioWeights(fxWithRate(null, null, null), settings);
         Map<String, BigDecimal> out = w.weightsBySymbol(List.of(
-                pos("AAPL", "10", "100", "1000", "USD"), pos("AAPL", "10", "100", "1000", "USD"),
-                pos("MSFT", "10", "200", "2000", "USD")));
-        assertThat(out.get("AAPL")).isEqualByComparingTo("50.0");
-        assertThat(out.get("MSFT")).isEqualByComparingTo("50.0");
+                pos("ACME", "10", "100", "1000", "USD"), pos("ACME", "10", "100", "1000", "USD"),
+                pos("BETA", "10", "200", "2000", "USD")));
+        assertThat(out.get("ACME")).isEqualByComparingTo("50.0");
+        assertThat(out.get("BETA")).isEqualByComparingTo("50.0");
     }
 
     @Test void collapseMergesLotsWithWeightedAvgPrice() {
         // two lots, DIFFERENT avgPrices (pins the weighted average): 10@100 + 30@200
         List<HeldPosition> out = PortfolioWeights.collapseBySymbol(List.of(
-                pos("AAPL", "10", "100", "1000", "USD"), pos("AAPL", "30", "200", "6000", "USD"),
-                pos("MSFT", "5", "50", "250", "USD")));
+                pos("ACME", "10", "100", "1000", "USD"), pos("ACME", "30", "200", "6000", "USD"),
+                pos("BETA", "5", "50", "250", "USD")));
         assertThat(out).hasSize(2);
         HeldPosition aapl = out.get(0);
-        assertThat(aapl.symbol()).isEqualTo("AAPL");
+        assertThat(aapl.symbol()).isEqualTo("ACME");
         assertThat(aapl.quantity()).isEqualByComparingTo("40");
         assertThat(aapl.marketValue()).isEqualByComparingTo("7000");
         // (10*100 + 30*200) / 40 = 175

@@ -24,14 +24,14 @@ class AgoraDepotClientHistoryTest {
         var client = new CapturingClient(mapper);
         client.canned = mapper.readTree("""
             {"output":{"closedPositions":[
-              {"symbol":"AAPL","openPrice":100.0,"closePrice":110.0,"profitLoss":50.0,"clientRef":"sig-1"}]}}""");
+              {"symbol":"ACME","openPrice":100.0,"closePrice":110.0,"profitLoss":50.0,"clientRef":"sig-1"}]}}""");
 
         var out = client.closedPositions("depot-1");
 
         assertThat(client.capturedTool).isEqualTo("get_closed_positions");
         assertThat(client.capturedArgs.path("connection").asString()).isEqualTo("depot-1");
         assertThat(out).hasSize(1);
-        assertThat(out.get(0).symbol()).isEqualTo("AAPL");
+        assertThat(out.get(0).symbol()).isEqualTo("ACME");
         assertThat(out.get(0).clientRef()).isEqualTo("sig-1");
     }
 
@@ -41,7 +41,7 @@ class AgoraDepotClientHistoryTest {
         var client = new CapturingClient(mapper);
         client.canned = mapper.readTree("""
             {"output":{"orders":[
-              {"brokerOrderId":"o-1","symbol":"MSFT","side":"buy","qty":10,"type":"market","status":"filled","role":"entry"}]}}""");
+              {"brokerOrderId":"o-1","symbol":"BETA","side":"buy","qty":10,"type":"market","status":"filled","role":"entry"}]}}""");
 
         var out = client.orders("depot-1", "all");
 
