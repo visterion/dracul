@@ -27,7 +27,7 @@ import java.util.List;
  * {@code expectsTwoLegs} for positions that have no leg rows yet. Dropping these columns removes
  * the binding key and would silently strand every future leg-creation and repoint. They can only
  * be dropped once leg creation sources per-tranche ids from the broker's bracket structure
- * directly instead of from these columns — see the follow-up in {@code docs/bugfix-todo.md}.
+ * directly instead of from these columns.
  *
  * <p><b>{@code stopLegsCollapsed}</b> has exactly one job (BUG-S13): on the legless, column-based
  * fallback routing in {@code StopRatchetService.ratchetLegs} and the equivalent trim path in

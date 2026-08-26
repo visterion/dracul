@@ -422,7 +422,8 @@ label for tables Dracul owns, not a Postgres `CREATE SCHEMA dracul`.
 | Table | Purpose |
 |---|---|
 | `executor_signal` | Injected advice awaiting evaluation (PK `signal_id`, caller-supplied or generated UUID — this is the broker `clientRef`, not a Prey link); `status` transitions `PENDING` → `ACCEPTED` / `REJECTED` / `SKIPPED`. `prey_id` (UUID, nullable, V39, indexed via `idx_executor_signal_prey`) — hard FK-style link to the originating `prey.id`, set by `PreySignalMapper` for every hunter-derived signal. Forward-only: operator-injected signals (`ExecutorSignalController.inject`) and pre-existing rows stay `prey_id = null` and are still correlated to prey heuristically (symbol + agent), as before. |
-| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids; these columns are the *legacy* record of the tranches — since V45 the stop ratchet and reconcile read `executor_position_leg`, one row per broker tranche, and fall back to these columns only for positions that have no leg rows, see `StopRatchetService`). V23 adds `trim_count` (scale-out ladder leg count) and `lowest_price` (adverse-excursion extreme for MAE tracking). V33 adds the book-equals-broker audit trail: `submitted_limit_price` (the limit originally submitted, persisting across `entry_price` drift), `pending_exit_reason` / `exit_order_id` / `exit_submitted_at` / `exit_price_source` / `pending_exit_fill_price` (soft-exit or hard-exit order awaiting broker confirmation; `entry_price` syncs to the broker's `avgEntryPrice` on fill, and a partial unique index `uq_executor_position_open (connection, lower(symbol)) WHERE status='OPEN'` ensures at most one OPEN row per (connection, symbol)). V42 adds `stop_legs_collapsed` (BOOLEAN, default false): set when a partial close folded protective legs together because the remainder could not give every leg a share. It records *that* a collapse happened, not how many legs survived. Its only remaining reader is the legacy column-based ratchet path (positions without `executor_position_leg` rows), where it tells a legitimate single-leg survivor from a book whose second leg id is merely unknown; a legged position never consults it. `r_value` (numeric(18,6), present since V17 but never populated until this fix): the denominator `realized_r` was actually divided by at close time — either the live entry/stop risk-per-share or, for a RECONCILE_GONE matched-fill close, the originally planned risk (planned entry vs. initial stop), whichever `ReconcileService`/`ExecutorWebhookController` used. Persisted so a closed row is reconcilable against itself (`realized_r == pnl / r_value`) instead of leaving the divisor unrecorded; null exactly when `realized_r` is null (zero/non-positive denominator) |
+| `executor_position` | The position book — one row per placed entry (`id` identity PK, connection, symbol, side, qty, entry/stop prices, tranche, kill criteria, source signal, status). V18 adds the exit-lifecycle columns: `highest_price`, `mfe_r` (max favorable excursion, in R), `soft_confirm_count` (consecutive-run soft-trigger streak), `exit_price`, `realized_r`, `exit_reason`, `closed_at`, `stop_order_id`. V20 adds entry-completeness columns: `sector` (candidate sector at entry time, from the Agora company-profile lookup, used for the `CONCENTRATION` veto), `entry_day_high` (the entry day's high bar, one input to tranche-2's `NEW_HIGH` eligibility), `tranche2_order_id`/`tranche2_stop_order_id` (the second bracket's broker order ids; these columns are **not legacy**: they are the only key that binds one of the broker's own tranches to this row — `ReconcileService.seedLegsFromWorkingStops` matches a working stop order against them to create the corresponding `executor_position_leg` row in the first place, and `repointStopLegs`/`repointLegStops` keep both the columns and the leg rows pointed at the same live order after a flatten rollback. Since V45 the stop ratchet and reconcile evaluate a position against its leg rows and fall back to these columns only for positions that have none (see `StopRatchetService`), but dropping the columns would silently strand every future leg creation and repoint; they can go only once leg creation sources per-tranche ids from the broker's bracket structure directly). V23 adds `trim_count` (scale-out ladder leg count) and `lowest_price` (adverse-excursion extreme for MAE tracking). V33 adds the book-equals-broker audit trail: `submitted_limit_price` (the limit originally submitted, persisting across `entry_price` drift), `pending_exit_reason` / `exit_order_id` / `exit_submitted_at` / `exit_price_source` / `pending_exit_fill_price` (soft-exit or hard-exit order awaiting broker confirmation; `entry_price` syncs to the broker's `avgEntryPrice` on fill, and a partial unique index `uq_executor_position_open (connection, lower(symbol)) WHERE status='OPEN'` ensures at most one OPEN row per (connection, symbol)). V42 adds `stop_legs_collapsed` (BOOLEAN, default false): set when a partial close folded protective legs together because the remainder could not give every leg a share. It records *that* a collapse happened, not how many legs survived. Its only remaining reader is the legacy column-based ratchet path (positions without `executor_position_leg` rows), where it tells a legitimate single-leg survivor from a book whose second leg id is merely unknown; a legged position never consults it. `r_value` (numeric(18,6), present since V17 but never populated until this fix): the denominator `realized_r` was actually divided by at close time — either the live entry/stop risk-per-share or, for a RECONCILE_GONE matched-fill close, the originally planned risk (planned entry vs. initial stop), whichever `ReconcileService`/`ExecutorWebhookController` used. Persisted so a closed row is reconcilable against itself (`realized_r == pnl / r_value`) instead of leaving the divisor unrecorded; null exactly when `realized_r` is null (zero/non-positive denominator) |
+| `executor_position_leg` | (V45) One row per **broker tranche** of a position — the broker holds each tranche as its own position with its own stop order, while `executor_position` stays the aggregate row every other consumer (MAX_POSITIONS, heat, cooldowns, `outcome_log`, Chronicle) reads. Columns: `position_id` (FK), `tranche`, `entry_order_id`, `stop_order_id`, `qty`, `status` (`OPEN`/`CLOSED`/`CANCELLED`), `exit_price`, `exit_reason`, `closed_at`, with `CHECK (qty > 0)` and `UNIQUE (position_id, tranche)`. `qty` follows the same rule as `executor_position.qty`: shares actually **held**, never shares intended — a row is created only once the broker confirms that tranche's protective stop is WORKING (`ReconcileService.seedLegsFromWorkingStops`, the only writer outside the V45 backfill), and its quantity is converged to the broker's own number on every pass. **Invariant: a CLOSED position has no OPEN leg.** V45 backfills the pre-existing book, V46 checks it, and each of the five lifecycle points that closes or cancels a position books its legs out with it. An OPEN row whose legs are all terminal is an interrupted close and is completed on the next reconcile pass. |
 | `executor_decision` | Append-only audit trail (slice 1) — one row per signal the executor processed, whether accepted or rejected, with the veto trace and rationale (`id` identity PK). V41 adds `action` (nullable): the agent's decision verb (`SKIP` / `HOLD` / `ADD_TRANCHE`) on rows written by `submit-decision`, needed because those rows are all `accepted=false` with an empty `reject_reason` and would otherwise be indistinguishable; the code-gate rows written on the entry/exit paths carry their meaning in `reject_reason` and leave it NULL |
 | `decision_log` | Append-only audit trail (V18, slice 2) — one row per *any* executor decision point (entry, hard exit, stop-ratchet, soft exit): `run_id`, `rule_version`, `trigger_type`, `symbol`, `inputs_snapshot`/`veto_results`/`order_json` (JSONB), `action`, `reason_code`, `reasoning`, `confidence_in_decision`. Richer and broader in scope than `executor_decision`, which only covers the entry path |
 | `rule_versions` | (V18) One row per tagged rule-version (`dracul.executor.rule-version`, e.g. `exec-v0.2`): `valid_from`, `changes`, `prompt_hash`, `params` — makes prompt/threshold changes traceable against `decision_log.rule_version` |
@@ -542,9 +543,76 @@ whose id **is** one of the position's persisted stop legs (`stop_order_id` /
 `STOP_LOSS`, since the book's own record of what a leg is beats the broker's
 role hint; only matches made purely by `parentId` still require an explicit
 `STOP_LOSS`/`TAKE_PROFIT` role. The history call is fail-soft and deliberately
-outside the `BROKER_UNAVAILABLE` bail-out: if it fails, reconcile degrades to
-exactly the position-gone behaviour described above (which still recovers real
-fill prices from `closedPositions`) rather than aborting the pass.
+outside the `BROKER_UNAVAILABLE` bail-out: a failure never aborts the pass.
+
+**It does not, however, degrade to the position-gone behaviour.** That was the
+pre-`executor_position_leg` behaviour, and it booked an estimated exit for a
+position nothing had observed closing. An empty `filledOrdersSince` result is
+ambiguous between "the broker genuinely reports nothing" and "we could not
+ask", and only the former licenses closing or resizing the book. When the call
+throws, the rest of the pass runs with `fillHistoryAvailable = false` and every
+finding that reasons from "no fill was observed" is **withheld**: a position the
+broker no longer reports is left **OPEN** with its legs untouched instead of
+being closed `RECONCILE_GONE`, the one-leg shortfall sync is withheld, and the
+per-leg WORKING-stop quantity convergence is skipped entirely. Each writes
+`ESCALATE / FILL_HISTORY_UNAVAILABLE` with a machine-readable `withheld`
+discriminator (`RECONCILE_GONE` vs `QTY_SYNC_SHORTFALL`) plus the
+book/leg/broker quantities in `inputs_snapshot`. **An operator reading this
+during an outage must expect those rows NOT to have closed.** An empty but
+successfully fetched history is unaffected — that is a fact about the world,
+not a failure.
+
+**Reconcile evaluates a position against its legs (BUG-S11).** Since V45 a
+position with `executor_position_leg` rows is reconciled leg by leg rather than
+against a single bracket id, and four findings are evaluated in order: every
+open leg has an observed fill → the whole position is closed with a
+quantity-weighted exit price; some legs filled → the filled ones are CLOSED and
+the row is TRIMmed to the survivors, staying OPEN; the broker no longer reports
+the position → `RECONCILE_GONE`, with every leg booked out alongside the row;
+the broker holds a quantity the legs cannot account for and no fill explains it
+→ `ESCALATE / LEG_QTY_DESYNC`, row left OPEN. Anything else is an ordinary open
+position. A position with **no** leg rows keeps the pre-leg single-row
+behaviour verbatim, including its `TRANCHE2_DESYNC` escalation.
+
+Two states that would otherwise be silent are named explicitly:
+
+- **`UNCLAIMED_STOP_FILL`** — a FILLED order carrying one of the position's own
+  stop-order ids that no OPEN leg claimed. A tranche whose entry *and* whose
+  stop both fill between two nightly passes never becomes a leg at all (seeding
+  only ever sees a WORKING stop), so nothing would look at that fill: the
+  surviving legs agree with the broker and the pass would end in an ordinary
+  quantity sync, with no TRIM and no realized R for shares that demonstrably
+  left. The escalation carries the filled order ids and the book/leg/broker
+  quantities in `inputs_snapshot`, and the row is left untouched.
+- **An interrupted close finishes itself.** Nothing in the executor is
+  transactional, so a crash between booking the legs out and booking the row
+  would leave CLOSED legs under an OPEN row — which the legless fallback then
+  escalates on every run forever, and which can never be re-legged because a
+  CLOSED leg still occupies its tranche. An OPEN row whose legs are all
+  terminal is therefore booked closed from what those legs already recorded,
+  labelled `FILL` only when every closed leg carries a positive price and a
+  fill-derived exit reason.
+
+**`BROKER_UNAVAILABLE` means "no verdict at all", everywhere.** A broker
+*rejection* is a verdict and is named separately on every path that can see one
+(`HardTriggerService`, `ExecutorWebhookController`, `EntryExpiryService`,
+`ReconcileService`): `POSITION_ALREADY_GONE` when Agora reports the position no
+longer exists, `BROKER_REJECTED` for every other reject code — including a
+generic `NOT_FOUND`, which says nothing about whether the position exists.
+Agora's wire code is carried in `inputs_snapshot.reject_code` rather than
+written into `reason_code`, so one query finds every rejection regardless of
+which path produced it. Historic rows with `reason_code = 'NOT_FOUND'` predate
+this and meant "the position is gone"; that string is never written again.
+
+**Reason codes that cover two conditions carry a discriminator** in
+`inputs_snapshot` rather than leaving the difference to free text:
+`FILL_HISTORY_UNAVAILABLE.withheld` (`RECONCILE_GONE` | `QTY_SYNC_SHORTFALL`),
+`NO_BRACKET_ID.missing` (`POSITION_BROKER_ORDER_ID` |
+`LEG_ENTRY_ORDER_ID_AND_POSITION_BROKER_ORDER_ID`),
+`TRANCHE_RATCHET_UNSUPPORTED.path` (`LEG` | `COLUMN`) and
+`ORPHAN_POSITION.phase` (`PRE_LOOP` — the book never knew about this holding |
+`POST_LOOP` — the broker still reports shares for a row this very run closed,
+a much stronger signal).
 
 **Hunters feed the executor (`PreySignalEmitter`).** When the executor is
 enabled, each hunter's `/complete` webhook — right after it persists prey —
