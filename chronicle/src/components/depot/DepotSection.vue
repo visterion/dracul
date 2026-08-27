@@ -93,15 +93,22 @@
         </div>
         <div v-if="chartLoading" class="dp-chart-loading">{{ t('depots.chart.loading') }}</div>
         <div v-else-if="chartError" class="dp-chart-error">{{ chartError }}</div>
-        <PriceChart
-          v-else-if="chartSeries.length"
-          :series="chartSeries"
-          :labels="chartLabels"
-          :times="chartTimes"
-          :value-formatter="formatChartValue"
-          :area-fill="true"
-          :height="160"
-        />
+        <template v-else-if="chart && chart.points.length">
+          <PriceChart
+            :series="chartSeries"
+            :labels="chartLabels"
+            :times="chartTimes"
+            :value-formatter="formatChartValue"
+            :area-fill="true"
+            :height="160"
+          />
+          <div v-if="chartHint" class="dp-chart-hint" data-testid="depot-chart-hint">
+            {{ chartHint }}
+          </div>
+        </template>
+        <div v-else class="dp-chart-empty" data-testid="depot-chart-empty">
+          {{ t('depots.chart.empty') }}
+        </div>
       </div>
 
       <div v-if="allocation.length" class="dp-allocation" data-testid="depot-allocation">
@@ -184,7 +191,7 @@ import DepotPositionsTable from './DepotPositionsTable.vue'
 import TickerButton from '../instrument/TickerButton.vue'
 import RawTranscriptPanel from './RawTranscriptPanel.vue'
 import { useApi } from '../../api'
-import type { Depot, DepotChart, ChartRange, DepotHistoryEntry } from '../../api/types'
+import type { Depot, DepotEquityCurve, ChartRange, DepotHistoryEntry } from '../../api/types'
 import { useDisplayMode } from '../../composables/useDisplayMode'
 import { fmtPl, allocationSegments, isStale, formatAbsoluteTime } from '../../lib/depotDisplay'
 import { orderTypeLabel, orderStatusLabel, groupOrders, orderStateLabel } from '../../lib/orderDisplay'
@@ -273,7 +280,7 @@ const ranges: { value: ChartRange; label: string }[] = [
 ]
 
 const range = ref<ChartRange>('1m')
-const chart = ref<DepotChart | null>(null)
+const chart = ref<DepotEquityCurve | null>(null)
 const chartLoading = ref(false)
 const chartError = ref<string | null>(null)
 
@@ -310,25 +317,70 @@ const chartSeries = computed(() => {
   return [{ data, color: 'var(--cathedral-gold)', fill: 'rgba(184,148,92,0.12)' }]
 })
 
+const isIntraday = computed(() => chart.value?.granularity === 'INTRADAY')
+
+/** Sparse axis-tick label for a point: HH:MM for intraday series (the date is
+ *  constant within one intraday window), MMM DD for daily series. */
+function pointLabel(t: string): string {
+  return isIntraday.value ? t.slice(11, 16) : t.slice(5)
+}
+
+/** Full per-point tooltip header: localized time for intraday series,
+ *  localized date for daily series. */
+function pointTime(t: string): string {
+  return isIntraday.value
+    ? new Date(t).toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit' })
+    : new Date(t).toLocaleDateString(locale.value, { day: '2-digit', month: 'short' })
+}
+
 const chartLabels = computed(() => {
   if (!chart.value) return []
   const points = chart.value.points
   if (points.length === 0) return []
   const idxs = points.length > 1 ? [0, points.length - 1] : [0]
-  return idxs.map(i => ({ i, t: points[i].t.slice(5) }))
+  return idxs.map(i => ({ i, t: pointLabel(points[i].t) }))
 })
 
-/** Full per-point date array — supersedes chartLabels for the axis-tooltip
+/** Full per-point date/time array — supersedes chartLabels for the axis-tooltip
  *  header (the sparse labels above still drive the visible axis ticks). */
-const chartTimes = computed(() =>
-  (chart.value?.points ?? []).map(p => new Date(p.t).toLocaleDateString(locale.value, { day: '2-digit', month: 'short' })),
-)
+const chartTimes = computed(() => (chart.value?.points ?? []).map(p => pointTime(p.t)))
 
 function formatChartValue(v: number): string {
-  return mode.value === 'pct' && props.depot
+  const currency = chart.value?.currency ?? props.depot.account?.currency ?? 'USD'
+  return mode.value === 'pct' && chart.value?.relative
     ? `${formatNumber(v, 2)}%`
-    : formatMoney(v, props.depot.account?.currency ?? 'USD')
+    : formatMoney(v, currency)
 }
+
+/** Weekdays (Mon–Fri) between two YYYY-MM-DD labels, inclusive. UTC-based: `new Date('2026-01-05')`
+ *  parses as UTC midnight while `.getDay()` reads local time, which would shift every date back a
+ *  day in any negative-offset zone and count Mondays as weekend. */
+function weekdaysBetween(fromIso: string, toIso: string): number {
+  let n = 0
+  const end = new Date(`${toIso}T00:00:00Z`).getTime()
+  for (let d = new Date(`${fromIso}T00:00:00Z`); d.getTime() <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const day = d.getUTCDay()
+    if (day !== 0 && day !== 6) n++
+  }
+  return n
+}
+
+const chartHint = computed<string | null>(() => {
+  const c = chart.value
+  if (!c || !c.points.length) return null
+  if (c.points.length < 2) {
+    return t('depots.chart.tooShort', { date: c.points[0].t })
+  }
+  // Gap counting is DAILY-only: an intraday series has 36 points on one weekday, so a weekday
+  // denominator would read "-35 of 1".
+  if (c.granularity !== 'DAILY') return null
+  const first = c.points[0].t
+  const last = c.points[c.points.length - 1].t
+  const total = weekdaysBetween(first, last)
+  const missing = total - c.points.length
+  if (missing <= 0) return null
+  return t('depots.chart.gaps', { date: first, missing, total })
+})
 </script>
 
 <style scoped>
@@ -382,7 +434,8 @@ function formatChartValue(v: number): string {
   font-size: var(--text-micro); padding: 4px 10px; border-radius: 3px; cursor: pointer;
 }
 .dp-range-btn.active { border-color: var(--cathedral-gold); color: var(--cathedral-gold); }
-.dp-chart-loading, .dp-chart-error { color: var(--ash-gray); font-size: var(--text-body-sm); padding: var(--space-4) 0; }
+.dp-chart-loading, .dp-chart-error, .dp-chart-empty { color: var(--ash-gray); font-size: var(--text-body-sm); padding: var(--space-4) 0; }
+.dp-chart-hint { color: var(--ash-gray-light); font-size: var(--text-micro); padding-top: var(--space-2); }
 
 .dp-allocation-bar {
   display: flex; width: 100%; height: 10px; border-radius: 4px; overflow: hidden;

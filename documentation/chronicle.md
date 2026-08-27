@@ -821,6 +821,28 @@ redirects here): one `DepotSection` per connected broker
       The same panel is also wired into the open-position detail view (Task 4b) — see
       "Depot position detail view" below for the heuristic symbol-link it uses there, since an
       open position's DTO carries no broker order id / clientRef to join on directly.
+  - **Equity curve, honest empty/gap states (`DepotEquityCurve`, Task 7)**: the performance
+    chart renders only *measured* equity snapshots (`GET /api/depots/{connection}/chart`,
+    `source: 'MEASURED'` for every point in this slice) — there is no synthetic backcast, so
+    the series simply starts on the day the connection first got a snapshot, which can be
+    later than the selected range's nominal start. With zero points the chart is replaced by
+    an empty-state line (`depots.chart.empty`, `data-testid="depot-chart-empty"`) instead of
+    drawing an empty area. Below the chart, at most one hint line appears
+    (`data-testid="depot-chart-hint"`), first match wins:
+    1. **Too short** (`depots.chart.tooShort`) — fewer than two points, so no percent series
+       can be derived (`relative` is `null` below two points); names the single point's date.
+    2. **Gaps** (`depots.chart.gaps`, DAILY only) — counts weekday (Mon–Fri) calendar days
+       between the first and last point and compares that to the point count; if any weekdays
+       are missing it names the first point's date and reports "N of M trading days without a
+       measurement". Intraday series (`granularity: 'INTRADAY'`) never show this hint — a
+       36-point single-day series compared against a weekday denominator would misreport a
+       large negative gap.
+    3. Otherwise no hint: the series is either gap-free or long enough that a few missing days
+       don't need calling out.
+    - **Percent-series caveat**: the `%` mode plots a *raw* equity delta (`relative[i].pct`),
+      not a time-weighted return — a deposit or withdrawal between two snapshots reads as a
+      gain or loss. Time-weighted return arrives with the planned cash-flow work; until then,
+      treat the percent curve as directional only, not as a performance figure.
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change
