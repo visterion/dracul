@@ -23,10 +23,14 @@ class DepotEquityCurveServiceTest {
             Clock.fixed(Instant.parse("2026-01-08T10:00:00Z"), ZoneOffset.UTC);
 
     private DepotEquitySnapshot daily(String isoDay, String equity) {
+        return daily(isoDay, equity, "EUR");
+    }
+
+    private DepotEquitySnapshot daily(String isoDay, String equity, String currency) {
         return new DepotEquitySnapshot(1L, "conn-1", Instant.parse(isoDay + "T00:00:00Z"),
                 "DAILY", new BigDecimal(equity), new BigDecimal("10.00"),
                 new BigDecimal(equity).subtract(new BigDecimal("10.00")),
-                "EUR", BigDecimal.ZERO, "MEASURED");
+                currency, BigDecimal.ZERO, "MEASURED");
     }
 
     private DepotEquitySnapshot intraday(String iso, String equity) {
@@ -89,6 +93,17 @@ class DepotEquityCurveServiceTest {
     }
 
     @Test
+    void oneDayWindowStartsAtAMidnightBoundarySoTheWholeDayIsIncluded() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of());
+
+        service(repo).curve("conn-1", "1d");
+
+        // now = 2026-01-08T10:00:00Z -> floor to the day, not the raw instant.
+        verify(repo).series("conn-1", "INTRADAY", Instant.parse("2026-01-08T00:00:00Z"));
+    }
+
+    @Test
     void maxRangeAsksForTheWholeSeries() {
         var repo = mock(DepotEquitySnapshotRepository.class);
         when(repo.series(any(), any(), any())).thenReturn(List.of());
@@ -146,9 +161,10 @@ class DepotEquityCurveServiceTest {
     void currencyComesFromTheNewestRow() {
         var repo = mock(DepotEquitySnapshotRepository.class);
         when(repo.series(any(), any(), any()))
-                .thenReturn(List.of(daily("2026-01-05", "100.00"), daily("2026-01-06", "110.00")));
+                .thenReturn(List.of(daily("2026-01-05", "100.00", "EUR"),
+                                    daily("2026-01-06", "110.00", "USD")));
 
-        assertThat(service(repo).curve("conn-1", "1w").currency()).isEqualTo("EUR");
+        assertThat(service(repo).curve("conn-1", "1w").currency()).isEqualTo("USD");
     }
 
     @Test
