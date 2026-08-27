@@ -282,11 +282,13 @@ class DepotControllerTest {
         when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
         var curveService = mock(DepotEquityCurveService.class);
+        List<DepotEquityCurveService.RelativePoint> relative = List.of(
+                new DepotEquityCurveService.RelativePoint("2026-01-05", new BigDecimal("0.00")));
         when(curveService.curve("conn-1", "1m")).thenReturn(
                 new DepotEquityCurveService.EquityCurve("DAILY",
                         List.of(new DepotEquityCurveService.CurvePoint(
                                 "2026-01-05", new BigDecimal("100.00"), "MEASURED")),
-                        null, "EUR"));
+                        relative, "EUR"));
 
         var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), curveService);
         var out = controller.depotChart("conn-1", "1m");
@@ -294,6 +296,9 @@ class DepotControllerTest {
         assertThat(out.granularity()).isEqualTo("DAILY");
         assertThat(out.currency()).isEqualTo("EUR");
         assertThat(out.points()).hasSize(1);
+        assertThat(out.relative()).isEqualTo(relative);
+        assertThat(out.connection()).isEqualTo("conn-1");
+        assertThat(out.range()).isEqualTo("1m");
     }
 
     @Test
