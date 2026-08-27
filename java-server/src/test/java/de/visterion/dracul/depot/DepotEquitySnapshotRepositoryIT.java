@@ -88,6 +88,27 @@ class DepotEquitySnapshotRepositoryIT {
     }
 
     @Test
+    void updatePathLeavesExternalFlowAndSourceUntouched() {
+        repo.upsert("conn-1", DAY, "DAILY", new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+        jdbc.sql("""
+                UPDATE depot_equity_snapshot
+                   SET external_flow = 250.00, source = 'RECONSTRUCTED'
+                 WHERE connection = 'conn-1' AND granularity = 'DAILY' AND as_of = :t""")
+                .param("t", java.sql.Timestamp.from(DAY))
+                .update();
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsert("conn-1", DAY, "DAILY", new BigDecimal("111.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(w).isPresent();
+        assertThat(w.get().inserted()).isFalse();
+        DepotEquitySnapshot row = repo.series("conn-1", "DAILY", DAY).getFirst();
+        assertThat(row.equity()).isEqualByComparingTo("111.00");
+        assertThat(row.externalFlow()).isEqualByComparingTo("250.00");
+        assertThat(row.source()).isEqualTo("RECONSTRUCTED");
+    }
+
+    @Test
     void positionsValueIsEquityMinusCash() {
         repo.upsert("conn-1", DAY, "DAILY", new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
 
