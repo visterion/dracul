@@ -7,7 +7,7 @@ import type {
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
-  DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
+  DepotsResponse, DepotChart, DepotEquityCurve, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory,
   RunTranscript,
   InspectorRunsResponse,
@@ -410,7 +410,7 @@ export class MockApiClient implements ApiClient {
     return structuredClone(mockDepotsResponse)
   }
 
-  async getDepotChart(connection: string, _range: ChartRange): Promise<DepotChart> {
+  async getDepotChart(connection: string, _range: ChartRange): Promise<DepotEquityCurve> {
     await delay(50)
     const depot = mockDepots.find(d => d.id === connection)
     if (!depot) throw new Error(`getDepotChart: connection not found: ${connection}`)

@@ -9,7 +9,9 @@ import type { Depot } from '../../api/types'
 
 vi.mock('../../api', () => ({
   useApi: () => ({
-    getDepotChart: vi.fn(async () => ({ points: [] })),
+    getDepotChart: vi.fn(async () => ({
+      granularity: 'DAILY' as const, points: [], relative: null, currency: null,
+    })),
     getDepotHistory: vi.fn(),
   }),
 }))

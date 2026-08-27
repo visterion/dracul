@@ -1,5 +1,5 @@
 import type {
-  Depot, DepotsResponse, DepotChart, DepotPositionView, DepotAggregates,
+  Depot, DepotsResponse, DepotChart, DepotEquityCurve, DepotPositionView, DepotAggregates,
   InstrumentInfo, DepotHistory,
 } from '../api/types'
 
@@ -164,17 +164,19 @@ function datesFor(count: number): string[] {
   })
 }
 
-const depotCurveValues = buildSeries(4150, 5)
-const depotCurveDates = datesFor(CHART_POINT_COUNT)
-const depotCurveBase = depotCurveValues[0]
-
-export const mockDepotChart: DepotChart = {
-  points: depotCurveDates.map((t, i) => ({ t, value: depotCurveValues[i] })),
-  relative: depotCurveDates.map((t, i) => ({
-    t,
-    pct: Math.round(((depotCurveValues[i] / depotCurveBase - 1) * 100) * 100) / 100,
-  })),
-  partial: false,
+export const mockDepotChart: DepotEquityCurve = {
+  granularity: 'DAILY',
+  points: [
+    { t: '2026-01-05', value: 10000, source: 'MEASURED' },
+    { t: '2026-01-06', value: 10120, source: 'MEASURED' },
+    { t: '2026-01-07', value: 10080, source: 'MEASURED' },
+  ],
+  relative: [
+    { t: '2026-01-05', pct: 0 },
+    { t: '2026-01-06', pct: 1.2 },
+    { t: '2026-01-07', pct: 0.8 },
+  ],
+  currency: 'EUR',
 }
 
 const instrumentCloseValues = buildSeries(135, 0.6)

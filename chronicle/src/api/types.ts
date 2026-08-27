@@ -730,13 +730,23 @@ export interface ChartPoint {
   value: number
 }
 
-/** Shared by both chart endpoints. The depot curve (`GET /api/depots/{connection}/chart`)
- *  populates `relative` and `partial`; the instrument chart (`GET /api/depots/chart`) is
- *  pure market data and only ever sends `points`. */
+/** Instrument chart (`GET /api/depots/chart`) — pure market data, points only. The depot
+ *  curve has its own type, DepotEquityCurve. */
 export interface DepotChart {
   points: ChartPoint[]
   relative?: { t: string; pct: number }[] | null
-  partial?: boolean
+}
+
+/** Response of `GET /api/depots/{connection}/chart` — the measured equity curve.
+ *  `granularity` tells you how to read `t`: `YYYY-MM-DD` for DAILY, an ISO instant for
+ *  INTRADAY. `currency` is null until the connection has its first snapshot.
+ *  `source` is in the contract from the start so the reconstruction slice needs no second
+ *  API change; this slice only ever sends `MEASURED`. */
+export interface DepotEquityCurve {
+  granularity: 'DAILY' | 'INTRADAY'
+  points: { t: string; value: number; source: 'MEASURED' | 'RECONSTRUCTED' }[]
+  relative: { t: string; pct: number }[] | null
+  currency: string | null
 }
 
 export type ChartRange = '1d' | '1w' | '1m' | '1y' | 'max'

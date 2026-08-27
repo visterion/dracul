@@ -11,7 +11,9 @@ const mockGetDepotHistory = vi.fn()
 const mockGetRunTranscript = vi.fn()
 vi.mock('../../api', () => ({
   useApi: () => ({
-    getDepotChart: vi.fn(async () => ({ points: [] })),
+    getDepotChart: vi.fn(async () => ({
+      granularity: 'DAILY' as const, points: [], relative: null, currency: null,
+    })),
     getDepotHistory: mockGetDepotHistory,
     getRunTranscript: mockGetRunTranscript,
   }),
