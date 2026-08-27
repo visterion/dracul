@@ -20,9 +20,13 @@ import static org.mockito.Mockito.when;
 
 class DepotEquitySnapshotJobTest {
 
-    // 2026-01-05 is a Monday; 21:45Z is the daily cron's firing time.
+    // 2026-01-05 is a Monday; 21:45Z is (roughly) the daily cron's firing time. Deliberately
+    // NOT on a minute boundary: Instant.parse("...T21:45:00Z").truncatedTo(MINUTES) would be the
+    // identity, so the intraday test below would stay green even if the truncation were loosened
+    // to SECONDS/MILLIS or deleted outright. Off-boundary seconds/millis make the test assert
+    // something the truncation actually has to do.
     private static final Clock CLOCK =
-            Clock.fixed(Instant.parse("2026-01-05T21:45:00Z"), ZoneOffset.UTC);
+            Clock.fixed(Instant.parse("2026-01-05T21:45:37.123Z"), ZoneOffset.UTC);
     private static final Instant DAY_LABEL = Instant.parse("2026-01-05T00:00:00Z");
 
     // Package-private constructor with an injectable Clock — the pattern EntryExpiryService:65
