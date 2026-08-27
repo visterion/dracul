@@ -25,7 +25,8 @@ class DepotControllerHistoryTest {
                         null, null, null, true, null)));
 
         var controller = new DepotController(mock(DepotService.class), mock(DepotChartService.class),
-                mock(DepotInstrumentService.class), history, mock(VistierieClient.class), mock(PreyRepository.class));
+                mock(DepotInstrumentService.class), history, mock(VistierieClient.class), mock(PreyRepository.class),
+                mock(DepotEquityCurveService.class));
         var out = controller.history("depot-1");
 
         assertThat(out.entries()).hasSize(1);

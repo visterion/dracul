@@ -33,7 +33,8 @@ class DepotControllerTranscriptTest {
         when(prey.runExistsForUser("run-xyz", "default")).thenReturn(true);
 
         var controller = new DepotController(mock(DepotService.class), mock(DepotChartService.class),
-                mock(DepotInstrumentService.class), mock(DepotHistoryService.class), vistierie, prey);
+                mock(DepotInstrumentService.class), mock(DepotHistoryService.class), vistierie, prey,
+                mock(DepotEquityCurveService.class));
 
         var res = controller.transcript("run-xyz");
 
@@ -49,7 +50,8 @@ class DepotControllerTranscriptTest {
         when(prey.runExistsForUser("gone", "default")).thenReturn(true);
 
         var controller = new DepotController(mock(DepotService.class), mock(DepotChartService.class),
-                mock(DepotInstrumentService.class), mock(DepotHistoryService.class), vistierie, prey);
+                mock(DepotInstrumentService.class), mock(DepotHistoryService.class), vistierie, prey,
+                mock(DepotEquityCurveService.class));
 
         var res = controller.transcript("gone");
 
@@ -64,7 +66,8 @@ class DepotControllerTranscriptTest {
         when(prey.runExistsForUser("foreign", "default")).thenReturn(false);
 
         var controller = new DepotController(mock(DepotService.class), mock(DepotChartService.class),
-                mock(DepotInstrumentService.class), mock(DepotHistoryService.class), vistierie, prey);
+                mock(DepotInstrumentService.class), mock(DepotHistoryService.class), vistierie, prey,
+                mock(DepotEquityCurveService.class));
 
         assertThatThrownBy(() -> controller.transcript("foreign"))
                 .isInstanceOf(ResponseStatusException.class)

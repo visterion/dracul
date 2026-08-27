@@ -202,7 +202,7 @@ class DepotControllerTest {
 
         var controller = new DepotController(service, mock(DepotChartService.class),
                 mock(DepotInstrumentService.class), historyService, mock(VistierieClient.class),
-                mock(PreyRepository.class));
+                mock(PreyRepository.class), mock(DepotEquityCurveService.class));
 
         var out = controller.positionDetail("conn-1", "ACME");
 
@@ -224,7 +224,7 @@ class DepotControllerTest {
 
         var controller = new DepotController(service, mock(DepotChartService.class),
                 mock(DepotInstrumentService.class), historyService, mock(VistierieClient.class),
-                mock(PreyRepository.class));
+                mock(PreyRepository.class), mock(DepotEquityCurveService.class));
 
         var out = controller.positionDetail("conn-1", "ACME");
 
@@ -240,7 +240,7 @@ class DepotControllerTest {
                 List.of(new DepotChartService.ChartPoint("2026-07-01", BigDecimal.TEN)));
         when(chartService.instrumentChart("ACME", "1y")).thenReturn(chart);
 
-        var controller = new DepotController(service, chartService, mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class));
+        var controller = new DepotController(service, chartService, mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), mock(DepotEquityCurveService.class));
         var out = controller.chart("ACME", "1y");
 
         assertThat(out.symbol()).isEqualTo("ACME");
@@ -253,7 +253,7 @@ class DepotControllerTest {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
         when(service.depot("missing-conn", "alice@x.com", false)).thenReturn(null);
-        var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class));
+        var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), mock(DepotEquityCurveService.class));
 
         assertThatThrownBy(() -> controller.depotChart("missing-conn", "1y"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -267,7 +267,7 @@ class DepotControllerTest {
         DepotDto depot = new DepotDto("conn-1", "alpaca", "paper", "connected", "2026-07-11T12:00:00Z",
                 "agora down", null, null, null, null, null);
         when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
-        var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class));
+        var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), mock(DepotEquityCurveService.class));
 
         assertThatThrownBy(() -> controller.depotChart("conn-1", "1y"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -275,28 +275,43 @@ class DepotControllerTest {
     }
 
     @Test
-    void depotChartComposesCurveFromResolvedDepotPositions() {
+    void depotChartDelegatesToTheEquityCurveService() {
         CurrentUserHolder.set("alice@x.com");
         var service = mock(DepotService.class);
         DepotDto depot = depotWithPosition("conn-1", "ACME");
         when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
 
+        var curveService = mock(DepotEquityCurveService.class);
+        when(curveService.curve("conn-1", "1m")).thenReturn(
+                new DepotEquityCurveService.EquityCurve("DAILY",
+                        List.of(new DepotEquityCurveService.CurvePoint(
+                                "2026-01-05", new BigDecimal("100.00"), "MEASURED")),
+                        null, "EUR"));
+
+        var controller = new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), curveService);
+        var out = controller.depotChart("conn-1", "1m");
+
+        assertThat(out.granularity()).isEqualTo("DAILY");
+        assertThat(out.currency()).isEqualTo("EUR");
+        assertThat(out.points()).hasSize(1);
+    }
+
+    @Test
+    void depotChartDoesNotReadBrokerPositions() {
+        CurrentUserHolder.set("alice@x.com");
+        var service = mock(DepotService.class);
+        DepotDto depot = depotWithPosition("conn-1", "ACME");
+        when(service.depot("conn-1", "alice@x.com", false)).thenReturn(depot);
+
+        var curveService = mock(DepotEquityCurveService.class);
         var chartService = mock(DepotChartService.class);
-        var curve = new DepotChartService.DepotCurve(
-                List.of(new DepotChartService.ChartPoint("2026-07-01", new BigDecimal("2250.00"))),
-                List.of(new DepotChartService.RelativePoint("2026-07-01", BigDecimal.ZERO)),
-                false);
-        when(chartService.depotCurve(eq("1y"), any(), any())).thenReturn(curve);
+        when(curveService.curve("conn-1", "1m")).thenReturn(
+                new DepotEquityCurveService.EquityCurve("DAILY", List.of(), null, null));
 
-        var controller = new DepotController(service, chartService, mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class));
-        var out = controller.depotChart("conn-1", "1y");
+        var controller = new DepotController(service, chartService, mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), curveService);
+        controller.depotChart("conn-1", "1m");
 
-        assertThat(out.connection()).isEqualTo("conn-1");
-        assertThat(out.range()).isEqualTo("1y");
-        assertThat(out.points()).isEqualTo(curve.points());
-        assertThat(out.relative()).isEqualTo(curve.relative());
-        assertThat(out.partial()).isFalse();
-        verify(chartService).depotCurve(eq("1y"), any(), any());
+        verifyNoInteractions(chartService);
     }
 
     @Test
@@ -309,7 +324,7 @@ class DepotControllerTest {
                 "ACME", profile, null, null, null, null, null, null, null);
         when(instrumentService.bundle("ACME")).thenReturn(bundle);
 
-        var controller = new DepotController(service, mock(DepotChartService.class), instrumentService, mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class));
+        var controller = new DepotController(service, mock(DepotChartService.class), instrumentService, mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), mock(DepotEquityCurveService.class));
         var out = controller.instrument("ACME");
 
         assertThat(out.symbol()).isEqualTo("ACME");
@@ -320,7 +335,7 @@ class DepotControllerTest {
     }
 
     private DepotController newController(DepotService service) {
-        return new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class));
+        return new DepotController(service, mock(DepotChartService.class), mock(DepotInstrumentService.class), mock(DepotHistoryService.class), mock(VistierieClient.class), mock(PreyRepository.class), mock(DepotEquityCurveService.class));
     }
 
     private DepotDto depotWithPosition(String connId, String symbol) {
