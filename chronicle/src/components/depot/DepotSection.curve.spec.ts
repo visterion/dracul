@@ -196,7 +196,9 @@ describe('DepotSection curve — render guard, intraday, hints', () => {
     const w = mountSection()
     await flush()
     const hint = w.get('[data-testid="depot-chart-hint"]')
-    expect(hint.text()).toContain('2 von 6')
+    // "Wochentagen", not "Handelstagen": weekdaysBetween counts Mon-Fri calendar days, not
+    // trading days, so a week with a public holiday would still count as gap-free here.
+    expect(hint.text()).toContain('2 von 6 Wochentagen')
   })
 
   it('shows no gap hint for a short but complete series', async () => {

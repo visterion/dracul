@@ -558,7 +558,7 @@ export default {
       error: 'Could not load the chart.',
       empty: 'No measured points for this period yet.',
       tooShort: 'Series starts on {date} — not enough points for a percent curve yet.',
-      gaps: 'from {date}, {missing} of {total} trading days without a measurement',
+      gaps: 'from {date}, {missing} of {total} weekdays without a measurement',
     },
     metric: { label: 'Metric', sinceBuy: 'Since buy', today: 'Today' },
     positions: { empty: 'No positions in this depot.' },
