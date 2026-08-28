@@ -75,6 +75,9 @@ public class DepotEquityCurveService {
     }
 
     private String granularityFor(String range) {
+        if (range == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid range: null");
+        }
         if ("1d".equals(range)) return "INTRADAY";
         if ("max".equals(range) || RANGE_DAYS.containsKey(range)) return "DAILY";
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid range: " + range);

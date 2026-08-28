@@ -28,6 +28,3 @@ CREATE TABLE depot_equity_snapshot (
         CHECK (granularity IN ('DAILY','INTRADAY')),
     CONSTRAINT depot_equity_snapshot_uk UNIQUE (connection, granularity, as_of)
 );
-
-CREATE INDEX depot_equity_snapshot_series_ix
-    ON depot_equity_snapshot (connection, granularity, as_of DESC);

@@ -54,6 +54,18 @@ class DepotEquityCurveServiceTest {
                 .hasMessageContaining("invalid range");
     }
 
+    // RANGE_DAYS is a Map.of(...); containsKey(null) throws NPE there, not a clean 400. Today
+    // the controller's @RequestParam is required so null never reaches this method -- but that
+    // is a fact about a different class, not a contract this service should depend on silently.
+    @Test
+    void nullRangeIs400() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+
+        assertThatThrownBy(() -> service(repo).curve("conn-1", null))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("invalid range");
+    }
+
     @Test
     void oneDayReadsIntradayRowsAndReportsThatGranularity() {
         var repo = mock(DepotEquitySnapshotRepository.class);
