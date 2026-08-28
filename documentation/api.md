@@ -501,7 +501,7 @@ Order ticket fields (`ticket`):
 | GET | `/api/depots/{connection}/positions/{symbol}` | One position's detail slice (owning depot's identity, the position, only that symbol's orders, and — for open positions — a heuristic `runId` plus the `decision_log`-derived move timeline `moves[]`, each move carrying its own `runId`). Fetches only the requested connection (cached), not all connections. |
 | GET | `/api/depots/{connection}/history` | Broker-authoritative trade history (closed positions for Saxo, all orders for Alpaca) with optional Dracul "why" annotation (Strigoi/rationale per `broker_order_id` when linked). Returns `{ entries: [...], error }`. |
 | GET | `/api/depots/chart` | Raw close-price series for one instrument (`symbol`, `range` query params) — pure market data, no live-gating |
-| GET | `/api/depots/{connection}/chart` | Composed depot performance curve for one connection (`range` query param) |
+| GET | `/api/depots/{connection}/chart` | Measured depot equity curve for one connection, read from recorded snapshots (`range` query param, required) |
 | GET | `/api/depots/instrument/{symbol}` | Instrument info bundle (profile, news, earnings, analyst/earnings estimates, fundamental score, fundamentals, insider activity) for the GUI's instrument page — pure market data, no live-gating |
 | GET | `/api/depots/run/{runId}/transcript` | Read-only proxy for Vistierie's raw run transcript (Schicht 2). Ownership-scoped to the current user via the originating `prey` row's `run_id`; an unknown `runId` or one belonging to another user returns `404`. Returns `{ transcript, expired }`; `expired: true` (and `transcript: null`) when Vistierie has pruned the run or is unreachable — never a 500. |
 
@@ -813,25 +813,29 @@ ISO date). An unrecognized `range` is `400 BAD_REQUEST`.
 
 ### `GET /api/depots/{connection}/chart` response
 
-Query param: `range` (same values/mapping as above). The connection is
-resolved through `DepotService.depots(CurrentUserHolder.get())` — the
-same call and live-visibility gate `GET /api/depots` uses — so this
-endpoint never leaks a live depot to a user outside the allow-list; its
-positions (already fetched/gated by `DepotService`) are then used to
-compose the curve. Error-status matrix matches
+Query param: `range` (`1d` | `1w` | `1m` | `1y` | `max`, required). The
+connection is resolved through the same `DepotService` call and
+live-visibility gate `GET /api/depots` uses, purely for its 404/503
+contract — the curve itself is read from measured snapshots and needs
+no broker data. Error-status matrix matches
 `GET /api/depots/{connection}/positions/{symbol}`: **`404 NOT_FOUND`**
 if `{connection}` isn't visible to the current user, **`503
 SERVICE_UNAVAILABLE`** if the whole read path failed or that
-connection's own fetch failed.
+connection's own fetch failed (even though the curve itself would not
+have needed the broker call).
 
-`value(t) = Σ qty_i × close_i(t) + cash` — the depot's current cash
-plus each held position's quantity times that instrument's close price
-at `t`. Per-symbol close series are fetched independently and aligned
-by **intersection**: only timestamps present in every
-successfully-fetched symbol's series appear in `points`/`relative`. A
-symbol whose series can't be fetched (Agora failure) — or that Agora
-fetches without error but returns zero bars for — is skipped; the
-curve is still built from the rest — and sets `partial: true`.
+The curve is served from `depot_equity_snapshot` rows recorded for the
+connection — never composed from today's holdings — and starts on the
+day the connection's snapshot recording went live; there is no
+backfilled history before that. `granularity` is `DAILY` (`range` in
+`1w`/`1m`/`1y`/`max`, `t` = ISO date) or `INTRADAY` (`range=1d`, `t` =
+ISO instant); the frontend uses it to decide how to parse `t`. Each
+point's `source` is `MEASURED` or `RECONSTRUCTED`, per the underlying
+`depot_equity_snapshot` row. `currency` is the most recent
+snapshot's currency, or `null` if the connection has no snapshot yet.
+A day with no snapshot row is a gap — never filled or interpolated
+from another granularity. `relative` is `null` below two points (a
+single point has nothing to be relative to); otherwise
 `relative[].pct` is `(value/points[0].value − 1) × 100`, scale 2
 HALF_UP (so the first point's `pct` is always `0.00`).
 
@@ -839,15 +843,16 @@ HALF_UP (so the first point's `pct` is always `0.00`).
 {
   "connection": "alpaca-paper-1",
   "range": "1y",
+  "granularity": "DAILY",
   "points": [
-    { "t": "2026-07-01", "value": 2250.00 },
-    { "t": "2026-07-02", "value": 2300.00 }
+    { "t": "2026-07-01", "value": 2250.00, "source": "MEASURED" },
+    { "t": "2026-07-02", "value": 2300.00, "source": "MEASURED" }
   ],
   "relative": [
     { "t": "2026-07-01", "pct": 0.00 },
     { "t": "2026-07-02", "pct": 2.22 }
   ],
-  "partial": false
+  "currency": "EUR"
 }
 ```
 

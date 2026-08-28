@@ -12,14 +12,13 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.JsonNode;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 /**
  * GUI-facing read path for depot connections: the full list ({@link DepotsResponse}, with
  * live-environment connections gated inside {@link DepotService} to allow-listed emails), a
  * per-position slice for the position-detail view, and chart data (a raw instrument series, plus
- * a composed depot performance curve).
+ * the measured depot equity curve from {@link DepotEquityCurveService}).
  */
 @RestController
 @RequestMapping("/api/depots")
@@ -31,16 +30,18 @@ public class DepotController {
     private final DepotHistoryService historyService;
     private final VistierieClient vistierie;
     private final PreyRepository prey;
+    private final DepotEquityCurveService curveService;
 
     public DepotController(DepotService service, DepotChartService chartService,
             DepotInstrumentService instrumentService, DepotHistoryService historyService,
-            VistierieClient vistierie, PreyRepository prey) {
+            VistierieClient vistierie, PreyRepository prey, DepotEquityCurveService curveService) {
         this.service = service;
         this.chartService = chartService;
         this.instrumentService = instrumentService;
         this.historyService = historyService;
         this.vistierie = vistierie;
         this.prey = prey;
+        this.curveService = curveService;
     }
 
     @GetMapping
@@ -105,16 +106,15 @@ public class DepotController {
     }
 
     @GetMapping("/{connection}/chart")
-    public DepotChartResponse depotChart(@PathVariable String connection, @RequestParam String range) {
-        DepotDto depot = resolveDepot(connection);
+    public DepotChartResponse depotChart(@PathVariable String connection,
+                                         @RequestParam String range) {
+        // resolveDepot stays: it carries the live-depot allow-list and the 404/503 contract the
+        // frontend depends on. The curve itself no longer needs any broker data.
+        resolveDepot(connection);
 
-        List<DepotPosition> positions = depot.positions().stream()
-                .map(p -> new DepotPosition(p.symbol(), null, p.qty(), null, null, null, null, null, null))
-                .toList();
-        BigDecimal cash = depot.account() != null ? depot.account().cash() : null;
-
-        DepotChartService.DepotCurve curve = chartService.depotCurve(range, positions, cash);
-        return new DepotChartResponse(connection, range, curve.points(), curve.relative(), curve.partial());
+        DepotEquityCurveService.EquityCurve curve = curveService.curve(connection, range);
+        return new DepotChartResponse(connection, range, curve.granularity(),
+                curve.points(), curve.relative(), curve.currency());
     }
 
     /**
@@ -173,10 +173,14 @@ public class DepotController {
     public record ChartResponse(String symbol, String range, List<DepotChartService.ChartPoint> points) {
     }
 
-    /** Response for {@code GET /api/depots/{connection}/chart}: the composed depot performance curve. */
-    public record DepotChartResponse(String connection, String range,
-            List<DepotChartService.ChartPoint> points, List<DepotChartService.RelativePoint> relative,
-            boolean partial) {
+    /** Response for {@code GET /api/depots/{connection}/chart}: the measured equity curve.
+     *  {@code granularity} is the frontend's branch condition for how to read {@code t}
+     *  ({@code YYYY-MM-DD} vs an ISO instant); {@code currency} is null while the connection has
+     *  no snapshot yet. */
+    public record DepotChartResponse(String connection, String range, String granularity,
+                                     List<DepotEquityCurveService.CurvePoint> points,
+                                     List<DepotEquityCurveService.RelativePoint> relative,
+                                     String currency) {
     }
 
     /**

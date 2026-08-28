@@ -553,7 +553,13 @@ export default {
     env: { paper: 'Paper', live: 'Live' },
     asOf: 'Stand: {time}',
     stat: { cash: 'Cash', invested: 'Investiert', buyingPower: 'Kaufkraft' },
-    chart: { loading: 'Lade Kurve …', error: 'Kurve konnte nicht geladen werden.' },
+    chart: {
+      loading: 'Lade Kurve …',
+      error: 'Kurve konnte nicht geladen werden.',
+      empty: 'Noch keine gemessenen Punkte für diesen Zeitraum.',
+      tooShort: 'Reihe beginnt am {date} — noch zu wenig Punkte für eine Prozentkurve.',
+      gaps: 'ab {date}, {missing} von {total} Wochentagen ohne Messung',
+    },
     metric: { label: 'Kennzahl', sinceBuy: 'Seit Kauf', today: 'Heute' },
     positions: { empty: 'Keine Positionen in diesem Depot.' },
     orders: {

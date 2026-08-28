@@ -370,6 +370,10 @@ dracul:
     live-visible-emails: ${DRACUL_DEPOTS_LIVE_VISIBLE_EMAILS:owner@example.com}
     cache-ttl-seconds: ${DRACUL_DEPOTS_CACHE_TTL_SECONDS:60}
     history-lookback-days: ${DRACUL_DEPOTS_HISTORY_LOOKBACK_DAYS:90}
+    equity-snapshot:
+      enabled:       ${DRACUL_DEPOTS_EQUITY_SNAPSHOT_ENABLED:true}
+      daily-cron:    ${DRACUL_DEPOTS_EQUITY_SNAPSHOT_DAILY_CRON:0 45 21 * * 1-5}
+      intraday-cron: ${DRACUL_DEPOTS_EQUITY_SNAPSHOT_INTRADAY_CRON:0 5,20,35,50 13-21 * * 1-5}
   position:
     enabled: ${DRACUL_POSITION_ENABLED:true}
     connection: ${DRACUL_POSITION_CONNECTION:depot-1}

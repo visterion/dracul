@@ -8,7 +8,7 @@ import type {
   PatchPositionRequest, LanguageSetting, CurrencySetting, AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
-  DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
+  DepotsResponse, DepotChart, DepotEquityCurve, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
 } from './types'
 
@@ -322,14 +322,14 @@ export class HttpApiClient implements ApiClient {
     return res.json() as Promise<DepotsResponse>
   }
 
-  async getDepotChart(connection: string, range: ChartRange): Promise<DepotChart> {
+  async getDepotChart(connection: string, range: ChartRange): Promise<DepotEquityCurve> {
     const res = await fetch(
       `${this.baseUrl}/api/depots/${encodeURIComponent(connection)}/chart?range=${encodeURIComponent(range)}`,
     )
     if (res.status === 404) throw new Error(`getDepotChart: connection not found: ${connection}`)
     if (res.status === 503) throw new Error(`getDepotChart: depot unavailable: ${connection}`)
     if (!res.ok) throw new Error(`getDepotChart failed: HTTP ${res.status}`)
-    return res.json() as Promise<DepotChart>
+    return res.json() as Promise<DepotEquityCurve>
   }
 
   async getInstrumentChart(symbol: string, range: ChartRange): Promise<DepotChart> {

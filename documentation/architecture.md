@@ -185,6 +185,7 @@ Key tables — see Flyway migrations in `dracul-crypt/` for authoritative DDL.
 | `pattern_evidence` | Supporting cases per pattern (symbol, anomaly, outcome, return); `pattern_id` FK ON DELETE CASCADE |
 | `watchlist_items` | Watchlist items (interest / tracked holdings / verdict candidates). Reviewed nightly by Strigoi and each morning by renfield; **not** swept by daywalker intraday unless `dracul.daywalker.watchlist-enabled=true`; `active` generated column |
 | `daywalker_alerts` | Every Daywalker trigger, with LLM assessment and notification flag |
+| `depot_equity_snapshot` | Gemessene Equity-Zeitreihe je Connection (V47). Eine Zeile je `(connection, granularity, as_of)`; `granularity` unterscheidet Tagesschluss von Intraday. `equity`/`cash` in Kontowährung, wie vom Broker geliefert. |
 
 **Verdict columns added:**
 - `decision` (TEXT, nullable) — CHECK constraint: TRACK, INTERESTING, DISMISS, ACTED

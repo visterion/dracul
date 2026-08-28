@@ -7,7 +7,7 @@ import type {
   AgentConfigRow, DataSourceHealth, Me, PatternCase,
   AgentDefinition, ToolCatalogView, AgentDefinitionEdit, ExitSignal, MorningReport,
   ExecutorCalibration, ExecutorBehavior,
-  DepotsResponse, DepotChart, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
+  DepotsResponse, DepotChart, DepotEquityCurve, ChartRange, InstrumentInfo, DepotPositionView, DepotOrderView,
   DepotHistory, RunTranscript, InspectorRunsResponse, DepotMove, InstrumentSearchHit, ProposalRun,
 } from './types'
 
@@ -51,7 +51,7 @@ export interface ApiClient {
   getExecutorCalibration(): Promise<ExecutorCalibration>
   getExecutorBehavior(): Promise<ExecutorBehavior>
   getDepots(refresh?: boolean): Promise<DepotsResponse>
-  getDepotChart(connection: string, range: ChartRange): Promise<DepotChart>
+  getDepotChart(connection: string, range: ChartRange): Promise<DepotEquityCurve>
   getInstrumentChart(symbol: string, range: ChartRange): Promise<DepotChart>
   getInstrumentInfo(symbol: string): Promise<InstrumentInfo>
   getDepotPosition(

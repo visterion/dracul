@@ -6,20 +6,21 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 import DepotsView from './DepotsView.vue'
 import PriceChart from '../components/common/PriceChart.vue'
 import de from '../i18n/locales/de'
-import type { Depot, DepotsResponse, DepotChart, ChartRange } from '../api/types'
+import type { Depot, DepotsResponse, DepotEquityCurve, ChartRange } from '../api/types'
 import { mockDepotChart } from '../mocks/depots'
 
-function chartFixture(markerValue: number): DepotChart {
+function chartFixture(markerValue: number): DepotEquityCurve {
   return {
+    granularity: 'DAILY',
     points: [
-      { t: '2026-07-01', value: markerValue },
-      { t: '2026-07-02', value: markerValue },
+      { t: '2026-07-01', value: markerValue, source: 'MEASURED' as const },
+      { t: '2026-07-02', value: markerValue, source: 'MEASURED' as const },
     ],
     relative: [
       { t: '2026-07-01', pct: markerValue },
       { t: '2026-07-02', pct: markerValue },
     ],
-    partial: false,
+    currency: 'USD',
   }
 }
 
@@ -54,7 +55,7 @@ function depot(overrides: Partial<Depot> = {}): Depot {
 }
 
 let depotsResponse: DepotsResponse
-let getDepotChartImpl: (connection: string, range: ChartRange) => Promise<DepotChart> =
+let getDepotChartImpl: (connection: string, range: ChartRange) => Promise<DepotEquityCurve> =
   async () => mockDepotChart
 const mockGetDepots = vi.fn(async () => depotsResponse)
 
@@ -250,7 +251,7 @@ describe('DepotsView', () => {
   it('ignores a stale chart response when the range is switched again before it resolves', async () => {
     depotsResponse = { depots: [depot({ id: 'depot-1' })], error: null }
 
-    const resolvers: Partial<Record<ChartRange, (v: DepotChart) => void>> = {}
+    const resolvers: Partial<Record<ChartRange, (v: DepotEquityCurve) => void>> = {}
     getDepotChartImpl = (_connection, range) =>
       new Promise(resolve => {
         resolvers[range] = resolve
