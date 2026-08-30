@@ -323,13 +323,17 @@ const chartSeries = computed(() => {
     : c.points.map(p => p.value)
 
   const style = { color: 'var(--cathedral-gold)', fill: 'rgba(184,148,92,0.12)' }
+  // Dimmer than the measured fill: the dashed line already marks the segment as
+  // reconstructed, but the area fill is the heavier visual mass, so it gets its own,
+  // lighter alpha rather than just inheriting the measured segment's.
+  const reconstructedStyle = { color: 'var(--cathedral-gold)', fill: 'rgba(184,148,92,0.05)' }
   const lastReconstructed = c.points.reduce(
     (acc, p, i) => (p.source === 'RECONSTRUCTED' ? i : acc), -1)
   if (lastReconstructed < 0) return [{ data: values, ...style }]
-  if (lastReconstructed === values.length - 1) return [{ data: values, dashed: true, ...style }]
+  if (lastReconstructed === values.length - 1) return [{ data: values, dashed: true, ...reconstructedStyle }]
 
   return [
-    { data: values.map((v, i) => (i <= lastReconstructed ? v : null)), dashed: true, ...style },
+    { data: values.map((v, i) => (i <= lastReconstructed ? v : null)), dashed: true, ...reconstructedStyle },
     { data: values.map((v, i) => (i >= lastReconstructed ? v : null)), ...style },
   ]
 })

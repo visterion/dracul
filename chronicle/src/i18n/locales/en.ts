@@ -559,7 +559,7 @@ export default {
       empty: 'No measured points for this period yet.',
       tooShort: 'Series starts on {date} — not enough points for a percent curve yet.',
       gaps: 'from {date}, {missing} of {total} weekdays without a measurement',
-      reconstructed: 'Reconstructed up to {date} from the book and daily closes — fees and dividends are missing, and the deviation grows towards the left.',
+      reconstructed: 'Reconstructed up to {date} from the book and daily closes — fees and dividends are missing, and the further back the curve reaches, the less accurate it gets.',
     },
     metric: { label: 'Metric', sinceBuy: 'Since buy', today: 'Today' },
     positions: { empty: 'No positions in this depot.' },

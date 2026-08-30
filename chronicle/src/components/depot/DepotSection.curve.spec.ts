@@ -334,7 +334,7 @@ describe('DepotSection curve — render guard, intraday, hints', () => {
     const w = mountSection()
     await flush()
 
-    expect(w.get('[data-testid="depot-chart-hint"]').text()).toContain('3')
+    expect(w.get('[data-testid="depot-chart-hint"]').text()).toContain('3 von 5')
     expect(w.find('[data-testid="depot-chart-reconstructed"]').exists()).toBe(false)
   })
 })
