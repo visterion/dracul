@@ -308,4 +308,23 @@ class DepotEquitySnapshotRepositoryIT {
 
         assertThat(repo.firstMeasured("conn-1", "DAILY")).isEmpty();
     }
+
+    @Test
+    void reconstructedRerunWithNewNumbersCorrectsTheRow() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                        new BigDecimal("120.00"), new BigDecimal("50.00"), "EUR");
+
+        // A backfill re-run after the book improves MUST correct the row, not skip it.
+        assertThat(w).isPresent();
+        assertThat(w.get().inserted()).isFalse();
+        var row = repo.series("conn-1", "DAILY", DAY).getFirst();
+        assertThat(row.equity()).isEqualByComparingTo("120.00");
+        assertThat(row.cash()).isEqualByComparingTo("50.00");
+        assertThat(row.positionsValue()).isEqualByComparingTo("70.00");
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("RECONSTRUCTED");
+    }
 }
