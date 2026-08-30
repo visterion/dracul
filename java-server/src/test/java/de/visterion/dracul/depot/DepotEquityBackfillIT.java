@@ -310,9 +310,22 @@ class DepotEquityBackfillIT {
 
     /**
      * Same guard as above, but the book is non-empty and every position is excluded by the
-     * ledger instead: an OPEN position the broker never received. That takes the
-     * firstHoldingDate.isEmpty() early return, not the book.isEmpty() one -- the two paths are
-     * reached through different conditions and each needed its own hoisted delete call.
+     * ledger instead. That takes the firstHoldingDate.isEmpty() early return, not the
+     * book.isEmpty() one -- the two paths are reached through different conditions and each
+     * needed its own hoisted delete call.
+     *
+     * <p>Position 902 is CANCELLED, not "OPEN and absent at the broker" as an earlier version
+     * of this fixture had it: once the guard was generalised from "broker map is empty" to
+     * "zero overlap between the book's OPEN symbols and the broker's" (see the guard's
+     * javadoc), an OPEN CCC paired with a broker answer that never mentions CCC IS zero
+     * overlap and the guard would refuse the run before the ledger ever gets to exclude
+     * anything -- exactly the degraded-answer case the guard exists to catch, now correctly
+     * caught here too. CANCELLED sidesteps the guard entirely (it only inspects OPEN
+     * positions) while still driving every position out of the ledger via a different,
+     * unconditional exclusion rule (PositionLedger.build's first check), so this test still
+     * proves what it always proved: a fully-excluded book still clears stale RECONSTRUCTED
+     * rows before returning. The "OPEN and absent at the broker" exclusion itself remains
+     * covered by aPartialDivergenceStillWorks below.
      */
     @Test
     void aFullyExcludedBookStillDeletesStaleReconstructedRowsBeforeReturning() {
@@ -321,7 +334,7 @@ class DepotEquityBackfillIT {
                        (id, connection, symbol, side, qty, entry_price, initial_stop,
                         active_stop, entry_date, status, source_signal_id)
                 VALUES (902, 'c4', 'CCC', 'BUY', 5, 10.00, 8.00, 8.00,
-                        timestamptz '2026-03-03 14:00:00+00', 'OPEN', 'sig-902')""").update();
+                        timestamptz '2026-03-03 14:00:00+00', 'CANCELLED', 'sig-902')""").update();
         jdbc.sql("""
                 INSERT INTO decision_log
                        (log_id, ts_decision, rule_version, trigger_type, action, symbol,
@@ -329,15 +342,10 @@ class DepotEquityBackfillIT {
                 VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
                         'ENTER', 'CCC', 'sig-902', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
         // depotClient is not stubbed for "c4" -> AgoraDepotClient mock returns null unless
-        // stubbed, so positions("c4") must be stubbed explicitly. The broker answer carries one
-        // decoy holding for a symbol NOT in c4's book ("ZZZ") rather than an empty list: this
-        // is a genuine, non-degraded broker answer that simply does not mention CCC, which is
-        // exactly the "open in the book, absent at the broker" exclusion PositionLedger.build
-        // applies -- see that reasoning there. An EMPTY broker answer here would instead trip
-        // the new zero-broker-holdings guard in DepotEquityBackfillService (a book with an OPEN
-        // position pairing with zero total broker holdings, tested separately below), which
-        // is a different situation from this one: a real, non-empty broker report that simply
-        // does not carry this one symbol.
+        // stubbed, so positions("c4") must be stubbed explicitly. With no OPEN position in the
+        // book the guard never inspects the broker answer at all, so its exact contents no
+        // longer matter to this test; a decoy holding is kept only to prove the run does not
+        // crash while consuming whatever the broker reports.
         var depotClient = mock(AgoraDepotClient.class);
         when(depotClient.positions("c4")).thenReturn(new PositionsSnapshot(
                 List.of(new DepotPosition("ZZZ", null, new BigDecimal("1"), null, null, null,
@@ -400,22 +408,122 @@ class DepotEquityBackfillIT {
     }
 
     /**
-     * The guard must not be broader than the degraded-answer case it exists for: a book of
-     * only CLOSED positions legitimately pairs with zero broker holdings -- a normal,
-     * fully-liquidated account -- and must still reach the existing fully-excluded behaviour
-     * (stale rows deleted, {@code daysDeletedStale} reported, the MEASURED anchor untouched).
-     * Position 903 here is CLOSED, not OPEN, so {@code book.stream().anyMatch(OPEN)} is false
-     * and the guard must not fire.
+     * The generalised guard's whole reason to exist: a degraded broker answer is not only the
+     * totally-empty list -- a per-entry field-name drift or symbol-format mismatch produces a
+     * NON-EMPTY {@code brokerQty} that still overlaps NONE of the book's OPEN symbols (here,
+     * an answer for the unrelated symbol "ZZZ" against a book whose only OPEN position is
+     * "AAA"). Before this fix (the old guard only fired on an EMPTY broker map) this exact
+     * shape sailed through the old guard, emptied the ledger via PositionLedger.build's "open
+     * in the book, absent at the broker" exclusion, and irrecoverably deleted every seeded
+     * RECONSTRUCTED row below.
+     *
+     * <p>As in aDegradedZeroBrokerAnswerIsRefusedRatherThanReadAsAnEmptyAccount, the
+     * surviving-rows assertion is the point, not the thrown exception alone.
+     */
+    @Test
+    void aZeroOverlapWithANonEmptyBrokerAnswerIsRefused() {
+        Instant stale = Instant.parse("2026-03-02T00:00:00Z");
+        snapshots.upsertReconstructed("c1", stale, "DAILY",
+                new BigDecimal("111.00"), new BigDecimal("111.00"), "EUR");
+
+        var mismatchedDepotClient = mock(AgoraDepotClient.class);
+        when(mismatchedDepotClient.positions("c1")).thenReturn(new PositionsSnapshot(
+                List.of(new DepotPosition("ZZZ", null, new BigDecimal("1"), null, null, null,
+                        "USD", null, null)), null));
+        var agora = mock(de.visterion.dracul.marketdata.AgoraClient.class);
+        when(agora.callTool(eq("get_ohlc"), any())).thenAnswer(inv -> bars(
+                inv.getArgument(1, JsonNode.class).path("symbol").asString()));
+        var guardedService = new DepotEquityBackfillService(snapshots,
+                new BackfillSourceRepository(jdbc), agora, mismatchedDepotClient);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> guardedService.run("c1"))
+                .isInstanceOf(DepotEquityBackfillService.BackfillConflictException.class);
+
+        assertThat(rowsAt("2026-03-02")).isEqualTo(1);
+        assertThat(sourceAt("2026-03-02")).isEqualTo("RECONSTRUCTED");
+    }
+
+    /**
+     * The generalised guard must not be broader than the degraded-answer case it exists for: a
+     * PARTIAL divergence between the book and the broker -- some OPEN book symbols present at
+     * the broker, some absent -- is a real, known, in-scope state of this system (spec §9) and
+     * must keep working exactly as before this change. Book c6 holds two OPEN positions, "EEE"
+     * and "FFF"; the broker reports only "EEE". The absent "FFF" is excluded and named, the
+     * present "EEE" still produces a reconstructed curve, and no exception is thrown.
+     */
+    @Test
+    void aPartialDivergenceStillWorks() {
+        jdbc.sql("""
+                INSERT INTO executor_position
+                       (id, connection, symbol, side, qty, entry_price, initial_stop,
+                        active_stop, entry_date, status, source_signal_id)
+                VALUES (904, 'c6', 'EEE', 'BUY', 5, 10.00, 8.00, 8.00,
+                        timestamptz '2026-03-03 14:00:00+00', 'OPEN', 'sig-904')""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, symbol,
+                        signal_id, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
+                        'ENTER', 'EEE', 'sig-904', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
+        jdbc.sql("""
+                INSERT INTO executor_position
+                       (id, connection, symbol, side, qty, entry_price, initial_stop,
+                        active_stop, entry_date, status, source_signal_id)
+                VALUES (905, 'c6', 'FFF', 'BUY', 5, 10.00, 8.00, 8.00,
+                        timestamptz '2026-03-03 14:00:00+00', 'OPEN', 'sig-905')""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, symbol,
+                        signal_id, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
+                        'ENTER', 'FFF', 'sig-905', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
+
+        var depotClient = mock(AgoraDepotClient.class);
+        when(depotClient.positions("c6")).thenReturn(new PositionsSnapshot(
+                List.of(new DepotPosition("EEE", null, new BigDecimal("5"), null, null, null,
+                        "USD", null, null)), null));
+        var agora = mock(de.visterion.dracul.marketdata.AgoraClient.class);
+        when(agora.callTool(eq("get_ohlc"), any())).thenAnswer(inv -> bars(
+                inv.getArgument(1, JsonNode.class).path("symbol").asString()));
+        var partialService = new DepotEquityBackfillService(snapshots,
+                new BackfillSourceRepository(jdbc), agora, depotClient);
+
+        Instant anchor = Instant.parse("2026-03-05T00:00:00Z");
+        snapshots.upsert("c6", anchor, "DAILY",
+                new BigDecimal("500.00"), new BigDecimal("400.00"), "EUR");
+
+        var report = partialService.run("c6");
+
+        assertThat(report.excludedPositions())
+                .containsExactly("FFF: open in the book, absent at the broker");
+        assertThat(sourceAt("2026-03-04", "c6")).isEqualTo("RECONSTRUCTED");
+    }
+
+    /**
+     * The guard must not be broader than the degraded-answer case it exists for: a book with
+     * NO open position at all -- here a closed-out one whose exit price is unknown, so
+     * PositionLedger.build excludes it too (spec: closed without an exit price) -- legitimately
+     * pairs with zero broker holdings and must still reach the existing fully-excluded
+     * behaviour (stale rows deleted, {@code daysDeletedStale} reported, the MEASURED anchor
+     * untouched, the exclusion itself surfaced in {@code excludedPositions}).
+     *
+     * <p>Position 903 is CLOSED with NO exit_price (not, as an earlier version of this fixture
+     * had it, CLOSED WITH an exit price): a closed position with a real exit price produces a
+     * real Holding (PositionLedger.build only excludes a closed position when exitPrice is
+     * null), so firstHoldingDate would be present and the run would take the NORMAL path --
+     * the guard's absence would never be exercised, and the stale row would be deleted by the
+     * unrelated normal-path delete instead. Dropping exit_price makes 903 genuinely excluded,
+     * so this test actually reaches the firstHoldingDate.isEmpty() branch it exists to cover.
      */
     @Test
     void aClosedOutBookWithNoBrokerHoldingsIsNotBlockedByTheGuard() {
         jdbc.sql("""
                 INSERT INTO executor_position
                        (id, connection, symbol, side, qty, entry_price, initial_stop,
-                        active_stop, entry_date, status, source_signal_id, exit_price, closed_at)
+                        active_stop, entry_date, status, source_signal_id, closed_at)
                 VALUES (903, 'c5', 'DDD', 'BUY', 5, 10.00, 8.00, 8.00,
                         timestamptz '2026-03-03 14:00:00+00', 'CLOSED', 'sig-903',
-                        12.00, timestamptz '2026-03-04 14:00:00+00')""").update();
+                        timestamptz '2026-03-04 14:00:00+00')""").update();
         jdbc.sql("""
                 INSERT INTO decision_log
                        (log_id, ts_decision, rule_version, trigger_type, action, symbol,
@@ -443,6 +551,9 @@ class DepotEquityBackfillIT {
         assertThat(report.daysDeletedStale()).isEqualTo(1);
         assertThat(rowsAt("2026-03-02", "c5")).isZero();
         assertThat(sourceAt("2026-03-05", "c5")).isEqualTo("MEASURED");
+        // Only true on the exclusion path (firstHoldingDate.isEmpty()); the normal path this
+        // test used to silently take instead would leave excludedPositions empty.
+        assertThat(report.excludedPositions()).isNotEmpty();
     }
 
     private int rowsAt(String day) {

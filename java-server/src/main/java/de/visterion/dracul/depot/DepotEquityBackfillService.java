@@ -128,23 +128,31 @@ public class DepotEquityBackfillService {
 
         Map<String, BigDecimal> brokerQty = brokerHoldings(connection);
 
-        // An HTTP-200-but-degraded broker answer (AgoraDepotClient.positions() silently
-        // returns an empty list for an unexpected response shape, see its javadoc) must not
-        // be read as "this account is fully liquidated". A book with at least one position
-        // still OPEN pairs with zero broker holdings only in a degraded-answer scenario; a
-        // book of only CLOSED positions legitimately pairs with zero broker holdings (a
-        // normal, fully-liquidated account) and must still reach the exclusion path below.
-        // "OPEN" is the same status PositionLedger.build checks before applying its own
-        // "open in the book, absent at the broker" exclusion — this guard fires strictly
-        // before that per-position exclusion can turn every open position into an excluded
-        // one and empty the ledger entirely.
-        if (brokerQty.isEmpty()) {
-            long stillOpen = book.stream().filter(p -> "OPEN".equals(p.status())).count();
-            if (stillOpen > 0) {
-                throw new BackfillConflictException(
-                        "the book still holds " + stillOpen + " open position(s) but the broker "
-                        + "reported none — refusing to treat that as an empty account");
-            }
+        // An HTTP-200-but-degraded broker answer must not be read as "this account is fully
+        // liquidated" — and "degraded" is not only the totally-empty list AgoraDepotClient.
+        // positions() falls back to for an unrecognised shape (see its javadoc); a per-entry
+        // field-name drift or a symbol-format mismatch (e.g. "AAA.US" vs "AAA") produces the
+        // SAME outcome one position at a time: every OPEN book symbol fails to match anything
+        // in brokerQty even though the map itself is non-empty. The condition below is
+        // "zero overlap", not "empty map": the book holds at least one OPEN position, AND NONE
+        // of its OPEN symbols appears in brokerQty. This strictly subsumes the old empty-map
+        // check (an empty map intersects nothing) and closes that degraded-shape hole.
+        //
+        // A PARTIAL divergence — some OPEN book symbols present at the broker, some absent —
+        // is a real, known, in-scope state of this system (spec §9) and must keep working
+        // exactly as today: the absent ones are excluded by PositionLedger.build's own "open
+        // in the book, absent at the broker" rule below, and the present ones still contribute
+        // a holding. Only TOTAL absence of every open symbol is refused here, because a
+        // reconstruction built from a book that agrees with the broker in nothing is not a
+        // reconstruction. A book of only CLOSED positions has no OPEN symbol to test and
+        // legitimately reaches the exclusion path below unguarded, same as before.
+        List<BookPosition> openPositions = book.stream()
+                .filter(p -> "OPEN".equals(p.status())).toList();
+        if (!openPositions.isEmpty()
+                && openPositions.stream().noneMatch(p -> brokerQty.containsKey(p.symbol()))) {
+            throw new BackfillConflictException(
+                    "the book holds " + openPositions.size() + " open position(s), none of "
+                    + "which the broker reports — refusing to treat that as an empty account");
         }
 
         PositionLedger.Ledger ledger = PositionLedger.build(book, brokerQty);
@@ -369,6 +377,13 @@ public class DepotEquityBackfillService {
                         "position " + p.symbol() + " is denominated in " + ccy
                         + "; this backfill values every holding as close / EURUSD=X and can "
                         + "only price USD positions");
+            }
+            if (p.symbol() == null || p.symbol().isBlank()) {
+                // A degraded broker answer can hand back an entry with no usable symbol (a
+                // field-name mismatch upstream). A null map key would silently pretend to be a
+                // holding while matching no book symbol, defeating the zero-overlap guard above
+                // instead of triggering it.
+                continue;
             }
             out.put(p.symbol(), p.qty());
         }
