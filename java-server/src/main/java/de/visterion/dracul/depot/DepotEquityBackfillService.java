@@ -28,7 +28,7 @@ import java.util.TreeSet;
  * <p>The pass runs BACKWARDS from the anchor — the oldest measured row:
  *
  * <pre>
- *   cash(d)   = cash(anchor) + net cash movement strictly after d
+ *   cash(d)   = cash(anchor) + net cash movement in (d, anchorDay]
  *   equity(d) = cash(d) + sum over symbols of qty(d) * close(d) / fx(d)
  * </pre>
  *
@@ -37,8 +37,10 @@ import java.util.TreeSet;
  * where fees, dividends and the book-versus-broker price drift accumulate (spec §1.6 bounds
  * it at 2.5–7 %).
  *
- * <p>The whole series is built and checked in memory before a single row is written. A run
- * that dies halfway through an Agora timeout leaves no half curve behind.
+ * <p>The whole series is computed and checked in memory first — every day's equity and cash,
+ * plus the seam comparison against the anchor — and only THEN written, in a second pass. A
+ * run that dies halfway through an Agora timeout leaves no half curve behind: either nothing
+ * was written yet, or everything already checked out.
  */
 @Service
 public class DepotEquityBackfillService {
@@ -61,6 +63,10 @@ public class DepotEquityBackfillService {
                                  int daysWritten, int daysUnchanged, int daysSkippedMeasured,
                                  List<String> missingBars, List<String> excludedPositions,
                                  BigDecimal seamDelta, BigDecimal seamDeltaPct) {
+    }
+
+    /** One computed-but-not-yet-written day. Kept in memory until the whole series checks out. */
+    private record ReconstructedDay(Instant asOf, BigDecimal equity, BigDecimal cash) {
     }
 
     private final DepotEquitySnapshotRepository repo;
@@ -114,37 +120,49 @@ public class DepotEquityBackfillService {
         for (String s : symbols) closes.put(s, fetchBars(s));
         NavigableMap<LocalDate, BigDecimal> fx = fetchBars(FX_SYMBOL);
 
-        // Trading days come from the union of every fetched bar series (prices AND fx), not
-        // from a book-derived lower bound: a day before the first position's entry still has a
-        // cash-only equity value, and a symbol's own bar gap must not hide a day the FX series
-        // (or another symbol) does have data for.
-        TreeSet<LocalDate> tradingDays = new TreeSet<>();
+        // Every day any fetched bar series (prices AND fx) has data for, capped at the anchor.
+        TreeSet<LocalDate> allBarDays = new TreeSet<>();
         for (var series : closes.values()) {
             for (LocalDate d : series.keySet()) {
-                if (!d.isAfter(anchorDay)) tradingDays.add(d);
+                if (!d.isAfter(anchorDay)) allBarDays.add(d);
             }
         }
         for (LocalDate d : fx.keySet()) {
-            if (!d.isAfter(anchorDay)) tradingDays.add(d);
+            if (!d.isAfter(anchorDay)) allBarDays.add(d);
         }
 
-        LocalDate from = tradingDays.isEmpty() ? null : tradingDays.first();
+        // One trading day before the first purchase, so the opening capital is visible — and
+        // not one day more. Everything earlier would be a flat line asserting the account
+        // already held its full capital, written into the same table as real measurements.
+        LocalDate firstEntry = book.stream().map(BookPosition::entryDate)
+                .min(LocalDate::compareTo).orElseThrow();
+        LocalDate from = allBarDays.headSet(firstEntry, false).isEmpty()
+                ? firstEntry
+                : allBarDays.headSet(firstEntry, false).last();
 
-        int written = 0;
-        int unchanged = 0;
-        int skippedMeasured = 0;
+        TreeSet<LocalDate> tradingDays = new TreeSet<>();
+        for (LocalDate d : allBarDays) {
+            if (!d.isBefore(from)) tradingDays.add(d);
+        }
+
+        // Pass 1: compute and check the whole series in memory. Nothing is written yet.
+        List<ReconstructedDay> days = new ArrayList<>();
+        int skippedUnpriced = 0;
         BigDecimal seamDelta = null;
         BigDecimal seamDeltaPct = null;
 
         for (LocalDate d : tradingDays) {
-            BigDecimal cash = anchor.cash().add(netCashAfterInAccountCurrency(ledger, fx, d))
+            BigDecimal cash = anchor.cash()
+                    .add(netCashAfterInAccountCurrency(ledger, fx, d, anchorDay, missingBars))
                     .setScale(SCALE, RoundingMode.HALF_UP);
             BigDecimal positions = BigDecimal.ZERO;
+            boolean unpriced = false;
             for (var e : ledger.holdingsOn(d).entrySet()) {
                 BigDecimal close = at(closes.get(e.getKey()), d);
                 BigDecimal rate = at(fx, d);
                 if (close == null || rate == null) {
                     missingBars.add(e.getKey() + "@" + d);
+                    unpriced = true;
                     continue;
                 }
                 positions = positions.add(e.getValue().multiply(close)
@@ -161,26 +179,47 @@ public class DepotEquityBackfillService {
                                 .divide(anchor.equity(), SCALE, RoundingMode.HALF_UP);
                 continue;
             }
-            if (d.isAfter(to)) continue;
+
+            if (unpriced) {
+                // A gap is honest; a number missing a holding it could not price is not. The
+                // day is named in missingBars above; it is better absent from the chart than
+                // present and wrong.
+                skippedUnpriced++;
+                continue;
+            }
 
             Instant asOf = d.atStartOfDay(ZoneOffset.UTC).toInstant().truncatedTo(ChronoUnit.DAYS);
-            Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
-                    repo.upsertReconstructed(connection, asOf, GRANULARITY, equity, cash, currency);
+            days.add(new ReconstructedDay(asOf, equity, cash));
+        }
+
+        // Pass 2: write. Everything above already checked out, so a failure here (an Agora
+        // call does not happen in this loop — only a database write) never leaves a half curve;
+        // it leaves whatever prefix of this already-validated list made it to the database.
+        int written = 0;
+        int unchanged = 0;
+        for (ReconstructedDay day : days) {
+            Optional<DepotEquitySnapshotRepository.SnapshotWrite> w = repo.upsertReconstructed(
+                    connection, day.asOf(), GRANULARITY, day.equity(), day.cash(), currency);
             if (w.isPresent()) {
                 written++;
-            } else if (repo.firstMeasured(connection, GRANULARITY).isPresent()
-                    && !d.isBefore(anchorDay)) {
-                skippedMeasured++;
             } else {
+                // Empty here can only mean "already RECONSTRUCTED with identical values": the
+                // anchor is by definition the earliest MEASURED row (firstMeasured), so no day
+                // strictly before it can ever be MEASURED. daysSkippedMeasured is therefore
+                // structurally always 0 for this loop; re-querying firstMeasured per row to
+                // "confirm" that would only add a round trip for a fact already known from how
+                // the anchor was selected.
                 unchanged++;
             }
         }
+        int skippedMeasured = 0;
 
-        BackfillReport report = new BackfillReport(connection, from == null ? null : from.toString(),
-                to.toString(), written, unchanged, skippedMeasured, List.copyOf(missingBars),
+        BackfillReport report = new BackfillReport(connection, from.toString(), to.toString(),
+                written, unchanged, skippedMeasured, List.copyOf(missingBars),
                 ledger.excluded(), seamDelta, seamDeltaPct);
-        log.info("equity backfill [{}]: {} written, {} unchanged, {} skipped, seamDelta {} ({}%)",
-                connection, written, unchanged, skippedMeasured, seamDelta, seamDeltaPct);
+        log.info("equity backfill [{}]: {} written, {} unchanged, {} skipped-unpriced, "
+                        + "seamDelta {} ({}%)",
+                connection, written, unchanged, skippedUnpriced, seamDelta, seamDeltaPct);
         return report;
     }
 
@@ -213,6 +252,9 @@ public class DepotEquityBackfillService {
             JsonNode date = b.path("date");
             JsonNode close = b.path("close");
             if (date.isMissingNode() || date.isNull() || close.isMissingNode() || close.isNull()) {
+                // Same visibility as the unparsable case below: a hole in the fetched series,
+                // not a silent one.
+                log.warn("equity backfill: bar missing date or close for {}: {}", symbol, b);
                 continue;
             }
             try {
@@ -233,21 +275,39 @@ public class DepotEquityBackfillService {
     }
 
     /**
-     * Net cash movement strictly after {@code d}, converted into the account currency at each
+     * Net cash movement in {@code (d, anchorDay]}, converted into the account currency at each
      * event's own FX rate. {@link PositionLedger.Ledger#events()} carries amounts in the
      * position's native currency by design (see {@link PositionLedger}'s class doc) — summing
-     * them unconverted would add USD figures onto a EUR cash balance. An event whose date has
-     * no FX rate at all (not even a carried-forward one) is dropped rather than guessed; that
-     * mirrors {@link #at} treating an uncovered day as absent.
+     * them unconverted would add USD figures onto a EUR cash balance.
+     *
+     * <p>The upper bound at {@code anchorDay} matters as much as the FX conversion:
+     * {@link BackfillSourceRepository#bookPositions} has no date filter and returns every
+     * position of the connection, including ones opened after the anchor. Their cash is
+     * already outside {@code anchor.cash()} — the anchor is a snapshot of that day, not of
+     * the account's whole future — so including them here would double-count a purchase that
+     * has not happened yet as of any day being reconstructed, and would do so at every single
+     * day AND at the anchor's own seam check, turning the one guard the design relies on into
+     * a false negative.
+     *
+     * <p>An event whose date has no FX rate at all (not even a carried-forward one) is
+     * recorded in {@code missingBars} rather than silently dropped — unlike a plain lookup
+     * miss on a holding's price, a missing cash-side FX rate would otherwise vanish from every
+     * signal the caller has (no exception, no missingBars entry, no log line), and it is most
+     * likely to happen for the oldest positions, which is exactly what this backfill exists to
+     * recover.
      */
     private static BigDecimal netCashAfterInAccountCurrency(PositionLedger.Ledger ledger,
                                                              NavigableMap<LocalDate, BigDecimal> fx,
-                                                             LocalDate d) {
+                                                             LocalDate d, LocalDate anchorDay,
+                                                             List<String> missingBars) {
         BigDecimal sum = BigDecimal.ZERO;
         for (PositionLedger.CashEvent e : ledger.events()) {
-            if (!e.date().isAfter(d)) continue;
+            if (!e.date().isAfter(d) || e.date().isAfter(anchorDay)) continue;
             BigDecimal rate = at(fx, e.date());
-            if (rate == null) continue;
+            if (rate == null) {
+                missingBars.add(e.symbol() + "@" + e.date() + " (cash event, no FX rate)");
+                continue;
+            }
             sum = sum.add(e.amount().divide(rate, 6, RoundingMode.HALF_UP));
         }
         return sum;

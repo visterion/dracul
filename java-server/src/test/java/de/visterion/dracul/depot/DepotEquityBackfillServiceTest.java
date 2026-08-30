@@ -123,18 +123,22 @@ class DepotEquityBackfillServiceTest {
 
     @Test
     void priceAndFxAreAppliedPerDayNotOnce() {
+        // FX also varies (D3 = 2.5, everywhere else 2.0) so a lookup pinned to the wrong day
+        // — anchorDay instead of d, for either the price or the FX rate — changes the result.
+        // A constant FX across the whole fixture would make an "at(fx, d) -> at(fx, anchorDay)"
+        // mutation a no-op regardless of how the production code is written.
         var f = fixture(
                 List.of(open("AAA", "10", "20.00", D2)),
                 Map.of("AAA", new BigDecimal("10")),
                 Map.of(D2, "20.00", D3, "30.00", D4, "20.00"),
-                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                Map.of(D2, "2.0", D3, "2.5", D4, "2.0"),
                 new BigDecimal("500.00"), new BigDecimal("400.00"));
 
         f.service().run("c1");
 
         var written = writtenEquities(f.repo());
-        assertThat(written.get(D2)).isEqualByComparingTo("500.00");   // 400 + 200/2
-        assertThat(written.get(D3)).isEqualByComparingTo("550.00");   // 400 + 300/2
+        assertThat(written.get(D2)).isEqualByComparingTo("500.00");   // 400 + 200/2.0
+        assertThat(written.get(D3)).isEqualByComparingTo("520.00");   // 400 + 300/2.5
     }
 
     @Test
@@ -154,7 +158,13 @@ class DepotEquityBackfillServiceTest {
         var report = f.service().run("c1");
 
         assertThat(report.missingBars()).anySatisfy(s -> assertThat(s).contains("AAA"));
+        // The carried-forward day must NOT be reported as a hole — that is the other half of
+        // the rule this test exists to pin.
+        assertThat(report.missingBars()).noneMatch(s -> s.contains("@" + D3));
         assertThat(writtenEquities(f.repo()).get(D3)).isEqualByComparingTo("500.00");
+        // d1 has no preceding close at all, so the day must be skipped entirely rather than
+        // written with a partial equity that silently drops the unpriced holding.
+        assertThat(writtenEquities(f.repo())).doesNotContainKey(d1);
     }
 
     @Test
@@ -222,6 +232,49 @@ class DepotEquityBackfillServiceTest {
 
         assertThat(writtenEquities(repo).keySet())
                 .allSatisfy(d -> assertThat(d.getDayOfWeek().getValue()).isLessThan(6));
+    }
+
+    @Test
+    void positionsAfterTheAnchorDoNotShiftTheCurve() {
+        // BackfillSourceRepository.bookPositions has no date filter, so the book can contain a
+        // position opened after the anchor. Its cash is already outside anchor.cash() (the
+        // anchor is a snapshot of that one day, not of the account's future) and must not be
+        // added again to every reconstructed day, or to the seam check itself.
+        LocalDate afterAnchor = LocalDate.of(2026, 3, 10);
+        var f = fixture(
+                List.of(open("AAA", "10", "20.00", D2), open("BBB", "5", "50.00", afterAnchor)),
+                Map.of("AAA", new BigDecimal("10"), "BBB", new BigDecimal("5")),
+                Map.of(D2, "20.00", D3, "20.00", D4, "20.00"),
+                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+
+        var report = f.service().run("c1");
+
+        assertThat(report.seamDelta()).isEqualByComparingTo("0.00");
+        var written = writtenEquities(f.repo());
+        assertThat(written.get(D2)).isEqualByComparingTo("500.00");
+        assertThat(written.get(D3)).isEqualByComparingTo("500.00");
+    }
+
+    @Test
+    void reconstructionDoesNotReachBeyondOneDayBeforeTheFirstEntry() {
+        // The fetched window reaches far back (400 days in production); the reconstruction
+        // must still stop one trading day before the first purchase, not wherever the bar data
+        // happens to start. Everything earlier would be a flat line asserting the account
+        // already held its full capital long before it existed.
+        LocalDate farBack = LocalDate.of(2026, 2, 20);
+        var f = fixture(
+                List.of(open("AAA", "10", "20.00", D3)),
+                Map.of("AAA", new BigDecimal("10")),
+                Map.of(farBack, "20.00", D2, "20.00", D3, "20.00", D4, "20.00"),
+                Map.of(farBack, "2.0", D2, "2.0", D3, "2.0", D4, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+
+        f.service().run("c1");
+
+        var written = writtenEquities(f.repo());
+        assertThat(written).doesNotContainKey(farBack);
+        assertThat(written.keySet()).allSatisfy(d -> assertThat(d).isAfterOrEqualTo(D2));
     }
 
     @Test
