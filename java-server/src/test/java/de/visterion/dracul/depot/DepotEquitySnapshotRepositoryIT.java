@@ -11,6 +11,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -326,5 +327,62 @@ class DepotEquitySnapshotRepositoryIT {
         assertThat(row.cash()).isEqualByComparingTo("50.00");
         assertThat(row.positionsValue()).isEqualByComparingTo("70.00");
         assertThat(sourceOf("conn-1", DAY)).isEqualTo("RECONSTRUCTED");
+    }
+
+    @Test
+    void deleteStaleReconstructedNeverTouchesAMeasuredRow() {
+        // The one guarantee that makes this DELETE safe to run before every write: a MEASURED
+        // row is a real observation of the account, and no reconstruction may remove it — not
+        // even one dated before the anchor, which is what a backdated measurement or a manual
+        // insert would look like.
+        Instant measuredEarlier = DAY.minus(java.time.Duration.ofDays(3));
+        Instant reconstructed = DAY.minus(java.time.Duration.ofDays(2));
+        repo.upsert("conn-1", measuredEarlier, "DAILY",
+                new BigDecimal("90.00"), new BigDecimal("30.00"), "EUR");
+        repo.upsertReconstructed("conn-1", reconstructed, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+
+        int deleted = repo.deleteStaleReconstructedBefore("conn-1", "DAILY", DAY, List.of());
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(sourceOf("conn-1", measuredEarlier)).isEqualTo("MEASURED");
+        assertThat(repo.series("conn-1", "DAILY", measuredEarlier))
+                .extracting(DepotEquitySnapshot::asOf)
+                .containsExactly(measuredEarlier);
+    }
+
+    @Test
+    void deleteStaleReconstructedKeepsTheDaysHandedToIt() {
+        Instant kept = DAY.minus(java.time.Duration.ofDays(2));
+        Instant stale = DAY.minus(java.time.Duration.ofDays(4));
+        repo.upsertReconstructed("conn-1", kept, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+        repo.upsertReconstructed("conn-1", stale, "DAILY",
+                new BigDecimal("80.00"), new BigDecimal("20.00"), "EUR");
+
+        int deleted = repo.deleteStaleReconstructedBefore("conn-1", "DAILY", DAY, List.of(kept));
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repo.series("conn-1", "DAILY", stale))
+                .extracting(DepotEquitySnapshot::asOf)
+                .containsExactly(kept);
+    }
+
+    @Test
+    void deleteStaleReconstructedStopsAtTheAnchorAndAtTheConnection() {
+        Instant afterAnchor = DAY.plus(java.time.Duration.ofDays(1));
+        Instant beforeAnchor = DAY.minus(java.time.Duration.ofDays(1));
+        repo.upsertReconstructed("conn-1", afterAnchor, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+        repo.upsertReconstructed("conn-2", beforeAnchor, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+        repo.upsertReconstructed("conn-1", beforeAnchor, "INTRADAY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+
+        int deleted = repo.deleteStaleReconstructedBefore("conn-1", "DAILY", DAY, List.of());
+
+        assertThat(deleted).isZero();
+        assertThat(sourceOf("conn-1", afterAnchor)).isEqualTo("RECONSTRUCTED");
+        assertThat(sourceOf("conn-2", beforeAnchor)).isEqualTo("RECONSTRUCTED");
     }
 }

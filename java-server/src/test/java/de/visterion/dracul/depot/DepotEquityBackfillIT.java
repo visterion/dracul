@@ -108,6 +108,20 @@ class DepotEquityBackfillIT {
                 VALUES (gen_random_uuid(), timestamptz '2026-03-01 09:00:00+00', 'v1', 'test',
                         'SYNC', 'QTY_SYNC', 'AAA', '{"position_id": "900"}'::jsonb)""").update();
 
+        // Decoy: a QTY_SYNC row inside position 900's time window (after its entry_date, before
+        // the real 03-04 sync) that belongs to a DIFFERENT position. It exists only to make the
+        // subquery's exact-identity binding ("q.order_json->>'position_id' = p.id::text")
+        // load-bearing: without it this 03-03 row would win the MIN(ts_decision), dating
+        // tranche 2 a day early and flipping the cash assertions in
+        // qtySyncDateSplitsTheHoldingAcrossTranches. There is no foreign key on position_id,
+        // so no executor_position row is needed for 999.
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, reason_code,
+                        symbol, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 18:00:00+00', 'v1', 'test',
+                        'SYNC', 'QTY_SYNC', 'AAA', '{"position_id": "999"}'::jsonb)""").update();
+
         // Position 901 belongs to a DIFFERENT connection (c2), a different symbol (BBB), and
         // its own signal. Nothing below runs the backfill for c2 -- its only job is to prove
         // bookPositions' "WHERE p.connection = :connection" actually filters: if it didn't,
@@ -162,7 +176,8 @@ class DepotEquityBackfillIT {
         // The left edge is the first bar day at-or-after firstEntry (2026-03-03): AAA's bars
         // start exactly there, so there is no earlier bar day to open the window one day
         // early on. The window is [03-03, 03-04] -- two reconstructed days, not the anchor.
-        assertThat(report.daysWritten()).isEqualTo(2);
+        assertThat(report.daysInserted()).isEqualTo(2);
+        assertThat(report.daysCorrected()).isZero();
         // Pins the anchor rule where it is actually named: a fresh run must not "unchange"
         // anything, only write. (aSecondRunWritesNothing is the idempotency case; this one is
         // the first-run case, and the two must not be conflated -- a mutation that makes the
@@ -180,8 +195,10 @@ class DepotEquityBackfillIT {
 
         var second = service.run("c1");
 
-        assertThat(second.daysWritten()).isZero();
+        assertThat(second.daysInserted()).isZero();
+        assertThat(second.daysCorrected()).isZero();
         assertThat(second.daysUnchanged()).isEqualTo(2);
+        assertThat(second.daysDeletedStale()).isZero();
     }
 
     @Test
@@ -230,6 +247,46 @@ class DepotEquityBackfillIT {
         var report = service.run("c1");
 
         assertThat(report.excludedPositions()).isEmpty();
+    }
+
+    /**
+     * A re-run after the book improves usually NARROWS the window — a position turns out never
+     * to have been filled, or drops out of the broker's holdings, and the first holding date
+     * moves right. The rows an earlier, wider run wrote before that date are computed from
+     * numbers this run considers wrong; left behind they are drawn dashed and connected as if
+     * they belonged to this reconstruction.
+     *
+     * <p>The measured rows in the same table must survive untouched, which is what the anchor
+     * (2026-03-05) and the later measured row (2026-03-06) assert here; the source and anchor
+     * bounds themselves are pinned directly in
+     * {@code DepotEquitySnapshotRepositoryIT.deleteStaleReconstructedNeverTouchesAMeasuredRow}.
+     */
+    @Test
+    void aReconstructedRowOutsideTheCurrentWindowIsDeletedWhileMeasuredRowsSurvive() {
+        Instant stale = Instant.parse("2026-03-02T00:00:00Z");
+        Instant laterMeasured = Instant.parse("2026-03-06T00:00:00Z");
+        snapshots.upsertReconstructed("c1", stale, "DAILY",
+                new BigDecimal("111.00"), new BigDecimal("111.00"), "EUR");
+        snapshots.upsert("c1", laterMeasured, "DAILY",
+                new BigDecimal("510.00"), new BigDecimal("410.00"), "EUR");
+
+        var report = service.run("c1");
+
+        assertThat(report.daysDeletedStale()).isEqualTo(1);
+        assertThat(rowsAt("2026-03-02")).isZero();
+        assertThat(sourceAt("2026-03-05")).isEqualTo("MEASURED");
+        assertThat(sourceAt("2026-03-06")).isEqualTo("MEASURED");
+        assertThat(sourceAt("2026-03-03")).isEqualTo("RECONSTRUCTED");
+        assertThat(sourceAt("2026-03-04")).isEqualTo("RECONSTRUCTED");
+    }
+
+    private int rowsAt(String day) {
+        return jdbc.sql("""
+                SELECT count(*) FROM depot_equity_snapshot
+                 WHERE connection = 'c1' AND granularity = 'DAILY' AND as_of = :a""")
+                .param("a", Timestamp.from(Instant.parse(day + "T00:00:00Z")))
+                .query(Integer.class)
+                .single();
     }
 
     private String sourceAt(String day) {

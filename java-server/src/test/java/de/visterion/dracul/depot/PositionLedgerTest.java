@@ -111,19 +111,17 @@ class PositionLedgerTest {
     }
 
     @Test
-    void netCashAfterAddsBuysAndSubtractsSells() {
+    void eventsCarryTheBuyOutAndTheSaleIn() {
+        // The service reads events() directly (converting each at its own date's FX rate and
+        // bounding them at the anchor), so the events themselves are what the tests assert on.
         var p = single("AAA", new BigDecimal("10"), new BigDecimal("20.00"), D1,
                 new BigDecimal("22.00"), D3);
 
         var l = PositionLedger.build(List.of(p), Map.of());
 
-        // After D0: buy 200 flowed out, sell 220 flowed in -> net -20 to undo
-        assertThat(l.netCashAfter(LocalDate.of(2026, 3, 1)))
-                .isEqualByComparingTo(new BigDecimal("-20.00"));
-        // After D1 the buy has already happened; only the sell is still ahead
-        assertThat(l.netCashAfter(D1)).isEqualByComparingTo(new BigDecimal("-220.00"));
-        // After the sell, nothing is left
-        assertThat(l.netCashAfter(D3)).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(l.events()).containsExactly(
+                new PositionLedger.CashEvent(D1, "AAA", new BigDecimal("200.00")),
+                new PositionLedger.CashEvent(D3, "AAA", new BigDecimal("-220.00")));
     }
 
     @Test
@@ -150,8 +148,8 @@ class PositionLedgerTest {
         var l = PositionLedger.build(List.of(p), Map.of("AAA", new BigDecimal("10")));
 
         assertThat(l.holdingsOn(D1)).containsEntry("AAA", new BigDecimal("10"));
-        assertThat(l.netCashAfter(LocalDate.of(2026, 3, 1)))
-                .isEqualByComparingTo(new BigDecimal("200.00"));
+        assertThat(l.events()).containsExactly(
+                new PositionLedger.CashEvent(D1, "AAA", new BigDecimal("200.00")));
         assertThat(l.excluded()).anySatisfy(s -> assertThat(s).contains("AAA"));
     }
 
@@ -167,7 +165,14 @@ class PositionLedgerTest {
 
         assertThat(l.holdingsOn(D2)).containsEntry("AAA", new BigDecimal("10"));
         assertThat(l.holdingsOn(D3)).isEmpty();
-        assertThat(l.events()).noneMatch(e -> e.amount().compareTo(new BigDecimal("400.00")) == 0);
+        // The exit must sell the 10 shares that were BOOKED, not the book row's 30: with
+        // tranche 2 dropped, an exit of 30 * 22.00 would hand the reconstruction 660 of
+        // proceeds for shares this ledger never says were held, and the backwards pass would
+        // carry that 440 error across the whole span left of the close. Nothing in the seam
+        // check would see it — the position closes before the anchor.
+        assertThat(l.events()).containsExactly(
+                new PositionLedger.CashEvent(D1, "AAA", new BigDecimal("200.00")),
+                new PositionLedger.CashEvent(D3, "AAA", new BigDecimal("-220.00")));
         assertThat(l.excluded()).anySatisfy(s -> assertThat(s).contains("AAA"));
     }
 
@@ -179,7 +184,13 @@ class PositionLedgerTest {
 
         var l = PositionLedger.build(List.of(p), Map.of());
 
-        assertThat(l.events()).noneMatch(e -> e.amount().signum() < 0);
+        // "Excluded" must mean excluded: the buy and the holding go with the missing sale.
+        // Keeping them would leave every day left of the close inflated by the sale proceeds
+        // that were never booked — value appearing out of nothing, invisible to the seam
+        // check because the position closes before the anchor.
+        assertThat(l.events()).isEmpty();
+        assertThat(l.holdings()).isEmpty();
+        assertThat(l.holdingsOn(D2)).isEmpty();
         assertThat(l.excluded()).anySatisfy(s -> assertThat(s).contains("AAA"));
     }
 }

@@ -28,13 +28,14 @@ class DepotEquityBackfillControllerTest {
     @Test
     void aConnectionWithNoPositionsAnswers200WithAnEmptyReport() throws Exception {
         var empty = new DepotEquityBackfillService.BackfillReport(
-                "c1", null, null, 0, 0, 0, java.util.List.of(), java.util.List.of(), null, null);
+                "c1", null, null, 0, 0, 0, 0, 0,
+                java.util.List.of(), java.util.List.of(), null, null);
         when(service.run("c1")).thenReturn(empty);
 
         mvc.perform(post("/api/depots/c1/equity/backfill"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.connection").value("c1"))
-                .andExpect(jsonPath("$.daysWritten").value(0));
+                .andExpect(jsonPath("$.daysInserted").value(0));
     }
 
     @Test

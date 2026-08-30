@@ -16,6 +16,13 @@ import java.util.Map;
  *
  * <p>Amounts stay in the position's own currency. Conversion is a later step's job, because
  * only it knows the per-day FX rate.
+ *
+ * <p><b>The invariant this class exists to keep:</b> a position's exit event sells exactly the
+ * quantity that was booked into its holdings — never the raw book quantity. Every partial
+ * exclusion below (a clamped tranche 1, a dropped tranche 2) reduces what is held, and an exit
+ * event derived from {@code p.qty()} instead would invent sale proceeds for shares this ledger
+ * never says were owned. {@link #assertExitSellsExactlyWhatWasHeld} pins that per position, so
+ * the failure is a loud exception rather than a plausible-looking curve.
  */
 public final class PositionLedger {
 
@@ -37,18 +44,6 @@ public final class PositionLedger {
                 out.merge(h.symbol(), h.qty(), BigDecimal::add);
             }
             return out;
-        }
-
-        /**
-         * Net cash movement strictly after {@code d}. The backwards pass adds this to the
-         * anchor's cash: a buy that happened later must be given back, a sale taken away.
-         */
-        public BigDecimal netCashAfter(LocalDate d) {
-            BigDecimal sum = BigDecimal.ZERO;
-            for (CashEvent e : events) {
-                if (e.date().isAfter(d)) sum = sum.add(e.amount());
-            }
-            return sum;
         }
     }
 
@@ -96,8 +91,14 @@ public final class PositionLedger {
             BigDecimal t2 = p.qty().subtract(t1);
             LocalDate t2Date = p.qtySyncDate() != null ? p.qtySyncDate() : p.entryDate().plusDays(1);
 
-            holdings.add(new Holding(p.symbol(), t1, p.entryDate(), p.closedAt()));
-            events.add(new CashEvent(p.entryDate(), p.symbol(), t1.multiply(p.entryPrice())));
+            // Built per position and only merged into the ledger once the position survives
+            // every exclusion below. An exclusion that left half of these behind is exactly
+            // the silent value loss this feature was written to end.
+            List<Holding> posHoldings = new ArrayList<>();
+            List<CashEvent> posEvents = new ArrayList<>();
+
+            posHoldings.add(new Holding(p.symbol(), t1, p.entryDate(), p.closedAt()));
+            posEvents.add(new CashEvent(p.entryDate(), p.symbol(), t1.multiply(p.entryPrice())));
 
             if (t2.signum() > 0) {
                 if (p.closedAt() != null && !t2Date.isBefore(p.closedAt())) {
@@ -106,23 +107,66 @@ public final class PositionLedger {
                     excluded.add(p.symbol() + ": tranche 2 dated " + t2Date
                             + " is not before the close " + p.closedAt() + " — dropped");
                 } else {
-                    holdings.add(new Holding(p.symbol(), t2, t2Date, p.closedAt()));
-                    events.add(new CashEvent(t2Date, p.symbol(), t2.multiply(p.entryPrice())));
+                    posHoldings.add(new Holding(p.symbol(), t2, t2Date, p.closedAt()));
+                    posEvents.add(new CashEvent(t2Date, p.symbol(), t2.multiply(p.entryPrice())));
                 }
             }
 
             if (p.closedAt() != null) {
                 if (p.exitPrice() == null) {
-                    // Without an exit price the holdings end but no sale cash arrives, so the
-                    // curve would simply lose the position's value with no trace.
+                    // A REAL exclusion: holdings and buy event go too. Keeping them while no
+                    // sale event can be derived would inflate every day left of the close by
+                    // the missing proceeds — the "+6.4 % while the broker reported a loss"
+                    // failure this feature replaces, rebuilt inside the replacement. Excluding
+                    // rather than aborting the whole run is deliberate: one unpriced close is
+                    // a named gap in the report, and a gap is honest; aborting would leave the
+                    // operator with no curve at all for a single bad row.
                     excluded.add(p.symbol() + ": closed on " + p.closedAt()
-                            + " with no exit price — sale proceeds unknown");
-                } else {
-                    events.add(new CashEvent(p.closedAt(), p.symbol(),
-                            p.qty().multiply(p.exitPrice()).negate()));
+                            + " with no exit price — sale proceeds unknown, position excluded"
+                            + " entirely (holdings and purchase dropped with it)");
+                    continue;
                 }
+                // The exit sells what was BOOKED, not p.qty(): a clamped tranche 1 or a
+                // dropped tranche 2 means fewer shares are held than the book row claims.
+                BigDecimal heldQty = BigDecimal.ZERO;
+                for (Holding h : posHoldings) heldQty = heldQty.add(h.qty());
+                posEvents.add(new CashEvent(p.closedAt(), p.symbol(),
+                        heldQty.multiply(p.exitPrice()).negate()));
             }
+
+            assertExitSellsExactlyWhatWasHeld(p, posHoldings, posEvents);
+            holdings.addAll(posHoldings);
+            events.addAll(posEvents);
         }
         return new Ledger(List.copyOf(events), List.copyOf(holdings), List.copyOf(excluded));
+    }
+
+    /**
+     * The ledger's core invariant, checked per position: the quantity summed over the
+     * position's holdings is exactly the quantity its exit event sells. Re-derived from the
+     * two built lists rather than from the running totals above, so that a future edit which
+     * sells {@code p.qty()} again — or which drops a holding but keeps its exit — trips here
+     * instead of shipping a curve that is wrong by the difference.
+     *
+     * <p>Checked against the event AMOUNT ({@code heldQty * exitPrice}), which is the same
+     * statement as long as the exit price is non-zero; a zero exit price makes the sale
+     * proceeds zero either way and there is nothing left to distinguish.
+     */
+    private static void assertExitSellsExactlyWhatWasHeld(BookPosition p, List<Holding> posHoldings,
+                                                          List<CashEvent> posEvents) {
+        if (p.exitPrice() == null) return;   // no sale event can exist without a price
+        BigDecimal heldQty = BigDecimal.ZERO;
+        for (Holding h : posHoldings) heldQty = heldQty.add(h.qty());
+        for (CashEvent e : posEvents) {
+            if (e.amount().signum() >= 0) continue;   // a purchase, not the sale
+            BigDecimal expected = heldQty.multiply(p.exitPrice()).negate();
+            if (e.amount().compareTo(expected) != 0) {
+                throw new IllegalStateException(
+                        "ledger invariant violated for " + p.symbol() + " (position " + p.id()
+                        + "): holdings total " + heldQty + " shares, so the exit at "
+                        + p.exitPrice() + " must be " + expected + " but is " + e.amount()
+                        + " — an exclusion left the position half in the ledger");
+            }
+        }
     }
 }

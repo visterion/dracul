@@ -59,8 +59,20 @@ public class DepotEquityBackfillService {
         }
     }
 
+    /**
+     * {@code daysInserted} and {@code daysCorrected} are kept apart on purpose. For a feature
+     * whose whole point is repeatability, "180 written" reading identically for a first run
+     * and for a run that silently changed 180 existing numbers is the wrong granularity: the
+     * second case means the inputs moved and deserves a look. The split comes from
+     * {@link DepotEquitySnapshotRepository.SnapshotWrite#inserted}, i.e. from Postgres's
+     * {@code (xmax = 0)}, not from a guess in this class.
+     *
+     * <p>{@code daysDeletedStale} counts RECONSTRUCTED rows an earlier, wider run left behind
+     * (see {@link DepotEquitySnapshotRepository#deleteStaleReconstructedBefore}).
+     */
     public record BackfillReport(String connection, String from, String to,
-                                 int daysWritten, int daysUnchanged, int daysSkippedUnpriced,
+                                 int daysInserted, int daysCorrected, int daysUnchanged,
+                                 int daysSkippedUnpriced, int daysDeletedStale,
                                  List<String> missingBars, List<String> excludedPositions,
                                  BigDecimal seamDelta, BigDecimal seamDeltaPct) {
     }
@@ -102,11 +114,11 @@ public class DepotEquityBackfillService {
             }
         }
         if (book.isEmpty()) {
-            return new BackfillReport(connection, null, null, 0, 0, 0,
+            return new BackfillReport(connection, null, null, 0, 0, 0, 0, 0,
                     List.of(), List.of(), null, null);
         }
 
-        Map<String, BigDecimal> brokerQty = brokerHoldings(connection, currency);
+        Map<String, BigDecimal> brokerQty = brokerHoldings(connection);
         PositionLedger.Ledger ledger = PositionLedger.build(book, brokerQty);
 
         // The left edge is derived from the LEDGER's real holdings, not from the raw book: a
@@ -119,7 +131,7 @@ public class DepotEquityBackfillService {
         if (firstHoldingDate.isEmpty()) {
             // Every book position was excluded — there is no real holding to reconstruct a
             // curve from, though the exclusions themselves are still worth surfacing.
-            return new BackfillReport(connection, null, null, 0, 0, 0,
+            return new BackfillReport(connection, null, null, 0, 0, 0, 0, 0,
                     List.of(), ledger.excluded(), null, null);
         }
         // entry_date is NOT NULL in the schema, so firstHoldingDate cannot be empty due to a
@@ -227,16 +239,45 @@ public class DepotEquityBackfillService {
             days.add(new ReconstructedDay(d, asOf, equity, cash));
         }
 
+        // tradingDays comes exclusively from fetched bar dates, so a weekday on which the
+        // market was closed (Thanksgiving, Good Friday, Labor Day) still carries a MEASURED
+        // snapshot row — the job runs on weekdays — but no bar. The anchor day then never
+        // enters the loop above and the seam check never runs at all, leaving seamDelta at its
+        // initial null: the SAME value that means "the anchor had an unpriced holding". Two
+        // very different situations must not read identically to the operator.
+        //
+        // The anchor is deliberately NOT added to tradingDays here. Doing so would seam-check
+        // the measured equity against a close carried forward from the previous bar day and
+        // produce a reassuring number out of stale data — worse than no number.
+        if (!tradingDays.contains(anchorDay)) {
+            missingBars.add("anchor@" + anchorDay + " (no bar, seam check not performed)");
+            log.warn("equity backfill [{}]: the anchor day {} has no bar of its own, so the "
+                            + "seam check was not performed; seamDelta stays null",
+                    connection, anchorDay);
+        }
+
         // Pass 2: write. Everything above already checked out, so a failure here (an Agora
         // call does not happen in this loop — only a database write) never leaves a half curve;
         // it leaves whatever prefix of this already-validated list made it to the database.
-        int written = 0;
+        // Before writing: drop RECONSTRUCTED rows an EARLIER, WIDER run left behind. The run
+        // must stay repeatable after the book improves, and "improves" often means the window
+        // SHRINKS — a position turns out never to have been filled, or drops out of the
+        // broker's holdings, and firstHoldingDate moves right. Without this, run 1's older
+        // rows survive as RECONSTRUCTED, computed from numbers this run considers wrong, and
+        // the chart draws them dashed and connected as if they belonged to the same
+        // reconstruction. (A day this run skipped as unpriced is stale by the same argument:
+        // this run cannot vouch for it, so it must not stay behind pretending it can.)
+        int deletedStale = repo.deleteStaleReconstructedBefore(connection, GRANULARITY,
+                anchor.asOf(), days.stream().map(ReconstructedDay::asOf).toList());
+
+        int inserted = 0;
+        int corrected = 0;
         int unchanged = 0;
         for (ReconstructedDay day : days) {
             Optional<DepotEquitySnapshotRepository.SnapshotWrite> w = repo.upsertReconstructed(
                     connection, day.asOf(), GRANULARITY, day.equity(), day.cash(), currency);
             if (w.isPresent()) {
-                written++;
+                if (w.get().inserted()) inserted++; else corrected++;
             } else if (day.date().isBefore(anchorDay)) {
                 // Expected: already RECONSTRUCTED with identical values (an ordinary re-run).
                 // The anchor is by definition the earliest MEASURED row (firstMeasured, ORDER
@@ -260,28 +301,39 @@ public class DepotEquityBackfillService {
         }
 
         BackfillReport report = new BackfillReport(connection, from.toString(), to.toString(),
-                written, unchanged, skippedUnpriced, List.copyOf(missingBars),
-                ledger.excluded(), seamDelta, seamDeltaPct);
-        log.info("equity backfill [{}]: {} written, {} unchanged, {} skipped-unpriced, "
-                        + "seamDelta {} ({}%)",
-                connection, written, unchanged, skippedUnpriced, seamDelta, seamDeltaPct);
+                inserted, corrected, unchanged, skippedUnpriced, deletedStale,
+                List.copyOf(missingBars), ledger.excluded(), seamDelta, seamDeltaPct);
+        log.info("equity backfill [{}]: {} inserted, {} corrected, {} unchanged, "
+                        + "{} skipped-unpriced, {} stale deleted, seamDelta {} ({}%)",
+                connection, inserted, corrected, unchanged, skippedUnpriced, deletedStale,
+                seamDelta, seamDeltaPct);
         return report;
     }
 
     /**
      * The broker's holdings on the anchor day. Used only to drop book-open positions the
-     * broker never received (spec §3.4) — a symbol in a third currency aborts the run,
-     * because the matching FX series would be missing and the error invisible.
+     * broker never received (spec §3.4).
+     *
+     * <p>Any currency other than USD aborts the run — including the ACCOUNT currency. Every
+     * consumer downstream values a holding as {@code qty * close / fx}, with a single
+     * {@code EURUSD=X} series and no per-position currency anywhere in the pipeline: a
+     * EUR-denominated position on a EUR account would be divided by the FX rate all the same
+     * and land in the curve understated by the full FX factor, with no missingBars entry, no
+     * exclusion and no log line. Admitting it here would deliberately open the door to exactly
+     * the silent value loss this feature exists to end. Carrying the currency all the way
+     * through the ledger and the per-day valuation is the honest alternative and a much larger
+     * change; until a non-USD holding actually exists, refusing to run is the smaller and the
+     * safer one.
      */
-    private Map<String, BigDecimal> brokerHoldings(String connection, String accountCurrency) {
+    private Map<String, BigDecimal> brokerHoldings(String connection) {
         Map<String, BigDecimal> out = new java.util.HashMap<>();
         for (DepotPosition p : depotClient.positions(connection).positions()) {
             String ccy = p.currency();
-            if (ccy != null && !"USD".equals(ccy) && !ccy.equals(accountCurrency)) {
+            if (ccy != null && !"USD".equals(ccy)) {
                 throw new BackfillConflictException(
                         "position " + p.symbol() + " is denominated in " + ccy
-                        + "; only USD and the account currency " + accountCurrency
-                        + " have an FX series here");
+                        + "; this backfill values every holding as close / EURUSD=X and can "
+                        + "only price USD positions");
             }
             out.put(p.symbol(), p.qty());
         }

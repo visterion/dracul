@@ -326,13 +326,109 @@ class DepotEquityBackfillServiceTest {
     }
 
     @Test
+    void anAnchorDayWithoutABarNamesTheUnperformedSeamCheck() {
+        // The snapshot job runs on weekdays, so a weekday the market was closed (Thanksgiving,
+        // Good Friday, Labor Day) leaves a MEASURED row with no OHLC bar behind it. The anchor
+        // day then never enters tradingDays, the seam block never runs, and seamDelta stays at
+        // its initial null — indistinguishable from "the anchor had an unpriced holding"
+        // unless the run says so. D4 (the anchor day) deliberately has no bar here.
+        var f = fixture(
+                List.of(open("AAA", "10", "20.00", D2)),
+                Map.of("AAA", new BigDecimal("10")),
+                Map.of(D2, "20.00", D3, "20.00"),
+                Map.of(D2, "2.0", D3, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+
+        var report = f.service().run("c1");
+
+        assertThat(report.seamDelta()).isNull();
+        assertThat(report.missingBars())
+                .anySatisfy(m -> assertThat(m).contains("anchor@" + D4).contains("seam check"));
+        // The days that DO have bars are still reconstructed — the missing seam check is a
+        // caveat on the run, not a reason to write nothing.
+        assertThat(writtenEquities(f.repo())).containsKeys(D2, D3);
+    }
+
+    @Test
+    void aPositionInTheAccountCurrencyAbortsInsteadOfBeingDividedByFx() {
+        // Every consumer values a holding as qty * close / fx, with one EURUSD=X series and no
+        // per-position currency anywhere. A EUR position on a EUR account would be divided by
+        // the FX rate all the same and land in the curve understated by the full factor, with
+        // no missingBars entry and no exclusion — silent value loss, which is the one thing
+        // this feature must never do.
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.firstMeasured("c1", "DAILY")).thenReturn(Optional.of(
+                new DepotEquitySnapshot(1L, "c1", ANCHOR, "DAILY", new BigDecimal("500.00"),
+                        new BigDecimal("400.00"), new BigDecimal("100.00"), "EUR",
+                        BigDecimal.ZERO, "MEASURED")));
+        var source = mock(BackfillSourceRepository.class);
+        when(source.bookPositions("c1"))
+                .thenReturn(List.of(open("AAA", "10", "20.00", D2)));
+        var depotClient = mock(AgoraDepotClient.class);
+        when(depotClient.positions("c1")).thenReturn(new PositionsSnapshot(
+                List.of(new DepotPosition("AAA", null, new BigDecimal("10"), null, null, null,
+                        "EUR", null, null)), null));
+        var service = new DepotEquityBackfillService(repo, source,
+                mock(de.visterion.dracul.marketdata.AgoraClient.class), depotClient);
+
+        assertThatThrownBy(() -> service.run("c1"))
+                .isInstanceOf(DepotEquityBackfillService.BackfillConflictException.class)
+                .hasMessageContaining("EUR");
+    }
+
+    @Test
+    void staleReconstructedRowsAreDeletedForExactlyTheDaysThisRunDidNotCompute() {
+        var f = fixture(
+                List.of(open("AAA", "10", "20.00", D2)),
+                Map.of("AAA", new BigDecimal("10")),
+                Map.of(D2, "20.00", D3, "20.00", D4, "20.00"),
+                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+        when(f.repo().deleteStaleReconstructedBefore(anyString(), anyString(), any(), any()))
+                .thenReturn(3);
+
+        var report = f.service().run("c1");
+
+        assertThat(report.daysDeletedStale()).isEqualTo(3);
+        @SuppressWarnings("unchecked")
+        var keep = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        var anchorArg = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        org.mockito.Mockito.verify(f.repo()).deleteStaleReconstructedBefore(
+                eq("c1"), eq("DAILY"), anchorArg.capture(), keep.capture());
+        assertThat(anchorArg.getValue()).isEqualTo(ANCHOR);
+        // The days this run computed must be kept; nothing else pre-anchor may survive.
+        assertThat(keep.getValue()).containsExactlyInAnyOrder(
+                D2.atStartOfDay(java.time.ZoneOffset.UTC).toInstant(),
+                D3.atStartOfDay(java.time.ZoneOffset.UTC).toInstant());
+    }
+
+    @Test
+    void aRunThatChangesExistingNumbersReportsCorrectionsNotInserts() {
+        // "180 written" must not read identically for a first run and for a run that silently
+        // changed 180 existing numbers — the second means the inputs moved.
+        var f = fixture(
+                List.of(open("AAA", "10", "20.00", D2)),
+                Map.of("AAA", new BigDecimal("10")),
+                Map.of(D2, "20.00", D3, "20.00", D4, "20.00"),
+                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+        when(f.repo().upsertReconstructed(anyString(), any(), anyString(), any(), any(), anyString()))
+                .thenReturn(Optional.of(new DepotEquitySnapshotRepository.SnapshotWrite(1L, false)));
+
+        var report = f.service().run("c1");
+
+        assertThat(report.daysCorrected()).isEqualTo(2);
+        assertThat(report.daysInserted()).isZero();
+    }
+
+    @Test
     void connectionWithoutPositionsWritesNothing() {
         var f = fixture(List.of(), Map.of(), Map.of(), Map.of(),
                 new BigDecimal("500.00"), new BigDecimal("500.00"));
 
         var report = f.service().run("c1");
 
-        assertThat(report.daysWritten()).isZero();
+        assertThat(report.daysInserted()).isZero();
     }
 
     private static Map<LocalDate, BigDecimal> writtenEquities(DepotEquitySnapshotRepository repo) {

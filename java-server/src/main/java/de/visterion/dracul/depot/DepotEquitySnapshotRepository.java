@@ -8,6 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -129,6 +130,49 @@ public class DepotEquitySnapshotRepository {
                 .param("currency", currency)
                 .query(SnapshotWrite.class)
                 .optional();
+    }
+
+    /**
+     * Deletes the RECONSTRUCTED rows of {@code (connection, granularity)} strictly before
+     * {@code anchor} whose {@code as_of} is not in {@code keep}, and returns how many went.
+     *
+     * <p>Why exactly this scope, and not one row more:
+     *
+     * <p>1. {@code source = 'RECONSTRUCTED'} — a MEASURED row is a real observation of the
+     * account and is never this run's to delete. The filter is in the SQL, not in the caller,
+     * for the same reason {@link #upsertReconstructed} keeps its source guard there: a check
+     * a later refactor can drop is not a guarantee.
+     *
+     * <p>2. {@code as_of < anchor} — everything at or after the anchor belongs to live
+     * measurement, which this backfill only ever reads.
+     *
+     * <p>3. {@code as_of NOT IN keep} — the days this run just computed stay, obviously; what
+     * goes is what an EARLIER, WIDER run wrote and this one no longer stands behind. The book
+     * improving usually means the window SHRINKS (a position that was never filled, or that
+     * dropped out of the broker's holdings, moves the first holding date right), and a
+     * leftover row from the previous window is a dashed point drawn from numbers the current
+     * run considers wrong.
+     *
+     * <p>With an empty {@code keep} the IN clause is omitted rather than rendered as
+     * {@code NOT IN ()}, which is a syntax error in Postgres. The semantics are the intended
+     * ones: a run that computes no day at all clears the whole pre-anchor reconstruction.
+     */
+    public int deleteStaleReconstructedBefore(String connection, String granularity,
+                                              Instant anchor, Collection<Instant> keep) {
+        String keepClause = keep.isEmpty() ? "" : "\n   AND as_of NOT IN (:keep)";
+        var spec = jdbc.sql("""
+                DELETE FROM depot_equity_snapshot
+                 WHERE connection = :connection
+                   AND granularity = :granularity
+                   AND source = 'RECONSTRUCTED'
+                   AND as_of < :anchor""" + keepClause)
+                .param("connection", connection)
+                .param("granularity", granularity)
+                .param("anchor", Timestamp.from(anchor));
+        if (!keep.isEmpty()) {
+            spec = spec.param("keep", keep.stream().map(Timestamp::from).toList());
+        }
+        return spec.update();
     }
 
     /** Rows at or after {@code from}, ascending. The boundary is inclusive. */
