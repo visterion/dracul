@@ -329,11 +329,19 @@ class DepotEquityBackfillIT {
                 VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
                         'ENTER', 'CCC', 'sig-902', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
         // depotClient is not stubbed for "c4" -> AgoraDepotClient mock returns null unless
-        // stubbed, so positions("c4") must be stubbed explicitly to an empty holdings list:
-        // CCC is open in the book but absent at the broker, which is exactly the exclusion
-        // PositionLedger.build applies -- see "open in the book, absent at the broker" there.
+        // stubbed, so positions("c4") must be stubbed explicitly. The broker answer carries one
+        // decoy holding for a symbol NOT in c4's book ("ZZZ") rather than an empty list: this
+        // is a genuine, non-degraded broker answer that simply does not mention CCC, which is
+        // exactly the "open in the book, absent at the broker" exclusion PositionLedger.build
+        // applies -- see that reasoning there. An EMPTY broker answer here would instead trip
+        // the new zero-broker-holdings guard in DepotEquityBackfillService (a book with an OPEN
+        // position pairing with zero total broker holdings, tested separately below), which
+        // is a different situation from this one: a real, non-empty broker report that simply
+        // does not carry this one symbol.
         var depotClient = mock(AgoraDepotClient.class);
-        when(depotClient.positions("c4")).thenReturn(new PositionsSnapshot(List.of(), null));
+        when(depotClient.positions("c4")).thenReturn(new PositionsSnapshot(
+                List.of(new DepotPosition("ZZZ", null, new BigDecimal("1"), null, null, null,
+                        "USD", null, null)), null));
         var agora = mock(de.visterion.dracul.marketdata.AgoraClient.class);
         when(agora.callTool(eq("get_ohlc"), any())).thenAnswer(inv -> bars(
                 inv.getArgument(1, JsonNode.class).path("symbol").asString()));
@@ -353,6 +361,88 @@ class DepotEquityBackfillIT {
         assertThat(rowsAt("2026-03-02", "c4")).isZero();
         assertThat(sourceAt("2026-03-05", "c4")).isEqualTo("MEASURED");
         assertThat(report.excludedPositions()).isNotEmpty();
+    }
+
+    /**
+     * The guard's whole reason to exist: a degraded broker answer (an HTTP 200 with an
+     * unexpected shape, see {@code AgoraDepotClient.positions()}) silently degrades into ZERO
+     * holdings, indistinguishable from a real empty account. With the stale-delete hoisted
+     * above both early returns (commit 874b2889), an unguarded run here would read the empty
+     * broker answer as "every OPEN position is absent at the broker", empty the ledger, take
+     * the {@code firstHoldingDate.isEmpty()} path, and irrecoverably delete every seeded
+     * RECONSTRUCTED row below. Position 900 is OPEN in the book (seeded in {@code seed()}); the
+     * depotClient here answers with zero holdings for c1 instead of the AAA holding the default
+     * stub provides.
+     *
+     * <p>The surviving-rows assertion is the point of this test, not the thrown exception
+     * alone -- an exception thrown AFTER the delete already ran would pass a naive
+     * assertThrows-only test while still having wiped the curve.
+     */
+    @Test
+    void aDegradedZeroBrokerAnswerIsRefusedRatherThanReadAsAnEmptyAccount() {
+        Instant stale = Instant.parse("2026-03-02T00:00:00Z");
+        snapshots.upsertReconstructed("c1", stale, "DAILY",
+                new BigDecimal("111.00"), new BigDecimal("111.00"), "EUR");
+
+        var degradedDepotClient = mock(AgoraDepotClient.class);
+        when(degradedDepotClient.positions("c1")).thenReturn(new PositionsSnapshot(List.of(), null));
+        var agora = mock(de.visterion.dracul.marketdata.AgoraClient.class);
+        when(agora.callTool(eq("get_ohlc"), any())).thenAnswer(inv -> bars(
+                inv.getArgument(1, JsonNode.class).path("symbol").asString()));
+        var guardedService = new DepotEquityBackfillService(snapshots,
+                new BackfillSourceRepository(jdbc), agora, degradedDepotClient);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> guardedService.run("c1"))
+                .isInstanceOf(DepotEquityBackfillService.BackfillConflictException.class);
+
+        assertThat(rowsAt("2026-03-02")).isEqualTo(1);
+        assertThat(sourceAt("2026-03-02")).isEqualTo("RECONSTRUCTED");
+    }
+
+    /**
+     * The guard must not be broader than the degraded-answer case it exists for: a book of
+     * only CLOSED positions legitimately pairs with zero broker holdings -- a normal,
+     * fully-liquidated account -- and must still reach the existing fully-excluded behaviour
+     * (stale rows deleted, {@code daysDeletedStale} reported, the MEASURED anchor untouched).
+     * Position 903 here is CLOSED, not OPEN, so {@code book.stream().anyMatch(OPEN)} is false
+     * and the guard must not fire.
+     */
+    @Test
+    void aClosedOutBookWithNoBrokerHoldingsIsNotBlockedByTheGuard() {
+        jdbc.sql("""
+                INSERT INTO executor_position
+                       (id, connection, symbol, side, qty, entry_price, initial_stop,
+                        active_stop, entry_date, status, source_signal_id, exit_price, closed_at)
+                VALUES (903, 'c5', 'DDD', 'BUY', 5, 10.00, 8.00, 8.00,
+                        timestamptz '2026-03-03 14:00:00+00', 'CLOSED', 'sig-903',
+                        12.00, timestamptz '2026-03-04 14:00:00+00')""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, symbol,
+                        signal_id, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
+                        'ENTER', 'DDD', 'sig-903', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
+
+        var depotClient = mock(AgoraDepotClient.class);
+        when(depotClient.positions("c5")).thenReturn(new PositionsSnapshot(List.of(), null));
+        var agora = mock(de.visterion.dracul.marketdata.AgoraClient.class);
+        when(agora.callTool(eq("get_ohlc"), any())).thenAnswer(inv -> bars(
+                inv.getArgument(1, JsonNode.class).path("symbol").asString()));
+        var closedOutService = new DepotEquityBackfillService(snapshots,
+                new BackfillSourceRepository(jdbc), agora, depotClient);
+
+        Instant anchor = Instant.parse("2026-03-05T00:00:00Z");
+        snapshots.upsert("c5", anchor, "DAILY",
+                new BigDecimal("500.00"), new BigDecimal("400.00"), "EUR");
+        Instant stale = Instant.parse("2026-03-02T00:00:00Z");
+        snapshots.upsertReconstructed("c5", stale, "DAILY",
+                new BigDecimal("111.00"), new BigDecimal("111.00"), "EUR");
+
+        var report = closedOutService.run("c5");
+
+        assertThat(report.daysDeletedStale()).isEqualTo(1);
+        assertThat(rowsAt("2026-03-02", "c5")).isZero();
+        assertThat(sourceAt("2026-03-05", "c5")).isEqualTo("MEASURED");
     }
 
     private int rowsAt(String day) {

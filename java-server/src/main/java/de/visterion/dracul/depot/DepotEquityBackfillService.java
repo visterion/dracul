@@ -120,11 +120,33 @@ public class DepotEquityBackfillService {
             // as stale as if the window had merely shrunk — they must not survive untouched.
             int deleted = repo.deleteStaleReconstructedBefore(connection, GRANULARITY,
                     anchor.asOf(), List.of());
+            log.info("equity backfill [{}]: {} stale reconstructed row(s) deleted (book empty)",
+                    connection, deleted);
             return new BackfillReport(connection, null, null, 0, 0, 0, 0, deleted,
                     List.of(), List.of(), null, null);
         }
 
         Map<String, BigDecimal> brokerQty = brokerHoldings(connection);
+
+        // An HTTP-200-but-degraded broker answer (AgoraDepotClient.positions() silently
+        // returns an empty list for an unexpected response shape, see its javadoc) must not
+        // be read as "this account is fully liquidated". A book with at least one position
+        // still OPEN pairs with zero broker holdings only in a degraded-answer scenario; a
+        // book of only CLOSED positions legitimately pairs with zero broker holdings (a
+        // normal, fully-liquidated account) and must still reach the exclusion path below.
+        // "OPEN" is the same status PositionLedger.build checks before applying its own
+        // "open in the book, absent at the broker" exclusion — this guard fires strictly
+        // before that per-position exclusion can turn every open position into an excluded
+        // one and empty the ledger entirely.
+        if (brokerQty.isEmpty()) {
+            long stillOpen = book.stream().filter(p -> "OPEN".equals(p.status())).count();
+            if (stillOpen > 0) {
+                throw new BackfillConflictException(
+                        "the book still holds " + stillOpen + " open position(s) but the broker "
+                        + "reported none — refusing to treat that as an empty account");
+            }
+        }
+
         PositionLedger.Ledger ledger = PositionLedger.build(book, brokerQty);
 
         // The left edge is derived from the LEDGER's real holdings, not from the raw book: a
@@ -142,6 +164,8 @@ public class DepotEquityBackfillService {
             // apply to a book that no longer supports any of them.
             int deleted = repo.deleteStaleReconstructedBefore(connection, GRANULARITY,
                     anchor.asOf(), List.of());
+            log.info("equity backfill [{}]: {} stale reconstructed row(s) deleted "
+                    + "(all positions excluded)", connection, deleted);
             return new BackfillReport(connection, null, null, 0, 0, 0, 0, deleted,
                     List.of(), ledger.excluded(), null, null);
         }
