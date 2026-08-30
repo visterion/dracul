@@ -105,20 +105,24 @@ class DepotEquityBackfillServiceTest {
 
     @Test
     void aBuyDoesNotMoveEquity() {
-        // The purchase on D3 moves 100 EUR from cash to stock. Equity on D2 (before) must
-        // equal equity on D3 (after) when the price does not move.
+        // The purchase on D3 moves cash to stock. FX also varies (D2 = 2.0, D3 = 2.5) so the
+        // cash-side conversion actually exercises "each cash event converted at its OWN
+        // date's FX rate" instead of at whichever day is being reconstructed -- a flat FX
+        // across the fixture would make that mutation undetectable regardless of how the
+        // production code converts. Equity on D2 (before) must still equal equity on D3
+        // (after): a buy alone must not move equity, whatever the FX level is.
         var f = fixture(
                 List.of(open("AAA", "10", "20.00", D3)),
                 Map.of("AAA", new BigDecimal("10")),
                 Map.of(D2, "20.00", D3, "20.00", D4, "20.00"),
-                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                Map.of(D2, "2.0", D3, "2.5", D4, "2.0"),
                 new BigDecimal("500.00"), new BigDecimal("400.00"));
 
         f.service().run("c1");
 
         var written = writtenEquities(f.repo());
-        assertThat(written.get(D2)).isEqualByComparingTo("500.00");
-        assertThat(written.get(D3)).isEqualByComparingTo("500.00");
+        assertThat(written.get(D2)).isEqualByComparingTo("480.00");   // 400 + 200/2.5
+        assertThat(written.get(D3)).isEqualByComparingTo("480.00");   // 400 + 200/2.5
     }
 
     @Test
@@ -163,8 +167,30 @@ class DepotEquityBackfillServiceTest {
         assertThat(report.missingBars()).noneMatch(s -> s.contains("@" + D3));
         assertThat(writtenEquities(f.repo()).get(D3)).isEqualByComparingTo("500.00");
         // d1 has no preceding close at all, so the day must be skipped entirely rather than
-        // written with a partial equity that silently drops the unpriced holding.
+        // written with a partial equity that silently drops the unpriced holding — and that
+        // skip must reach the caller through the report, not just a log line.
         assertThat(writtenEquities(f.repo())).doesNotContainKey(d1);
+        assertThat(report.daysSkippedUnpriced()).isEqualTo(1);
+    }
+
+    @Test
+    void anAnchorWithAnUnpricedHoldingReportsNoSeamDelta() {
+        // AAA has no bar at all, so every day (including the anchor) is unpriced for it. A
+        // seam computed from a partial equity would read as a large fabricated price/FX
+        // drift instead of the "no data" gap it actually is — worse than no number at all,
+        // since the seam check is the one figure that certifies the whole run.
+        var f = fixture(
+                List.of(open("AAA", "10", "20.00", D2)),
+                Map.of("AAA", new BigDecimal("10")),
+                Map.of(),                                     // no AAA bar at all
+                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+
+        var report = f.service().run("c1");
+
+        assertThat(report.seamDelta()).isNull();
+        assertThat(report.seamDeltaPct()).isNull();
+        assertThat(report.missingBars()).anySatisfy(s -> assertThat(s).contains("AAA@" + D4));
     }
 
     @Test
