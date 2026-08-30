@@ -280,19 +280,104 @@ class DepotEquityBackfillIT {
         assertThat(sourceAt("2026-03-04")).isEqualTo("RECONSTRUCTED");
     }
 
+    /**
+     * Both early-return paths must still clear an earlier, wider run's stale RECONSTRUCTED
+     * rows before returning a zero report: an empty book means there is no holding left to
+     * reconstruct a curve from, but the rows a previous, wider run wrote are exactly as stale
+     * as if the window had merely shrunk, and must not survive untouched.
+     */
+    @Test
+    void anEmptyBookStillDeletesStaleReconstructedRowsBeforeReturning() {
+        // A fresh connection with a MEASURED anchor and NO executor_position rows at all --
+        // bookPositions("c3") returns an empty list, taking the book.isEmpty() early return.
+        Instant anchor = Instant.parse("2026-03-05T00:00:00Z");
+        snapshots.upsert("c3", anchor, "DAILY",
+                new BigDecimal("500.00"), new BigDecimal("400.00"), "EUR");
+        Instant stale1 = Instant.parse("2026-03-02T00:00:00Z");
+        Instant stale2 = Instant.parse("2026-03-03T00:00:00Z");
+        snapshots.upsertReconstructed("c3", stale1, "DAILY",
+                new BigDecimal("111.00"), new BigDecimal("111.00"), "EUR");
+        snapshots.upsertReconstructed("c3", stale2, "DAILY",
+                new BigDecimal("122.00"), new BigDecimal("122.00"), "EUR");
+
+        var report = service.run("c3");
+
+        assertThat(report.daysDeletedStale()).isEqualTo(2);
+        assertThat(rowsAt("2026-03-02", "c3")).isZero();
+        assertThat(rowsAt("2026-03-03", "c3")).isZero();
+        assertThat(sourceAt("2026-03-05", "c3")).isEqualTo("MEASURED");
+    }
+
+    /**
+     * Same guard as above, but the book is non-empty and every position is excluded by the
+     * ledger instead: an OPEN position the broker never received. That takes the
+     * firstHoldingDate.isEmpty() early return, not the book.isEmpty() one -- the two paths are
+     * reached through different conditions and each needed its own hoisted delete call.
+     */
+    @Test
+    void aFullyExcludedBookStillDeletesStaleReconstructedRowsBeforeReturning() {
+        jdbc.sql("""
+                INSERT INTO executor_position
+                       (id, connection, symbol, side, qty, entry_price, initial_stop,
+                        active_stop, entry_date, status, source_signal_id)
+                VALUES (902, 'c4', 'CCC', 'BUY', 5, 10.00, 8.00, 8.00,
+                        timestamptz '2026-03-03 14:00:00+00', 'OPEN', 'sig-902')""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, symbol,
+                        signal_id, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
+                        'ENTER', 'CCC', 'sig-902', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
+        // depotClient is not stubbed for "c4" -> AgoraDepotClient mock returns null unless
+        // stubbed, so positions("c4") must be stubbed explicitly to an empty holdings list:
+        // CCC is open in the book but absent at the broker, which is exactly the exclusion
+        // PositionLedger.build applies -- see "open in the book, absent at the broker" there.
+        var depotClient = mock(AgoraDepotClient.class);
+        when(depotClient.positions("c4")).thenReturn(new PositionsSnapshot(List.of(), null));
+        var agora = mock(de.visterion.dracul.marketdata.AgoraClient.class);
+        when(agora.callTool(eq("get_ohlc"), any())).thenAnswer(inv -> bars(
+                inv.getArgument(1, JsonNode.class).path("symbol").asString()));
+        var excludedService = new DepotEquityBackfillService(snapshots,
+                new BackfillSourceRepository(jdbc), agora, depotClient);
+
+        Instant anchor = Instant.parse("2026-03-05T00:00:00Z");
+        snapshots.upsert("c4", anchor, "DAILY",
+                new BigDecimal("500.00"), new BigDecimal("400.00"), "EUR");
+        Instant stale = Instant.parse("2026-03-02T00:00:00Z");
+        snapshots.upsertReconstructed("c4", stale, "DAILY",
+                new BigDecimal("111.00"), new BigDecimal("111.00"), "EUR");
+
+        var report = excludedService.run("c4");
+
+        assertThat(report.daysDeletedStale()).isEqualTo(1);
+        assertThat(rowsAt("2026-03-02", "c4")).isZero();
+        assertThat(sourceAt("2026-03-05", "c4")).isEqualTo("MEASURED");
+        assertThat(report.excludedPositions()).isNotEmpty();
+    }
+
     private int rowsAt(String day) {
+        return rowsAt(day, "c1");
+    }
+
+    private int rowsAt(String day, String connection) {
         return jdbc.sql("""
                 SELECT count(*) FROM depot_equity_snapshot
-                 WHERE connection = 'c1' AND granularity = 'DAILY' AND as_of = :a""")
+                 WHERE connection = :c AND granularity = 'DAILY' AND as_of = :a""")
+                .param("c", connection)
                 .param("a", Timestamp.from(Instant.parse(day + "T00:00:00Z")))
                 .query(Integer.class)
                 .single();
     }
 
     private String sourceAt(String day) {
+        return sourceAt(day, "c1");
+    }
+
+    private String sourceAt(String day, String connection) {
         return jdbc.sql("""
                 SELECT source FROM depot_equity_snapshot
-                 WHERE connection = 'c1' AND granularity = 'DAILY' AND as_of = :a""")
+                 WHERE connection = :c AND granularity = 'DAILY' AND as_of = :a""")
+                .param("c", connection)
                 .param("a", Timestamp.from(Instant.parse(day + "T00:00:00Z")))
                 .query(String.class)
                 .single();

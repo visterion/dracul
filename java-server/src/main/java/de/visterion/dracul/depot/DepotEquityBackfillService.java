@@ -114,7 +114,13 @@ public class DepotEquityBackfillService {
             }
         }
         if (book.isEmpty()) {
-            return new BackfillReport(connection, null, null, 0, 0, 0, 0, 0,
+            // An empty book still needs to clear whatever an earlier, wider run left behind:
+            // if every position closed or vanished from the book entirely, there is nothing
+            // left to reconstruct a curve from, but the earlier RECONSTRUCTED rows are exactly
+            // as stale as if the window had merely shrunk — they must not survive untouched.
+            int deleted = repo.deleteStaleReconstructedBefore(connection, GRANULARITY,
+                    anchor.asOf(), List.of());
+            return new BackfillReport(connection, null, null, 0, 0, 0, 0, deleted,
                     List.of(), List.of(), null, null);
         }
 
@@ -130,8 +136,13 @@ public class DepotEquityBackfillService {
                 .min(LocalDate::compareTo);
         if (firstHoldingDate.isEmpty()) {
             // Every book position was excluded — there is no real holding to reconstruct a
-            // curve from, though the exclusions themselves are still worth surfacing.
-            return new BackfillReport(connection, null, null, 0, 0, 0, 0, 0,
+            // curve from, though the exclusions themselves are still worth surfacing. Same
+            // reasoning as the book.isEmpty() branch above: an earlier, wider run's
+            // RECONSTRUCTED rows must still be cleared, not left behind pretending they still
+            // apply to a book that no longer supports any of them.
+            int deleted = repo.deleteStaleReconstructedBefore(connection, GRANULARITY,
+                    anchor.asOf(), List.of());
+            return new BackfillReport(connection, null, null, 0, 0, 0, 0, deleted,
                     List.of(), ledger.excluded(), null, null);
         }
         // entry_date is NOT NULL in the schema, so firstHoldingDate cannot be empty due to a
