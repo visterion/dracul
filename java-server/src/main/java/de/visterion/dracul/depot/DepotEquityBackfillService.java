@@ -373,6 +373,10 @@ public class DepotEquityBackfillService {
         for (DepotPosition p : depotClient.positions(connection).positions()) {
             String ccy = p.currency();
             if (ccy != null && !"USD".equals(ccy)) {
+                // Deliberately ahead of the unusable-symbol skip below: an entry this class
+                // cannot price must stop the run even when its symbol is unreadable. The
+                // message then names "position null", which is ugly but honest — refusing is
+                // the point, and nothing has been deleted at this stage.
                 throw new BackfillConflictException(
                         "position " + p.symbol() + " is denominated in " + ccy
                         + "; this backfill values every holding as close / EURUSD=X and can "
@@ -380,9 +384,11 @@ public class DepotEquityBackfillService {
             }
             if (p.symbol() == null || p.symbol().isBlank()) {
                 // A degraded broker answer can hand back an entry with no usable symbol (a
-                // field-name mismatch upstream). A null map key would silently pretend to be a
-                // holding while matching no book symbol, defeating the zero-overlap guard above
-                // instead of triggering it.
+                // field-name mismatch upstream). Defensive only: the zero-overlap guard asks
+                // whether any OPEN book symbol appears in this map, and no book symbol can
+                // equal null (executor_position.symbol is NOT NULL), so an unusable entry
+                // would not defeat the guard either way. Dropping it keeps the map an honest
+                // list of holdings rather than one padded with entries that hold nothing.
                 continue;
             }
             out.put(p.symbol(), p.qty());
