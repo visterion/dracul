@@ -299,15 +299,16 @@ describe('DepotSection curve — render guard, intraday, hints', () => {
   })
 
   it('does not count reconstructed days as gaps', async () => {
-    // Mon-Wed reconstructed, Thu+Fri measured: a naive weekday count would report
-    // "3 of 5 weekdays without a measurement" for a curve that has a point every day.
+    // Mon and Wed reconstructed (Tue absent), Thu+Fri measured. The measured stretch is
+    // complete, so no hint is correct. Without the MEASURED filter the whole span
+    // 02.03–06.03 would be counted — five weekdays against four points — and a gap
+    // would be reported for a curve that has a point on every day it covers.
     curveResponse = {
       granularity: 'DAILY',
       currency: 'EUR',
       relative: null,
       points: [
         { t: '2026-03-02', value: 100, source: 'RECONSTRUCTED' },
-        { t: '2026-03-03', value: 101, source: 'RECONSTRUCTED' },
         { t: '2026-03-04', value: 102, source: 'RECONSTRUCTED' },
         { t: '2026-03-05', value: 103, source: 'MEASURED' },
         { t: '2026-03-06', value: 104, source: 'MEASURED' },
