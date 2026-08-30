@@ -27,9 +27,12 @@ type EChartsOption = ComposeOption<
 >
 
 interface Series {
-  data: number[]
+  data: (number | null)[]
   color?: string
   fill?: string
+  /** Draws this series dashed. Used to mark a reconstructed segment as not measured —
+   *  a colour change alone survives neither greyscale nor red-green deficiency. */
+  dashed?: boolean
 }
 
 const props = defineProps<{
@@ -174,7 +177,7 @@ const option = computed<EChartsOption>(() => ({
         color,
         showSymbol: false,
         smooth: false,
-        lineStyle: { width: 2.5, color },
+        lineStyle: { width: 2.5, color, type: s.dashed ? 'dashed' : 'solid' },
         emphasis: {
           focus: 'none',
           itemStyle: { color, borderColor: color },

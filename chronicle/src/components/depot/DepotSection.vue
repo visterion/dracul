@@ -102,6 +102,10 @@
             :area-fill="true"
             :height="160"
           />
+          <div v-if="hasReconstructed" class="dp-chart-hint"
+               data-testid="depot-chart-reconstructed">
+            {{ t('depots.chart.reconstructed', { date: lastReconstructedDate }) }}
+          </div>
           <div v-if="chartHint" class="dp-chart-hint" data-testid="depot-chart-hint">
             {{ chartHint }}
           </div>
@@ -309,12 +313,33 @@ async function loadChart() {
 watch(range, loadChart)
 onMounted(loadChart)
 
+/** Two series instead of one: the reconstructed part is drawn dashed. The seam point
+ *  belongs to BOTH arrays, otherwise the segments render as two disconnected lines. */
 const chartSeries = computed(() => {
-  if (!chart.value) return []
-  const data = mode.value === 'pct' && chart.value.relative
-    ? chart.value.relative.map(r => r.pct)
-    : chart.value.points.map(p => p.value)
-  return [{ data, color: 'var(--cathedral-gold)', fill: 'rgba(184,148,92,0.12)' }]
+  const c = chart.value
+  if (!c) return []
+  const values = mode.value === 'pct' && c.relative
+    ? c.relative.map(r => r.pct)
+    : c.points.map(p => p.value)
+
+  const style = { color: 'var(--cathedral-gold)', fill: 'rgba(184,148,92,0.12)' }
+  const lastReconstructed = c.points.reduce(
+    (acc, p, i) => (p.source === 'RECONSTRUCTED' ? i : acc), -1)
+  if (lastReconstructed < 0) return [{ data: values, ...style }]
+  if (lastReconstructed === values.length - 1) return [{ data: values, dashed: true, ...style }]
+
+  return [
+    { data: values.map((v, i) => (i <= lastReconstructed ? v : null)), dashed: true, ...style },
+    { data: values.map((v, i) => (i >= lastReconstructed ? v : null)), ...style },
+  ]
+})
+
+const hasReconstructed = computed(() =>
+  (chart.value?.points ?? []).some(p => p.source === 'RECONSTRUCTED'))
+
+const lastReconstructedDate = computed(() => {
+  const pts = (chart.value?.points ?? []).filter(p => p.source === 'RECONSTRUCTED')
+  return pts.length ? pts[pts.length - 1].t : ''
 })
 
 const isIntraday = computed(() => chart.value?.granularity === 'INTRADAY')
@@ -374,10 +399,13 @@ const chartHint = computed<string | null>(() => {
   // Gap counting is DAILY-only: an intraday series has 36 points on one weekday, so a weekday
   // denominator would read "-35 of 1".
   if (c.granularity !== 'DAILY') return null
-  const first = c.points[0].t
-  const last = c.points[c.points.length - 1].t
+  // …and it counts MEASURED days only: a reconstructed day is a point, not a hole.
+  const measured = c.points.filter(p => p.source === 'MEASURED')
+  if (measured.length < 2) return null
+  const first = measured[0].t
+  const last = measured[measured.length - 1].t
   const total = weekdaysBetween(first, last)
-  const missing = total - c.points.length
+  const missing = total - measured.length
   if (missing <= 0) return null
   return t('depots.chart.gaps', { date: first, missing, total })
 })
