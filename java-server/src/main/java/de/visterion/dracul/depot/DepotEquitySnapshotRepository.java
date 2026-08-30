@@ -94,7 +94,9 @@ public class DepotEquitySnapshotRepository {
      * <p>2. Its conflict branch carries {@code WHERE depot_equity_snapshot.source =
      * 'RECONSTRUCTED'}. A measured day is therefore never overwritten by a reconstruction —
      * enforced by the database, not by a check in the caller that a later refactor could drop.
-     * The call returns empty in that case, which is what {@code daysSkippedMeasured} counts.
+     * The call returns empty both when the row is already MEASURED and when it is an
+     * unchanged RECONSTRUCTED re-run — the {@code IS DISTINCT FROM} guard makes the latter
+     * the common case, which the caller counts as {@code daysUnchanged}.
      */
     public Optional<SnapshotWrite> upsertReconstructed(String connection, Instant asOf,
                                                        String granularity, BigDecimal equity,
