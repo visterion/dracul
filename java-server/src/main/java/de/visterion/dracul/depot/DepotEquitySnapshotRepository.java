@@ -47,6 +47,11 @@ public class DepotEquitySnapshotRepository {
      *
      * <p>{@code external_flow} is deliberately absent from the SET clause: a manually entered
      * cash flow must survive every later write.
+     *
+     * <p>{@code source} IS part of the SET clause: a day first written by the backfill as
+     * RECONSTRUCTED and later measured for real must be relabelled, or the chart would draw
+     * it dashed forever. It is in the IS DISTINCT FROM comparison for the same reason — with
+     * identical numbers and only the label differing, the write must still happen.
      */
     public Optional<SnapshotWrite> upsert(String connection, Instant asOf, String granularity,
                                           BigDecimal equity, BigDecimal cash, String currency) {
@@ -59,8 +64,55 @@ public class DepotEquitySnapshotRepository {
                    SET equity = EXCLUDED.equity,
                        cash = EXCLUDED.cash,
                        positions_value = EXCLUDED.positions_value,
-                       currency = EXCLUDED.currency
+                       currency = EXCLUDED.currency,
+                       source = 'MEASURED'
                  WHERE (depot_equity_snapshot.equity, depot_equity_snapshot.cash,
+                        depot_equity_snapshot.positions_value, depot_equity_snapshot.currency,
+                        depot_equity_snapshot.source)
+                       IS DISTINCT FROM
+                       (EXCLUDED.equity, EXCLUDED.cash,
+                        EXCLUDED.positions_value, EXCLUDED.currency, 'MEASURED')
+                RETURNING id, (xmax = 0) AS inserted""")
+                .param("connection", connection)
+                .param("asOf", Timestamp.from(asOf))
+                .param("granularity", granularity)
+                .param("equity", equity)
+                .param("cash", cash)
+                .param("positionsValue", positionsValue)
+                .param("currency", currency)
+                .query(SnapshotWrite.class)
+                .optional();
+    }
+
+    /**
+     * The backfill's write path. Differs from {@link #upsert} in exactly two ways, and both
+     * matter:
+     *
+     * <p>1. It writes {@code source = 'RECONSTRUCTED'} explicitly instead of relying on the
+     * column default.
+     *
+     * <p>2. Its conflict branch carries {@code WHERE depot_equity_snapshot.source =
+     * 'RECONSTRUCTED'}. A measured day is therefore never overwritten by a reconstruction —
+     * enforced by the database, not by a check in the caller that a later refactor could drop.
+     * The call returns empty in that case, which is what {@code daysSkippedMeasured} counts.
+     */
+    public Optional<SnapshotWrite> upsertReconstructed(String connection, Instant asOf,
+                                                       String granularity, BigDecimal equity,
+                                                       BigDecimal cash, String currency) {
+        BigDecimal positionsValue = equity.subtract(cash);
+        return jdbc.sql("""
+                INSERT INTO depot_equity_snapshot
+                       (connection, as_of, granularity, equity, cash, positions_value,
+                        currency, source)
+                VALUES (:connection, :asOf, :granularity, :equity, :cash, :positionsValue,
+                        :currency, 'RECONSTRUCTED')
+                ON CONFLICT (connection, granularity, as_of) DO UPDATE
+                   SET equity = EXCLUDED.equity,
+                       cash = EXCLUDED.cash,
+                       positions_value = EXCLUDED.positions_value,
+                       currency = EXCLUDED.currency
+                 WHERE depot_equity_snapshot.source = 'RECONSTRUCTED'
+                   AND (depot_equity_snapshot.equity, depot_equity_snapshot.cash,
                         depot_equity_snapshot.positions_value, depot_equity_snapshot.currency)
                        IS DISTINCT FROM
                        (EXCLUDED.equity, EXCLUDED.cash,
@@ -92,6 +144,27 @@ public class DepotEquitySnapshotRepository {
                 .param("from", Timestamp.from(from))
                 .query(this::mapRow)
                 .list();
+    }
+
+    /**
+     * The backfill's anchor: the oldest genuinely measured row. Reconstructed rows are
+     * excluded on purpose — anchoring on one would make a re-run drift away from the broker
+     * a little further each time.
+     */
+    public Optional<DepotEquitySnapshot> firstMeasured(String connection, String granularity) {
+        return jdbc.sql("""
+                SELECT id, connection, as_of, granularity, equity, cash, positions_value,
+                       currency, external_flow, source
+                  FROM depot_equity_snapshot
+                 WHERE connection = :connection
+                   AND granularity = :granularity
+                   AND source = 'MEASURED'
+                 ORDER BY as_of ASC
+                 LIMIT 1""")
+                .param("connection", connection)
+                .param("granularity", granularity)
+                .query(this::mapRow)
+                .optional();
     }
 
     private DepotEquitySnapshot mapRow(ResultSet rs, int rowNum) throws SQLException {

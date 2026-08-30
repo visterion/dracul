@@ -88,7 +88,7 @@ class DepotEquitySnapshotRepositoryIT {
     }
 
     @Test
-    void updatePathLeavesExternalFlowAndSourceUntouched() {
+    void updatePathLeavesExternalFlowUntouchedAndSetsSourceToMeasured() {
         repo.upsert("conn-1", DAY, "DAILY", new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
         jdbc.sql("""
                 UPDATE depot_equity_snapshot
@@ -105,7 +105,7 @@ class DepotEquitySnapshotRepositoryIT {
         DepotEquitySnapshot row = repo.series("conn-1", "DAILY", DAY).getFirst();
         assertThat(row.equity()).isEqualByComparingTo("111.00");
         assertThat(row.externalFlow()).isEqualByComparingTo("250.00");
-        assertThat(row.source()).isEqualTo("RECONSTRUCTED");
+        assertThat(row.source()).isEqualTo("MEASURED");
     }
 
     @Test
@@ -227,5 +227,85 @@ class DepotEquitySnapshotRepositoryIT {
                 .param("t", java.sql.Timestamp.from(DAY))
                 .update())
                 .hasMessageContaining("currency");
+    }
+
+    private String sourceOf(String connection, Instant asOf) {
+        return jdbc.sql("""
+                SELECT source FROM depot_equity_snapshot
+                 WHERE connection = :c AND granularity = 'DAILY' AND as_of = :a""")
+                .param("c", connection)
+                .param("a", java.sql.Timestamp.from(asOf))
+                .query(String.class)
+                .single();
+    }
+
+    @Test
+    void reconstructedInsertIsLabelledReconstructed() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("RECONSTRUCTED");
+    }
+
+    @Test
+    void reconstructedNeverOverwritesMeasured() {
+        repo.upsert("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                        new BigDecimal("999.00"), new BigDecimal("999.00"), "EUR");
+
+        assertThat(w).isEmpty();
+        assertThat(repo.series("conn-1", "DAILY", DAY).getFirst().equity())
+                .isEqualByComparingTo("100.00");
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("MEASURED");
+    }
+
+    @Test
+    void measuredRelabelsAReconstructedRow() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsert("conn-1", DAY, "DAILY",
+                        new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        // Identical numbers, different source: the write MUST happen, otherwise the day
+        // keeps the wrong label forever.
+        assertThat(w).isPresent();
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("MEASURED");
+    }
+
+    @Test
+    void reconstructedReplayWritesNothing() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR")).isEmpty();
+    }
+
+    @Test
+    void firstMeasuredSkipsReconstructedRows() {
+        Instant earlier = DAY.minus(java.time.Duration.ofDays(3));
+        repo.upsertReconstructed("conn-1", earlier, "DAILY",
+                new BigDecimal("90.00"), new BigDecimal("30.00"), "EUR");
+        repo.upsert("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(repo.firstMeasured("conn-1", "DAILY"))
+                .isPresent()
+                .get()
+                .extracting(DepotEquitySnapshot::asOf)
+                .isEqualTo(DAY);
+    }
+
+    @Test
+    void firstMeasuredIgnoresOtherConnections() {
+        repo.upsert("conn-2", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(repo.firstMeasured("conn-1", "DAILY")).isEmpty();
     }
 }
