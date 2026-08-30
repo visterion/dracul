@@ -3,6 +3,8 @@ package de.visterion.dracul.depot;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -15,6 +17,15 @@ import java.util.List;
  * <p>Reads only. {@code executor_position_leg} is deliberately not touched: its quantities
  * carry the invariant "shares held, never shares intended", and the ENTER order in
  * {@code decision_log} answers the tranche question without that conflict.
+ *
+ * <p>{@code decision_log} itself has no {@code connection} column, so a plain {@code symbol}
+ * join is not a safe key: two connections holding the same symbol would cross-contaminate,
+ * and a lower-bound-only time window can silently bind a later order when a position's own
+ * ENTER row is missing. The ENTER lateral instead binds on {@code source_signal_id}
+ * (populated for every position; each maps to exactly one ENTER row) and the QTY_SYNC
+ * subquery binds on {@code order_json->>'position_id'} — both exact identity keys, the
+ * established pattern elsewhere in this codebase ({@code DepotHistoryService},
+ * {@code OutcomeBatchJob}). Do not "simplify" this back to a symbol join.
  */
 @Repository
 public class BackfillSourceRepository {
@@ -38,17 +49,19 @@ public class BackfillSourceRepository {
                        (e.order_json->>'qty')::numeric                AS enter_qty,
                        (SELECT (MIN(q.ts_decision) AT TIME ZONE 'UTC')::date
                           FROM decision_log q
-                         WHERE q.symbol = p.symbol
-                           AND q.action = 'SYNC'
+                         WHERE q.action = 'SYNC'
+                           -- LEG_QTY_SYNC is deliberately out of scope: leg-level convergence
+                           -- does not move the position quantity for our purposes.
                            AND q.reason_code = 'QTY_SYNC'
-                           AND q.ts_decision > p.entry_date)          AS qty_sync_date
+                           AND q.order_json->>'position_id' = p.id::text
+                           AND q.ts_decision > p.entry_date
+                           AND (p.closed_at IS NULL OR q.ts_decision < p.closed_at)) AS qty_sync_date
                   FROM executor_position p
                   LEFT JOIN LATERAL (
                        SELECT d.order_json
                          FROM decision_log d
-                        WHERE d.symbol = p.symbol
-                          AND d.action = 'ENTER'
-                          AND d.ts_decision >= p.entry_date - interval '1 hour'
+                        WHERE d.action = 'ENTER'
+                          AND d.signal_id = p.source_signal_id
                         ORDER BY d.ts_decision ASC
                         LIMIT 1
                   ) e ON true
@@ -60,10 +73,10 @@ public class BackfillSourceRepository {
     }
 
     private BookPosition mapRow(ResultSet rs, int rowNum) throws SQLException {
-        java.sql.Date closed = rs.getDate("closed_at");
-        java.sql.Date qtySync = rs.getDate("qty_sync_date");
-        java.math.BigDecimal enterQty = rs.getBigDecimal("enter_qty");
-        java.math.BigDecimal qty = rs.getBigDecimal("qty");
+        Date closed = rs.getDate("closed_at");
+        Date qtySync = rs.getDate("qty_sync_date");
+        BigDecimal enterQty = rs.getBigDecimal("enter_qty");
+        BigDecimal qty = rs.getBigDecimal("qty");
         return new BookPosition(
                 rs.getLong("id"),
                 rs.getString("symbol"),
@@ -73,8 +86,8 @@ public class BackfillSourceRepository {
                 rs.getDate("entry_date").toLocalDate(),
                 rs.getBigDecimal("exit_price"),
                 closed == null ? null : closed.toLocalDate(),
-                // null enterQty means no ENTER row was found; the service turns that into a
-                // 409 rather than guessing a tranche split.
+                // null enterQty means no ENTER row was found (e.g. source_signal_id is NULL);
+                // PositionLedger.build fails loudly on it rather than guessing a tranche split.
                 enterQty,
                 qtySync == null ? null : qtySync.toLocalDate());
     }

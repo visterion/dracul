@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The whole domain rule set of the backfill. No database, no HTTP — the tranche rule
@@ -123,5 +124,62 @@ class PositionLedgerTest {
         assertThat(l.netCashAfter(D1)).isEqualByComparingTo(new BigDecimal("-220.00"));
         // After the sell, nothing is left
         assertThat(l.netCashAfter(D3)).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void missingEnterQtyThrowsRatherThanGuessing() {
+        // enterQty null means the ENTER row could not be matched (e.g. source_signal_id is
+        // NULL). A guessed tranche split would be a wrong curve that looks right, so build()
+        // fails loudly instead.
+        var p = new BookPosition(1L, "AAA", "OPEN", new BigDecimal("10"), new BigDecimal("20.00"),
+                D1, null, null, null, null);
+
+        assertThatThrownBy(() -> PositionLedger.build(List.of(p), Map.of("AAA", new BigDecimal("10"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AAA");
+    }
+
+    @Test
+    void enterQtyAboveHeldQuantityIsClampedToTheBook() {
+        // A reconcile shortfall can leave qty BELOW the ordered quantity. Booking the full
+        // ENTER quantity would inflate both the holding and the purchase cash beyond what was
+        // ever actually held.
+        var p = new BookPosition(1L, "AAA", "OPEN", new BigDecimal("10"), new BigDecimal("20.00"),
+                D1, null, null, new BigDecimal("20"), null);
+
+        var l = PositionLedger.build(List.of(p), Map.of("AAA", new BigDecimal("10")));
+
+        assertThat(l.holdingsOn(D1)).containsEntry("AAA", new BigDecimal("10"));
+        assertThat(l.netCashAfter(LocalDate.of(2026, 3, 1)))
+                .isEqualByComparingTo(new BigDecimal("200.00"));
+        assertThat(l.excluded()).anySatisfy(s -> assertThat(s).contains("AAA"));
+    }
+
+    @Test
+    void trancheTwoDatedAtOrAfterTheCloseIsDropped() {
+        // If the QTY_SYNC lands on or after the close, the resulting holding would never
+        // appear in holdingsOn() while the cash event still fired — a purchase the backwards
+        // pass would subtract with no trace of it in the curve.
+        var p = new BookPosition(1L, "AAA", "CLOSED", new BigDecimal("30"), new BigDecimal("20.00"),
+                D1, new BigDecimal("22.00"), D3, new BigDecimal("10"), D3);
+
+        var l = PositionLedger.build(List.of(p), Map.of());
+
+        assertThat(l.holdingsOn(D2)).containsEntry("AAA", new BigDecimal("10"));
+        assertThat(l.holdingsOn(D3)).isEmpty();
+        assertThat(l.events()).noneMatch(e -> e.amount().compareTo(new BigDecimal("400.00")) == 0);
+        assertThat(l.excluded()).anySatisfy(s -> assertThat(s).contains("AAA"));
+    }
+
+    @Test
+    void closedWithoutAnExitPriceIsRecordedNotSilentlyLost() {
+        // No exit price means no sale-proceeds cash event can be derived. Silently omitting
+        // it would make the curve lose the position's value with no trace of why.
+        var p = single("AAA", new BigDecimal("10"), new BigDecimal("20.00"), D1, null, D3);
+
+        var l = PositionLedger.build(List.of(p), Map.of());
+
+        assertThat(l.events()).noneMatch(e -> e.amount().signum() < 0);
+        assertThat(l.excluded()).anySatisfy(s -> assertThat(s).contains("AAA"));
     }
 }

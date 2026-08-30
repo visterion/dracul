@@ -77,8 +77,22 @@ public final class PositionLedger {
                 excluded.add(p.symbol() + ": open in the book, absent at the broker");
                 continue;
             }
+            // No ENTER row means no source_signal_id match, so the tranche split is unknown.
+            // Fail loudly: a guessed split is a wrong curve that looks right.
+            if (p.enterQty() == null) {
+                throw new IllegalArgumentException(
+                        "no ENTER order for " + p.symbol() + " (position " + p.id()
+                        + ") — the tranche split cannot be derived");
+            }
 
-            BigDecimal t1 = p.enterQty();
+            // A reconcile shortfall can leave qty BELOW the ordered quantity
+            // (ReconcileService emits QTY_SYNC_SHORTFALL for exactly this). Booking the full
+            // order quantity would inflate both the holding and the purchase cash.
+            BigDecimal t1 = p.enterQty().min(p.qty());
+            if (t1.compareTo(p.enterQty()) != 0) {
+                excluded.add(p.symbol() + ": ENTER ordered " + p.enterQty()
+                        + " but only " + p.qty() + " held — tranche 1 clamped to the book");
+            }
             BigDecimal t2 = p.qty().subtract(t1);
             LocalDate t2Date = p.qtySyncDate() != null ? p.qtySyncDate() : p.entryDate().plusDays(1);
 
@@ -86,13 +100,27 @@ public final class PositionLedger {
             events.add(new CashEvent(p.entryDate(), p.symbol(), t1.multiply(p.entryPrice())));
 
             if (t2.signum() > 0) {
-                holdings.add(new Holding(p.symbol(), t2, t2Date, p.closedAt()));
-                events.add(new CashEvent(t2Date, p.symbol(), t2.multiply(p.entryPrice())));
+                if (p.closedAt() != null && !t2Date.isBefore(p.closedAt())) {
+                    // Holding would be empty for every day while the cash event still fires —
+                    // the backwards pass would subtract a purchase that appears nowhere.
+                    excluded.add(p.symbol() + ": tranche 2 dated " + t2Date
+                            + " is not before the close " + p.closedAt() + " — dropped");
+                } else {
+                    holdings.add(new Holding(p.symbol(), t2, t2Date, p.closedAt()));
+                    events.add(new CashEvent(t2Date, p.symbol(), t2.multiply(p.entryPrice())));
+                }
             }
 
-            if (p.closedAt() != null && p.exitPrice() != null) {
-                events.add(new CashEvent(p.closedAt(), p.symbol(),
-                        p.qty().multiply(p.exitPrice()).negate()));
+            if (p.closedAt() != null) {
+                if (p.exitPrice() == null) {
+                    // Without an exit price the holdings end but no sale cash arrives, so the
+                    // curve would simply lose the position's value with no trace.
+                    excluded.add(p.symbol() + ": closed on " + p.closedAt()
+                            + " with no exit price — sale proceeds unknown");
+                } else {
+                    events.add(new CashEvent(p.closedAt(), p.symbol(),
+                            p.qty().multiply(p.exitPrice()).negate()));
+                }
             }
         }
         return new Ledger(List.copyOf(events), List.copyOf(holdings), List.copyOf(excluded));
