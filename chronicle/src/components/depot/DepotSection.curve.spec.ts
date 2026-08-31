@@ -271,4 +271,70 @@ describe('DepotSection curve — render guard, intraday, hints', () => {
     expect(formatted).not.toContain('$')
     expect(formatted).toContain('¥')
   })
+
+  it('draws the reconstructed part as a separate dashed series', async () => {
+    curveResponse = {
+      granularity: 'DAILY',
+      currency: 'EUR',
+      relative: null,
+      points: [
+        { t: '2026-03-03', value: 100, source: 'RECONSTRUCTED' },
+        { t: '2026-03-04', value: 110, source: 'RECONSTRUCTED' },
+        { t: '2026-03-05', value: 120, source: 'MEASURED' },
+      ],
+    }
+    const w = mountSection()
+    await flush()
+
+    const series = w.findComponent(PriceChart).props('series') as
+      { data: (number | null)[]; dashed?: boolean }[]
+
+    expect(series).toHaveLength(2)
+    expect(series[0].dashed).toBe(true)
+    expect(series[0].data).toEqual([100, 110, null])
+    expect(series[1].dashed).toBeFalsy()
+    // The seam point belongs to both, otherwise the line breaks in two
+    expect(series[1].data).toEqual([null, 110, 120])
+    expect(w.find('[data-testid="depot-chart-reconstructed"]').exists()).toBe(true)
+  })
+
+  it('does not count reconstructed days as gaps', async () => {
+    // Mon and Wed reconstructed (Tue absent), Thu+Fri measured. The measured stretch is
+    // complete, so no hint is correct. Without the MEASURED filter the whole span
+    // 02.03–06.03 would be counted — five weekdays against four points — and a gap
+    // would be reported for a curve that has a point on every day it covers.
+    curveResponse = {
+      granularity: 'DAILY',
+      currency: 'EUR',
+      relative: null,
+      points: [
+        { t: '2026-03-02', value: 100, source: 'RECONSTRUCTED' },
+        { t: '2026-03-04', value: 102, source: 'RECONSTRUCTED' },
+        { t: '2026-03-05', value: 103, source: 'MEASURED' },
+        { t: '2026-03-06', value: 104, source: 'MEASURED' },
+      ],
+    }
+    const w = mountSection()
+    await flush()
+
+    expect(w.find('[data-testid="depot-chart-hint"]').exists()).toBe(false)
+    expect(w.find('[data-testid="depot-chart-reconstructed"]').exists()).toBe(true)
+  })
+
+  it('still reports a gap between two measured days', async () => {
+    curveResponse = {
+      granularity: 'DAILY',
+      currency: 'EUR',
+      relative: null,
+      points: [
+        { t: '2026-03-02', value: 100, source: 'MEASURED' },
+        { t: '2026-03-06', value: 104, source: 'MEASURED' },
+      ],
+    }
+    const w = mountSection()
+    await flush()
+
+    expect(w.get('[data-testid="depot-chart-hint"]').text()).toContain('3 von 5')
+    expect(w.find('[data-testid="depot-chart-reconstructed"]').exists()).toBe(false)
+  })
 })

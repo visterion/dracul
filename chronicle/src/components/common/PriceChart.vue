@@ -27,9 +27,12 @@ type EChartsOption = ComposeOption<
 >
 
 interface Series {
-  data: number[]
+  data: (number | null)[]
   color?: string
   fill?: string
+  /** Draws this series dashed. Used to mark a reconstructed segment as not measured —
+   *  a colour change alone survives neither greyscale nor red-green deficiency. */
+  dashed?: boolean
 }
 
 const props = defineProps<{
@@ -148,10 +151,15 @@ const option = computed<EChartsOption>(() => ({
       type AxisTooltipParam = { axisValueLabel?: string; axisValue?: string; color?: string; value?: unknown }
       const first = arr[0] as AxisTooltipParam
       const date = first.axisValueLabel ?? first.axisValue ?? ''
+      // A null-valued point (the gap side of a dashed/solid segment pair, e.g. the
+      // reconstructed/measured split) still shows up in `params` under the axis trigger —
+      // drop it here rather than rendering an empty row (or, at the seam index where both
+      // segments carry the real value, the same number twice).
       const rows = (arr as AxisTooltipParam[])
-        .map(p => {
-          const raw = Array.isArray(p.value) ? p.value[p.value.length - 1] : p.value
-          const val = typeof raw === 'number' ? fmt(raw) : String(raw ?? '')
+        .map(p => ({ p, raw: Array.isArray(p.value) ? p.value[p.value.length - 1] : p.value }))
+        .filter((r): r is { p: AxisTooltipParam; raw: number } => typeof r.raw === 'number')
+        .map(({ p, raw }) => {
+          const val = fmt(raw)
           return `<div style="display:flex;align-items:center;gap:6px;margin-top:4px;">`
             + `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color ?? LINE_COLOR};"></span>`
             + `<span>${val}</span>`
@@ -174,7 +182,7 @@ const option = computed<EChartsOption>(() => ({
         color,
         showSymbol: false,
         smooth: false,
-        lineStyle: { width: 2.5, color },
+        lineStyle: { width: 2.5, color, type: s.dashed ? 'dashed' : 'solid' },
         emphasis: {
           focus: 'none',
           itemStyle: { color, borderColor: color },

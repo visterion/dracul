@@ -11,6 +11,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -88,7 +89,7 @@ class DepotEquitySnapshotRepositoryIT {
     }
 
     @Test
-    void updatePathLeavesExternalFlowAndSourceUntouched() {
+    void updatePathLeavesExternalFlowUntouchedAndSetsSourceToMeasured() {
         repo.upsert("conn-1", DAY, "DAILY", new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
         jdbc.sql("""
                 UPDATE depot_equity_snapshot
@@ -105,7 +106,7 @@ class DepotEquitySnapshotRepositoryIT {
         DepotEquitySnapshot row = repo.series("conn-1", "DAILY", DAY).getFirst();
         assertThat(row.equity()).isEqualByComparingTo("111.00");
         assertThat(row.externalFlow()).isEqualByComparingTo("250.00");
-        assertThat(row.source()).isEqualTo("RECONSTRUCTED");
+        assertThat(row.source()).isEqualTo("MEASURED");
     }
 
     @Test
@@ -227,5 +228,161 @@ class DepotEquitySnapshotRepositoryIT {
                 .param("t", java.sql.Timestamp.from(DAY))
                 .update())
                 .hasMessageContaining("currency");
+    }
+
+    private String sourceOf(String connection, Instant asOf) {
+        return jdbc.sql("""
+                SELECT source FROM depot_equity_snapshot
+                 WHERE connection = :c AND granularity = 'DAILY' AND as_of = :a""")
+                .param("c", connection)
+                .param("a", java.sql.Timestamp.from(asOf))
+                .query(String.class)
+                .single();
+    }
+
+    @Test
+    void reconstructedInsertIsLabelledReconstructed() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("RECONSTRUCTED");
+    }
+
+    @Test
+    void reconstructedNeverOverwritesMeasured() {
+        repo.upsert("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                        new BigDecimal("999.00"), new BigDecimal("999.00"), "EUR");
+
+        assertThat(w).isEmpty();
+        assertThat(repo.series("conn-1", "DAILY", DAY).getFirst().equity())
+                .isEqualByComparingTo("100.00");
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("MEASURED");
+    }
+
+    @Test
+    void measuredRelabelsAReconstructedRow() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsert("conn-1", DAY, "DAILY",
+                        new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        // Identical numbers, different source: the write MUST happen, otherwise the day
+        // keeps the wrong label forever.
+        assertThat(w).isPresent();
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("MEASURED");
+    }
+
+    @Test
+    void reconstructedReplayWritesNothing() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR")).isEmpty();
+    }
+
+    @Test
+    void firstMeasuredSkipsReconstructedRows() {
+        Instant earlier = DAY.minus(java.time.Duration.ofDays(3));
+        repo.upsertReconstructed("conn-1", earlier, "DAILY",
+                new BigDecimal("90.00"), new BigDecimal("30.00"), "EUR");
+        repo.upsert("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(repo.firstMeasured("conn-1", "DAILY"))
+                .isPresent()
+                .get()
+                .extracting(DepotEquitySnapshot::asOf)
+                .isEqualTo(DAY);
+    }
+
+    @Test
+    void firstMeasuredIgnoresOtherConnections() {
+        repo.upsert("conn-2", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        assertThat(repo.firstMeasured("conn-1", "DAILY")).isEmpty();
+    }
+
+    @Test
+    void reconstructedRerunWithNewNumbersCorrectsTheRow() {
+        repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                new BigDecimal("100.00"), new BigDecimal("40.00"), "EUR");
+
+        Optional<DepotEquitySnapshotRepository.SnapshotWrite> w =
+                repo.upsertReconstructed("conn-1", DAY, "DAILY",
+                        new BigDecimal("120.00"), new BigDecimal("50.00"), "EUR");
+
+        // A backfill re-run after the book improves MUST correct the row, not skip it.
+        assertThat(w).isPresent();
+        assertThat(w.get().inserted()).isFalse();
+        var row = repo.series("conn-1", "DAILY", DAY).getFirst();
+        assertThat(row.equity()).isEqualByComparingTo("120.00");
+        assertThat(row.cash()).isEqualByComparingTo("50.00");
+        assertThat(row.positionsValue()).isEqualByComparingTo("70.00");
+        assertThat(sourceOf("conn-1", DAY)).isEqualTo("RECONSTRUCTED");
+    }
+
+    @Test
+    void deleteStaleReconstructedNeverTouchesAMeasuredRow() {
+        // The one guarantee that makes this DELETE safe to run before every write: a MEASURED
+        // row is a real observation of the account, and no reconstruction may remove it — not
+        // even one dated before the anchor, which is what a backdated measurement or a manual
+        // insert would look like.
+        Instant measuredEarlier = DAY.minus(java.time.Duration.ofDays(3));
+        Instant reconstructed = DAY.minus(java.time.Duration.ofDays(2));
+        repo.upsert("conn-1", measuredEarlier, "DAILY",
+                new BigDecimal("90.00"), new BigDecimal("30.00"), "EUR");
+        repo.upsertReconstructed("conn-1", reconstructed, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+
+        int deleted = repo.deleteStaleReconstructedBefore("conn-1", "DAILY", DAY, List.of());
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(sourceOf("conn-1", measuredEarlier)).isEqualTo("MEASURED");
+        assertThat(repo.series("conn-1", "DAILY", measuredEarlier))
+                .extracting(DepotEquitySnapshot::asOf)
+                .containsExactly(measuredEarlier);
+    }
+
+    @Test
+    void deleteStaleReconstructedKeepsTheDaysHandedToIt() {
+        Instant kept = DAY.minus(java.time.Duration.ofDays(2));
+        Instant stale = DAY.minus(java.time.Duration.ofDays(4));
+        repo.upsertReconstructed("conn-1", kept, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+        repo.upsertReconstructed("conn-1", stale, "DAILY",
+                new BigDecimal("80.00"), new BigDecimal("20.00"), "EUR");
+
+        int deleted = repo.deleteStaleReconstructedBefore("conn-1", "DAILY", DAY, List.of(kept));
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repo.series("conn-1", "DAILY", stale))
+                .extracting(DepotEquitySnapshot::asOf)
+                .containsExactly(kept);
+    }
+
+    @Test
+    void deleteStaleReconstructedStopsAtTheAnchorAndAtTheConnection() {
+        Instant afterAnchor = DAY.plus(java.time.Duration.ofDays(1));
+        Instant beforeAnchor = DAY.minus(java.time.Duration.ofDays(1));
+        repo.upsertReconstructed("conn-1", afterAnchor, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+        repo.upsertReconstructed("conn-2", beforeAnchor, "DAILY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+        repo.upsertReconstructed("conn-1", beforeAnchor, "INTRADAY",
+                new BigDecimal("95.00"), new BigDecimal("35.00"), "EUR");
+
+        int deleted = repo.deleteStaleReconstructedBefore("conn-1", "DAILY", DAY, List.of());
+
+        assertThat(deleted).isZero();
+        assertThat(sourceOf("conn-1", afterAnchor)).isEqualTo("RECONSTRUCTED");
+        assertThat(sourceOf("conn-2", beforeAnchor)).isEqualTo("RECONSTRUCTED");
     }
 }

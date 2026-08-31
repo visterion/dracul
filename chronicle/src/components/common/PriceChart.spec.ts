@@ -118,4 +118,39 @@ describe('PriceChart', () => {
     expect(option.series[0].color).toBe('#D4AF7A')
     expect(option.series[0].lineStyle.width).toBe(2.5)
   })
+
+  it('drops a null-valued series from a multi-series tooltip instead of rendering an empty row', () => {
+    // Mirrors DepotSection's split into a dashed reconstructed series and a solid measured
+    // series: at any non-seam index exactly one of the two carries a real value and the
+    // other is null (the gap side of the split). ECharts' axis trigger still includes the
+    // null-valued series in `params` — without filtering, that rendered a second row with
+    // a gold dot and no label next to it.
+    make({
+      series: [
+        { data: [100, 120, null] },
+        { data: [null, 120, 130] },
+      ],
+      times: ['02.03', '03.03', '04.03'],
+    })
+    const tooltip = lastOption().tooltip as { formatter: (params: unknown) => string }
+
+    // Normal index (03.03 is the seam — see below — so use 02.03): series 0 has a real
+    // value, series 1 is null there. Only one row should render.
+    const normalHtml = tooltip.formatter([
+      { axisValueLabel: '02.03', color: '#D4AF7A', value: 100 },
+      { axisValueLabel: '02.03', color: '#B8945C', value: null },
+    ])
+    expect((normalHtml.match(/margin-top:4px/g) ?? []).length).toBe(1)
+    expect(normalHtml).toContain('100')
+
+    // Seam index (03.03): both segments intentionally carry the same real value there
+    // (see chartSeries in DepotSection.vue) so the line renders as one connected curve —
+    // two legitimate rows, not a null-row artifact.
+    const seamHtml = tooltip.formatter([
+      { axisValueLabel: '03.03', color: '#D4AF7A', value: 120 },
+      { axisValueLabel: '03.03', color: '#B8945C', value: 120 },
+    ])
+    expect((seamHtml.match(/margin-top:4px/g) ?? []).length).toBe(2)
+    expect((seamHtml.match(/120/g) ?? []).length).toBe(2)
+  })
 })

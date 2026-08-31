@@ -559,6 +559,7 @@ export default {
       empty: 'Noch keine gemessenen Punkte für diesen Zeitraum.',
       tooShort: 'Reihe beginnt am {date} — noch zu wenig Punkte für eine Prozentkurve.',
       gaps: 'ab {date}, {missing} von {total} Wochentagen ohne Messung',
+      reconstructed: 'Bis {date} rekonstruiert aus Buch und Tageskursen — Gebühren und Dividenden fehlen, und je weiter die Kurve zurückreicht, desto ungenauer wird sie.',
     },
     metric: { label: 'Kennzahl', sinceBuy: 'Seit Kauf', today: 'Heute' },
     positions: { empty: 'Keine Positionen in diesem Depot.' },

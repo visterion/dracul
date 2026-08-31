@@ -8,6 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -47,6 +48,11 @@ public class DepotEquitySnapshotRepository {
      *
      * <p>{@code external_flow} is deliberately absent from the SET clause: a manually entered
      * cash flow must survive every later write.
+     *
+     * <p>{@code source} IS part of the SET clause: a day first written by the backfill as
+     * RECONSTRUCTED and later measured for real must be relabelled, or the chart would draw
+     * it dashed forever. It is in the IS DISTINCT FROM comparison for the same reason — with
+     * identical numbers and only the label differing, the write must still happen.
      */
     public Optional<SnapshotWrite> upsert(String connection, Instant asOf, String granularity,
                                           BigDecimal equity, BigDecimal cash, String currency) {
@@ -59,8 +65,57 @@ public class DepotEquitySnapshotRepository {
                    SET equity = EXCLUDED.equity,
                        cash = EXCLUDED.cash,
                        positions_value = EXCLUDED.positions_value,
-                       currency = EXCLUDED.currency
+                       currency = EXCLUDED.currency,
+                       source = 'MEASURED'
                  WHERE (depot_equity_snapshot.equity, depot_equity_snapshot.cash,
+                        depot_equity_snapshot.positions_value, depot_equity_snapshot.currency,
+                        depot_equity_snapshot.source)
+                       IS DISTINCT FROM
+                       (EXCLUDED.equity, EXCLUDED.cash,
+                        EXCLUDED.positions_value, EXCLUDED.currency, 'MEASURED')
+                RETURNING id, (xmax = 0) AS inserted""")
+                .param("connection", connection)
+                .param("asOf", Timestamp.from(asOf))
+                .param("granularity", granularity)
+                .param("equity", equity)
+                .param("cash", cash)
+                .param("positionsValue", positionsValue)
+                .param("currency", currency)
+                .query(SnapshotWrite.class)
+                .optional();
+    }
+
+    /**
+     * The backfill's write path. Differs from {@link #upsert} in exactly two ways, and both
+     * matter:
+     *
+     * <p>1. It writes {@code source = 'RECONSTRUCTED'} explicitly instead of relying on the
+     * column default.
+     *
+     * <p>2. Its conflict branch carries {@code WHERE depot_equity_snapshot.source =
+     * 'RECONSTRUCTED'}. A measured day is therefore never overwritten by a reconstruction —
+     * enforced by the database, not by a check in the caller that a later refactor could drop.
+     * The call returns empty both when the row is already MEASURED and when it is an
+     * unchanged RECONSTRUCTED re-run — the {@code IS DISTINCT FROM} guard makes the latter
+     * the common case, which the caller counts as {@code daysUnchanged}.
+     */
+    public Optional<SnapshotWrite> upsertReconstructed(String connection, Instant asOf,
+                                                       String granularity, BigDecimal equity,
+                                                       BigDecimal cash, String currency) {
+        BigDecimal positionsValue = equity.subtract(cash);
+        return jdbc.sql("""
+                INSERT INTO depot_equity_snapshot
+                       (connection, as_of, granularity, equity, cash, positions_value,
+                        currency, source)
+                VALUES (:connection, :asOf, :granularity, :equity, :cash, :positionsValue,
+                        :currency, 'RECONSTRUCTED')
+                ON CONFLICT (connection, granularity, as_of) DO UPDATE
+                   SET equity = EXCLUDED.equity,
+                       cash = EXCLUDED.cash,
+                       positions_value = EXCLUDED.positions_value,
+                       currency = EXCLUDED.currency
+                 WHERE depot_equity_snapshot.source = 'RECONSTRUCTED'
+                   AND (depot_equity_snapshot.equity, depot_equity_snapshot.cash,
                         depot_equity_snapshot.positions_value, depot_equity_snapshot.currency)
                        IS DISTINCT FROM
                        (EXCLUDED.equity, EXCLUDED.cash,
@@ -75,6 +130,49 @@ public class DepotEquitySnapshotRepository {
                 .param("currency", currency)
                 .query(SnapshotWrite.class)
                 .optional();
+    }
+
+    /**
+     * Deletes the RECONSTRUCTED rows of {@code (connection, granularity)} strictly before
+     * {@code anchor} whose {@code as_of} is not in {@code keep}, and returns how many went.
+     *
+     * <p>Why exactly this scope, and not one row more:
+     *
+     * <p>1. {@code source = 'RECONSTRUCTED'} — a MEASURED row is a real observation of the
+     * account and is never this run's to delete. The filter is in the SQL, not in the caller,
+     * for the same reason {@link #upsertReconstructed} keeps its source guard there: a check
+     * a later refactor can drop is not a guarantee.
+     *
+     * <p>2. {@code as_of < anchor} — everything at or after the anchor belongs to live
+     * measurement, which this backfill only ever reads.
+     *
+     * <p>3. {@code as_of NOT IN keep} — the days this run just computed stay, obviously; what
+     * goes is what an EARLIER, WIDER run wrote and this one no longer stands behind. The book
+     * improving usually means the window SHRINKS (a position that was never filled, or that
+     * dropped out of the broker's holdings, moves the first holding date right), and a
+     * leftover row from the previous window is a dashed point drawn from numbers the current
+     * run considers wrong.
+     *
+     * <p>With an empty {@code keep} the IN clause is omitted rather than rendered as
+     * {@code NOT IN ()}, which is a syntax error in Postgres. The semantics are the intended
+     * ones: a run that computes no day at all clears the whole pre-anchor reconstruction.
+     */
+    public int deleteStaleReconstructedBefore(String connection, String granularity,
+                                              Instant anchor, Collection<Instant> keep) {
+        String keepClause = keep.isEmpty() ? "" : "\n   AND as_of NOT IN (:keep)";
+        var spec = jdbc.sql("""
+                DELETE FROM depot_equity_snapshot
+                 WHERE connection = :connection
+                   AND granularity = :granularity
+                   AND source = 'RECONSTRUCTED'
+                   AND as_of < :anchor""" + keepClause)
+                .param("connection", connection)
+                .param("granularity", granularity)
+                .param("anchor", Timestamp.from(anchor));
+        if (!keep.isEmpty()) {
+            spec = spec.param("keep", keep.stream().map(Timestamp::from).toList());
+        }
+        return spec.update();
     }
 
     /** Rows at or after {@code from}, ascending. The boundary is inclusive. */
@@ -92,6 +190,27 @@ public class DepotEquitySnapshotRepository {
                 .param("from", Timestamp.from(from))
                 .query(this::mapRow)
                 .list();
+    }
+
+    /**
+     * The backfill's anchor: the oldest genuinely measured row. Reconstructed rows are
+     * excluded on purpose — anchoring on one would make a re-run drift away from the broker
+     * a little further each time.
+     */
+    public Optional<DepotEquitySnapshot> firstMeasured(String connection, String granularity) {
+        return jdbc.sql("""
+                SELECT id, connection, as_of, granularity, equity, cash, positions_value,
+                       currency, external_flow, source
+                  FROM depot_equity_snapshot
+                 WHERE connection = :connection
+                   AND granularity = :granularity
+                   AND source = 'MEASURED'
+                 ORDER BY as_of ASC
+                 LIMIT 1""")
+                .param("connection", connection)
+                .param("granularity", granularity)
+                .query(this::mapRow)
+                .optional();
     }
 
     private DepotEquitySnapshot mapRow(ResultSet rs, int rowNum) throws SQLException {
