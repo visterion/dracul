@@ -55,7 +55,17 @@ public class BackfillSourceRepository {
                            AND q.reason_code = 'QTY_SYNC'
                            AND q.order_json->>'position_id' = p.id::text
                            AND q.ts_decision > p.entry_date
-                           AND (p.closed_at IS NULL OR q.ts_decision < p.closed_at)) AS qty_sync_date
+                           AND (p.closed_at IS NULL OR q.ts_decision < p.closed_at)) AS qty_sync_date,
+                       (SELECT (MIN(f.ts_decision) AT TIME ZONE 'UTC')::date
+                          FROM decision_log f
+                         WHERE f.action = 'SYNC'
+                           -- Deliberately NO reason_code filter, unlike qty_sync_date above: a
+                           -- SYNC row of ANY reason code proves the broker held the position
+                           -- that day (design spec §2). PAYO's only SYNC is LEG_SEEDED, not
+                           -- QTY_SYNC -- a fix that filtered on QTY_SYNC would have missed
+                           -- exactly the position that caused this defect.
+                           AND f.order_json->>'position_id' = p.id::text
+                           AND f.ts_decision > p.entry_date) AS fill_date
                   FROM executor_position p
                   LEFT JOIN LATERAL (
                        SELECT d.order_json
@@ -75,6 +85,7 @@ public class BackfillSourceRepository {
     private BookPosition mapRow(ResultSet rs, int rowNum) throws SQLException {
         Date closed = rs.getDate("closed_at");
         Date qtySync = rs.getDate("qty_sync_date");
+        Date fill = rs.getDate("fill_date");
         BigDecimal enterQty = rs.getBigDecimal("enter_qty");
         BigDecimal qty = rs.getBigDecimal("qty");
         return new BookPosition(
@@ -89,6 +100,7 @@ public class BackfillSourceRepository {
                 // null enterQty means no ENTER row was found (e.g. source_signal_id is NULL);
                 // PositionLedger.build fails loudly on it rather than guessing a tranche split.
                 enterQty,
-                qtySync == null ? null : qtySync.toLocalDate());
+                qtySync == null ? null : qtySync.toLocalDate(),
+                fill == null ? null : fill.toLocalDate());
     }
 }

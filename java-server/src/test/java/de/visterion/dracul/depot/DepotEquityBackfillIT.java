@@ -219,9 +219,15 @@ class DepotEquityBackfillIT {
      * <p>{@code equity} alone cannot tell tranche 1 from tranche 2 here: buying more of the
      * same symbol at the same price that is already priced into the curve does not change
      * equity, only its cash/positions split (500.00 on both days, confirmed by this test).
-     * {@code cash} is the signal that actually moves: 450.00 while only tranche 1 (5 shares)
-     * is held, dropping to 400.00 -- the anchor's own cash -- once tranche 2's 5 shares are
-     * bought on the QTY_SYNC date. A wrong or ignored QTY_SYNC date (NULL, the decoy's
+     * {@code cash} is the signal that actually moves.
+     *
+     * <p>Under the fill_date feature (2026-09-02 design spec), the SAME 2026-03-04 SYNC row
+     * that dates tranche 2 also corroborates tranche 1 -- fill_date has deliberately no
+     * reason_code filter, unlike qty_sync_date -- so tranche 1 is ALSO re-dated to 03-04 here
+     * (guard B then has nothing to clamp: both tranches already land on the same day). Nothing
+     * is held on 03-03 at all, so cash there is the full anchor cash plus BOTH tranches' buy
+     * amounts added back (500.00), dropping to 400.00 -- the anchor's own cash -- once both
+     * tranches are bought on 03-04. A wrong or ignored QTY_SYNC date (NULL, the decoy's
      * 2026-03-01, or entryDate + 1 -- which happens to coincide with the real date here, so
      * this alone would not catch every regression) would move that transition to the wrong
      * day and flip one of these two cash values.
@@ -230,10 +236,46 @@ class DepotEquityBackfillIT {
     void qtySyncDateSplitsTheHoldingAcrossTranches() {
         service.run("c1");
 
-        assertThat(cashAt("2026-03-03")).isEqualByComparingTo("450.00");
+        assertThat(cashAt("2026-03-03")).isEqualByComparingTo("500.00");
         assertThat(cashAt("2026-03-04")).isEqualByComparingTo("400.00");
         assertThat(equityAt("2026-03-03")).isEqualByComparingTo("500.00");
         assertThat(equityAt("2026-03-04")).isEqualByComparingTo("500.00");
+    }
+
+    /**
+     * Proves {@code fill_date} is read from {@code decision_log} for a SYNC row whose
+     * {@code reason_code} is LEG_SEEDED -- NOT QTY_SYNC. This is the exact shape of the
+     * production defect (2026-09-02 design spec §2): PAYO's only SYNC row is LEG_SEEDED, and a
+     * fix that filtered fill_date on QTY_SYNC (as qty_sync_date deliberately does) would have
+     * missed it entirely. Position 906 has no QTY_SYNC row at all, so qty_sync_date must stay
+     * NULL while fill_date picks up the LEG_SEEDED row's date.
+     */
+    @Test
+    void fillDateIsReadForALegSeededRowNotOnlyQtySync() {
+        jdbc.sql("""
+                INSERT INTO executor_position
+                       (id, connection, symbol, side, qty, entry_price, initial_stop,
+                        active_stop, entry_date, status, source_signal_id)
+                VALUES (906, 'c8', 'GGG', 'BUY', 5, 10.00, 8.00, 8.00,
+                        timestamptz '2026-03-03 14:00:00+00', 'OPEN', 'sig-906')""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, symbol,
+                        signal_id, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
+                        'ENTER', 'GGG', 'sig-906', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, reason_code,
+                        symbol, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-06 09:00:00+00', 'v1', 'test',
+                        'SYNC', 'LEG_SEEDED', 'GGG', '{"position_id": "906"}'::jsonb)""").update();
+
+        var positions = new BackfillSourceRepository(jdbc).bookPositions("c8");
+
+        var ggg = positions.stream().filter(p -> "GGG".equals(p.symbol())).findFirst().orElseThrow();
+        assertThat(ggg.fillDate()).isEqualTo(java.time.LocalDate.of(2026, 3, 6));
+        assertThat(ggg.qtySyncDate()).isNull();
     }
 
     /**

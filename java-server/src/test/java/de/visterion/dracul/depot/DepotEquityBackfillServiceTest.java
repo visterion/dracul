@@ -85,7 +85,7 @@ class DepotEquityBackfillServiceTest {
 
     private static BookPosition open(String symbol, String qty, String price, LocalDate entry) {
         return new BookPosition(1L, symbol, "OPEN", new BigDecimal(qty), new BigDecimal(price),
-                entry, null, null, new BigDecimal(qty), null);
+                entry, null, null, new BigDecimal(qty), null, null);
     }
 
     @Test
@@ -196,7 +196,7 @@ class DepotEquityBackfillServiceTest {
     @Test
     void missingEnterRowIsAConflictNotAGuess() {
         var noEnter = new BookPosition(1L, "AAA", "OPEN", new BigDecimal("10"),
-                new BigDecimal("20.00"), D2, null, null, null, null);
+                new BigDecimal("20.00"), D2, null, null, null, null, null);
         var f = fixture(List.of(noEnter), Map.of("AAA", new BigDecimal("10")),
                 Map.of(D2, "20.00"), Map.of(D2, "2.0"),
                 new BigDecimal("500.00"), new BigDecimal("400.00"));
