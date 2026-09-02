@@ -34,7 +34,16 @@ public final class PositionLedger {
     public record Holding(String symbol, BigDecimal qty, LocalDate from, LocalDate untilExclusive) {
     }
 
-    public record Ledger(List<CashEvent> events, List<Holding> holdings, List<String> excluded) {
+    /**
+     * @param uncorroboratedPositions positions dated from {@code entryDate} because no SYNC
+     *                                row exists for them at all — no broker corroboration
+     * @param lateCorroborations      positions whose {@code fillDate} landed more than two
+     *                                days after {@code entryDate}. A late corroboration is
+     *                                indistinguishable from a late fill (design spec §2), so
+     *                                the operator must see it even though the date was used.
+     */
+    public record Ledger(List<CashEvent> events, List<Holding> holdings, List<String> excluded,
+                          List<String> uncorroboratedPositions, List<String> lateCorroborations) {
 
         public Map<String, BigDecimal> holdingsOn(LocalDate d) {
             Map<String, BigDecimal> out = new HashMap<>();
@@ -59,6 +68,8 @@ public final class PositionLedger {
         List<CashEvent> events = new ArrayList<>();
         List<Holding> holdings = new ArrayList<>();
         List<String> excluded = new ArrayList<>();
+        List<String> uncorroboratedPositions = new ArrayList<>();
+        List<String> lateCorroborations = new ArrayList<>();
 
         for (BookPosition p : book) {
             if ("CANCELLED".equals(p.status())) {
@@ -89,7 +100,40 @@ public final class PositionLedger {
                         + " but only " + p.qty() + " held — tranche 1 clamped to the book");
             }
             BigDecimal t2 = p.qty().subtract(t1);
+
+            // Tranche 1 dating (design spec §3.2): the corroborated fillDate, not the book's
+            // entryDate, is the day the position was actually held -- unless it is null, in
+            // which case there is nothing to corroborate with and entryDate is all there is.
+            LocalDate tranche1Start = p.entryDate();
+            if (p.fillDate() == null) {
+                uncorroboratedPositions.add(p.symbol());
+            } else {
+                // Guard A -- a closed position never loses its exit (design spec §3.3, and
+                // PositionLedger's own class javadoc "the invariant this class exists to
+                // keep"). If fillDate lands on or after the close, using it would clamp
+                // tranche 1 to nothing left of the close, zero heldQty, zero the exit event,
+                // and delete a realized loss -- the exact silent value loss this class exists
+                // to end. A proxy date that contradicts a hard book fact (the position DID
+                // close, and DID sell something) yields to that fact; it does not erase it.
+                // The position is NOT excluded -- only its dating falls back to entryDate.
+                if (p.closedAt() == null || p.fillDate().isBefore(p.closedAt())) {
+                    tranche1Start = p.fillDate();
+                }
+                if (p.fillDate().isAfter(p.entryDate().plusDays(2))) {
+                    lateCorroborations.add(p.symbol() + ": entryDate " + p.entryDate()
+                            + ", fillDate " + p.fillDate());
+                }
+            }
+
             LocalDate t2Date = p.qtySyncDate() != null ? p.qtySyncDate() : p.entryDate().plusDays(1);
+            // Guard B -- tranche 2 can never precede tranche 1 (design spec §3.3). Neither
+            // qtySyncDate nor the entryDate+1 fallback know about the corroborated
+            // tranche1Start; without this, tranche 2 could be held on days tranche 1 does not
+            // exist yet and its purchase cash booked before tranche 1's own. Applied BEFORE
+            // the close-drop check just below so the CLAMPED date is the one that check tests.
+            if (t2Date.isBefore(tranche1Start)) {
+                t2Date = tranche1Start;
+            }
 
             // Built per position and only merged into the ledger once the position survives
             // every exclusion below. An exclusion that left half of these behind is exactly
@@ -97,8 +141,8 @@ public final class PositionLedger {
             List<Holding> posHoldings = new ArrayList<>();
             List<CashEvent> posEvents = new ArrayList<>();
 
-            posHoldings.add(new Holding(p.symbol(), t1, p.entryDate(), p.closedAt()));
-            posEvents.add(new CashEvent(p.entryDate(), p.symbol(), t1.multiply(p.entryPrice())));
+            posHoldings.add(new Holding(p.symbol(), t1, tranche1Start, p.closedAt()));
+            posEvents.add(new CashEvent(tranche1Start, p.symbol(), t1.multiply(p.entryPrice())));
 
             if (t2.signum() > 0) {
                 if (p.closedAt() != null && !t2Date.isBefore(p.closedAt())) {
@@ -138,7 +182,8 @@ public final class PositionLedger {
             holdings.addAll(posHoldings);
             events.addAll(posEvents);
         }
-        return new Ledger(List.copyOf(events), List.copyOf(holdings), List.copyOf(excluded));
+        return new Ledger(List.copyOf(events), List.copyOf(holdings), List.copyOf(excluded),
+                List.copyOf(uncorroboratedPositions), List.copyOf(lateCorroborations));
     }
 
     /**

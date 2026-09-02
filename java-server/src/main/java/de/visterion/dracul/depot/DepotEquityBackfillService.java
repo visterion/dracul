@@ -74,7 +74,9 @@ public class DepotEquityBackfillService {
                                  int daysInserted, int daysCorrected, int daysUnchanged,
                                  int daysSkippedUnpriced, int daysDeletedStale,
                                  List<String> missingBars, List<String> excludedPositions,
-                                 BigDecimal seamDelta, BigDecimal seamDeltaPct) {
+                                 BigDecimal seamDelta, BigDecimal seamDeltaPct,
+                                 List<String> uncorroboratedPositions,
+                                 List<String> lateCorroborations) {
     }
 
     /** One computed-but-not-yet-written day. Kept in memory until the whole series checks out. */
@@ -123,7 +125,7 @@ public class DepotEquityBackfillService {
             log.info("equity backfill [{}]: {} stale reconstructed row(s) deleted (book empty)",
                     connection, deleted);
             return new BackfillReport(connection, null, null, 0, 0, 0, 0, deleted,
-                    List.of(), List.of(), null, null);
+                    List.of(), List.of(), null, null, List.of(), List.of());
         }
 
         Map<String, BigDecimal> brokerQty = brokerHoldings(connection);
@@ -175,7 +177,8 @@ public class DepotEquityBackfillService {
             log.info("equity backfill [{}]: {} stale reconstructed row(s) deleted "
                     + "(all positions excluded)", connection, deleted);
             return new BackfillReport(connection, null, null, 0, 0, 0, 0, deleted,
-                    List.of(), ledger.excluded(), null, null);
+                    List.of(), ledger.excluded(), null, null,
+                    ledger.uncorroboratedPositions(), ledger.lateCorroborations());
         }
         // entry_date is NOT NULL in the schema, so firstHoldingDate cannot be empty due to a
         // null entryDate; the .isEmpty() branch above only covers "every position excluded".
@@ -345,11 +348,14 @@ public class DepotEquityBackfillService {
 
         BackfillReport report = new BackfillReport(connection, from.toString(), to.toString(),
                 inserted, corrected, unchanged, skippedUnpriced, deletedStale,
-                List.copyOf(missingBars), ledger.excluded(), seamDelta, seamDeltaPct);
+                List.copyOf(missingBars), ledger.excluded(), seamDelta, seamDeltaPct,
+                ledger.uncorroboratedPositions(), ledger.lateCorroborations());
         log.info("equity backfill [{}]: {} inserted, {} corrected, {} unchanged, "
-                        + "{} skipped-unpriced, {} stale deleted, seamDelta {} ({}%)",
+                        + "{} skipped-unpriced, {} stale deleted, seamDelta {} ({}%), "
+                        + "{} uncorroborated, {} late corroboration(s)",
                 connection, inserted, corrected, unchanged, skippedUnpriced, deletedStale,
-                seamDelta, seamDeltaPct);
+                seamDelta, seamDeltaPct, ledger.uncorroboratedPositions().size(),
+                ledger.lateCorroborations().size());
         return report;
     }
 

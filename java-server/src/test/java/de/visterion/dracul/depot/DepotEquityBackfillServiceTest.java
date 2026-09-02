@@ -85,7 +85,7 @@ class DepotEquityBackfillServiceTest {
 
     private static BookPosition open(String symbol, String qty, String price, LocalDate entry) {
         return new BookPosition(1L, symbol, "OPEN", new BigDecimal(qty), new BigDecimal(price),
-                entry, null, null, new BigDecimal(qty), null);
+                entry, null, null, new BigDecimal(qty), null, null);
     }
 
     @Test
@@ -196,7 +196,7 @@ class DepotEquityBackfillServiceTest {
     @Test
     void missingEnterRowIsAConflictNotAGuess() {
         var noEnter = new BookPosition(1L, "AAA", "OPEN", new BigDecimal("10"),
-                new BigDecimal("20.00"), D2, null, null, null, null);
+                new BigDecimal("20.00"), D2, null, null, null, null, null);
         var f = fixture(List.of(noEnter), Map.of("AAA", new BigDecimal("10")),
                 Map.of(D2, "20.00"), Map.of(D2, "2.0"),
                 new BigDecimal("500.00"), new BigDecimal("400.00"));
@@ -429,6 +429,32 @@ class DepotEquityBackfillServiceTest {
         var report = f.service().run("c1");
 
         assertThat(report.daysInserted()).isZero();
+    }
+
+    @Test
+    void reportCarriesUncorroboratedAndLateCorroboratedPositionsFromTheLedger() {
+        // Proves the wiring end-to-end: PositionLedger.Ledger's uncorroboratedPositions and
+        // lateCorroborations must actually arrive in BackfillReport, not just exist on the
+        // ledger. A mutation that drops them at the service boundary (e.g. hardcoding List.of()
+        // in DepotEquityBackfillService.run) must redden this -- open(...) alone never checks
+        // it, since every position it builds has fillDate == null.
+        LocalDate lateFill = D2.plusDays(5);
+        var uncorroborated = open("AAA", "10", "20.00", D2);
+        var lateCorroborated = new BookPosition(2L, "BBB", "OPEN", new BigDecimal("10"),
+                new BigDecimal("20.00"), D2, null, null, new BigDecimal("10"), null, lateFill);
+
+        var f = fixture(
+                List.of(uncorroborated, lateCorroborated),
+                Map.of("AAA", new BigDecimal("10"), "BBB", new BigDecimal("10")),
+                Map.of(D2, "20.00", D3, "20.00", D4, "20.00"),
+                Map.of(D2, "2.0", D3, "2.0", D4, "2.0"),
+                new BigDecimal("500.00"), new BigDecimal("400.00"));
+
+        var report = f.service().run("c1");
+
+        assertThat(report.uncorroboratedPositions()).containsExactly("AAA");
+        assertThat(report.lateCorroborations()).hasSize(1)
+                .anySatisfy(s -> assertThat(s).contains("BBB"));
     }
 
     private static Map<LocalDate, BigDecimal> writtenEquities(DepotEquitySnapshotRepository repo) {
