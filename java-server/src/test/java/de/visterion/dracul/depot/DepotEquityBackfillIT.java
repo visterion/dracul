@@ -25,9 +25,11 @@ import static org.mockito.Mockito.when;
 /**
  * The backfill against a real Postgres, with the book seeded through real INSERTs. Proves
  * what the unit tests cannot: that the SQL in {@code BackfillSourceRepository} reads the
- * ENTER order (bound on {@code decision_log.signal_id = executor_position.source_signal_id})
- * and the QTY_SYNC date (bound on {@code order_json->>'position_id'}, with the entry/close
- * time window) out of the real schema; that {@code connection} actually filters the book
+ * ENTER order (bound on {@code decision_log.signal_id = executor_position.source_signal_id}),
+ * the QTY_SYNC date (bound on {@code order_json->>'position_id'}, with the entry/close time
+ * window), and the fill_date (bound on {@code order_json->>'position_id'} and the entry time
+ * bound, but -- deliberately unlike qty_sync_date -- with no {@code reason_code} filter and no
+ * close bound) out of the real schema; that {@code connection} actually filters the book
  * rather than cross-contaminating another connection's positions; and that a second run
  * writes nothing.
  */
@@ -75,6 +77,15 @@ class DepotEquityBackfillIT {
         // reads its date out of the real schema rather than the code merely compiling against
         // an untested query — see qtySyncDateSplitsTheHoldingAcrossTranches below.
         //
+        // An earlier, separate ENTRY_PRICE_SYNC row on 2026-03-03 (same day as entry_date, a
+        // later timestamp) gives fill_date a SYNC row of its own, distinct from the 03-04
+        // QTY_SYNC one. Without it, fill_date's reason_code-agnostic subquery would pick up
+        // the SAME 03-04 QTY_SYNC row that dates tranche 2, re-dating tranche 1 to 03-04 too;
+        // guard B (PositionLedger.build) would then clamp qty_sync_date up to 03-04 whenever it
+        // is earlier, silently masking the entry/close time-window bound below. With this row,
+        // fill_date = 03-03 = entryDate, tranche 1 stays on its book date, and qty_sync_date's
+        // own bound stays independently observable.
+        //
         // source_signal_id / signal_id is the exact-identity key BackfillSourceRepository
         // binds the ENTER row on (not a symbol join, see that class's javadoc) — both sides
         // must carry the same value or enter_qty comes back NULL and the service throws
@@ -95,12 +106,19 @@ class DepotEquityBackfillIT {
                 INSERT INTO decision_log
                        (log_id, ts_decision, rule_version, trigger_type, action, reason_code,
                         symbol, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 15:00:00+00', 'v1', 'test',
+                        'SYNC', 'ENTRY_PRICE_SYNC', 'AAA', '{"position_id": "900"}'::jsonb)""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, reason_code,
+                        symbol, order_json)
                 VALUES (gen_random_uuid(), timestamptz '2026-03-04 10:00:00+00', 'v1', 'test',
                         'SYNC', 'QTY_SYNC', 'AAA', '{"position_id": "900"}'::jsonb)""").update();
         // Decoy: a QTY_SYNC row for the SAME position, dated BEFORE its entry_date. It exists
-        // only to make the subquery's time bound ("q.ts_decision > p.entry_date") load-bearing:
-        // without that bound this earlier row -- not the real 03-04 one -- would win the
-        // MIN(ts_decision) aggregation, dating tranche 2 to before the position even opened.
+        // only to make qty_sync_date's own time bound ("q.ts_decision > p.entry_date")
+        // load-bearing: without that bound this earlier row -- not the real 03-04 one -- would
+        // win the MIN(ts_decision) aggregation, dating tranche 2 to before the position even
+        // opened. It predates entry_date, so it does not affect fill_date's own bound either.
         jdbc.sql("""
                 INSERT INTO decision_log
                        (log_id, ts_decision, rule_version, trigger_type, action, reason_code,
@@ -214,29 +232,30 @@ class DepotEquityBackfillIT {
      * Proves the QTY_SYNC subquery reads a real date out of {@code decision_log} -- bound on
      * both {@code order_json->>'position_id'} AND the entry/close time window -- rather than
      * always returning NULL (which would silently fall back to {@code entryDate.plusDays(1)},
-     * see {@code PositionLedger.build}) or picking up the decoy row seeded above.
+     * see {@code PositionLedger.build}) or picking up either decoy row seeded above.
+     *
+     * <p>The separate 03-03 ENTRY_PRICE_SYNC row seeded above gives fill_date its own,
+     * independent SYNC row (fill_date = entryDate = 03-03, so tranche 1 stays on its book
+     * date) -- without it, fill_date's reason_code-agnostic subquery would pick up the SAME
+     * 03-04 QTY_SYNC row this test exists to check, re-date tranche 1 to 03-04 too, and let
+     * guard B (PositionLedger.build) clamp qty_sync_date up to 03-04 whenever it is earlier --
+     * silently masking the very bound this test pins.
      *
      * <p>{@code equity} alone cannot tell tranche 1 from tranche 2 here: buying more of the
      * same symbol at the same price that is already priced into the curve does not change
      * equity, only its cash/positions split (500.00 on both days, confirmed by this test).
-     * {@code cash} is the signal that actually moves.
-     *
-     * <p>Under the fill_date feature (2026-09-02 design spec), the SAME 2026-03-04 SYNC row
-     * that dates tranche 2 also corroborates tranche 1 -- fill_date has deliberately no
-     * reason_code filter, unlike qty_sync_date -- so tranche 1 is ALSO re-dated to 03-04 here
-     * (guard B then has nothing to clamp: both tranches already land on the same day). Nothing
-     * is held on 03-03 at all, so cash there is the full anchor cash plus BOTH tranches' buy
-     * amounts added back (500.00), dropping to 400.00 -- the anchor's own cash -- once both
-     * tranches are bought on 03-04. A wrong or ignored QTY_SYNC date (NULL, the decoy's
-     * 2026-03-01, or entryDate + 1 -- which happens to coincide with the real date here, so
-     * this alone would not catch every regression) would move that transition to the wrong
-     * day and flip one of these two cash values.
+     * {@code cash} is the signal that actually moves: 450.00 while only tranche 1 (5 shares)
+     * is held, dropping to 400.00 -- the anchor's own cash -- once tranche 2's 5 shares are
+     * bought on the QTY_SYNC date. A wrong or ignored QTY_SYNC date (NULL, the decoy's
+     * 2026-03-01, the wrong-position decoy's 2026-03-03, or entryDate + 1 -- which happens to
+     * coincide with the real date here, so this alone would not catch every regression) would
+     * move that transition to the wrong day and flip one of these two cash values.
      */
     @Test
     void qtySyncDateSplitsTheHoldingAcrossTranches() {
         service.run("c1");
 
-        assertThat(cashAt("2026-03-03")).isEqualByComparingTo("500.00");
+        assertThat(cashAt("2026-03-03")).isEqualByComparingTo("450.00");
         assertThat(cashAt("2026-03-04")).isEqualByComparingTo("400.00");
         assertThat(equityAt("2026-03-03")).isEqualByComparingTo("500.00");
         assertThat(equityAt("2026-03-04")).isEqualByComparingTo("500.00");

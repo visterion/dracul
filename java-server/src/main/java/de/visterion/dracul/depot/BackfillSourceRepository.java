@@ -22,10 +22,11 @@ import java.util.List;
  * join is not a safe key: two connections holding the same symbol would cross-contaminate,
  * and a lower-bound-only time window can silently bind a later order when a position's own
  * ENTER row is missing. The ENTER lateral instead binds on {@code source_signal_id}
- * (populated for every position; each maps to exactly one ENTER row) and the QTY_SYNC
- * subquery binds on {@code order_json->>'position_id'} — both exact identity keys, the
- * established pattern elsewhere in this codebase ({@code DepotHistoryService},
- * {@code OutcomeBatchJob}). Do not "simplify" this back to a symbol join.
+ * (populated for every position; each maps to exactly one ENTER row), and both the
+ * {@code qty_sync_date} AND {@code fill_date} subqueries bind on
+ * {@code order_json->>'position_id'} — all exact identity keys, the established pattern
+ * elsewhere in this codebase ({@code DepotHistoryService}, {@code OutcomeBatchJob}). Do not
+ * "simplify" this back to a symbol join.
  */
 @Repository
 public class BackfillSourceRepository {

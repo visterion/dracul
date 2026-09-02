@@ -287,4 +287,23 @@ class PositionLedgerTest {
                         .contains(D1.plusDays(23).toString()));
         assertThat(l.uncorroboratedPositions()).isEmpty();
     }
+
+    @Test
+    void lateCorroborationBoundaryIsStrictlyAfterTwoDays() {
+        // The condition is isAfter(entryDate.plusDays(2)): exactly +2 must NOT be late (still
+        // within the allowed window), and +3 must. Pins the boundary itself, not just a value
+        // deep on either side of it -- an off-by-one to plusDays(1) or plusDays(3) would slip
+        // past a test that only checked +1 (not late) and +23 (late).
+        var exactlyTwoDays = single("AAA", new BigDecimal("10"), new BigDecimal("20.00"), D1,
+                null, null, D1.plusDays(2));
+        var threeDays = single("BBB", new BigDecimal("10"), new BigDecimal("20.00"), D1,
+                null, null, D1.plusDays(3));
+
+        var l = PositionLedger.build(List.of(exactlyTwoDays, threeDays),
+                Map.of("AAA", new BigDecimal("10"), "BBB", new BigDecimal("10")));
+
+        assertThat(l.lateCorroborations()).hasSize(1)
+                .anySatisfy(s -> assertThat(s).contains("BBB"));
+        assertThat(l.lateCorroborations()).noneMatch(s -> s.contains("AAA"));
+    }
 }
