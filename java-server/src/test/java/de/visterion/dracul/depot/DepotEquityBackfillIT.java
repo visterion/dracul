@@ -298,6 +298,59 @@ class DepotEquityBackfillIT {
     }
 
     /**
+     * Proves {@code fill_date} deliberately carries NO close bound, unlike {@code
+     * qty_sync_date} (design spec §3.1: "do NOT carry over the {@code < p.closed_at} bound
+     * into fill_date"). Position 907 is CLOSED, and its only SYNC row lies two days AFTER
+     * {@code closed_at} -- a shape {@code qty_sync_date}'s own close bound would silently drop
+     * to NULL. {@code fill_date} must still read it, and read it correctly dated (not just
+     * non-null), so a mutation that picks the row up but mis-dates it would also redden this.
+     *
+     * <p>Guard A (PositionLedger.build) is what turns "corroboration at/after the close" into
+     * a safe fallback to entryDate for TRANCHE DATING -- this test does not exercise guard A's
+     * dating decision, only that fillDate itself is read. The second assertion checks the other
+     * half of the failure this bound protects against: without it, a position like this one
+     * would ALSO be wrongly reported as uncorroborated (fillDate NULL), when in fact a real,
+     * if late, corroboration exists.
+     */
+    @Test
+    void fillDateIsReadEvenWhenTheOnlySyncRowIsAtOrAfterTheClose() {
+        jdbc.sql("""
+                INSERT INTO executor_position
+                       (id, connection, symbol, side, qty, entry_price, initial_stop,
+                        active_stop, entry_date, status, source_signal_id, closed_at, exit_price)
+                VALUES (907, 'c9', 'HHH', 'BUY', 5, 10.00, 8.00, 8.00,
+                        timestamptz '2026-03-03 14:00:00+00', 'CLOSED', 'sig-907',
+                        timestamptz '2026-03-04 12:00:00+00', 12.00)""").update();
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, symbol,
+                        signal_id, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-03 14:00:00+00', 'v1', 'test',
+                        'ENTER', 'HHH', 'sig-907', '{"qty": 5, "limit_price": 10.00}'::jsonb)""").update();
+        // The only SYNC row for 907, dated two days AFTER closed_at (2026-03-04) -- exactly
+        // the shape qty_sync_date's own close bound exists to drop, and fill_date exists to
+        // read anyway.
+        jdbc.sql("""
+                INSERT INTO decision_log
+                       (log_id, ts_decision, rule_version, trigger_type, action, reason_code,
+                        symbol, order_json)
+                VALUES (gen_random_uuid(), timestamptz '2026-03-06 09:00:00+00', 'v1', 'test',
+                        'SYNC', 'ENTRY_PRICE_SYNC', 'HHH', '{"position_id": "907"}'::jsonb)""").update();
+
+        var positions = new BackfillSourceRepository(jdbc).bookPositions("c9");
+
+        var hhh = positions.stream().filter(p -> "HHH".equals(p.symbol())).findFirst().orElseThrow();
+        assertThat(hhh.closedAt()).isEqualTo(java.time.LocalDate.of(2026, 3, 4));
+        assertThat(hhh.fillDate()).isEqualTo(java.time.LocalDate.of(2026, 3, 6));
+
+        // End-to-end: a position with a real (if late) corroboration must not be reported as
+        // uncorroborated, even though guard A separately falls its TRANCHE DATING back to
+        // entryDate because fillDate is not before closedAt.
+        var ledger = PositionLedger.build(positions, java.util.Map.of());
+        assertThat(ledger.uncorroboratedPositions()).doesNotContain("HHH");
+    }
+
+    /**
      * Proves {@code bookPositions}' {@code WHERE p.connection = :connection} is load-bearing.
      * Position 901 (connection c2, symbol BBB) exists in the same table; if the filter were
      * ever dropped it would leak into c1's book, fail the broker-holdings check (the mocked
