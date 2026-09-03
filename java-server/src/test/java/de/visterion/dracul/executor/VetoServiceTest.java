@@ -1179,4 +1179,30 @@ class VetoServiceTest {
     void patternGate_isTransient() {
         assertThat(RejectReason.PATTERN_GATE.isTransient()).isTrue();
     }
+
+    // ---- HEAT_LIMIT consumes logical risk, never broker risk (regression) ----
+
+    /** Test 30. HEAT_LIMIT consumes position_risk — the loss the CLOSE-BASED rule intends — and
+     *  never position_risk_broker, the wider loss the resting leg permits. That is a deliberate
+     *  reversal of an earlier review decision: on broker risk, five positions would occupy ~40 % of
+     *  the heat limit on day one, making max-positions and heat-pct mutually unreachable through a
+     *  TRANSIENT reason that leaves signals silently PENDING.
+     *  Mutation: feed the veto a risk figure computed from the broker stop (here 1.4x larger,
+     *  which tips this fixture over the limit). */
+    @Test
+    void heatLimitStillConsumesLogicalRisk() {
+        // heat limit = totalBudget 10000 * heatPct 0.06 = 600. Open heat 540 already booked.
+        // Logical new risk 50 -> 590 <= 600, PASS.
+        // Broker risk for the same position would be 50 * (7/5) = 70 -> 610 > 600, FAIL.
+        Sizing logical = new Sizing(new BigDecimal("10"), new BigDecimal("5"),
+                new BigDecimal("50.0000"), new BigDecimal("93.5"), new BigDecimal("95"), true,
+                "entry - 2.5 x ATR22", new BigDecimal("10"), new BigDecimal("20"), "NOTIONAL", null);
+
+        EntryContext heatCtx = ctx().openHeat(BigDecimal.valueOf(540)).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), heatCtx, logical, cfg());
+
+        VetoResult heat = named(outcome, "HEAT_LIMIT");
+        assertThat(heat.passed()).as("590 <= 600 on LOGICAL risk").isTrue();
+        assertThat(outcome.firstFailure()).isNotEqualTo(RejectReason.HEAT_LIMIT);
+    }
 }
