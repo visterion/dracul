@@ -127,6 +127,14 @@ public class ExecutorWebhookController {
     private final int brokerAttemptWindowHours;
     /** Broker calls per signal allowed inside a single run before the throttle bites. */
     private final int maxBrokerCallsPerRun;
+    /** How many ATRs the protective leg rests away from the logical stop; 0 = exact legacy. */
+    private final BigDecimal brokerStopBufferAtr;
+    /** Proximity band the broker accepts for a bracket leg, as a fraction of the entry price. */
+    private final BigDecimal maxBrokerStopPct;
+    /** Fraction of the total budget a single tranche may lose at its logical stop. */
+    private final double riskPct;
+    /** Period of the short ATR window, for the {@code stop_basis} audit label. */
+    private final int atrShortPeriod;
 
     @Autowired
     public ExecutorWebhookController(
@@ -174,7 +182,11 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-broker-attempts:3}") int maxBrokerAttempts,
             @Value("${dracul.executor.broker-attempt-window-hours:72}") int brokerAttemptWindowHours,
             @Value("${dracul.executor.max-broker-calls-per-run:2}") int maxBrokerCallsPerRun,
-            @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency) {
+            @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency,
+            @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") java.math.BigDecimal brokerStopBufferAtr,
+            @Value("${dracul.executor.max-broker-stop-pct:0.20}") java.math.BigDecimal maxBrokerStopPct,
+            @Value("${dracul.executor.risk-pct:0.01}") double riskPct,
+            @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod) {
         this(signalRepo, positionRepo, legRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
@@ -182,6 +194,7 @@ public class ExecutorWebhookController {
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
                 entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
                 driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
+                brokerStopBufferAtr, maxBrokerStopPct, riskPct, atrShortPeriod,
                 Clock.systemUTC());
     }
 
@@ -233,6 +246,10 @@ public class ExecutorWebhookController {
             double driftAnchorAtrMult,
             double valueAnchorAtrMult,
             String instrumentCurrency,
+            java.math.BigDecimal brokerStopBufferAtr,
+            java.math.BigDecimal maxBrokerStopPct,
+            double riskPct,
+            int atrShortPeriod,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -260,6 +277,10 @@ public class ExecutorWebhookController {
         this.maxBrokerAttempts = maxBrokerAttempts;
         this.brokerAttemptWindowHours = brokerAttemptWindowHours;
         this.maxBrokerCallsPerRun = maxBrokerCallsPerRun;
+        this.brokerStopBufferAtr = brokerStopBufferAtr;
+        this.maxBrokerStopPct = maxBrokerStopPct;
+        this.riskPct = riskPct;
+        this.atrShortPeriod = atrShortPeriod;
         this.verifier = new BearerTokenVerifier(webhookToken);
         this.assembler = assembler;
         this.sizer = sizer;
@@ -306,7 +327,12 @@ public class ExecutorWebhookController {
                 node.put("swing_low", levels.swingLow());
                 node.put("reference_price", levels.referencePrice());
 
-                StopWindow w = sizer.stopWindow(s.direction(), levels.referencePrice(), levels.atr(), levels.swingLow());
+                // The WINDOW the LLM proposes a stop inside comes from atrEff -- the post-report
+                // window, when there is one. The `atr` field above deliberately stays ATR22: the
+                // LLM reasons about the volatility number it has always seen, and the window is
+                // where the widening belongs.
+                StopWindow w = sizer.stopWindow(s.direction(), levels.referencePrice(),
+                        levels.atrEff(), levels.swingLow());
                 node.put("stop_min", w.stopMin());
                 node.put("stop_max", w.stopMax());
             } else {
@@ -485,8 +511,15 @@ public class ExecutorWebhookController {
     private ObjectNode inputsSnapshotNode(ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
             BigDecimal orderPriceRounded, VetoService.Outcome veto) {
         ObjectNode n = mapper.createObjectNode();
-        n.put("signal_confidence", signal.confidence());
-        n.put("signal_mechanism", signal.mechanism());
+        // A tranche-2 add has no signal of its own (the source signal is long ACCEPTED) and runs no
+        // veto catalog. Explicit nulls, never fabricated values.
+        if (signal == null) {
+            n.putNull("signal_confidence");
+            n.putNull("signal_mechanism");
+        } else {
+            n.put("signal_confidence", signal.confidence());
+            n.put("signal_mechanism", signal.mechanism());
+        }
         long ageDays = ctx.signalAgeTradingDays();
         if (ageDays < 0) n.putNull("signal_age_trading_days");
         else n.put("signal_age_trading_days", ageDays);
@@ -498,12 +531,14 @@ public class ExecutorWebhookController {
         // that motivated this field).
         n.put("submitted_price", orderPriceRounded);
         n.put("atr", ctx.atr());
+        n.put("atr_short", ctx.atrShort());
+        n.put("atr_effective", ctx.atrEff());
         n.put("book_positions_count", ctx.openPositions() == null ? 0 : ctx.openPositions().size());
 
         // Ternaries like `snap == null ? (Double) null : snap.heatBeforePct()` are a classic trap:
         // binary numeric promotion forces the null branch through unboxing too, NPEing exactly
         // when snap IS null. Plain if/else avoids it.
-        VetoService.Snapshot snap = veto.snapshot();
+        VetoService.Snapshot snap = veto == null ? null : veto.snapshot();
         if (snap == null) {
             n.putNull("portfolio_heat_before_pct");
             n.putNull("portfolio_heat_after_pct");
@@ -520,6 +555,36 @@ public class ExecutorWebhookController {
             n.put("cooldown_status", snap.cooldownStatus());
         }
         return n;
+    }
+
+    /** The per-trade risk budget in ACCOUNT currency: a fixed fraction of the total budget. */
+    private BigDecimal riskBudgetAccountCcy() {
+        return vetoConfig.totalBudget().multiply(BigDecimal.valueOf(riskPct));
+    }
+
+    /** Names the ATR window {@code ctx.atrEff()} actually resolved to, for the {@code stop_basis}
+     *  audit string. Not cosmetic: {@code stop_basis} is grouped on in the outcome analytics, and a
+     *  row that says ATR22 while the stop came from ATR5 mis-attributes the result. */
+    private String atrLabel(EntryContext ctx) {
+        boolean shortWins = ctx.atrShort() != null && ctx.atr() != null
+                && ctx.atrShort().compareTo(ctx.atr()) > 0;
+        return "ATR" + (shortWins ? atrShortPeriod : atrPeriod);
+    }
+
+    /** {@code qty x (entryPrice - brokerStop) x fx} for a BUY, mirrored for a SELL: the loss the
+     *  RESTING LEG permits in a catastrophe. Logged only — heat and the HEAT_LIMIT veto stay on
+     *  the logical {@code position_risk}, because on broker risk the same five positions would
+     *  occupy ~40 % of the heat limit on day one and make max-positions and heat-pct mutually
+     *  unreachable through a TRANSIENT reason that leaves signals silently PENDING. Gap losses
+     *  beyond the logical stop are what heat never bounded; they are measured, not capped. */
+    private static BigDecimal positionRiskBroker(String side, BigDecimal qty, BigDecimal price,
+            BigDecimal brokerStop, BigDecimal fxToAccount) {
+        if (qty == null || price == null || brokerStop == null) return null;
+        BigDecimal perShare = "BUY".equalsIgnoreCase(side)
+                ? price.subtract(brokerStop)
+                : brokerStop.subtract(price);
+        return qty.multiply(perShare).multiply(fxToAccount)
+                .setScale(4, java.math.RoundingMode.HALF_UP);
     }
 
     /** {@code latency.signal_to_decision_seconds}, omitted entirely (null) when the signal's
@@ -548,6 +613,39 @@ public class ExecutorWebhookController {
                 vetoResultsNode(veto.results()),
                 action, reasonCode, orderJson, null, confidence,
                 latencyNode(signal.createdAt(), now), null));
+    }
+
+    /**
+     * The tranche-2 counterpart of {@link #logEntryDecision}. Add-tranche used to write only an
+     * {@code executor_decision} row, so every audit query over {@code decision_log.order_json} had
+     * a tranche-2 shaped hole — no sizing basis, no risk figures, no broker stop for the second
+     * leg. It cannot reuse {@code logEntryDecision}: that needs a {@link VetoService.Outcome} this
+     * path never builds (there is no signal to veto, only capital bounds to check).
+     *
+     * <p>{@code veto_results} is therefore synthesised as the BUDGET/HEAT_LIMIT pair the path
+     * really did evaluate — the same two checks {@code CapitalBounds} answers for the entry path —
+     * rather than left empty, which would read as "no checks ran".
+     */
+    private void logAddTrancheDecision(String runId, ExecutorPosition position, EntryContext ctx,
+            BigDecimal orderPrice, BigDecimal orderPriceRounded, CapitalBounds.Result bounds,
+            Sizing sizing, ObjectNode orderJson) {
+        BigDecimal heatLimit = vetoConfig.totalBudget()
+                .multiply(BigDecimal.valueOf(vetoConfig.heatPct()));
+        List<VetoResult> synthesised = List.of(
+                new VetoResult("BUDGET", bounds.budgetOk(),
+                        "tranche " + bounds.trancheAccountCcy().toPlainString()
+                                + (bounds.budgetOk() ? " within " : " beyond ")
+                                + "cash and budget headroom"),
+                new VetoResult("HEAT_LIMIT", bounds.heatOk(),
+                        "new risk " + sizing.newRiskAccountCcy().toPlainString()
+                                + (bounds.heatOk() ? " within " : " beyond ")
+                                + "heat limit " + heatLimit.toPlainString()));
+
+        decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
+                position.sourceSignalId(), position.sourceAgent(), null, position.symbol(),
+                inputsSnapshotNode(null, ctx, orderPrice, orderPriceRounded, null),
+                vetoResultsNode(synthesised),
+                "ENTER", null, orderJson, null, null, null, null));
     }
 
     // -------------------------------------------------------------------
@@ -632,6 +730,10 @@ public class ExecutorWebhookController {
         // decision_log can distinguish "the LLM sent none" from "one was sent and dropped".
         BigDecimal proposedTakeProfit = takeProfit;
         boolean takeProfitDropped = false;
+        // The price the protective leg will actually rest at, computed once, immediately after
+        // sizing. Null only on the DATA_UNAVAILABLE placeholder path below, which the veto
+        // short-circuits before anything reads it.
+        BrokerStop.Result brokerStopResult = null;
         if (ctx.missing() == null || ctx.missing().isEmpty()) {
             // Risk layer is authoritative over the stop. Compute the sizer's stop window (pure fn
             // of side/price/ATR/swing-low, independent of the proposed stop) from the ROUNDED
@@ -642,7 +744,7 @@ public class ExecutorWebhookController {
             orderPrice = limitPrice != null ? limitPrice : ctx.price();
             orderPriceRounded = TickSize.roundEntry(side, orderPrice);
 
-            window = sizer.stopWindow(side, orderPriceRounded, ctx.atr(), ctx.swingLow());
+            window = sizer.stopWindow(side, orderPriceRounded, ctx.atrEff(), ctx.swingLow());
 
             // orderPriceRounded, not orderPrice: StopWindowRounding rule 2 requires the window to
             // come from the SAME price size() below is called with. This call site is the only
@@ -652,14 +754,25 @@ public class ExecutorWebhookController {
             // fails under a mutation back to `orderPrice` here even though the whole rest of the
             // suite stays green.
             StopWindowRounding.Result stopResult = StopWindowRounding.compute(
-                    side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice, sizer);
+                    side, orderPriceRounded, ctx.atrEff(), ctx.swingLow(), stopPrice, sizer);
             stopPrice = stopResult.stop();          // authoritative stop used by guard, booking, take-profit
             roundedStopMin = stopResult.stopMin();
             roundedStopMax = stopResult.stopMax();
             stopClamped = stopResult.clamped();
 
-            sizing = sizer.size(side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice,
-                    ctx.trancheAmount(), ctx.fxToAccount(), ctx.totalBudget(), "ATR22");
+            sizing = sizer.size(side, orderPriceRounded, ctx.atrEff(), ctx.swingLow(), stopPrice,
+                    ctx.trancheAmount(), ctx.fxToAccount(), riskBudgetAccountCcy(), atrLabel(ctx));
+            // Immediately after sizing, from side / logical stop / atrEff / entry price. The sizer
+            // never sees this value and nothing feeds it back: the book's risk, the heat veto and
+            // the hard trigger all reason about the LOGICAL stop.
+            // A null stop can only come from a broken (null-bounds) server window, which
+            // OrderGuard rejects as NO_STOP below — long before the bracket is built. Leaving the
+            // result null here keeps BrokerStop's "logicalStop is never null" contract intact
+            // instead of teaching it to swallow a value that must not exist.
+            if (stopPrice != null) {
+                brokerStopResult = BrokerStop.forEntry(side, stopPrice, ctx.atrEff(),
+                        brokerStopBufferAtr, orderPriceRounded, maxBrokerStopPct);
+            }
             if (takeProfit != null) {
                 takeProfit = TickSize.roundTarget(side, takeProfit);
                 // Rounding moves the target toward the entry (roundTarget: BUY floors, SELL
@@ -723,8 +836,18 @@ public class ExecutorWebhookController {
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
 
-        if (sizing.qty() == null || sizing.qty().signum() == 0) {
-            String reason = RejectReason.TRANCHE_TOO_SMALL.name();
+        if (sizing.rejectCause() != null || sizing.qty() == null || sizing.qty().signum() == 0) {
+            // Three different zero paths, three different reasons. NO_R preserves today's outcome:
+            // OrderGuard used to reject the collapsed stop as NO_STOP, and the rPerShare-first
+            // ordering now returns before the guard is ever reached, so the controller emits the
+            // same reason itself. RISK_TOO_WIDE is new and terminal.
+            RejectReason cause = switch (sizing.rejectCause() == null
+                    ? Sizing.RejectCause.NOTIONAL_ZERO : sizing.rejectCause()) {
+                case NOTIONAL_ZERO -> RejectReason.TRANCHE_TOO_SMALL;
+                case NO_R -> RejectReason.NO_STOP;
+                case RISK_ZERO -> RejectReason.RISK_TOO_WIDE;
+            };
+            String reason = cause.name();
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
@@ -824,7 +947,7 @@ public class ExecutorWebhookController {
                         Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
             } else {
                 BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPriceRounded,
-                        stopPrice, takeProfit, signalId, null);
+                        brokerStopResult.price(), takeProfit, signalId, null);
                 placed = gateway.placeBracket(connection, req);
             }
         } catch (BrokerUnavailableException e) {
@@ -858,7 +981,8 @@ public class ExecutorWebhookController {
                     "OPEN", brokerOrderId,
                     orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
                     ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    orderPriceRounded, null, null, null, false, null, null));
+                    orderPriceRounded, null, null, null, false,
+                    brokerStopResult.price(), null));
 
             positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
 
@@ -900,6 +1024,20 @@ public class ExecutorWebhookController {
                 orderJson.put("stop_max_rounded", roundedStopMax);
                 orderJson.put("proposed_take_profit", proposedTakeProfit);
                 orderJson.put("take_profit_dropped", takeProfitDropped);
+                orderJson.put("broker_stop", brokerStopResult.price());
+                orderJson.put("broker_stop_buffer_atr", brokerStopBufferAtr);
+                orderJson.put("broker_stop_clamped", brokerStopResult.clamped());
+                orderJson.put("broker_stop_capped", brokerStopResult.capped());
+                orderJson.put("qty_notional", sizing.qtyNotional());
+                orderJson.put("qty_risk", sizing.qtyRisk());
+                orderJson.put("sizing_basis", sizing.sizingBasis());
+                orderJson.put("reject_cause",
+                        sizing.rejectCause() == null ? null : sizing.rejectCause().name());
+                orderJson.put("risk_pct", riskPct);
+                orderJson.put("atr_short", ctx.atrShort());
+                orderJson.put("atr_effective", ctx.atrEff());
+                orderJson.put("position_risk_broker", positionRiskBroker(side, qty,
+                        orderPriceRounded, brokerStopResult.price(), ctx.fxToAccount()));
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
                         confidence, clock.instant());
             } catch (RuntimeException e) {
@@ -1050,8 +1188,14 @@ public class ExecutorWebhookController {
             node.put("entry_filled", p.entryFilled());
             node.put("entry_price", p.entryPrice());
             node.put("active_stop", p.activeStop());
+            // The catastrophe backstop, alongside the level that decides. position_context's
+            // active_stop mirror (mirrorActiveStop) keeps mirroring the LOGICAL stop deliberately:
+            // proximity alerts and the daywalker/renfield prompts watch the level that decides,
+            // not the backstop.
+            node.put("broker_stop", p.brokerStop());
             node.put("current_price", p.currentPrice());
             node.put("atr", p.atr());
+            node.put("atr_short", p.atrShort());
             node.put("chandelier_level", p.chandelierLevel());
             node.put("r_current", p.rCurrent());
             node.put("mfe_r", p.mfeR());
@@ -1609,11 +1753,20 @@ public class ExecutorWebhookController {
         // only qty/risk outputs are used. Sized from the ROUNDED price/stop, not the raw ones, so
         // HEAT_LIMIT/BUDGET below see the same (possibly smaller) rPerShare the broker will
         // actually work with.
-        Sizing sizing = sizer.size(position.side(), pxRounded, ctx.atr(), ctx.swingLow(),
-                stopRounded, ctx.trancheAmount(), ctx.fxToAccount(), ctx.totalBudget(), "ATR22");
+        Sizing sizing = sizer.size(position.side(), pxRounded, ctx.atrEff(), ctx.swingLow(),
+                stopRounded, ctx.trancheAmount(), ctx.fxToAccount(), riskBudgetAccountCcy(),
+                atrLabel(ctx));
 
-        if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
-            String reason = RejectReason.TRANCHE_TOO_SMALL.name();
+        if (sizing.rejectCause() != null || sizing.qty() == null
+                || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
+            // The same three-way routing as place-entry: three zero paths, three reasons.
+            RejectReason cause = switch (sizing.rejectCause() == null
+                    ? Sizing.RejectCause.NOTIONAL_ZERO : sizing.rejectCause()) {
+                case NOTIONAL_ZERO -> RejectReason.TRANCHE_TOO_SMALL;
+                case NO_R -> RejectReason.NO_STOP;
+                case RISK_ZERO -> RejectReason.RISK_TOO_WIDE;
+            };
+            String reason = cause.name();
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
                     reason, List.of(), "rejected: " + reason, null, runId, null));
             return ResponseEntity.ok(Map.of("output", Map.of("placed", false, "reason", reason)));
@@ -1647,6 +1800,12 @@ public class ExecutorWebhookController {
         // und verhinderte die Tranche seit dem 2026-07-20 in jedem Nachtlauf.
         // Der Ausstieg der Gesamtposition wird ohnehin vom Exit-Lifecycle gesteuert,
         // nicht von einem Zielkurs an der zweiten Tranche.
+        // The new leg may rest at a different broker level than tranche 1's (an older atrEff). That
+        // transient two-level state is accepted: the next ratchet sends ONE buffered price to every
+        // open leg and they converge.
+        BrokerStop.Result brokerStopResult = BrokerStop.forEntry(position.side(), stopRounded,
+                ctx.atrEff(), brokerStopBufferAtr, pxRounded, maxBrokerStopPct);
+
         String signalId = position.sourceSignalId();
         String clientRef = "t2-" + (signalId != null ? signalId : "pos-" + position.id());
 
@@ -1734,7 +1893,7 @@ public class ExecutorWebhookController {
                             Map.of("placed", false, "reason", "MAX_BROKER_ATTEMPTS")));
                 }
                 BracketRequest req = new BracketRequest(symbol, position.side(), trancheQty, pxRounded,
-                        stopRounded, null, clientRef, null);
+                        brokerStopResult.price(), null, clientRef, null);
                 placed = gateway.placeBracket(connection, req);
             }
         } catch (BrokerUnavailableException e) {
@@ -1766,6 +1925,33 @@ public class ExecutorWebhookController {
             try {
                 decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, true,
                         null, List.of(), "tranche 2 added: " + t2.reason(), brokerOrderId, runId, null));
+
+                ObjectNode trancheOrderJson = mapper.createObjectNode();
+                trancheOrderJson.put("type", "limit_bracket");
+                trancheOrderJson.put("tranche", 2);
+                trancheOrderJson.put("qty", trancheQty);
+                trancheOrderJson.put("limit_price", pxRounded);
+                trancheOrderJson.put("stop_price", stopRounded);
+                trancheOrderJson.put("broker_stop", brokerStopResult.price());
+                trancheOrderJson.put("broker_stop_buffer_atr", brokerStopBufferAtr);
+                trancheOrderJson.put("broker_stop_clamped", brokerStopResult.clamped());
+                trancheOrderJson.put("broker_stop_capped", brokerStopResult.capped());
+                trancheOrderJson.put("stop_basis", sizing.stopBasis());
+                trancheOrderJson.put("r_per_share", sizing.rPerShare());
+                trancheOrderJson.put("position_risk", sizing.newRiskAccountCcy());
+                trancheOrderJson.put("position_risk_broker", positionRiskBroker(position.side(),
+                        trancheQty, pxRounded, brokerStopResult.price(), ctx.fxToAccount()));
+                trancheOrderJson.put("qty_notional", sizing.qtyNotional());
+                trancheOrderJson.put("qty_risk", sizing.qtyRisk());
+                trancheOrderJson.put("sizing_basis", sizing.sizingBasis());
+                trancheOrderJson.put("reject_cause",
+                        sizing.rejectCause() == null ? null : sizing.rejectCause().name());
+                trancheOrderJson.put("risk_pct", riskPct);
+                trancheOrderJson.put("atr_short", ctx.atrShort());
+                trancheOrderJson.put("atr_effective", ctx.atrEff());
+                trancheOrderJson.put("position_id", position.id());
+                logAddTrancheDecision(runId, position, ctx, ctx.price(), pxRounded, bounds,
+                        sizing, trancheOrderJson);
             } catch (RuntimeException e) {
                 // Position tranche update is durably persisted — the order is managed. Only the
                 // accepted-audit row is missing; log it, but do not flip the response into a

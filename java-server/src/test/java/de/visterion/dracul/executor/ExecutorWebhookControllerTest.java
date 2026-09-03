@@ -37,6 +37,11 @@ class ExecutorWebhookControllerTest {
 
     private static final String BEARER = "Bearer tkn";
 
+    private static final BigDecimal BUFFER_ONE = BigDecimal.ONE;
+    private static final BigDecimal MAX_BROKER_STOP_PCT = new BigDecimal("0.20");
+    /** The whole budget may be risked -> the risk cap never binds and NOTIONAL alone sizes. */
+    private static final double RISK_UNBOUND = 1.0;
+
     private ExecutorSignalRepository signalRepo;
     private ExecutorPositionRepository positionRepo;
     private ExecutorPositionLegRepository legRepo;
@@ -93,14 +98,61 @@ class ExecutorWebhookControllerTest {
         when(assembler.assemble(any())).thenReturn(happyContext());
         when(assembler.assembleForSymbol(any())).thenReturn(happyContext());
 
-        controller = new ExecutorWebhookController(
+        controller = controllerWith(BUFFER_ONE, sizer, tranche2Detector);
+    }
+
+    /** The production wiring under test: buffer 1.0 ATR, 20 % proximity cap, 1 % risk budget. */
+    private ExecutorWebhookController controllerWith(BigDecimal bufferAtr, PositionSizer theSizer,
+            Tranche2Detector theDetector) {
+        return controllerWith(bufferAtr, theSizer, theDetector, 0.01, 0.06);
+    }
+
+    /** The identity wiring (buffer 0): the bracket then carries the logical stop VERBATIM, so a
+     *  test that pins the stop ROUNDING/clamping sequence keeps asserting about rounding and not
+     *  about the broker-stop offset, which is a separate concern. */
+    private ExecutorWebhookController stopRoundingController() {
+        return controllerWith(BigDecimal.ZERO, sizer, tranche2Detector);
+    }
+
+    /** {@link #controllerWith} with an explicit per-trade risk fraction and heat pct.
+     *  {@code riskPct} 1.0 makes the whole budget riskable, i.e. the risk cap never binds and the
+     *  NOTIONAL cap alone decides the quantity — the pre-SP1 sizing rule, which the notional /
+     *  price-rounding tests are about. */
+    private ExecutorWebhookController controllerWith(BigDecimal bufferAtr, PositionSizer theSizer,
+            Tranche2Detector theDetector, double riskPct, double heatPct) {
+        return new ExecutorWebhookController(
                 signalRepo, positionRepo, legRepo, decisionRepo,
                 new VetoService(), new OrderGuard(), gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
+                assembler, theSizer, ranker, theDetector, telegram, executorNotifier,
+                positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
-                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+                new BigDecimal("10000"), 10, heatPct, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
+                2, 3, 72, 2, 0.0, 3.0, "USD",
+                bufferAtr, MAX_BROKER_STOP_PCT, riskPct, 5,
+                fixedClock);
+    }
+
+    /** EntryContext with an explicit short ATR, so atrEff = max(atr, atrShort) differs from atr. */
+    private static EntryContext withPriceAtrAndShort(EntryContext c, BigDecimal price,
+            BigDecimal atr, BigDecimal atrShort) {
+        BigDecimal atrEff = atrShort == null ? atr : atr.max(atrShort);
+        return new EntryContext(c.account(), price, atr, c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing(), c.quoteCurrency(), atrShort, atrEff);
+    }
+
+    /** The ENTER row (the one carrying order_json), out of however many decision_log rows the
+     *  call produced. */
+    private DecisionLog enterLog() {
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(captor.capture());
+        return captor.getAllValues().stream()
+                .filter(d -> "ENTER".equals(d.action()))
+                .reduce((a, b) -> b)
+                .orElseThrow(() -> new AssertionError("no ENTER decision_log row was written"));
     }
 
     // -------------------------------------------------------------------
@@ -238,6 +290,21 @@ class ExecutorWebhookControllerTest {
                 null, null, null, null, 0, null, null, null, null, null, null, false, null, null);
     }
 
+    /** {@link #openPosition} with the entry confirmed filled at the broker. */
+    private ExecutorPosition filledPosition(long id, String symbol, String side,
+            BigDecimal entry, BigDecimal initialStop, String entryFilledAt) {
+        ExecutorPosition p = openPosition(id, symbol, side, entry, initialStop);
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
+                p.stopLegsCollapsed(), null, entryFilledAt);
+    }
+
     /** Same fixture as {@link #openPosition} but with an explicit {@code qty} and
      *  {@code trimCount} for scale-out/ladder tests. */
     private ExecutorPosition openPosition(long id, String symbol, String side,
@@ -319,7 +386,8 @@ class ExecutorWebhookControllerTest {
                 assembler, customSizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+                2, 3, 72, 2, 0.0, 3.0, "USD",
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a lower LIQUIDITY min-price
@@ -334,7 +402,8 @@ class ExecutorWebhookControllerTest {
                 assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, minPrice, 200, 5, 1.0, 2, 2,
-                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+                2, 3, 72, 2, 0.0, 3.0, "USD",
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but wired with the REAL
@@ -349,21 +418,15 @@ class ExecutorWebhookControllerTest {
                 assembler, sizer, ranker, new Tranche2Detector(), telegram, executorNotifier, positionContextRepo, patternRepo,
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+                2, 3, 72, 2, 0.0, 3.0, "USD",
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a caller-supplied
      *  {@code heatPct}, so a HEAT_LIMIT boundary can be placed exactly between the raw and the
      *  tick-rounded {@code newRiskAccountCcy} for a given price/stop pair. */
     private ExecutorWebhookController controllerWithHeatPct(double heatPct) {
-        return new ExecutorWebhookController(
-                signalRepo, positionRepo, legRepo, decisionRepo,
-                new VetoService(), new OrderGuard(), gateway, executorIndicators,
-                pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
-                assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo,
-                "tkn", "depot-1", 0.6, 3, 22, 20, 10,
-                new BigDecimal("10000"), 10, heatPct, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
-                2, 3, 72, 2, 0.0, 3.0, "USD", fixedClock);
+        return controllerWith(BUFFER_ONE, sizer, tranche2Detector, 0.01, heatPct);
     }
 
     /** Full-field {@link ExecutorPosition} builder for tests that need {@code entryDayHigh} and/or
@@ -685,7 +748,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":94}
                 """);
 
-        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-1", body);
+        ResponseEntity<?> resp = stopRoundingController().placeEntry(BEARER, "run-1", body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
 
@@ -714,7 +777,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":98}
                 """);
 
-        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-2", body);
+        ResponseEntity<?> resp = stopRoundingController().placeEntry(BEARER, "run-2", body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
         verify(decisionRepo, never()).insert(argThat(d -> "NO_STOP".equals(d.rejectReason())));
@@ -747,7 +810,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":90}
                 """);
 
-        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-3", body);
+        ResponseEntity<?> resp = stopRoundingController().placeEntry(BEARER, "run-3", body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
 
@@ -783,7 +846,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"SELL","stop_price":115}
                 """);
 
-        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-sell-1", body);
+        ResponseEntity<?> resp = stopRoundingController().placeEntry(BEARER, "run-sell-1", body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
         verify(decisionRepo, never()).insert(argThat(d -> "NO_STOP".equals(d.rejectReason())));
@@ -821,7 +884,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY"}
                 """);
 
-        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-4", body);
+        ResponseEntity<?> resp = stopRoundingController().placeEntry(BEARER, "run-4", body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
 
@@ -1101,7 +1164,8 @@ class ExecutorWebhookControllerTest {
         assertThat(req.side()).isEqualTo("BUY");
         // qty is server-side sizer output (tranche 1000 / price 100), not caller-supplied.
         assertThat(req.qty()).isEqualByComparingTo("10");
-        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        // The bracket carries the BUFFERED stop: logical 95.00 - 1 x atrEff 2.
+        assertThat(req.stopLossStop()).isEqualByComparingTo("93.00");
         assertThat(req.limitPrice()).isEqualByComparingTo("100");
         // No take-profit leg: the LLM supplied none and Dracul no longer invents one. A synthetic
         // target is exactly what Saxo rejected with TooFarFromEntryOrder, taking the stop with it.
@@ -1780,7 +1844,7 @@ class ExecutorWebhookControllerTest {
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.takeProfitLimit()).isNull();
         // The protective leg is untouched.
-        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("93.00");
     }
 
     @Test
@@ -1927,7 +1991,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.017,"stop_price":99}
                 """);
 
-        controller.placeEntry(BEARER, null, body);
+        stopRoundingController().placeEntry(BEARER, null, body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -1956,7 +2020,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"SELL","limit_price":100.013,"stop_price":90}
                 """);
 
-        controller.placeEntry(BEARER, null, body);
+        stopRoundingController().placeEntry(BEARER, null, body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -2016,7 +2080,7 @@ class ExecutorWebhookControllerTest {
                     "{\"signal_id\":\"%s\",\"symbol\":\"ACME\",\"side\":\"%s\",\"limit_price\":%s}",
                     f.signalId(), f.side(), f.limitPrice()));
 
-            controller.placeEntry(BEARER, null, body);
+            stopRoundingController().placeEntry(BEARER, null, body);
 
             ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
             verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -2042,7 +2106,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.017,"stop_price":94.005}
                 """);
 
-        controller.placeEntry(BEARER, "run-5fields", body);
+        stopRoundingController().placeEntry(BEARER, "run-5fields", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -2085,7 +2149,8 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.005,"stop_price":95}
                 """);
 
-        controller.placeEntry(BEARER, null, body);
+        controllerWith(BUFFER_ONE, sizer, tranche2Detector, RISK_UNBOUND, 0.06)
+                .placeEntry(BEARER, null, body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -2119,7 +2184,8 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":94.005}
                 """);
 
-        ResponseEntity<?> resp = controllerWithSizer(brokenSizer).placeEntry(BEARER, null, body);
+        ResponseEntity<?> resp = controllerWith(BigDecimal.ZERO, brokenSizer, tranche2Detector)
+                .placeEntry(BEARER, null, body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
@@ -2333,7 +2399,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":94.006}
                 """);
 
-        controller.placeEntry(BEARER, "run-proposed-stop", body);
+        stopRoundingController().placeEntry(BEARER, "run-proposed-stop", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -2359,7 +2425,7 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":98.5}
                 """);
 
-        controller.placeEntry(BEARER, "run-clamped", body);
+        stopRoundingController().placeEntry(BEARER, "run-clamped", body);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
@@ -2400,7 +2466,7 @@ class ExecutorWebhookControllerTest {
         BracketRequest req = reqCaptor.getValue();
         assertThat(req.side()).isEqualTo("BUY");
         assertThat(req.qty()).isEqualByComparingTo("10");
-        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("93.00");
         assertThat(req.clientRef()).isEqualTo("s1");
 
         verify(signalRepo).markStatus("s1", "ACCEPTED");
@@ -4040,7 +4106,7 @@ class ExecutorWebhookControllerTest {
         assertThat(req.side()).isEqualTo("BUY");
         assertThat(req.qty()).isEqualByComparingTo("10");
         // stop-2 leg uses the position's EXISTING active stop (95), not a re-derived stop window.
-        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("93.00");
         assertThat(req.clientRef()).isEqualTo("t2-sig-1");
 
         ArgumentCaptor<BigDecimal> qtyCaptor = ArgumentCaptor.forClass(BigDecimal.class);
@@ -4088,7 +4154,7 @@ class ExecutorWebhookControllerTest {
         // The old 3R synthesis would have produced 100 + 3*(100-95) = 115 here.
         assertThat(req.takeProfitLimit()).isNull();
         // ...but the stop leg is untouched: a tranche must never be unguarded.
-        assertThat(req.stopLossStop()).isEqualByComparingTo("95");
+        assertThat(req.stopLossStop()).isEqualByComparingTo("93.00");
     }
 
     @Test
@@ -4490,7 +4556,8 @@ class ExecutorWebhookControllerTest {
                 {"symbol":"ACME","reason":"tranche-2 add"}
                 """);
 
-        ResponseEntity<?> resp = controllerWithHeatPct(0.0501).addTranche(BEARER, "run-1", body);
+        ResponseEntity<?> resp = controllerWith(BUFFER_ONE, sizer, tranche2Detector,
+                RISK_UNBOUND, 0.0501).addTranche(BEARER, "run-1", body);
 
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("placed")).isEqualTo(true);
@@ -4521,7 +4588,8 @@ class ExecutorWebhookControllerTest {
                 {"symbol":"ACME","reason":"tranche-2 add"}
                 """);
 
-        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
+        ResponseEntity<?> resp = controllerWith(BUFFER_ONE, sizer, tranche2Detector,
+                RISK_UNBOUND, 0.06).addTranche(BEARER, "run-1", body);
 
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("placed")).isEqualTo(true);
@@ -4854,5 +4922,389 @@ class ExecutorWebhookControllerTest {
         Instant now = Instant.parse("2026-07-03T09:00:00Z");
         assertThat(ExecutorWebhookController.entryExpiry(now, 2))
                 .isEqualTo(Instant.parse("2026-07-06T09:00:00Z"));
+    }
+
+    // -------------------------------------------------------------------
+    // SP1: buffered broker stop, risk-capped sizing, atrEff in lockstep
+    // -------------------------------------------------------------------
+
+    /** Test 31. The bracket carries the BUFFERED stop; the book carries the LOGICAL one.
+     *  Mutation: send stopPrice to the bracket, or persist the broker stop as active_stop. */
+    @Test
+    void bracketStopIsBufferedBelowLogicalStopWhilePositionStoresLogical() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        // logical stop 95.00, atrEff 2, buffer 1.0 -> 93.00
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("93.00");
+
+        ArgumentCaptor<ExecutorPosition> pos = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(pos.capture());
+        assertThat(pos.getValue().initialStop()).isEqualByComparingTo("95.00");
+        assertThat(pos.getValue().activeStop()).isEqualByComparingTo("95.00");
+        assertThat(pos.getValue().brokerStop()).isEqualByComparingTo("93.00");
+        assertThat(pos.getValue().entryFilledAt()).isNull();
+    }
+
+    /** Test 31b. The sizer never sees the broker stop and nothing feeds it back: sizing runs ONCE,
+     *  on the logical stop. Mutation: re-run sizer.size on the buffered stop (which would report a
+     *  larger r_per_share and a smaller qty than the book's own risk). */
+    @Test
+    void brokerStopIsNotFedBackIntoSizing() {
+        PositionSizer spySizer = spy(new PositionSizer());
+        ExecutorWebhookController c = controllerWith(BUFFER_ONE, spySizer, tranche2Detector);
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        c.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        ArgumentCaptor<BigDecimal> stopArg = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(spySizer, times(1)).size(eq("BUY"), any(), any(), any(), stopArg.capture(),
+                any(), any(), any(), any());
+        assertThat(stopArg.getValue()).isEqualByComparingTo("95.00");
+
+        DecisionLog log = enterLog();
+        assertThat(log.orderJson().path("r_per_share").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("5.00"));
+        assertThat(log.orderJson().path("position_risk").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("50"));
+    }
+
+    /** Test 31c. A zero ATR collapses the window onto the entry, the clamp puts the stop AT the
+     *  price, and rPerShare is zero. That is a NO_STOP, exactly as before SP1 (where OrderGuard
+     *  produced it) — not a TRANCHE_TOO_SMALL.
+     *  Mutation: route every zero qty through the TRANCHE_TOO_SMALL handler. */
+    @Test
+    void zeroAtrStillRejectsWithNoStopNotTrancheTooSmall() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("100"), BigDecimal.ZERO));
+
+        ResponseEntity<Map<String, Object>> res = controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> out = (Map<String, Object>) res.getBody().get("output");
+        assertThat(out.get("placed")).isEqualTo(false);
+        assertThat(out.get("reason")).isEqualTo("NO_STOP");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** Test 34e. Stop distance in account currency exceeds the whole 1 % risk budget -> the new
+     *  terminal RISK_TOO_WIDE, and the signal is REJECTED, not left PENDING.
+     *  Mutation: route through the TRANCHE_TOO_SMALL handler. */
+    @Test
+    void riskCapZeroRejectsWithRiskTooWide() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("500")));
+        // price 500, atr 60 -> window [305, 350]; a 380 proposal clamps to 350, r/share 150.
+        // risk budget = 10000 * 0.01 = 100 -> floor(100/150) = 0. qtyNotional = floor(1000/500) = 2.
+        when(assembler.assemble(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("500"), new BigDecimal("60")));
+
+        ResponseEntity<Map<String, Object>> res = controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":500,"stop_price":380}
+                """));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> out = (Map<String, Object>) res.getBody().get("output");
+        assertThat(out.get("reason")).isEqualTo("RISK_TOO_WIDE");
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** Test 32. With the buffer at zero the bracket gets the logical stop VERBATIM — including the
+     *  un-tick-rounded value StopWindowRounding's degenerate branch produces. This is the
+     *  mechanical proof the feature is additive.
+     *  Mutation: any offset, or any re-rounding, on the identity path. */
+    @Test
+    void bufferZeroReproducesLegacyBracketIncludingDegenerateWindow() {
+        ExecutorWebhookController c = controllerWith(BigDecimal.ZERO, sizer, tranche2Detector);
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100.00")));
+        // atr 0.006 -> raw window [99.98050, 99.985]; rounded inward it inverts (99.99 > 99.98),
+        // so StopWindowRounding skips tick rounding entirely and clamps the raw proposal into the
+        // RAW window: 99.00 -> 99.98050, an un-tick-rounded value.
+        when(assembler.assemble(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("100.00"), new BigDecimal("0.006")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        c.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100.00,"stop_price":99.00}
+                """));
+
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("99.9805");
+        assertThat(req.getValue().stopLossStop().stripTrailingZeros().scale())
+                .as("the degenerate branch's un-tick-rounded value must reach the broker verbatim")
+                .isGreaterThan(2);
+    }
+
+    /** Test 34b. The window, the clamp and the sizing call must all receive the SAME ATR — atrEff.
+     *  Mutation: pass ctx.atr() at :645, :655 or :661. With atr 2 and atrShort 4 the two ATRs give
+     *  windows that do not overlap on the clamp target, so every one of the three sites is pinned.
+     *  (Mirrors placeEntry_stopWindowRule2Regression_buy, which pins the price the same way.) */
+    @Test
+    void placeEntryUsesTheSameAtrForWindowClampAndSizing() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(withPriceAtrAndShort(happyContext(),
+                new BigDecimal("100"), new BigDecimal("2"), new BigDecimal("4")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        // atrEff 4 -> window [87.0, 90.0], the 95 proposal clamps to 90.00 (:645 + :655).
+        ArgumentCaptor<ExecutorPosition> pos = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(pos.capture());
+        assertThat(pos.getValue().activeStop()).isEqualByComparingTo("90.00");
+
+        DecisionLog log = enterLog();
+        // :645 — the raw window written to order_json
+        assertThat(log.orderJson().path("stop_min").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("87.0"));
+        assertThat(log.orderJson().path("stop_max").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("90.0"));
+        // :661 — r_per_share follows the clamped stop, 100 - 90 = 10, not 100 - 95 = 5
+        assertThat(log.orderJson().path("r_per_share").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("10.00"));
+        // the atr snapshot itself stays ATR22
+        assertThat(log.inputsSnapshot().path("atr").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("2"));
+    }
+
+    /** Test 34c. fetch-pending-signals shows the LLM the window derived from atrEff, while the
+     *  `atr` field it reports stays ATR22 — the LLM proposes stops inside the wider window but
+     *  reasons about the volatility number it has always seen.
+     *  Mutation: atrEff -> atr at :309, or atr -> atrEff at :305. */
+    @Test
+    void fetchPendingSignalsWindowUsesAtrEffWhileAtrFieldStaysAtr22() {
+        ExecutorSignal s = new ExecutorSignal("sig-1", "hunter", "v1", "ACME", "BUY",
+                0.9, "mechanism", List.of("X"), "3m", new BigDecimal("100"), "PENDING",
+                "2026-07-01T00:00:00Z");
+        when(signalRepo.findPending(50)).thenReturn(List.of(s));
+        when(positionRepo.findOpen()).thenReturn(List.of());
+        when(executorIndicators.levels(eq("ACME"), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2"), null,
+                        new BigDecimal("100"), new BigDecimal("4")));
+
+        ResponseEntity<Map<String, Object>> res = controller.fetchPendingSignals(BEARER, null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> out = (Map<String, Object>) res.getBody().get("output");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> signals = (List<Map<String, Object>>) out.get("signals");
+        assertThat(signals).hasSize(1);
+        assertThat((BigDecimal) signals.get(0).get("atr")).isEqualByComparingTo("2");
+        // window from atrEff 4: [100 - 12 - 1, 100 - 10] = [87.0, 90.0]
+        assertThat((BigDecimal) signals.get(0).get("stop_min")).isEqualByComparingTo("87.0");
+        assertThat((BigDecimal) signals.get(0).get("stop_max")).isEqualByComparingTo("90.0");
+    }
+
+    /** Test 34d. stop_basis names the ATR that actually produced the window.
+     *  Mutation: keep the hard-coded "ATR22" string in PositionSizer. */
+    @Test
+    void orderJsonStopBasisNamesTheAtrActuallyUsed() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(withPriceAtrAndShort(happyContext(),
+                new BigDecimal("100"), new BigDecimal("2"), new BigDecimal("4")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        assertThat(enterLog().orderJson().path("stop_basis").asString())
+                .isEqualTo("entry - 2.5 x ATR5");
+    }
+
+    /** Test 34d, the ATR22 half: with no short ATR the label is the long window's. */
+    @Test
+    void orderJsonStopBasisNamesAtr22WhenNoShortAtr() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        assertThat(enterLog().orderJson().path("stop_basis").asString())
+                .isEqualTo("entry - 2.5 x ATR22");
+    }
+
+    /** Test 34, entry half. Every new audit key is present and carries the right value.
+     *  Mutation: drop any one of them, or compute position_risk_broker from the logical stop. */
+    @Test
+    void orderJsonCarriesBrokerStopAtrFieldsQtyRiskSizingBasisBothRisks() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(withPriceAtrAndShort(happyContext(),
+                new BigDecimal("100"), new BigDecimal("2"), new BigDecimal("2")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":95}
+                """));
+
+        JsonNode oj = enterLog().orderJson();
+        for (String key : List.of("broker_stop", "broker_stop_buffer_atr", "broker_stop_clamped",
+                "broker_stop_capped", "qty_notional", "qty_risk", "sizing_basis", "reject_cause",
+                "risk_pct", "position_risk", "position_risk_broker", "atr_short", "atr_effective",
+                "stop_basis")) {
+            assertThat(oj.has(key)).as("missing order_json key " + key).isTrue();
+        }
+        assertThat(oj.path("broker_stop").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("93.00"));
+        assertThat(oj.path("broker_stop_buffer_atr").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(BigDecimal.ONE);
+        assertThat(oj.path("broker_stop_clamped").asBoolean()).isFalse();
+        assertThat(oj.path("broker_stop_capped").asBoolean()).isFalse();
+        assertThat(oj.path("qty_notional").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("10"));
+        assertThat(oj.path("sizing_basis").asString()).isEqualTo("NOTIONAL");
+        assertThat(oj.path("reject_cause").isNull()).isTrue();
+        assertThat(oj.path("risk_pct").asDouble()).isEqualTo(0.01);
+        assertThat(oj.path("atr_short").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("2"));
+        assertThat(oj.path("atr_effective").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("2"));
+        // position_risk stays on the LOGICAL stop: 10 * (100 - 95) * 1
+        assertThat(oj.path("position_risk").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("50"));
+        // position_risk_broker is what the RESTING LEG permits: 10 * (100 - 93) * 1
+        assertThat(oj.path("position_risk_broker").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("70"));
+    }
+
+    /** The open-positions payload gains broker_stop and atr_short; active_stop keeps mirroring the
+     *  LOGICAL stop deliberately (proximity alerts watch the level that decides).
+     *  Mutation: put the broker stop into active_stop. */
+    @Test
+    void fetchOpenPositionsPayloadCarriesBrokerStopAndAtrShort() {
+        EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("101"), new BigDecimal("2"), new BigDecimal("95"),
+                new BigDecimal("1.0"), new BigDecimal("1.0"), 3, List.of("X"), List.of(),
+                false, false, 0, false, null, "sig-1", 0, 0.33, true,
+                new BigDecimal("4"), new BigDecimal("93.00"));
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
+
+        ResponseEntity<Map<String, Object>> res = controller.fetchOpenPositions(BEARER, "run-1");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> out = (Map<String, Object>) res.getBody().get("output");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> positions = (List<Map<String, Object>>) out.get("positions");
+        assertThat((BigDecimal) positions.get(0).get("active_stop")).isEqualByComparingTo("95");
+        assertThat((BigDecimal) positions.get(0).get("broker_stop")).isEqualByComparingTo("93.00");
+        assertThat((BigDecimal) positions.get(0).get("atr_short")).isEqualByComparingTo("4");
+    }
+
+    /** Test 33. The PLACEMENT path, not only the detector: a position the broker has not filled
+     *  cannot get a second tranche. Uses the REAL Tranche2Detector, because the fill precondition
+     *  lives there and the shared mock would stub it away.
+     *  Mutation: drop the entryFilledAt check from the detector, or pass the detector a position
+     *  without it. */
+    @Test
+    void addTrancheRejectsUnfilledEntry() {
+        ExecutorWebhookController c = controllerWith(BUFFER_ONE, sizer, new Tranche2Detector());
+        // +1R and above entry: R_CONFIRMED would fire if the entry were filled.
+        ExecutorPosition unfilled = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("90"));   // entryFilledAt is null in this fixture
+        when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
+        when(assembler.assembleForSymbol("ACME"))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("110"), new BigDecimal("2")));
+
+        ResponseEntity<Map<String, Object>> res = c.addTranche(BEARER, "run-1",
+                json("{\"symbol\":\"ACME\"}"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> out = (Map<String, Object>) res.getBody().get("output");
+        assertThat(out.get("placed")).isEqualTo(false);
+        assertThat(out.get("reason")).isEqualTo("NOT_ELIGIBLE");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** Test 34, add-tranche half. The tranche add now writes a decision_log row with the SAME
+     *  order_json keys as place-entry, an inputs_snapshot from the same helper, and a synthesised
+     *  BUDGET/HEAT_LIMIT veto_results pair — so the audit query has no tranche-2 hole.
+     *  Mutation: drop the write, or omit any of the keys. */
+    @Test
+    void addTrancheWritesADecisionLogRowWithTheSameOrderJson() {
+        ExecutorWebhookController c = controllerWith(BUFFER_ONE, sizer, new Tranche2Detector());
+        ExecutorPosition filled = filledPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("90"), "2026-07-02T00:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(filled));
+        when(assembler.assembleForSymbol("ACME"))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("110"), new BigDecimal("2")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        c.addTranche(BEARER, "run-1", json("{\"symbol\":\"ACME\"}"));
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        DecisionLog log = captor.getValue();
+
+        assertThat(log.triggerType()).isEqualTo("SIGNAL");
+        assertThat(log.action()).isEqualTo("ENTER");
+        assertThat(log.reasonCode()).isNull();
+        assertThat(log.signalId()).isEqualTo("sig-1");
+        assertThat(log.symbol()).isEqualTo("ACME");
+        assertThat(log.runId()).isEqualTo("run-1");
+        assertThat(log.inputsSnapshot()).isNotNull();
+        for (String key : List.of("broker_stop", "qty_notional", "qty_risk", "sizing_basis",
+                "reject_cause", "position_risk", "position_risk_broker", "atr_short",
+                "atr_effective", "stop_basis")) {
+            assertThat(log.orderJson().has(key)).as("missing order_json key " + key).isTrue();
+        }
+        assertThat(log.vetoResults()).hasSize(2);
+        assertThat(log.vetoResults().get(0).get("check").asString()).isEqualTo("BUDGET");
+        assertThat(log.vetoResults().get(1).get("check").asString()).isEqualTo("HEAT_LIMIT");
+    }
+
+    /** The tranche bracket carries the buffered stop too — a second leg resting at the logical
+     *  stop would still be wick-sensitive.
+     *  Mutation: send position.activeStop() (tick-rounded) to the tranche bracket. */
+    @Test
+    void addTrancheBracketCarriesTheBufferedStop() {
+        ExecutorWebhookController c = controllerWith(BUFFER_ONE, sizer, new Tranche2Detector());
+        ExecutorPosition filled = filledPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("90"), "2026-07-02T00:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(filled));
+        when(assembler.assembleForSymbol("ACME"))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("110"), new BigDecimal("2")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        c.addTranche(BEARER, "run-1", json("{\"symbol\":\"ACME\"}"));
+
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        // the position's active stop 90 rounds to 90.00, buffered by 1 x atrEff 2 -> 88.00
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("88.00");
+        assertThat(req.getValue().takeProfitLimit()).isNull();
     }
 }
