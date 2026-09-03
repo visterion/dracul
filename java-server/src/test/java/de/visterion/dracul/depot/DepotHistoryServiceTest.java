@@ -41,7 +41,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-1", "index-strigoi", null, null, "CLOSED", "o-1",
                 null, null, 0, new BigDecimal("110"), new BigDecimal("2.0"), "TAKE_PROFIT", "2026-01-02",
-                null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
         when(decisions.findBySignalIdAndAction("sig-1", "ENTER")).thenReturn(new DecisionLog(
                 "log-1", "run-1", null, "SIGNAL", "sig-1", "index-strigoi", null, "AAPL",
                 null, null, "ENTER", "OK", null, "index inclusion drift", 0.7, null, null));
@@ -136,7 +136,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-9", "pead", null, null, "CLOSED", null,
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
-                null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions), Optional.empty(),
                 90, FIXED_CLOCK);
@@ -165,7 +165,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-9", "pead", null, null, "CLOSED", null,
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
-                null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions), Optional.empty(),
                 90, FIXED_CLOCK);
@@ -207,7 +207,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "SAP", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-1", "pead", null, null, "CLOSED", null,
                 null, null, 0, new BigDecimal("120"), new BigDecimal("1.8"), "TAKE_PROFIT", "2026-06-05",
-                null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
         when(signals.findRunIdBySignalId("sig-1")).thenReturn("run-xyz");
 
         var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
@@ -233,7 +233,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-open", "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
         when(signals.findRunIdBySignalId("sig-open")).thenReturn("run-open-1");
 
         var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
@@ -281,7 +281,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), null, "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
                 Optional.of(signals), 90, FIXED_CLOCK);
@@ -303,7 +303,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), "sig-open", "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
         when(decisions.findBySignalId("sig-open")).thenReturn(List.of(
                 new DecisionLog("log-1", "run-enter", null, "SIGNAL", "sig-open", "index-strigoi", null,
                         "AAPL", null, null, "ENTER", "OK", null, "opened", 0.8, null, "2026-07-01T10:00:00Z"),
@@ -346,7 +346,7 @@ class DepotHistoryServiceTest {
                 7L, "depot-1", "AAPL", "buy", new BigDecimal("10"), new BigDecimal("100"), null, null, 1,
                 null, List.of("stop below 95"), null, "index-strigoi", null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         var svc = new DepotHistoryService(client, depotService, Optional.of(positions), Optional.of(decisions),
                 Optional.empty(), 90, FIXED_CLOCK);

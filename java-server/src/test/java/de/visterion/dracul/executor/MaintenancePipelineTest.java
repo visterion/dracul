@@ -59,7 +59,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("95"), activeStop, 1, null, killCriteria, "sig-1", "agent",
                 "2026-06-01", null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null,
                 null, null, null, "stop-1", null, null, null, null, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
     }
 
     @Test
@@ -106,7 +106,7 @@ class MaintenancePipelineTest {
                 eq(Map.of("BBB", new BigDecimal("108"))), eq("r1"));
 
         verify(positionRepo).updateMaintenance(eq(1L), eq(new BigDecimal("110")),
-                eq(new BigDecimal("1.6")), eq(0), eq(new BigDecimal("104")), eq(null));
+                eq(new BigDecimal("1.6")), eq(0), eq(new BigDecimal("104")), eq(null), any());
     }
 
     @Test
@@ -132,7 +132,7 @@ class MaintenancePipelineTest {
         assertThat(ep.chandelierBreach()).isTrue();
         assertThat(ep.softConfirmCount()).isEqualTo(1);
 
-        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(1), any(), any());
+        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(1), any(), any(), any());
     }
 
     @Test
@@ -182,7 +182,7 @@ class MaintenancePipelineTest {
         assertThat(ep.chandelierBreach()).isFalse();
         assertThat(ep.softConfirmCount()).isEqualTo(0);
 
-        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any());
+        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any(), any());
         assertThat(ep.tranche2Eligible()).isFalse();
         assertThat(ep.tranche2Reason()).isNull();
     }
@@ -301,7 +301,7 @@ class MaintenancePipelineTest {
         assertThat(ep.chandelierBreach()).isFalse();
         assertThat(ep.softConfirmCount()).isEqualTo(0);
 
-        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any());
+        verify(positionRepo).updateMaintenance(eq(1L), any(), any(), eq(0), any(), any(), any());
         verify(positionRepo, org.mockito.Mockito.never()).updateAdverseExtreme(anyLong(), any());
     }
 
@@ -372,7 +372,7 @@ class MaintenancePipelineTest {
                 List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
                 null, null, null, null, 0, new BigDecimal("39"), null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
         List<ExecutorPosition> survivors = List.of(bbb);
 
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
@@ -394,7 +394,7 @@ class MaintenancePipelineTest {
                 new BigDecimal("100"), new BigDecimal("105"), new BigDecimal("105"), 1, null,
                 List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("90"), new BigDecimal("1.6"), 0, null, null, null, null, "stop-1",
-                null, null, null, null, 0, null, null, null, null, null, null, false);
+                null, null, null, null, 0, null, null, null, null, null, null, false, null, null);
         List<ExecutorPosition> survivors = List.of(aaa);
 
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
@@ -564,7 +564,7 @@ class MaintenancePipelineTest {
                 1, null, List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
                 new BigDecimal("110"), new BigDecimal("1.6"), 0, null, null, null, null,
                 "stop-1", null, null, null, null, 0, null, null, null,
-                "HARD_STOP", null, null, false);
+                "HARD_STOP", null, null, false, null, null);
         List<ExecutorPosition> survivors = List.of(dark, pendingExit);
 
         when(reconcile.reconcile("c", "run1")).thenReturn(

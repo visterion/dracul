@@ -150,7 +150,7 @@ class ExecutorPositionLegRepositoryTest {
                 null, null, "OPEN", "ord-1",
                 null, null, 0, null, null, null, null, "stop-1",
                 "Technology", null, null, null, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
         return positionRepo.insert(pos);
     }
 }

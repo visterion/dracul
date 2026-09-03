@@ -152,7 +152,7 @@ class VetoServiceTest {
                 BigDecimal.ONE, List.of("kill"), "src-sig", "agent", "2026-07-01",
                 BigDecimal.ZERO, "OPEN", null, BigDecimal.valueOf(50), BigDecimal.ZERO, 0,
                 null, null, null, null, null, sector, null, null, null, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
     }
 
     private ExecutorSignal pending(String signalId, String symbol, String mechanism) {

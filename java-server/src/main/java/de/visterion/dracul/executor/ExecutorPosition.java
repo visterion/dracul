@@ -76,5 +76,16 @@ public record ExecutorPosition(
         String pendingExitReason,
         String exitOrderId,
         BigDecimal pendingExitFillPrice,
-        boolean stopLegsCollapsed) {
+        boolean stopLegsCollapsed,
+        /** The price the protective leg actually rests at, which is buffered AWAY from
+         *  {@code activeStop} (below it for a BUY, above it for a SELL) so an intraday wick cannot
+         *  close a position the close-based rule would have kept. NULL for rows opened before V48
+         *  until the next ratchet writes it; every consumer must fall back to {@code activeStop}.
+         *  Never fed to a veto — heat stays on the logical risk. */
+        BigDecimal brokerStop,
+        /** Timestamp of the first reconcile pass that saw a broker holding for this position with
+         *  no entry order still working. NULL means the entry is not (yet) filled, which makes the
+         *  position ineligible for a second tranche. Written once, by
+         *  {@code ReconcileService.reconcile}. */
+        String entryFilledAt) {
 }

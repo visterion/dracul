@@ -95,7 +95,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("90"), activeStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01",
                 null, "OPEN", brokerOrderId, highestPrice, mfeR, softConfirmCount, null, null, null, null,
                 "stop-1", null, null, tranche2OrderId, tranche2StopOrderId, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
     }
 
     @Test
@@ -121,7 +121,7 @@ class StopRatchetServiceTest {
                 org.mockito.ArgumentMatchers.eq(new BigDecimal("110")),
                 org.mockito.ArgumentMatchers.eq(new BigDecimal("1.0")),
                 org.mockito.ArgumentMatchers.eq(0),
-                newStopCaptor.capture(), org.mockito.ArgumentMatchers.isNull());
+                newStopCaptor.capture(), org.mockito.ArgumentMatchers.isNull(), any());
         assertThat(newStopCaptor.getValue()).isEqualByComparingTo("104");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -148,7 +148,7 @@ class StopRatchetServiceTest {
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(decisionRepo, never()).insert(any());
     }
 
@@ -161,7 +161,7 @@ class StopRatchetServiceTest {
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         // A symbol missing from the ATR map is a routine condition, not a fault: never escalate.
         verify(decisionRepo, never()).insert(any());
     }
@@ -184,7 +184,7 @@ class StopRatchetServiceTest {
         assertThat(log.orderJson()).isNotNull();
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(4L);
 
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         // No "stop raised" push may go out when the stop did not move.
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
@@ -213,7 +213,7 @@ class StopRatchetServiceTest {
         assertThat(log.symbol()).isEqualTo("ACME");
         assertThat(log.orderJson()).isNotNull();
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(5L);
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -224,7 +224,7 @@ class StopRatchetServiceTest {
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
                 null /* stop_order_id missing */, null, null, "t2-1", "s2", 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
@@ -234,7 +234,7 @@ class StopRatchetServiceTest {
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
         assertThat(logCaptor.getValue().reasoning()).contains("stop_order_id");
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -267,7 +267,7 @@ class StopRatchetServiceTest {
                 org.mockito.ArgumentMatchers.eq(new BigDecimal("1.0")),
                 org.mockito.ArgumentMatchers.eq(0),
                 org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("104")) == 0),
-                org.mockito.ArgumentMatchers.isNull());
+                org.mockito.ArgumentMatchers.isNull(), any());
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
@@ -289,7 +289,7 @@ class StopRatchetServiceTest {
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -325,7 +325,7 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -364,7 +364,7 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls.get(0).stopOrderId()).isEqualTo("stop-1");
         assertThat(gateway.modifyCalls.get(1).stopOrderId()).isEqualTo("s2");
         assertThat(gateway.modifyCalls.get(1).orderId()).isEqualTo("brk-1");
-        verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
     }
 
     /** Synthetic collapsed-position fixture: {@code stop_legs_collapsed} true, with whatever the
@@ -376,7 +376,7 @@ class StopRatchetServiceTest {
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "2000000000", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
                 stopOrderId, null, null, "2000000003", tranche2StopOrderId, 0, null, null,
-                null, null, null, null, true);
+                null, null, null, null, true, null, null);
     }
 
     @Test
@@ -404,7 +404,7 @@ class StopRatchetServiceTest {
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(50L),
                 any(), any(), any(Integer.class),
                 org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("104")) == 0),
-                org.mockito.ArgumentMatchers.isNull());
+                org.mockito.ArgumentMatchers.isNull(), any());
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
@@ -429,7 +429,7 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).hasSize(2);
         // Book untouched: no new active_stop, and emphatically no success push.
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -469,7 +469,7 @@ class StopRatchetServiceTest {
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(52L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -505,7 +505,7 @@ class StopRatchetServiceTest {
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
                 "stop-1", null, null, "t2-1", null, 0, null, null,
-                null, null, null, null, true);
+                null, null, null, null, true, null, null);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
@@ -524,7 +524,7 @@ class StopRatchetServiceTest {
         assertThat(call.stopOrderId()).isNull();
 
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(40L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
@@ -540,7 +540,7 @@ class StopRatchetServiceTest {
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", new BigDecimal("110"),
                 new BigDecimal("1.0"), 0, null, null, null, null,
                 "stop-1", null, null, "t2-1", null, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
 
         service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
@@ -553,7 +553,7 @@ class StopRatchetServiceTest {
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
         // This row has no leg rows at all, so it is the legacy COLUMN path.
         assertThat(log.inputsSnapshot().path("path").asString()).isEqualTo("COLUMN");
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -571,7 +571,7 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("104");
         assertThat(gateway.modifyCalls.get(1).stop()).isEqualByComparingTo("104");
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(42L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -608,7 +608,7 @@ class StopRatchetServiceTest {
                 .isEqualTo("POSITION_BROKER_ORDER_ID");
         assertThat(log.orderJson()).isNotNull();
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(9L);
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         // No "stop raised" push may go out when the stop did not move.
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
@@ -627,7 +627,7 @@ class StopRatchetServiceTest {
 
         ArgumentCaptor<BigDecimal> newStopCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(10L),
-                any(), any(), any(Integer.class), newStopCaptor.capture(), any());
+                any(), any(), any(Integer.class), newStopCaptor.capture(), any(), any());
         // Sent == persisted. The book must never claim a stop the broker didn't get.
         assertThat(newStopCaptor.getValue()).isEqualByComparingTo("103.99");
     }
@@ -679,7 +679,7 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).isEmpty();
         verify(decisionRepo, never()).insert(any());
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -781,7 +781,7 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls.get(0).symbol()).isEqualTo("CCC");
         assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("brk-1");
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(21L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 
     // -------------------------------------------------------------------
@@ -811,7 +811,7 @@ class StopRatchetServiceTest {
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(30L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -836,7 +836,7 @@ class StopRatchetServiceTest {
         assertThat(log.reasoning()).contains("3 attempt");
         assertThat(log.orderJson().get("position_id").asLong()).isEqualTo(31L);
 
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -1005,7 +1005,7 @@ class StopRatchetServiceTest {
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(60L),
                 any(), any(), any(Integer.class),
                 org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("104")) == 0),
-                org.mockito.ArgumentMatchers.isNull());
+                org.mockito.ArgumentMatchers.isNull(), any());
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
@@ -1055,7 +1055,7 @@ class StopRatchetServiceTest {
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().action()).isEqualTo("MODIFY_STOP");
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(62L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -1081,7 +1081,7 @@ class StopRatchetServiceTest {
         // Structural: one attempt, no backoff, and the book keeps the old stop.
         assertThat(gateway.modifyCalls).hasSize(1);
         assertThat(service.backoffs).isEmpty();
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -1144,7 +1144,7 @@ class StopRatchetServiceTest {
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
-                any(), any());
+                any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1180,7 +1180,7 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -1206,7 +1206,7 @@ class StopRatchetServiceTest {
         // one dies when the legless fallback does.
         assertThat(logCaptor.getValue().inputsSnapshot().path("path").asString()).isEqualTo("LEG");
         assertThat(logCaptor.getValue().reasoning()).contains("tranche 2");
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -1226,7 +1226,7 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls.get(0).orderId()).isEqualTo("brk-1");
         assertThat(gateway.modifyCalls.get(0).stopOrderId()).isNull();
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(69L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -1250,7 +1250,7 @@ class StopRatchetServiceTest {
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("TRANCHE_RATCHET_UNSUPPORTED");
         // active_stop must not move: the book may not claim a protection level the broker was
         // never asked for.
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -1273,7 +1273,7 @@ class StopRatchetServiceTest {
         assertThat(gateway.modifyCalls).hasSize(1);
         assertThat(gateway.modifyCalls.get(0).stopOrderId()).isNull();
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(72L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -1311,7 +1311,7 @@ class StopRatchetServiceTest {
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().reasonCode()).isEqualTo("NO_BRACKET_ID");
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
     }
 
     @Test
@@ -1399,7 +1399,7 @@ class StopRatchetServiceTest {
                 .isEqualTo("stop-1");
         assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("stop-2");
         assertThat(logs.get(1).orderJson().get("active_stop").asDouble()).isEqualTo(95.0);
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -1421,6 +1421,6 @@ class StopRatchetServiceTest {
                 c -> assertThat(c.stopOrderId()).isEqualTo("stop-1"));
         assertThat(service.backoffs).containsExactly(500L);
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(71L),
-                any(), any(), any(Integer.class), any(), any());
+                any(), any(), any(Integer.class), any(), any(), any());
     }
 }

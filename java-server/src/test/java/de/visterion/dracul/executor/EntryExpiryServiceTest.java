@@ -56,7 +56,7 @@ class EntryExpiryServiceTest {
                 new BigDecimal("95"), new BigDecimal("95"), 1, null, List.of(), sourceSignalId,
                 "agent", "2026-07-01", null, "OPEN", "brk-1", null, null, 0, null, null, null,
                 null, "stop-1", null, null, null, null, 0, null, "2026-07-06T00:00:00Z",
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
     }
 
     @Test
@@ -212,7 +212,7 @@ class EntryExpiryServiceTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-1", null, null, 0, null, null,
                 null, null, "stop-1", null, null, null, null, 0, null, "2026-07-06T00:00:00Z",
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
         when(positionRepo.findOpenUnfilledPastExpiry(NOW)).thenReturn(List.of(other));
 
         service.expire("c", "run1");

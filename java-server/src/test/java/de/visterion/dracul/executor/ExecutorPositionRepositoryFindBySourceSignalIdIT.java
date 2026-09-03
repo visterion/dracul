@@ -26,7 +26,7 @@ class ExecutorPositionRepositoryFindBySourceSignalIdIT {
         repo.insert(new ExecutorPosition(null, "depot-sigtest", "SIGA", "buy", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, new BigDecimal("1"),
                 List.of("kc1"), "sig-1", "index-strigoi", null, null, "OPEN", "broker-older",
-                null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         // Ensure a distinguishable entry_date ordering (timestamptz default now()).
         Thread.sleep(20);
@@ -34,7 +34,7 @@ class ExecutorPositionRepositoryFindBySourceSignalIdIT {
         repo.insert(new ExecutorPosition(null, "depot-sigtest", "SIGB", "buy", new BigDecimal("5"),
                 new BigDecimal("200"), new BigDecimal("190"), new BigDecimal("190"), 1, new BigDecimal("1"),
                 List.of("kc2"), "sig-1", "index-strigoi", null, null, "OPEN", "broker-newer",
-                null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         var found = repo.findBySourceSignalId("sig-1");
 

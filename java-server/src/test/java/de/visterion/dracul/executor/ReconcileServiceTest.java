@@ -96,7 +96,7 @@ class ReconcileServiceTest {
         return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, entry, initialStop,
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 brokerOrderId, highest, mfeR, 0, null, null, null, null, stopOrderId,
-                null, null, null, null, 0, null, null, null, null, null, null, false);
+                null, null, null, null, 0, null, null, null, null, null, null, false, null, null);
     }
 
     @Test
@@ -134,7 +134,7 @@ class ReconcileServiceTest {
         assertThat(log.ruleVersion()).isEqualTo("exec-v0.2");
 
         assertThat(survivors).isEmpty();
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any(), any());
         verify(executorNotifier).notifyExit(any(), any(), any(), any(), any());
     }
 
@@ -145,7 +145,7 @@ class ReconcileServiceTest {
                 initialStop, 1, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "brk-" + id, null, null, 0, null, null, null, null, stopOrderId,
                 null, null, null, null, 0, null, null, null,
-                pendingExitReason, exitOrderId, pendingExitFillPrice, false);
+                pendingExitReason, exitOrderId, pendingExitFillPrice, false, null, null);
     }
 
     @Test
@@ -167,7 +167,7 @@ class ReconcileServiceTest {
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any(), any());
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any(), any());
         verify(cooldownRepo, never()).add(any(), any(), any(), any());
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("ORPHAN_POSITION"));
 
@@ -393,7 +393,7 @@ class ReconcileServiceTest {
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(eq(3L), highestCaptor.capture(), mfeCaptor.capture(),
-                eq(0), eq(new BigDecimal("95")), eq(null));
+                eq(0), eq(new BigDecimal("95")), eq(null), any());
         assertThat(highestCaptor.getValue()).isEqualByComparingTo("108");
         assertThat(mfeCaptor.getValue()).isEqualByComparingTo("1.6");
 
@@ -417,7 +417,7 @@ class ReconcileServiceTest {
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-20", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-20",
                 null, null, null, null, 0, null, null,
-                new BigDecimal("100.01"), null, null, null, false);
+                new BigDecimal("100.01"), null, null, null, false, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("SYNP", "BUY", BigDecimal.TEN,
@@ -470,7 +470,7 @@ class ReconcileServiceTest {
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-7", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-7",
                 "Technology", new BigDecimal("101.5"), "ord-2", "stop-2", 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("BBB", "BUY", BigDecimal.TEN,
@@ -500,7 +500,7 @@ class ReconcileServiceTest {
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(eq(5L), highestCaptor.capture(), mfeCaptor.capture(),
-                eq(0), eq(new BigDecimal("105")), eq(null));
+                eq(0), eq(new BigDecimal("105")), eq(null), any());
         assertThat(highestCaptor.getValue()).isEqualByComparingTo("94");
         assertThat(mfeCaptor.getValue()).isEqualByComparingTo("1.2");
 
@@ -524,7 +524,7 @@ class ReconcileServiceTest {
         ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
         verify(positionRepo).updateMaintenance(eq(6L), highestCaptor.capture(), mfeCaptor.capture(),
-                eq(0), eq(new BigDecimal("105")), eq(null));
+                eq(0), eq(new BigDecimal("105")), eq(null), any());
         // favorable extreme (the low) must not move against the position when price rises
         assertThat(highestCaptor.getValue()).isEqualByComparingTo("98");
         // mfeR keeps the best-ever R, not the current (worse) R
@@ -543,7 +543,7 @@ class ReconcileServiceTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-8", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-8",
-                null, null, "ord-t2", "stop-t2", 0, null, null, null, null, null, null, false);
+                null, null, "ord-t2", "stop-t2", 0, null, null, null, null, null, null, false, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedOrder(new BrokerOrder("tp-8", "ref-8", "ACME", OrderRole.TAKE_PROFIT,
@@ -552,7 +552,7 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -575,7 +575,7 @@ class ReconcileServiceTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, null,
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-9", null,
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-9",
-                null, null, "ord-t2-9", "stop-t2-9", 0, null, null, null, null, null, null, false);
+                null, null, "ord-t2-9", "stop-t2-9", 0, null, null, null, null, null, null, false, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         // Only the tranche-2 stop leg id matches (not brokerOrderId/stopOrderId/tranche2OrderId).
@@ -585,7 +585,7 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(logCaptor.capture());
@@ -647,7 +647,7 @@ class ReconcileServiceTest {
                 List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-13",
                 new BigDecimal("100"), BigDecimal.ZERO, 0, null, null, null, null, "stop-13",
                 null, null, null, null, 0, null, "2026-07-10T00:00:00Z",
-                null, null, null, null, false);
+                null, null, null, null, false, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
 
         gateway.seedPosition(new BrokerPosition("FILLPOS", "BUY", BigDecimal.TEN,
@@ -726,7 +726,7 @@ class ReconcileServiceTest {
         assertThat(log.symbol()).isNull();
 
         verify(positionRepo, never()).close(anyLong(), any(), any(), any(), any());
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any());
+        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), anyInt(), any(), any(), any());
 
         assertThat(survivors).isEqualTo(List.of(p));
     }
@@ -1116,7 +1116,7 @@ class ReconcileServiceTest {
                 new BigDecimal("95"), new BigDecimal("95"), 2, null, List.of(), "sig-1", "agent",
                 "2026-07-01", null, "OPEN", "2000000001", null, null, 0, null, null, null, null,
                 "2000000002", null, null, "2000000003", "2000000004", 0, null, null, null,
-                null, null, null, false);
+                null, null, null, false, null, null);
     }
 
     @Test
@@ -1190,7 +1190,7 @@ class ReconcileServiceTest {
         return new ExecutorPosition(id, "c", symbol, "BUY", qty, entry, initialStop,
                 initialStop, 2, null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN",
                 "ord-1", null, BigDecimal.ZERO, 0, null, null, null, null, "stop-1",
-                null, null, "ord-2", "stop-2", 0, null, null, null, null, null, null, false);
+                null, null, "ord-2", "stop-2", 0, null, null, null, null, null, null, false, null, null);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1988,7 +1988,7 @@ class ReconcileServiceTest {
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 2, null, List.of(),
                 "sig-1", "agent", "2026-07-01", null, "OPEN", "ord-1", new BigDecimal("110"),
                 BigDecimal.ZERO, 0, null, null, null, null, "stop-1", null, null, "ord-2", "stop-2",
-                0, null, null, null, null, null, null, false);
+                0, null, null, null, null, null, null, false, null, null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
         when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
                 leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("10")),

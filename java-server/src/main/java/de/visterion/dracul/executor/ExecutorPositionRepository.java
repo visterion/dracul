@@ -51,14 +51,15 @@ public class ExecutorPositionRepository {
                    realized_r, exit_reason, stop_order_id, sector, entry_day_high,
                    tranche2_order_id, tranche2_stop_order_id, trim_count, lowest_price,
                    entry_expires_at, submitted_limit_price, pending_exit_reason, exit_order_id,
-                   pending_exit_fill_price, stop_legs_collapsed)
+                   pending_exit_fill_price, stop_legs_collapsed, broker_stop, entry_filled_at)
                 VALUES (:connection, :symbol, :side, :qty, :entryPrice, :initialStop, :activeStop,
                         :tranche, :rValue, CAST(:killCriteria AS jsonb), :sourceSignalId, :sourceAgent,
                         :mfe, :status, :brokerOrderId, :highestPrice, :mfeR, :softConfirmCount,
                         :exitPrice, :realizedR, :exitReason, :stopOrderId, :sector, :entryDayHigh,
                         :tranche2OrderId, :tranche2StopOrderId, :trimCount, :lowestPrice,
                         CAST(:entryExpiresAt AS timestamptz), :submittedLimitPrice, :pendingExitReason,
-                        :exitOrderId, :pendingExitFillPrice, :stopLegsCollapsed)
+                        :exitOrderId, :pendingExitFillPrice, :stopLegsCollapsed, :brokerStop,
+                        CAST(:entryFilledAt AS timestamptz))
                 """)
                 .param("connection", p.connection())
                 .param("symbol", p.symbol())
@@ -94,19 +95,29 @@ public class ExecutorPositionRepository {
                 .param("exitOrderId", p.exitOrderId())
                 .param("pendingExitFillPrice", p.pendingExitFillPrice())
                 .param("stopLegsCollapsed", p.stopLegsCollapsed())
+                .param("brokerStop", p.brokerStop())
+                .param("entryFilledAt", p.entryFilledAt())
                 .update(keyHolder, "id");
         return ((Number) keyHolder.getKeys().get("id")).longValue();
     }
 
+    /**
+     * Writes the per-pass maintenance state. {@code brokerStop} is COALESCEd: a caller with
+     * nothing to say about the broker leg passes null and the stored value survives. Only the
+     * ratchet has something to say — and it says it only after the broker confirmed the modify
+     * (broker first, book second). {@code activeStop} is deliberately NOT coalesced: every caller
+     * knows the logical stop and must state it.
+     */
     public void updateMaintenance(long id, BigDecimal highestPrice, BigDecimal mfeR,
-            int softConfirmCount, BigDecimal activeStop, String stopOrderId) {
+            int softConfirmCount, BigDecimal activeStop, String stopOrderId, BigDecimal brokerStop) {
         jdbc.sql("""
                 UPDATE executor_position
                 SET highest_price = :highestPrice,
                     mfe_r = :mfeR,
                     soft_confirm_count = :softConfirmCount,
                     active_stop = :activeStop,
-                    stop_order_id = COALESCE(:stopOrderId, stop_order_id)
+                    stop_order_id = COALESCE(:stopOrderId, stop_order_id),
+                    broker_stop = COALESCE(:brokerStop, broker_stop)
                 WHERE id = :id
                 """)
                 .param("highestPrice", highestPrice)
@@ -114,6 +125,7 @@ public class ExecutorPositionRepository {
                 .param("softConfirmCount", softConfirmCount)
                 .param("activeStop", activeStop)
                 .param("stopOrderId", stopOrderId)
+                .param("brokerStop", brokerStop)
                 .param("id", id)
                 .update();
     }
@@ -455,6 +467,17 @@ public class ExecutorPositionRepository {
                 .param("id", id).update();
     }
 
+    /** Stamps the first reconcile pass that saw a broker holding for this position. Write-once by
+     *  construction (COALESCE), so a later pass can call it unconditionally without moving the
+     *  timestamp — the caller does not have to read the row first. */
+    public void markEntryFilled(long id, Instant at) {
+        jdbc.sql("UPDATE executor_position SET entry_filled_at = COALESCE(entry_filled_at, :ts) "
+                        + "WHERE id = :id")
+                .param("ts", java.sql.Timestamp.from(at))
+                .param("id", id)
+                .update();
+    }
+
     /** Open positions whose entry GTD expiry has passed. Fill detection is a separate concern
      *  (Task 6) — this only filters by expiry. */
     public List<ExecutorPosition> findOpenUnfilledPastExpiry(Instant now) {
@@ -585,12 +608,19 @@ public class ExecutorPositionRepository {
                 rs.getString("pending_exit_reason"),
                 rs.getString("exit_order_id"),
                 rs.getBigDecimal("pending_exit_fill_price"),
-                rs.getBoolean("stop_legs_collapsed"));
+                rs.getBoolean("stop_legs_collapsed"),
+                rs.getBigDecimal("broker_stop"),
+                entryFilledAtOrNull(rs));
     }
 
     private String entryExpiresAtOrNull(ResultSet rs) throws SQLException {
         Object entryExpiresAtObj = rs.getObject("entry_expires_at");
         return entryExpiresAtObj == null ? null : entryExpiresAtObj.toString();
+    }
+
+    private String entryFilledAtOrNull(ResultSet rs) throws SQLException {
+        Object entryFilledAtObj = rs.getObject("entry_filled_at");
+        return entryFilledAtObj == null ? null : entryFilledAtObj.toString();
     }
 
     private String closedAtOrNull(ResultSet rs) throws SQLException {

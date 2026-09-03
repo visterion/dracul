@@ -40,14 +40,16 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS", "GUIDANCE_CUT"), "sig-a", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false);
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
         var posB = new ExecutorPosition(null, "depot-1", symbolB, "BUY",
                 new BigDecimal("5"), new BigDecimal("50.00"), new BigDecimal("45.00"),
                 new BigDecimal("47.00"), 1, new BigDecimal("0.8"),
                 List.of("STOP_HIT"), "sig-b", "strigoi-insider",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false);
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
 
         long idA = repo.insert(posA);
         long idB = repo.insert(posB);
@@ -75,11 +77,12 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-maint", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false);
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
         long id = repo.insert(pos);
 
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 1,
-                new BigDecimal("104"), "stop-9");
+                new BigDecimal("104"), "stop-9", null);
 
         var found = repo.findById(id);
         assertThat(found.highestPrice()).isEqualByComparingTo("110");
@@ -98,7 +101,8 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-close", "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false);
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
         long id = repo.insert(pos);
 
         repo.close(id, new BigDecimal("95"), new BigDecimal("-1.0"), "HARD_STOP", new BigDecimal("10"));
@@ -172,7 +176,7 @@ class ExecutorPositionRepositoryTest {
     void recordTrimUpdatesQtyTrimCountAndResetsSoftConfirm() {
         long id = repo.insert(openPosition("TRIM" + System.nanoTime()));
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
-                new BigDecimal("104"), "stop-9");
+                new BigDecimal("104"), "stop-9", null);
         assertThat(repo.findById(id).softConfirmCount()).isEqualTo(3);
 
         repo.recordTrim(id, new BigDecimal("50"), 1);
@@ -301,7 +305,7 @@ class ExecutorPositionRepositoryTest {
         // order must be nulled, or StopRatchetService addresses a dead id by name next run.
         long id = repo.insert(openPositionWithStops("CLEARSTOP" + System.nanoTime(), "old-1", "old-2"));
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
-                new BigDecimal("104"), "old-1");
+                new BigDecimal("104"), "old-1", null);
         ExecutorPosition before = repo.findById(id);
 
         repo.clearStopLeg(id, "old-1");
@@ -319,7 +323,7 @@ class ExecutorPositionRepositoryTest {
         // The pair of writes a reconcile trim makes: null the dead leg, then explain the null.
         long id = repo.insert(openPositionWithStops("COLLAPSEFLAG" + System.nanoTime(), "old-1", "old-2"));
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
-                new BigDecimal("104"), "old-1");
+                new BigDecimal("104"), "old-1", null);
         ExecutorPosition before = repo.findById(id);
         assertThat(before.stopLegsCollapsed()).isFalse();
 
@@ -352,7 +356,7 @@ class ExecutorPositionRepositoryTest {
     void repointStopLegsRepointsAMatchedLegAndLeavesQtyTrimCountSoftConfirmAlone() {
         long id = repo.insert(openPositionWithStops("REPOINTONLY" + System.nanoTime(), "old-1", "old-2"));
         repo.updateMaintenance(id, new BigDecimal("110"), new BigDecimal("1.6"), 3,
-                new BigDecimal("104"), "old-1");
+                new BigDecimal("104"), "old-1", null);
         ExecutorPosition before = repo.findById(id);
         assertThat(before.softConfirmCount()).isEqualTo(3);
 
@@ -528,6 +532,100 @@ class ExecutorPositionRepositoryTest {
         assertThat(exitPriceSource).isEqualTo("FILL");
     }
 
+    /** Test 36. Mutation that must redden this: drop `broker_stop`/`entry_filled_at` from the
+     *  INSERT column list, or from the row mapper — either way the values do not survive a
+     *  write/read round trip. */
+    @Test
+    void insertPersistsAndReadsBackBrokerStopAndEntryFilledAt() {
+        String symbol = "POS-V48-" + UUID.randomUUID();
+        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48", "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                new BigDecimal("88.500000"), "2026-09-01T10:00:00Z");
+
+        long id = repo.insert(p);
+        ExecutorPosition read = repo.findById(id);
+
+        assertThat(read.brokerStop()).isEqualByComparingTo("88.5");
+        assertThat(read.entryFilledAt()).isNotNull();
+        assertThat(read.entryFilledAt()).startsWith("2026-09-01");
+    }
+
+    /** Test 36b. Mutation: map the columns to a non-null default. A row written before V48 has
+     *  NULL in both columns and must read back as null, not as zero and not as "". */
+    @Test
+    void mapRowReturnsNullForPreV48Rows() {
+        String symbol = "POS-V48N-" + UUID.randomUUID();
+        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48n", "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
+
+        long id = repo.insert(p);
+        ExecutorPosition read = repo.findById(id);
+
+        assertThat(read.brokerStop()).isNull();
+        assertThat(read.entryFilledAt()).isNull();
+    }
+
+    /** Test 35. Mutation: write `broker_stop = :brokerStop` without the COALESCE. The two
+     *  non-ratchet callers (MaintenancePipeline, ReconcileService) pass the position's own value,
+     *  but a future caller passing null must never blank a stop the broker really holds — this
+     *  IT is the guard the spec names for that (§2.1, test 26 was dropped in its favour). */
+    @Test
+    void updateMaintenanceWithNullBrokerStopPreservesStoredValue() {
+        String symbol = "POS-V48C-" + UUID.randomUUID();
+        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48c", "strigoi-spin",
+                null, null, "OPEN", null,
+                new BigDecimal("110.00"), null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                new BigDecimal("88.500000"), null);
+        long id = repo.insert(p);
+
+        repo.updateMaintenance(id, new BigDecimal("112.00"), new BigDecimal("1.5"), 1,
+                new BigDecimal("96.00"), null, null);
+
+        ExecutorPosition afterNull = repo.findById(id);
+        assertThat(afterNull.activeStop()).isEqualByComparingTo("96.00");
+        assertThat(afterNull.brokerStop()).isEqualByComparingTo("88.5");
+
+        repo.updateMaintenance(id, new BigDecimal("113.00"), new BigDecimal("1.6"), 1,
+                new BigDecimal("97.00"), null, new BigDecimal("90.250000"));
+
+        ExecutorPosition afterValue = repo.findById(id);
+        assertThat(afterValue.brokerStop()).isEqualByComparingTo("90.25");
+    }
+
+    /** Test 28-support. `markEntryFilled` is write-once: a second call with a later instant must
+     *  not move the timestamp. Mutation: drop the COALESCE. */
+    @Test
+    void markEntryFilledIsWriteOnce() {
+        String symbol = "POS-V48F-" + UUID.randomUUID();
+        var p = new ExecutorPosition(null, "depot-1", symbol, "BUY",
+                new BigDecimal("10"), new BigDecimal("100.00"), new BigDecimal("90.00"),
+                new BigDecimal("95.00"), 1, null, List.of("X"), "sig-v48f", "strigoi-spin",
+                null, null, "OPEN", null,
+                null, null, 0, null, null, null, null, null,
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null);
+        long id = repo.insert(p);
+
+        Instant first = Instant.parse("2026-09-01T10:00:00Z");
+        Instant second = Instant.parse("2026-09-02T10:00:00Z");
+        repo.markEntryFilled(id, first);
+        repo.markEntryFilled(id, second);
+
+        assertThat(repo.findById(id).entryFilledAt()).startsWith("2026-09-01");
+    }
+
     private long insertOpenPosition(String symbol, String entryPrice) {
         return repo.insert(new ExecutorPosition(null, "depot-1", symbol, "BUY",
                 new BigDecimal("10"), new BigDecimal(entryPrice), new BigDecimal("90.00"),
@@ -535,7 +633,8 @@ class ExecutorPositionRepositoryTest {
                 List.of("EARNINGS_MISS"), "sig-" + symbol, "strigoi-spin",
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
-                null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, null, null, 0, null, null, null, null, null, null, false,
+                null, null));
     }
 
     private ExecutorPosition openPosition(String symbol) {
@@ -546,7 +645,8 @@ class ExecutorPositionRepositoryTest {
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, null,
                 "Technology", new BigDecimal("105.5"), null, null, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false,
+                null, null);
     }
 
     private ExecutorPosition openPositionWithStops(String symbol, String stopOrderId, String tranche2StopOrderId) {
@@ -557,6 +657,7 @@ class ExecutorPositionRepositoryTest {
                 null, null, "OPEN", null,
                 null, null, 0, null, null, null, null, stopOrderId,
                 "Technology", new BigDecimal("105.5"), "ord-2", tranche2StopOrderId, 0, null, null,
-                null, null, null, null, false);
+                null, null, null, null, false,
+                null, null);
     }
 }

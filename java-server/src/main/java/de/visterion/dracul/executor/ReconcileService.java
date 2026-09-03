@@ -1383,7 +1383,8 @@ public class ReconcileService {
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), stopOrderId,
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), tranche2StopOrderId,
                 trimCount, p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), collapsed);
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), collapsed,
+                p.brokerStop(), p.entryFilledAt());
     }
 
     /**
@@ -1591,7 +1592,8 @@ public class ReconcileService {
                         p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                         p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                         p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                        p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+                        p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
+                        p.brokerStop(), p.entryFilledAt());
                 exitPrice = match.closePrice();
                 exitPriceSource = "FILL";
                 rCalcOverride = realizedRAgainstPlannedRisk(p, match.openPrice(), match.closePrice());
@@ -1679,7 +1681,8 @@ public class ReconcileService {
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
+                p.brokerStop(), p.entryFilledAt());
     }
 
     private ExecutorPosition updateMaintenance(ExecutorPosition p, BrokerPosition bp, String runId) {
@@ -1714,7 +1717,8 @@ public class ReconcileService {
                     p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                     p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                     p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
-                    p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+                    p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
+                    p.brokerStop(), p.entryFilledAt());
         }
 
         // Book = broker for QUANTITY too. `qty` means shares HELD (see ExecutorPosition), so the
@@ -1757,7 +1761,7 @@ public class ReconcileService {
         BigDecimal newMfeR = currentR == null ? baseMfe : baseMfe.max(currentR);
 
         positionRepo.updateMaintenance(p.id(), newHighest, newMfeR, p.softConfirmCount(),
-                p.activeStop(), null);
+                p.activeStop(), null, p.brokerStop());
 
         return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                 p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
@@ -1766,7 +1770,8 @@ public class ReconcileService {
                 p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
-                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed());
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
+                p.brokerStop(), p.entryFilledAt());
     }
 
     /** Realized R together with the denominator (risk-per-share) it was actually divided by, so

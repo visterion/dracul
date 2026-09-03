@@ -219,7 +219,7 @@ public class MaintenancePipeline {
         List<String> killCriteriaBreached = killCriteriaEvaluator.breached(p.killCriteria(), currentPrice);
 
         positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), ss.confirmCount(),
-                p.activeStop(), null);
+                p.activeStop(), null, p.brokerStop());
 
         // Adverse-extreme (MAE) tracking: BUY positions track the lowest close seen while open,
         // written only when it decreases below the current floor. SELL positions do NOT write

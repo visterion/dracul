@@ -26,7 +26,7 @@ class ExecutorPositionRepositoryFindByBrokerOrderIdIT {
         repo.insert(new ExecutorPosition(null, "depot-1", "ACME", "buy", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1, new BigDecimal("1"),
                 List.of("kc1"), "sig-xyz", "index-strigoi", null, null, "OPEN", "broker-abc",
-                null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false));
+                null, null, 0, null, null, null, null, null, null, null, null, null, 0, null, null, null, null, null, null, false, null, null));
 
         var found = repo.findByBrokerOrderId("broker-abc");
 

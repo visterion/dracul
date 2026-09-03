@@ -183,7 +183,7 @@ public class StopRatchetService {
 
                 // Every open leg confirmed — only now is the new level true of the whole position.
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
-                        chandelier, null);
+                        chandelier, null, null);
                 recordRatchet(p, atr, chandelier, runId);
                 executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
                 continue;
@@ -223,7 +223,7 @@ public class StopRatchetService {
                 if (!ratchetTwoLegs(p, chandelier, runId, budget)) continue;
 
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
-                        chandelier, null);
+                        chandelier, null, null);
                 recordRatchet(p, atr, chandelier, runId);
                 executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
                 continue;
@@ -262,7 +262,7 @@ public class StopRatchetService {
             if (!modifyWithRetry(p, bracketId, chandelier, runId, budget)) continue;
 
             positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
-                    chandelier, null);
+                    chandelier, null, null);
 
             recordRatchet(p, atr, chandelier, runId);
 
