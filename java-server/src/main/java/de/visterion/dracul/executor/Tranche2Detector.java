@@ -15,28 +15,30 @@ import java.util.List;
  *
  * <p>The hard gate — never eligible below entry (BUY) / above entry (SELL), no averaging down,
  * ever — is checked first and wins over every other condition, including a reinforcing signal.
- * Once past the gate, the first of three conditions to match decides the reason (first match
- * wins, checked in this order):
+ * A position whose entry the broker has not filled ({@code entryFilledAt == null}) is likewise
+ * never eligible, whatever the price has done. Once past both, the first of two conditions to
+ * match decides the reason (first match wins, checked in this order):
  *
  * <ol>
  *   <li>{@code R_CONFIRMED} — price has moved at least 1R in the position's favor, where R is
  *       the initial per-share risk ({@code entryPrice - initialStop} for BUY, mirrored for SELL).</li>
- *   <li>{@code NEW_HIGH} — price has extended past the entry-day extreme
- *       ({@link ExecutorPosition#entryDayHigh()}), i.e. day-1 momentum is still running.</li>
  *   <li>{@code REINFORCING_SIGNAL} — a currently pending signal for the same symbol and direction
  *       as the position originates from a mechanism that differs from the mechanism that opened
  *       the position itself, i.e. an independent hunting strategy corroborates the thesis. If the
  *       position's own mechanism is unknown ({@code positionMechanism == null}), this route is
  *       conservatively unavailable — a pending signal can never be judged "different" from an
- *       unknown mechanism, so only {@code R_CONFIRMED}/{@code NEW_HIGH} can fire.</li>
+ *       unknown mechanism, so only {@code R_CONFIRMED} can fire.</li>
  * </ol>
+ *
+ * <p>A mere new high used to be a third route. It was removed in SP1: in production it doubled a
+ * position sitting at +0.08 R, and both tranches were then stopped out together. A new high is
+ * momentum, not evidence that the thesis is working.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class Tranche2Detector {
 
     public static final String R_CONFIRMED = "R_CONFIRMED";
-    public static final String NEW_HIGH = "NEW_HIGH";
     public static final String REINFORCING_SIGNAL = "REINFORCING_SIGNAL";
 
     private static final Tranche2Status NOT_ELIGIBLE = new Tranche2Status(false, null);
@@ -47,6 +49,14 @@ public class Tranche2Detector {
     public Tranche2Status detect(ExecutorPosition p, BigDecimal price, List<ExecutorSignal> pendings,
             String positionMechanism) {
         if (p.tranche() != 1 || !"OPEN".equals(p.status()) || price == null) return NOT_ELIGIBLE;
+
+        // Never add to a position the broker has not filled. A second bracket resting next to an
+        // unfilled first one doubles the intended size the moment both fill, and the book would
+        // carry risk for shares nobody holds. entry_filled_at is the single source of truth for
+        // that (ReconcileService writes it once, on `broker holds it AND no entry order still
+        // working`), so /tools/add-tranche and fetch-open-positions enforce the SAME predicate
+        // from the SAME column.
+        if (p.entryFilledAt() == null) return NOT_ELIGIBLE;
 
         boolean sell = "SELL".equals(p.side());
         boolean neverBelowEntry = sell
@@ -65,13 +75,6 @@ public class Tranche2Detector {
                 BigDecimal rMultiple = move.divide(rPerShare, 6, RoundingMode.HALF_UP);
                 if (rMultiple.compareTo(BigDecimal.ONE) >= 0) return new Tranche2Status(true, R_CONFIRMED);
             }
-        }
-
-        if (p.entryDayHigh() != null) {
-            boolean newExtreme = sell
-                    ? price.compareTo(p.entryDayHigh()) < 0
-                    : price.compareTo(p.entryDayHigh()) > 0;
-            if (newExtreme) return new Tranche2Status(true, NEW_HIGH);
         }
 
         if (pendings != null && positionMechanism != null) {

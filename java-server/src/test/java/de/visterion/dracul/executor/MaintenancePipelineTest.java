@@ -55,11 +55,13 @@ class MaintenancePipelineTest {
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
             BigDecimal highestPrice, BigDecimal mfeR, int softConfirmCount, List<String> killCriteria) {
+        // entryFilledAt is set (broker confirmed the fill) so tranche-2 eligibility in these
+        // pipeline tests is decided by price/reinforcing-signal evidence, not by this precondition.
         return new ExecutorPosition(id, "c", symbol, "BUY", BigDecimal.TEN, new BigDecimal("100"),
                 new BigDecimal("95"), activeStop, 1, null, killCriteria, "sig-1", "agent",
                 "2026-06-01", null, "OPEN", "brk-1", highestPrice, mfeR, softConfirmCount, null,
                 null, null, null, "stop-1", null, null, null, null, 0, null, null,
-                null, null, null, null, false, null, null);
+                null, null, null, null, false, null, "2026-07-02T00:00:00Z");
     }
 
     @Test

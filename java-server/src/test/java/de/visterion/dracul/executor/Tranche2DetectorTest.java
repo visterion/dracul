@@ -16,10 +16,18 @@ class Tranche2DetectorTest {
 
     private ExecutorPosition position(int tranche, String side, BigDecimal entryPrice,
             BigDecimal initialStop, BigDecimal entryDayHigh, String symbol, String status) {
+        return position(tranche, side, entryPrice, initialStop, entryDayHigh, symbol, status,
+                "2026-07-02T00:00:00Z");
+    }
+
+    /** {@code entryFilledAt} null = the broker has not confirmed a holding for this position. */
+    private ExecutorPosition position(int tranche, String side, BigDecimal entryPrice,
+            BigDecimal initialStop, BigDecimal entryDayHigh, String symbol, String status,
+            String entryFilledAt) {
         return new ExecutorPosition(1L, "c", symbol, side, BigDecimal.TEN, entryPrice, initialStop,
                 initialStop, tranche, null, List.of(), "sig-1", "agent", "2026-07-01", null, status,
                 "brk-1", null, null, 0, null, null, null, null, "stop-1", null, entryDayHigh, null, null, 0, null, null,
-                null, null, null, null, false, null, null);
+                null, null, null, null, false, null, entryFilledAt);
     }
 
     private ExecutorSignal signal(String symbol, String direction, String mechanism) {
@@ -50,21 +58,77 @@ class Tranche2DetectorTest {
         assertThat(status.reason()).isNull();
     }
 
+    /** Test 19. A new high alone is no longer evidence. Prod: RGNX doubled on "NEW_HIGH" while the
+     *  position sat at +0.08 R, and both tranches were stopped out together.
+     *  Mutation: re-add the entryDayHigh branch. */
     @Test
-    void newHigh_onlyWhenEntryDayHighNonNull() {
-        ExecutorPosition withoutEntryDayHigh = position(1, "BUY", new BigDecimal("100"),
-                new BigDecimal("90"), null, "ACME", "OPEN");
-        // price above entry but under +1R and no entryDayHigh set -> not eligible
-        Tranche2Detector.Tranche2Status noHigh = detector.detect(withoutEntryDayHigh,
-                new BigDecimal("105"), List.of(), "PEAD");
-        assertThat(noHigh.eligible()).isFalse();
+    void newHighAloneIsNotEligible() {
+        // Above entry, above the entry-day high, but under +1R and with no reinforcing signal.
+        ExecutorPosition p = position(1, "BUY", new BigDecimal("100"), new BigDecimal("90"),
+                new BigDecimal("101"), "ACME", "OPEN");
 
-        ExecutorPosition withEntryDayHigh = position(1, "BUY", new BigDecimal("100"),
-                new BigDecimal("90"), new BigDecimal("104"), "ACME", "OPEN");
-        Tranche2Detector.Tranche2Status withHigh = detector.detect(withEntryDayHigh,
-                new BigDecimal("105"), List.of(), "PEAD");
-        assertThat(withHigh.eligible()).isTrue();
-        assertThat(withHigh.reason()).isEqualTo("NEW_HIGH");
+        Tranche2Detector.Tranche2Status status =
+                detector.detect(p, new BigDecimal("105"), List.of(), "PEAD");
+
+        assertThat(status.eligible()).isFalse();
+        assertThat(status.reason()).isNull();
+    }
+
+    /** Test 19, SELL mirror. */
+    @Test
+    void newLowAloneIsNotEligibleOnSell() {
+        ExecutorPosition p = position(1, "SELL", new BigDecimal("100"), new BigDecimal("110"),
+                new BigDecimal("99"), "ACME", "OPEN");
+
+        Tranche2Detector.Tranche2Status status =
+                detector.detect(p, new BigDecimal("95"), List.of(), "PEAD");
+
+        assertThat(status.eligible()).isFalse();
+    }
+
+    /** Test 20. Never add to a position the broker has not filled — the second bracket would rest
+     *  next to an unfilled first one and double the intended size the moment both fill.
+     *  Mutation: drop the entryFilledAt check. Without it this position is at exactly +1R and
+     *  would fire R_CONFIRMED. */
+    @Test
+    void unfilledEntryIsNotEligibleEvenAtOneR() {
+        ExecutorPosition p = position(1, "BUY", new BigDecimal("100"), new BigDecimal("90"),
+                null, "ACME", "OPEN", null);
+
+        Tranche2Detector.Tranche2Status status =
+                detector.detect(p, new BigDecimal("110"), List.of(), "PEAD");
+
+        assertThat(status.eligible()).isFalse();
+        assertThat(status.reason()).isNull();
+    }
+
+    /** Test 20, reinforcing-signal route. The precondition wins over EVERY route, not just R. */
+    @Test
+    void unfilledEntryIsNotEligibleEvenWithAReinforcingSignal() {
+        ExecutorPosition p = position(1, "BUY", new BigDecimal("100"), new BigDecimal("90"),
+                null, "ACME", "OPEN", null);
+        List<ExecutorSignal> pendings = List.of(signal("ACME", "BUY", "SPIN_OFF"));
+
+        assertThat(detector.detect(p, new BigDecimal("101"), pendings, "PEAD").eligible()).isFalse();
+    }
+
+    /** Test 21. Regression: with the entry filled, both surviving routes still fire.
+     *  Mutation: make the entryFilledAt check reject everything. */
+    @Test
+    void rConfirmedAndReinforcingStillFireWhenFilled() {
+        ExecutorPosition filled = position(1, "BUY", new BigDecimal("100"), new BigDecimal("90"),
+                null, "ACME", "OPEN", "2026-07-02T00:00:00Z");
+
+        Tranche2Detector.Tranche2Status r =
+                detector.detect(filled, new BigDecimal("110"), List.of(), "PEAD");
+        assertThat(r.eligible()).isTrue();
+        assertThat(r.reason()).isEqualTo("R_CONFIRMED");
+
+        List<ExecutorSignal> pendings = List.of(signal("ACME", "BUY", "SPIN_OFF"));
+        Tranche2Detector.Tranche2Status reinforcing =
+                detector.detect(filled, new BigDecimal("101"), pendings, "PEAD");
+        assertThat(reinforcing.eligible()).isTrue();
+        assertThat(reinforcing.reason()).isEqualTo("REINFORCING_SIGNAL");
     }
 
     @Test

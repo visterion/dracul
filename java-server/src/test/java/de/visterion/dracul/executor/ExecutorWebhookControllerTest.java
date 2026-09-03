@@ -339,7 +339,7 @@ class ExecutorWebhookControllerTest {
 
     /** Builds a controller identical to {@link #controller} but wired with the REAL
      *  {@link Tranche2Detector} instead of the mock — needed to exercise the actual
-     *  {@code entryDayHigh} comparison (the field-level mock always returns whatever the test
+     *  {@code R_CONFIRMED} comparison (the field-level mock always returns whatever the test
      *  stubs, which cannot prove the controller passes the RAW price into it). */
     private ExecutorWebhookController controllerWithRealTranche2Detector() {
         return new ExecutorWebhookController(
@@ -377,7 +377,8 @@ class ExecutorWebhookControllerTest {
                 /* stopOrderId */ null, /* sector */ null, entryDayHigh,
                 /* tranche2OrderId */ null, /* tranche2StopOrderId */ null, /* trimCount */ 0,
                 /* lowestPrice */ null, /* entryExpiresAt */ null, /* submittedLimitPrice */ null,
-                /* pendingExitReason */ null, /* exitOrderId */ null, /* pendingExitFillPrice */ null, false, null, null);
+                /* pendingExitReason */ null, /* exitOrderId */ null, /* pendingExitFillPrice */ null, false, null,
+                "2026-07-02T00:00:00Z");
     }
 
     @SuppressWarnings("unchecked")
@@ -4326,19 +4327,19 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void addTranche_eligibilityUsesRawPrice_brokerGetsRoundedPrice() {
-        // entryDayHigh=70.50, ctx.price()=70.504: the REAL Tranche2Detector's strict
-        // compareTo(entryDayHigh) > 0 only fires on the raw price (70.504 > 70.50). If the
-        // controller rounded ctx.price() before calling detect(), the comparison would become
-        // 70.50 > 70.50 = false and the add-on would be silently dropped -- this is the gate for
-        // constraint 1 in the task brief. entryPrice/initialStop are chosen so R_CONFIRMED (which
-        // is checked before NEW_HIGH and would otherwise mask the entryDayHigh path) does NOT
-        // fire: rMultiple = (70.504-68)/(68-65) = 0.835 < 1.
+        // entryPrice=68, initialStop=64.976 -> rPerShare=3.024, so +1R sits at 71.024, not on the
+        // 0.01 tick grid. ctx.price()=71.026 is raw-eligible: rMultiple = 3.026/3.024 = 1.000661
+        // >= 1. TickSize.roundEntry FLOORs a BUY price away from the fill, so the broker gets
+        // 71.02 -- and if the controller fed THAT rounded price into detect() instead of the raw
+        // one, rMultiple would recompute to 3.02/3.024 = 0.998677 < 1 and the add-on would be
+        // silently dropped. This is the raw-vs-rounded split the controller comment above
+        // tranche2Detector.detect(...) documents (decision raw, mechanics rounded).
         ExecutorPosition open = positionWithEntryDayHighAndActiveStop(7L, "ACME", "BUY",
-                new BigDecimal("68"), new BigDecimal("65"), new BigDecimal("65"),
-                new BigDecimal("70.50"));
+                new BigDecimal("68"), new BigDecimal("64.976"), new BigDecimal("64.976"),
+                null);
         when(positionRepo.findOpen()).thenReturn(List.of(open));
         when(assembler.assembleForSymbol(any()))
-                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("70.504"), new BigDecimal("2")));
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("71.026"), new BigDecimal("2")));
         when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-7", "stop-7", null, "t2-sig-1", OrderStatus.WORKING));
 
@@ -4350,11 +4351,11 @@ class ExecutorWebhookControllerTest {
 
         Map<String, Object> output = outputOf(resp);
         assertThat(output.get("placed")).isEqualTo(true);
-        assertThat(output.get("reason")).isEqualTo(Tranche2Detector.NEW_HIGH);
+        assertThat(output.get("reason")).isEqualTo(Tranche2Detector.R_CONFIRMED);
 
         ArgumentCaptor<BracketRequest> reqCaptor = ArgumentCaptor.forClass(BracketRequest.class);
         verify(gateway).placeBracket(eq("depot-1"), reqCaptor.capture());
-        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("70.50");
+        assertThat(reqCaptor.getValue().limitPrice()).isEqualByComparingTo("71.02");
     }
 
     @Test
