@@ -199,6 +199,28 @@ class BrokerStopTest {
         assertThat(r.lags()).isTrue();
     }
 
+    /** A legacy leg can rest ABOVE the logical stop and above the new chandelier: a partial
+     *  ratchet confirms a price on the leg it managed to move without advancing active_stop, and
+     *  V48 seeds broker_stop from that confirmed price. The monotonic floor must beat the "never
+     *  crosses the logical stop" clamp here — the leg is left where it rests, tighter than the
+     *  chandelier, and lags says so. Mutation: clamp the result to the chandelier (apply
+     *  towardLogical AFTER the floor, or floor against activeStop instead of previousBrokerStop). */
+    @Test
+    void legacyLegAboveChandelierIsNeverMovedDown() {
+        BrokerStop.Result r = BrokerStop.forRatchet("BUY", bd("50.00"), bd("2.00"), BUFFER,
+                bd("51.30"), bd("47.00"));
+
+        assertThat(r.price()).isEqualByComparingTo("51.30");   // not 48.00, and not 50.00
+        assertThat(r.lags()).isTrue();
+        assertThat(r.clamped()).isFalse();
+
+        BrokerStop.Result sell = BrokerStop.forRatchet("SELL", bd("50.00"), bd("2.00"), BUFFER,
+                bd("48.70"), bd("53.00"));
+
+        assertThat(sell.price()).isEqualByComparingTo("48.70");
+        assertThat(sell.lags()).isTrue();
+    }
+
     /** Test 10, ratchet half. Mutation: any offset or rounding on the identity path. */
     @Test
     void ratchetBufferZeroReturnsTheChandelierUnchanged() {

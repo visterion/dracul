@@ -26,8 +26,15 @@ import java.math.RoundingMode;
  *       exceeds the band the broker stop equals it and today's behaviour applies — beyond the band
  *       Agora's far-stop fallback is the safety net, and tightening a stop we never chose would be
  *       worse than relying on it.</li>
- *   <li><b>Monotonic on the ratchet.</b> The broker leg never moves against the position, even
- *       when ATR expands faster than the high; it simply lags, and says so.</li>
+ *   <li><b>Monotonic on the ratchet, and it outranks rule 1.</b> The broker leg never moves
+ *       against the position, even when ATR expands faster than the high; it simply lags, and
+ *       says so. The monotonic floor is applied LAST, after the "never crosses the logical stop"
+ *       clamp, so a leg that already rests BEYOND the new chandelier stays where it is instead of
+ *       being walked back down to it. Legacy rows reach that state: a partial ratchet confirms a
+ *       new price on the leg it managed to move without advancing {@code active_stop}, so the leg
+ *       can rest above the logical stop (BUY). Such a leg is then tighter than the logical stop
+ *       until the chandelier catches up. That is accepted — moving a live protective leg against
+ *       the position is the worse of the two — and {@code broker_stop_lags} records it.</li>
  * </ol>
  *
  * <p><b>{@code bufferAtr == 0} is the exact identity.</b> Both entry points then return their
@@ -116,10 +123,12 @@ public final class BrokerStop {
      *
      * @param chandelier the logical chandelier level, already rounded by
      *        {@code StopRatchetService.computeChandelier}
-     * @param previousBrokerStop the price the leg rests at now, or null for a row opened before
-     *        V48 — such a row's leg really does rest at {@code activeStop}, which is then the
-     *        monotonic floor. Treating null as zero would let the first post-V48 ratchet move a
-     *        live leg DOWN by a whole buffer.
+     * @param previousBrokerStop the price the leg rests at now. V48 backfills it for every OPEN
+     *        row from the highest broker-confirmed stop price, so it is normally non-null; null
+     *        means "no record of where the leg rests", and {@code activeStop} is then the floor.
+     *        Treating null as zero would let the first post-V48 ratchet move a live leg DOWN by a
+     *        whole buffer. The floor may sit ABOVE the chandelier (a legacy leg moved by a partial
+     *        ratchet): it still wins, see rule 4 on the class.
      * @param activeStop the position's current logical stop, the fallback floor
      */
     public static Result forRatchet(String side, BigDecimal chandelier, BigDecimal atrEff,
@@ -143,6 +152,8 @@ public final class BrokerStop {
         // Away from the entry, matching computeChandelier -- NOT TickSize.roundStop.
         BigDecimal rounded = raw.setScale(2, buy ? RoundingMode.FLOOR : RoundingMode.CEILING);
 
+        // LAST, deliberately after towardLogical: a leg resting beyond the chandelier is never
+        // walked back to it (rule 4 outranks rule 1 on this path).
         BigDecimal floor = previousBrokerStop != null ? previousBrokerStop : activeStop;
         boolean lags = false;
         if (floor != null) {

@@ -58,8 +58,8 @@ class Tranche2DetectorTest {
         assertThat(status.reason()).isNull();
     }
 
-    /** Test 19. A new high alone is no longer evidence. Prod: RGNX doubled on "NEW_HIGH" while the
-     *  position sat at +0.08 R, and both tranches were stopped out together.
+    /** Test 19. A new high alone is no longer evidence. Prod: a position doubled on
+     *  "NEW_HIGH" while it sat at +0.08 R, and both tranches were stopped out together.
      *  Mutation: re-add the entryDayHigh branch. */
     @Test
     void newHighAloneIsNotEligible() {

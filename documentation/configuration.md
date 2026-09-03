@@ -664,6 +664,23 @@ Dracul's read-only design.
   every pause/unpause toggle will 500 with `BudgetException`. See
   `documentation/vistierie-integration.md`.
 
+**Legacy positions after V48 — a broker leg above `active_stop`:** V48 seeds
+`broker_stop` for every OPEN position from the highest broker-confirmed stop
+price in `decision_log` (`inputs_snapshot.new_stop` of `MODIFY_STOP` rows,
+`order_json.attempted_stop` of `PARTIAL_TRANCHE_RATCHET` rows), never below
+`active_stop`. It has to: a partial ratchet confirms a new price on the leg it
+managed to move while deliberately leaving `active_stop` untouched, so a legacy
+leg can already rest ABOVE the logical stop. Seeding from `active_stop` alone
+would let the first post-V48 ratchet send a price BELOW where that leg rests — a
+downward stop modify on a live protective leg, which the design otherwise never
+does. The cost is that such a position starts with its broker leg TIGHTER than
+`active_stop` instead of buffered away from it. That is accepted and
+self-correcting: the monotonic floor in `BrokerStop.forRatchet` outranks the
+"never crosses the logical stop" clamp, so the leg is left where it rests, every
+permitted ratchet records `broker_stop_lags: true`, and once the buffered
+chandelier climbs past the leg the normal `active_stop − buffer × atrEff`
+geometry takes over. Only rows that existed before V48 can be in this state.
+
 Executor reuses `DRACUL_PUBLIC_URL` (webhook callback base URL) and fetches
 research indicators via the existing read-only `AgoraClient`
 (`DRACUL_AGORA_BASE_URL` / `DRACUL_AGORA_TOKEN`); the trading-specific
