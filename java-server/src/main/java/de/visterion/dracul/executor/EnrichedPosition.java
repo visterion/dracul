@@ -32,5 +32,11 @@ public record EnrichedPosition(
         /** False while the position's GTD entry has no confirmed fill (no broker holdings):
          *  hard triggers, ratcheting, soft-confirm accumulation and LLM exits are all gated
          *  off until the entry fills; EntryExpiryService owns the unfilled lifecycle. */
-        boolean entryFilled) {
+        boolean entryFilled,
+        /** The short-window ATR, shown to the LLM alongside {@link #atr()} so it can see that a
+         *  post-report window is wider than the 22-day one. Nullable. */
+        BigDecimal atrShort,
+        /** The price the protective leg actually rests at — the catastrophe backstop, buffered
+         *  away from {@link #activeStop()}. Nullable for rows opened before V48. */
+        BigDecimal brokerStop) {
 }

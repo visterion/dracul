@@ -100,6 +100,7 @@ public class StopRatchetService {
     private final int retryAttempts;
     private final long retryBackoffMs;
     private final long retryBudgetMs;
+    private final BigDecimal brokerStopBufferAtr;
 
     public StopRatchetService(
             ExecutionGateway gateway,
@@ -113,7 +114,8 @@ public class StopRatchetService {
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
             @Value("${dracul.executor.ratchet-retry-attempts:3}") int retryAttempts,
             @Value("${dracul.executor.ratchet-retry-backoff-ms:500}") long retryBackoffMs,
-            @Value("${dracul.executor.ratchet-retry-budget-ms:5000}") long retryBudgetMs) {
+            @Value("${dracul.executor.ratchet-retry-budget-ms:5000}") long retryBudgetMs,
+            @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
         this.legRepo = legRepo;
@@ -126,6 +128,7 @@ public class StopRatchetService {
         this.retryAttempts = Math.max(1, retryAttempts);
         this.retryBackoffMs = Math.max(0, retryBackoffMs);
         this.retryBudgetMs = Math.max(0, retryBudgetMs);
+        this.brokerStopBufferAtr = brokerStopBufferAtr;
     }
 
     /** Backoff seam — overridden in tests so retry assertions neither sleep nor guess at timing. */
@@ -138,7 +141,15 @@ public class StopRatchetService {
         }
     }
 
+    /**
+     * @param atrBySymbol ATR22 — snapshot only
+     * @param atrShortBySymbol the short-window ATR, nullable per symbol — snapshot only
+     * @param atrEffBySymbol {@code max(atr22, atrShort)} — the ATR the chandelier AND the broker
+     *        buffer are computed from
+     * @param closeBySymbol last close, for the wrong-side-of-the-market skip
+     */
     public void ratchet(List<ExecutorPosition> openPositions, Map<String, BigDecimal> atrBySymbol,
+            Map<String, BigDecimal> atrShortBySymbol, Map<String, BigDecimal> atrEffBySymbol,
             Map<String, BigDecimal> closeBySymbol, String runId) {
         // Wall-clock ceiling for ALL retrying in this pass, shared across every position. The
         // whole ratchet runs inside the agent's 30s fetch_open_positions tool call, so a
@@ -152,8 +163,11 @@ public class StopRatchetService {
             if (p.highestPrice() == null) continue;
             BigDecimal atr = atrBySymbol.get(p.symbol());
             if (atr == null) continue;
+            // atrEff is filled from the SAME Levels as atr, so a fallback is defence only.
+            BigDecimal atrEff = atrEffBySymbol.getOrDefault(p.symbol(), atr);
+            BigDecimal atrShort = atrShortBySymbol.get(p.symbol());
 
-            BigDecimal chandelier = computeChandelier(p, atr);
+            BigDecimal chandelier = computeChandelier(p, atrEff);
             if (!guard.permit(p.activeStop(), chandelier, p.side())) continue;
 
             // The guard only compares against the OLD stop, never against the market. If the price
@@ -171,6 +185,16 @@ public class StopRatchetService {
 
             BigDecimal oldStop = p.activeStop();
 
+            // The LOGICAL chandelier is what the guard and the wrong-side check decided on, and
+            // what the book records as active_stop. The BROKER leg rests a buffer further away and
+            // never moves against the position -- BrokerStop.forRatchet holds both rules.
+            // previousBrokerStop is null on rows opened before V48; their leg really does rest at
+            // active_stop, so that is the monotonic floor.
+            BrokerStop.Result brokerStop = BrokerStop.forRatchet(p.side(), chandelier, atrEff,
+                    brokerStopBufferAtr, p.brokerStop(), p.activeStop());
+            BigDecimal stopToSend = brokerStop.price();
+            BigDecimal oldBrokerStop = p.brokerStop() != null ? p.brokerStop() : p.activeStop();
+
             // How many protective legs the broker holds is read off executor_position_leg, the
             // book's record of the broker's own tranches — not off the two id columns and never
             // off stop_legs_collapsed. Read HERE, per position, so the list is the state left by
@@ -179,12 +203,12 @@ public class StopRatchetService {
             // ordinary "the leg is gone because it filled" case produces no escalation at all.
             List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
             if (!legs.isEmpty()) {
-                if (!ratchetLegs(p, legs, chandelier, runId, budget)) continue;
+                if (!ratchetLegs(p, legs, stopToSend, runId, budget)) continue;
 
                 // Every open leg confirmed — only now is the new level true of the whole position.
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
-                        chandelier, null, null);
-                recordRatchet(p, atr, chandelier, runId);
+                        chandelier, null, stopToSend);
+                recordRatchet(p, atr, atrShort, atrEff, chandelier, oldBrokerStop, brokerStop, runId);
                 executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
                 continue;
             }
@@ -220,11 +244,11 @@ public class StopRatchetService {
                     || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
             boolean twoStopLegs = bothLegsNamed || (expectsTwoLegs && !p.stopLegsCollapsed());
             if (twoStopLegs) {
-                if (!ratchetTwoLegs(p, chandelier, runId, budget)) continue;
+                if (!ratchetTwoLegs(p, stopToSend, runId, budget)) continue;
 
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
-                        chandelier, null, null);
-                recordRatchet(p, atr, chandelier, runId);
+                        chandelier, null, stopToSend);
+                recordRatchet(p, atr, atrShort, atrEff, chandelier, oldBrokerStop, brokerStop, runId);
                 executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
                 continue;
             }
@@ -259,12 +283,12 @@ public class StopRatchetService {
                         discriminator("missing", "POSITION_BROKER_ORDER_ID"));
                 continue;
             }
-            if (!modifyWithRetry(p, bracketId, chandelier, runId, budget)) continue;
+            if (!modifyWithRetry(p, bracketId, stopToSend, runId, budget)) continue;
 
             positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
-                    chandelier, null, null);
+                    chandelier, null, stopToSend);
 
-            recordRatchet(p, atr, chandelier, runId);
+            recordRatchet(p, atr, atrShort, atrEff, chandelier, oldBrokerStop, brokerStop, runId);
 
             executorNotifier.notifyStopRatchet(p, oldStop, chandelier, p.connection());
         }
@@ -321,7 +345,7 @@ public class StopRatchetService {
      * level either way, and one escalation row per pass is what an operator can read.
      */
     private boolean ratchetLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
-            BigDecimal chandelier, String runId, RetryBudget budget) {
+            BigDecimal stopToSend, String runId, RetryBudget budget) {
         List<ExecutorPositionLeg> unnamed = legs.stream()
                 .filter(l -> l.stopOrderId() == null).toList();
         // An unnamed leg may only be reached by an unnamed (bracket-addressed) modify when the
@@ -387,7 +411,7 @@ public class StopRatchetService {
                                 leg.tranche()));
                 confirmed = false;
             } else {
-                confirmed = modifyWithRetry(p, bracketId, leg.stopOrderId(), chandelier, runId, budget);
+                confirmed = modifyWithRetry(p, bracketId, leg.stopOrderId(), stopToSend, runId, budget);
             }
             // EVERY way of failing a leg leaves through here, so a half-moved position is recorded
             // as a partial whatever stopped it. An unaddressable leg mid-loop is still a broker
@@ -395,7 +419,7 @@ public class StopRatchetService {
             // that, and a row that leaves it unsaid is how a silent partial gets back in.
             if (!confirmed) {
                 if (!moved.isEmpty()) {
-                    recordPartialRatchet(p, moved, leg.stopOrderId(), chandelier, runId);
+                    recordPartialRatchet(p, moved, leg.stopOrderId(), stopToSend, runId);
                 }
                 return false;
             }
@@ -409,19 +433,19 @@ public class StopRatchetService {
      *  whole position. {@code unmoved_stop_order_id} is null when the failing leg had no id — that
      *  can only be the single-leg fallback, which never reaches this row. */
     private void recordPartialRatchet(ExecutorPosition p, List<String> movedStopOrderIds,
-            String unmovedStopOrderId, BigDecimal chandelier, String runId) {
+            String unmovedStopOrderId, BigDecimal stopToSend, String runId) {
         ObjectNode order = mapper.createObjectNode();
         order.put("position_id", p.id());
         var movedArray = order.putArray("moved_stop_order_ids");
         movedStopOrderIds.forEach(movedArray::add);
         order.put("unmoved_stop_order_id", unmovedStopOrderId);
-        order.put("attempted_stop", chandelier);
+        order.put("attempted_stop", stopToSend);
         order.put("active_stop", p.activeStop());
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
                 "ESCALATE", "PARTIAL_TRANCHE_RATCHET", order,
                 "partial stop ratchet: leg(s) " + movedStopOrderIds + " moved to "
-                        + chandelier.toPlainString() + " but leg " + unmovedStopOrderId
+                        + stopToSend.toPlainString() + " but leg " + unmovedStopOrderId
                         + " did not; active_stop stays at "
                         + (p.activeStop() == null ? "null" : p.activeStop().toPlainString())
                         + " because it must hold for the whole position",
@@ -482,7 +506,7 @@ public class StopRatchetService {
      * instead of hiding. The next maintenance pass re-sends both legs (the first is idempotent at
      * the same price) and recovers on its own once the broker cooperates.
      */
-    private boolean ratchetTwoLegs(ExecutorPosition p, BigDecimal chandelier, String runId, RetryBudget budget) {
+    private boolean ratchetTwoLegs(ExecutorPosition p, BigDecimal stopToSend, String runId, RetryBudget budget) {
         String leg1 = p.stopOrderId();
         String leg2 = p.tranche2StopOrderId();
         if (leg1 == null || leg2 == null) {
@@ -505,20 +529,20 @@ public class StopRatchetService {
             return false;
         }
 
-        if (!modifyWithRetry(p, bracket1, leg1, chandelier, runId, budget)) return false;
-        if (!modifyWithRetry(p, bracket2, leg2, chandelier, runId, budget)) {
+        if (!modifyWithRetry(p, bracket1, leg1, stopToSend, runId, budget)) return false;
+        if (!modifyWithRetry(p, bracket2, leg2, stopToSend, runId, budget)) {
             ObjectNode order = mapper.createObjectNode();
             order.put("position_id", p.id());
             // Same shape as the leg path's row (a one-element array here): one reason code must
             // not mean two JSON shapes depending on which path wrote it.
             order.putArray("moved_stop_order_ids").add(leg1);
             order.put("unmoved_stop_order_id", leg2);
-            order.put("attempted_stop", chandelier);
+            order.put("attempted_stop", stopToSend);
             order.put("active_stop", p.activeStop());
             decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                     "MAINTENANCE", p.sourceSignalId(), p.sourceAgent(), null, p.symbol(), null, null,
                     "ESCALATE", "PARTIAL_TRANCHE_RATCHET", order,
-                    "partial stop ratchet: leg " + leg1 + " moved to " + chandelier.toPlainString()
+                    "partial stop ratchet: leg " + leg1 + " moved to " + stopToSend.toPlainString()
                             + " but leg " + leg2 + " did not; active_stop stays at "
                             + (p.activeStop() == null ? "null" : p.activeStop().toPlainString())
                             + " because it must hold for the whole position",
@@ -548,18 +572,18 @@ public class StopRatchetService {
      * would make Dracul's book (and stopguard, which trusts it) claim a protection the broker does
      * not have.
      */
-    private boolean modifyWithRetry(ExecutorPosition p, String bracketId, BigDecimal chandelier,
+    private boolean modifyWithRetry(ExecutorPosition p, String bracketId, BigDecimal stopToSend,
             String runId, RetryBudget budget) {
-        return modifyWithRetry(p, bracketId, null, chandelier, runId, budget);
+        return modifyWithRetry(p, bracketId, null, stopToSend, runId, budget);
     }
 
     /** {@code stopOrderId} null = let Agora resolve the leg (single-tranche, unchanged behaviour);
      *  non-null = address that exact stop leg (two-tranche, see {@link #ratchetTwoLegs}). */
     private boolean modifyWithRetry(ExecutorPosition p, String bracketId, String stopOrderId,
-            BigDecimal chandelier, String runId, RetryBudget budget) {
+            BigDecimal stopToSend, String runId, RetryBudget budget) {
         for (int attempt = 1; ; attempt++) {
             try {
-                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), chandelier, null,
+                gateway.modifyBracket(p.connection(), bracketId, p.symbol(), stopToSend, null,
                         stopOrderId, null);
                 return true;
             } catch (BrokerUnavailableException e) {
@@ -746,25 +770,36 @@ public class StopRatchetService {
      * matching the {@code "lowestLow + "} basis label in {@link #recordRatchet}. The {@code add} on
      * SELL is correct — do not "fix" it into a subtraction.
      */
-    private BigDecimal computeChandelier(ExecutorPosition p, BigDecimal atr) {
-        BigDecimal offset = atr.multiply(BigDecimal.valueOf(chandelierMult));
+    private BigDecimal computeChandelier(ExecutorPosition p, BigDecimal atrEff) {
+        BigDecimal offset = atrEff.multiply(BigDecimal.valueOf(chandelierMult));
         return "SELL".equals(p.side())
                 ? p.highestPrice().add(offset).setScale(2, RoundingMode.CEILING)
                 : p.highestPrice().subtract(offset).setScale(2, RoundingMode.FLOOR);
     }
 
-    private void recordRatchet(ExecutorPosition p, BigDecimal atr, BigDecimal chandelier, String runId) {
+    private void recordRatchet(ExecutorPosition p, BigDecimal atr, BigDecimal atrShort,
+            BigDecimal atrEff, BigDecimal chandelier, BigDecimal oldBrokerStop,
+            BrokerStop.Result brokerStop, String runId) {
         ObjectNode inputs = mapper.createObjectNode();
         inputs.put("highest_price", p.highestPrice());
         inputs.put("atr", atr);
+        inputs.put("atr_short", atrShort);
+        inputs.put("atr_effective", atrEff);
         inputs.put("chandelier_mult", chandelierMult);
         inputs.put("old_stop", p.activeStop());
         inputs.put("new_stop", chandelier);
+        inputs.put("broker_stop_old", oldBrokerStop);
+        inputs.put("broker_stop_new", brokerStop.price());
+        // True when the monotonic floor bound: ATR expanded faster than the high, so the broker
+        // leg stays where it is while the logical stop advances. Not an error -- the design's
+        // intent, made visible.
+        inputs.put("broker_stop_lags", brokerStop.lags());
 
         String basisSide = "SELL".equals(p.side()) ? "lowestLow + " : "highestHigh - ";
         ObjectNode order = mapper.createObjectNode();
         order.put("stop_basis", "chandelier: " + basisSide + chandelierMult + "xATR");
         order.put("new_stop", chandelier);
+        order.put("broker_stop", brokerStop.price());
 
         decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
                 "MAINTENANCE", null, null, null, p.symbol(), inputs, null,

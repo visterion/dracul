@@ -104,7 +104,7 @@ class MaintenancePipelineTest {
         // false and the ratchet would skip forever without writing a single escalation row. Pin
         // the content, not just the arity.
         order.verify(ratchet).ratchet(any(),
-                eq(Map.of("BBB", new BigDecimal("2.0"))),
+                eq(Map.of("BBB", new BigDecimal("2.0"))), any(), any(),
                 eq(Map.of("BBB", new BigDecimal("108"))), eq("r1"));
 
         verify(positionRepo).updateMaintenance(eq(1L), eq(new BigDecimal("110")),
@@ -265,7 +265,7 @@ class MaintenancePipelineTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ExecutorPosition>> ratchetArg =
                 ArgumentCaptor.forClass((Class) List.class);
-        verify(ratchet).ratchet(ratchetArg.capture(), any(), any(), eq("r1"));
+        verify(ratchet).ratchet(ratchetArg.capture(), any(), any(), any(), any(), eq("r1"));
         assertThat(ratchetArg.getValue()).extracting(ExecutorPosition::id).containsExactly(1L);
 
         assertThat(result).extracting(EnrichedPosition::symbol)
@@ -444,7 +444,7 @@ class MaintenancePipelineTest {
                 new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
-                        new BigDecimal("90"), new BigDecimal("100"), null));
+                        new BigDecimal("90"), new BigDecimal("100"), new BigDecimal("2.5")));
         when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels(eq("DARK2"), anyInt(), anyInt()))
@@ -487,7 +487,7 @@ class MaintenancePipelineTest {
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
-                        new BigDecimal("90"), new BigDecimal("100"), null));
+                        new BigDecimal("90"), new BigDecimal("100"), new BigDecimal("2.5")));
         when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(survivors);
 
@@ -511,7 +511,7 @@ class MaintenancePipelineTest {
                 new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
-                        new BigDecimal("90"), new BigDecimal("100"), null));
+                        new BigDecimal("90"), new BigDecimal("100"), new BigDecimal("2.5")));
         when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(survivors);
 
@@ -614,5 +614,38 @@ class MaintenancePipelineTest {
         assertThat(ep.tranche2Reason()).isEqualTo("REINFORCING_SIGNAL");
 
         verify(signalRepo).findPending(50);
+    }
+
+    /** Test 25. The ratchet gets atrEff; the soft trigger and the LLM view keep ATR22. Widening
+     *  the soft trigger would silence it — it is MEANT to fire earlier than the hard stop.
+     *  Mutation: build one map and pass it to both. */
+    @Test
+    void ratchetReceivesAtrEffWhileEnrichKeepsAtr22() {
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1"))
+                .thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("108"), new BigDecimal("5.0")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        verify(ratchet).ratchet(any(),
+                eq(Map.of("BBB", new BigDecimal("2.0"))),    // atr22
+                eq(Map.of("BBB", new BigDecimal("5.0"))),    // atr_short
+                eq(Map.of("BBB", new BigDecimal("5.0"))),    // atrEff = max(2.0, 5.0)
+                eq(Map.of("BBB", new BigDecimal("108"))),    // closes
+                eq("r1"));
+
+        // enrich() and the LLM view stay on ATR22: chandelier 110 - 3 * 2.0 = 104, NOT 110 - 15.
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).atr()).isEqualByComparingTo("2.0");
+        assertThat(result.get(0).chandelierLevel()).isEqualByComparingTo("104");
+        assertThat(result.get(0).atrShort()).isEqualByComparingTo("5.0");
     }
 }

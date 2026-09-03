@@ -41,9 +41,10 @@ class StopRatchetServiceTest {
                 ExecutorPositionLegRepository legRepo,
                 DecisionLogRepository decisionRepo, RuleVersionProvider ruleVersions,
                 StopRatchetGuard guard, ObjectMapper mapper, ExecutorNotifier notifier,
-                double chandelierMult, int retryAttempts, long retryBackoffMs, long retryBudgetMs) {
+                double chandelierMult, int retryAttempts, long retryBackoffMs, long retryBudgetMs,
+                BigDecimal bufferAtr) {
             super(gateway, positionRepo, legRepo, decisionRepo, ruleVersions, guard, mapper, notifier,
-                    chandelierMult, retryAttempts, retryBackoffMs, retryBudgetMs);
+                    chandelierMult, retryAttempts, retryBackoffMs, retryBudgetMs, bufferAtr);
         }
 
         @Override
@@ -55,12 +56,27 @@ class StopRatchetServiceTest {
     @BeforeEach
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
-        service = newService(3, 500L, 10_000L);
+        // bufferAtr = 0 is the exact identity in BrokerStop, so every pre-SP1 expectation in this
+        // file keeps describing the same price. The buffered tests build their own service.
+        service = newService(3, 500L, 10_000L, BigDecimal.ZERO);
     }
 
     private RecordingStopRatchetService newService(int attempts, long backoffMs, long budgetMs) {
+        return newService(attempts, backoffMs, budgetMs, BigDecimal.ZERO);
+    }
+
+    private RecordingStopRatchetService newService(int attempts, long backoffMs, long budgetMs,
+            BigDecimal bufferAtr) {
         return new RecordingStopRatchetService(gateway, positionRepo, legRepo, decisionRepo, ruleVersions,
-                new StopRatchetGuard(), mapper, executorNotifier, 3.0, attempts, backoffMs, budgetMs);
+                new StopRatchetGuard(), mapper, executorNotifier, 3.0, attempts, backoffMs, budgetMs,
+                bufferAtr);
+    }
+
+    /** Legacy-shaped call: the same ATR is the long, the short and the effective one, so every
+     *  pre-SP1 test keeps exercising exactly the chandelier it was written for. */
+    private void ratchet(List<ExecutorPosition> positions, Map<String, BigDecimal> atrBySymbol,
+            Map<String, BigDecimal> closeBySymbol, String runId) {
+        service.ratchet(positions, atrBySymbol, atrBySymbol, atrBySymbol, closeBySymbol, runId);
     }
 
     /** An OPEN leg row exactly as {@code executor_position_leg} holds it. */
@@ -103,7 +119,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -144,7 +160,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(2L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("5.33")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("5.33")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -157,7 +173,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(3L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of(),
+        ratchet(List.of(p), Map.of(),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -172,7 +188,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
         gateway.unavailable = true;
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -197,7 +213,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -226,7 +242,7 @@ class StopRatchetServiceTest {
                 null /* stop_order_id missing */, null, null, "t2-1", "s2", 0, null, null,
                 null, null, null, null, false, null, null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -246,7 +262,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -285,7 +301,7 @@ class StopRatchetServiceTest {
         gateway.failModifyForStopOrderId = "s2";
         gateway.modifyFailureMessage = "boom";
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -318,7 +334,7 @@ class StopRatchetServiceTest {
         gateway.failModifyForStopOrderId = "stop-1";
         service = newService(1, 0L, 0L);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -336,7 +352,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(7L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, "t2-1", null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -357,7 +373,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(22L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, null, "s2");
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -390,7 +406,7 @@ class StopRatchetServiceTest {
         // Two named legs are two live legs, so both must move, each addressed by its own id.
         ExecutorPosition p = collapsedPosition(50L, "SYNA", "2000000001", "2000000002");
 
-        service.ratchet(List.of(p), Map.of("SYNA", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("SYNA", new BigDecimal("2.0")),
                 Map.of("SYNA", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -424,7 +440,7 @@ class StopRatchetServiceTest {
         gateway.modifyRejectCode = "LEG_NOT_FOUND";
         service = newService(1, 0L, 0L);
 
-        service.ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
                 Map.of("SYNB", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -457,7 +473,7 @@ class StopRatchetServiceTest {
         // broker-side resolution is safe here in a way it is not for two legs. Unchanged by the fix.
         ExecutorPosition p = collapsedPosition(52L, "SYNA", "2000000001", null);
 
-        service.ratchet(List.of(p), Map.of("SYNA", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("SYNA", new BigDecimal("2.0")),
                 Map.of("SYNA", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -479,7 +495,7 @@ class StopRatchetServiceTest {
         // one bracket-addressed modify, exactly as for any other single-legged position.
         ExecutorPosition p = collapsedPosition(53L, "SYNB", null, null);
 
-        service.ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("SYNB", new BigDecimal("2.0")),
                 Map.of("SYNB", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -507,7 +523,7 @@ class StopRatchetServiceTest {
                 "stop-1", null, null, "t2-1", null, 0, null, null,
                 null, null, null, null, true, null, null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -542,7 +558,7 @@ class StopRatchetServiceTest {
                 "stop-1", null, null, "t2-1", null, 0, null, null,
                 null, null, null, null, false, null, null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -564,7 +580,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(42L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", "s2");
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -581,7 +597,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(8L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("5.33")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("5.33")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -593,7 +609,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(9L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, null, 1, null, null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -619,7 +635,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -640,7 +656,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("100"), new BigDecimal("1.0"), 0);
 
         // SELL needs a price BELOW the chandelier of 96.01 for the safe-side check to pass.
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
                 Map.of("ACME", new BigDecimal("90")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -656,7 +672,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(12L, "ACME", "BUY", new BigDecimal("110.004"),
                 new BigDecimal("104.00"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -674,7 +690,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(13L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("100")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -690,7 +706,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(14L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "t2-1", null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("100")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -704,7 +720,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(15L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), Map.of(), "run1");
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")), Map.of(), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
         verify(decisionRepo, never()).insert(any());
@@ -723,7 +739,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(16L, "ACME", "SELL", new BigDecimal("90"),
                 new BigDecimal("100"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.001")),
                 Map.of("ACME", new BigDecimal("100")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -738,7 +754,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(17L, "ACME", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("104")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -752,7 +768,7 @@ class StopRatchetServiceTest {
         ExecutorPosition p = openPosition(18L, "ACME", "BUY", null,
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -770,7 +786,7 @@ class StopRatchetServiceTest {
         ExecutorPosition healthy = openPosition(21L, "CCC", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-        service.ratchet(List.of(tranche2, noBracket, healthy),
+        ratchet(List.of(tranche2, noBracket, healthy),
                 Map.of("AAA", new BigDecimal("2.0"), "BBB", new BigDecimal("2.0"),
                         "CCC", new BigDecimal("2.0")),
                 Map.of("AAA", new BigDecimal("110"), "BBB", new BigDecimal("110"),
@@ -801,7 +817,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailures = 1;
         gateway.modifyFailureMessage = RATE_LIMITED;
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -822,7 +838,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailures = 99;
         gateway.modifyFailureMessage = RATE_LIMITED;
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(3);
@@ -858,7 +874,7 @@ class StopRatchetServiceTest {
                 org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
                 org.springframework.http.HttpHeaders.EMPTY, new byte[0], null);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -885,7 +901,7 @@ class StopRatchetServiceTest {
             ExecutorPosition p = openPosition(36L, "ACME", "BUY", new BigDecimal("110"),
                     new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-            service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+            ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                     Map.of("ACME", new BigDecimal("110")), "run1");
 
             assertThat(gateway.modifyCalls).as("message: %s", message).hasSize(1);
@@ -909,7 +925,7 @@ class StopRatchetServiceTest {
             ExecutorPosition p = openPosition(37L, "ACME", "BUY", new BigDecimal("110"),
                     new BigDecimal("95"), new BigDecimal("1.0"), 0);
 
-            service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+            ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                     Map.of("ACME", new BigDecimal("110")), "run1");
 
             assertThat(gateway.modifyCalls).as("message: %s", message).hasSize(2);
@@ -925,7 +941,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no stop-loss leg";
         gateway.modifyRejectCode = "LEG_NOT_FOUND";
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -949,7 +965,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailures = 99;
         gateway.modifyFailureMessage = RATE_LIMITED;
 
-        service.ratchet(List.of(a, b),
+        ratchet(List.of(a, b),
                 Map.of("AAA", new BigDecimal("2.0"), "BBB", new BigDecimal("2.0")),
                 Map.of("AAA", new BigDecimal("110"), "BBB", new BigDecimal("110")), "run1");
 
@@ -966,7 +982,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailures = 99;
         gateway.modifyFailureMessage = RATE_LIMITED;
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -989,7 +1005,7 @@ class StopRatchetServiceTest {
                 leg(10L, 60L, 1, "ord-1", "stop-1", new BigDecimal("10")),
                 leg(11L, 60L, 2, "ord-2", "stop-2", new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -1023,7 +1039,7 @@ class StopRatchetServiceTest {
                 leg(10L, 61L, 1, null, "stop-1", new BigDecimal("10")),
                 leg(11L, 61L, 2, null, "stop-2", new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -1046,7 +1062,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
         withOpenLegs(62L, leg(11L, 62L, 2, "ord-2", "stop-2", new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -1070,7 +1086,7 @@ class StopRatchetServiceTest {
         gateway.modifyRejectCode = "LEG_NOT_FOUND";
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-1";
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1095,7 +1111,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailureMessage = "agora trading call failed: modify_bracket — HTTP 503";
         service = newService(1, 0L, 0L);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1115,7 +1131,7 @@ class StopRatchetServiceTest {
         gateway.modifyRejectCode = "PRICE_OUT_OF_RANGE";
         gateway.modifyFailureMessage = "agora order rejected [PRICE_OUT_OF_RANGE]: outside collar";
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1140,7 +1156,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-2";
         service = newService(1, 0L, 0L);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
@@ -1173,7 +1189,7 @@ class StopRatchetServiceTest {
         gateway.failModifyForStopOrderId = "stop-1";
         service = newService(1, 0L, 0L);
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -1194,7 +1210,7 @@ class StopRatchetServiceTest {
                 leg(10L, 68L, 1, "ord-1", "stop-1", new BigDecimal("10")),
                 leg(11L, 68L, 2, "ord-2", null, new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -1219,7 +1235,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 1, null, null);
         withOpenLegs(69L, leg(10L, 69L, 1, null, null, new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -1241,7 +1257,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "ord-2", "stop-2");
         withOpenLegs(71L, leg(10L, 71L, 1, null, null, new BigDecimal("6")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -1267,7 +1283,7 @@ class StopRatchetServiceTest {
                 new ExecutorPositionLeg(11L, 72L, 2, "ord-2", "stop-2", new BigDecimal("4"),
                         ExecutorPositionLeg.CLOSED, new BigDecimal("95"), "HARD_STOP", null)));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(1);
@@ -1287,7 +1303,7 @@ class StopRatchetServiceTest {
         when(legRepo.findByPosition(73L)).thenReturn(List.of(
                 leg(10L, 73L, 1, null, null, new BigDecimal("6"))));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -1304,7 +1320,7 @@ class StopRatchetServiceTest {
                 new BigDecimal("95"), new BigDecimal("1.0"), 0, null, 1, null, null);
         withOpenLegs(70L, leg(10L, 70L, 1, null, "stop-1", new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).isEmpty();
@@ -1327,7 +1343,7 @@ class StopRatchetServiceTest {
         gateway.modifyRejectCode = "LEG_NOT_FOUND";
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-1";
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1353,7 +1369,7 @@ class StopRatchetServiceTest {
         gateway.modifyRejectCode = "LEG_NOT_FOUND";
         gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no stop-loss leg";
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1379,7 +1395,7 @@ class StopRatchetServiceTest {
                 leg(10L, 74L, 1, "ord-1", "stop-1", new BigDecimal("10")),
                 leg(11L, 74L, 2, null, "stop-2", new BigDecimal("10")));
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         // Leg 1 had an entry order id and moved; leg 2 has neither its own nor a bracket id.
@@ -1413,7 +1429,7 @@ class StopRatchetServiceTest {
         gateway.modifyFailures = 1;
         gateway.modifyFailureMessage = RATE_LIMITED;
 
-        service.ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
+        ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
@@ -1422,5 +1438,172 @@ class StopRatchetServiceTest {
         assertThat(service.backoffs).containsExactly(500L);
         verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(71L),
                 any(), any(), any(Integer.class), any(), any(), any());
+    }
+
+    private static ExecutorPosition withBrokerStop(ExecutorPosition p, BigDecimal brokerStop) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
+                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt());
+    }
+
+    /** Test 15. The broker leg rests a buffer BELOW the logical chandelier, and the book records
+     *  the logical chandelier as active_stop plus the buffered price as broker_stop.
+     *  Mutation: send the raw chandelier. */
+    @Test
+    void ratchetSendsBufferedChandelier() {
+        service = newService(3, 500L, 10_000L, BigDecimal.ONE);
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        // chandelier = 110 - 3 * 2.0 = 104.00; broker = 104.00 - 1 * 2.0 = 102.00
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("102.00");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("110")),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("1.0")),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("104.00")) == 0),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("102.00")) == 0));
+    }
+
+    /** Test 16. The guard decides on the LOGICAL pair (active_stop -> chandelier), never on
+     *  broker prices. Mutation: run the guard on the buffered price — the buffered chandelier here
+     *  is BELOW the current active_stop, so a broker-price guard would deny a ratchet that is
+     *  genuinely an improvement. */
+    @Test
+    void guardStillComparesLogicalStops() {
+        service = newService(3, 500L, 10_000L, BigDecimal.ONE);
+        // chandelier = 110 - 6 = 104.00, an improvement on active_stop 103.
+        // broker = 104.00 - 2.0 = 102.00, which is BELOW 103. The leg already rests at 102.00, so
+        // the monotonic floor does not lift it back up and the buffered price really is sent.
+        ExecutorPosition p = withBrokerStop(openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("103"), new BigDecimal("1.0"), 0), new BigDecimal("102.00"));
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("102.00");
+    }
+
+    /** Test 18. One price level for the whole position: both legs get the SAME buffered value.
+     *  Mutation: compute a per-leg ATR / a per-leg buffer. */
+    @Test
+    void bothLegsGetTheSameBufferedPrice() {
+        service = newService(3, 500L, 10_000L, BigDecimal.ONE);
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "brk-1", 2, "brk-2", "stop-2");
+        withOpenLegs(1L,
+                leg(11L, 1L, 1, "brk-1", "stop-1", new BigDecimal("5")),
+                leg(12L, 1L, 2, "brk-2", "stop-2", new BigDecimal("5")));
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::stop)
+                .allSatisfy(s -> assertThat(s).isEqualByComparingTo("102.00"));
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::stopOrderId)
+                .containsExactlyInAnyOrder("stop-1", "stop-2");
+    }
+
+    /** The monotonic floor: ATR expanding faster than the high must never walk the LIVE leg down.
+     *  Mutation: drop the max in BrokerStop.forRatchet (also covered by test 12, here end to end).
+     *  The broker leg stays where it is while active_stop still advances. */
+    @Test
+    void expandingAtrLeavesTheBrokerLegWhereItIsWhileActiveStopAdvances() {
+        service = newService(3, 500L, 10_000L, BigDecimal.ONE);
+        ExecutorPosition base = openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("103"), new BigDecimal("1.0"), 0);
+        ExecutorPosition p = withBrokerStop(base, new BigDecimal("103.50"));
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        // chandelier 104.00 (an improvement on 103), buffered 102.00 — but the leg already rests
+        // at 103.50, so the leg stays and only the logical stop moves.
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("103.50");
+        ArgumentCaptor<DecisionLog> logs = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logs.capture());
+        assertThat(logs.getValue().inputsSnapshot().path("broker_stop_lags").asBoolean()).isTrue();
+        assertThat(logs.getValue().inputsSnapshot().path("broker_stop_old").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("103.50"));
+        assertThat(logs.getValue().inputsSnapshot().path("broker_stop_new").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("103.50"));
+        assertThat(logs.getValue().inputsSnapshot().path("atr_effective").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("2.0"));
+    }
+
+    /** The ratchet computes the chandelier from atrEff, not from ATR22.
+     *  Mutation: pass atrBySymbol to computeChandelier. */
+    @Test
+    void chandelierUsesAtrEffNotAtr22() {
+        service = newService(3, 500L, 10_000L, BigDecimal.ZERO);
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0);
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),    // atr22
+                Map.of("ACME", new BigDecimal("4.0")),    // atr_short
+                Map.of("ACME", new BigDecimal("4.0")),    // atrEff = max(2.0, 4.0)
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        // With atrEff: 110 - 3 * 4.0 = 98.00. With atr22 it would be 104.00.
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("98.00");
+    }
+
+    /** Test 17 (Variant A — the probe showed Saxo accepts a same-price ReplaceOrder). A permitted
+     *  ratchet whose broker price is unchanged STILL sends the modify: the call count is identical
+     *  to pre-SP1 (the guard gates it the same way, so rate-limit pressure does not rise), and on
+     *  permitted runs the modify doubles as a leg liveness check — a LEG_NOT_FOUND is how a leg the
+     *  book believes is live becomes visible.
+     *  Mutation: skip the call when the price is unchanged. */
+    @Test
+    void unchangedBrokerPriceStillSendsTheModify() {
+        service = newService(3, 500L, 10_000L, BigDecimal.ONE);
+        ExecutorPosition p = withBrokerStop(openPosition(1L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("103"), new BigDecimal("1.0"), 0), new BigDecimal("103.50"));
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        // Buffered chandelier 102.00 < the resting 103.50 -> the leg keeps its price, and the
+        // modify is sent at that unchanged price anyway.
+        assertThat(gateway.modifyCalls).hasSize(1);
+        assertThat(gateway.modifyCalls.get(0).stop()).isEqualByComparingTo("103.50");
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(1L), any(), any(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("104.00")) == 0),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("103.50")) == 0));
     }
 }

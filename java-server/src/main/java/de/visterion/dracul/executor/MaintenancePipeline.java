@@ -119,7 +119,13 @@ public class MaintenancePipeline {
 
         Map<String, BigDecimal> closeBySymbol = new HashMap<>();
         Map<String, BigDecimal> atrBySymbol = new HashMap<>();
+        // atrEff = max(atr22, atr_short) drives the chandelier and the broker-stop buffer;
+        // atr_short rides along for the ratchet snapshot and the LLM view. All three come from the
+        // SAME Levels object -- one indicators.levels call per symbol, unchanged.
+        Map<String, BigDecimal> atrShortBySymbol = new HashMap<>();
+        Map<String, BigDecimal> atrEffBySymbol = new HashMap<>();
         Set<String> withoutIndicators = new LinkedHashSet<>();
+        Set<String> withoutShortAtr = new LinkedHashSet<>();
         // Both n and total must count the same thing — distinct SYMBOLS, matching the word in
         // the message — not positions. Two filled positions sharing one unavailable symbol is
         // one unavailable symbol out of however many distinct symbols were checked, not "1 of 2":
@@ -136,6 +142,9 @@ public class MaintenancePipeline {
             }
             if (lv.referencePrice() != null) closeBySymbol.put(p.symbol(), lv.referencePrice());
             if (lv.atr() != null) atrBySymbol.put(p.symbol(), lv.atr());
+            if (lv.atrShort() != null) atrShortBySymbol.put(p.symbol(), lv.atrShort());
+            else if (wasGoingToBeChecked) withoutShortAtr.add(p.symbol());
+            if (lv.atrEff() != null) atrEffBySymbol.put(p.symbol(), lv.atrEff());
         }
         // A symbol missing here is missing from BOTH maps, which disables the stop ratchet AND
         // the hard-trigger evaluation for that position for this entire run. The skip itself is
@@ -148,6 +157,15 @@ public class MaintenancePipeline {
             log.warn("maintenance indicators unavailable: {} of {} symbols — {}",
                     withoutIndicators.size(), checkedSymbols.size(),
                     String.join(",", withoutIndicators));
+        }
+
+        // Fail-soft and separate from the outage line above: a missing short ATR is DATA (the
+        // symbol has too few bars), not an outage, and atrEff simply falls back to ATR22. One line
+        // per run, same stable prefix family so the existing alarm rule sees it.
+        if (!withoutShortAtr.isEmpty()) {
+            log.warn("maintenance indicators unavailable: atr_short for {} of {} symbols — {}",
+                    withoutShortAtr.size(), checkedSymbols.size(),
+                    String.join(",", withoutShortAtr));
         }
 
         // Hard triggers and stop ratcheting act on broker holdings — a position whose GTD
@@ -170,7 +188,7 @@ public class MaintenancePipeline {
                 .toList();
 
         List<ExecutorPosition> afterHard = hardTrigger.apply(filledSurvivors, closeBySymbol, runId);
-        ratchet.ratchet(afterHard, atrBySymbol, closeBySymbol, runId);
+        ratchet.ratchet(afterHard, atrBySymbol, atrShortBySymbol, atrEffBySymbol, closeBySymbol, runId);
 
         Set<Long> keepIds = new HashSet<>();
         for (ExecutorPosition p : afterHard) keepIds.add(p.id());
@@ -191,15 +209,18 @@ public class MaintenancePipeline {
             String positionMechanism = resolveMechanism(p.sourceSignalId());
             Tranche2Detector.Tranche2Status t2 = tranche2Detector.detect(p, currentPrice, pendings, positionMechanism);
             boolean entryFilled = !unfilledIds.contains(p.id());
-            enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()), t2, entryFilled));
+            enriched.add(enrich(p, currentPrice, atrBySymbol.get(p.symbol()),
+                    atrShortBySymbol.get(p.symbol()), t2, entryFilled));
         }
         return enriched;
     }
 
     private EnrichedPosition enrich(ExecutorPosition p, BigDecimal currentPrice, BigDecimal atr,
-            Tranche2Detector.Tranche2Status t2, boolean entryFilled) {
+            BigDecimal atrShort, Tranche2Detector.Tranche2Status t2, boolean entryFilled) {
         boolean sell = "SELL".equals(p.side());
 
+        // ATR22, deliberately NOT atrEff. The soft trigger is meant to fire EARLIER than the hard
+        // stop; widening it with a post-report window would silence it.
         BigDecimal chandelierLevel = null;
         if (currentPrice != null && atr != null && p.highestPrice() != null) {
             BigDecimal offset = atr.multiply(BigDecimal.valueOf(chandelierMult));
@@ -238,7 +259,7 @@ public class MaintenancePipeline {
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
                 ss.chandelierBreach(), ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(),
                 p.sourceSignalId(), p.trimCount(), ExecutorWebhookController.ladderFloor(p.trimCount()),
-                entryFilled);
+                entryFilled, atrShort, p.brokerStop());
     }
 
     private String resolveMechanism(String sourceSignalId) {
