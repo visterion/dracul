@@ -36,4 +36,16 @@ class RejectReasonTest {
         assertThat(RejectReason.CHASED_AWAY.isTransient()).isFalse();
         assertThat(RejectReason.CONTRADICTION.isTransient()).isFalse();
     }
+
+    /** RISK_TOO_WIDE is TERMINAL. A signal whose stop distance exceeds the whole per-trade risk
+     *  budget is structurally untradeable at this budget — nothing about waiting a run changes it,
+     *  and a transient classification would leave it silently PENDING until SIGNAL_EXPIRED.
+     *  A fresh signal with a tighter stop is a NEW signal.
+     *  Mutation: add RISK_TOO_WIDE to the TRANSIENT set (which also reddens the @EnumSource test
+     *  above, by construction). */
+    @Test
+    void riskTooWideIsTerminal() {
+        assertThat(RejectReason.RISK_TOO_WIDE.isTransient()).isFalse();
+        assertThat(EXPECTED_TRANSIENT).doesNotContain(RejectReason.RISK_TOO_WIDE);
+    }
 }

@@ -37,6 +37,16 @@ public enum RejectReason {
     NO_STOP,
     MAX_TRANCHE,
     TRANCHE_TOO_SMALL,
+    /** The protective stop distance, converted to account currency, exceeds the entire per-trade
+     *  risk budget ({@code total-budget x risk-pct}) — even one share would risk more than the
+     *  budget allows. Code-enforced by {@code PositionSizer} and routed by
+     *  {@code ExecutorWebhookController}, so it sits outside the {@code VetoService} catalog next
+     *  to {@code TRANCHE_TOO_SMALL}.
+     *
+     *  <p>TERMINAL, not transient: nothing about waiting a run changes an instrument's stop
+     *  distance, and a transient classification would leave the signal silently PENDING until
+     *  SIGNAL_EXPIRED. A fresh signal with a tighter stop is a new signal. */
+    RISK_TOO_WIDE,
     NON_SIM_CONNECTION,
     DUPLICATE,
     NO_POSITION,
