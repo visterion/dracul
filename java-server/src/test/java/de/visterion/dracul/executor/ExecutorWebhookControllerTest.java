@@ -613,9 +613,10 @@ class ExecutorWebhookControllerTest {
         PositionSizer brokenSizer = mock(PositionSizer.class);
         when(brokenSizer.stopWindow(any(), any(), any(), any()))
                 .thenReturn(new StopWindow(null, null, "broken"));
-        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any()))
+        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new Sizing(new BigDecimal("10"), new BigDecimal("5"),
-                        new BigDecimal("50"), null, null, true, "broken"));
+                        new BigDecimal("50"), null, null, true, "broken",
+                        new BigDecimal("10"), new BigDecimal("10"), "NOTIONAL", null));
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY"}
@@ -643,9 +644,10 @@ class ExecutorWebhookControllerTest {
         PositionSizer brokenSizer = mock(PositionSizer.class);
         when(brokenSizer.stopWindow(any(), any(), any(), any()))
                 .thenReturn(new StopWindow(null, null, "broken"));
-        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any()))
+        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new Sizing(new BigDecimal("10"), new BigDecimal("5"),
-                        new BigDecimal("50"), null, null, true, "broken"));
+                        new BigDecimal("50"), null, null, true, "broken",
+                        new BigDecimal("10"), new BigDecimal("10"), "NOTIONAL", null));
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY"}
@@ -2103,9 +2105,10 @@ class ExecutorWebhookControllerTest {
         PositionSizer brokenSizer = mock(PositionSizer.class);
         when(brokenSizer.stopWindow(any(), any(), any(), any()))
                 .thenReturn(new StopWindow(null, null, "broken"));
-        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any()))
+        when(brokenSizer.size(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new Sizing(new BigDecimal("10"), new BigDecimal("6"),
-                        new BigDecimal("60"), null, null, true, "broken"));
+                        new BigDecimal("60"), null, null, true, "broken",
+                        new BigDecimal("10"), new BigDecimal("10"), "NOTIONAL", null));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(77L);

@@ -82,7 +82,7 @@ class StopWindowRoundingTest {
         assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_BUY);
         assertThat(result.clamped()).isTrue(); // the far-outside proposal genuinely got clamped
 
-        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, swingLow, result.stop(), bd("1000"), BigDecimal.ONE);
+        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, swingLow, result.stop(), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, result.stop(),
                 result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
@@ -151,7 +151,7 @@ class StopWindowRoundingTest {
         assertThat(result.stop()).usingComparator(BigDecimal::compareTo).isEqualTo(RAW_CLAMPED_STOP_TODAY_SELL);
         assertThat(result.clamped()).isTrue();
 
-        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, swingHigh, result.stop(), bd("1000"), BigDecimal.ONE);
+        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, swingHigh, result.stop(), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), orderPriceRounded, result.stop(),
                 result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
@@ -177,12 +177,12 @@ class StopWindowRoundingTest {
 
         StopWindow rawWindow = sizer.stopWindow("BUY", price, atr, null);
         BigDecimal clampedRaw = clamp(proposed, rawWindow.stopMin(), rawWindow.stopMax());
-        Sizing rawSizing = sizer.size("BUY", price, atr, null, clampedRaw, bd("1000"), BigDecimal.ONE);
+        Sizing rawSizing = sizer.size("BUY", price, atr, null, clampedRaw, bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
 
         BigDecimal roundedEntry = TickSize.roundEntry("BUY", price);
         StopWindowRounding.Result result = StopWindowRounding.compute(
                 "BUY", roundedEntry, atr, null, proposed, sizer);
-        Sizing roundedSizing = sizer.size("BUY", roundedEntry, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
+        Sizing roundedSizing = sizer.size("BUY", roundedEntry, atr, null, result.stop(), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
 
         BigDecimal delta = roundedSizing.rPerShare().subtract(rawSizing.rPerShare()).abs();
         assertThat(delta).isLessThanOrEqualTo(TickSize.tickFor(price));
@@ -203,13 +203,13 @@ class StopWindowRoundingTest {
 
         StopWindow rawWindow = sizer.stopWindow("SELL", price, atr, null);
         BigDecimal clampedRaw = clamp(proposed, rawWindow.stopMin(), rawWindow.stopMax());
-        Sizing rawSizing = sizer.size("SELL", price, atr, null, clampedRaw, bd("1000"), BigDecimal.ONE);
+        Sizing rawSizing = sizer.size("SELL", price, atr, null, clampedRaw, bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         assertThat(rawSizing.rPerShare()).usingComparator(BigDecimal::compareTo).isEqualTo(bd("8.325"));
 
         BigDecimal roundedEntry = TickSize.roundEntry("SELL", price);
         StopWindowRounding.Result result = StopWindowRounding.compute(
                 "SELL", roundedEntry, atr, null, proposed, sizer);
-        Sizing roundedSizing = sizer.size("SELL", roundedEntry, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
+        Sizing roundedSizing = sizer.size("SELL", roundedEntry, atr, null, result.stop(), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         assertThat(roundedSizing.rPerShare()).usingComparator(BigDecimal::compareTo).isEqualTo(bd("8.33"));
 
         BigDecimal delta = roundedSizing.rPerShare().subtract(rawSizing.rPerShare()).abs();
@@ -225,7 +225,7 @@ class StopWindowRoundingTest {
         BigDecimal atr = bd("2");
         BigDecimal swingLow = bd("95");
 
-        Sizing sizing = sizer.size("BUY", price, atr, swingLow, bd("96"), bd("1000"), BigDecimal.ONE);
+        Sizing sizing = sizer.size("BUY", price, atr, swingLow, bd("96"), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         StopWindow window = sizer.stopWindow("BUY", price, atr, swingLow);
 
         assertThat(sizing.stopMin()).usingComparator(BigDecimal::compareTo).isEqualTo(window.stopMin());
@@ -293,13 +293,15 @@ class StopWindowRoundingTest {
 
     // ---- Hazard 1 (Task-1 review): entry rounds down, stop rounds up (BUY) -> they converge.
     // price 100.009 -> 100.00, proposed stop 100.005 -> 100.01: the rounded stop sits ABOVE the
-    // rounded entry of a long. PositionSizer.java:59 computes rPerShare = price.subtract(stopPrice)
-    // with no guard against this — pin that it is negative (load-bearing assertion). OrderGuard
-    // rejects it as NO_STOP either way (window check or side check — with a real, non-null
-    // window here, either one alone is sufficient, so this first assertion does NOT by itself
-    // prove which check fired). The second assertion below, with stopMin/stopMax forced to null
-    // so the window check is structurally skipped (OrderGuard.java:56-59), is what actually pins
-    // that the side check (OrderGuard.java:48-49) fires on its own.
+    // rounded entry of a long. Since SP1, PositionSizer.size() computes rPerShare =
+    // price.subtract(stopPrice) and, seeing it non-positive, rejects with NO_R BEFORE anything
+    // downstream reads it — pin that the reject cause is NO_R and qty is zero (load-bearing
+    // assertion; this replaces the pre-SP1 "rPerShare is negative and unguarded" pin). OrderGuard
+    // separately rejects it as NO_STOP either way (window check or side check — with a real,
+    // non-null window here, either one alone is sufficient, so this first assertion does NOT by
+    // itself prove which check fired). The second assertion below, with stopMin/stopMax forced to
+    // null so the window check is structurally skipped (OrderGuard.java:56-59), is what actually
+    // pins that the side check (OrderGuard.java:48-49) fires on its own.
     //
     // Independent of StopWindowRounding on purpose: it demonstrates that even a
     // correctly-tick-rounded entry/stop pair, considered in isolation from the window/clamp
@@ -313,18 +315,25 @@ class StopWindowRoundingTest {
         assertThat(roundedStop).usingComparator(BigDecimal::compareTo).isEqualTo(bd("100.01"));
         assertThat(roundedStop).isGreaterThan(roundedEntry); // stop above entry on a long
 
-        Sizing sizing = sizer.size("BUY", roundedEntry, bd("1"), null, roundedStop, bd("1000"), BigDecimal.ONE);
-        assertThat(sizing.rPerShare()).isNegative(); // unguarded at PositionSizer.java:59
+        Sizing sizing = sizer.size("BUY", roundedEntry, bd("1"), null, roundedStop, bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
+        assertThat(sizing.rejectCause()).isEqualTo(Sizing.RejectCause.NO_R); // guarded since SP1
+        assertThat(sizing.qty()).isEqualByComparingTo("0");
 
-        OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), roundedEntry, roundedStop,
-                sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
+        // sizing.qty() is now structurally 0 (NO_R short-circuits before PositionSizer computes a
+        // window), which would trip OrderGuard's own qty<=0 check (SCHEMA_INVALID) before ever
+        // reaching the stop checks this test is about. Isolate OrderGuard from PositionSizer's own
+        // guard: a synthetic positive qty, and the window computed directly via stopWindow(...)
+        // (the same inputs size() would have used to build one).
+        StopWindow window = sizer.stopWindow("BUY", roundedEntry, bd("1"), null);
+        OrderGuard.Result guard = orderGuard.check("BUY", BigDecimal.TEN, roundedEntry, roundedStop,
+                window.stopMin(), window.stopMax(), "depot-1", "depot-1");
         assertThat(guard.ok()).isFalse();
         assertThat(guard.reason()).isEqualTo(RejectReason.NO_STOP);
 
         // Proves the side check alone rejects this: with a null window, OrderGuard.java:56-59
         // is structurally unreachable, so only the side check (:48-49) can be responsible for
         // this NO_STOP.
-        OrderGuard.Result guardWithNullWindow = orderGuard.check("BUY", sizing.qty(), roundedEntry, roundedStop,
+        OrderGuard.Result guardWithNullWindow = orderGuard.check("BUY", BigDecimal.TEN, roundedEntry, roundedStop,
                 null, null, "depot-1", "depot-1");
         assertThat(guardWithNullWindow.ok()).isFalse();
         assertThat(guardWithNullWindow.reason()).isEqualTo(RejectReason.NO_STOP);
@@ -348,7 +357,7 @@ class StopWindowRoundingTest {
         StopWindowRounding.Result result = StopWindowRounding.compute(
                 "BUY", orderPriceRounded, atr, null, proposedNearAnchor, sizer);
 
-        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
+        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, null, result.stop(), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, result.stop(),
                 result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
@@ -371,7 +380,7 @@ class StopWindowRoundingTest {
         StopWindowRounding.Result result = StopWindowRounding.compute(
                 "SELL", orderPriceRounded, atr, null, proposedNearAnchor, sizer);
 
-        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, null, result.stop(), bd("1000"), BigDecimal.ONE);
+        Sizing sizing = sizer.size("SELL", orderPriceRounded, atr, null, result.stop(), bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         OrderGuard.Result guard = orderGuard.check("SELL", sizing.qty(), orderPriceRounded, result.stop(),
                 result.stopMin(), result.stopMax(), "depot-1", "depot-1");
 
@@ -414,7 +423,7 @@ class StopWindowRoundingTest {
         BigDecimal clamped = clamp(roundedProposed, roundedBoundMin, roundedBoundMax);
 
         // ...while size() is called with the ROUNDED price, as it must be (it is the order price).
-        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, null, clamped, bd("1000"), BigDecimal.ONE);
+        Sizing sizing = sizer.size("BUY", orderPriceRounded, atr, null, clamped, bd("1000"), BigDecimal.ONE, bd("1000000000"), "ATR22");
         OrderGuard.Result guard = orderGuard.check("BUY", sizing.qty(), orderPriceRounded, clamped,
                 sizing.stopMin(), sizing.stopMax(), "depot-1", "depot-1");
 

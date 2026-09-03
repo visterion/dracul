@@ -39,7 +39,8 @@ class ExecutorCurrencyVetoTest {
 
     private Sizing sizing() {
         return new Sizing(BigDecimal.TEN, BigDecimal.ONE, BigDecimal.valueOf(100),
-                BigDecimal.ZERO, BigDecimal.ZERO, true, "entry - 2.5 x ATR22");
+                BigDecimal.ZERO, BigDecimal.ZERO, true, "entry - 2.5 x ATR22",
+                BigDecimal.TEN, BigDecimal.TEN, "NOTIONAL", null);
     }
 
     /** config instrument-currency = USD. */

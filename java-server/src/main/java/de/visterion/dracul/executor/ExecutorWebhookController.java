@@ -659,7 +659,7 @@ public class ExecutorWebhookController {
             stopClamped = stopResult.clamped();
 
             sizing = sizer.size(side, orderPriceRounded, ctx.atr(), ctx.swingLow(), stopPrice,
-                    ctx.trancheAmount(), ctx.fxToAccount());
+                    ctx.trancheAmount(), ctx.fxToAccount(), ctx.totalBudget(), "ATR22");
             if (takeProfit != null) {
                 takeProfit = TickSize.roundTarget(side, takeProfit);
                 // Rounding moves the target toward the entry (roundTarget: BUY floors, SELL
@@ -680,7 +680,8 @@ public class ExecutorWebhookController {
         } else {
             orderPrice = null;
             orderPriceRounded = null;
-            sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false, null);
+            sizing = new Sizing(BigDecimal.ZERO, null, BigDecimal.ZERO, null, null, false, null,
+                    BigDecimal.ZERO, BigDecimal.ZERO, null, null);
         }
 
         VetoService.Outcome veto = vetoService.evaluate(signal, ctx, sizing, vetoConfig, orderPrice,
@@ -1609,7 +1610,7 @@ public class ExecutorWebhookController {
         // HEAT_LIMIT/BUDGET below see the same (possibly smaller) rPerShare the broker will
         // actually work with.
         Sizing sizing = sizer.size(position.side(), pxRounded, ctx.atr(), ctx.swingLow(),
-                stopRounded, ctx.trancheAmount(), ctx.fxToAccount());
+                stopRounded, ctx.trancheAmount(), ctx.fxToAccount(), ctx.totalBudget(), "ATR22");
 
         if (sizing.qty() == null || sizing.qty().compareTo(BigDecimal.ONE) < 0) {
             String reason = RejectReason.TRANCHE_TOO_SMALL.name();
