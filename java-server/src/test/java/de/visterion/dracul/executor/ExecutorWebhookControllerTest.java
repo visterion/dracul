@@ -5085,6 +5085,13 @@ class ExecutorWebhookControllerTest {
         // :661 — r_per_share follows the clamped stop, 100 - 90 = 10, not 100 - 95 = 5
         assertThat(log.orderJson().path("r_per_share").decimalValue())
                 .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("10.00"));
+        // :661 — the SIZER's own window verdict. The clamped stop 90.00 sits inside the atrEff
+        // window [87.0, 90.0] but far below the ATR22 window [93.5, 95.0], so a sizer handed
+        // ctx.atr() reports stop_in_window=false. This is the assertion that reddens the
+        // sizer-site mutation; stop_min/stop_max above only pin the window site.
+        assertThat(log.orderJson().path("stop_in_window").asBoolean())
+                .as("the sizer must judge the stop against the SAME atrEff window")
+                .isTrue();
         // the atr snapshot itself stays ATR22
         assertThat(log.inputsSnapshot().path("atr").decimalValue())
                 .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("2"));
@@ -5306,5 +5313,75 @@ class ExecutorWebhookControllerTest {
         // the position's active stop 90 rounds to 90.00, buffered by 1 x atrEff 2 -> 88.00
         assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("88.00");
         assertThat(req.getValue().takeProfitLimit()).isNull();
+    }
+
+    /** The Saxo proximity band is the reason BrokerStop has rule 3 at all: a leg outside it comes
+     *  back as TooFarFromEntryOrder and takes the whole bracket with it. Nothing else in the suite
+     *  observes the cap binding, so a null/disabled band would pass unnoticed.
+     *  Mutation: pass null (or a wrong pct) as maxBrokerStopPct, or stop reporting `capped`. */
+    @Test
+    void entryProximityCapBindsAndIsFlagged() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        // price 100, atr 7 -> window [77.25, 82.5]; the 82 proposal needs no clamping. The logical
+        // stop 82 is still INSIDE the 20 % band (bound 80.00), but 82 - 1 x atrEff 7 = 75 is not,
+        // so the buffer is cut back to the band edge rather than shrunk away entirely.
+        when(assembler.assemble(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("100"), new BigDecimal("7")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","limit_price":100,"stop_price":82}
+                """));
+
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        // entry x (1 - 0.20), tick-rounded toward the entry -- NOT the unbanded 75.00.
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("80.00");
+
+        JsonNode oj = enterLog().orderJson();
+        assertThat(oj.path("broker_stop_capped").asBoolean())
+                .as("a cap that binds must be auditable").isTrue();
+        assertThat(oj.path("broker_stop_clamped").asBoolean()).isFalse();
+        // The audit value and the wire value are one number, computed once.
+        assertThat(oj.path("broker_stop").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(req.getValue().stopLossStop());
+        // The book still records the LOGICAL stop; only the resting leg was pulled in.
+        ArgumentCaptor<ExecutorPosition> pos = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(pos.capture());
+        assertThat(pos.getValue().activeStop()).isEqualByComparingTo("82.00");
+    }
+
+    /** The add-tranche sibling of {@link #entryProximityCapBindsAndIsFlagged}: the second leg is a
+     *  bracket too, and Saxo bands it the same way.
+     *  Mutation: pass null as maxBrokerStopPct at the add-tranche BrokerStop.forEntry call. */
+    @Test
+    void addTrancheProximityCapBindsAndIsFlagged() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("82"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(assembler.assembleForSymbol(any()))
+                .thenReturn(withPriceAndAtr(happyContext(), new BigDecimal("100"), new BigDecimal("7")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        controller.addTranche(BEARER, "run-1", json("{\"symbol\":\"ACME\"}"));
+
+        ArgumentCaptor<BracketRequest> req = ArgumentCaptor.forClass(BracketRequest.class);
+        verify(gateway).placeBracket(eq("depot-1"), req.capture());
+        assertThat(req.getValue().stopLossStop()).isEqualByComparingTo("80.00");
+
+        ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(captor.capture());
+        JsonNode oj = captor.getValue().orderJson();
+        assertThat(oj.path("broker_stop_capped").asBoolean()).isTrue();
+        assertThat(oj.path("broker_stop").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(req.getValue().stopLossStop());
+        // stop_price stays the position's own (tick-rounded) logical stop.
+        assertThat(oj.path("stop_price").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("82.00"));
     }
 }

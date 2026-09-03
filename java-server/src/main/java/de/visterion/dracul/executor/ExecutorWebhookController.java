@@ -1020,6 +1020,13 @@ public class ExecutorWebhookController {
                 // above only in the degenerate branch, where rounding is skipped entirely).
                 // Without this pair the audit trail cannot show why a stop next to a bound was
                 // accepted or rejected.
+                // The SIZER's own verdict on the stop it was handed, from the window IT derived
+                // internally. Distinct from stop_min/stop_max above, which come from the separate
+                // sizer.stopWindow() call: the two agree only while both are given the same ATR,
+                // so writing this makes the sizer's ATR argument observable instead of inert (it
+                // otherwise reaches nothing a caller reads). placeEntryUsesTheSameAtrForWindow
+                // ClampAndSizing pins window, clamp and sizing together through this key.
+                orderJson.put("stop_in_window", sizing.stopInWindow());
                 orderJson.put("stop_min_rounded", roundedStopMin);
                 orderJson.put("stop_max_rounded", roundedStopMax);
                 orderJson.put("proposed_take_profit", proposedTakeProfit);
