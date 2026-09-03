@@ -131,6 +131,14 @@ public class StopRatchetService {
         this.brokerStopBufferAtr = brokerStopBufferAtr;
     }
 
+    /**
+     * How far a multi-leg send got. The caller needs three states, not two: a PARTIAL is
+     * broker-confirmed for the legs that DID move, so {@code broker_stop} must record where they
+     * now rest, while NONE has moved nothing and must leave the book untouched. Collapsing the two
+     * into "false" is what let a later run's monotonic floor sit BELOW a live leg.
+     */
+    private enum LegOutcome { ALL_CONFIRMED, PARTIAL, NONE }
+
     /** Backoff seam — overridden in tests so retry assertions neither sleep nor guess at timing. */
     protected void backoff(long millis) {
         if (millis <= 0) return;
@@ -203,7 +211,11 @@ public class StopRatchetService {
             // ordinary "the leg is gone because it filled" case produces no escalation at all.
             List<ExecutorPositionLeg> legs = legRepo.findOpenByPosition(p.id());
             if (!legs.isEmpty()) {
-                if (!ratchetLegs(p, legs, stopToSend, runId, budget)) continue;
+                LegOutcome outcome = ratchetLegs(p, legs, stopToSend, runId, budget);
+                if (outcome != LegOutcome.ALL_CONFIRMED) {
+                    persistPartialBrokerStop(p, outcome, stopToSend);
+                    continue;
+                }
 
                 // Every open leg confirmed — only now is the new level true of the whole position.
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
@@ -244,7 +256,11 @@ public class StopRatchetService {
                     || p.tranche2OrderId() != null || p.tranche2StopOrderId() != null;
             boolean twoStopLegs = bothLegsNamed || (expectsTwoLegs && !p.stopLegsCollapsed());
             if (twoStopLegs) {
-                if (!ratchetTwoLegs(p, stopToSend, runId, budget)) continue;
+                LegOutcome outcome = ratchetTwoLegs(p, stopToSend, runId, budget);
+                if (outcome != LegOutcome.ALL_CONFIRMED) {
+                    persistPartialBrokerStop(p, outcome, stopToSend);
+                    continue;
+                }
 
                 positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
                         chandelier, null, stopToSend);
@@ -295,6 +311,33 @@ public class StopRatchetService {
     }
 
     /**
+     * A partial ratchet writes {@code broker_stop} and NOTHING else.
+     *
+     * <p>Broker first, book second is not weakened here — it is applied per leg. The legs that
+     * moved are broker-CONFIRMED at {@code stopToSend}; they really do rest there, so recording it
+     * is the honest state, not an optimistic one. {@code active_stop} deliberately does not move:
+     * it is the one value stopguard reads for the WHOLE position and one leg is still at the old
+     * level, so the old stop stays the only value true of every share. The PARTIAL_TRANCHE_RATCHET
+     * escalation the send path already wrote stays exactly as it was.
+     *
+     * <p>Leaving {@code broker_stop} stale was a live hazard, not a tidiness issue: the next run's
+     * monotonic floor is {@code max(buffered, broker_stop)}, so a floor read off a pre-partial
+     * value sits BELOW the leg that did move, and that leg gets walked back DOWN — the one thing
+     * spec §2.1 says the broker leg must never do. The floor must never be below any live leg.
+     *
+     * <p>{@code highestPrice}, {@code mfeR} and {@code softConfirmCount} are passed back unchanged
+     * from the in-memory row, and {@code activeStop} is {@code p.activeStop()} — the same
+     * "everything else stays" idiom {@code MaintenancePipeline.enrich} already uses, since
+     * {@code updateMaintenance} assigns {@code active_stop} unconditionally.
+     */
+    private void persistPartialBrokerStop(ExecutorPosition p, LegOutcome outcome,
+            BigDecimal stopToSend) {
+        if (outcome != LegOutcome.PARTIAL) return;
+        positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.activeStop(), null, stopToSend);
+    }
+
+    /**
      * True when the tranche that is NOT {@code openTranche} has a leg row that has already left
      * the book (CLOSED or CANCELLED) — i.e. the position is a genuine single-leg survivor rather
      * than one whose second leg is merely unknown.
@@ -311,8 +354,9 @@ public class StopRatchetService {
 
     /**
      * Ratchets every OPEN leg of a position to the same level, each addressed by its own
-     * {@code stop_order_id}. Returns true only when the broker confirmed EVERY one of them; false
-     * when the position was escalated and {@code active_stop} must not move.
+     * {@code stop_order_id}. Returns {@code ALL_CONFIRMED} only when the broker confirmed EVERY one
+     * of them; {@code PARTIAL} when some moved and one did not; {@code NONE} when nothing moved.
+     * In both failing cases the position was escalated and {@code active_stop} must not move.
      *
      * <p><b>One level, not one per leg.</b> A protective stop is a price level on the underlying,
      * not a per-tranche quantity: {@link #computeChandelier} reads {@code highestPrice} and ATR and
@@ -336,15 +380,18 @@ public class StopRatchetService {
      * un-ratcheted for as long as the id is missing, which buys nothing.
      *
      * <p><b>Some legs moved, one did not, is reported as PARTIAL — and the book keeps the OLD
-     * stop.</b> Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure
-     * the position really is half-protected at the new level and half at the old one, so the only
-     * value true of all of it is the old stop. Writing the new one would make stopguard trust a
-     * protection part of the position does not have. The next maintenance pass re-sends every leg
+     * {@code active_stop} while {@code broker_stop} follows the legs that moved</b> (see
+     * {@link #persistPartialBrokerStop}). Broker first, book second holds per leg: after a leg-1
+     * success and a leg-2 failure the position really is half-protected at the new level and half
+     * at the old one, so the only value true of all of it is the old stop. Writing the new one
+     * would make stopguard trust a protection part of the position does not have. Where the moved
+     * leg RESTS is a different fact, and one the broker did confirm; it is recorded so the next
+     * run's monotonic floor cannot sit below it. The next maintenance pass re-sends every leg
      * (a leg already at the price is idempotent) and recovers on its own once the broker
      * cooperates. Remaining legs are NOT attempted after a failure: the book is staying at the old
      * level either way, and one escalation row per pass is what an operator can read.
      */
-    private boolean ratchetLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
+    private LegOutcome ratchetLegs(ExecutorPosition p, List<ExecutorPositionLeg> legs,
             BigDecimal stopToSend, String runId, RetryBudget budget) {
         List<ExecutorPositionLeg> unnamed = legs.stream()
                 .filter(l -> l.stopOrderId() == null).toList();
@@ -393,7 +440,7 @@ public class StopRatchetService {
                             + unnamed.stream().map(l -> "tranche " + l.tranche()).toList()
                             + " have no stop_order_id",
                     discriminator("path", "LEG"));
-            return false;
+            return LegOutcome.NONE;
         }
 
         List<String> moved = new ArrayList<>();
@@ -418,14 +465,13 @@ public class StopRatchetService {
             // that has already moved earlier legs; the escalation naming the cause does not say
             // that, and a row that leaves it unsaid is how a silent partial gets back in.
             if (!confirmed) {
-                if (!moved.isEmpty()) {
-                    recordPartialRatchet(p, moved, leg.stopOrderId(), stopToSend, runId);
-                }
-                return false;
+                if (moved.isEmpty()) return LegOutcome.NONE;
+                recordPartialRatchet(p, moved, leg.stopOrderId(), stopToSend, runId);
+                return LegOutcome.PARTIAL;
             }
             moved.add(leg.stopOrderId());
         }
-        return true;
+        return LegOutcome.ALL_CONFIRMED;
     }
 
     /** The PARTIAL_TRANCHE_RATCHET row for the leg path: which legs moved, which one did not, to
@@ -498,15 +544,16 @@ public class StopRatchetService {
      * for: two legs are expected, one id is unknown and no collapse explains it — a bug on the
      * book.
      *
-     * <p><b>One leg up, one leg not, is reported as PARTIAL — and the book keeps the OLD stop.</b>
-     * Broker first, book second holds per leg: after a leg-1 success and a leg-2 failure the
-     * position really is half-protected at the new level and half at the old one, so the only
-     * value that is true of all of it is the old stop. Writing the new one would make stopguard
-     * trust a protection part of the position does not have; that is the bug class this escalates
-     * instead of hiding. The next maintenance pass re-sends both legs (the first is idempotent at
+     * <p><b>One leg up, one leg not, is reported as PARTIAL — and the book keeps the OLD
+     * {@code active_stop} while {@code broker_stop} follows leg 1</b> (see
+     * {@link #persistPartialBrokerStop}). Broker first, book second holds per leg: after a leg-1
+     * success and a leg-2 failure the position really is half-protected at the new level and half
+     * at the old one, so the only value that is true of all of it is the old stop. Writing the new
+     * one would make stopguard trust a protection part of the position does not have; that is the
+     * bug class this escalates instead of hiding. The next maintenance pass re-sends both legs (the first is idempotent at
      * the same price) and recovers on its own once the broker cooperates.
      */
-    private boolean ratchetTwoLegs(ExecutorPosition p, BigDecimal stopToSend, String runId, RetryBudget budget) {
+    private LegOutcome ratchetTwoLegs(ExecutorPosition p, BigDecimal stopToSend, String runId, RetryBudget budget) {
         String leg1 = p.stopOrderId();
         String leg2 = p.tranche2StopOrderId();
         if (leg1 == null || leg2 == null) {
@@ -515,7 +562,7 @@ public class StopRatchetService {
                             + "to be moved unambiguously, but stop_order_id=" + leg1
                             + " and tranche2_stop_order_id=" + leg2,
                     discriminator("path", "COLUMN"));
-            return false;
+            return LegOutcome.NONE;
         }
 
         // Bracket ids are context only once a leg id is given; the tranche-2 entry id may be gone
@@ -526,10 +573,10 @@ public class StopRatchetService {
             escalate(p, runId, "NO_BRACKET_ID",
                     "stop ratchet cannot address the bracket: broker_order_id is null",
                     discriminator("missing", "POSITION_BROKER_ORDER_ID"));
-            return false;
+            return LegOutcome.NONE;
         }
 
-        if (!modifyWithRetry(p, bracket1, leg1, stopToSend, runId, budget)) return false;
+        if (!modifyWithRetry(p, bracket1, leg1, stopToSend, runId, budget)) return LegOutcome.NONE;
         if (!modifyWithRetry(p, bracket2, leg2, stopToSend, runId, budget)) {
             ObjectNode order = mapper.createObjectNode();
             order.put("position_id", p.id());
@@ -547,9 +594,9 @@ public class StopRatchetService {
                             + (p.activeStop() == null ? "null" : p.activeStop().toPlainString())
                             + " because it must hold for the whole position",
                     null, null, null));
-            return false;
+            return LegOutcome.PARTIAL;
         }
-        return true;
+        return LegOutcome.ALL_CONFIRMED;
     }
 
     /**

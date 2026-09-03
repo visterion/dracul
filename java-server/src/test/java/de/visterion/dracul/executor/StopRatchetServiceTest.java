@@ -305,7 +305,12 @@ class StopRatchetServiceTest {
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
         assertThat(gateway.modifyCalls).hasSize(2);
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
+        // The partial path writes broker_stop -- the leg that moved really rests there -- but
+        // active_stop must stay at the level EVERY share still honours.
+        verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("95")) == 0),
+                org.mockito.ArgumentMatchers.isNull(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -445,7 +450,12 @@ class StopRatchetServiceTest {
 
         assertThat(gateway.modifyCalls).hasSize(2);
         // Book untouched: no new active_stop, and emphatically no success push.
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
+        // The partial path writes broker_stop -- the leg that moved really rests there -- but
+        // active_stop must stay at the level EVERY share still honours.
+        verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("95")) == 0),
+                org.mockito.ArgumentMatchers.isNull(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1159,8 +1169,14 @@ class StopRatchetServiceTest {
         ratchet(List.of(p), Map.of("ACME", new BigDecimal("2.0")),
                 Map.of("ACME", new BigDecimal("110")), "run1");
 
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
-                any(), any(), any());
+        // active_stop must NOT move — but broker_stop does, because leg 1 really rests at the new
+        // level now (see partialLegRatchetPersistsBrokerStopOfTheConfirmedLeg). With bufferAtr = 0
+        // the two prices coincide at 104.00, so this asserts the active_stop column specifically.
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(66L), any(), any(),
+                any(Integer.class),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("95")) == 0),
+                org.mockito.ArgumentMatchers.isNull(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -1415,7 +1431,12 @@ class StopRatchetServiceTest {
                 .isEqualTo("stop-1");
         assertThat(logs.get(1).orderJson().get("unmoved_stop_order_id").asString()).isEqualTo("stop-2");
         assertThat(logs.get(1).orderJson().get("active_stop").asDouble()).isEqualTo(95.0);
-        verify(positionRepo, never()).updateMaintenance(anyLong(), any(), any(), any(Integer.class), any(), any(), any());
+        // The partial path writes broker_stop -- the leg that moved really rests there -- but
+        // active_stop must stay at the level EVERY share still honours.
+        verify(positionRepo).updateMaintenance(anyLong(), any(), any(), any(Integer.class),
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("95")) == 0),
+                org.mockito.ArgumentMatchers.isNull(), any());
         verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
     }
 
@@ -1605,5 +1626,93 @@ class StopRatchetServiceTest {
                 org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.argThat(
                         (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("103.50")) == 0));
+    }
+
+    /** A partial ratchet is broker-confirmed for the leg that DID move: it now rests at the
+     *  buffered price, so broker_stop records it while active_stop stays at the old level (one leg
+     *  is still there) and the PARTIAL_TRANCHE_RATCHET escalation stays.
+     *  Mutation: keep persisting nothing on the partial path. */
+    @Test
+    void partialLegRatchetPersistsBrokerStopOfTheConfirmedLeg() {
+        service = newService(1, 0L, 0L, BigDecimal.ONE);
+        ExecutorPosition p = openPosition(66L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
+        withOpenLegs(66L,
+                leg(10L, 66L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 66L, 2, "ord-2", "stop-2", new BigDecimal("10")));
+        gateway.modifyFailures = 1;
+        gateway.failModifyForStopOrderId = "stop-2";
+        gateway.modifyRejectCode = "LEG_NOT_FOUND";
+        gateway.modifyFailureMessage = "agora order rejected [LEG_NOT_FOUND]: no working order stop-2";
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        // chandelier 104.00, buffered 102.00 — leg 1 confirmed there, leg 2 rejected.
+        assertThat(gateway.modifyCalls).hasSize(2);
+        verify(positionRepo).updateMaintenance(org.mockito.ArgumentMatchers.eq(66L),
+                any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                // active_stop stays at the old level: one leg is still resting there.
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("95")) == 0),
+                org.mockito.ArgumentMatchers.isNull(),
+                // broker_stop follows the leg that moved, so the next run's monotonic floor
+                // cannot sit below a live leg.
+                org.mockito.ArgumentMatchers.argThat(
+                        (BigDecimal v) -> v != null && v.compareTo(new BigDecimal("102.00")) == 0));
+        verify(executorNotifier, never()).notifyStopRatchet(any(), any(), any(), any());
+
+        ArgumentCaptor<DecisionLog> logs = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo, times(2)).insert(logs.capture());
+        assertThat(logs.getAllValues().get(1).reasonCode()).isEqualTo("PARTIAL_TRANCHE_RATCHET");
+    }
+
+    /** The follow-up run to the partial above: the value run 1 persisted is what keeps run 2 from
+     *  sending a price BELOW the leg run 1 confirmed. Driven end to end (run 1's persisted
+     *  broker_stop is captured and fed to run 2) so the two halves cannot drift apart.
+     *  Mutation: persist nothing on the partial path — run 2's floor falls back to active_stop 95
+     *  and walks the live leg down from 102.00 to 94.00. */
+    @Test
+    void nextRunNeverSendsBelowTheLegAPartialRatchetConfirmed() {
+        service = newService(1, 0L, 0L, BigDecimal.ONE);
+        ExecutorPosition p = openPosition(66L, "ACME", "BUY", new BigDecimal("110"),
+                new BigDecimal("95"), new BigDecimal("1.0"), 0, "ord-1", 2, "ord-2", "stop-2");
+        withOpenLegs(66L,
+                leg(10L, 66L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 66L, 2, "ord-2", "stop-2", new BigDecimal("10")));
+        gateway.modifyFailures = 1;
+        gateway.failModifyForStopOrderId = "stop-2";
+
+        service.ratchet(List.of(p),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("2.0")),
+                Map.of("ACME", new BigDecimal("110")), "run1");
+
+        ArgumentCaptor<BigDecimal> persistedBrokerStop = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(anyLong(), any(), any(),
+                org.mockito.ArgumentMatchers.anyInt(), any(),
+                org.mockito.ArgumentMatchers.isNull(), persistedBrokerStop.capture());
+        assertThat(persistedBrokerStop.getValue()).isEqualByComparingTo("102.00");
+
+        // Run 2: the broker cooperates again, but ATR has doubled, so the raw buffered price
+        // (110 - 3*4.0 = 98.00, less 1 x 4.0 = 94.00) is BELOW where leg 1 already rests.
+        gateway.modifyCalls.clear();
+        gateway.modifyFailures = 0;
+        gateway.failModifyForStopOrderId = null;
+        ExecutorPosition afterPartial = withBrokerStop(p, persistedBrokerStop.getValue());
+
+        service.ratchet(List.of(afterPartial),
+                Map.of("ACME", new BigDecimal("4.0")),
+                Map.of("ACME", new BigDecimal("4.0")),
+                Map.of("ACME", new BigDecimal("4.0")),
+                Map.of("ACME", new BigDecimal("110")), "run2");
+
+        assertThat(gateway.modifyCalls).hasSize(2);
+        assertThat(gateway.modifyCalls).extracting(FakeExecutionGateway.ModifyCall::stop)
+                .allSatisfy(stop -> assertThat(stop).isEqualByComparingTo("102.00"));
     }
 }

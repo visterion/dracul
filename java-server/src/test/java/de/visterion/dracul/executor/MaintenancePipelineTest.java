@@ -648,4 +648,49 @@ class MaintenancePipelineTest {
         assertThat(result.get(0).chandelierLevel()).isEqualByComparingTo("104");
         assertThat(result.get(0).atrShort()).isEqualByComparingTo("5.0");
     }
+
+    /** The fail-soft atr_short line: a symbol whose short window has too few bars is DATA, not an
+     *  outage — one warn line per RUN naming the symbol, and atrEff quietly falls back to ATR22 so
+     *  the ratchet still runs on that symbol.
+     *  Mutation: delete the warn block (no line at all), or log per position rather than per
+     *  symbol (GOOD carries two positions, so that yields two lines). */
+    @Test
+    void missingShortAtrIsWarnedOncePerSymbolAndAtrEffFallsBackToAtr22() {
+        ExecutorPosition good1 = openPosition(1L, "GOOD", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition good2 = openPosition(2L, "GOOD", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        ExecutorPosition othr = openPosition(3L, "OTHR", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(good1, good2, othr);
+
+        when(reconcile.reconcile("c", "run1")).thenReturn(
+                new ReconcileService.ReconcileResult(survivors, Set.of()));
+        // Available in every other respect — only the short window is missing.
+        when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
+                        new BigDecimal("90"), new BigDecimal("100"), null));
+        when(indicators.levels(eq("OTHR"), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
+                        new BigDecimal("90"), new BigDecimal("100"), new BigDecimal("5.0")));
+        when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        var warnings = warningsWhile(MaintenancePipeline.class,
+                () -> pipeline.run("c", "run1"));
+
+        // Exactly one line, distinguishable from the outage line by naming the indicator, and
+        // pinned in full: the counts and the comma join are contract, not incidental wording.
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0))
+                .isEqualTo("maintenance indicators unavailable: atr_short for 1 of 2 symbols — GOOD");
+
+        // Fail-soft: GOOD is still ratcheted, on ATR22 as its effective ATR.
+        verify(ratchet).ratchet(any(),
+                eq(Map.of("GOOD", new BigDecimal("2.0"), "OTHR", new BigDecimal("2.0"))),
+                eq(Map.of("OTHR", new BigDecimal("5.0"))),
+                eq(Map.of("GOOD", new BigDecimal("2.0"), "OTHR", new BigDecimal("5.0"))),
+                eq(Map.of("GOOD", new BigDecimal("100"), "OTHR", new BigDecimal("100"))),
+                eq("run1"));
+    }
 }
