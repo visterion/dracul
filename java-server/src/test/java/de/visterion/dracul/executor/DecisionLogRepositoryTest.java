@@ -71,6 +71,50 @@ class DecisionLogRepositoryTest {
         assertThat(moves).allSatisfy(d -> assertThat(d.signalId()).isEqualTo(signalId));
     }
 
+    /**
+     * A tranche-2 add writes a decision_log row under the SAME signal_id as the entry it adds to,
+     * and {@code findBySignalIdAndAction} takes the NEWEST match (ORDER BY created_at DESC LIMIT
+     * 1). Written as {@code ENTER} that row would shadow the entry row for every consumer that
+     * resolves "the ENTER row of this signal" — {@code outcome_log.log_id_ref}, both Brier scores,
+     * the stop-basis table, the depot "why" — and hand them the nulls a tranche-2 row carries by
+     * design. {@code ADD_TRANCHE} keeps the two apart.
+     *
+     * <p>Mutation: write the add-tranche row with {@code action = "ENTER"} (here, or in
+     * {@code ExecutorWebhookController.logAddTrancheDecision}, whose action string
+     * {@code addTrancheWritesADecisionLogRowWithTheSameOrderJson} pins).
+     */
+    @Test
+    void addTrancheRowDoesNotShadowTheEntryRow() {
+        String signalId = "sig-" + UUID.randomUUID();
+
+        var enter = new DecisionLog(
+                null, "run-enter", "exec-v0.5", "SIGNAL", signalId, "strigoi-spin", "v1",
+                "ACME", null, null, "ENTER", null,
+                null, "opened on spin-off drift", 0.8, null, null);
+        repo.insert(enter);
+
+        // The tranche-2 row as logAddTrancheDecision writes it: same signal, written later, with
+        // null confidence / reasoning / agent version — a tranche 2 has no signal of its own.
+        var addTranche = new DecisionLog(
+                null, "run-t2", "exec-v0.5", "SIGNAL", signalId, "strigoi-spin", null,
+                "ACME", null, null, "ADD_TRANCHE", null,
+                null, null, null, null, null);
+        repo.insert(addTranche);
+
+        var resolved = repo.findBySignalIdAndAction(signalId, "ENTER");
+
+        assertThat(resolved).isNotNull();
+        assertThat(resolved.runId()).isEqualTo("run-enter");
+        assertThat(resolved.reasoning()).isEqualTo("opened on spin-off drift");
+        assertThat(resolved.confidenceInDecision()).isEqualTo(0.8);
+        assertThat(resolved.sourceAgentVersion()).isEqualTo("v1");
+
+        // and the tranche row is still there, findable under its own action
+        var t2 = repo.findBySignalIdAndAction(signalId, "ADD_TRANCHE");
+        assertThat(t2).isNotNull();
+        assertThat(t2.runId()).isEqualTo("run-t2");
+    }
+
     @Test
     void nullableJsonAndConfidence() {
         String symbol = "DLOG-" + UUID.randomUUID();

@@ -5257,7 +5257,13 @@ class ExecutorWebhookControllerTest {
     /** Test 34, add-tranche half. The tranche add now writes a decision_log row with the SAME
      *  order_json keys as place-entry, an inputs_snapshot from the same helper, and a synthesised
      *  BUDGET/HEAT_LIMIT veto_results pair — so the audit query has no tranche-2 hole.
-     *  Mutation: drop the write, or omit any of the keys. */
+     *
+     *  <p>The action is ADD_TRANCHE, not the ENTER spec §2.1 asked for: the row carries the SAME
+     *  signal_id as the entry, and under ENTER it would shadow the entry row for every
+     *  "the ENTER row of this signal" lookup (see
+     *  {@code DecisionLogRepositoryTest.addTrancheRowDoesNotShadowTheEntryRow}).
+     *
+     *  Mutation: drop the write, write ENTER, or omit any of the keys. */
     @Test
     void addTrancheWritesADecisionLogRowWithTheSameOrderJson() {
         ExecutorWebhookController c = controllerWith(BUFFER_ONE, sizer, new Tranche2Detector());
@@ -5276,7 +5282,7 @@ class ExecutorWebhookControllerTest {
         DecisionLog log = captor.getValue();
 
         assertThat(log.triggerType()).isEqualTo("SIGNAL");
-        assertThat(log.action()).isEqualTo("ENTER");
+        assertThat(log.action()).isEqualTo("ADD_TRANCHE");
         assertThat(log.reasonCode()).isNull();
         assertThat(log.signalId()).isEqualTo("sig-1");
         assertThat(log.symbol()).isEqualTo("ACME");

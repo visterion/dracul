@@ -625,6 +625,19 @@ public class ExecutorWebhookController {
      * <p>{@code veto_results} is therefore synthesised as the BUDGET/HEAT_LIMIT pair the path
      * really did evaluate — the same two checks {@code CapitalBounds} answers for the entry path —
      * rather than left empty, which would read as "no checks ran".
+     *
+     * <p><b>{@code action = ADD_TRANCHE} is a deliberate deviation from spec §2.1</b>, which asked
+     * for {@code ENTER}. A tranche 2 carries the SAME {@code signal_id} as the entry it adds to,
+     * and every "the ENTER row of this signal" lookup takes the newest match
+     * ({@code DecisionLogRepository.findBySignalIdAndAction}: {@code ORDER BY created_at DESC
+     * LIMIT 1}). Written as {@code ENTER}, this row would shadow the entry row for
+     * {@code OutcomeBatchJob.resolveEnterDecision} — and with it {@code outcome_log.log_id_ref},
+     * the executor and hunter Brier scores, the stop-basis table — and for the depot history
+     * "why", all of which would then read the nulls this row carries by design (a tranche 2 has no
+     * signal of its own: no confidence, no reasoning, no agent version). {@code decision_log.action}
+     * is free text, {@code ADD_TRANCHE} is already this codebase's word for the move
+     * ({@code ExecutorDefaults}' tool schema), and §6.5's intent is served identically because it
+     * queries {@code order_json}, not the action string.
      */
     private void logAddTrancheDecision(String runId, ExecutorPosition position, EntryContext ctx,
             BigDecimal orderPrice, BigDecimal orderPriceRounded, CapitalBounds.Result bounds,
@@ -645,7 +658,7 @@ public class ExecutorWebhookController {
                 position.sourceSignalId(), position.sourceAgent(), null, position.symbol(),
                 inputsSnapshotNode(null, ctx, orderPrice, orderPriceRounded, null),
                 vetoResultsNode(synthesised),
-                "ENTER", null, orderJson, null, null, null, null));
+                "ADD_TRANCHE", null, orderJson, null, null, null, null));
     }
 
     // -------------------------------------------------------------------
