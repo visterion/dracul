@@ -427,4 +427,62 @@ class HardTriggerServiceTest {
         assertThat(log.reasoning()).doesNotContain("null");
         assertThat(log.reasoning()).doesNotContain("already gone");
     }
+
+    /** {@link #openPosition} with an explicit broker stop below the logical one. */
+    private ExecutorPosition withBrokerStop(ExecutorPosition p, BigDecimal brokerStop) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
+                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt());
+    }
+
+    /** Test 22. The hard trigger is the DECISION and it is close-based against active_stop; the
+     *  broker leg is only a catastrophe backstop. A close between the two stops must still breach.
+     *  Mutation: compare against brokerStop — this close (94) sits ABOVE it (93), so the mutated
+     *  rule would hold a position the design says to exit. */
+    @Test
+    void closeBelowActiveStopButAboveBrokerStopStillBreaches() {
+        ExecutorPosition p = withBrokerStop(openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null), new BigDecimal("93"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("94")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenedSymbols).containsExactly("ACME");
+        verify(positionRepo).markPendingExit(org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq("HARD_STOP"), any(), any(),
+                org.mockito.ArgumentMatchers.eq(NOW));
+    }
+
+    /** Test 22, the other side: a close between the two stops on a SELL. */
+    @Test
+    void closeAboveActiveStopButBelowBrokerStopStillBreachesOnSell() {
+        ExecutorPosition p = withBrokerStop(openPosition(2L, "ACME", "SELL", new BigDecimal("100"),
+                new BigDecimal("105"), new BigDecimal("105"), null), new BigDecimal("107"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("106")), "run1");
+
+        assertThat(survivors).isEmpty();
+        assertThat(gateway.flattenedSymbols).containsExactly("ACME");
+    }
+
+    /** And a close ABOVE both stops still holds — the regression must not simply always breach. */
+    @Test
+    void closeAboveBothStopsStillHolds() {
+        ExecutorPosition p = withBrokerStop(openPosition(3L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null), new BigDecimal("93"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("ACME", new BigDecimal("96")), "run1");
+
+        assertThat(survivors).hasSize(1);
+        assertThat(gateway.flattenedSymbols).isEmpty();
+    }
 }
