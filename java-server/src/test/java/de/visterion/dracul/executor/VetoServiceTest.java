@@ -142,7 +142,8 @@ class VetoServiceTest {
             return new EntryContext(account, price, atr, swingLow, adv20Notional, dayHigh,
                     candidateSector, openPositions, activeCooldowns, pendingSignals,
                     entriesThisWeek, signalAgeTradingDays, trancheAmount, totalBudget,
-                    openExposure, openHeat, openMechanisms, fxToAccount, missing, quoteCurrency);
+                    openExposure, openHeat, openMechanisms, fxToAccount, missing, quoteCurrency,
+                    null, atr);
         }
     }
 

@@ -46,7 +46,7 @@ class EntryContextAssemblerTest {
     @BeforeEach
     void setUp() {
         assembler = new EntryContextAssembler(agora, gateway, fx, positionRepo, cooldownRepo,
-                signalRepo, mapper, sectorCascade, "depot-1", 22, 20,
+                signalRepo, mapper, sectorCascade, "depot-1", 22, 20, 5,
                 new BigDecimal("10000"), 10, "USD", CLOCK);
 
         when(gateway.account("depot-1"))
@@ -373,5 +373,67 @@ class EntryContextAssemblerTest {
         EntryContext ctx = assembler.assemble(sig);
 
         assertThat(ctx.missing()).contains("account");
+    }
+
+    /** Test 23 (assembler half) + test 24. Mutation: drop the explicit `atr_short` label from
+     *  fetchIndicators' request, or let a missing atr_short null out atrEff. */
+    @Test
+    void requestsShortAtrWithExplicitLabelAndExposesAtrEff() {
+        ObjectNode root = mapper.createObjectNode();
+        root.put("symbol", "ACME");
+        root.put("currentClose", "100.00");
+        root.put("available", true);
+        ArrayNode values = root.putArray("values");
+        addValue(values, "atr", new BigDecimal("2.50"));
+        addValue(values, "atr_short", new BigDecimal("4.00"));
+        addValue(values, "swing_low", new BigDecimal("95.00"));
+        addValue(values, "adv20", new BigDecimal("1000000"));
+        addValue(values, "day_high", new BigDecimal("101.00"));
+        org.mockito.ArgumentCaptor<ObjectNode> args = org.mockito.ArgumentCaptor.forClass(ObjectNode.class);
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(root);
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+
+        EntryContext ctx = assembler.assemble(signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        org.mockito.Mockito.verify(agora).callTool(eq("get_indicators"), args.capture());
+        JsonNode specs = args.getValue().path("indicators");
+        boolean hasLabelledShortAtr = false;
+        for (JsonNode s : specs) {
+            if ("atr".equals(s.path("name").asString()) && "atr_short".equals(s.path("label").asString(""))) {
+                assertThat(s.path("params").path("period").asInt()).isEqualTo(5);
+                hasLabelledShortAtr = true;
+            }
+        }
+        assertThat(hasLabelledShortAtr).as("atr_short spec present with explicit label").isTrue();
+
+        assertThat(ctx.atr()).isEqualByComparingTo("2.50");
+        assertThat(ctx.atrShort()).isEqualByComparingTo("4.00");
+        assertThat(ctx.atrEff()).isEqualByComparingTo("4.00");
+        assertThat(ctx.missing()).isEmpty();
+    }
+
+    /** A missing atr_short is fail-soft: atrEff falls back to ATR22 and the symbol is NOT flagged
+     *  as missing mandatory data. Mutation: add "atr_short" to `missing`. */
+    @Test
+    void missingShortAtrIsFailSoftAndNeverMandatory() {
+        ObjectNode root = mapper.createObjectNode();
+        root.put("symbol", "ACME");
+        root.put("currentClose", "100.00");
+        root.put("available", true);
+        ArrayNode values = root.putArray("values");
+        addValue(values, "atr", new BigDecimal("2.50"));
+        addValue(values, "atr_short", null);
+        addValue(values, "swing_low", new BigDecimal("95.00"));
+        addValue(values, "adv20", new BigDecimal("1000000"));
+        addValue(values, "day_high", new BigDecimal("101.00"));
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(root);
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+
+        EntryContext ctx = assembler.assemble(signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.atrShort()).isNull();
+        assertThat(ctx.atrEff()).isEqualByComparingTo("2.50");
+        assertThat(ctx.missing()).doesNotContain("atr_short");
+        assertThat(ctx.missing()).isEmpty();
     }
 }

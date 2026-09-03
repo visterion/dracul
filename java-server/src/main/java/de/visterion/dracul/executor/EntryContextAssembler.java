@@ -38,6 +38,9 @@ import java.util.Map;
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
 public class EntryContextAssembler {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(EntryContextAssembler.class);
+
     private static final int PENDING_SIGNALS_LIMIT = 50;
 
     private final AgoraClient agora;
@@ -51,6 +54,7 @@ public class EntryContextAssembler {
     private final String connection;
     private final int atrPeriod;
     private final int swingPeriod;
+    private final int atrShortPeriod;
     private final BigDecimal totalBudget;
     private final int trancheCount;
     private final String instrumentCurrency;
@@ -62,6 +66,7 @@ public class EntryContextAssembler {
             @Value("${dracul.executor.connection:depot-1}") String connection,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
+            @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
             @Value("${dracul.executor.total-budget:10000}") BigDecimal totalBudget,
             @Value("${dracul.executor.tranche-count:10}") int trancheCount,
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency,
@@ -77,6 +82,7 @@ public class EntryContextAssembler {
         this.connection = connection;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
+        this.atrShortPeriod = atrShortPeriod;
         this.totalBudget = totalBudget;
         this.trancheCount = trancheCount;
         this.instrumentCurrency = instrumentCurrency;
@@ -177,7 +183,9 @@ public class EntryContextAssembler {
                 openMechanisms,
                 fxToAccount,
                 missing,
-                quoteCurrency);
+                quoteCurrency,
+                ind.atrShort(),
+                ind.atrEff());
     }
 
     /**
@@ -222,8 +230,15 @@ public class EntryContextAssembler {
     }
 
     private record Indicators(BigDecimal price, BigDecimal atr, BigDecimal swingLow,
-            BigDecimal adv20Notional, BigDecimal dayHigh) {
-        static Indicators unavailable() { return new Indicators(null, null, null, null, null); }
+            BigDecimal adv20Notional, BigDecimal dayHigh, BigDecimal atrShort) {
+        static Indicators unavailable() { return new Indicators(null, null, null, null, null, null); }
+
+        /** {@code max(atr, atrShort)}, null-safe in both directions. */
+        BigDecimal atrEff() {
+            if (atr == null) return atrShort;
+            if (atrShort == null) return atr;
+            return atr.max(atrShort);
+        }
     }
 
     private Indicators fetchIndicators(String symbol, List<String> missing) {
@@ -234,6 +249,13 @@ public class EntryContextAssembler {
         ObjectNode atrSpec = indicators.addObject();
         atrSpec.put("name", "atr");
         atrSpec.putObject("params").put("period", atrPeriod);
+
+        // Explicit label is mandatory: Agora derives a default label from the indicator name
+        // only, so a second unlabelled "atr" spec would collide with the first and be rejected.
+        ObjectNode atrShortSpec = indicators.addObject();
+        atrShortSpec.put("name", "atr");
+        atrShortSpec.putObject("params").put("period", atrShortPeriod);
+        atrShortSpec.put("label", "atr_short");
 
         ObjectNode swingSpec = indicators.addObject();
         swingSpec.put("name", "lowest");
@@ -263,13 +285,14 @@ public class EntryContextAssembler {
         }
 
         BigDecimal price = decimal(r, "currentClose");
-        BigDecimal atr = null, swingLow = null, adv20 = null, dayHigh = null;
+        BigDecimal atr = null, swingLow = null, adv20 = null, dayHigh = null, atrShort = null;
         for (JsonNode v : r.path("values")) {
             String label = v.path("label").asString("");
             if (!v.path("available").asBoolean(false)) continue;
             BigDecimal value = decimal(v, "value");
             switch (label) {
                 case "atr" -> atr = value;
+                case "atr_short" -> atrShort = value;
                 case "swing_low" -> swingLow = value;
                 case "adv20" -> adv20 = value;
                 case "day_high" -> dayHigh = value;
@@ -280,10 +303,18 @@ public class EntryContextAssembler {
         if (price == null) missing.add("price");
         if (atr == null) missing.add("atr");
 
+        // Fail-soft, never mandatory: a missing short ATR only means atrEff falls back to ATR22.
+        // One line per symbol per call, under the stable `maintenance indicators unavailable:`
+        // prefix family so the existing alarm rule sees it.
+        if (atr != null && atrShort == null) {
+            log.warn("maintenance indicators unavailable: atr_short for {} — atrEff falls back to "
+                    + "the ATR{} window", symbol, atrPeriod);
+        }
+
         BigDecimal adv20Notional = (adv20 != null && price != null) ? adv20.multiply(price) : null;
         if (adv20Notional == null) missing.add("adv20_notional");
 
-        return new Indicators(price, atr, swingLow, adv20Notional, dayHigh);
+        return new Indicators(price, atr, swingLow, adv20Notional, dayHigh, atrShort);
     }
 
     /** Sector via the shared cascade helper (T3.3 — one sector vocabulary everywhere).

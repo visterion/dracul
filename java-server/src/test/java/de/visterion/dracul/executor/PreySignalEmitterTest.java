@@ -71,7 +71,7 @@ class PreySignalEmitterTest {
         when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
         when(indicators.levels(anyString(), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("3.1"),
-                        new BigDecimal("95"), new BigDecimal("101.5")));
+                        new BigDecimal("95"), new BigDecimal("101.5"), null));
 
         emitter.emit(List.of(samplePrey()));
 

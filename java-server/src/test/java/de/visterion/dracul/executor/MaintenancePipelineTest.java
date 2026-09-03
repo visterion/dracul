@@ -71,7 +71,7 @@ class MaintenancePipelineTest {
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("108")));
+                        new BigDecimal("108"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
 
         ExecutorPosition bbbPostRatchet = openPosition(1L, "BBB", new BigDecimal("104"),
@@ -118,7 +118,7 @@ class MaintenancePipelineTest {
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("103")));
+                        new BigDecimal("103"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
 
         ExecutorPosition bbbPostRatchet = openPosition(1L, "BBB", new BigDecimal("104"),
@@ -147,7 +147,7 @@ class MaintenancePipelineTest {
         when(indicators.levels("AAA", 22, 20)).thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("108")));
+                        new BigDecimal("108"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(List.of(bbb));
 
         ExecutorPosition bbbPostRatchet = openPosition(1L, "BBB", new BigDecimal("104"),
@@ -196,7 +196,7 @@ class MaintenancePipelineTest {
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("85")));
+                        new BigDecimal("85"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
 
@@ -289,7 +289,7 @@ class MaintenancePipelineTest {
                 new ReconcileService.ReconcileResult(List.of(bbb), Set.of(1L)));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("90")));
+                        new BigDecimal("90"), null));
         when(hardTrigger.apply(any(), any(), eq("r1"))).thenAnswer(inv -> inv.getArgument(0));
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
 
@@ -333,7 +333,7 @@ class MaintenancePipelineTest {
                 new ReconcileService.ReconcileResult(List.of(unfilled), Set.of(2L)));
         when(indicators.levels("AAA", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("39")));
+                        new BigDecimal("39"), null));
         when(positionRepo.findOpen()).thenReturn(List.of(unfilled));
 
         List<EnrichedPosition> result = gatedPipeline.run("c", "r1");
@@ -355,7 +355,7 @@ class MaintenancePipelineTest {
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("38")));
+                        new BigDecimal("38"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
 
@@ -378,7 +378,7 @@ class MaintenancePipelineTest {
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("40")));
+                        new BigDecimal("40"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
 
@@ -400,7 +400,7 @@ class MaintenancePipelineTest {
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels("AAA", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("50")));
+                        new BigDecimal("50"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(aaa));
 
@@ -442,7 +442,7 @@ class MaintenancePipelineTest {
                 new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
-                        new BigDecimal("90"), new BigDecimal("100")));
+                        new BigDecimal("90"), new BigDecimal("100"), null));
         when(indicators.levels(eq("DARK"), anyInt(), anyInt()))
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels(eq("DARK2"), anyInt(), anyInt()))
@@ -485,7 +485,7 @@ class MaintenancePipelineTest {
                 .thenReturn(ExecutorIndicators.Levels.unavailable());
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
-                        new BigDecimal("90"), new BigDecimal("100")));
+                        new BigDecimal("90"), new BigDecimal("100"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(survivors);
 
@@ -509,7 +509,7 @@ class MaintenancePipelineTest {
                 new ReconcileService.ReconcileResult(survivors, Set.of()));
         when(indicators.levels(eq("GOOD"), anyInt(), anyInt()))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"),
-                        new BigDecimal("90"), new BigDecimal("100")));
+                        new BigDecimal("90"), new BigDecimal("100"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("run1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(survivors);
 
@@ -594,7 +594,7 @@ class MaintenancePipelineTest {
         // price 100.9 -> R = (100.9-100)/(100-95) = 0.18, no R_CONFIRMED; no entryDayHigh set.
         when(indicators.levels("BBB", 22, 20))
                 .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
-                        new BigDecimal("100.9")));
+                        new BigDecimal("100.9"), null));
         when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
         when(positionRepo.findOpen()).thenReturn(List.of(bbb));
         when(signalRepo.findById("sig-1")).thenReturn(

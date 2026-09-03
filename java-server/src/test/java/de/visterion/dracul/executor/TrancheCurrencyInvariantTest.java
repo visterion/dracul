@@ -119,7 +119,7 @@ class TrancheCurrencyInvariantTest {
                 new BigDecimal("100"), new BigDecimal("2"), null, new BigDecimal("500000"),
                 new BigDecimal("101"), "TECH", List.of(), List.of(), List.of(), 0, 0L,
                 new BigDecimal("1000"), new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
-                Map.of(), BigDecimal.ONE, List.of(), quoteCurrency);
+                Map.of(), BigDecimal.ONE, List.of(), quoteCurrency, null, new BigDecimal("2"));
     }
 
     @Test

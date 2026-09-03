@@ -33,5 +33,12 @@ public record EntryContext(
         Map<String, String> openMechanisms,   // open-position symbol -> mechanism, via signalRepo.findById(p.sourceSignalId()); entries with unknown source signal omitted
         BigDecimal fxToAccount,               // multiplier instrument ccy -> account ccy; BigDecimal.ONE on cache miss (FxService identity fallback)
         List<String> missing,                 // names of absent MANDATORY data
-        String quoteCurrency) {               // actual instrument currency from get_quote, NULL-preserving (a missing currency stays null, NOT coerced to USD); consumed by the CURRENCY_MISMATCH veto
+        String quoteCurrency,                 // actual instrument currency from get_quote, NULL-preserving (a missing currency stays null, NOT coerced to USD); consumed by the CURRENCY_MISMATCH veto
+        /** Short-period ATR (`atr_short`), nullable — a symbol with too few bars has none. */
+        BigDecimal atrShort,
+        /** {@code max(atr, atrShort)}, or {@code atr} when {@code atrShort} is null. THE ATR every
+         *  stop-distance decision uses: the sizer's stop window, the stop clamp, the sizing call
+         *  and the broker-stop buffer. The chase/drift/value-anchor vetos and the LLM's own `atr`
+         *  field deliberately stay on {@link #atr()}. */
+        BigDecimal atrEff) {
 }
