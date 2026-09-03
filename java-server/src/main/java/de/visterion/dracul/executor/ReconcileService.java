@@ -290,6 +290,18 @@ public class ReconcileService {
                     .filter(x -> x.symbol().equals(p.symbol()))
                     .findFirst().orElse(null);
 
+            // Fill state, written once. The conjunction matters in both directions:
+            //   bp != null alone is SYMBOL-level evidence — a foreign or orphaned holding in the
+            //   same symbol satisfies it (see escalateOrphans) — and a partially filled GTD entry
+            //   would be declared filled while its remainder is still working.
+            //   !entryStillPending alone says nothing about whether anything was ever bought.
+            // Written HERE, inside the reconcile loop, so MaintenancePipeline's re-read via
+            // findOpen() later in the SAME pass already sees it. Never reached for a position that
+            // ends up in unfilledIds: those all require bp == null.
+            if (p.entryFilledAt() == null && bp != null && !entryStillPending(p, orders)) {
+                positionRepo.markEntryFilled(p.id(), clock.instant());
+            }
+
             // A hard-trigger flatten or fill-less webhook FULL exit already submitted an order
             // for this position but has not yet been confirmed — branch here FIRST, before any
             // other reconcile logic (tranche2 desync, entry-pending, normal fill detection) can
@@ -1164,7 +1176,12 @@ public class ReconcileService {
             // a made-up price must not be booked as an observed one.
             log.warn("position {} (id {}): all {} legs filled but no usable fill price reported — "
                     + "booking the close at the mark estimate", p.symbol(), p.id(), fills.size());
-            exitPrice = bp != null ? bp.marketPrice() : p.activeStop();
+            // The exit came from the PROTECTIVE LEGS, so the price they rested at is the best
+            // estimate available — not the logical stop, which the legs never sat on. Still MARK,
+            // never FILL: an estimate must not be labelled as an observed price (see the comment
+            // above). A row without a recorded broker stop falls back to active_stop, as before.
+            exitPrice = bp != null ? bp.marketPrice()
+                    : (p.brokerStop() != null ? p.brokerStop() : p.activeStop());
             bookClose(p, new ResolvedExit(exitReason, exitPrice, "MARK", p, null), connection, runId);
             return;
         }
@@ -1435,8 +1452,15 @@ public class ReconcileService {
             exitPrice = p.pendingExitFillPrice();
             exitPriceSource = "FILL";
         } else {
+            // NEVER substitute broker_stop here. pending_exit_reason is written only by the
+            // MARKET-order exit paths (HardTriggerService's flatten, the webhook FULL exit), and
+            // a flatten CANCELS the protective leg before closing — so whatever the position
+            // exited at, it was not the resting leg's price. The distinct label is what lets the
+            // acceptance measurement exclude these rows from leg-slippage.
+            // exit_price_source is free TEXT (no CHECK constraint); the only reads are the
+            // `IS DISTINCT FROM 'FILL'` guard and two tests, so a new value breaks nothing.
             exitPrice = p.activeStop();
-            exitPriceSource = "MARK";
+            exitPriceSource = "MARK_FLATTEN";
         }
 
         RCalc rCalc = computeR(p, exitPrice);
@@ -1545,11 +1569,23 @@ public class ReconcileService {
         if (filledLeg != null && filledLeg.role() == OrderRole.STOP_LOSS) {
             exitReason = "HARD_STOP";
             exitPrice = filledLeg.avgFillPrice();
-            exitPriceSource = "FILL";
+            if (exitPrice == null) {
+                // The protective leg filled but the broker reported no price. The leg rested at
+                // broker_stop, so that is the estimate — and the label must become MARK: this arm
+                // pre-stamped "FILL" before the shared tail below, and that label must never
+                // survive an estimate.
+                exitPrice = p.brokerStop() != null ? p.brokerStop() : p.activeStop();
+                exitPriceSource = "MARK";
+            } else {
+                exitPriceSource = "FILL";
+            }
         } else if (filledLeg != null && filledLeg.role() == OrderRole.TAKE_PROFIT) {
             exitReason = "TAKE_PROFIT";
             exitPrice = filledLeg.avgFillPrice();
-            exitPriceSource = "FILL";
+            // NEVER broker_stop here: a take-profit that filled without a reported price is a
+            // WINNING exit, and booking it at the protective stop would record a loss that never
+            // happened. The shared tail below supplies bp.marketPrice() ?? active_stop.
+            exitPriceSource = exitPrice == null ? "MARK" : "FILL";
         } else {
             // Position vanished from the broker with no filled exit leg observed in this
             // reconcile pass (e.g. it opened AND closed entirely between two reconcile cycles).

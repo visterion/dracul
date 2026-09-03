@@ -343,7 +343,8 @@ class ReconcileServiceTest {
     @Test
     void reconcileFinalizesPendingExitFallsBackToActiveStopWhenNoFillDataAtAll() {
         // Neither a matched filled leg nor a stamped pending_exit_fill_price -> last resort is
-        // active_stop, tagged source MARK (explicitly NOT a fill price).
+        // active_stop, tagged source MARK_FLATTEN (explicitly NOT a fill price, and distinct from
+        // a leg-produced MARK estimate: a flatten cancelled the protective leg before closing).
         ExecutorPosition p = pendingExitPosition(33L, "NOPRICE", new BigDecimal("100"),
                 new BigDecimal("95"), "stop-33", "HARD_STOP", "close-33", null);
         when(positionRepo.findOpen()).thenReturn(List.of(p));
@@ -351,7 +352,7 @@ class ReconcileServiceTest {
         List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
 
         verify(positionRepo).close(eq(33L), eq(new BigDecimal("95")), any(),
-                eq("HARD_STOP"), eq("MARK"), any());
+                eq("HARD_STOP"), eq("MARK_FLATTEN"), any());
 
         assertThat(survivors).isEmpty();
     }
@@ -2275,5 +2276,252 @@ class ReconcileServiceTest {
         ArgumentCaptor<DecisionLog> captor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionRepo).insert(captor.capture());
         assertThat(captor.getValue().reasonCode()).isEqualTo("BROKER_UNAVAILABLE");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Task 7: entry_filled_at, and the MARK estimate chosen by the PRODUCER of the exit.
+    // ---------------------------------------------------------------------------------------
+
+    /** Copy of a fixture with an explicit broker stop — the price the protective leg rests at. */
+    private static ExecutorPosition withBrokerStop(ExecutorPosition p, BigDecimal brokerStop) {
+        return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
+                p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
+                p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
+                p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
+                p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
+                p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
+                p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
+                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt());
+    }
+
+    /** Test 27. A protective leg filled with no reported price: the estimate must be the price the
+     *  LEG actually rested at, not the logical stop it never sat on — and it must be labelled MARK,
+     *  because the STOP_LOSS arm pre-stamps "FILL" before the shared tail runs.
+     *  Mutation: keep p.activeStop() as the estimate, or let the pre-stamped "FILL" survive. */
+    @Test
+    void markFallbackUsesBrokerStopWhenAStopLegFilledWithoutPrice() {
+        ExecutorPosition p = withBrokerStop(openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", null, null), new BigDecimal("93.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // FILLED stop leg with a null avgFillPrice — exactly what the broker's history returns when
+        // it reports the fill but not the price.
+        gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, null, "brk-1"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(1L), argThatComparesTo("93.00"), any(),
+                eq("HARD_STOP"), eq("MARK"), any());
+    }
+
+    /** Test 27, null-broker-stop half: a row opened before the broker_stop column has no broker
+     *  stop and must fall back to active_stop, exactly as today. Mutation: NPE, or book zero. */
+    @Test
+    void fallsBackToActiveStopWhenBrokerStopNull() {
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, null, "brk-1"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(1L), argThatComparesTo("95"), any(),
+                eq("HARD_STOP"), eq("MARK"), any());
+    }
+
+    /** Test 27, the closePositionFromLegs site: EVERY leg filled, none of them reported a price.
+     *  Same rule, other code path — closePositionFromLegs' own fallback.
+     *  Mutation: keep `bp != null ? bp.marketPrice() : p.activeStop()` unchanged. */
+    @Test
+    void allLegsFilledWithoutPriceBooksTheBrokerStopEstimate() {
+        ExecutorPosition p = withBrokerStop(openPosition(10L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-10", "stop-10", null, null), new BigDecimal("93.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(10L)).thenReturn(List.of(
+                leg(1L, 10L, 1, "brk-10", "stop-10", BigDecimal.TEN)));
+        // FILLED, but avgFillPrice null — weightedFillPrice() then has nothing to average.
+        gateway.seedOrder(new BrokerOrder("stop-10", "ref-10", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, null, "brk-10"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(10L), argThatComparesTo("93.00"), any(),
+                eq("HARD_STOP"), eq("MARK"), any());
+    }
+
+    /** Test 27b. finalizePendingExitOrKeep's reason comes from pending_exit_reason, written only by
+     *  the MARKET-order exit paths. Those exits cancel the protective leg before closing, so the
+     *  broker stop is not what they filled at — substituting it here would be a fabricated price.
+     *  The distinct MARK_FLATTEN label is what lets the acceptance measurement exclude these rows.
+     *  Mutation: substitute brokerStop here, or keep the plain "MARK" label. */
+    @Test
+    void pendingExitFinalizeKeepsActiveStopEvenWhenReasonIsHardStop() {
+        ExecutorPosition p = withBrokerStop(
+                pendingExitPosition(2L, "ACME", new BigDecimal("100"), new BigDecimal("95"),
+                        "stop-1", "HARD_STOP", "close-1", null),
+                new BigDecimal("93.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // Broker no longer holds it and the exit order is not working -> confirmed gone.
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).close(eq(2L), argThatComparesTo("95"), any(),
+                eq("HARD_STOP"), eq("MARK_FLATTEN"), any());
+    }
+
+    /** Test 27c. A take-profit leg filled with no reported price must NEVER be booked at the stop:
+     *  that would record a winning exit at a losing price. It keeps the market-price/active-stop
+     *  fallback of the shared tail, labelled MARK.
+     *  Mutation: treat the TAKE_PROFIT arm as a protective leg. */
+    @Test
+    void takeProfitLegWithoutFillPriceIsNeverBookedAtBrokerStop() {
+        ExecutorPosition p = withBrokerStop(openPosition(3L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-3", "tp-3", null, null), new BigDecimal("93.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedOrder(new BrokerOrder("tp-3", "ref-3", "ACME", OrderRole.TAKE_PROFIT,
+                OrderStatus.FILLED, BigDecimal.TEN, BigDecimal.TEN, null, "brk-3"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> exitPrice = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).close(eq(3L), exitPrice.capture(), any(),
+                eq("TAKE_PROFIT"), eq("MARK"), any());
+        assertThat(exitPrice.getValue()).isEqualByComparingTo("95");   // active_stop, NOT 93.00
+    }
+
+    /** Test 28. entry_filled_at is written on the CONJUNCTION: the broker holds the symbol AND no
+     *  entry order is still working. Mutation: write on bp != null alone — a foreign or orphaned
+     *  holding in the same symbol satisfies that, and a partially-filled GTD entry would be
+     *  declared filled while its remainder is still working. */
+    @Test
+    void entryFilledAtSetOnceWhenBrokerHoldsAndEntryNotPending() {
+        ExecutorPosition p = openPosition(4L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-4", "stop-4", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("101"), 1));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).markEntryFilled(4L, NOW);
+    }
+
+    /** Test 28. No broker holding -> never written. */
+    @Test
+    void entryFilledAtNotSetForUnfilledEntry() {
+        ExecutorPosition p = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-5", "stop-5", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // The GTD entry is still working and the broker holds nothing.
+        gateway.seedOrder(new BrokerOrder("brk-5", "ref-5", "ACME", OrderRole.ENTRY,
+                OrderStatus.WORKING, BigDecimal.TEN, BigDecimal.ZERO, null, null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).markEntryFilled(anyLong(), any());
+    }
+
+    /** Test 28, the case that reddens the `bp != null` mutation: the broker DOES hold the symbol,
+     *  but the position's own entry order is still working (a partial fill). Not filled. */
+    @Test
+    void entryFilledAtNotSetWhileEntryOrderStillWorkingDespiteBrokerHolding() {
+        ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-6", "stop-6", null, null);
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("4"),
+                new BigDecimal("100"), new BigDecimal("101"), 1));
+        gateway.seedOrder(new BrokerOrder("brk-6", "ref-6", "ACME", OrderRole.ENTRY,
+                OrderStatus.PARTIALLY_FILLED, BigDecimal.TEN, new BigDecimal("4"), null, null));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).markEntryFilled(anyLong(), any());
+    }
+
+    /** Test 28. Already stamped -> the reconciler does not write again (the repository COALESCE is
+     *  the second guard, tested in Task 2). Mutation: drop the `entryFilledAt() == null` check. */
+    @Test
+    void entryFilledAtNotRewrittenOnceStamped() {
+        ExecutorPosition base = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-7", "stop-7", null, null);
+        ExecutorPosition p = new ExecutorPosition(base.id(), base.connection(), base.symbol(),
+                base.side(), base.qty(), base.entryPrice(), base.initialStop(), base.activeStop(),
+                base.tranche(), base.rValue(), base.killCriteria(), base.sourceSignalId(),
+                base.sourceAgent(), base.entryDate(), base.mfe(), base.status(),
+                base.brokerOrderId(), base.highestPrice(), base.mfeR(), base.softConfirmCount(),
+                base.exitPrice(), base.realizedR(), base.exitReason(), base.closedAt(),
+                base.stopOrderId(), base.sector(), base.entryDayHigh(), base.tranche2OrderId(),
+                base.tranche2StopOrderId(), base.trimCount(), base.lowestPrice(),
+                base.entryExpiresAt(), base.submittedLimitPrice(), base.pendingExitReason(),
+                base.exitOrderId(), base.pendingExitFillPrice(), base.stopLegsCollapsed(),
+                null, "2026-07-01T09:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("101"), 1));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo, never()).markEntryFilled(anyLong(), any());
+    }
+
+    /** Test 29b. The five positional rebuilds inside ReconcileService must forward broker_stop and
+     *  entry_filled_at — a null at any of them silently blanks the broker leg for the rest of the
+     *  pass, and the survivor the pipeline then ratchets would compute its monotonic floor from
+     *  active_stop instead of the real leg price.
+     *  Mutation: pass null at any of the five rebuild sites. */
+    @Test
+    void reconcileRebuiltPositionPreservesBrokerStopAndEntryFilledAt() {
+        ExecutorPosition base = openPosition(8L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-8", "stop-8", null, null);
+        ExecutorPosition p = new ExecutorPosition(base.id(), base.connection(), base.symbol(),
+                base.side(), base.qty(), base.entryPrice(), base.initialStop(), base.activeStop(),
+                base.tranche(), base.rValue(), base.killCriteria(), base.sourceSignalId(),
+                base.sourceAgent(), base.entryDate(), base.mfe(), base.status(),
+                base.brokerOrderId(), base.highestPrice(), base.mfeR(), base.softConfirmCount(),
+                base.exitPrice(), base.realizedR(), base.exitReason(), base.closedAt(),
+                base.stopOrderId(), base.sector(), base.entryDayHigh(), base.tranche2OrderId(),
+                base.tranche2StopOrderId(), base.trimCount(), base.lowestPrice(),
+                base.entryExpiresAt(), base.submittedLimitPrice(), base.pendingExitReason(),
+                base.exitOrderId(), base.pendingExitFillPrice(), base.stopLegsCollapsed(),
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // A broker holding whose avg entry price differs from the book forces the ENTRY_PRICE_SYNC
+        // rebuild AND the updateMaintenance rebuild on one pass.
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("99.50"), new BigDecimal("101"), 1));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).brokerStop()).isEqualByComparingTo("93.00");
+        assertThat(survivors.get(0).entryFilledAt()).isEqualTo("2026-07-01T09:00:00Z");
+        // And the maintenance write forwards it rather than blanking it.
+        verify(positionRepo).updateMaintenance(eq(8L), any(), any(), anyInt(), any(), isNull(),
+                argThatComparesTo("93.00"));
+    }
+
+    /** Test 29. Regression: leg seeding is id/qty-based and completely indifferent to the
+     *  active_stop / broker_stop divergence. Mutation: make seeding read either stop. */
+    @Test
+    void legSeedingIsUnaffectedByBrokerStop() {
+        ExecutorPosition p = withBrokerStop(openPosition(9L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-9", "stop-9", null, null), new BigDecimal("80.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", BigDecimal.TEN,
+                new BigDecimal("100"), new BigDecimal("101"), 1));
+        gateway.seedOrder(workingStop("stop-9", "ACME", BigDecimal.TEN));
+
+        service.reconcile("c", "run1");
+
+        ExecutorPositionLeg seeded = captureSeededLegs().getValue();
+        assertThat(seeded.positionId()).isEqualTo(9L);
+        assertThat(seeded.tranche()).isEqualTo(1);
+        assertThat(seeded.stopOrderId()).isEqualTo("stop-9");
+        assertThat(seeded.qty()).isEqualByComparingTo("10");
     }
 }
