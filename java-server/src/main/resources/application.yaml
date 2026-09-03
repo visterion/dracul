@@ -335,8 +335,12 @@ dracul:
     min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.65}
     max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
     atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
+    atr-short-period: ${DRACUL_EXECUTOR_ATR_SHORT_PERIOD:5}
+    broker-stop-buffer-atr: ${DRACUL_EXECUTOR_BROKER_STOP_BUFFER_ATR:1.0}
+    max-broker-stop-pct: ${DRACUL_EXECUTOR_MAX_BROKER_STOP_PCT:0.20}
+    risk-pct: ${DRACUL_EXECUTOR_RISK_PCT:0.01}
     swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
-    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.4}
+    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.5}
     chandelier-mult: ${DRACUL_EXECUTOR_CHANDELIER_MULT:3.0}
     giveback-pct: ${DRACUL_EXECUTOR_GIVEBACK_PCT:0.35}
     giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}

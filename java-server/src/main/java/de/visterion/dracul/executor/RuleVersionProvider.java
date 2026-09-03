@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
@@ -25,14 +26,26 @@ public class RuleVersionProvider {
     private final String active;
     private final RuleVersionRepository repo;
     private final ObjectMapper mapper;
+    private final BigDecimal brokerStopBufferAtr;
+    private final BigDecimal maxBrokerStopPct;
+    private final int atrShortPeriod;
+    private final double riskPct;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.4}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.5}") String active,
             RuleVersionRepository repo,
-            ObjectMapper mapper) {
+            ObjectMapper mapper,
+            @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
+            @Value("${dracul.executor.max-broker-stop-pct:0.20}") BigDecimal maxBrokerStopPct,
+            @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
+            @Value("${dracul.executor.risk-pct:0.01}") double riskPct) {
         this.active = active;
         this.repo = repo;
         this.mapper = mapper;
+        this.brokerStopBufferAtr = brokerStopBufferAtr;
+        this.maxBrokerStopPct = maxBrokerStopPct;
+        this.atrShortPeriod = atrShortPeriod;
+        this.riskPct = riskPct;
     }
 
     @PostConstruct
@@ -49,9 +62,19 @@ public class RuleVersionProvider {
                     .put("max_positions", 5)
                     .put("trim_fractions", "0.33,0.5,1.0")
                     .put("entry_gtd_days", 2)
-                    .put("kill_criteria_hard", "price-level only");
+                    .put("kill_criteria_hard", "price-level only")
+                    .put("broker_stop_buffer_atr", brokerStopBufferAtr)
+                    .put("max_broker_stop_pct", maxBrokerStopPct)
+                    .put("atr_short_period", atrShortPeriod)
+                    .put("risk_pct", riskPct);
+            // seed() only inserts when the version string is NEW, so this text is written once and
+            // is then permanent for exec-v0.5 -- it is the audit record of what this version
+            // changed, and prod verification asserts it verbatim.
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "sim completion: hybrid kill hard trigger, scale-out ladder, entry GTD; confidence_min drift fixed 0.6->0.65", null, params));
+                    "buffered broker stop (monotonic, capped); atr_short with atrEff on stop window, "
+                            + "buffer and chandelier; risk-based sizing with RISK_TOO_WIDE; heat stays "
+                            + "on logical position_risk, position_risk_broker logged only; tranche2 "
+                            + "without NEW_HIGH, gated on entry_filled_at", null, params));
         }
     }
 

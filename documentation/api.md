@@ -2207,6 +2207,7 @@ and for order-guard rejections it is the veto trace plus an
 | `BELOW_ANCHOR` | `VetoService` | The effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use `dracul.executor.drift-anchor-atr-mult` (default `0.0`×ATR, i.e. no adverse move tolerated), value mechanisms use `dracul.executor.value-anchor-atr-mult` (default `3.0`×ATR) |
 | `PACE_LIMIT` | `VetoService` | New positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week` |
 | `TRANCHE_TOO_SMALL` | `ExecutorWebhookController` | `PositionSizer` computed a zero quantity (tranche amount doesn't buy even one share at the order price) |
+| `RISK_TOO_WIDE` | `ExecutorWebhookController` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so `PositionSizer` computed a zero risk-capped quantity. Terminal — a fresh signal with a tighter stop is a new signal |
 | `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | The signal is no longer `PENDING` (already `ACCEPTED`/`REJECTED`/`SKIPPED`) — idempotency guard, checked before vetos/order guard; no broker call, no signal-status change |
@@ -2285,7 +2286,8 @@ pipeline. Response:
 { "output": { "positions": [
   { "symbol": "ACME", "signal_id": "sig-123", "side": "BUY", "qty": 10, "entry_filled": true,
     "entry_price": 142.50,
-    "active_stop": 138.90, "current_price": 151.20, "atr": 4.2,
+    "active_stop": 138.90, "broker_stop": 136.10, "current_price": 151.20, "atr": 4.2,
+    "atr_short": 5.1,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
     "days_held": 6, "kill_criteria": ["..."],
     "trim_count": 0, "suggested_fraction": 0.33,
@@ -2294,6 +2296,8 @@ pipeline. Response:
     "tranche2": { "eligible": true, "reason": "R_CONFIRMED" } }
 ] } }
 ```
+
+`active_stop` is the LOGICAL stop the close-based hard trigger tests; `broker_stop` is the buffered price the protective leg actually rests at (null for positions opened before V48). `position_context.active_stop` deliberately keeps mirroring the logical stop — proximity alerts watch the level that decides, not the backstop.
 
 `signal_id` is the position's source signal id (`ExecutorPosition.sourceSignalId()`,
 null-safe — `null` when the position has none), so the LLM can copy it verbatim
@@ -2324,13 +2328,14 @@ unparsed for the LLM to judge from the raw `kill_criteria` list.
 this tranche-1 position is eligible for a second tranche via `add-tranche`.
 `eligible` is `false` whenever price has ever moved against entry (BUY:
 below entry; SELL: above entry — no averaging down, ever, regardless of any
-other condition). Once past that gate, `reason` is the first of three
-conditions to match:
+other condition). It also requires the entry to be confirmed filled at the
+broker (`entry_filled_at` not null) — an unfilled tranche 1 can never gate a
+tranche 2. Once past those gates, `reason` is the first of two conditions to
+match:
 
 | Reason | Condition |
 |---|---|
 | `R_CONFIRMED` | Price has moved ≥ 1R (initial per-share risk) in the position's favor |
-| `NEW_HIGH` | Price has extended past the entry-day extreme (`entry_day_high`) |
 | `REINFORCING_SIGNAL` | A pending signal for the same symbol/direction originates from a mechanism different from the one that opened the position (unavailable if the position's own mechanism is unknown) |
 
 `reason` is `null` when `eligible` is `false`.
@@ -2487,8 +2492,9 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | `NO_POSITION` | No open tranche-1 position for `symbol` on the configured connection |
 | `MAX_TRANCHE` | Position's current `tranche` count is already at or above `dracul.executor.max-tranche` |
 | `DATA_UNAVAILABLE` | Mandatory upstream data missing at assembly time |
-| `NOT_ELIGIBLE` | `Tranche2Detector` re-derived ineligibility (e.g. price has moved against entry, or none of `R_CONFIRMED`/`NEW_HIGH`/`REINFORCING_SIGNAL` currently holds) |
+| `NOT_ELIGIBLE` | `Tranche2Detector` re-derived ineligibility — price has moved against entry, the entry is not confirmed filled at the broker (`entry_filled_at` is null), or neither `R_CONFIRMED` nor `REINFORCING_SIGNAL` currently holds |
 | `TRANCHE_TOO_SMALL` | Sizer computed less than one whole share for the second tranche |
+| `RISK_TOO_WIDE` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so the sizer computed a zero risk-capped quantity for the second tranche |
 | `HEAT_LIMIT` | Adding this tranche's risk would exceed the heat cap |
 | `BUDGET` | Remaining cash or budget headroom can't cover the tranche |
 | `BROKER_ERROR` | The Agora trading webhook call failed |
