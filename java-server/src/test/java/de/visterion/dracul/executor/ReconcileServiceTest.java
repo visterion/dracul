@@ -2284,6 +2284,12 @@ class ReconcileServiceTest {
 
     /** Copy of a fixture with an explicit broker stop — the price the protective leg rests at. */
     private static ExecutorPosition withBrokerStop(ExecutorPosition p, BigDecimal brokerStop) {
+        return withFillState(p, brokerStop, p.entryFilledAt());
+    }
+
+    /** Copy of a fixture carrying BOTH columns this task threads through the reconcile rebuilds. */
+    private static ExecutorPosition withFillState(ExecutorPosition p, BigDecimal brokerStop,
+            String entryFilledAt) {
         return new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                 p.entryPrice(), p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
                 p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
@@ -2292,7 +2298,7 @@ class ReconcileServiceTest {
                 p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                 p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(),
-                p.stopLegsCollapsed(), brokerStop, p.entryFilledAt());
+                p.stopLegsCollapsed(), brokerStop, entryFilledAt);
     }
 
     /** Test 27. A protective leg filled with no reported price: the estimate must be the price the
@@ -2523,5 +2529,84 @@ class ReconcileServiceTest {
         assertThat(seeded.tranche()).isEqualTo(1);
         assertThat(seeded.stopOrderId()).isEqualTo("stop-9");
         assertThat(seeded.qty()).isEqualByComparingTo("10");
+    }
+
+    /** Test 29b, the withTrim rebuild. A partial leg exit rebuilds the row positionally; blanking
+     *  the two new components there hands the maintenance pipeline a survivor whose protective leg
+     *  price and fill stamp have silently vanished for the rest of the pass.
+     *  Mutation: pass null instead of p.brokerStop(), p.entryFilledAt() in withTrim. */
+    @Test
+    void trimRebuiltPositionPreservesBrokerStopAndEntryFilledAt() {
+        ExecutorPosition p = withFillState(
+                twoTranchePosition(60L, "ACME", new BigDecimal("20"),
+                        new BigDecimal("100"), new BigDecimal("95")),
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(60L)).thenReturn(List.of(
+                leg(10L, 60L, 1, "ord-1", "stop-1", new BigDecimal("10")),
+                leg(11L, 60L, 2, "ord-2", "stop-2", new BigDecimal("10"))));
+        // Broker holds exactly the surviving tranche, and at the booked entry price, so neither
+        // QTY_SYNC nor ENTRY_PRICE_SYNC runs: withTrim is the only rebuild under test here.
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(filled("stop-1", "ACME", new BigDecimal("10"), new BigDecimal("95")));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).recordTrim(eq(60L), argThatComparesTo("10"), eq(1));
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().brokerStop()).isEqualByComparingTo("93.00");
+        assertThat(survivors.getFirst().entryFilledAt()).isEqualTo("2026-07-01T09:00:00Z");
+        // The trim path hands its own rebuild straight on as the survivor — it does not go through
+        // updateMaintenance — so the survivor IS the withTrim output under assertion here.
+    }
+
+    /** Test 29b, the withQty rebuild. The book-follows-broker quantity sync rebuilds the row too.
+     *  Mutation: pass null instead of p.brokerStop(), p.entryFilledAt() in withQty. */
+    @Test
+    void qtySyncRebuiltPositionPreservesBrokerStopAndEntryFilledAt() {
+        ExecutorPosition p = withFillState(
+                unfilledTranche2Position(61L, "SYNA", new BigDecimal("12")),
+                new BigDecimal("93.00"), "2026-07-01T09:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // Broker holds 6 of the booked 12 at the booked entry price -> QTY_SYNC only.
+        gateway.seedPosition(new BrokerPosition("SYNA", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncQty(61L, new BigDecimal("6"));
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().qty()).isEqualByComparingTo("6");
+        assertThat(survivors.getFirst().brokerStop()).isEqualByComparingTo("93.00");
+        assertThat(survivors.getFirst().entryFilledAt()).isEqualTo("2026-07-01T09:00:00Z");
+        verify(positionRepo).updateMaintenance(eq(61L), any(), any(), anyInt(), any(), isNull(),
+                argThatComparesTo("93.00"));
+    }
+
+    /** Test 29b, the RECONCILE_GONE entry-price-sync rebuild. That copy becomes `effective`, the
+     *  record the close is booked and NOTIFIED from — the only place it is observable from outside,
+     *  and the reason a blanked rebuild there is a real defect rather than dead state.
+     *  Mutation: pass null instead of p.brokerStop(), p.entryFilledAt() at the sync rebuild. */
+    @Test
+    void reconcileGoneSyncRebuiltPositionPreservesBrokerStopAndEntryFilledAt() {
+        ExecutorPosition p = withFillState(
+                openPosition(62L, "SYNG", "BUY", new BigDecimal("100.00"),
+                        new BigDecimal("67.97"), "brk-62", "stop-62", null, null),
+                new BigDecimal("66.00"), "2026-07-01T09:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        // Gone from the broker, but its real fills are in the closed-position history -> the
+        // matched branch syncs the entry price and rebuilds the record it books from.
+        gateway.seedClosedPosition(new BrokerClosedPosition("SYNG", new BigDecimal("61.78"),
+                new BigDecimal("61.53"), new BigDecimal("-0.25"), "sig-1"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).syncEntryPrice(62L, new BigDecimal("61.78"));
+        ArgumentCaptor<ExecutorPosition> booked = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(executorNotifier).notifyExit(booked.capture(), eq("RECONCILE_GONE"), any(), any(), any());
+        assertThat(booked.getValue().entryPrice()).isEqualByComparingTo("61.78");  // the rebuild ran
+        assertThat(booked.getValue().brokerStop()).isEqualByComparingTo("66.00");
+        assertThat(booked.getValue().entryFilledAt()).isEqualTo("2026-07-01T09:00:00Z");
     }
 }

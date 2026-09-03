@@ -1415,7 +1415,9 @@ public class ReconcileService {
      * {@code exit_order_id} is not reported WORKING/PARTIALLY_FILLED. Exit price precedence:
      * the matched filled exit leg's {@code avgFillPrice} (source FILL) → the fill price stamped
      * at submit time, {@code pending_exit_fill_price} (source FILL) → the position's
-     * {@code active_stop} as a last resort (source MARK, no fill data available at all).
+     * {@code active_stop} as a last resort (source MARK_FLATTEN, no fill data available at all —
+     * a flatten cancels the protective leg, so the leg price is deliberately NOT substituted, and
+     * the distinct label keeps these rows out of leg-slippage measurement).
      *
      * <p>{@code openOrders} answers "is the exit still working?" and {@code filledOrders} answers
      * "what did it fill at?" — two different broker views. Reading the fill out of the open-orders
