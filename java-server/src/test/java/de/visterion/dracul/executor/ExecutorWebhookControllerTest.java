@@ -141,7 +141,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), atrShort, atrEff);
+                c.missing(), c.quoteCurrency(), atrShort, atrEff, c.openExposureByMechanism());
     }
 
     /** The ENTER row (the one carrying order_json), out of however many decision_log rows the
@@ -186,7 +186,7 @@ class ExecutorWebhookControllerTest {
                 Map.of(),
                 BigDecimal.ONE,
                 List.of(),
-                "USD", null, new BigDecimal("2"));
+                "USD", null, new BigDecimal("2"), Map.of());
     }
 
     private static EntryContext withMissing(EntryContext c, List<String> missing) {
@@ -194,7 +194,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                missing, c.quoteCurrency(), c.atrShort(), c.atrEff());
+                missing, c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext withOpenPositions(EntryContext c, List<ExecutorPosition> positions) {
@@ -202,7 +202,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), positions, c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext withEntriesThisWeek(EntryContext c, int entriesThisWeek) {
@@ -210,7 +210,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), entriesThisWeek, c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext withPendingSignals(EntryContext c, List<ExecutorSignal> pending) {
@@ -218,7 +218,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 pending, c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext withSignalAge(EntryContext c, long ageTradingDays) {
@@ -226,7 +226,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), ageTradingDays, c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext withTrancheAmount(EntryContext c, BigDecimal trancheAmount) {
@@ -234,7 +234,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), trancheAmount,
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     /** Also raises adv20Notional to keep the LIQUIDITY veto's adv-multiple check satisfied
@@ -249,7 +249,7 @@ class ExecutorWebhookControllerTest {
                 withTranche.activeCooldowns(), withTranche.pendingSignals(), withTranche.entriesThisWeek(),
                 withTranche.signalAgeTradingDays(), withTranche.trancheAmount(), withTranche.totalBudget(),
                 withTranche.openExposure(), withTranche.openHeat(), withTranche.openMechanisms(),
-                withTranche.fxToAccount(), withTranche.missing(), withTranche.quoteCurrency(), withTranche.atrShort(), withTranche.atrEff());
+                withTranche.fxToAccount(), withTranche.missing(), withTranche.quoteCurrency(), withTranche.atrShort(), withTranche.atrEff(), withTranche.openExposureByMechanism());
     }
 
     private static EntryContext withPrice(EntryContext c, BigDecimal price) {
@@ -257,7 +257,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext withPriceAndAtr(EntryContext c, BigDecimal price, BigDecimal atr) {
@@ -265,7 +265,7 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), null, atr);
+                c.missing(), c.quoteCurrency(), null, atr, c.openExposureByMechanism());
     }
 
     private static EntryContext withOpenHeat(EntryContext c, BigDecimal openHeat) {
@@ -273,13 +273,13 @@ class ExecutorWebhookControllerTest {
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), openHeat, c.openMechanisms(), c.fxToAccount(),
-                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff());
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
     private static EntryContext unavailableContext() {
         return new EntryContext(null, null, null, null, null, null, null,
                 List.of(), List.of(), List.of(), 0, -1L, null, null, null, null,
-                Map.of(), BigDecimal.ONE, List.of("price", "atr"), "USD", null, null);
+                Map.of(), BigDecimal.ONE, List.of("price", "atr"), "USD", null, null, Map.of());
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side,
@@ -2357,7 +2357,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("1.399"), base.adv20Notional(), base.dayHigh(), base.candidateSector(),
                 base.openPositions(), base.activeCooldowns(), base.pendingSignals(), base.entriesThisWeek(),
                 base.signalAgeTradingDays(), base.trancheAmount(), base.totalBudget(), base.openExposure(),
-                base.openHeat(), base.openMechanisms(), base.fxToAccount(), base.missing(), base.quoteCurrency(), base.atrShort(), base.atrEff());
+                base.openHeat(), base.openMechanisms(), base.fxToAccount(), base.missing(), base.quoteCurrency(), base.atrShort(), base.atrEff(), base.openExposureByMechanism());
         when(assembler.assemble(any())).thenReturn(withSwingLow);
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-1", "stop-1", "tp-1", "s1", OrderStatus.WORKING));
@@ -4050,7 +4050,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("102"), new BigDecimal("2"), null, new BigDecimal("500000"),
                 new BigDecimal("103"), "TECH", List.of(), List.of(), List.of(), 0, 0L,
                 new BigDecimal("750"), new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO,
-                Map.of(), BigDecimal.ONE, List.of(), "USD", null, new BigDecimal("2"));
+                Map.of(), BigDecimal.ONE, List.of(), "USD", null, new BigDecimal("2"), Map.of());
         when(assembler.assembleForSymbol(any())).thenReturn(ctx);
 
         JsonNode body = json("""

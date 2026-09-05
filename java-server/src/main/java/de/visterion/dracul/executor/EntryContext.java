@@ -40,5 +40,10 @@ public record EntryContext(
          *  stop-distance decision uses: the sizer's stop window, the stop clamp, the sizing call
          *  and the broker-stop buffer. The chase/drift/value-anchor vetos and the LLM's own `atr`
          *  field deliberately stay on {@link #atr()}. */
-        BigDecimal atrEff) {
+        BigDecimal atrEff,
+        /** Account-currency exposure of the open book per mechanism of each position's OWN source
+         *  signal (key upper-cased), plus {@code "UNRESOLVED"} for positions whose source signal or
+         *  mechanism is missing. Same per-position FX rounding as {@link #openExposure()}, so the two
+         *  agree at every cap boundary. Read by the MECHANISM_BUDGET veto (5b). */
+        Map<String, BigDecimal> openExposureByMechanism) {
 }

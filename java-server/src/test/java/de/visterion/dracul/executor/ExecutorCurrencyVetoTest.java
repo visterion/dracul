@@ -34,7 +34,7 @@ class ExecutorCurrencyVetoTest {
                 BigDecimal.valueOf(50), BigDecimal.valueOf(2), null, BigDecimal.valueOf(1_000_000),
                 null, "Tech", List.of(), List.of(), List.of(), 0, 1L, BigDecimal.valueOf(1000),
                 BigDecimal.valueOf(10000), BigDecimal.ZERO, BigDecimal.ZERO, Map.of(),
-                BigDecimal.ONE, List.of(), quoteCurrency, null, BigDecimal.valueOf(2));
+                BigDecimal.ONE, List.of(), quoteCurrency, null, BigDecimal.valueOf(2), Map.of());
     }
 
     private Sizing sizing() {

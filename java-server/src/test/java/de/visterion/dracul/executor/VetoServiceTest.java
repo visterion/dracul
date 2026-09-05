@@ -121,6 +121,7 @@ class VetoServiceTest {
         BigDecimal fxToAccount = BigDecimal.ONE;
         List<String> missing = List.of();
         String quoteCurrency = "USD";
+        Map<String, BigDecimal> openExposureByMechanism = Map.of();
 
         EntryContextBuilder account(AccountSnapshot v) { account = v; return this; }
         EntryContextBuilder price(BigDecimal v) { price = v; return this; }
@@ -138,13 +139,14 @@ class VetoServiceTest {
         EntryContextBuilder openMechanisms(Map<String, String> v) { openMechanisms = v; return this; }
         EntryContextBuilder missing(List<String> v) { missing = v; return this; }
         EntryContextBuilder quoteCurrency(String v) { quoteCurrency = v; return this; }
+        EntryContextBuilder openExposureByMechanism(Map<String, BigDecimal> v) { openExposureByMechanism = v; return this; }
 
         EntryContext build() {
             return new EntryContext(account, price, atr, swingLow, adv20Notional, dayHigh,
                     candidateSector, openPositions, activeCooldowns, pendingSignals,
                     entriesThisWeek, signalAgeTradingDays, trancheAmount, totalBudget,
                     openExposure, openHeat, openMechanisms, fxToAccount, missing, quoteCurrency,
-                    null, atr);
+                    null, atr, openExposureByMechanism);
         }
     }
 

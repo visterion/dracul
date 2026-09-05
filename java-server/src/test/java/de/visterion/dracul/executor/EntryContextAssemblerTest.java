@@ -270,6 +270,45 @@ class EntryContextAssemblerTest {
     }
 
     @Test
+    void openPositions_exposureByMechanismUsesPositionSignalAndFx() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+        // 0.8601 instrument -> account, rounded to 4 places per product like FxService.convert
+        when(fx.convert(any(), anyString(), anyString())).thenAnswer(inv -> {
+            BigDecimal amount = inv.getArgument(0);
+            return amount.multiply(new BigDecimal("0.8601")).setScale(4, java.math.RoundingMode.HALF_UP);
+        });
+
+        ExecutorPosition merger = openPosition("ACME", BigDecimal.TEN, new BigDecimal("100.00"),
+                new BigDecimal("95.00"), "sig-merger");
+        ExecutorPosition pead = openPosition("ACME", BigDecimal.TEN, new BigDecimal("100.00"),
+                new BigDecimal("95.00"), "sig-pead");
+        ExecutorPosition unresolved = openPosition("BETA", BigDecimal.ONE, new BigDecimal("50.00"),
+                new BigDecimal("45.00"), "sig-missing");
+        ExecutorPosition nullQty = openPosition("GAMMA", null, new BigDecimal("50.00"),
+                new BigDecimal("45.00"), "sig-pead");
+        when(positionRepo.findOpen()).thenReturn(List.of(merger, pead, unresolved, nullQty));
+        when(signalRepo.findById("sig-merger")).thenReturn(new ExecutorSignal("sig-merger", "strigoi-merger",
+                "v1", "ACME", "BUY", 0.7, "merger_arb", List.of(), "3m", new BigDecimal("100.00"),
+                "PENDING", "2026-07-01T00:00:00Z"));
+        when(signalRepo.findById("sig-pead")).thenReturn(new ExecutorSignal("sig-pead", "strigoi-echo",
+                "v1", "ACME", "BUY", 0.7, "PEAD", List.of(), "3m", new BigDecimal("100.00"),
+                "PENDING", "2026-07-01T00:00:00Z"));
+        when(signalRepo.findById("sig-missing")).thenReturn(null);
+
+        EntryContext ctx = assembler.assemble(signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.openExposureByMechanism()).containsOnlyKeys("MERGER_ARB", "PEAD", "UNRESOLVED");
+        assertThat(ctx.openExposureByMechanism().get("MERGER_ARB")).isEqualByComparingTo("860.1000");
+        assertThat(ctx.openExposureByMechanism().get("PEAD")).isEqualByComparingTo("860.1000");
+        assertThat(ctx.openExposureByMechanism().get("UNRESOLVED")).isEqualByComparingTo("43.0050");
+        // the buckets are the same numbers openExposure is made of
+        assertThat(ctx.openExposure()).isEqualByComparingTo("1763.2050");
+    }
+
+    @Test
     void tradingDayAge_previousFridayToMonday_isOne() {
         when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
                 new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),

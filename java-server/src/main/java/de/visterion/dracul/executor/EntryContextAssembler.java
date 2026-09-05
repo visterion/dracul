@@ -26,6 +26,7 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -148,16 +149,20 @@ public class EntryContextAssembler {
         BigDecimal openExposure = BigDecimal.ZERO;
         BigDecimal openHeat = BigDecimal.ZERO;
         Map<String, String> openMechanisms = new LinkedHashMap<>();
+        Map<String, BigDecimal> openExposureByMechanism = new LinkedHashMap<>();
         for (ExecutorPosition p : openPositions) {
+            ExecutorSignal source = p.sourceSignalId() != null ? signalRepo.findById(p.sourceSignalId()) : null;
+            String mechanism = source != null && source.mechanism() != null
+                    ? source.mechanism().trim().toUpperCase(Locale.ROOT) : null;
             if (p.qty() != null && p.entryPrice() != null) {
-                BigDecimal exposure = p.qty().multiply(p.entryPrice());
-                openExposure = openExposure.add(fx.convert(exposure, instrumentCurrency, accountCurrency));
+                BigDecimal exposure = fx.convert(p.qty().multiply(p.entryPrice()), instrumentCurrency, accountCurrency);
+                openExposure = openExposure.add(exposure);
+                openExposureByMechanism.merge(mechanism != null ? mechanism : "UNRESOLVED", exposure, BigDecimal::add);
             }
             if (p.qty() != null && p.entryPrice() != null && p.activeStop() != null) {
                 BigDecimal heat = p.qty().multiply(p.entryPrice().subtract(p.activeStop()));
                 openHeat = openHeat.add(fx.convert(heat, instrumentCurrency, accountCurrency));
             }
-            ExecutorSignal source = p.sourceSignalId() != null ? signalRepo.findById(p.sourceSignalId()) : null;
             if (source != null && source.mechanism() != null) {
                 openMechanisms.put(p.symbol(), source.mechanism());
             }
@@ -185,7 +190,8 @@ public class EntryContextAssembler {
                 missing,
                 quoteCurrency,
                 ind.atrShort(),
-                ind.atrEff());
+                ind.atrEff(),
+                openExposureByMechanism);
     }
 
     /**
