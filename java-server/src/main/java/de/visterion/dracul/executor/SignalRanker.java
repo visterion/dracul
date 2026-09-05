@@ -18,9 +18,11 @@ import java.util.Set;
  * <ol>
  *   <li>Signals whose {@code mechanism} is <em>not</em> already represented among the currently
  *       open positions (portfolio diversification -- avoid piling into the same anomaly type).
- *   <li>Confidence, descending.
  *   <li>{@code createdAt}, descending (freshest first -- most remaining runway for
  *       time-decaying anomalies such as PEAD or index-inclusion drift).
+ *   <li>Confidence, descending, as the final tiebreak only. SP2 (2026-09): producer confidence
+ *       proved anti-calibrated against realised outcomes (higher confidence, worse R), so it no
+ *       longer decides which signal the LLM sees first and is withheld from the payload entirely.
  * </ol>
  *
  * <p>Pure and stateless: no I/O, no repository access. The caller assembles {@code openMechanisms}
@@ -40,10 +42,10 @@ public class SignalRanker {
                     heldMechanisms.contains(a.mechanism()), heldMechanisms.contains(b.mechanism()));
             if (byNovelty != 0) return byNovelty;
 
-            int byConfidence = compareConfidenceDesc(a.confidence(), b.confidence());
-            if (byConfidence != 0) return byConfidence;
+            int byCreatedAt = compareCreatedAtDesc(a.createdAt(), b.createdAt());
+            if (byCreatedAt != 0) return byCreatedAt;
 
-            return compareCreatedAtDesc(a.createdAt(), b.createdAt());
+            return compareConfidenceDesc(a.confidence(), b.confidence());
         });
         return ranked;
     }
