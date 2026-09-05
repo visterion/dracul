@@ -557,7 +557,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(17);
+        assertThat(vetoResults.size()).isEqualTo(18);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -727,7 +727,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("NO_STOP");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(17);
+        assertThat(log.vetoResults().size()).isEqualTo(18);
     }
 
     // -------------------------------------------------------------------
@@ -1036,7 +1036,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("TRANCHE_TOO_SMALL");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(17);
+        assertThat(log.vetoResults().size()).isEqualTo(18);
     }
 
     @Test
@@ -1258,7 +1258,7 @@ class ExecutorWebhookControllerTest {
 
         JsonNode vetoResults = log.vetoResults();
         assertThat(vetoResults.isArray()).isTrue();
-        assertThat(vetoResults.size()).isEqualTo(17);
+        assertThat(vetoResults.size()).isEqualTo(18);
         for (JsonNode v : vetoResults) {
             assertThat(v.has("check")).isTrue();
             assertThat(v.has("passed")).isTrue();
@@ -1373,7 +1373,7 @@ class ExecutorWebhookControllerTest {
         assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
         assertThat(log.orderJson()).isNull();
         assertThat(log.inputsSnapshot()).isNotNull();
-        assertThat(log.vetoResults().size()).isEqualTo(17);
+        assertThat(log.vetoResults().size()).isEqualTo(18);
     }
 
     @Test

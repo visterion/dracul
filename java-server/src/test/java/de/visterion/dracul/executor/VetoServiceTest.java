@@ -11,7 +11,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Full 17-veto catalog (incl. CURRENCY_MISMATCH + PATTERN_GATE) + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
+ * Full 18-veto catalog (incl. CURRENCY_MISMATCH + PATTERN_GATE + MECHANISM_BUDGET) + DATA_UNAVAILABLE pre-veto. {@link #ctx()}/{@link #sizing()}/
  * {@link #cfg()} return pass-everything defaults; each test perturbs exactly what it needs to
  * exercise one veto boundary.
  */
@@ -78,6 +78,13 @@ class VetoServiceTest {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
                 BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0, "USD", MechanismBudget.none());
     }
+
+    private VetoConfig cfgWithBudget(String spec, int maxPositions) {
+        return new VetoConfig(0.6, maxPositions, BigDecimal.valueOf(10000), 0.06, 3,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD", new MechanismBudget(spec));
+    }
+
+    private static final String MERGER_SPEC = "MERGER_ARB:0.20,QUALITY_52W_LOW:0.15";
 
     private VetoResult named(VetoService.Outcome out, String check) {
         return out.results().stream().filter(v -> v.check().equals(check)).findFirst().orElseThrow();
@@ -173,7 +180,7 @@ class VetoServiceTest {
 
         assertThat(outcome.passed()).isTrue();
         assertThat(outcome.firstFailure()).isNull();
-        assertThat(outcome.results()).hasSize(17);
+        assertThat(outcome.results()).hasSize(18);
         assertThat(outcome.results()).allMatch(VetoResult::passed);
         assertThat(outcome.contradictingSignalId()).isNull();
     }
@@ -872,9 +879,9 @@ class VetoServiceTest {
         EntryContext ctx = ctx().entriesThisWeek(3).build(); // fails PACE_LIMIT
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(outcome.results()).hasSize(17);
-        assertThat(outcome.results().get(15).check()).isEqualTo("PACE_LIMIT");
-        assertThat(outcome.results().get(16).check()).isEqualTo("CURRENCY_MISMATCH");
+        assertThat(outcome.results()).hasSize(18);
+        assertThat(outcome.results().get(16).check()).isEqualTo("PACE_LIMIT");
+        assertThat(outcome.results().get(17).check()).isEqualTo("CURRENCY_MISMATCH");
     }
 
     @Test
@@ -894,8 +901,8 @@ class VetoServiceTest {
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
 
         List<String> expectedOrder = List.of("SCHEMA_INVALID", "LOW_CONFIDENCE", "SIGNAL_EXPIRED",
-                "COOLDOWN", "MAX_POSITIONS", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
-                "CONTRADICTION", "REDUNDANCY", "PATTERN_GATE", "LIQUIDITY", "CHASED_AWAY",
+                "COOLDOWN", "MAX_POSITIONS", "MECHANISM_BUDGET", "BUDGET", "HEAT_LIMIT", "CONCENTRATION",
+                "CORRELATED", "CONTRADICTION", "REDUNDANCY", "PATTERN_GATE", "LIQUIDITY", "CHASED_AWAY",
                 "BELOW_ANCHOR", "PACE_LIMIT", "CURRENCY_MISMATCH");
         List<String> actualOrder = outcome.results().stream().map(VetoResult::check).toList();
 
@@ -1206,5 +1213,130 @@ class VetoServiceTest {
         VetoResult heat = named(outcome, "HEAT_LIMIT");
         assertThat(heat.passed()).as("590 <= 600 on LOGICAL risk").isTrue();
         assertThat(outcome.firstFailure()).isNotEqualTo(RejectReason.HEAT_LIMIT);
+    }
+
+    // ---- MECHANISM_BUDGET (5b) ----
+
+    @Test
+    void mechanismBudgetFailsWhenHeldPlusTrancheExceedsCap() {
+        var ctx = ctx().openExposureByMechanism(Map.of("MERGER_ARB", new BigDecimal("3864.77"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isFalse();
+        assertThat(named(out, "MECHANISM_BUDGET").measured())
+                .isEqualTo("MERGER_ARB 3864.77 + 1000.00 > entry cap 2000.00 (20% of 10000.00)");
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.MECHANISM_BUDGET);
+    }
+
+    @Test
+    void mechanismBudgetPassesAtExactCap() {
+        var ctx = ctx().openExposureByMechanism(Map.of("MERGER_ARB", new BigDecimal("1000.00"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isTrue();
+        assertThat(named(out, "MECHANISM_BUDGET").measured())
+                .isEqualTo("MERGER_ARB 1000.00 + 1000.00 <= entry cap 2000.00 (20% of 10000.00)");
+    }
+
+    @Test
+    void mechanismBudgetIgnoresOtherMechanisms() {
+        var ctx = ctx().openExposureByMechanism(Map.of("PEAD", new BigDecimal("9000.00"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(out, "MECHANISM_BUDGET").measured())
+                .isEqualTo("MERGER_ARB 0.00 + 1000.00 <= entry cap 2000.00 (20% of 10000.00)");
+    }
+
+    @Test
+    void mechanismBudgetSkipsUnlistedMechanism() {
+        var out = vetoService.evaluate(signal(), ctx().build(), sizing(), cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isTrue();
+        assertThat(named(out, "MECHANISM_BUDGET").measured()).isEqualTo("no cap for PEAD");
+    }
+
+    @Test
+    void mechanismBudgetReportsUnresolved() {
+        var ctx = ctx().openExposureByMechanism(Map.of(
+                "MERGER_ARB", new BigDecimal("500.00"), "UNRESOLVED", new BigDecimal("928.38"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isTrue();
+        assertThat(named(out, "MECHANISM_BUDGET").measured())
+                .isEqualTo("MERGER_ARB 500.00 + 1000.00 <= entry cap 2000.00 (20% of 10000.00); unresolved: 928.38");
+    }
+
+    @Test
+    void mechanismBudgetIsCaseInsensitiveOnTheMap() {
+        var ctx = ctx().openExposureByMechanism(Map.of("MERGER_ARB", new BigDecimal("3000.00"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("merger_arb").build(), ctx, sizing(),
+                cfgWithBudget("merger_arb:0.2", 8));
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isFalse();
+    }
+
+    @Test
+    void mechanismBudgetPrecedenceAfterMaxPositions() {
+        List<ExecutorPosition> eight = java.util.Collections.nCopies(8, position("X", "Tech"));
+        var ctx = ctx().openPositions(eight)
+                .openExposureByMechanism(Map.of("MERGER_ARB", new BigDecimal("3864.77"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.MAX_POSITIONS);
+        assertThat(named(out, "MECHANISM_BUDGET").passed()).isFalse();
+    }
+
+    @Test
+    void mechanismBudgetPrecedesBudget() {
+        var ctx = ctx().account(new AccountSnapshot(BigDecimal.valueOf(100), BigDecimal.valueOf(100), "USD"))
+                .openExposureByMechanism(Map.of("MERGER_ARB", new BigDecimal("3864.77"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(out.firstFailure()).isEqualTo(RejectReason.MECHANISM_BUDGET);
+        assertThat(named(out, "BUDGET").passed()).isFalse();
+    }
+
+    @Test
+    void mechanismBudgetTracesPassWhenSchemaInvalid() {
+        var blank = vetoService.evaluate(signalBuilder().mechanism("").build(), ctx().build(), sizing(),
+                cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(blank, "MECHANISM_BUDGET").passed()).isTrue();
+        assertThat(named(blank, "MECHANISM_BUDGET").measured()).isEqualTo("not evaluated (schema invalid)");
+        assertThat(blank.firstFailure()).isEqualTo(RejectReason.SCHEMA_INVALID);
+
+        var nul = vetoService.evaluate(null, ctx().build(), sizing(), cfgWithBudget(MERGER_SPEC, 8));
+        assertThat(named(nul, "MECHANISM_BUDGET").measured()).isEqualTo("not evaluated (schema invalid)");
+    }
+
+    @Test
+    void mechanismBudgetNonRoundSharePercentFormat() {
+        var ctx = ctx().openExposureByMechanism(Map.of("MERGER_ARB", new BigDecimal("0.00"))).build();
+        var out = vetoService.evaluate(signalBuilder().mechanism("MERGER_ARB").build(), ctx, sizing(),
+                cfgWithBudget("MERGER_ARB:0.155", 8));
+        assertThat(named(out, "MECHANISM_BUDGET").measured())
+                .isEqualTo("MERGER_ARB 0.00 + 1000.00 <= entry cap 1550.00 (15.5% of 10000.00)");
+    }
+
+    @Test
+    void vetoCatalogOrderAfterHoist() {
+        var out = vetoService.evaluate(signal(), ctx().build(), sizing(), cfg());
+        assertThat(out.results()).extracting(VetoResult::check).containsExactly(
+                "SCHEMA_INVALID", "LOW_CONFIDENCE", "SIGNAL_EXPIRED", "COOLDOWN", "MAX_POSITIONS",
+                "MECHANISM_BUDGET", "BUDGET", "HEAT_LIMIT", "CONCENTRATION", "CORRELATED",
+                "CONTRADICTION", "REDUNDANCY", "PATTERN_GATE", "LIQUIDITY", "CHASED_AWAY",
+                "BELOW_ANCHOR", "PACE_LIMIT", "CURRENCY_MISMATCH");
+        assertThat(named(out, "BUDGET").measured()).contains("cash ").contains("; exposure ");
+        assertThat(out.snapshot().budgetFree()).isEqualByComparingTo("9000.00");
+    }
+
+    @Test
+    void lowerFloorLetsAFormerlyTerminalSignalThrough() {
+        // prod MFP 2026-09-02: LOW_CONFIDENCE:FAIL (0.62 < 0.65) under exec-v0.5
+        ExecutorSignal s = new ExecutorSignal("sig-1", "strigoi-test", "v1", "ACME", "LONG", 0.62, "PEAD",
+                List.of("Close below 90.00"), "20d", BigDecimal.valueOf(50), "PENDING", "2026-07-08T00:00:00Z");
+        VetoConfig old = new VetoConfig(0.65, 5, BigDecimal.valueOf(10000), 0.06, 3,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD", MechanismBudget.none());
+        VetoConfig neu = new VetoConfig(0.40, 5, BigDecimal.valueOf(10000), 0.06, 3,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD", MechanismBudget.none());
+        assertThat(vetoService.evaluate(s, ctx().build(), sizing(), old).firstFailure()).isEqualTo(RejectReason.LOW_CONFIDENCE);
+        assertThat(vetoService.evaluate(s, ctx().build(), sizing(), neu).passed()).isTrue();
     }
 }

@@ -20,7 +20,7 @@ import java.util.Set;
  * Code-enforced pre-trade vetos ("Garantien in Code"). Pure and deterministic — no I/O, no clock.
  * The LLM's judgment never overrides these.
  *
- * <p>{@link #evaluate} runs the full 17-veto catalog against an assembled {@link EntryContext},
+ * <p>{@link #evaluate} runs the full 18-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
  * mandatory upstream data was missing at assembly time.
  */
@@ -156,12 +156,46 @@ public class VetoService {
         results.add(new VetoResult("MAX_POSITIONS", capacityOk, maxPositionsMeasured));
         if (!capacityOk && firstFailure == null) firstFailure = RejectReason.MAX_POSITIONS;
 
-        // 6 BUDGET + 7 HEAT_LIMIT — all account ccy; shared arithmetic with
-        // ExecutorWebhookController.addTranche via CapitalBounds so the two capital-bounds
-        // enforcement points can never silently drift apart.
+        // Shared capital arithmetic for 5b, 6 and 7 (hoisted: 5b needs the same tranche as BUDGET).
         CapitalBounds.Result bounds = CapitalBounds.check(ctx.account(), ctx.openExposure(),
                 ctx.openHeat(), sizing.newRiskAccountCcy(), cfg.totalBudget(), cfg.trancheCount(),
                 cfg.heatPct());
+
+        // 5b MECHANISM_BUDGET — new-entry exposure per mechanism, account ccy. Entry cap only:
+        // add_tranche is deliberately not gated (SP1's R_CONFIRMED rule). Transient like
+        // MAX_POSITIONS. Sits before the terminal checks; a signal that is both over the cap and
+        // e.g. CORRELATED reports MECHANISM_BUDGET on this row (see RejectReason Javadoc).
+        boolean mechanismOk = true;
+        String mechanismMeasured;
+        if (!schemaOk) {
+            mechanismMeasured = "not evaluated (schema invalid)";
+        } else {
+            String m = signal.mechanism();
+            var share = cfg.mechanismBudget().shareFor(m);
+            if (share.isEmpty()) {
+                mechanismMeasured = "no cap for " + m;
+            } else {
+                BigDecimal cap = cfg.totalBudget().multiply(BigDecimal.valueOf(share.get()));
+                BigDecimal held = ctx.openExposureByMechanism()
+                        .getOrDefault(m.trim().toUpperCase(Locale.ROOT), BigDecimal.ZERO);
+                BigDecimal after = held.add(bounds.trancheAccountCcy());
+                mechanismOk = after.compareTo(cap) <= 0;
+                String pct = BigDecimal.valueOf(share.get()).movePointRight(2).stripTrailingZeros().toPlainString() + "%";
+                mechanismMeasured = m + " " + fmt2(held) + " + " + fmt2(bounds.trancheAccountCcy())
+                        + (mechanismOk ? " <= " : " > ") + "entry cap " + fmt2(cap)
+                        + " (" + pct + " of " + fmt2(cfg.totalBudget()) + ")";
+                BigDecimal unresolved = ctx.openExposureByMechanism().get("UNRESOLVED");
+                if (unresolved != null && unresolved.signum() != 0) {
+                    mechanismMeasured += "; unresolved: " + fmt2(unresolved);
+                }
+            }
+        }
+        results.add(new VetoResult("MECHANISM_BUDGET", mechanismOk, mechanismMeasured));
+        if (!mechanismOk && firstFailure == null) firstFailure = RejectReason.MECHANISM_BUDGET;
+
+        // 6 BUDGET + 7 HEAT_LIMIT — all account ccy; shared arithmetic with
+        // ExecutorWebhookController.addTranche via CapitalBounds so the two capital-bounds
+        // enforcement points can never silently drift apart.
         boolean budgetOk = bounds.budgetOk();
         BigDecimal cash = ctx.account() != null ? ctx.account().cash() : BigDecimal.ZERO;
         BigDecimal exposureAfter = ctx.openExposure().add(bounds.trancheAccountCcy());
