@@ -23,6 +23,14 @@ class ExecutorDefaults {
         return Clock.systemUTC();
     }
 
+    /** Parsed once; injected into ExecutorWebhookController (VetoConfig) and RuleVersionProvider
+     *  (audit params) so the key is read exactly once and the two cannot drift. */
+    @Bean
+    MechanismBudget mechanismBudget(
+            @Value("${dracul.executor.mechanism-budget-pct:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15}") String spec) {
+        return new MechanismBudget(spec);
+    }
+
     @Bean
     AgentDefaultProvider executorAgentDefaults(
             ObjectMapper mapper,

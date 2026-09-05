@@ -11,10 +11,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RejectReasonTest {
 
-    /** The exact set of temporary capacity/rate vetos whose signal stays PENDING for retry. */
+    /** The exact set of capacity/rate vetos that leave the signal PENDING for the current run
+     *  (place_entry does not retire it; the LLM's submit_decision SKIP normally does, see
+     *  RejectReason's Javadoc — in-executor deferral is SP2b). */
     private static final Set<RejectReason> EXPECTED_TRANSIENT = EnumSet.of(
             RejectReason.PACE_LIMIT,
             RejectReason.MAX_POSITIONS,
+            RejectReason.MECHANISM_BUDGET,
             RejectReason.BUDGET,
             RejectReason.HEAT_LIMIT,
             RejectReason.COOLDOWN,
@@ -26,6 +29,11 @@ class RejectReasonTest {
         assertThat(reason.isTransient())
                 .as("isTransient() for " + reason)
                 .isEqualTo(EXPECTED_TRANSIENT.contains(reason));
+    }
+
+    @Test
+    void mechanismBudgetIsTransient() {
+        assertThat(RejectReason.MECHANISM_BUDGET.isTransient()).isTrue();
     }
 
     @Test

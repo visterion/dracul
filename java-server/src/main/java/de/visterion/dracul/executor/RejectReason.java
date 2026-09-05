@@ -5,8 +5,8 @@ import java.util.Set;
 
 /**
  * Code-enforced rejection reasons. Slice 1 wired SCHEMA_INVALID, LOW_CONFIDENCE, MAX_POSITIONS.
- * The full 17-veto catalog (Task 5 + the CURRENCY_MISMATCH currency guard + the T3.3 PATTERN_GATE)
- * adds the entry-completeness vetos plus the DATA_UNAVAILABLE
+ * The full 18-veto catalog (Task 5 + the CURRENCY_MISMATCH currency guard + the T3.3 PATTERN_GATE
+ * + the SP2 MECHANISM_BUDGET cap) adds the entry-completeness vetos plus the DATA_UNAVAILABLE
  * pre-veto that short-circuits evaluation when {@code EntryContext.missing()} is non-empty, and
  * the BELOW_ANCHOR anchor guard that rejects entries on the invalidating side of the reference
  * price anchor.
@@ -24,6 +24,9 @@ public enum RejectReason {
     LOW_CONFIDENCE,
     COOLDOWN,
     MAX_POSITIONS,
+    /** New-entry exposure in the signal's mechanism plus one tranche would exceed the mechanism's
+     *  configured share of the total budget (SP2, veto 5b, entry cap only — add_tranche is not gated). */
+    MECHANISM_BUDGET,
     BUDGET,
     HEAT_LIMIT,
     CONCENTRATION,
@@ -65,22 +68,18 @@ public enum RejectReason {
     PATTERN_GATE;
 
     /**
-     * Transient = temporary rate/capacity caps. A signal rejected for one of these
-     * reasons is deferred, not disqualified: it stays PENDING and is re-evaluated on
-     * the next executor run once a slot frees up. All other reasons are terminal (the
-     * signal is structurally untradeable). How long a signal may stay deferred is
-     * capped identically for all six transient reasons: SIGNAL_EXPIRED sits at
-     * veto-catalog position #3 (after LOW_CONFIDENCE, BEFORE the transient caps
-     * COOLDOWN/MAX_POSITIONS/BUDGET/HEAT_LIMIT/PATTERN_GATE and in any case before
-     * PACE_LIMIT). A too-old signal therefore gets SIGNAL_EXPIRED as firstFailure —
-     * terminal — once it exceeds maxSignalAgeDays (default 5 trading days), no matter
-     * which cap would otherwise bite. Within the window a transiently vetoed signal
-     * stays PENDING and is retried; afterwards it flips terminally to REJECTED instead
-     * of lying PENDING forever. (Reorder 2026-07-17: SIGNAL_EXPIRED moved from #12 to
-     * #3 so the 5-trading-day cap applies to all transient reasons, not just PACE_LIMIT.)
+     * Transient = temporary rate/capacity caps. {@code place_entry} leaves a signal rejected for one
+     * of these reasons {@code PENDING} for the current run instead of {@code REJECTED}. What happens
+     * next is NOT an in-executor retry: the LLM's {@code submit_decision} normally records a SKIP for
+     * the same signal in the same run and that marks it {@code SKIPPED} (prod, 2026-09: every
+     * MAX_POSITIONS decision ended SKIPPED within the run). The retry that exists today is the
+     * producer's re-emission of the symbol on a later run (PreySignalEmitter suppresses only PENDING
+     * symbols and open positions). Making transient vetoes defer inside the executor is the SP2b
+     * slice. All other reasons are terminal. SIGNAL_EXPIRED sits at catalog #3, ahead of every
+     * transient cap, so a too-old signal is REJECTED regardless of which cap would bite.
      */
     private static final Set<RejectReason> TRANSIENT = EnumSet.of(
-            PACE_LIMIT, MAX_POSITIONS, BUDGET, HEAT_LIMIT, COOLDOWN, PATTERN_GATE);
+            PACE_LIMIT, MAX_POSITIONS, MECHANISM_BUDGET, BUDGET, HEAT_LIMIT, COOLDOWN, PATTERN_GATE);
 
     public boolean isTransient() {
         return TRANSIENT.contains(this);

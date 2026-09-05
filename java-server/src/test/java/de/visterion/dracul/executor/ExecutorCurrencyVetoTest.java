@@ -46,7 +46,7 @@ class ExecutorCurrencyVetoTest {
     /** config instrument-currency = USD. */
     private VetoConfig cfgUsd() {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD");
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD", MechanismBudget.none());
     }
 
     private VetoResult result(VetoService.Outcome out, String check) {

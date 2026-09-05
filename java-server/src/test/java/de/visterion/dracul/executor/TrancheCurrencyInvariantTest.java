@@ -96,7 +96,8 @@ class TrancheCurrencyInvariantTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                java.math.BigDecimal.ONE, new java.math.BigDecimal("0.20"), 0.01, 5, fixedClock);
+                java.math.BigDecimal.ONE, new java.math.BigDecimal("0.20"), 0.01, 5,
+                MechanismBudget.none(), fixedClock);
     }
 
     private JsonNode json(String s) {

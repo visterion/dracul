@@ -161,8 +161,8 @@ public class ExecutorWebhookController {
             PatternRepository patternRepo,
             @Value("${dracul.executor.webhook-token:}") String webhookToken,
             @Value("${dracul.executor.connection:depot-1}") String connection,
-            @Value("${dracul.executor.min-confidence:0.65}") double minConfidence,
-            @Value("${dracul.executor.max-positions:5}") int maxPositions,
+            @Value("${dracul.executor.min-confidence:0.40}") double minConfidence,
+            @Value("${dracul.executor.max-positions:8}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
@@ -186,7 +186,8 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") java.math.BigDecimal brokerStopBufferAtr,
             @Value("${dracul.executor.max-broker-stop-pct:0.20}") java.math.BigDecimal maxBrokerStopPct,
             @Value("${dracul.executor.risk-pct:0.01}") double riskPct,
-            @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod) {
+            @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
+            MechanismBudget mechanismBudget) {
         this(signalRepo, positionRepo, legRepo, decisionRepo, vetoService, orderGuard, gateway, executorIndicators,
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
@@ -194,7 +195,7 @@ public class ExecutorWebhookController {
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
                 entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
                 driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
-                brokerStopBufferAtr, maxBrokerStopPct, riskPct, atrShortPeriod,
+                brokerStopBufferAtr, maxBrokerStopPct, riskPct, atrShortPeriod, mechanismBudget,
                 Clock.systemUTC());
     }
 
@@ -250,6 +251,7 @@ public class ExecutorWebhookController {
             java.math.BigDecimal maxBrokerStopPct,
             double riskPct,
             int atrShortPeriod,
+            MechanismBudget mechanismBudget,
             Clock clock) {
 
         this.signalRepo = signalRepo;
@@ -292,7 +294,7 @@ public class ExecutorWebhookController {
         this.patternRepo = patternRepo;
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
-                trancheCount, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency);
+                trancheCount, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency, mechanismBudget);
     }
 
     // -------------------------------------------------------------------

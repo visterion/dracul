@@ -71,12 +71,12 @@ class VetoServiceTest {
 
     private VetoConfig cfg() {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD");
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD", MechanismBudget.none());
     }
 
     private VetoConfig cfg(int trancheCount) {
         return new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0, "USD");
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0, "USD", MechanismBudget.none());
     }
 
     private VetoResult named(VetoService.Outcome out, String check) {
@@ -93,7 +93,7 @@ class VetoServiceTest {
     @Test
     void vetoConfig_anchorMultipliers_bindInDeclaredOrder() {
         VetoConfig c = new VetoConfig(0.6, 5, BigDecimal.valueOf(10000), 0.06, 3,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, /*drift*/ 0.7, /*value*/ 3.3, "USD");
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, /*drift*/ 0.7, /*value*/ 3.3, "USD", MechanismBudget.none());
         assertThat(c.driftAnchorAtrMult()).isEqualTo(0.7);
         assertThat(c.valueAnchorAtrMult()).isEqualTo(3.3);
     }

@@ -332,8 +332,9 @@ dracul:
     agora-timeout-ms: ${DRACUL_EXECUTOR_AGORA_TIMEOUT_MS:8000}
     webhook-token: ${DRACUL_EXECUTOR_WEBHOOK_TOKEN:}
     schedule: ${DRACUL_EXECUTOR_SCHEDULE:}
-    min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.65}
-    max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:5}
+    min-confidence: ${DRACUL_EXECUTOR_MIN_CONFIDENCE:0.40}
+    max-positions: ${DRACUL_EXECUTOR_MAX_POSITIONS:8}
+    mechanism-budget-pct: ${DRACUL_EXECUTOR_MECHANISM_BUDGET_PCT:MERGER_ARB:0.20,QUALITY_52W_LOW:0.15}
     atr-period: ${DRACUL_EXECUTOR_ATR_PERIOD:22}
     atr-short-period: ${DRACUL_EXECUTOR_ATR_SHORT_PERIOD:5}
     broker-stop-buffer-atr: ${DRACUL_EXECUTOR_BROKER_STOP_BUFFER_ATR:1.0}

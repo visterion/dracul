@@ -129,7 +129,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, heatPct, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                bufferAtr, MAX_BROKER_STOP_PCT, riskPct, 5,
+                bufferAtr, MAX_BROKER_STOP_PCT, riskPct, 5, MechanismBudget.none(),
                 fixedClock);
     }
 
@@ -387,7 +387,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a lower LIQUIDITY min-price
@@ -403,7 +403,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, minPrice, 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but wired with the REAL
@@ -419,7 +419,7 @@ class ExecutorWebhookControllerTest {
                 "tkn", "depot-1", 0.6, 3, 22, 20, 10,
                 new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
                 2, 3, 72, 2, 0.0, 3.0, "USD",
-                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, fixedClock);
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, MechanismBudget.none(), fixedClock);
     }
 
     /** Builds a controller identical to {@link #controller} but with a caller-supplied
