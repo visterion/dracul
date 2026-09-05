@@ -848,7 +848,8 @@ reasons (`RejectReason.isTransient()`): `place_entry` leaves the signal
 re-emission of the symbol on a later run — the LLM's own `submit_decision`
 SKIP would instead mark it `SKIPPED` in the same run. It stays `PENDING`
 until it either passes or hits `SIGNAL_EXPIRED` (max signal age, default 5
-trading days).
+trading days). Making transient vetoes defer
+inside the executor is a later slice (SP2b).
 
 **Recovering from a bad gate.** If a gate turns out to be mistranslated or too
 broad, the operator has two levers: deactivate the whole pattern (`reject`/

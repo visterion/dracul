@@ -2195,7 +2195,7 @@ and for order-guard rejections it is the veto trace plus an
 | `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.40`) |
 | `COOLDOWN` | `VetoService` | Any active `cooldown` row matches the symbol — a hard block in v1 with no fresh-setup exception (the cooldown's originating mechanism isn't stored, so no rule can safely distinguish "same setup" from "genuinely new"; see `documentation/architecture.md`) |
 | `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
-| `MECHANISM_BUDGET` | `VetoService` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); transient; new entries only |
+| `MECHANISM_BUDGET` | `VetoService` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); transient; new entries only. Making transient vetoes defer inside the executor is a later slice (SP2b) |
 | `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
 | `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
 | `CONCENTRATION` | `VetoService` | Open positions in the candidate's sector (via Agora company-profile lookup, case-insensitive) already ≥ `dracul.executor.max-per-sector` |
