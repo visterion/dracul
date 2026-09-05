@@ -51,7 +51,8 @@ class MechanismBudgetTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "MERGER_ARB", "MERGER_ARB:", ":0.2", "MERGER_ARB:abc", "MERGER_ARB:0",
-            "MERGER_ARB:-0.1", "MERGER_ARB:1.5", "MERGER_ARB:0.2,merger_arb:0.3"})
+            "MERGER_ARB:-0.1", "MERGER_ARB:1.5", "MERGER_ARB:0.2,merger_arb:0.3",
+            "MERGER_ARB:0.2,", ",", "MERGER_ARB:0.2,,X:0.1"})
     void rejectsMalformedSpec(String spec) {
         assertThatThrownBy(() -> new MechanismBudget(spec))
                 .isInstanceOf(IllegalArgumentException.class)

@@ -46,7 +46,7 @@ public final class MechanismBudget {
     private static Map<String, Double> parse(String spec) {
         Map<String, Double> out = new LinkedHashMap<>();
         if (spec.isEmpty()) return out;
-        for (String entry : spec.split(",")) {
+        for (String entry : spec.split(",", -1)) {
             int colon = entry.indexOf(':');
             if (colon < 0) throw bad(entry, "missing ':'");
             String key = entry.substring(0, colon).trim().toUpperCase(Locale.ROOT);
