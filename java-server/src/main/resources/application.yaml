@@ -341,7 +341,7 @@ dracul:
     max-broker-stop-pct: ${DRACUL_EXECUTOR_MAX_BROKER_STOP_PCT:0.20}
     risk-pct: ${DRACUL_EXECUTOR_RISK_PCT:0.01}
     swing-period: ${DRACUL_EXECUTOR_SWING_PERIOD:20}
-    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.5}
+    rule-version: ${DRACUL_EXECUTOR_RULE_VERSION:exec-v0.6}
     chandelier-mult: ${DRACUL_EXECUTOR_CHANDELIER_MULT:3.0}
     giveback-pct: ${DRACUL_EXECUTOR_GIVEBACK_PCT:0.35}
     giveback-active-from-r: ${DRACUL_EXECUTOR_GIVEBACK_ACTIVE_FROM_R:1.5}

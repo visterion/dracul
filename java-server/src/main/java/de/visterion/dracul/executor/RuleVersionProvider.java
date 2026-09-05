@@ -30,15 +30,21 @@ public class RuleVersionProvider {
     private final BigDecimal maxBrokerStopPct;
     private final int atrShortPeriod;
     private final double riskPct;
+    private final double minConfidence;
+    private final int maxPositions;
+    private final MechanismBudget mechanismBudget;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.5}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.6}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
             @Value("${dracul.executor.max-broker-stop-pct:0.20}") BigDecimal maxBrokerStopPct,
             @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
-            @Value("${dracul.executor.risk-pct:0.01}") double riskPct) {
+            @Value("${dracul.executor.risk-pct:0.01}") double riskPct,
+            @Value("${dracul.executor.min-confidence:0.40}") double minConfidence,
+            @Value("${dracul.executor.max-positions:8}") int maxPositions,
+            MechanismBudget mechanismBudget) {
         this.active = active;
         this.repo = repo;
         this.mapper = mapper;
@@ -46,6 +52,9 @@ public class RuleVersionProvider {
         this.maxBrokerStopPct = maxBrokerStopPct;
         this.atrShortPeriod = atrShortPeriod;
         this.riskPct = riskPct;
+        this.minConfidence = minConfidence;
+        this.maxPositions = maxPositions;
+        this.mechanismBudget = mechanismBudget;
     }
 
     @PostConstruct
@@ -58,23 +67,24 @@ public class RuleVersionProvider {
                     .put("cooldown_days", 10)
                     .put("atr_period", 22)
                     .put("soft_confirm_min", 2)
-                    .put("confidence_min", 0.65)
-                    .put("max_positions", 5)
+                    .put("confidence_min", minConfidence)
+                    .put("max_positions", maxPositions)
                     .put("trim_fractions", "0.33,0.5,1.0")
                     .put("entry_gtd_days", 2)
                     .put("kill_criteria_hard", "price-level only")
                     .put("broker_stop_buffer_atr", brokerStopBufferAtr)
                     .put("max_broker_stop_pct", maxBrokerStopPct)
                     .put("atr_short_period", atrShortPeriod)
-                    .put("risk_pct", riskPct);
+                    .put("risk_pct", riskPct)
+                    .put("mechanism_budget_pct", mechanismBudget.spec());
             // seed() only inserts when the version string is NEW, so this text is written once and
-            // is then permanent for exec-v0.5 -- it is the audit record of what this version
+            // is then permanent for exec-v0.6 -- it is the audit record of what this version
             // changed, and prod verification asserts it verbatim.
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "buffered broker stop (monotonic, capped); atr_short with atrEff on stop window, "
-                            + "buffer and chandelier; risk-based sizing with RISK_TOO_WIDE; heat stays "
-                            + "on logical position_risk, position_risk_broker logged only; tranche2 "
-                            + "without NEW_HIGH, gated on entry_filled_at", null, params));
+                    "confidence floor 0.40; confidence withheld from the LLM queue and dropped "
+                            + "from ranking (freshness first); MECHANISM_BUDGET entry cap (MERGER_ARB 20%, "
+                            + "QUALITY_52W_LOW 15% of budget), transient like MAX_POSITIONS; max_positions 8",
+                    null, params));
         }
     }
 
