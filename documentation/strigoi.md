@@ -1349,10 +1349,12 @@ LLM's own request to enter a position is itself re-checked before any broker
 call is made:
 
 - **`VetoService`** (pure, deterministic, no I/O) evaluates every signal
-  against three checks before the agent may act on it: `SCHEMA_INVALID`
-  (missing symbol/direction/confidence), `LOW_CONFIDENCE` (below
-  `dracul.executor.min-confidence`), `MAX_POSITIONS` (open-position count at
-  or above `dracul.executor.max-positions`).
+  against the full veto catalog before the agent may act on it, including
+  `SCHEMA_INVALID` (missing symbol/direction/confidence), `LOW_CONFIDENCE`
+  (below `dracul.executor.min-confidence`), `MAX_POSITIONS` (open-position
+  count at or above `dracul.executor.max-positions`), and `MECHANISM_BUDGET`
+  (the signal's mechanism already at its share of `dracul.executor.
+  total-budget`).
 - **`OrderGuard`** (pure, deterministic) is the final check on the LLM's own
   `place_entry` request: it requires a valid protective stop on the correct
   side of the reference price, a strictly positive quantity, and that the

@@ -2098,9 +2098,9 @@ Priority (highest first):
 1. Mechanism diversity — signals whose `mechanism` is not already
    represented among the currently open positions rank above ones that
    are (avoid piling into the same anomaly type).
-2. `confidence`, descending.
-3. `createdAt`, descending (freshest first — most remaining runway for
+2. `createdAt`, descending (freshest first — most remaining runway for
    time-decaying anomalies such as PEAD or index-inclusion drift).
+3. `confidence`, descending — final tiebreak only.
 
 Each signal is enriched server-side with `atr`/`swing_low` (via
 `ExecutorIndicators`, periods `dracul.executor.atr-period`/`dracul.executor.
@@ -2113,7 +2113,7 @@ for this context — it is fetched once per signal by the controller.
 Response:
 ```json
 { "output": { "signals": [
-  { "signal_id": "...", "symbol": "ACME", "direction": "LONG", "confidence": 0.8,
+  { "signal_id": "...", "symbol": "ACME", "direction": "LONG",
     "mechanism": "...", "kill_criteria": ["..."], "horizon": "3m",
     "atr": 4.2, "swing_low": 138.00, "reference_price": 142.50 }
 ] } }
@@ -2172,7 +2172,7 @@ otherwise the freshly assembled current close (`EntryContext.price()`) — never
 the signal's original, potentially stale, `reference_price`.
 
 Pipeline: signal lookup → `EntryContextAssembler` (single I/O layer: Agora
-indicators/company-profile, FX, account, repos) → `VetoService` (15-veto
+indicators/company-profile, FX, account, repos) → `VetoService` (18-veto
 catalog, preceded by the `DATA_UNAVAILABLE` pre-veto) → `PositionSizer` →
 `OrderGuard` → `AgoraTrading` (only on pass). Every step short-circuits
 before the broker call. On success:
@@ -2192,9 +2192,10 @@ and for order-guard rejections it is the veto trace plus an
 |---|---|---|
 | `DATA_UNAVAILABLE` | `VetoService` (pre-veto) | Mandatory upstream data (account, price, ATR, ADV20 notional, sector, signal age/reference) was missing at `EntryContext` assembly time — short-circuits every other veto; the executor never trades blind |
 | `SCHEMA_INVALID` | `VetoService` / `OrderGuard` | Signal not found; missing `symbol`/`direction`/`confidence`/`kill_criteria`/`mechanism`/`agent_version`; or malformed `side` |
-| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.65`) |
+| `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.40`) |
 | `COOLDOWN` | `VetoService` | Any active `cooldown` row matches the symbol — a hard block in v1 with no fresh-setup exception (the cooldown's originating mechanism isn't stored, so no rule can safely distinguish "same setup" from "genuinely new"; see `documentation/architecture.md`) |
 | `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
+| `MECHANISM_BUDGET` | `VetoService` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); transient; new entries only |
 | `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
 | `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
 | `CONCENTRATION` | `VetoService` | Open positions in the candidate's sector (via Agora company-profile lookup, case-insensitive) already ≥ `dracul.executor.max-per-sector` |

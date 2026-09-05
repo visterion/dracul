@@ -321,7 +321,7 @@ Three consumers of a gate:
 1. **The `voievod-outcome` completion handler** — the LLM may propose a
    `suggested_gate` on a pattern it curates; an invalid one is dropped (WARN)
    while the rest of the statement/evidence is still persisted.
-2. **`VetoService` (place-entry veto catalog, position #12)** — sits between
+2. **`VetoService` (place-entry veto catalog, position #13)** — sits between
    `REDUNDANCY` and `LIQUIDITY`. Every `ACTIVE` pattern with a non-null gate is
    loaded as an `EnforcedGate`; the first one whose predicate matches the
    candidate signal vetoes the entry with reason `PATTERN_GATE` and detail
@@ -685,37 +685,40 @@ pre-veto below: some fields (`swing_low`, `day_high`) are optional and may
 be `null` without being flagged; every other datum that's absent because an
 upstream call failed is both null/default *and* named in `missing`.
 
-**The 15-veto catalog (`VetoService`, code-enforced, pure/deterministic —
+**The 18-veto catalog (`VetoService`, code-enforced, pure/deterministic —
 the LLM's judgment never overrides these), preceded by a `DATA_UNAVAILABLE`
 pre-veto:**
 
 | # | Veto | Short form |
 |---|---|---|
-| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 15, audited, never trade blind |
+| — | `DATA_UNAVAILABLE` | Pre-veto: mandatory `EntryContext` data missing ⇒ reject before any of the 18, audited, never trade blind |
 | 1 | `SCHEMA_INVALID` | Signal missing symbol/direction/confidence/kill-criteria/mechanism/agent-version |
-| 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.65) |
-| 3 | `COOLDOWN` | Active cooldown on the symbol — hard block in v1, no fresh-setup exception (origin mechanism not stored) |
-| 4 | `MAX_POSITIONS` | Open-position count at cap |
-| 5 | `BUDGET` | Tranche doesn't fit remaining cash / budget headroom |
-| 6 | `HEAT_LIMIT` | Open heat + new risk exceeds `heat-pct` of total budget |
-| 7 | `CONCENTRATION` | Sector already at `max-per-sector` open positions |
-| 8 | `CORRELATED` | Same sector *and* same mechanism as an existing open position (blocks piling into one correlated bet even under the sector cap) |
-| 9 | `CONTRADICTION` | `MERGER_ARB` vs. a drift-style mechanism (`PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW`) on the same symbol, either direction |
-| 10 | `REDUNDANCY` | Same mechanism already open on the symbol |
-| 11 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
-| 12 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
-| 13 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
-| 14 | `BELOW_ANCHOR` | Effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use a tight `drift-anchor-atr-mult` (default `0.0`×ATR) band, value mechanisms use a wide `value-anchor-atr-mult` (default `3.0`×ATR) band |
-| 15 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
+| 2 | `LOW_CONFIDENCE` | Confidence below `dracul.executor.min-confidence` (0.40) |
+| 3 | `SIGNAL_EXPIRED` | Signal age exceeds `max-signal-age-days` |
+| 4 | `COOLDOWN` | Active cooldown on the symbol — hard block in v1, no fresh-setup exception (origin mechanism not stored) |
+| 5 | `MAX_POSITIONS` | Open-position count at cap |
+| 6 | `MECHANISM_BUDGET` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); entry cap only, `add_tranche` is not gated |
+| 7 | `BUDGET` | Tranche doesn't fit remaining cash / budget headroom |
+| 8 | `HEAT_LIMIT` | Open heat + new risk exceeds `heat-pct` of total budget |
+| 9 | `CONCENTRATION` | Sector already at `max-per-sector` open positions |
+| 10 | `CORRELATED` | Same sector *and* same mechanism as an existing open position (blocks piling into one correlated bet even under the sector cap) |
+| 11 | `CONTRADICTION` | `MERGER_ARB` vs. a drift-style mechanism (`PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW`) on the same symbol, either direction |
+| 12 | `REDUNDANCY` | Same mechanism already open on the symbol |
+| 13 | `PATTERN_GATE` | Candidate signal matches an `ACTIVE` curated pattern's enforced gate |
+| 14 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
+| 15 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |
+| 16 | `BELOW_ANCHOR` | Effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use a tight `drift-anchor-atr-mult` (default `0.0`×ATR) band, value mechanisms use a wide `value-anchor-atr-mult` (default `3.0`×ATR) band |
+| 17 | `PACE_LIMIT` | New entries this ISO week at `pace-per-week` |
+| 18 | `CURRENCY_MISMATCH` | Signal/instrument currency does not resolve against the account currency via `FxRates` |
 
-`VetoService.evaluate` always runs and traces all 15 checks (`veto_trace`
+`VetoService.evaluate` always runs and traces all 18 checks (`veto_trace`
 in the `place-entry` response), even after the first failure, except
 where a check is itself gated on schema validity — see the source comments
 in `VetoService` for the exact PASS/FAIL trace semantics of a
 schema-invalid signal. `TRANCHE_TOO_SMALL` (sizer produced zero shares at
 the notional cap) and `RISK_TOO_WIDE` (sizer produced zero shares at the
 risk cap) are code-enforced rejections but sit outside this catalog — both
-are checked by `ExecutorWebhookController` only after all 15 vetos pass,
+are checked by `ExecutorWebhookController` only after all 18 vetos pass,
 since sizing depends on the order price the LLM/context supplies. `MAX_TRANCHE`
 (tranche count already at `dracul.executor.max-tranche` for the symbol) is
 likewise a code-enforced rejection checked separately, inside `add_tranche`
@@ -725,7 +728,7 @@ rather than `place-entry`'s veto pipeline.
 in doubt, fail" — a missing account snapshot, price, ATR, ADV20 notional,
 sector, or (for `place-entry` only) signal reference/age never falls back
 to a stale or default value. Any one of them missing at assembly time
-short-circuits straight to `DATA_UNAVAILABLE`, before any of the 15 vetos
+short-circuits straight to `DATA_UNAVAILABLE`, before any of the 18 vetos
 even run, and is recorded as an audited rejection (`executor_decision` row,
 `missing` fields joined into the reject detail) rather than a silent
 skip or a guessed trade.

@@ -324,6 +324,7 @@ touching executor thresholds, guards, or prompt wording:
 earlier change — only the audit blob was stale, not the enforced veto
 behavior. `exec-v0.4` records the correct `0.65` plus the knobs introduced
 this branch (`trim_fractions`, `entry_gtd_days`, `kill_criteria_hard`).
+SP2 (2026-09) lowered the default to `0.40`; see the exec-v0.6 rule version.
 
 ### Human-confirm gate (deferred to live phase)
 
@@ -839,12 +840,15 @@ see "Long digests are split, not dropped" under Renfield above.
 **Approve = enforce immediately.** Approving a `PENDING` pattern that carries a
 stored `gate` predicate flips it to `ACTIVE` and the gate is enforced on the
 very next signal evaluation — the veto catalog runs `PATTERN_GATE` (position
-#12, after `REDUNDANCY`, before `LIQUIDITY`) against every candidate entry. A
+#13, after `REDUNDANCY`, before `LIQUIDITY`) against every candidate entry. A
 matching signal is vetoed with reason `PATTERN_GATE` and a detail string
 `pattern_gate:<id> (<name>)`. `PATTERN_GATE` is one of the **transient** reject
-reasons (`RejectReason.isTransient()`): a blocked signal is not disqualified —
-it stays `PENDING` and is retried on subsequent executor runs until it either
-passes or hits `SIGNAL_EXPIRED` (max signal age, default 5 trading days).
+reasons (`RejectReason.isTransient()`): `place_entry` leaves the signal
+`PENDING` for this run, and the retry that exists today is the producer's
+re-emission of the symbol on a later run — the LLM's own `submit_decision`
+SKIP would instead mark it `SKIPPED` in the same run. It stays `PENDING`
+until it either passes or hits `SIGNAL_EXPIRED` (max signal age, default 5
+trading days).
 
 **Recovering from a bad gate.** If a gate turns out to be mistranslated or too
 broad, the operator has two levers: deactivate the whole pattern (`reject`/
