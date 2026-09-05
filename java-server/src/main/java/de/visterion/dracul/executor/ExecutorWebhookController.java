@@ -318,7 +318,6 @@ public class ExecutorWebhookController {
             node.put("signal_id", s.signalId());
             node.put("symbol", s.symbol());
             node.put("direction", s.direction());
-            node.put("confidence", s.confidence());
             node.put("mechanism", s.mechanism());
             node.put("kill_criteria", s.killCriteria());
             node.put("horizon", s.horizon());

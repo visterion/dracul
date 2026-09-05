@@ -107,6 +107,24 @@ class ExecutorWebhookControllerTest {
         return controllerWith(bufferAtr, theSizer, theDetector, 0.01, 0.06);
     }
 
+    /** {@link #controllerWith} with an explicit {@link MechanismBudget} and {@code maxPositions} —
+     *  needed by the MECHANISM_BUDGET (veto 5b) tests, which must set both independently of the
+     *  other controller wiring: the budget cap to trip, and a headroom-generous maxPositions so
+     *  MAX_POSITIONS (an earlier, transient veto) never masks it. */
+    private ExecutorWebhookController controller(MechanismBudget mechanismBudget, int maxPositions) {
+        return new ExecutorWebhookController(
+                signalRepo, positionRepo, legRepo, decisionRepo,
+                new VetoService(), new OrderGuard(), gateway, executorIndicators,
+                pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper,
+                assembler, sizer, ranker, tranche2Detector, telegram, executorNotifier,
+                positionContextRepo, patternRepo,
+                "tkn", "depot-1", 0.6, maxPositions, 22, 20, 10,
+                new BigDecimal("10000"), 10, 0.06, 2, new BigDecimal("5"), 200, 5, 1.0, 2, 2,
+                2, 3, 72, 2, 0.0, 3.0, "USD",
+                BUFFER_ONE, MAX_BROKER_STOP_PCT, 0.01, 5, mechanismBudget,
+                fixedClock);
+    }
+
     /** The identity wiring (buffer 0): the bracket then carries the logical stop VERBATIM, so a
      *  test that pins the stop ROUNDING/clamping sequence keeps asserting about rounding and not
      *  about the broker-stop offset, which is a separate concern. */
@@ -266,6 +284,14 @@ class ExecutorWebhookControllerTest {
                 c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
                 c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
                 c.missing(), c.quoteCurrency(), null, atr, c.openExposureByMechanism());
+    }
+
+    private static EntryContext withExposureByMechanism(EntryContext c, Map<String, BigDecimal> openExposureByMechanism) {
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(), c.openMechanisms(), c.fxToAccount(),
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), openExposureByMechanism);
     }
 
     private static EntryContext withOpenHeat(EntryContext c, BigDecimal openHeat) {
@@ -618,6 +644,40 @@ class ExecutorWebhookControllerTest {
         verify(positionRepo, never()).insert(any());
         verify(signalRepo).markStatus("sig-1", "PENDING");
         verify(signalRepo, never()).markStatus("sig-1", "REJECTED");
+    }
+
+    /** The MERGER_ARB mechanism already holds 3864.77 of open exposure and the entry cap is 20 %
+     *  of the 10000 total budget (2000.00); adding one more 1000.00 tranche (totalBudget 10000 /
+     *  trancheCount 10, both this controller's defaults) would push it to 4864.77, past the cap.
+     *  Transient like MAX_POSITIONS: markStatus stays PENDING for the next run. */
+    @Test
+    void placeEntry_mechanismBudget_noBrokerCall() {
+        ExecutorWebhookController c = controller(new MechanismBudget("MERGER_ARB:0.20"), 8);
+        when(signalRepo.findById("sig-1"))
+                .thenReturn(signal("sig-1", 0.9, new BigDecimal("100"), "PENDING", "MERGER_ARB"));
+        when(assembler.assemble(any())).thenReturn(withExposureByMechanism(happyContext(),
+                Map.of("MERGER_ARB", new BigDecimal("3864.77"))));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = c.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("MECHANISM_BUDGET");
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "PENDING");
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        ExecutorDecision decision = captor.getValue();
+        assertThat(decision.rejectReason()).isEqualTo("MECHANISM_BUDGET");
+        assertThat(decision.vetoTrace()).contains(
+                "MECHANISM_BUDGET:FAIL (MERGER_ARB 3864.77 + 1000.00 > entry cap 2000.00 (20% of 10000.00))");
     }
 
     @Test
@@ -2506,8 +2566,26 @@ class ExecutorWebhookControllerTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> first = (Map<String, Object>) signals.get(0);
         assertThat(first.get("symbol")).isEqualTo("ACME");
-        assertThat(first.get("confidence")).isEqualTo(0.8);
         assertThat(first.get("kill_criteria")).isEqualTo(List.of("X"));
+    }
+
+    /** The producer's confidence score must not leak into the LLM's decision-queue payload —
+     *  the LLM reasons from the veto trace and market data, not a re-quoted producer score. */
+    @Test
+    void fetchPendingSignals_omitsConfidence() {
+        when(signalRepo.findPending(50)).thenReturn(List.of(signal("sig-1", 0.8, new BigDecimal("100"))));
+
+        ResponseEntity<?> resp = controller.fetchPendingSignals(BEARER, null);
+
+        Map<String, Object> output = outputOf(resp);
+        List<?> signals = (List<?>) output.get("signals");
+        assertThat(signals).hasSize(1);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> first = (Map<String, Object>) signals.get(0);
+        assertThat(first).doesNotContainKey("confidence");
+        assertThat(first).containsKeys("signal_id", "symbol", "direction", "mechanism",
+                "kill_criteria", "horizon");
     }
 
     @Test
@@ -4127,6 +4205,46 @@ class ExecutorWebhookControllerTest {
         assertThat(decision.brokerOrderId()).isEqualTo("brk-2");
 
         verify(executorNotifier).notifyTranche2(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /** Guard (green before the MECHANISM_BUDGET veto existed, kept deliberately): {@code
+     *  addTranche} is documented (VetoService.java:165-166) as not gated by the mechanism-budget
+     *  cap — SP1's R_CONFIRMED rule already governs tranche-2 eligibility, and add_tranche never
+     *  calls {@code VetoService.evaluate} at all. A budget so tight (1 %) that a fresh entry would
+     *  never clear it must still let a tranche-2 add through untouched. Copy of {@link
+     *  #addTranche_eligible_placesSecondTranche} with an otherwise-crippling MechanismBudget. */
+    @Test
+    void addTranche_isNotGatedByMechanismBudget() {
+        ExecutorWebhookController c = controller(new MechanismBudget("MERGER_ARB:0.01"), 8);
+        when(signalRepo.findById("sig-1"))
+                .thenReturn(signal("sig-1", 0.9, new BigDecimal("100"), "ACCEPTED", "MERGER_ARB"));
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-2", "stop-2", "tp-2", "t2-sig-1", OrderStatus.WORKING));
+
+        JsonNode body = json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """);
+
+        ResponseEntity<?> resp = c.addTranche(BEARER, "run-1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("reason")).isEqualTo("R_CONFIRMED");
+
+        verify(gateway).placeBracket(eq("depot-1"), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decisionCaptor.capture());
+        ExecutorDecision decision = decisionCaptor.getValue();
+        assertThat(decision.accepted()).isTrue();
+        assertThat(decision.rejectReason()).isNotEqualTo("MECHANISM_BUDGET");
+        List<String> trace = decision.vetoTrace();
+        assertThat(trace == null || trace.stream().noneMatch(t -> t.contains("MECHANISM_BUDGET")))
+                .as("add_tranche must never emit a MECHANISM_BUDGET trace line").isTrue();
     }
 
     @Test
