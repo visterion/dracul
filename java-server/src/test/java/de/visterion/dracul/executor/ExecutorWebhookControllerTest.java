@@ -1015,7 +1015,9 @@ class ExecutorWebhookControllerTest {
 
         verifyNoInteractions(gateway);
         verify(positionRepo, never()).insert(any());
-        verify(signalRepo).markStatus("sig-1", "REJECTED");
+        // DATA_UNAVAILABLE is transient (SP3, 2026-09): a missing upstream datum is an outage, not
+        // a verdict, so the signal stays PENDING for a later run instead of going REJECTED.
+        verify(signalRepo).markStatus("sig-1", "PENDING");
     }
 
     @Test

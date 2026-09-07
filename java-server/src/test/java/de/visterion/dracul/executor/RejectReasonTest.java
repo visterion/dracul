@@ -21,7 +21,8 @@ class RejectReasonTest {
             RejectReason.BUDGET,
             RejectReason.HEAT_LIMIT,
             RejectReason.COOLDOWN,
-            RejectReason.PATTERN_GATE);
+            RejectReason.PATTERN_GATE,
+            RejectReason.DATA_UNAVAILABLE);
 
     @ParameterizedTest
     @EnumSource(RejectReason.class)
@@ -55,5 +56,19 @@ class RejectReasonTest {
     void riskTooWideIsTerminal() {
         assertThat(RejectReason.RISK_TOO_WIDE.isTransient()).isFalse();
         assertThat(EXPECTED_TRANSIENT).doesNotContain(RejectReason.RISK_TOO_WIDE);
+    }
+
+    /** A missing upstream datum is an OUTAGE, not a verdict on the signal: an Agora hiccup that
+     *  drops price/ATR/ADV20/sector for one run must not retire a signal the next run could
+     *  evaluate perfectly well. Bounded by SIGNAL_EXPIRED (catalog #3), so a permanently
+     *  data-less instrument still leaves the queue -- it just takes the expiry to do it. */
+    @Test
+    void dataUnavailableIsTransient() {
+        assertThat(RejectReason.DATA_UNAVAILABLE.isTransient()).isTrue();
+    }
+
+    @Test
+    void transientSetHasExactlyEightMembers() {
+        assertThat(EXPECTED_TRANSIENT).hasSize(8);
     }
 }

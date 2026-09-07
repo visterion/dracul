@@ -68,18 +68,27 @@ public enum RejectReason {
     PATTERN_GATE;
 
     /**
-     * Transient = temporary rate/capacity caps. {@code place_entry} leaves a signal rejected for one
-     * of these reasons {@code PENDING} for the current run instead of {@code REJECTED}. What happens
-     * next is NOT an in-executor retry: the LLM's {@code submit_decision} normally records a SKIP for
-     * the same signal in the same run and that marks it {@code SKIPPED} (prod, 2026-09: every
-     * MAX_POSITIONS decision ended SKIPPED within the run). The retry that exists today is the
-     * producer's re-emission of the symbol on a later run (PreySignalEmitter suppresses only PENDING
-     * symbols and open positions). Making transient vetoes defer inside the executor is the SP2b
-     * slice. All other reasons are terminal. SIGNAL_EXPIRED sits at catalog #3, ahead of every
-     * transient cap, so a too-old signal is REJECTED regardless of which cap would bite.
+     * Transient = temporary rate/capacity caps, plus the data outage. {@code place_entry} leaves a
+     * signal rejected for one of these reasons {@code PENDING} for the current run instead of
+     * {@code REJECTED}. What happens next is NOT an in-executor retry: the LLM's
+     * {@code submit_decision} normally records a SKIP for the same signal in the same run and that
+     * marks it {@code SKIPPED} (prod, 2026-09: every MAX_POSITIONS decision ended SKIPPED within
+     * the run). The retry that exists today is the producer's re-emission of the symbol on a later
+     * run (PreySignalEmitter suppresses only PENDING symbols and open positions). Making transient
+     * vetoes defer inside the executor is the SP2b slice. All other reasons are terminal.
+     * SIGNAL_EXPIRED sits at catalog #3, ahead of every transient cap, so a too-old signal is
+     * REJECTED regardless of which cap would bite.
+     *
+     * <p>{@code DATA_UNAVAILABLE} is in this set because <b>a missing upstream datum is an outage,
+     * not a verdict</b>: an Agora hiccup that drops price/ATR/ADV20/sector for one run says nothing
+     * about the signal, and retiring it would throw away a candidate the next run could evaluate.
+     * The cost is stated and accepted: an instrument whose datum is missing PERMANENTLY (no sector,
+     * no ADV20) now stays PENDING until SIGNAL_EXPIRED instead of being rejected at once. That is
+     * bounded by the expiry, and zero prod rows have ever carried this reason.
      */
     private static final Set<RejectReason> TRANSIENT = EnumSet.of(
-            PACE_LIMIT, MAX_POSITIONS, MECHANISM_BUDGET, BUDGET, HEAT_LIMIT, COOLDOWN, PATTERN_GATE);
+            PACE_LIMIT, MAX_POSITIONS, MECHANISM_BUDGET, BUDGET, HEAT_LIMIT, COOLDOWN, PATTERN_GATE,
+            DATA_UNAVAILABLE);
 
     public boolean isTransient() {
         return TRANSIENT.contains(this);
