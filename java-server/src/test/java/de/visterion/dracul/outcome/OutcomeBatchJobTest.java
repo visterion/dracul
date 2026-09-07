@@ -457,4 +457,17 @@ class OutcomeBatchJobTest {
         assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(2.0);
         assertThat(row.hunterLabel()).isTrue();
     }
+
+    @Test
+    void addTrancheRejectRow_producesNoCounterfactual() {
+        // The job selects action='REJECT' only. ADD_TRANCHE_REJECT must therefore never be
+        // handed to it -- pinning the selector, not the row.
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+
+        job.run();
+
+        verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
+        verify(decisionLog, org.mockito.Mockito.never()).findSignalRowsByAction("ADD_TRANCHE_REJECT");
+    }
 }

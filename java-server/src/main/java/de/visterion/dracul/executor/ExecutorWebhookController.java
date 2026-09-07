@@ -604,15 +604,18 @@ public class ExecutorWebhookController {
 
     /** Inserts one rich {@code decision_log} row for a place-entry accept or reject.
      *  {@code confidence} is the LLM's own decision confidence (0..1, optional tool argument),
-     *  persisted as {@code confidence_in_decision} — the executor-side Brier/calibration input. */
+     *  persisted as {@code confidence_in_decision} — the executor-side Brier/calibration input.
+     *  {@code reasoning} is free text explaining the verdict; only the BROKER_ERROR path has one
+     *  today (the broker's own message), every other call site passes null so that
+     *  {@code reasoning IS NOT NULL} keeps meaning "the broker said something". */
     private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
             BigDecimal orderPrice, BigDecimal orderPriceRounded, VetoService.Outcome veto, String action,
-            String reasonCode, ObjectNode orderJson, Double confidence, Instant now) {
+            String reasonCode, ObjectNode orderJson, Double confidence, Instant now, String reasoning) {
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
                 signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
                 inputsSnapshotNode(signal, ctx, orderPrice, orderPriceRounded, veto),
                 vetoResultsNode(veto.results()),
-                action, reasonCode, orderJson, null, confidence,
+                action, reasonCode, orderJson, reasoning, confidence,
                 latencyNode(signal.createdAt(), now), null));
     }
 
@@ -660,6 +663,17 @@ public class ExecutorWebhookController {
                 inputsSnapshotNode(null, ctx, orderPrice, orderPriceRounded, null),
                 vetoResultsNode(synthesised),
                 "ADD_TRANCHE", null, orderJson, null, null, null, null));
+    }
+
+    /** The BROKER_ERROR counterpart of {@link #logAddTrancheDecision}: add-tranche used to write
+     *  only an {@code executor_decision} row on a broker failure, so the audit table the Chronicle
+     *  UI and the daily analysis read had no trace of it at all. */
+    private void logAddTrancheReject(String runId, ExecutorPosition position, String symbol,
+            ObjectNode inputs, String reasoning) {
+        decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
+                position.sourceSignalId(), position.sourceAgent(), null, symbol,
+                inputs, null, "ADD_TRANCHE_REJECT", "BROKER_ERROR", null, reasoning,
+                null, null, null));
     }
 
     // -------------------------------------------------------------------
@@ -827,7 +841,7 @@ public class ExecutorWebhookController {
             // lassen, damit der nächste Executor-Lauf es erneut prüft (Obergrenze: SIGNAL_EXPIRED).
             signalRepo.markStatus(signalId, firstFailure.isTransient() ? "PENDING" : "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
-                    clock.instant());
+                    clock.instant(), null);
 
             // A detected contradiction co-rejects the pending peer — but only when the entering
             // signal is itself terminally out (!isTransient). SIGNAL_EXPIRED (catalog #3) and
@@ -866,7 +880,7 @@ public class ExecutorWebhookController {
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
-                    clock.instant());
+                    clock.instant(), null);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
@@ -889,7 +903,7 @@ public class ExecutorWebhookController {
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
-                    clock.instant());
+                    clock.instant(), null);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
         }
@@ -956,7 +970,7 @@ public class ExecutorWebhookController {
                                 + "/" + maxBrokerCallsPerRun,
                         null, runId, null));
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
-                        "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant());
+                        "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant(), null);
                 return ResponseEntity.ok(Map.of("output",
                         Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
             } else {
@@ -980,7 +994,7 @@ public class ExecutorWebhookController {
             }
             // else: leave PENDING so a corrected retry (this run or a later run) can succeed
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", "BROKER_ERROR", null,
-                    confidence, clock.instant());
+                    confidence, clock.instant(), "broker call failed: " + e.getMessage());
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
         }
@@ -1060,7 +1074,7 @@ public class ExecutorWebhookController {
                 orderJson.put("position_risk_broker", positionRiskBroker(side, qty,
                         orderPriceRounded, brokerStopResult.price(), ctx.fxToAccount()));
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
-                        confidence, clock.instant());
+                        confidence, clock.instant(), null);
             } catch (RuntimeException e) {
                 // Position and signal status are durably persisted — the order is managed.
                 // Only the accepted-audit row(s) are missing; log it, but do not flip the response
@@ -1918,8 +1932,17 @@ public class ExecutorWebhookController {
                 placed = gateway.placeBracket(connection, req);
             }
         } catch (BrokerUnavailableException e) {
+            String reasoning = "broker call failed: " + e.getMessage();
             decisionRepo.insert(new ExecutorDecision(null, position.sourceSignalId(), symbol, false,
-                    "BROKER_ERROR", List.of(), "broker call failed: " + e.getMessage(), null, runId, null));
+                    "BROKER_ERROR", List.of(), reasoning, null, runId, null));
+            // Deliberately NOT action="REJECT": OutcomeBatchJob.processCounterfactuals selects
+            // trigger_type='SIGNAL' AND action='REJECT' and would otherwise turn every tranche
+            // failure into a permanently skipped BROKER_ERROR counterfactual. The accepted case
+            // already writes action="ADD_TRANCHE" (logAddTrancheDecision) for the same reason.
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("position_id", position.id());
+            inputs.put("tranche", position.tranche());
+            logAddTrancheReject(runId, position, symbol, inputs, reasoning);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
         }

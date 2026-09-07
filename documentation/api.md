@@ -2219,6 +2219,10 @@ Every outcome (accepted or rejected) writes one `executor_decision` audit
 row; accepted entries also insert an `executor_position` row and mark the
 source signal `ACCEPTED` (rejections mark it `REJECTED`).
 
+On the `BROKER_ERROR` path, the matching `decision_log` row's `reasoning`
+carries `broker call failed: <message>` (the broker's own error text). Every
+other entry decision — accepted or rejected — still writes `reasoning=null`.
+
 ### `POST /api/executor/tools/submit-decision`
 
 Tool webhook. Records the decisions the LLM made this run for signals and
@@ -2498,7 +2502,7 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | `RISK_TOO_WIDE` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so the sizer computed a zero risk-capped quantity for the second tranche |
 | `HEAT_LIMIT` | Adding this tranche's risk would exceed the heat cap |
 | `BUDGET` | Remaining cash or budget headroom can't cover the tranche |
-| `BROKER_ERROR` | The Agora trading webhook call failed |
+| `BROKER_ERROR` | The Agora trading webhook call failed. Also writes one `decision_log` row with `trigger_type=SIGNAL`, `action=ADD_TRANCHE_REJECT`, `reason_code=BROKER_ERROR`, the broker's message in `reasoning`, `order_json=null` and `inputs_snapshot={position_id, tranche}`. The action is deliberately not `REJECT` — the counterfactual batch selects `action='REJECT'` and would otherwise write a permanently skipped counterfactual for every tranche failure. |
 | `MAX_BROKER_ATTEMPTS` | The signal already has `dracul.executor.max-broker-attempts` (default 3) `BROKER_ERROR` decisions — no further tranche is placed |
 
 Every outcome writes one `executor_decision` audit row (no `submit-decision`

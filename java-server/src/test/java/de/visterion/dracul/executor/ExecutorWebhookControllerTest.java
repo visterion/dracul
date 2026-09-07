@@ -1437,6 +1437,42 @@ class ExecutorWebhookControllerTest {
     }
 
     @Test
+    void placeEntry_brokerError_reasoningCarriesTheBrokerText() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenThrow(new BrokerUnavailableException("agora trading call failed: place_bracket — HTTP 429 Too Many Requests"));
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
+        assertThat(log.reasoning()).startsWith("broker call failed: ");
+        assertThat(log.reasoning()).contains("HTTP 429 Too Many Requests");
+    }
+
+    @Test
+    void placeEntry_vetoReject_stillCarriesNullReasoning() {
+        // Only the broker path has a text to thread; every other call site must keep writing
+        // null, or an analyst reading `reasoning IS NOT NULL` would stop meaning "the broker
+        // said something".
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.05, new BigDecimal("100")));
+
+        controller.placeEntry(BEARER, null, json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().action()).isEqualTo("REJECT");
+        assertThat(logCaptor.getValue().reasonCode()).isEqualTo("LOW_CONFIDENCE");
+        assertThat(logCaptor.getValue().reasoning()).isNull();
+    }
+
+    @Test
     void placeEntry_brokerError_underCap_leavesPending() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
@@ -4205,6 +4241,36 @@ class ExecutorWebhookControllerTest {
         assertThat(decision.brokerOrderId()).isEqualTo("brk-2");
 
         verify(executorNotifier).notifyTranche2(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void addTranche_brokerError_writesAddTrancheRejectDecisionLogRow() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenThrow(new BrokerUnavailableException("agora trading call failed: place_bracket — HTTP 429 Too Many Requests"));
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("BROKER_ERROR");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        // NOT "REJECT": OutcomeBatchJob.processCounterfactuals selects trigger_type='SIGNAL'
+        // AND action='REJECT' and would turn every tranche failure into a permanently skipped
+        // BROKER_ERROR counterfactual.
+        assertThat(log.action()).isEqualTo("ADD_TRANCHE_REJECT");
+        assertThat(log.triggerType()).isEqualTo("SIGNAL");
+        assertThat(log.reasonCode()).isEqualTo("BROKER_ERROR");
+        assertThat(log.reasoning()).startsWith("broker call failed: ");
+        assertThat(log.orderJson()).isNull();
+        assertThat(log.inputsSnapshot().path("position_id").asLong()).isEqualTo(7L);
+        assertThat(log.inputsSnapshot().path("tranche").asInt()).isEqualTo(open.tranche());
     }
 
     /** Guard (green before the MECHANISM_BUDGET veto existed, kept deliberately): {@code
