@@ -22,10 +22,21 @@ public class ExecutorIndicators {
      *        few bars simply has none, which must NOT make the bundle unavailable (see
      *        {@code available} below). Appended last so existing positional constructions of this
      *        record only gain one argument.
+     * @param asOfDate the date of the LAST COMPLETED BAR the reference price came from (Agora's
+     *        {@code asOf}), nullable, and — like {@code atrShort} — deliberately NOT part of
+     *        {@code available}: a symbol whose bundle lacks it must keep its hard trigger and its
+     *        ratchet for the run. Appended last for the same positional reason.
      */
     public record Levels(boolean available, BigDecimal atr, BigDecimal swingLow,
-            BigDecimal referencePrice, BigDecimal atrShort) {
-        static Levels unavailable() { return new Levels(false, null, null, null, null); }
+            BigDecimal referencePrice, BigDecimal atrShort, java.time.LocalDate asOfDate) {
+
+        /** Back-compat: callers that do not carry a bar date. */
+        public Levels(boolean available, BigDecimal atr, BigDecimal swingLow,
+                BigDecimal referencePrice, BigDecimal atrShort) {
+            this(available, atr, swingLow, referencePrice, atrShort, null);
+        }
+
+        static Levels unavailable() { return new Levels(false, null, null, null, null, null); }
 
         /**
          * The ATR every stop-distance decision uses: the WIDER of the long and short window.
@@ -97,11 +108,22 @@ public class ExecutorIndicators {
             else if (label.equals("swing_low")) swingLow = value;
         }
         BigDecimal ref = bd(r, "currentClose");
+        // Guarded parse: Agora sends a plain ISO date, but a malformed or absent value must
+        // degrade to null rather than take the whole bundle down.
+        java.time.LocalDate asOfDate = null;
+        JsonNode asOf = r.path("asOf");
+        if (!asOf.isMissingNode() && !asOf.isNull()) {
+            try {
+                asOfDate = java.time.LocalDate.parse(asOf.asString());
+            } catch (java.time.format.DateTimeParseException e) {
+                asOfDate = null;
+            }
+        }
         // atrShort deliberately does NOT participate: a symbol with too few bars for the short
         // window would otherwise drop out of closeBySymbol and lose hard trigger AND ratchet for
-        // the whole run.
+        // the whole run. asOfDate has the same carve-out.
         boolean available = atrValue != null && ref != null;
-        return new Levels(available, atrValue, swingLow, ref, atrShort);
+        return new Levels(available, atrValue, swingLow, ref, atrShort, asOfDate);
     }
 
     private static BigDecimal bd(JsonNode n, String field) {

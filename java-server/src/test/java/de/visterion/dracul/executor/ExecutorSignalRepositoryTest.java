@@ -121,4 +121,29 @@ class ExecutorSignalRepositoryTest {
         assertThat(repo.findRunIdBySignalId("sig-run-2")).isNull();
         assertThat(repo.findRunIdBySignalId("does-not-exist")).isNull();
     }
+
+    @Test
+    void referenceBarDateAndAtrRoundTrip() {
+        String id = UUID.randomUUID().toString();
+        repo.insert(new ExecutorSignal(id, "strigoi-spin", "v1", "SKIPCO", "BUY", 0.7,
+                "SPINOFF", List.of(), "3m", new java.math.BigDecimal("101.5"), "PENDING", null,
+                null, null, java.time.LocalDate.parse("2026-09-04"), new java.math.BigDecimal("3.100000")));
+
+        var found = repo.findById(id);
+        // Read via getObject(LocalDate.class), never through a Timestamp -- a Timestamp read
+        // would shift the day in a non-UTC JVM.
+        assertThat(found.referenceBarDate()).isEqualTo(java.time.LocalDate.parse("2026-09-04"));
+        assertThat(found.referenceAtr()).isEqualByComparingTo("3.1");
+    }
+
+    @Test
+    void signalsWithoutReferenceInputsRoundTripAsNull() {
+        String id = UUID.randomUUID().toString();
+        repo.insert(new ExecutorSignal(id, "strigoi-spin", "v1", "NOREF", "BUY", 0.7,
+                "SPINOFF", List.of(), "3m", null, "PENDING", null));
+
+        var found = repo.findById(id);
+        assertThat(found.referenceBarDate()).isNull();
+        assertThat(found.referenceAtr()).isNull();
+    }
 }

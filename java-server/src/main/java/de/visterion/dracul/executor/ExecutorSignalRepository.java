@@ -34,10 +34,12 @@ public class ExecutorSignalRepository {
         jdbc.sql("""
                 INSERT INTO executor_signal
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
-                   kill_criteria, horizon, reference_price, status, thesis, prey_id)
+                   kill_criteria, horizon, reference_price, status, thesis, prey_id,
+                   reference_bar_date, reference_atr)
                 VALUES (:signalId, :source, :agentVersion, :symbol, :direction, :confidence, :mechanism,
                         CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status,
-                        CAST(:thesis AS jsonb), CAST(:preyId AS uuid))
+                        CAST(:thesis AS jsonb), CAST(:preyId AS uuid),
+                        :referenceBarDate, :referenceAtr)
                 ON CONFLICT (signal_id) DO NOTHING
                 """)
                 .param("signalId", s.signalId())
@@ -53,6 +55,8 @@ public class ExecutorSignalRepository {
                 .param("status", status)
                 .param("thesis", writeThesis(s.thesis()))
                 .param("preyId", s.preyId())
+                .param("referenceBarDate", s.referenceBarDate())
+                .param("referenceAtr", s.referenceAtr())
                 .update();
     }
 
@@ -117,7 +121,11 @@ public class ExecutorSignalRepository {
                 rs.getString("status"),
                 createdAtObj == null ? null : createdAtObj.toString(),
                 readThesis(rs.getString("thesis")),
-                rs.getString("prey_id"));
+                rs.getString("prey_id"),
+                // getObject(..., LocalDate.class), never a Timestamp: a Timestamp read would shift
+                // the day in a non-UTC JVM, and this date is what the counterfactual walk anchors on.
+                rs.getObject("reference_bar_date", java.time.LocalDate.class),
+                rs.getBigDecimal("reference_atr"));
     }
 
     private String writeJson(List<String> v) {

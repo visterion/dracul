@@ -171,4 +171,38 @@ class ExecutorIndicatorsTest {
 
         assertThat(levels.atrEff()).isEqualByComparingTo("2.5");
     }
+
+    @Test void asOfIsParsedIntoAsOfDate() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_indicators"), any())).thenReturn(json("""
+            {"asOf":"2026-09-04","currentClose":"101.50",
+             "values":[{"label":"atr","available":true,"value":"3.10"},
+                       {"label":"swing_low","available":true,"value":"95.00"}]}
+            """));
+
+        ExecutorIndicators.Levels lv = new ExecutorIndicators(client, mapper).levels("ACME", 22, 20);
+
+        assertThat(lv.asOfDate()).isEqualTo(java.time.LocalDate.parse("2026-09-04"));
+        assertThat(lv.available()).isTrue();
+    }
+
+    /** asOfDate deliberately does NOT participate in `available` -- the same carve-out atrShort
+     *  has. A symbol whose bundle lacks it must keep its hard trigger and its ratchet. */
+    @Test void missingOrMalformedAsOfLeavesAsOfDateNullWithoutAffectingAvailable() {
+        AgoraClient client = Mockito.mock(AgoraClient.class);
+        when(client.callTool(eq("get_indicators"), any())).thenReturn(json("""
+            {"currentClose":"101.50",
+             "values":[{"label":"atr","available":true,"value":"3.10"}]}
+            """));
+        ExecutorIndicators indicators = new ExecutorIndicators(client, mapper);
+        assertThat(indicators.levels("ACME", 22, 20).asOfDate()).isNull();
+        assertThat(indicators.levels("ACME", 22, 20).available()).isTrue();
+
+        when(client.callTool(eq("get_indicators"), any())).thenReturn(json("""
+            {"asOf":"not-a-date","currentClose":"101.50",
+             "values":[{"label":"atr","available":true,"value":"3.10"}]}
+            """));
+        assertThat(indicators.levels("ACME", 22, 20).asOfDate()).isNull();
+        assertThat(indicators.levels("ACME", 22, 20).available()).isTrue();
+    }
 }

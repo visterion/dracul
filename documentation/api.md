@@ -90,7 +90,19 @@ status `PENDING`. Response (200):
 ### `GET /api/executor/signals`
 
 Returns up to 50 pending `ExecutorSignal` rows (same shape as the tool
-webhook's `fetch-pending-signals`, see below).
+webhook's `fetch-pending-signals`, see below), plus two fields the webhook
+payload deliberately does **not** carry:
+
+- `referenceBarDate` — the date of the last completed bar `referencePrice`
+  came from (Agora's `asOf`), or `null`.
+- `referenceAtr` — the ATR over `dracul.executor.atr-period` (22) at emission,
+  or `null`.
+
+Both are written by `PreySignalEmitter` only, under the same availability
+condition as `referencePrice`, and only from migration V49 onward. Signals
+injected by an operator through `POST /api/executor/signals` carry neither, and
+so do all rows written before V49 — which is exactly why neither ever produces
+an `LLM_SKIP` counterfactual.
 
 ### `POST /api/executor/run`
 

@@ -216,4 +216,58 @@ class PreySignalEmitterTest {
 
         verify(signalRepo).insert(any(ExecutorSignal.class));
     }
+
+    @Test
+    void referenceBarDateAndAtrArePersistedWhenLevelsAreAvailable() {
+        stubNoOpenOrPending();
+        when(mapper.map(any(Prey.class))).thenReturn(mapperSignal());
+        when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
+        when(indicators.levels(anyString(), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("3.1"),
+                        new BigDecimal("95"), new BigDecimal("101.5"), new BigDecimal("4.4"),
+                        java.time.LocalDate.parse("2026-09-04")));
+
+        emitter.emit(List.of(samplePrey()));
+
+        ArgumentCaptor<ExecutorSignal> captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(signalRepo).insert(captor.capture());
+        assertThat(captor.getValue().referenceBarDate()).isEqualTo(java.time.LocalDate.parse("2026-09-04"));
+        // The LONG ATR22 window, NOT atrEff: the REJECT path stores ctx.atr() as
+        // inputs_snapshot.atr, and both counterfactual populations must share one definition.
+        assertThat(captor.getValue().referenceAtr()).isEqualByComparingTo("3.1");
+    }
+
+    @Test
+    void unavailableLevelsPersistNeitherReferenceField() {
+        stubNoOpenOrPending();
+        when(mapper.map(any(Prey.class))).thenReturn(mapperSignal());
+        when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
+        when(indicators.levels(anyString(), anyInt(), anyInt()))
+                .thenReturn(ExecutorIndicators.Levels.unavailable());
+
+        emitter.emit(List.of(samplePrey()));
+
+        ArgumentCaptor<ExecutorSignal> captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(signalRepo).insert(captor.capture());
+        assertThat(captor.getValue().referencePrice()).isNull();
+        assertThat(captor.getValue().referenceBarDate()).isNull();
+        assertThat(captor.getValue().referenceAtr()).isNull();
+    }
+
+    @Test
+    void availableLevelsWithoutAnAsOfDatePersistTheAtrButNoBarDate() {
+        stubNoOpenOrPending();
+        when(mapper.map(any(Prey.class))).thenReturn(mapperSignal());
+        when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
+        when(indicators.levels(anyString(), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("3.1"),
+                        new BigDecimal("95"), new BigDecimal("101.5"), null, null));
+
+        emitter.emit(List.of(samplePrey()));
+
+        ArgumentCaptor<ExecutorSignal> captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(signalRepo).insert(captor.capture());
+        assertThat(captor.getValue().referenceBarDate()).isNull();
+        assertThat(captor.getValue().referenceAtr()).isEqualByComparingTo("3.1");
+    }
 }

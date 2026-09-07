@@ -83,9 +83,18 @@ public class PreySignalEmitter {
             }
             ExecutorIndicators.Levels lv = indicators.levels(symbol, atrPeriod, swingPeriod);
             BigDecimal ref = lv.available() ? lv.referencePrice() : null;
+            // Persisted under the SAME availability condition as reference_price, because the
+            // three together are what an LLM_SKIP counterfactual anchors on: without all of them
+            // the outcome batch cannot walk the signal at all (its selector requires both new
+            // columns non-null). atr(), not atrEff(): the REJECT path stores ctx.atr() as
+            // inputs_snapshot.atr, and the two counterfactual populations must share one ATR
+            // definition -- atr_effective is a separate snapshot field.
+            java.time.LocalDate refBarDate = lv.available() ? lv.asOfDate() : null;
+            BigDecimal refAtr = lv.available() ? lv.atr() : null;
             signalRepo.insert(new ExecutorSignal(s.signalId(), s.source(), s.agentVersion(),
                     s.symbol(), s.direction(), s.confidence(), s.mechanism(), s.killCriteria(),
-                    s.horizon(), ref, s.status(), s.createdAt(), s.thesis(), s.preyId()));
+                    s.horizon(), ref, s.status(), s.createdAt(), s.thesis(), s.preyId(),
+                    refBarDate, refAtr));
             pendingSymbols.add(symbol); // guard against duplicate symbols within this batch
             emitted++;
         }
