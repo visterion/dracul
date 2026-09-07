@@ -119,6 +119,40 @@ public class ExecutorDecisionRepository {
                 .list();
     }
 
+    /**
+     * SKIP verdicts the LLM issued without a {@code place_entry}, and whose signal carries the
+     * two counterfactual reference inputs. These rows are invisible to
+     * {@code OutcomeBatchJob.processCounterfactuals}, which reads {@code decision_log} REJECT rows
+     * only: a bare {@code submit_decision} SKIP writes nothing there. 202 of 242 SKIPPED signals
+     * were outside the learning loop for this reason.
+     *
+     * <p>Each predicate earns its place:
+     * <ul>
+     *   <li>{@code reject_reason IS NULL} — a row WITH one is a code-gate reject, not an LLM verdict.</li>
+     *   <li>{@code reference_bar_date/reference_atr IS NOT NULL} — the walk has no anchor without
+     *       them, and pre-V49 rows have neither. Forward-only by decision; no backfill.</li>
+     *   <li>The {@code NOT EXISTS} matches {@code action = 'REJECT'} SPECIFICALLY, mirroring exactly
+     *       what {@code processCounterfactuals} consumes: when place_entry already vetoed the signal
+     *       in the same run, the VETO REASON WINS and the LLM's SKIP is not counted a second time;
+     *       but a signal whose only decision_log row is some other action (e.g. ADD_TRANCHE_REJECT)
+     *       must not fall out of both loops.</li>
+     * </ul>
+     */
+    public List<ExecutorDecision> findSkipsWithoutDecisionLog() {
+        return jdbc.sql("""
+                SELECT d.* FROM executor_decision d
+                JOIN executor_signal s ON s.signal_id = d.signal_id
+                WHERE d.action = 'SKIP' AND d.reject_reason IS NULL AND d.signal_id IS NOT NULL
+                  AND s.reference_bar_date IS NOT NULL AND s.reference_atr IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM decision_log l
+                                  WHERE l.signal_id = d.signal_id
+                                    AND l.trigger_type = 'SIGNAL' AND l.action = 'REJECT')
+                ORDER BY d.created_at ASC
+                """)
+                .query(this::mapRow)
+                .list();
+    }
+
     private ExecutorDecision mapRow(ResultSet rs, int n) throws SQLException {
         Object createdAtObj = rs.getObject("created_at");
         return new ExecutorDecision(

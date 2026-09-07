@@ -120,6 +120,12 @@ predicted realized outcomes (Brier score). No LLM calls, no writes.
 - **Hunter Brier**: `inputs_snapshot.signal_confidence` of the `ENTER`/`REJECT`
   decision row vs. `outcome_log.hunter_label` (triple-barrier label), grouped
   by `outcome_log.source_agent`.
+  **Scope limit (SP3):** `LLM_SKIP` counterfactuals are *not* in the
+  per-hunter Brier score. The query inner-joins `decision_log` for the signal
+  confidence and a `skip:` row has no `decision_log` partner. Bringing LLM
+  skips into the hunter score needs the confidence from `executor_signal` and
+  belongs to the learning-loop slice, not to this one. The executor Brier and
+  the stop-basis table are TRADE/ENTER-scoped and unaffected.
 - Buckets are fixed predicted-confidence deciles `[0-0.5)`, `[0.5-0.6)`,
   `[0.6-0.7)`, `[0.7-0.8)`, `[0.8-0.9)`, `[0.9-1.0]`; only non-empty buckets
   are returned.
@@ -149,7 +155,29 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   `reason_code` (the first failed veto check). `skipped` counts rows with a
   `hypothetical.skipped_reason` set (e.g. missing reference price); means
   (`mean_hypothetical_r_20d`, `mean_hypothetical_r_60d`, `stopped_out_pct`)
-  are computed over the remaining, non-skipped rows only.
+  are computed over the remaining, non-skipped rows only. `n` counts
+  **signals**, not attempts — see the dedupe note below.
+- **`LLM_SKIP`** is the reason code for signals the executor's LLM skipped
+  outright, without a `place_entry` (they write no `decision_log` row, so they
+  were invisible to the batch before SP3). **Overlap rule:** when
+  `place_entry` already vetoed the signal in the same run, the **veto reason
+  wins** and the SKIP is not counted a second time — `LLM_SKIP` never
+  double-counts a vetoed signal. The series **starts at the V49 deploy date**:
+  the counterfactual needs `executor_signal.reference_bar_date` and
+  `reference_atr`, which `PreySignalEmitter` only began persisting then, and
+  the ~202 historical skips are deliberately not backfilled. Signals injected
+  through `POST /api/executor/signals` carry neither field and therefore never
+  produce an `LLM_SKIP` row.
+- **Anchor semantics differ between the two counterfactual populations, on
+  purpose.** A veto-reason row anchors at the **decision** (the price and ATR
+  `place_entry` recomputed that day, stored in `inputs_snapshot`); an
+  `LLM_SKIP` row anchors at **emission** (the price and ATR persisted with the
+  signal, which is the bar that price actually belongs to). For a decision
+  taken on the emission day these coincide; a small minority of signals are
+  decided later and are therefore anchored earlier than their verdict.
+- **Dedupe:** one row per (signal, reason). `place_entry` retries of the same
+  signal used to write one counterfactual per attempt and inflate these
+  counts; `n` is now signals, not attempts.
 - **`caveats`**: three fixed strings, always present, calling out the
   optimistic-fill assumption, the opportunity-cost nature of
   `PACE_LIMIT`/`BUDGET` rejects, and that `reason_code` stats are conditional

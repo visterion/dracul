@@ -46,8 +46,14 @@ class OutcomeBatchJobTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final HypotheticalREngine engine = new HypotheticalREngine();
 
+    private final de.visterion.dracul.executor.ExecutorDecisionRepository executorDecisions =
+            mock(de.visterion.dracul.executor.ExecutorDecisionRepository.class);
+    private final de.visterion.dracul.executor.RuleVersionProvider ruleVersions =
+            mock(de.visterion.dracul.executor.RuleVersionProvider.class);
+
     private final OutcomeBatchJob job = new OutcomeBatchJob(
-            positions, decisionLog, signals, outcomeLog, engine, marketData, mapper);
+            positions, decisionLog, signals, outcomeLog, engine, marketData, mapper,
+            executorDecisions, ruleVersions);
 
     private static BigDecimal bd(String v) { return new BigDecimal(v); }
 
@@ -381,7 +387,7 @@ class OutcomeBatchJobTest {
         when(client.callTool(eq("get_ohlc"), any()))
                 .thenReturn(mapper.readTree(ohlcPayload));
         return new OutcomeBatchJob(positions, decisionLog, signals, outcomeLog, engine,
-                new AgoraMarketData(client), mapper);
+                new AgoraMarketData(client), mapper, executorDecisions, ruleVersions);
     }
 
     private DecisionLog rejectFor(String symbol, String logId, String signalId) {
@@ -456,5 +462,144 @@ class OutcomeBatchJobTest {
         assertThat(row.hypothetical().path("would_have_stopped_out").asBoolean()).isFalse();
         assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(2.0);
         assertThat(row.hunterLabel()).isTrue();
+    }
+
+    // =========================================================================
+    // LLM_SKIP — counterfactual for signals the LLM skipped outright (no place_entry, no
+    // decision_log row). Walked from the persisted reference_bar_date/reference_atr instead of
+    // an inputs_snapshot, keyed on log_id_ref = "skip:" + signal_id.
+    // =========================================================================
+
+    private de.visterion.dracul.executor.ExecutorDecision skipDecision(String signalId, String symbol) {
+        return new de.visterion.dracul.executor.ExecutorDecision(1L, signalId, symbol, false, null,
+                List.of(), "LLM chose to skip", null, "run-1", "2026-09-05 21:00:00.0", "SKIP");
+    }
+
+    private ExecutorSignal skippedSignal(String signalId, String symbol) {
+        return new ExecutorSignal(signalId, "strigoi-spin", "v1", symbol, "BUY", 0.7, "SPINOFF",
+                List.of(), "3m", bd("100"), "SKIPPED", null, null, null,
+                LocalDate.parse("2026-09-04"), bd("2"));
+    }
+
+    private void wireSkip(String signalId, String symbol, ExecutorSignal signal, List<OhlcBar> bars) {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog())
+                .thenReturn(List.of(skipDecision(signalId, symbol)));
+        when(signals.findById(signalId)).thenReturn(signal);
+        when(outcomeLog.isComplete("skip:" + signalId)).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+        when(marketData.dailyOhlcHistory(eq(symbol), anyInt())).thenReturn(bars);
+    }
+
+    /** Rising series starting the day AFTER the anchor bar. */
+    private static List<OhlcBar> risingBarsFrom(LocalDate anchor, int n) {
+        List<OhlcBar> bars = new ArrayList<>();
+        // One bar ON the anchor date, which the walk must EXCLUDE (fetchBarsAfter is strict).
+        bars.add(new OhlcBar(anchor, bd("100"), bd("100"), bd("100"), bd("100"), 1000L));
+        for (int i = 1; i <= n; i++) {
+            BigDecimal px = bd("100").add(bd("1").multiply(BigDecimal.valueOf(i)));
+            bars.add(new OhlcBar(anchor.plusDays(i), px, px, px, px, 1000L));
+        }
+        return bars;
+    }
+
+    @Test
+    void llmSkip_writesCounterfactualKeyedOnTheSignal() {
+        String signalId = "sig-skip-1";
+        wireSkip(signalId, "SKIPCO", skippedSignal(signalId, "SKIPCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        // Keyed on the SIGNAL: a re-sent submit_decision inserting a second SKIP row for the same
+        // signal must upsert this row, not add one. The "skip:" prefix keeps it disjoint from
+        // decision_log.log_id UUIDs in the TEXT UNIQUE column.
+        assertThat(row.logIdRef()).isEqualTo("skip:" + signalId);
+        assertThat(row.kind()).isEqualTo("COUNTERFACTUAL");
+        assertThat(row.reasonCode()).isEqualTo("LLM_SKIP");
+        assertThat(row.symbol()).isEqualTo("SKIPCO");
+        assertThat(row.sourceAgent()).isEqualTo("strigoi-spin");
+        assertThat(row.agentVersion()).isEqualTo("v1");
+        assertThat(row.ruleVersion()).isEqualTo("exec-v0.6");
+        // rPerShare comes from reference_atr (2) via deriveStopAnchor, and the walk starts at the
+        // bar AFTER reference_bar_date -- the anchor-date bar itself is excluded.
+        assertThat(row.hypothetical().path("r_after_20d").isNull()).isFalse();
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
+        assertThat(row.complete()).isTrue();
+    }
+
+    @Test
+    void llmSkip_nullReferencePrice_writesSkippedReason() {
+        String signalId = "sig-skip-2";
+        ExecutorSignal noPrice = new ExecutorSignal(signalId, "strigoi-spin", "v1", "NOPXCO", "BUY",
+                0.7, "SPINOFF", List.of(), "3m", null, "SKIPPED", null, null, null,
+                LocalDate.parse("2026-09-04"), bd("2"));
+        wireSkip(signalId, "NOPXCO", noPrice, risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("skipped_reason").isNull()).isFalse();
+        assertThat(captor.getValue().hypothetical().path("would_have_stopped_out").isNull()).isTrue();
+        assertThat(captor.getValue().complete()).isTrue();
+    }
+
+    @Test
+    void llmSkip_twoDecisionRowsForOneSignal_produceOneOutcomeRow() {
+        String signalId = "sig-skip-3";
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog()).thenReturn(List.of(
+                skipDecision(signalId, "DUPCO"), skipDecision(signalId, "DUPCO")));
+        when(signals.findById(signalId)).thenReturn(skippedSignal(signalId, "DUPCO"));
+        when(outcomeLog.isComplete("skip:" + signalId)).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+        when(marketData.dailyOhlcHistory(eq("DUPCO"), anyInt()))
+                .thenReturn(risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(2)).upsert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(OutcomeLogRow::logIdRef)
+                .containsOnly("skip:" + signalId);
+    }
+
+    @Test
+    void llmSkip_marketDataOutage_leavesTheRowForTheNextNight() {
+        String signalId = "sig-skip-4";
+        wireSkip(signalId, "OUTCO", skippedSignal(signalId, "OUTCO"), List.of());
+        when(marketData.dailyOhlcHistory(eq("OUTCO"), anyInt()))
+                .thenThrow(new de.visterion.dracul.marketdata.MarketDataException(
+                        de.visterion.dracul.marketdata.MarketDataException.Kind.UNAVAILABLE, "provider down"));
+
+        job.run();
+
+        verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
+    }
+
+    @Test
+    void llmSkip_oneBadRowDoesNotAbortTheLoop() {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog()).thenReturn(List.of(
+                skipDecision("sig-bad", "BADCO"), skipDecision("sig-ok", "OKCO")));
+        when(signals.findById("sig-bad")).thenThrow(new IllegalStateException("synthetic failure"));
+        when(signals.findById("sig-ok")).thenReturn(skippedSignal("sig-ok", "OKCO"));
+        when(outcomeLog.isComplete(anyString())).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+        when(marketData.dailyOhlcHistory(eq("OKCO"), anyInt()))
+                .thenReturn(risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().logIdRef()).isEqualTo("skip:sig-ok");
     }
 }

@@ -2,10 +2,13 @@ package de.visterion.dracul.outcome;
 
 import de.visterion.dracul.executor.DecisionLog;
 import de.visterion.dracul.executor.DecisionLogRepository;
+import de.visterion.dracul.executor.ExecutorDecision;
+import de.visterion.dracul.executor.ExecutorDecisionRepository;
 import de.visterion.dracul.executor.ExecutorPosition;
 import de.visterion.dracul.executor.ExecutorPositionRepository;
 import de.visterion.dracul.executor.ExecutorSignal;
 import de.visterion.dracul.executor.ExecutorSignalRepository;
+import de.visterion.dracul.executor.RuleVersionProvider;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
@@ -61,6 +64,8 @@ public class OutcomeBatchJob {
     private final HypotheticalREngine engine;
     private final AgoraMarketData marketData;
     private final ObjectMapper mapper;
+    private final ExecutorDecisionRepository executorDecisions;
+    private final RuleVersionProvider ruleVersions;
 
     /** Per-run tally of counterfactuals whose symbol served no OHLC data at all. Only ever
      *  touched from the single-threaded {@code @Scheduled} run. */
@@ -68,7 +73,8 @@ public class OutcomeBatchJob {
 
     public OutcomeBatchJob(ExecutorPositionRepository positions, DecisionLogRepository decisionLog,
             ExecutorSignalRepository signals, OutcomeLogRepository outcomeLog,
-            HypotheticalREngine engine, AgoraMarketData marketData, ObjectMapper mapper) {
+            HypotheticalREngine engine, AgoraMarketData marketData, ObjectMapper mapper,
+            ExecutorDecisionRepository executorDecisions, RuleVersionProvider ruleVersions) {
         this.positions = positions;
         this.decisionLog = decisionLog;
         this.signals = signals;
@@ -76,6 +82,8 @@ public class OutcomeBatchJob {
         this.engine = engine;
         this.marketData = marketData;
         this.mapper = mapper;
+        this.executorDecisions = executorDecisions;
+        this.ruleVersions = ruleVersions;
     }
 
     @Scheduled(cron = "${dracul.outcome.cron:0 30 22 * * 2-6}")
@@ -315,6 +323,20 @@ public class OutcomeBatchJob {
                         reject.logId(), reject.symbol(), e.getMessage(), e);
             }
         }
+        // LLM SKIPs without a place_entry, processed AFTER the decision_log REJECT rows and with
+        // the same isComplete(logIdRef) skip. They exist because a bare submit_decision SKIP
+        // writes only executor_decision -- 202 of 242 SKIPPED signals were outside the learning
+        // loop. The finder's NOT EXISTS already resolved the overlap: when place_entry vetoed the
+        // signal in the same run, the veto reason wins and the SKIP is not counted again.
+        for (ExecutorDecision skip : executorDecisions.findSkipsWithoutDecisionLog()) {
+            seen++;
+            try {
+                processSkip(skip);
+            } catch (Exception e) {
+                log.warn("outcome batch: LLM_SKIP counterfactual failed for signal {} ({}): {}",
+                        skip.signalId(), skip.symbol(), e.getMessage(), e);
+            }
+        }
         // Countable loss: without this line a batch in which every symbol came back empty looks
         // exactly like a clean batch. The same figure is visible to the operator in the
         // calibration report, where these rows are counted as `skipped` per reason_code.
@@ -412,6 +434,99 @@ public class OutcomeBatchJob {
                 reject.sourceAgent(), reject.sourceAgentVersion(), reject.ruleVersion(),
                 complete);
         outcomeLog.upsert(row);
+    }
+
+    /**
+     * Counterfactual for a signal the LLM skipped outright. Structurally the same walk as
+     * {@link #processReject}, with three deliberate differences:
+     *
+     * <ol>
+     *   <li><b>The inputs come from the SIGNAL, not from an inputs_snapshot</b> — a SKIP without a
+     *       place_entry has no decision_log row at all. {@code reference_atr} is the ATR22 window,
+     *       the same definition the REJECT path stores as {@code inputs_snapshot.atr}.</li>
+     *   <li><b>The anchor is EMISSION, not the decision.</b> The REJECT counterfactual anchors on
+     *       the day place_entry recomputed price and ATR; this one anchors on the bar the persisted
+     *       price actually belongs to. For a decision taken on the emission day — 186 of 202 in the
+     *       current population — that is the same day; the rest are anchored earlier than their
+     *       verdict, which is stated in documentation/api.md rather than papered over.</li>
+     *   <li><b>{@code log_id_ref} keys on the signal</b> ({@code "skip:" + signal_id}), so a re-sent
+     *       submit_decision upserts this row instead of adding one.</li>
+     * </ol>
+     *
+     * <p>Two limitations are shared with the REJECT path and not fixed here (§9 of the spec):
+     * a signal emitted while its exchange is in session carries a partial-bar price and an ATR that
+     * includes that bar, and neither path checks the walked series against the stored price, so a
+     * split between emission and walk yields a wrong R-multiple with {@code skipped = 0}.
+     */
+    private void processSkip(ExecutorDecision skip) {
+        String logIdRef = "skip:" + skip.signalId();
+        if (outcomeLog.isComplete(logIdRef)) return;
+
+        ExecutorSignal signal = signals.findById(skip.signalId());
+        String side = signal != null ? signal.direction() : null;
+        BigDecimal referencePrice = signal != null ? signal.referencePrice() : null;
+        BigDecimal referenceAtr = signal != null ? signal.referenceAtr() : null;
+        LocalDate anchor = signal != null ? signal.referenceBarDate() : null;
+
+        HypotheticalOutcome outcome;
+        boolean complete;
+
+        if (side == null) {
+            outcome = HypotheticalOutcome.skipped("signal direction unresolvable (no signal_id match)");
+            complete = true;
+        } else if (referencePrice == null || referencePrice.signum() <= 0
+                || referenceAtr == null || anchor == null) {
+            outcome = HypotheticalOutcome.skipped("missing reference_price/reference_atr/reference_bar_date");
+            complete = true;
+        } else {
+            BarsAfter fetched;
+            try {
+                fetched = fetchBarsAfter(skip.symbol(), anchor);
+            } catch (MarketDataException e) {
+                // Transient provider outage, not a permanent skip: leave the row untouched so the
+                // next nightly run retries. Same contract as processReject.
+                log.warn("outcome batch: OHLC unavailable for {} (skip {}): {}",
+                        skip.symbol(), logIdRef, e.getMessage());
+                return;
+            }
+            if (fetched.sourceEmpty()) {
+                outcome = HypotheticalOutcome.skipped(
+                        "no OHLC bars available for symbol over the whole lookback");
+                complete = false;   // a data blackout is not a verdict on the signal
+                noDataSymbols++;
+                log.warn("outcome batch: no OHLC bars at all for {} (skip {}) — writing an "
+                        + "explicitly skipped counterfactual, not a stopped-out=false verdict",
+                        skip.symbol(), logIdRef);
+            } else {
+                List<OhlcBar> bars = fetched.after();
+                outcome = engine.walk(side, referencePrice, referenceAtr, null, bars,
+                        resolveHorizon(signal));
+                complete = outcome.skippedReason() != null || bars.size() >= 60;
+            }
+        }
+
+        ObjectNode hypo = mapper.createObjectNode();
+        putOrNull(hypo, "r_after_20d", outcome.rAfter20d());
+        putOrNull(hypo, "r_after_60d", outcome.rAfter60d());
+        // Same honesty rule as processReject: a skipped walk evaluated nothing, so persisting its
+        // placeholder wouldHaveStoppedOut=false would let "we could not look" read as "the stop was
+        // never hit" -- and findVetoRows reads this column with no complete-filter.
+        if (outcome.skippedReason() != null) hypo.putNull("would_have_stopped_out");
+        else hypo.put("would_have_stopped_out", outcome.wouldHaveStoppedOut());
+        if (outcome.skippedReason() != null) hypo.put("skipped_reason", outcome.skippedReason());
+        else hypo.putNull("skipped_reason");
+
+        outcomeLog.upsert(new OutcomeLogRow(
+                "COUNTERFACTUAL", logIdRef, null, skip.symbol(), "LLM_SKIP",
+                null, null, null, null,
+                null, null, null,
+                null, null, null,
+                null, null,
+                hypo, outcome.tripleBarrierLabel(),
+                signal != null ? signal.source() : null,
+                signal != null ? signal.agentVersion() : null,
+                ruleVersions.active(),
+                complete));
     }
 
     /** Bars after the signal date, plus whether the SOURCE served nothing at all.
