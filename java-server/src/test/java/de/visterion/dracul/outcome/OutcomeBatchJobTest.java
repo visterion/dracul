@@ -525,11 +525,38 @@ class OutcomeBatchJobTest {
         assertThat(row.sourceAgent()).isEqualTo("strigoi-spin");
         assertThat(row.agentVersion()).isEqualTo("v1");
         assertThat(row.ruleVersion()).isEqualTo("exec-v0.6");
-        // rPerShare comes from reference_atr (2) via deriveStopAnchor, and the walk starts at the
-        // bar AFTER reference_bar_date -- the anchor-date bar itself is excluded.
-        assertThat(row.hypothetical().path("r_after_20d").isNull()).isFalse();
+        // Stop = deriveStopAnchor("BUY", 100, referenceAtr=2, null) = 100 - 2.5*2 = 95,
+        // rPerShare = 5. The walk starts at the bar AFTER reference_bar_date (2026-09-04): the
+        // anchor-date bar itself (price 100) is excluded, so the 20th walked bar is trading day
+        // 20 after the anchor, price 100+20=120. No bar's low (>= 101) ever reaches the stop
+        // (95), so r_after_20d = (120 - 100) / 5 = 4.0 exactly -- pinning both the ATR used and
+        // the day the walk actually starts on, not just "some non-null number".
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.0);
         assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
         assertThat(row.complete()).isTrue();
+    }
+
+    @Test
+    void llmSkip_walksFromReferenceBarDate_notADifferentAnchor() {
+        // Same fixture as llmSkip_writesCounterfactualKeyedOnTheSignal, but reference_bar_date is
+        // shifted ONE DAY LATER. fetchBarsAfter's filter is strict (date > anchor), so the bar
+        // dated on the (now excluded) old anchor day is dropped too, and the 20th walked bar
+        // becomes trading day 21 after the true 2026-09-04 anchor: price 100+21=121, so
+        // r_after_20d = (121 - 100) / 5 = 4.2 -- a DIFFERENT exact value from the 4.0 above. If
+        // processSkip ever anchored on something other than signal.referenceBarDate() (e.g. the
+        // executor_decision's created_at), this fixture would silently keep producing 4.0.
+        String signalId = "sig-skip-anchor";
+        LocalDate trueAnchor = LocalDate.parse("2026-09-04");
+        ExecutorSignal shiftedAnchor = new ExecutorSignal(signalId, "strigoi-spin", "v1",
+                "ANCHORCO", "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "SKIPPED", null,
+                null, null, trueAnchor.plusDays(1), bd("2"));
+        wireSkip(signalId, "ANCHORCO", shiftedAnchor, risingBarsFrom(trueAnchor, 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.2);
     }
 
     @Test
