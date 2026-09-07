@@ -115,6 +115,35 @@ class DecisionLogRepositoryTest {
         assertThat(t2.runId()).isEqualTo("run-t2");
     }
 
+    /** {@code OutcomeBatchJob.processCounterfactuals} selects exclusively
+     *  {@code findSignalRowsByAction("REJECT")}. An {@code ADD_TRANCHE_REJECT} row must never
+     *  come back from that query, or a tranche-2 broker failure would be handed to the
+     *  counterfactual walk and permanently written as a skipped BROKER_ERROR counterfactual --
+     *  see {@code ExecutorWebhookController.logAddTrancheReject}. */
+    @Test
+    void findSignalRowsByActionRejectExcludesAddTrancheReject() {
+        String rejectSignalId = "sig-" + UUID.randomUUID();
+        String addTrancheRejectSignalId = "sig-" + UUID.randomUUID();
+
+        var reject = new DecisionLog(
+                null, "run-reject", "exec-v0.5", "SIGNAL", rejectSignalId, "strigoi-spin", "v1",
+                "ACME", null, null, "REJECT", "LOW_CONFIDENCE",
+                null, null, 0.1, null, null);
+        repo.insert(reject);
+
+        var addTrancheReject = new DecisionLog(
+                null, "run-t2-reject", "exec-v0.5", "SIGNAL", addTrancheRejectSignalId,
+                "strigoi-spin", null, "ACME", null, null, "ADD_TRANCHE_REJECT", "BROKER_ERROR",
+                null, "broker call failed: synthetic test error", null, null, null);
+        repo.insert(addTrancheReject);
+
+        var rows = repo.findSignalRowsByAction("REJECT");
+
+        assertThat(rows).extracting(DecisionLog::signalId).contains(rejectSignalId);
+        assertThat(rows).extracting(DecisionLog::signalId).doesNotContain(addTrancheRejectSignalId);
+        assertThat(rows).extracting(DecisionLog::action).allMatch("REJECT"::equals);
+    }
+
     @Test
     void nullableJsonAndConfidence() {
         String symbol = "DLOG-" + UUID.randomUUID();
