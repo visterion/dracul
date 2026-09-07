@@ -752,6 +752,50 @@ now demotes that one fingerprint to `DEBUG`. Any other dropped reactor error
 still logs at `ERROR` with its stack trace — if you see one after a deploy, it
 is not this.
 
+### SP3 executor hygiene (2026-09) — what to watch after the deploy
+
+No environment variable changes: `dracul.executor.agora-write-timeout-ms`
+(30000), `dracul.executor.price-sanity-pct` (0.50) and the raised
+`dracul.executor.ratchet-retry-budget-ms` (20000) all default in
+`application.yaml`. Flyway V49 adds two nullable columns to `executor_signal`
+and is additive — rollback is a redeploy of the previous image.
+
+**Before the deploy:** snapshot `GET /api/executor/behavior`. `veto_precision`
+counts change on deploy because the query now returns one row per *signal*
+rather than one per *attempt* — without a snapshot the drop is indistinguishable
+from data loss. Expect roughly: `MAX_POSITIONS` 32 → 28, `COOLDOWN` 16 → 1,
+`PACE_LIMIT` 9 → 7, `HEAT_LIMIT` 4 → 2, `BROKER_ERROR` 14 → 7, others unchanged.
+
+**After the deploy:**
+
+- **`LLM_SKIP` counterfactuals** start accruing from the deploy date, not
+  before: the walk needs `executor_signal.reference_bar_date` and
+  `reference_atr`, which the emitter only began persisting with V49, and the
+  historical skips are deliberately not backfilled. Expect **zero rows on the
+  first night**, then roughly the daily skip flow, with `r_after_20d`
+  populated from the fourth week on. Check after the third nightly batch:
+  `SELECT source_agent, count(*), count(hypothetical->>'r_after_20d') FROM
+  outcome_log WHERE reason_code='LLM_SKIP' GROUP BY 1;`
+- **Reference inputs are populated** on every emitter-produced signal whose
+  `reference_price` is set. Operator injects via `POST /api/executor/signals`
+  carry neither field by design and never produce an `LLM_SKIP` row.
+- **`PRICE_IMPLAUSIBLE`** (`decision_log`, `trigger_type=MAINTENANCE`,
+  `action=ESCALATE`) means the broker reported a market price beyond
+  `price-sanity-pct` on the favourable side of the recorded extreme. The
+  ratchet was skipped and `highest_price`/`mfe_r` were left unchanged — the
+  position is safe, the data is not. **It repeats on every maintenance pass**
+  while the broker keeps reporting the price: that is intentional, so the row
+  cannot scroll out of a daily report. Investigate the quote at the broker;
+  do not raise the band to silence it.
+- **`ADD_TRANCHE_REJECT`** (`decision_log`, `trigger_type=SIGNAL`) is the new
+  audit row for a tranche-2 placement that failed at the broker. The daily
+  analysis script counts it as a failure action, not as evidence that the
+  broker was reachable.
+- **`decision_log.reasoning`** now carries `broker call failed: …` on the
+  `place-entry` `BROKER_ERROR` path and stays `null` on every other entry
+  decision — so `reasoning IS NOT NULL` on a `SIGNAL` row means "the broker
+  said something".
+
 ## Agent budget guard
 
 A scheduled agent without a Vistierie budget silently never runs: Vistierie
