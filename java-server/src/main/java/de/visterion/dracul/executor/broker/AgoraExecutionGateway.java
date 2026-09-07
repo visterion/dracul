@@ -30,24 +30,58 @@ public class AgoraExecutionGateway implements ExecutionGateway {
 
     private static final Logger log = LoggerFactory.getLogger(AgoraExecutionGateway.class);
 
+    /** The four tools that WRITE at the broker. They are the only ones that can sit behind
+     *  Agora's Saxo order-write pacer, which spaces consecutive order writes by ~1.1 s and may
+     *  add one clamped 429 block, so a single tool call can legitimately take far longer than
+     *  a read. Reads must NOT inherit that patience: {@code get_positions}/{@code get_orders}/
+     *  {@code get_closed_positions} run in per-position loops (ReconcileService.java:1602) and a
+     *  hung Agora would cost the whole pass. {@code get_order_by_ref} is a READ that runs before
+     *  place_bracket on the entry path and deliberately stays on the read client. */
+    private static final java.util.Set<String> WRITE_TOOLS =
+            java.util.Set.of("place_bracket", "flatten", "modify_bracket", "cancel_order");
+
     private final String token;
     private final ObjectMapper mapper;
     private final RestClient http;
+    private final RestClient writeHttp;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public AgoraExecutionGateway(
             @Value("${dracul.executor.agora-base-url:http://agora:8080}") String baseUrl,
             @Value("${dracul.executor.agora-trading-token:}") String token,
             ObjectMapper mapper,
-            @Value("${dracul.executor.agora-timeout-ms:8000}") long timeoutMs) {
+            @Value("${dracul.executor.agora-timeout-ms:8000}") long timeoutMs,
+            @Value("${dracul.executor.agora-write-timeout-ms:30000}") long writeTimeoutMs) {
         this.token = token;
         this.mapper = mapper;
+        this.http = client(baseUrl, timeoutMs, timeoutMs);
+        // Connect stays on the SHARED knob: a refused connection says nothing about how long
+        // the pacer will hold the request, and a 30 s connect timeout would only delay the
+        // verdict that Agora is down.
+        this.writeHttp = client(baseUrl, timeoutMs, writeTimeoutMs);
+    }
+
+    /** Back-compat: the write read-timeout defaults to the same 30000 the property does, so
+     *  every existing 4-arg construction (tests, CapturingGateway) keeps its old read behaviour
+     *  and gains the write budget. */
+    public AgoraExecutionGateway(String baseUrl, String token, ObjectMapper mapper, long timeoutMs) {
+        this(baseUrl, token, mapper, timeoutMs, 30000L);
+    }
+
+    private static RestClient client(String baseUrl, long connectMs, long readMs) {
         var requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofMillis(timeoutMs));
-        requestFactory.setReadTimeout(Duration.ofMillis(timeoutMs));
-        this.http = RestClient.builder()
+        requestFactory.setConnectTimeout(Duration.ofMillis(connectMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(readMs));
+        return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory)
                 .build();
+    }
+
+    /** Which of the two clients a tool call goes out on. Package-private so a test can pin the
+     *  membership without reaching through the HTTP layer. */
+    static boolean isWriteTool(String tool) {
+        return WRITE_TOOLS.contains(tool);
     }
 
     @Override
@@ -403,7 +437,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     /** Overridable HTTP seam. Returns the full {"output": ...} envelope. */
     protected JsonNode call(String tool, JsonNode args) {
         try {
-            String body = http.post()
+            String body = (isWriteTool(tool) ? writeHttp : http).post()
                     .uri("/tools/{name}", tool)
                     .header("Authorization", "Bearer " + token)
                     .header("Content-Type", "application/json")

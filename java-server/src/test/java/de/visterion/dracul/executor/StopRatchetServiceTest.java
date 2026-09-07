@@ -964,9 +964,10 @@ class StopRatchetServiceTest {
 
     @Test
     void retryBudget_isSharedAcrossTheWholeRatchetPass() {
-        // The whole ratchet runs inside the 30s fetch_open_positions tool call. The budget is a
-        // wall-clock ceiling over the ENTIRE pass, so a book full of rate-limited positions can
-        // never multiply the retries into a tool timeout. Budget 0 => not one retry anywhere.
+        // The budget is a wall-clock ceiling over the ENTIRE ratchet phase (not the enclosing
+        // tool call — there is no 30 s tool timeout), so a book full of rate-limited positions
+        // can never multiply the retries into an unbounded pass. Default is 20000 ms since SP3;
+        // this test pins the mechanism with budget 0 => not one retry anywhere.
         service = newService(3, 500L, 0L);
         ExecutorPosition a = openPosition(33L, "AAA", "BUY", new BigDecimal("110"),
                 new BigDecimal("95"), new BigDecimal("1.0"), 0);

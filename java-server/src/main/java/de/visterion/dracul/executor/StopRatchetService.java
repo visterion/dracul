@@ -159,12 +159,18 @@ public class StopRatchetService {
     public void ratchet(List<ExecutorPosition> openPositions, Map<String, BigDecimal> atrBySymbol,
             Map<String, BigDecimal> atrShortBySymbol, Map<String, BigDecimal> atrEffBySymbol,
             Map<String, BigDecimal> closeBySymbol, String runId) {
-        // Wall-clock ceiling for ALL retrying in this pass, shared across every position. The
-        // whole ratchet runs inside the agent's 30s fetch_open_positions tool call, so a
-        // per-position budget would multiply with the size of the book into a tool timeout.
-        // It measures elapsed time in the pass, not time spent retrying, so a slow or hung broker
-        // spends the budget on its first attempt and is not retried, while a fast 429 (~1 ms in
-        // production) leaves ample room.
+        // Wall-clock ceiling for ALL retrying in this pass, shared across every position. It is a
+        // monotonic deadline measured from HERE — after reconcile, expiry, the indicator fetch and
+        // the hard triggers — so it bounds the ratchet phase, not the enclosing tool call, and it
+        // measures elapsed time in that phase rather than time spent retrying. There is no 30 s
+        // tool timeout above it to be bounded by (see RetryBudget's Javadoc); the budget is simply
+        // the only ceiling that exists, which is why it is kept.
+        //
+        // Raised 5000 -> 20000 with Agora's Saxo order-write pacer (SP3): the pacer spaces
+        // consecutive order writes by ~1.1 s, so a ten-leg ratchet pass now legitimately spends
+        // ~11 s of wall clock on FIRST attempts alone and a 5000 ms budget would be exhausted
+        // before any retry could be granted. With the pacer the first attempt is expected to
+        // succeed and the budget is never consumed.
         RetryBudget budget = new RetryBudget(retryBudgetMs);
 
         for (ExecutorPosition p : openPositions) {

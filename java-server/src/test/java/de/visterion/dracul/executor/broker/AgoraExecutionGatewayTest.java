@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgoraExecutionGatewayTest {
@@ -715,6 +716,53 @@ class AgoraExecutionGatewayTest {
 
             assertThatThrownBy(() -> gw.account("depot-1"))
                     .isInstanceOf(BrokerUnavailableException.class);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test void isWriteTool_isExactlyTheFourWriteTools() {
+        assertThat(AgoraExecutionGateway.isWriteTool("place_bracket")).isTrue();
+        assertThat(AgoraExecutionGateway.isWriteTool("flatten")).isTrue();
+        assertThat(AgoraExecutionGateway.isWriteTool("modify_bracket")).isTrue();
+        assertThat(AgoraExecutionGateway.isWriteTool("cancel_order")).isTrue();
+
+        // Reads stay on the 8000/8000 client. get_order_by_ref in particular runs BEFORE
+        // place_bracket on the entry path and is a read, not a write.
+        assertThat(AgoraExecutionGateway.isWriteTool("get_account")).isFalse();
+        assertThat(AgoraExecutionGateway.isWriteTool("get_positions")).isFalse();
+        assertThat(AgoraExecutionGateway.isWriteTool("get_orders")).isFalse();
+        assertThat(AgoraExecutionGateway.isWriteTool("get_closed_positions")).isFalse();
+        assertThat(AgoraExecutionGateway.isWriteTool("get_order_by_ref")).isFalse();
+    }
+
+    /** The write tools must reach the SECOND client: a handler that sleeps past the read
+     *  timeout but inside the write timeout has to fail for a read tool and succeed for a
+     *  write tool. Without this the two clients could be wired identically and nothing
+     *  would notice. */
+    @Test void writeToolsUseTheWriteTimeout_readToolsUseTheReadTimeout() throws Exception {
+        HttpServer server = HttpServer.create(new java.net.InetSocketAddress(0), 0);
+        com.sun.net.httpserver.HttpHandler slow = exchange -> {
+            try {
+                Thread.sleep(600);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] body = "{\"output\":{\"accepted\":true}}".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        };
+        server.createContext("/tools/get_account", slow);
+        server.createContext("/tools/cancel_order", slow);
+        server.start();
+        try {
+            AgoraExecutionGateway gw = new AgoraExecutionGateway(
+                    "http://localhost:" + server.getAddress().getPort(), "tkn", mapper, 200, 5000);
+
+            assertThatThrownBy(() -> gw.account("depot-1"))
+                    .isInstanceOf(BrokerUnavailableException.class);
+            assertThatCode(() -> gw.cancelOrder("depot-1", "ord-1")).doesNotThrowAnyException();
         } finally {
             server.stop(0);
         }
