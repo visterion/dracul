@@ -181,18 +181,36 @@ public class OutcomeLogRepository {
                 .list();
     }
 
-    /** One row per COUNTERFACTUAL outcome, carrying reason_code + the hypothetical fields
-     *  needed for veto-precision stats. Skipped rows still come back (skipped=true, null
-     *  hypothetical fields) so the caller can count them separately from the means. */
+    /**
+     * One row per (signal, reason_code) COUNTERFACTUAL outcome, carrying the hypothetical fields
+     * veto-precision stats need. Skipped rows still come back (skipped=true, null hypothetical
+     * fields) so the caller can count them separately from the means.
+     *
+     * <p><b>Why DISTINCT ON.</b> {@code place_entry} retries of the SAME signal each wrote their
+     * own counterfactual, so one signal could contribute 16 rows (ISRG, COOLDOWN) and inflate
+     * {@code vetoPrecision}. The key is the SIGNAL, not the symbol: P (4 rows / 4 signals) and
+     * PAYO (3 / 3) are genuinely distinct signals and must all survive. {@code LLM_SKIP} rows have
+     * no {@code decision_log} partner and key on their own {@code log_id_ref}
+     * ({@code "skip:" + signal_id}), which is already one per signal — hence the COALESCE.
+     *
+     * <p>Tiebreak: the COMPLETE row if there is one, else the most recently computed;
+     * {@code ol.id DESC} is only a deterministic last resort ({@code id} is a UUID and carries no
+     * time information). The WRITE side stays keyed per {@code log_id_ref} — this is a read-side
+     * dedupe only.
+     */
     public List<CalibrationService.VetoRow> findVetoRows() {
         return jdbc.sql("""
-                SELECT ol.reason_code AS reason_code,
-                       (ol.hypothetical ->> 'skipped_reason') IS NOT NULL AS skipped,
-                       (ol.hypothetical ->> 'r_after_20d') AS r_after_20d,
-                       (ol.hypothetical ->> 'r_after_60d') AS r_after_60d,
-                       (ol.hypothetical ->> 'would_have_stopped_out') AS would_have_stopped_out
+                SELECT DISTINCT ON (COALESCE(dl.signal_id, ol.log_id_ref), ol.reason_code)
+                       ol.reason_code AS reason_code,
+                       (ol.hypothetical->>'skipped_reason') IS NOT NULL AS skipped,
+                       ol.hypothetical->>'r_after_20d' AS r_after_20d,
+                       ol.hypothetical->>'r_after_60d' AS r_after_60d,
+                       ol.hypothetical->>'would_have_stopped_out' AS would_have_stopped_out
                 FROM outcome_log ol
-                WHERE ol.kind = 'COUNTERFACTUAL' AND ol.reason_code IS NOT NULL
+                LEFT JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
+                WHERE ol.kind='COUNTERFACTUAL' AND ol.reason_code IS NOT NULL
+                ORDER BY COALESCE(dl.signal_id, ol.log_id_ref), ol.reason_code,
+                         ol.complete DESC, ol.computed_at DESC, ol.id DESC
                 """)
                 .query((rs, n) -> new CalibrationService.VetoRow(
                         rs.getString("reason_code"),

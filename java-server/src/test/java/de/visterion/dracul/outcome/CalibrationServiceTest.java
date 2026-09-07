@@ -210,4 +210,20 @@ class CalibrationServiceTest {
         assertThat(stats.mean()).isEqualTo(0.0);
         assertThat(stats.worst()).isEqualTo(0.0);
     }
+
+    @Test
+    void threeLlmSkipRowsCountAsThree() {
+        // vetoPrecision itself is unchanged by SP3: it still groups by reason_code and counts
+        // rows. What changed is that findVetoRows now hands it one row per SIGNAL.
+        var rows = List.of(
+                new VetoRow("LLM_SKIP", false, 0.5, 1.0, false),
+                new VetoRow("LLM_SKIP", false, 0.7, 1.2, false),
+                new VetoRow("LLM_SKIP", false, 0.9, 1.4, true));
+
+        var result = service.vetoPrecision(rows);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().reasonCode()).isEqualTo("LLM_SKIP");
+        assertThat(result.getFirst().n()).isEqualTo(3);
+    }
 }
