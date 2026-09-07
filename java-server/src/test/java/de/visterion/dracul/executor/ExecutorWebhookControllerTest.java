@@ -308,6 +308,16 @@ class ExecutorWebhookControllerTest {
                 Map.of(), BigDecimal.ONE, List.of("price", "atr"), "USD", null, null, Map.of());
     }
 
+    /** Like {@link #unavailableContext()}, but with a real, stale signal age (6 trading days,
+     *  over the 5-day default) instead of the "createdAt unparseable" -1L sentinel — a
+     *  permanently data-less instrument (I1 fix) whose age check must now win over the
+     *  DATA_UNAVAILABLE pre-veto and retire the signal terminally. */
+    private static EntryContext staleUnavailableContext() {
+        return new EntryContext(null, null, null, null, null, null, null,
+                List.of(), List.of(), List.of(), 0, 6L, null, null, null, null,
+                Map.of(), BigDecimal.ONE, List.of("sector"), "USD", null, null, Map.of());
+    }
+
     private ExecutorPosition openPosition(long id, String symbol, String side,
             BigDecimal entry, BigDecimal initialStop) {
         return new ExecutorPosition(id, "depot-1", symbol, side, new BigDecimal("10"),
@@ -1055,6 +1065,29 @@ class ExecutorWebhookControllerTest {
 
         assertThat(log.vetoResults().size()).isEqualTo(1);
         assertThat(log.vetoResults().get(0).path("check").asString()).startsWith("DATA_UNAVAILABLE");
+    }
+
+    @Test
+    void placeEntry_dataUnavailable_butAlsoExpired_rejectsTerminallyNotPending() {
+        // I1 fix: a permanently data-less instrument (no sector) whose signal is also older than
+        // max-signal-age-days must be retired via SIGNAL_EXPIRED (terminal REJECTED), not left
+        // PENDING forever behind the DATA_UNAVAILABLE pre-veto.
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(staleUnavailableContext());
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, null, body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("SIGNAL_EXPIRED");
+
+        verifyNoInteractions(gateway);
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
     }
 
     @Test

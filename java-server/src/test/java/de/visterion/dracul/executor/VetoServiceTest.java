@@ -206,6 +206,61 @@ class VetoServiceTest {
         assertThat(outcome.results().get(0).check()).isEqualTo("DATA_UNAVAILABLE:price,atr");
     }
 
+    // ---- pre-veto: SIGNAL_EXPIRED bounds a permanently data-less signal (I1 fix) ----
+
+    @Test
+    void dataUnavailable_butAlsoExpired_reportsSignalExpiredFirst() {
+        // A permanently data-less instrument (e.g. no sector from Agora) whose signal is also
+        // older than max-signal-age-days must retire via SIGNAL_EXPIRED, not linger PENDING
+        // forever on DATA_UNAVAILABLE.
+        EntryContext ctx = ctx().missing(List.of("sector")).signalAgeTradingDays(6).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SIGNAL_EXPIRED);
+        assertThat(outcome.contradictingSignalId()).isNull();
+        assertThat(outcome.results()).hasSize(2);
+        assertThat(outcome.results().get(0).check()).isEqualTo("SIGNAL_EXPIRED:FAIL (6 > 5 days)");
+        assertThat(outcome.results().get(1).check()).isEqualTo("DATA_UNAVAILABLE:sector");
+    }
+
+    @Test
+    void dataUnavailable_notYetExpired_staysDataUnavailable() {
+        EntryContext ctx = ctx().missing(List.of("sector")).signalAgeTradingDays(2).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.DATA_UNAVAILABLE);
+        assertThat(outcome.results()).hasSize(1);
+        assertThat(outcome.results().get(0).check()).isEqualTo("DATA_UNAVAILABLE:sector");
+    }
+
+    @Test
+    void dataUnavailable_unparseableCreatedAt_neverExpiresViaMissingAge() {
+        // signal_age itself in ctx.missing() means createdAt was unparseable (age == -1); the
+        // expiry check must never fire off that sentinel, so DATA_UNAVAILABLE stands regardless
+        // of the (meaningless) age value.
+        EntryContext ctx = ctx().missing(List.of("signal_age")).signalAgeTradingDays(-1).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.DATA_UNAVAILABLE);
+        assertThat(outcome.results()).hasSize(1);
+        assertThat(outcome.results().get(0).check()).isEqualTo("DATA_UNAVAILABLE:signal_age");
+    }
+
+    @Test
+    void signalExpired_noMissingData_stillFiresAtCatalogCheckThree() {
+        // Regression: the catalog's own SIGNAL_EXPIRED check (#3) is unaffected when there is no
+        // missing data at all — the pre-veto branch is simply never entered.
+        EntryContext ctx = ctx().signalAgeTradingDays(6).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.passed()).isFalse();
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.SIGNAL_EXPIRED);
+        assertThat(outcome.results()).hasSize(18);
+    }
+
     // ---- 1 SCHEMA_INVALID ----
 
     @Test

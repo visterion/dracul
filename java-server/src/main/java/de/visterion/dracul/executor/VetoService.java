@@ -22,7 +22,9 @@ import java.util.Set;
  *
  * <p>{@link #evaluate} runs the full 18-veto catalog against an assembled {@link EntryContext},
  * preceded by a {@code DATA_UNAVAILABLE} pre-veto that short-circuits everything else whenever
- * mandatory upstream data was missing at assembly time.
+ * mandatory upstream data was missing at assembly time — unless the signal is also older than
+ * {@code max-signal-age-days}, in which case {@code SIGNAL_EXPIRED} fires instead so a
+ * permanently data-less instrument is retired rather than left {@code PENDING} forever.
  */
 @Service
 @ConditionalOnProperty(value = "dracul.executor.enabled", havingValue = "true")
@@ -67,7 +69,23 @@ public class VetoService {
     public Outcome evaluate(ExecutorSignal signal, EntryContext ctx, Sizing sizing, VetoConfig cfg,
                             BigDecimal orderPrice, List<EnforcedGate> gates) {
         if (ctx.missing() != null && !ctx.missing().isEmpty()) {
+            // DATA_UNAVAILABLE is transient (SP3): a missing upstream datum is an outage, not a
+            // verdict, so the pre-veto alone would leave a PERMANENTLY data-less instrument (no
+            // sector, no ADV20 — e.g. a fresh spin-off with no Agora company profile) PENDING
+            // forever. SIGNAL_EXPIRED is what bounds that PENDING state, so it must run ahead of
+            // this pre-veto — and it safely can, because the signal's age is computed from the
+            // signal row itself, independent of the very Agora data that is missing here. Only an
+            // unparseable createdAt (age == -1, "signal_age" present in ctx.missing()) skips this
+            // and falls through to DATA_UNAVAILABLE below.
             String joined = String.join(",", ctx.missing());
+            if (!ctx.missing().contains("signal_age")
+                    && ctx.signalAgeTradingDays() > cfg.maxSignalAgeDays()) {
+                String expiredMeasured = ctx.signalAgeTradingDays() + " > " + cfg.maxSignalAgeDays() + " days";
+                return new Outcome(false, RejectReason.SIGNAL_EXPIRED,
+                        List.of(new VetoResult("SIGNAL_EXPIRED:FAIL (" + expiredMeasured + ")", false, expiredMeasured),
+                                new VetoResult("DATA_UNAVAILABLE:" + joined, false, joined)),
+                        null, null);
+            }
             return new Outcome(false, RejectReason.DATA_UNAVAILABLE,
                     List.of(new VetoResult("DATA_UNAVAILABLE:" + joined, false, joined)), null, null);
         }

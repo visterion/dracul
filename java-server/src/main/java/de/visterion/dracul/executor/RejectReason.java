@@ -82,9 +82,12 @@ public enum RejectReason {
      * <p>{@code DATA_UNAVAILABLE} is in this set because <b>a missing upstream datum is an outage,
      * not a verdict</b>: an Agora hiccup that drops price/ATR/ADV20/sector for one run says nothing
      * about the signal, and retiring it would throw away a candidate the next run could evaluate.
-     * The cost is stated and accepted: an instrument whose datum is missing PERMANENTLY (no sector,
-     * no ADV20) now stays PENDING until SIGNAL_EXPIRED instead of being rejected at once. That is
-     * bounded by the expiry, and zero prod rows have ever carried this reason.
+     * The age check runs ahead of the data pre-veto in {@code VetoService.evaluate}, so an
+     * instrument whose datum is missing PERMANENTLY (no sector, no ADV20) is retired by
+     * {@code SIGNAL_EXPIRED} after {@code max-signal-age-days} like any other transient reject —
+     * it does not stay PENDING forever. Until then, the LLM's SKIP normally retires it within the
+     * same run (see the retry note above). This ordering is safe because the signal's age is
+     * computed from the signal row itself, independent of the very Agora data that is missing.
      */
     private static final Set<RejectReason> TRANSIENT = EnumSet.of(
             PACE_LIMIT, MAX_POSITIONS, MECHANISM_BUDGET, BUDGET, HEAT_LIMIT, COOLDOWN, PATTERN_GATE,
