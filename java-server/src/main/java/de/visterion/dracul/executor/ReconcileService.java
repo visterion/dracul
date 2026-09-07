@@ -151,6 +151,7 @@ public class ReconcileService {
     private final int cooldownDays;
     private final int pendingExitStaleHours;
     private final ExecutorPositionLegRepository legRepo;
+    private final BigDecimal priceSanityPct;
     private final Clock clock;
 
     @Autowired
@@ -165,9 +166,11 @@ public class ReconcileService {
             ExecutorNotifier executorNotifier,
             @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
             @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours,
-            ExecutorPositionLegRepository legRepo) {
+            ExecutorPositionLegRepository legRepo,
+            @Value("${dracul.executor.price-sanity-pct:0.50}") BigDecimal priceSanityPct) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper, telegram,
-                executorNotifier, cooldownDays, pendingExitStaleHours, legRepo, Clock.systemUTC());
+                executorNotifier, cooldownDays, pendingExitStaleHours, legRepo, priceSanityPct,
+                Clock.systemUTC());
     }
 
     ReconcileService(
@@ -182,6 +185,7 @@ public class ReconcileService {
             int cooldownDays,
             int pendingExitStaleHours,
             ExecutorPositionLegRepository legRepo,
+            BigDecimal priceSanityPct,
             Clock clock) {
         this.gateway = gateway;
         this.positionRepo = positionRepo;
@@ -194,6 +198,7 @@ public class ReconcileService {
         this.cooldownDays = cooldownDays;
         this.pendingExitStaleHours = pendingExitStaleHours;
         this.legRepo = legRepo;
+        this.priceSanityPct = priceSanityPct;
         this.clock = clock;
     }
 
@@ -1789,14 +1794,40 @@ public class ReconcileService {
 
         BigDecimal currentClose = bp.marketPrice();
         BigDecimal baseHighest = p.highestPrice() == null ? p.entryPrice() : p.highestPrice();
-        // highest_price is the favorable price extreme: highest for a long, lowest for a short.
-        BigDecimal newHighest = "SELL".equalsIgnoreCase(p.side())
-                ? baseHighest.min(currentClose)
-                : baseHighest.max(currentClose);
-
-        BigDecimal currentR = computeR(p, currentClose).r();
         BigDecimal baseMfe = p.mfeR() == null ? BigDecimal.ZERO : p.mfeR();
-        BigDecimal newMfeR = currentR == null ? baseMfe : baseMfe.max(currentR);
+
+        // The favourable extreme is the input the giveback stop is computed from, so a single
+        // corrupted quote can close a healthy position. Two ways to skip the ratchet, both of
+        // which keep the OLD extreme and MFE, still persist maintenance, and never return early
+        // or null -- the caller does survivors.add(updateMaintenance(...)) at :369, so a null
+        // return would silently drop the position from the survivor list.
+        BigDecimal newHighest;
+        BigDecimal newMfeR;
+        boolean isShort = "SELL".equalsIgnoreCase(p.side());
+
+        if (currentClose == null) {
+            // Guard, not cosmetics: baseHighest.max(null) NPEs, and the loop at :287-372 has no
+            // per-position catch, so one quote-less position used to abort the WHOLE pass. A
+            // missing quote is not an implausible one -- no escalation.
+            newHighest = baseHighest;
+            newMfeR = baseMfe;
+        } else if (isImplausible(isShort, currentClose, baseHighest)) {
+            ObjectNode inputs = mapper.createObjectNode();
+            inputs.put("position_id", p.id());
+            inputs.put("reference_price", baseHighest);
+            inputs.put("broker_price", currentClose);
+            inputs.put("threshold_pct", priceSanityPct);
+            decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                    "MAINTENANCE", null, null, null, p.symbol(), inputs, null,
+                    "ESCALATE", "PRICE_IMPLAUSIBLE", null, null, null, null, null));
+            newHighest = baseHighest;
+            newMfeR = baseMfe;
+        } else {
+            // highest_price is the favorable price extreme: highest for a long, lowest for a short.
+            newHighest = isShort ? baseHighest.min(currentClose) : baseHighest.max(currentClose);
+            BigDecimal currentR = computeR(p, currentClose).r();
+            newMfeR = currentR == null ? baseMfe : baseMfe.max(currentR);
+        }
 
         positionRepo.updateMaintenance(p.id(), newHighest, newMfeR, p.softConfirmCount(),
                 p.activeStop(), null, p.brokerStop());
@@ -1810,6 +1841,27 @@ public class ReconcileService {
                 p.trimCount(), p.lowestPrice(), null, p.submittedLimitPrice(),
                 p.pendingExitReason(), p.exitOrderId(), p.pendingExitFillPrice(), p.stopLegsCollapsed(),
                 p.brokerStop(), p.entryFilledAt());
+    }
+
+    /**
+     * One-sided plausibility on the favourable-extreme ratchet. The ratchet only ever moves the
+     * extreme in the position's favour, so only a move in THAT direction can corrupt it: a long is
+     * implausible above {@code reference x (1 + pct)}, a short below {@code reference x (1 - pct)}.
+     * A drawdown is never implausible — RGNX sat 33 % under its high for weeks and a biotech can
+     * gap -65 % on trial data; escalating those would be pure noise.
+     *
+     * <p>{@code reference} is {@code highest_price}, or {@code entry_price} when the position has
+     * not ratcheted yet ({@code entry_price} is NOT NULL). At the default 50 % the net is wide:
+     * the largest high-over-entry ever booked is +11.8 % (IMAX), while the PSMT incident that
+     * motivated this guard reported +393 %.
+     */
+    private boolean isImplausible(boolean isShort, BigDecimal price, BigDecimal reference) {
+        if (reference == null || reference.signum() <= 0) return false;
+        BigDecimal factor = isShort
+                ? BigDecimal.ONE.subtract(priceSanityPct)
+                : BigDecimal.ONE.add(priceSanityPct);
+        BigDecimal bound = reference.multiply(factor);
+        return isShort ? price.compareTo(bound) < 0 : price.compareTo(bound) > 0;
     }
 
     /** Realized R together with the denominator (risk-per-share) it was actually divided by, so

@@ -87,7 +87,8 @@ class ReconcileServiceTest {
 
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new ReconcileService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, telegram, executorNotifier, 10, 24, legRepo, clock);
+                ruleVersions, mapper, telegram, executorNotifier, 10, 24, legRepo,
+                new BigDecimal("0.50"), clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -2609,5 +2610,117 @@ class ReconcileServiceTest {
         assertThat(booked.getValue().entryPrice()).isEqualByComparingTo("61.78");  // the rebuild ran
         assertThat(booked.getValue().brokerStop()).isEqualByComparingTo("66.00");
         assertThat(booked.getValue().entryFilledAt()).isEqualTo("2026-07-01T09:00:00Z");
+    }
+
+    private static final BigDecimal SANE_QTY = BigDecimal.TEN;
+
+    private void seedMaintenanceOnly(ExecutorPosition p, BigDecimal marketPrice) {
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition(p.symbol(), p.side(), SANE_QTY,
+                p.entryPrice(), marketPrice, 0));
+    }
+
+    @Test
+    void implausibleHighPrice_skipsTheRatchetAndEscalates() {
+        // PSMT replay in synthetic numbers: the broker reports 5x the recorded high. The
+        // favourable extreme must NOT move -- it is the input the giveback stop is computed from.
+        ExecutorPosition p = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", new BigDecimal("110"), new BigDecimal("2.0"));
+        seedMaintenanceOnly(p, new BigDecimal("550"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<BigDecimal> mfeCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(1L), highestCaptor.capture(), mfeCaptor.capture(),
+                anyInt(), any(), any(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("110");
+        assertThat(mfeCaptor.getValue()).isEqualByComparingTo("2.0");
+        assertThat(reasonCodes()).contains("PRICE_IMPLAUSIBLE");
+    }
+
+    @Test
+    void plausibleRise_ratchetsNormally() {
+        // +40 % is inside the 50 % band. Nothing legitimate in the book has ever come near even
+        // cumulatively (largest high-over-entry: +11.8 %), so 50 % is a wide, one-sided net.
+        ExecutorPosition p = openPosition(2L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", new BigDecimal("110"), new BigDecimal("2.0"));
+        seedMaintenanceOnly(p, new BigDecimal("154"));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(2L), highestCaptor.capture(), any(),
+                anyInt(), any(), any(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("154");
+        assertThat(reasonCodes()).doesNotContain("PRICE_IMPLAUSIBLE");
+    }
+
+    @Test
+    void deepDrawdown_isNeverImplausibleForALong() {
+        // A biotech can gap -65 % on trial data and RGNX sat 33 % under its high for weeks. The
+        // ratchet is one-sided, so a drawdown cannot corrupt the favourable extreme and must not
+        // escalate.
+        ExecutorPosition p = openPosition(3L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", new BigDecimal("110"), new BigDecimal("2.0"));
+        seedMaintenanceOnly(p, new BigDecimal("33"));
+
+        service.reconcile("c", "run1");
+
+        verify(positionRepo).updateMaintenance(eq(3L), any(), any(), anyInt(), any(), any(), any());
+        assertThat(reasonCodes()).doesNotContain("PRICE_IMPLAUSIBLE");
+    }
+
+    @Test
+    void implausibleLowPrice_isMirroredForAShort() {
+        ExecutorPosition p = openPosition(4L, "ACME", "SELL", new BigDecimal("100"),
+                new BigDecimal("105"), "brk-1", "stop-1", new BigDecimal("90"), new BigDecimal("2.0"));
+        seedMaintenanceOnly(p, new BigDecimal("40"));   // < 90 x (1 - 0.50)
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(4L), highestCaptor.capture(), any(),
+                anyInt(), any(), any(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("90");
+        assertThat(reasonCodes()).contains("PRICE_IMPLAUSIBLE");
+    }
+
+    @Test
+    void nullMarketPrice_doesNotNpeAndStillPersistsMaintenance() {
+        // baseHighest.max(null) used to NPE and abort the WHOLE reconcile pass (the loop at
+        // ReconcileService:287-372 has no per-position catch), so the second position was never
+        // reached. No escalation: a missing quote is not an implausible one.
+        ExecutorPosition a = openPosition(5L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", new BigDecimal("110"), new BigDecimal("2.0"));
+        ExecutorPosition b = openPosition(6L, "BETA", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-2", "stop-2", new BigDecimal("112"), new BigDecimal("2.0"));
+        when(positionRepo.findOpen()).thenReturn(List.of(a, b));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", SANE_QTY, new BigDecimal("100"), null, 0));
+        gateway.seedPosition(new BrokerPosition("BETA", "BUY", SANE_QTY, new BigDecimal("100"),
+                new BigDecimal("115"), 0));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(5L), highestCaptor.capture(), any(),
+                anyInt(), any(), any(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("110");
+        verify(positionRepo).updateMaintenance(eq(6L), any(), any(), anyInt(), any(), any(), any());
+        assertThat(reasonCodes()).doesNotContain("PRICE_IMPLAUSIBLE");
+    }
+
+    @Test
+    void implausiblePriceOnASecondPass_escalatesAgain() {
+        // Repetition is the point: while the broker keeps reporting the bad price this is a data
+        // problem the operator must see EVERY day, not a one-off row that scrolls away.
+        ExecutorPosition p = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", new BigDecimal("110"), new BigDecimal("2.0"));
+        seedMaintenanceOnly(p, new BigDecimal("550"));
+
+        service.reconcile("c", "run1");
+        service.reconcile("c", "run2");
+
+        assertThat(reasonCodes().stream().filter("PRICE_IMPLAUSIBLE"::equals).count()).isEqualTo(2);
     }
 }

@@ -2375,6 +2375,13 @@ the book is left untouched and a `trigger_type=MAINTENANCE`,
 `action=ESCALATE`, `reason_code=BROKER_UNAVAILABLE` row is written instead,
 mirroring `ReconcileService`'s/`HardTriggerService`'s broker-outage idiom.
 
+`ReconcileService.updateMaintenance` writes its own `trigger_type=MAINTENANCE`,
+`action=ESCALATE`, `reason_code=PRICE_IMPLAUSIBLE` row when the broker
+reported a market price beyond `dracul.executor.price-sanity-pct` on the
+favourable side of the recorded extreme; the ratchet was skipped and
+`highest_price`/`mfe_r` left unchanged. Repeats on every pass while the price
+persists.
+
 Both cancel paths also clear `entry_expires_at` afterwards, making the
 expiry one-shot by construction (the expiry query filters on
 `entry_expires_at IS NOT NULL`) — a partially-filled entry whose remainder
