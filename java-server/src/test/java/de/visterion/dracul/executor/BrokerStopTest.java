@@ -87,8 +87,9 @@ class BrokerStopTest {
     }
 
     /** Test 11b. Mutation: cap the LOGICAL stop. When the logical stop alone already sits beyond
-     *  the band, the broker stop equals it and today's behaviour applies — Agora's far-stop
-     *  fallback is the safety net beyond the band, not a tightened stop we never chose. */
+     *  the band, the broker stop equals it and today's behaviour applies — beyond the band Saxo
+     *  rejects the bracket and Dracul books a transient BROKER_ERROR, which is still better than
+     *  a tightened stop we never chose. */
     @Test
     void logicalStopBeyondCapIsSentUnbuffered() {
         // entry 100, cap 20 % -> floor 80.00. Logical stop 75 is already beyond it.

@@ -24,8 +24,11 @@ import java.math.RoundingMode;
  *   <li><b>Proximity cap, entry and add-tranche only.</b> Saxo rejects a bracket whose legs sit
  *       outside a proximity band. The buffer shrinks first; if the LOGICAL stop alone already
  *       exceeds the band the broker stop equals it and today's behaviour applies — beyond the band
- *       Agora's far-stop fallback is the safety net, and tightening a stop we never chose would be
- *       worse than relying on it.</li>
+ *       Saxo rejects the bracket with {@code TooFarFromEntryOrder}, Agora reports it with the leg
+ *       named and nothing is placed, and Dracul books a transient {@code BROKER_ERROR} until the
+ *       signal is retired after {@code max-broker-attempts}. Tightening a stop we never chose is
+ *       still the worse trade: a rejected entry is a missed trade, a tightened stop is a wrong
+ *       position.</li>
  *   <li><b>Monotonic on the ratchet, and it outranks rule 1.</b> The broker leg never moves
  *       against the position, even when ATR expands faster than the high; it simply lags, and
  *       says so. The monotonic floor is applied LAST, after the "never crosses the logical stop"
