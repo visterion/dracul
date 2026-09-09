@@ -102,7 +102,8 @@ Both are written by `PreySignalEmitter` only, under the same availability
 condition as `referencePrice`, and only from migration V49 onward. Signals
 injected by an operator through `POST /api/executor/signals` carry neither, and
 so do all rows written before V49 — which is exactly why neither ever produces
-an `LLM_SKIP` counterfactual.
+an `LLM_SKIP` counterfactual — except a verification probe whose anchors were
+set by hand (SP2b, 2026-09).
 
 ### `POST /api/executor/run`
 
@@ -156,7 +157,11 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   `hypothetical.skipped_reason` set (e.g. missing reference price); means
   (`mean_hypothetical_r_20d`, `mean_hypothetical_r_60d`, `stopped_out_pct`)
   are computed over the remaining, non-skipped rows only. `n` counts
-  **signals**, not attempts — see the dedupe note below.
+  **signals**, not attempts — see the dedupe note below. Rows whose signal
+  reached `ACCEPTED` are excluded from `veto_precision` **only** (the hunter
+  Brier keeps them): that signal's question is answered by its TRADE row
+  once the position closes; until then the counterfactual is withheld, so an
+  `n` drop need not be matched by an `n` gain elsewhere.
 - **`LLM_SKIP`** is the reason code for signals the executor's LLM skipped
   outright, without a `place_entry` (they write no `decision_log` row, so they
   were invisible to the batch before SP3). **Overlap rule:** when
@@ -168,6 +173,21 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   the ~202 historical skips are deliberately not backfilled. Signals injected
   through `POST /api/executor/signals` carry neither field and therefore never
   produce an `LLM_SKIP` row.
+- **`SIGNAL_EXPIRED_UNEVALUATED`** is the reason code for a PENDING signal
+  `PendingSignalSweeper` retired without anyone evaluating it
+  (`executor_decision.action = SWEEP`; `outcome_log.log_id_ref` is
+  `expired:<signal_id>`). Like `LLM_SKIP` it anchors on the **emission bar**,
+  which is why it is a separate key from `SIGNAL_EXPIRED` (that one is
+  `place_entry`'s veto #3 and anchors on the **decision day**); for a swept
+  signal the two are apart by at least `max-signal-age-days` + 1 trading days
+  and unbounded above, so pooling them would redefine the existing datum.
+  Same forward-only limitation as `LLM_SKIP` (needs the V49 anchors). A
+  signal stranded by a *transient* `place_entry` reject never appears here —
+  it already has a counterfactual under that veto reason, and the veto reason
+  wins. The bucket counts **signals**, not symbols: a symbol re-emitted and
+  never entered yields one swept signal per `max-signal-age-days + 1` trading
+  days, each anchored a few bars apart on nearly the same path, so read the
+  first month per symbol rather than as a mean.
 - **Anchor semantics differ between the two counterfactual populations, on
   purpose.** A veto-reason row anchors at the **decision** (the price and ATR
   `place_entry` recomputed that day, stored in `inputs_snapshot`); an
@@ -178,10 +198,11 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
 - **Dedupe:** one row per (signal, reason). `place_entry` retries of the same
   signal used to write one counterfactual per attempt and inflate these
   counts; `n` is now signals, not attempts.
-- **`caveats`**: three fixed strings, always present, calling out the
+- **`caveats`**: four fixed strings, always present, calling out the
   optimistic-fill assumption, the opportunity-cost nature of
-  `PACE_LIMIT`/`BUDGET` rejects, and that `reason_code` stats are conditional
-  on earlier checks having passed.
+  `PACE_LIMIT`/`BUDGET` rejects, that `reason_code` stats are conditional
+  on earlier checks having passed, and that `SIGNAL_EXPIRED_UNEVALUATED`/
+  `LLM_SKIP` anchor on the emission bar rather than the decision day.
 - **`hard_exit_latency`**: `n`/`max_seconds`/`p95_seconds` over
   `decision_log.latency.trigger_to_order_seconds` of `HARD_TRIGGER` rows.
 - **`whipsaw`**: counts of `TRADE` outcome rows with `reentry_within_10d` /
@@ -203,7 +224,8 @@ Response (200):
                        "mean_hypothetical_r_60d": 1.1, "stopped_out_pct": 25.0}],
   "caveats": ["counterfactuals assume reference-price fills (optimistic)",
               "PACE_LIMIT/BUDGET rejects are opportunity-cost questions",
-              "reason_code is the first failed check; stats are conditional on earlier checks passing"],
+              "reason_code is the first failed check; stats are conditional on earlier checks passing",
+              "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day"],
   "hard_exit_latency": {"n": 5, "max_seconds": 3, "p95_seconds": 2},
   "whipsaw": {"reentry_within_10d": 0, "roundtrip_under_5d": 1},
   "stop_basis": [{"basis": "ATR", "n": 8, "mean_realized_r": 0.9, "mean_mae_r": -0.5},
@@ -2230,12 +2252,12 @@ and for order-guard rejections it is the veto trace plus an
 
 | Reason | Where enforced | Meaning |
 |---|---|---|
-| `DATA_UNAVAILABLE` | `VetoService` (pre-veto) | Mandatory upstream data (account, price, ATR, ADV20 notional, sector, signal age/reference) was missing at `EntryContext` assembly time — short-circuits every other veto; the executor never trades blind. **Transient** (SP3, 2026-09): a missing upstream datum is an outage, not a verdict, so the signal stays `PENDING` for a later run instead of going `REJECTED`. The age check runs ahead of the data pre-veto, so a data-less signal is retired by `SIGNAL_EXPIRED` after `max-signal-age-days` like any other transient reject; until then the LLM's SKIP normally retires it in the same run. |
+| `DATA_UNAVAILABLE` | `VetoService` (pre-veto) | Mandatory upstream data (account, price, ATR, ADV20 notional, sector, signal age/reference) was missing at `EntryContext` assembly time — short-circuits every other veto; the executor never trades blind. **Transient** (SP3, 2026-09): a missing upstream datum is an outage, not a verdict, so the signal stays `PENDING` for a later run instead of going `REJECTED`. The age check runs ahead of the data pre-veto, so a data-less signal is retired by `SIGNAL_EXPIRED` after `max-signal-age-days` like any other transient reject; until then the LLM's SKIP or the sweeper retires it. |
 | `SCHEMA_INVALID` | `VetoService` / `OrderGuard` | Signal not found; missing `symbol`/`direction`/`confidence`/`kill_criteria`/`mechanism`/`agent_version`; or malformed `side` |
 | `LOW_CONFIDENCE` | `VetoService` | Signal `confidence` below `dracul.executor.min-confidence` (default `0.40`) |
 | `COOLDOWN` | `VetoService` | Any active `cooldown` row matches the symbol — a hard block in v1 with no fresh-setup exception (the cooldown's originating mechanism isn't stored, so no rule can safely distinguish "same setup" from "genuinely new"; see `documentation/architecture.md`) |
 | `MAX_POSITIONS` | `VetoService` | Open-position count ≥ `dracul.executor.max-positions` |
-| `MECHANISM_BUDGET` | `VetoService` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); transient; new entries only. Making transient vetoes defer inside the executor is a later slice (SP2b) |
+| `MECHANISM_BUDGET` | `VetoService` | Open exposure in the signal's mechanism plus one tranche exceeds the mechanism's share of `dracul.executor.total-budget` (`mechanism-budget-pct`); transient; new entries only. |
 | `BUDGET` | `VetoService` | Remaining cash or remaining total-budget headroom can't cover one tranche (`dracul.executor.total-budget` / `tranche-count`) |
 | `HEAT_LIMIT` | `VetoService` | Open heat (sum of `qty × (entry − active stop)`, account ccy) plus this trade's risk would exceed `dracul.executor.heat-pct` × total budget |
 | `CONCENTRATION` | `VetoService` | Open positions in the candidate's sector (via Agora company-profile lookup, case-insensitive) already ≥ `dracul.executor.max-per-sector` |
@@ -2243,7 +2265,7 @@ and for order-guard rejections it is the veto trace plus an
 | `CONTRADICTION` | `VetoService` | A `MERGER_ARB` signal/position and a `PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW` signal/position collide on the same symbol (checked against other pending signals and open-position mechanisms); both pending signals in a contradicting pair are rejected, and the audit row for the other signal notes the pairing |
 | `REDUNDANCY` | `VetoService` | An open position on the same symbol already originates from the same `mechanism` |
 | `LIQUIDITY` | `VetoService` | Price below `dracul.executor.min-price` (USD-equivalent), or ADV20 notional below `dracul.executor.adv-multiple` × the tranche amount |
-| `SIGNAL_EXPIRED` | `VetoService` | Signal age (trading days since `createdAt`) exceeds `dracul.executor.max-signal-age-days` |
+| `SIGNAL_EXPIRED` | `VetoService` | Signal age (trading days since `createdAt`) exceeds `dracul.executor.max-signal-age-days`. Also written by `PendingSignalSweeper` (maintenance pass, `action = SWEEP`) for a PENDING signal nobody evaluated: single-entry `veto_trace`, rationale prefix `expired without evaluation:`, status `REJECTED`, no `decision_log` row. |
 | `CHASED_AWAY` | `VetoService` | Current price has moved more than `dracul.executor.chase-atr-mult` × ATR beyond the signal's reference price |
 | `BELOW_ANCHOR` | `VetoService` | The effective order price is on the invalidating side of the signal's reference-price anchor — drift mechanisms (`PEAD`/`INDEX_INCLUSION`) use `dracul.executor.drift-anchor-atr-mult` (default `0.0`×ATR, i.e. no adverse move tolerated), value mechanisms use `dracul.executor.value-anchor-atr-mult` (default `3.0`×ATR) |
 | `PACE_LIMIT` | `VetoService` | New positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week` |

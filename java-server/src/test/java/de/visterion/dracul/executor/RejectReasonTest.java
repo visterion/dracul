@@ -11,9 +11,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RejectReasonTest {
 
-    /** The exact set of capacity/rate vetos that leave the signal PENDING for the current run
-     *  (place_entry does not retire it; the LLM's submit_decision SKIP normally does, see
-     *  RejectReason's Javadoc — in-executor deferral is SP2b). */
+    /** The exact set of capacity/rate vetos that leave the signal PENDING for the current run:
+     *  place_entry does not retire it, the LLM's submit_decision SKIP normally does, the producer's
+     *  re-emission is the retry, and PendingSignalSweeper retires whatever nobody decided after
+     *  max-signal-age-days. */
     private static final Set<RejectReason> EXPECTED_TRANSIENT = EnumSet.of(
             RejectReason.PACE_LIMIT,
             RejectReason.MAX_POSITIONS,

@@ -1179,8 +1179,8 @@ public class ExecutorWebhookController {
                 //                 long ACCEPTED. Touching the status would overwrite the entry
                 //                 verdict and processed_at with a maintenance-time note.
                 // HOLD has no sensible transition in the existing vocabulary (PENDING / ACCEPTED /
-                // REJECTED / SKIPPED / EXPIRED), and inventing one would break
-                // RejectReason.isTransient()'s "PENDING means retry me" contract.
+                // REJECTED / SKIPPED / EXPIRED), and PENDING is reserved for signals the LLM has
+                // not yet decided (RejectReason.isTransient()).
                 // So: persist the row, leave the status alone.
                 if (!"SKIP".equals(action) && !"HOLD".equals(action)) {
                     // Never swallow a decision we cannot classify: it is a prompt/schema drift

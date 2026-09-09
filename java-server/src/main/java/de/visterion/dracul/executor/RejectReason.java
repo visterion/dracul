@@ -68,16 +68,16 @@ public enum RejectReason {
     PATTERN_GATE;
 
     /**
-     * Transient = temporary rate/capacity caps, plus the data outage. {@code place_entry} leaves a
-     * signal rejected for one of these reasons {@code PENDING} for the current run instead of
-     * {@code REJECTED}. What happens next is NOT an in-executor retry: the LLM's
-     * {@code submit_decision} normally records a SKIP for the same signal in the same run and that
-     * marks it {@code SKIPPED} (prod, 2026-09: every MAX_POSITIONS decision ended SKIPPED within
-     * the run). The retry that exists today is the producer's re-emission of the symbol on a later
-     * run (PreySignalEmitter suppresses only PENDING symbols and open positions). Making transient
-     * vetoes defer inside the executor is the SP2b slice. All other reasons are terminal.
-     * SIGNAL_EXPIRED sits at catalog #3, ahead of every transient cap, so a too-old signal is
-     * REJECTED regardless of which cap would bite.
+     * Transient = temporary rate/capacity caps, plus the data outage. Transient means: <b>this
+     * {@code place_entry} call does not disqualify the signal; it stays PENDING for the rest of the
+     * run.</b> It does NOT mean the executor retries it. The retry that exists is the producer's
+     * re-emission of the symbol after the LLM's SKIP ({@code PreySignalEmitter} suppresses only
+     * PENDING symbols and open positions) — prod 2026-09: 221 of 251 SKIPs had no {@code place_entry}
+     * call at all. A PENDING row that nobody decides is retired by {@link PendingSignalSweeper}
+     * after {@code max-signal-age-days}, with the same {@code SIGNAL_EXPIRED} reason veto #3 would
+     * give it, status REJECTED. All other reasons are terminal. SIGNAL_EXPIRED sits at catalog #3,
+     * ahead of every transient cap, so a too-old signal is REJECTED regardless of which cap would
+     * bite.
      *
      * <p>{@code DATA_UNAVAILABLE} is in this set because <b>a missing upstream datum is an outage,
      * not a verdict</b>: an Agora hiccup that drops price/ATR/ADV20/sector for one run says nothing

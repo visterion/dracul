@@ -766,6 +766,19 @@ rather than one per *attempt* — without a snapshot the drop is indistinguishab
 from data loss. Expect roughly: `MAX_POSITIONS` 32 → 28, `COOLDOWN` 16 → 1,
 `PACE_LIMIT` 9 → 7, `HEAT_LIMIT` 4 → 2, `BROKER_ERROR` 14 → 7, others unchanged.
 
+**SP2b (2026-09) behaviour-snapshot deltas.** Snapshot
+`GET /api/executor/behavior` before the deploy again. `veto_precision` now
+excludes counterfactuals whose signal reached `ACCEPTED`: expect
+`BROKER_ERROR.n` to drop by 2 and the `NO_STOP` key to **disappear** from the
+block entirely (`vetoPrecision` groups over surviving rows, so a reason with
+none has no entry rather than `n: 0`). `NO_STOP` is a safety veto — its
+absence means "no counted datum", not "never fired". The drop has no
+matching gain elsewhere in the same report: an ACCEPTED signal's
+counterfactual is withheld until its position closes and its TRADE row
+enters the Brier population. A new `SIGNAL_EXPIRED_UNEVALUATED` key appears
+once the sweeper has retired a signal that carries V49 anchors, and
+`caveats` grows from three to four strings.
+
 **After the deploy:**
 
 - **`LLM_SKIP` counterfactuals** start accruing from the deploy date, not
@@ -778,7 +791,8 @@ from data loss. Expect roughly: `MAX_POSITIONS` 32 → 28, `COOLDOWN` 16 → 1,
   outcome_log WHERE reason_code='LLM_SKIP' GROUP BY 1;`
 - **Reference inputs are populated** on every emitter-produced signal whose
   `reference_price` is set. Operator injects via `POST /api/executor/signals`
-  carry neither field by design and never produce an `LLM_SKIP` row.
+  carry neither field by design and never produce an `LLM_SKIP` row — except
+  a verification probe whose anchors were set by hand (SP2b, 2026-09).
 - **`PRICE_IMPLAUSIBLE`** (`decision_log`, `trigger_type=MAINTENANCE`,
   `action=ESCALATE`) means the broker reported a market price beyond
   `price-sanity-pct` on the favourable side of the recorded extreme. The
@@ -890,10 +904,11 @@ matching signal is vetoed with reason `PATTERN_GATE` and a detail string
 reasons (`RejectReason.isTransient()`): `place_entry` leaves the signal
 `PENDING` for this run, and the retry that exists today is the producer's
 re-emission of the symbol on a later run — the LLM's own `submit_decision`
-SKIP would instead mark it `SKIPPED` in the same run. It stays `PENDING`
-until it either passes or hits `SIGNAL_EXPIRED` (max signal age, default 5
-trading days). Making transient vetoes defer
-inside the executor is a later slice (SP2b).
+SKIP would instead mark it `SKIPPED` in the same run. It stays `PENDING` until it passes, the LLM skips it, or the
+maintenance-pass sweeper (`PendingSignalSweeper`, triggered by the agent's
+exit review, not by a cron) retires it after `max-signal-age-days`
+(`SIGNAL_EXPIRED`, status `REJECTED`, rationale prefix
+`expired without evaluation:`).
 
 **Recovering from a bad gate.** If a gate turns out to be mistranslated or too
 broad, the operator has two levers: deactivate the whole pattern (`reject`/
