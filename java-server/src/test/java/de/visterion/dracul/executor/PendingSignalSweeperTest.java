@@ -88,6 +88,17 @@ class PendingSignalSweeperTest {
                 .endsWith("6 > 5 trading days");
 
         verify(signalRepo).markStatus("sig-old", "REJECTED");
+
+        // The summary line names the retired symbol: an operator reading the log must be able to
+        // tell WHICH signal left the PENDING set without a follow-up DB query.
+        assertThat(appender.list)
+                .filteredOn(e -> e.getFormattedMessage().contains("pending sweep: scanned"))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getLevel()).isEqualTo(Level.INFO);
+                    assertThat(e.getFormattedMessage())
+                            .isEqualTo("pending sweep: scanned 1 PENDING signal(s), retired 1 older than 5 trading days: SWEEPCO");
+                });
     }
 
     /** (2) — the bound is strict {@code >}, exactly like VetoService's veto #3. */
@@ -169,10 +180,16 @@ class PendingSignalSweeperTest {
         assertThat(sweeper.sweep("run-1")).isZero();
 
         // getFormattedMessage(), not getMessage(): the latter returns the unformatted pattern.
+        // Exact match, not just contains: with nothing retired, the ": <symbols>" suffix must be
+        // ABSENT — the line must not end with a trailing "()" or ": " artifact.
         assertThat(appender.list)
                 .filteredOn(e -> e.getFormattedMessage().contains("pending sweep: scanned 0"))
                 .singleElement()
-                .satisfies(e -> assertThat(e.getLevel()).isEqualTo(Level.INFO));
+                .satisfies(e -> {
+                    assertThat(e.getLevel()).isEqualTo(Level.INFO);
+                    assertThat(e.getFormattedMessage())
+                            .isEqualTo("pending sweep: scanned 0 PENDING signal(s), retired 0 older than 5 trading days");
+                });
     }
 
     /** (7b) — a header-less maintenance call writes run_id NULL, which prod has never seen. */
@@ -182,9 +199,16 @@ class PendingSignalSweeperTest {
 
         assertThat(sweeper.sweep(null)).isZero();
 
+        // The WARN line must SAY why it is a warning in the message itself, not only in a code
+        // comment: a log pipeline or grep that drops the level still has to see the explanation.
         assertThat(appender.list)
                 .filteredOn(e -> e.getFormattedMessage().contains("pending sweep: scanned 0"))
                 .singleElement()
-                .satisfies(e -> assertThat(e.getLevel()).isEqualTo(Level.WARN));
+                .satisfies(e -> {
+                    assertThat(e.getLevel()).isEqualTo(Level.WARN);
+                    assertThat(e.getFormattedMessage())
+                            .isEqualTo("pending sweep: scanned 0 PENDING signal(s), retired 0 older than 5 trading days"
+                                    + " — no run id on this maintenance call, so the decision rows carry run_id NULL");
+                });
     }
 }

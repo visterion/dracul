@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -79,6 +80,7 @@ public class PendingSignalSweeper {
         List<ExecutorSignal> pending = signalRepo.findPending(Integer.MAX_VALUE);
         int maxAge = policy.maxSignalAgeDays();
         int retired = 0;
+        List<String> retiredSymbols = new ArrayList<>();
 
         for (ExecutorSignal signal : pending) {
             try {
@@ -101,6 +103,7 @@ public class PendingSignalSweeper {
                         null, runId, null, ACTION));
                 signalRepo.markStatus(signal.signalId(), "REJECTED");
                 retired++;
+                retiredSymbols.add(signal.symbol());
             } catch (RuntimeException e) {
                 log.warn("pending sweep: failed to retire signal {} ({}): {}",
                         signal.signalId(), signal.symbol(), e.getMessage(), e);
@@ -108,14 +111,19 @@ public class PendingSignalSweeper {
         }
 
         // ALWAYS logged: a night with no line means the sweep did not run, which is a different
-        // and alarmable fact from "nothing was eligible". WARN when runId is null: a header-less
-        // maintenance call writes run_id NULL on every retired row, which prod has never seen.
+        // and alarmable fact from "nothing was eligible".
+        String symbols = retiredSymbols.isEmpty() ? "" : ": " + String.join(", ", retiredSymbols);
         if (runId == null) {
-            log.warn("pending sweep: scanned {} PENDING signal(s), retired {} older than {} trading days",
-                    pending.size(), retired, maxAge);
+            // WARN and SAYS SO: a header-less maintenance call writes run_id NULL on every
+            // retired row, which prod has never seen (411 of 411 decision rows are non-null) —
+            // the fact must be in the message itself, not only in this comment, so a log
+            // pipeline or grep that drops the level still sees it.
+            log.warn("pending sweep: scanned {} PENDING signal(s), retired {} older than {} trading days{}"
+                            + " — no run id on this maintenance call, so the decision rows carry run_id NULL",
+                    pending.size(), retired, maxAge, symbols);
         } else {
-            log.info("pending sweep: scanned {} PENDING signal(s), retired {} older than {} trading days",
-                    pending.size(), retired, maxAge);
+            log.info("pending sweep: scanned {} PENDING signal(s), retired {} older than {} trading days{}",
+                    pending.size(), retired, maxAge, symbols);
         }
         return retired;
     }
