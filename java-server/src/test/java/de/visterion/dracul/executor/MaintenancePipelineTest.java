@@ -720,4 +720,35 @@ class MaintenancePipelineTest {
         order.verify(sweeper).sweep("r1");
         order.verify(signalRepo).findPending(50);
     }
+
+    /** I1: the sweep is now guarded so a hygiene failure can never suppress the deterministic
+     *  hard-exit/ratchet steps that follow it. Before the fix, an exception out of
+     *  sweeper.sweep(...) (e.g. an unmappable PENDING row surfacing from findPending inside the
+     *  sweeper) would propagate out of run(), and hardTrigger.apply/ratchet.ratchet would never
+     *  be invoked at all. */
+    @Test
+    void sweepFailure_doesNotAbortHardTriggerAndRatchet() {
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("108"), null));
+        org.mockito.Mockito.doThrow(new RuntimeException("boom")).when(sweeper).sweep("r1");
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        List<EnrichedPosition> result = pipeline.run("c", "r1");
+
+        InOrder order = inOrder(entryExpiry, sweeper, hardTrigger, ratchet);
+        order.verify(entryExpiry).expire("c", "r1");
+        order.verify(sweeper).sweep("r1");
+        order.verify(hardTrigger).apply(any(), any(), eq("r1"));
+        order.verify(ratchet).ratchet(any(), any(), any(), any(), any(), eq("r1"));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).symbol()).isEqualTo("BBB");
+    }
 }

@@ -114,7 +114,18 @@ public class MaintenancePipeline {
         // method: a signal past the age bound must stop conferring REINFORCING_SIGNAL tranche-2
         // eligibility in this same pass. The return value is for tests and the log line; the
         // pipeline itself has nothing to do with it.
-        sweeper.sweep(runId);
+        //
+        // Guarded: this hygiene step must never be able to gate the deterministic hard-exit and
+        // ratchet steps that follow. sweeper.sweep wraps its per-signal body in its own
+        // catch (RuntimeException), but findPending's mapRow and the summary log sit outside
+        // that — an unmappable row, a statement timeout or a transient pool exhaustion would
+        // otherwise throw out of sweep() and abort this method before hardTrigger.apply and
+        // ratchet.ratchet ever run, leaving a breached kill criterion unflattened.
+        try {
+            sweeper.sweep(runId);
+        } catch (RuntimeException e) {
+            log.warn("pending sweep failed, continuing the maintenance pass: {}", e.getMessage(), e);
+        }
 
         // Only positions that will actually be evaluated below (filled, no pending exit) can
         // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an
