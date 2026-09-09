@@ -30,7 +30,9 @@ import java.util.Set;
  * <p>Pipeline order is fixed and matters: {@link ReconcileService} must run first (it detects
  * fills/disappearances against the broker before anything else touches the book), then
  * {@link EntryExpiryService} (cancels — never re-prices — unfilled GTD entries past their expiry,
- * using the fill state reconcile just refreshed), then {@link HardTriggerService} (deterministic
+ * using the fill state reconcile just refreshed), then {@link PendingSignalSweeper} (retires
+ * PENDING signals past {@code max-signal-age-days} that nobody evaluated), then
+ * {@link HardTriggerService} (deterministic
  * exits, code-enforced, never overridden), then {@link StopRatchetService} (trailing-stop
  * maintenance on whatever survived). Positions whose GTD entry has no confirmed fill yet
  * ({@link ReconcileService.ReconcileResult#unfilledIds()}) are excluded from both the
@@ -49,6 +51,7 @@ public class MaintenancePipeline {
 
     private final ReconcileService reconcile;
     private final EntryExpiryService entryExpiry;
+    private final PendingSignalSweeper sweeper;
     private final HardTriggerService hardTrigger;
     private final StopRatchetService ratchet;
     private final SoftConditionEvaluator softEval;
@@ -64,6 +67,7 @@ public class MaintenancePipeline {
     public MaintenancePipeline(
             ReconcileService reconcile,
             EntryExpiryService entryExpiry,
+            PendingSignalSweeper sweeper,
             HardTriggerService hardTrigger,
             StopRatchetService ratchet,
             SoftConditionEvaluator softEval,
@@ -77,6 +81,7 @@ public class MaintenancePipeline {
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
         this.reconcile = reconcile;
         this.entryExpiry = entryExpiry;
+        this.sweeper = sweeper;
         this.hardTrigger = hardTrigger;
         this.ratchet = ratchet;
         this.softEval = softEval;
@@ -104,6 +109,12 @@ public class MaintenancePipeline {
                     .filter(p -> !expiryCancelledIds.contains(p.id()))
                     .toList();
         }
+
+        // Retire PENDING signals nobody evaluated, BEFORE the pending read at the bottom of this
+        // method: a signal past the age bound must stop conferring REINFORCING_SIGNAL tranche-2
+        // eligibility in this same pass. The return value is for tests and the log line; the
+        // pipeline itself has nothing to do with it.
+        sweeper.sweep(runId);
 
         // Only positions that will actually be evaluated below (filled, no pending exit) can
         // have a hard-trigger/ratchet check "silently skipped" by a missing indicator — an

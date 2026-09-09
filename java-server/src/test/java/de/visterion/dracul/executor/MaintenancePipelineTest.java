@@ -29,6 +29,7 @@ class MaintenancePipelineTest {
 
     private final ReconcileService reconcile = mock(ReconcileService.class);
     private final EntryExpiryService entryExpiry = mock(EntryExpiryService.class);
+    private final PendingSignalSweeper sweeper = mock(PendingSignalSweeper.class);
     private final HardTriggerService hardTrigger = mock(HardTriggerService.class);
     private final StopRatchetService ratchet = mock(StopRatchetService.class);
     private final ExecutorIndicators indicators = mock(ExecutorIndicators.class);
@@ -43,9 +44,9 @@ class MaintenancePipelineTest {
     @BeforeEach
     void setUp() {
         when(signalRepo.findPending(50)).thenReturn(List.of());
-        pipeline = new MaintenancePipeline(reconcile, entryExpiry, hardTrigger, ratchet, softEval,
-                indicators, positionRepo, signalRepo, tranche2Detector, killCriteriaEvaluator,
-                3.0, 22, 20);
+        pipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper, hardTrigger, ratchet,
+                softEval, indicators, positionRepo, signalRepo, tranche2Detector,
+                killCriteriaEvaluator, 3.0, 22, 20);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
@@ -324,7 +325,7 @@ class MaintenancePipelineTest {
                 killCriteriaEvaluator, 0.35, 1.5, 10,
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
-        MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry,
+        MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
                 tranche2Detector, killCriteriaEvaluator, 3.0, 22, 20);
 
@@ -692,5 +693,31 @@ class MaintenancePipelineTest {
                 eq(Map.of("GOOD", new BigDecimal("2.0"), "OTHR", new BigDecimal("5.0"))),
                 eq(Map.of("GOOD", new BigDecimal("100"), "OTHR", new BigDecimal("100"))),
                 eq("run1"));
+    }
+
+    /** The sweep runs INSIDE the maintenance pass, after the GTD-entry expiry and before the
+     *  pipeline reads its own pending set at findPending(50) — so a PENDING signal past the age
+     *  bound stops conferring REINFORCING_SIGNAL tranche-2 eligibility in the SAME pass
+     *  (Tranche2Detector has no age filter of its own). */
+    @Test
+    void sweepRunsAfterEntryExpiryAndBeforeThePendingRead() {
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0);
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1"))
+                .thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("108"), null));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(survivors);
+
+        pipeline.run("c", "r1");
+
+        InOrder order = inOrder(entryExpiry, sweeper, signalRepo);
+        order.verify(entryExpiry).expire("c", "r1");
+        order.verify(sweeper).sweep("r1");
+        order.verify(signalRepo).findPending(50);
     }
 }
