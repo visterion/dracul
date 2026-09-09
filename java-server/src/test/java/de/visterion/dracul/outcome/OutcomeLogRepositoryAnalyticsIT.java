@@ -28,11 +28,16 @@ class OutcomeLogRepositoryAnalyticsIT {
      *  across IT classes, so a sibling that writes {@code outcome_log}/{@code decision_log}
      *  (e.g. {@code VersionMetricsRepositoryIT}) leaves rows behind and every assertion here
      *  fails — a latent order-dependence that only shows up once class ordering shifts. Ten
-     *  sibling ITs clear their tables for exactly this reason. */
+     *  sibling ITs clear their tables for exactly this reason. {@code executor_signal} joins in
+     *  too now ({@code findVetoRows}' ACCEPTED exclusion), and it carries no incoming FK, so it
+     *  is cleared here as well — without it, a sibling IT that ever inserts a
+     *  {@code sig-a}/{@code sig-dupe}/{@code sig-distinct-*}/{@code sig-nonexistent} row would
+     *  silently change what the pre-existing tests below see. */
     @org.junit.jupiter.api.BeforeEach
     void clean() {
         jdbc.sql("DELETE FROM outcome_log").update();
         jdbc.sql("DELETE FROM decision_log").update();
+        jdbc.sql("DELETE FROM executor_signal").update();
     }
 
     @Test
@@ -180,7 +185,6 @@ class OutcomeLogRepositoryAnalyticsIT {
     @Test
     void aCounterfactualForAnAcceptedSignalLeavesVetoPrecision() {
         String logId = java.util.UUID.randomUUID().toString();
-        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-accepted'").update();
         seedSignal("sig-accepted", "ACCCO", "ACCEPTED");
         seedDecisionLog(logId, "sig-accepted", "ACCCO", "BROKER_ERROR");
         seedCounterfactual(logId, "ACCCO", "BROKER_ERROR", "0.5", true, "2026-09-01T00:00:00Z");
@@ -193,7 +197,6 @@ class OutcomeLogRepositoryAnalyticsIT {
     @Test
     void theSameRowWithAnExpiredSignalStays() {
         String logId = java.util.UUID.randomUUID().toString();
-        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-expired'").update();
         seedSignal("sig-expired", "EXPCO", "EXPIRED");
         seedDecisionLog(logId, "sig-expired", "EXPCO", "PACE_LIMIT");
         seedCounterfactual(logId, "EXPCO", "PACE_LIMIT", "0.5", true, "2026-09-01T00:00:00Z");
@@ -205,7 +208,6 @@ class OutcomeLogRepositoryAnalyticsIT {
      *  the log_id_ref prefix instead. skip:<id> for an ACCEPTED signal drops out too. */
     @Test
     void aSkipRowForAnAcceptedSignalAlsoLeavesVetoPrecision() {
-        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-skip-acc'").update();
         seedSignal("sig-skip-acc", "SKACC", "ACCEPTED");
         seedCounterfactual("skip:sig-skip-acc", "SKACC", "LLM_SKIP", "0.5", true, "2026-09-01T00:00:00Z");
 
@@ -216,13 +218,27 @@ class OutcomeLogRepositoryAnalyticsIT {
      *  own reason code (never pooled with place_entry's SIGNAL_EXPIRED). */
     @Test
     void anExpiredRowForARejectedSignalSurvivesWithItsOwnReasonCode() {
-        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-swept'").update();
         seedSignal("sig-swept", "SWPCO", "REJECTED");
         seedCounterfactual("expired:sig-swept", "SWPCO", "SIGNAL_EXPIRED_UNEVALUATED", "0.5",
                 true, "2026-09-01T00:00:00Z");
 
         assertThat(repo.findVetoRows())
                 .extracting("reasonCode").containsExactly("SIGNAL_EXPIRED_UNEVALUATED");
+    }
+
+    /** Pins the {@code substr(ol.log_id_ref, 9)} offset for the {@code expired:} prefix: a wrong
+     *  offset would mis-slice the id, resolve to no {@code executor_signal} row, and the
+     *  {@code s.status IS NULL} arm of the guard would then keep this row — passing the suite
+     *  while silently disabling the ACCEPTED exclusion for the whole
+     *  {@code SIGNAL_EXPIRED_UNEVALUATED} population. Asserting absence here forces the offset
+     *  to resolve to the real, ACCEPTED signal. */
+    @Test
+    void anExpiredRowForAnAcceptedSignalAlsoLeavesVetoPrecision() {
+        seedSignal("sig-expired-acc", "EXPACC", "ACCEPTED");
+        seedCounterfactual("expired:sig-expired-acc", "EXPACC", "SIGNAL_EXPIRED_UNEVALUATED",
+                "0.5", true, "2026-09-01T00:00:00Z");
+
+        assertThat(repo.findVetoRows()).isEmpty();
     }
 
     /** s.status IS NULL keeps rows whose signal id no longer resolves, exactly as before. */
