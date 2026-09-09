@@ -107,4 +107,95 @@ class ExecutorDecisionRepositoryIT {
         assertThat(repo.findSkipsWithoutDecisionLog())
                 .extracting(ExecutorDecision::signalId).containsExactly(first, second);
     }
+
+    // =========================================================================
+    // findSweptWithoutDecisionLog — the SIGNAL_EXPIRED_UNEVALUATED population: signals the
+    // sweeper retired that the LLM never called place_entry on. A signal stranded by a TRANSIENT
+    // place_entry reject already has a processReject counterfactual under that veto reason and
+    // must NOT appear here — the veto reason wins, exactly as it does for LLM_SKIPs.
+    // =========================================================================
+
+    private String seedPendingSignal(String symbol, LocalDate barDate, BigDecimal atr) {
+        String id = UUID.randomUUID().toString();
+        signals.insert(new ExecutorSignal(id, "strigoi-spin", "v1", symbol, "BUY", 0.7,
+                "SPINOFF", List.of(), "3m", new BigDecimal("101.5"), "REJECTED", null,
+                null, null, barDate, atr));
+        return id;
+    }
+
+    private void seedSweepRow(String signalId, String symbol) {
+        repo.insert(new ExecutorDecision(null, signalId, symbol, false, "SIGNAL_EXPIRED",
+                List.of("SIGNAL_EXPIRED:FAIL (6 > 5 days)"),
+                PendingSignalSweeper.RATIONALE_PREFIX + "6 > 5 trading days",
+                null, "run-1", null, PendingSignalSweeper.ACTION));
+    }
+
+    @Test
+    void selectsOnlySweptSignalsWithAnchorsAndNoRejectDecisionLogRow() {
+        String wanted = seedPendingSignal("SWEPTCO", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        seedSweepRow(wanted, "SWEPTCO");
+
+        // (a) pre-V49 shape: no reference_atr, so the walk has no anchor. Forward-only, no backfill.
+        String noAtr = seedPendingSignal("NOATRCO", LocalDate.parse("2026-09-04"), null);
+        seedSweepRow(noAtr, "NOATRCO");
+
+        // (b) place_entry's OWN SIGNAL_EXPIRED row: action is null there, and its counterfactual
+        // comes from the decision_log REJECT partner, not from here.
+        String placeEntry = seedPendingSignal("PECO", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        seedDecision(placeEntry, "PECO", null, "SIGNAL_EXPIRED");
+
+        // (c) stranded by a TRANSIENT place_entry reject: it already has a processReject
+        // counterfactual under MAX_POSITIONS. The veto reason wins.
+        String vetoed = seedPendingSignal("VETOSWEPT", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        seedSweepRow(vetoed, "VETOSWEPT");
+        decisionLog.insert(new DecisionLog(null, "run-1", "exec-v0.6", "SIGNAL", vetoed,
+                "strigoi-spin", "v1", "VETOSWEPT", null, null, "REJECT", "MAX_POSITIONS",
+                null, null, null, null, null));
+
+        assertThat(repo.findSweptWithoutDecisionLog())
+                .extracting(ExecutorDecision::signalId).containsExactly(wanted);
+    }
+
+    /** The accepting interleaving: the sweep marked REJECTED while an in-flight place_entry,
+     *  already past its DUPLICATE check, booked the position and logged SIGNAL/ENTER. The row
+     *  still satisfies the finder (NOT EXISTS looks for REJECT, not ENTER) — what keeps the
+     *  hypothetical away from the real trade is OutcomeBatchJob's ACCEPTED guard, not this SQL.
+     *  An implementation that widens NOT EXISTS to any SIGNAL row fails here. */
+    @Test
+    void aSignalWhoseOnlyDecisionLogPartnerIsAnEnterIsStillReturned() {
+        String id = seedPendingSignal("ENTERCO", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        seedSweepRow(id, "ENTERCO");
+        decisionLog.insert(new DecisionLog(null, "run-1", "exec-v0.6", "SIGNAL", id,
+                "strigoi-spin", "v1", "ENTERCO", null, null, "ENTER", null,
+                null, null, null, null, null));
+
+        assertThat(repo.findSweptWithoutDecisionLog())
+                .extracting(ExecutorDecision::signalId).containsExactly(id);
+    }
+
+    /** A MAINTENANCE/CANCEL_EXPIRED partner is a different trigger_type entirely and must not
+     *  drop the signal out of BOTH counterfactual loops. */
+    @Test
+    void aSignalWhoseOnlyDecisionLogPartnerIsAMaintenanceRowIsStillReturned() {
+        String id = seedPendingSignal("MAINTCO", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        seedSweepRow(id, "MAINTCO");
+        decisionLog.insert(new DecisionLog(null, "run-1", "exec-v0.6", "MAINTENANCE", id,
+                "strigoi-spin", "v1", "MAINTCO", null, null, "CANCEL_EXPIRED", "SIGNAL_EXPIRED",
+                null, null, null, null, null));
+
+        assertThat(repo.findSweptWithoutDecisionLog())
+                .extracting(ExecutorDecision::signalId).containsExactly(id);
+    }
+
+    /** One signal can carry TWO sweep rows (a markStatus failure after the insert, or an operator
+     *  pass overlapping the agent's). DISTINCT ON collapses them to the earliest. */
+    @Test
+    void twoSweepRowsForOneSignalCollapseToOne() {
+        String id = seedPendingSignal("DUPSWEEP", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        seedSweepRow(id, "DUPSWEEP");
+        seedSweepRow(id, "DUPSWEEP");
+
+        assertThat(repo.findSweptWithoutDecisionLog())
+                .extracting(ExecutorDecision::signalId).containsExactly(id);
+    }
 }

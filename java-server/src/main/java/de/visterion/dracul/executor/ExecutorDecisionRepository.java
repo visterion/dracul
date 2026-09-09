@@ -153,6 +153,50 @@ public class ExecutorDecisionRepository {
                 .list();
     }
 
+    /**
+     * Signals the {@code PendingSignalSweeper} retired that the LLM never called
+     * {@code place_entry} on, and whose signal carries the two counterfactual reference inputs.
+     * Feeds the {@code SIGNAL_EXPIRED_UNEVALUATED} loop in {@code OutcomeBatchJob}.
+     *
+     * <p>Each predicate earns its place:
+     * <ul>
+     *   <li>{@code action = 'SWEEP'} — the structural discriminator against {@code place_entry}'s
+     *       own {@code SIGNAL_EXPIRED} row, which carries {@code action = null}, a full catalog
+     *       trace and a {@code decision_log} REJECT partner. Bound to
+     *       {@code PendingSignalSweeper.ACTION}: {@code ExecutorDecisionRepositoryIT} seeds its
+     *       positive row from that constant, so a drift breaks a test rather than silently
+     *       emptying this finder (whose empty result is also its steady state on most nights).</li>
+     *   <li>{@code reference_bar_date/reference_atr IS NOT NULL} — the walk has no anchor without
+     *       them, and pre-V49 rows have neither. Forward-only by decision; no backfill.</li>
+     *   <li>The {@code NOT EXISTS} matches {@code trigger_type='SIGNAL'} AND {@code action='REJECT'}
+     *       SPECIFICALLY: a signal stranded by a transient {@code place_entry} reject already has a
+     *       {@code processReject} counterfactual under that veto reason, and the VETO REASON WINS —
+     *       exactly the rule {@link #findSkipsWithoutDecisionLog} applies to skips. A signal whose
+     *       only partner is a SIGNAL/ENTER row (the accepting interleaving) or a MAINTENANCE row
+     *       must NOT fall out of both loops, so the predicate stays narrow.</li>
+     * </ul>
+     *
+     * <p>{@code DISTINCT ON (d.signal_id)} because one signal can carry two {@code SWEEP} rows (a
+     * {@code markStatus} failure after the insert, or an operator pass overlapping the agent's).
+     * The {@code outcome_log} upsert is keyed on {@code log_id_ref} anyway, so a second row would
+     * only cost a redundant OHLC fetch.
+     */
+    public List<ExecutorDecision> findSweptWithoutDecisionLog() {
+        return jdbc.sql("""
+                SELECT DISTINCT ON (d.signal_id) d.* FROM executor_decision d
+                JOIN executor_signal s ON s.signal_id = d.signal_id
+                WHERE d.action = :sweepAction AND d.reject_reason = 'SIGNAL_EXPIRED'
+                  AND s.reference_bar_date IS NOT NULL AND s.reference_atr IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM decision_log l
+                                  WHERE l.signal_id = d.signal_id
+                                    AND l.trigger_type = 'SIGNAL' AND l.action = 'REJECT')
+                ORDER BY d.signal_id, d.created_at ASC
+                """)
+                .param("sweepAction", PendingSignalSweeper.ACTION)
+                .query(this::mapRow)
+                .list();
+    }
+
     private ExecutorDecision mapRow(ResultSet rs, int n) throws SQLException {
         Object createdAtObj = rs.getObject("created_at");
         return new ExecutorDecision(

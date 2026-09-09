@@ -197,6 +197,18 @@ public class OutcomeLogRepository {
      * {@code ol.id DESC} is only a deterministic last resort ({@code id} is a UUID and carries no
      * time information). The WRITE side stays keyed per {@code log_id_ref} — this is a read-side
      * dedupe only.
+     *
+     * <p><b>Why ACCEPTED signals are excluded.</b> An ACCEPTED signal has an
+     * {@code executor_position}, and its question "what if we had taken it" is answered by the
+     * trade — once that trade completes and its TRADE outcome row enters the Brier population.
+     * Until then the counterfactual is <i>withheld</i>, not replaced: a reason's {@code n} can drop
+     * by one without an {@code n} gain elsewhere in the same report for as long as the position is
+     * open. That is the honest state; counting a hypothetical next to a live real position would be
+     * the worse error. EXPIRED (bracket placed, never filled), REJECTED and SKIPPED signals never
+     * traded, so their counterfactual stays. {@code s.status IS NULL} keeps rows whose signal id no
+     * longer resolves exactly as before. The exclusion is {@code veto_precision} ONLY — the hunter
+     * Brier ({@link #findHunterBrierPoints}) deliberately keeps these rows, because it asks whether
+     * the SIGNAL was good, which a hypothetical answers even when the executor entered.
      */
     public List<CalibrationService.VetoRow> findVetoRows() {
         return jdbc.sql("""
@@ -208,7 +220,12 @@ public class OutcomeLogRepository {
                        ol.hypothetical->>'would_have_stopped_out' AS would_have_stopped_out
                 FROM outcome_log ol
                 LEFT JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
+                LEFT JOIN executor_signal s
+                       ON s.signal_id = COALESCE(dl.signal_id,
+                                                 CASE WHEN ol.log_id_ref LIKE 'skip:%'    THEN substr(ol.log_id_ref, 6)
+                                                      WHEN ol.log_id_ref LIKE 'expired:%' THEN substr(ol.log_id_ref, 9) END)
                 WHERE ol.kind='COUNTERFACTUAL' AND ol.reason_code IS NOT NULL
+                  AND (s.status IS NULL OR s.status <> 'ACCEPTED')
                 ORDER BY COALESCE(dl.signal_id, ol.log_id_ref), ol.reason_code,
                          ol.complete DESC, ol.computed_at DESC, ol.id DESC
                 """)

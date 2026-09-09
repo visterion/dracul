@@ -159,4 +159,78 @@ class OutcomeLogRepositoryAnalyticsIT {
         assertThat(repo.findStopBasisRows()).isEmpty();
         assertThat(repo.findExecutorBrierPoints()).isEmpty();
     }
+
+    private void seedSignal(String signalId, String symbol, String status) {
+        jdbc.sql("""
+                INSERT INTO executor_signal
+                  (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
+                   horizon, reference_price, status)
+                VALUES (:id, 'strigoi-spin', 'v1', :symbol, 'BUY', 0.7, 'SPINOFF',
+                        '3m', 100, :status)
+                ON CONFLICT (signal_id) DO UPDATE SET status = EXCLUDED.status
+                """)
+                .param("id", signalId).param("symbol", symbol).param("status", status)
+                .update();
+    }
+
+    /** An ACCEPTED signal has a position, and its "what if we had taken it" is answered by the
+     *  TRADE row once that position closes. Counting a hypothetical next to a live real position
+     *  would be the worse error, so the counterfactual is WITHHELD from veto_precision (an n can
+     *  drop without a matching n gain elsewhere while the position is still open). */
+    @Test
+    void aCounterfactualForAnAcceptedSignalLeavesVetoPrecision() {
+        String logId = java.util.UUID.randomUUID().toString();
+        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-accepted'").update();
+        seedSignal("sig-accepted", "ACCCO", "ACCEPTED");
+        seedDecisionLog(logId, "sig-accepted", "ACCCO", "BROKER_ERROR");
+        seedCounterfactual(logId, "ACCCO", "BROKER_ERROR", "0.5", true, "2026-09-01T00:00:00Z");
+
+        assertThat(repo.findVetoRows()).isEmpty();
+    }
+
+    /** EXPIRED means the entry bracket was placed and never filled — no trade happened, so the
+     *  counterfactual is still the only answer there is. Same for REJECTED and SKIPPED. */
+    @Test
+    void theSameRowWithAnExpiredSignalStays() {
+        String logId = java.util.UUID.randomUUID().toString();
+        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-expired'").update();
+        seedSignal("sig-expired", "EXPCO", "EXPIRED");
+        seedDecisionLog(logId, "sig-expired", "EXPCO", "PACE_LIMIT");
+        seedCounterfactual(logId, "EXPCO", "PACE_LIMIT", "0.5", true, "2026-09-01T00:00:00Z");
+
+        assertThat(repo.findVetoRows()).extracting("reasonCode").containsExactly("PACE_LIMIT");
+    }
+
+    /** The signal-anchored rows have no decision_log partner and resolve their signal id out of
+     *  the log_id_ref prefix instead. skip:<id> for an ACCEPTED signal drops out too. */
+    @Test
+    void aSkipRowForAnAcceptedSignalAlsoLeavesVetoPrecision() {
+        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-skip-acc'").update();
+        seedSignal("sig-skip-acc", "SKACC", "ACCEPTED");
+        seedCounterfactual("skip:sig-skip-acc", "SKACC", "LLM_SKIP", "0.5", true, "2026-09-01T00:00:00Z");
+
+        assertThat(repo.findVetoRows()).isEmpty();
+    }
+
+    /** expired:<id> for a REJECTED signal is the normal swept case and must survive, keeping its
+     *  own reason code (never pooled with place_entry's SIGNAL_EXPIRED). */
+    @Test
+    void anExpiredRowForARejectedSignalSurvivesWithItsOwnReasonCode() {
+        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = 'sig-swept'").update();
+        seedSignal("sig-swept", "SWPCO", "REJECTED");
+        seedCounterfactual("expired:sig-swept", "SWPCO", "SIGNAL_EXPIRED_UNEVALUATED", "0.5",
+                true, "2026-09-01T00:00:00Z");
+
+        assertThat(repo.findVetoRows())
+                .extracting("reasonCode").containsExactly("SIGNAL_EXPIRED_UNEVALUATED");
+    }
+
+    /** s.status IS NULL keeps rows whose signal id no longer resolves, exactly as before. */
+    @Test
+    void aRowWhoseSignalIdResolvesToNothingIsUnaffected() {
+        seedCounterfactual("skip:sig-nonexistent", "GHOSTCO", "LLM_SKIP", "0.5",
+                true, "2026-09-01T00:00:00Z");
+
+        assertThat(repo.findVetoRows()).extracting("reasonCode").containsExactly("LLM_SKIP");
+    }
 }
