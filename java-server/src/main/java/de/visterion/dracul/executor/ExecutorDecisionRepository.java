@@ -180,6 +180,11 @@ public class ExecutorDecisionRepository {
      * {@code markStatus} failure after the insert, or an operator pass overlapping the agent's).
      * The {@code outcome_log} upsert is keyed on {@code log_id_ref} anyway, so a second row would
      * only cost a redundant OHLC fetch.
+     *
+     * <p>Ordering note: the result is ordered by {@code d.signal_id} (UUID order, a consequence of
+     * {@code DISTINCT ON}), NOT chronologically — unlike {@link #findSkipsWithoutDecisionLog}, which
+     * orders by {@code created_at}. Consumers must not rely on this method's rows arriving in any
+     * meaningful order.
      */
     public List<ExecutorDecision> findSweptWithoutDecisionLog() {
         return jdbc.sql("""

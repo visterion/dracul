@@ -1,6 +1,7 @@
 package de.visterion.dracul.executor;
 
 import de.visterion.dracul.ContainerConfig;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -44,11 +45,23 @@ class ExecutorSignalRepositoryIT {
     @Autowired ExecutorSignalRepository repo;
     @Autowired JdbcClient jdbc;
 
+    // Seeded by the test, cleaned up in @AfterEach — moved out of the test body so a failing
+    // assertion still cleans up its row instead of leaking it into the reused Testcontainer.
+    private String seededId;
+
+    @AfterEach
+    void cleanUp() {
+        if (seededId != null) {
+            jdbc.sql("DELETE FROM executor_signal WHERE signal_id = :id").param("id", seededId).update();
+        }
+    }
+
     @Test
     void aSignalEmittedJustAfterMidnightUtcIsZeroTradingDaysOldOnTheSameDay() {
         // ExecutorSignalRepository.insert has no created_at parameter (the column is DB-defaulted),
         // so the row is seeded with raw SQL to pin the instant.
         String id = UUID.randomUUID().toString();
+        seededId = id;
         jdbc.sql("""
                 INSERT INTO executor_signal
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
@@ -67,7 +80,5 @@ class ExecutorSignalRepositoryIT {
         assertThat(TradingDays.ageOf(seeded.createdAt(), TUESDAY))
                 .as("age of a 00:30 UTC Tuesday emission, read back on that Tuesday")
                 .isZero();
-
-        jdbc.sql("DELETE FROM executor_signal WHERE signal_id = :id").param("id", id).update();
     }
 }

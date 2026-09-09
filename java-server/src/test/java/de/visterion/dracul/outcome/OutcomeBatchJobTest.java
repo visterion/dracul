@@ -661,19 +661,32 @@ class OutcomeBatchJobTest {
         when(marketData.dailyOhlcHistory(eq(symbol), anyInt())).thenReturn(bars);
     }
 
-    /** (a) A decision_log REJECT row whose signal later reached ACCEPTED: the book answers the
-     *  question, so nothing is fetched and nothing is written. */
+    /** (a) I2: unlike {@code processSignalAnchored}, {@code processReject} has NO ACCEPTED guard
+     *  — a decision_log REJECT row whose signal later reached ACCEPTED is still walked and
+     *  upserted exactly as any other REJECT row. This is deliberate: {@code findVetoRows}' own
+     *  read-side filter already excludes ACCEPTED-signal rows from {@code veto_precision}, while
+     *  {@code findHunterBrierPoints} needs this very row — a TRADE row carries no
+     *  {@code hunter_label}, so the REJECT counterfactual is the hunter Brier's only source for an
+     *  entered signal. */
     @Test
-    void processReject_forAnAcceptedSignal_fetchesNothingAndWritesNothing() {
+    void processReject_forAnAcceptedSignal_isStillWalkedAndUpserted() {
         DecisionLog reject = rejectFor("ACCA", "reject-acc", "sig-acc");
         wireReject(reject, "sig-acc");
         when(signals.findById("sig-acc")).thenReturn(new ExecutorSignal("sig-acc", "strigoi-spin",
                 "v1", "ACCA", "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "ACCEPTED", null));
+        when(marketData.dailyOhlcHistory(anyString(), anyInt()))
+                .thenReturn(risingBarsFrom(LocalDate.parse("2026-06-01"), 70));
 
         job.run();
 
-        verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
-        verify(marketData, org.mockito.Mockito.never()).dailyOhlcHistory(anyString(), anyInt());
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.kind()).isEqualTo("COUNTERFACTUAL");
+        assertThat(row.logIdRef()).isEqualTo("reject-acc");
+        assertThat(row.symbol()).isEqualTo("ACCA");
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
+        verify(marketData).dailyOhlcHistory(eq("ACCA"), anyInt());
     }
 
     /** (a2) The same guard on the signal-anchored path: the sweep marked REJECTED while an

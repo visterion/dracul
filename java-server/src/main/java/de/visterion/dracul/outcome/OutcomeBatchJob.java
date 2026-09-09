@@ -370,10 +370,13 @@ public class OutcomeBatchJob {
         BigDecimal atr = bigDecimalOrNull(snap, "atr");
 
         ExecutorSignal signal = reject.signalId() != null ? signals.findById(reject.signalId()) : null;
-        // Same rule as processSignalAnchored: a signal that reached ACCEPTED is answered by its
-        // TRADE row, so nothing is fetched and nothing is written here. Null-tolerant — an
-        // unresolved signal keeps falling into the side == null skip below.
-        if (signal != null && "ACCEPTED".equals(signal.status())) return;
+        // No ACCEPTED guard here (deliberately, unlike processSignalAnchored): findVetoRows'
+        // read-side filter already excludes ACCEPTED-signal rows from veto_precision, but
+        // findHunterBrierPoints needs exactly these REJECT counterfactual rows — TRADE rows carry
+        // no hunter_label, so a REJECT row of a later-entered signal is the hunter Brier's only
+        // source for that signal. Skipping the walk here would silently stop the hunter Brier
+        // population from growing for every signal that took a transient/BROKER_ERROR reject and
+        // was later entered (see documentation/api.md and OutcomeLogRepository for the split).
         String side = signal != null ? signal.direction() : null;
 
         HypotheticalOutcome outcome;
@@ -459,7 +462,7 @@ public class OutcomeBatchJob {
      * Counterfactual for a signal that has no {@code decision_log} row of its own — the LLM's
      * outright SKIP ({@code LLM_SKIP}) and the sweeper's unevaluated expiry
      * ({@code SIGNAL_EXPIRED_UNEVALUATED}). Structurally the same walk as {@link #processReject},
-     * with three deliberate differences:
+     * with four deliberate differences:
      *
      * <ol>
      *   <li><b>The inputs come from the SIGNAL, not from an inputs_snapshot</b> — neither of these
@@ -468,17 +471,27 @@ public class OutcomeBatchJob {
      *   <li><b>The anchor is EMISSION, not the decision.</b> The REJECT counterfactual anchors on
      *       the day place_entry recomputed price and ATR; this one anchors on the bar the persisted
      *       price actually belongs to. For a decision taken on the emission day — 186 of 202 in the
-     *       current population — that is the same day; the rest are anchored earlier than their
-     *       verdict, which is stated in documentation/api.md rather than papered over.</li>
+     *       current {@code LLM_SKIP} population — that is the same day; the rest are anchored
+     *       earlier than their verdict, which is stated in documentation/api.md rather than papered
+     *       over. That statistic does not apply to the swept population sharing this method: by
+     *       construction a swept signal's decision (if any) trails its emission by at least
+     *       {@code max-signal-age-days + 1} trading days, so anchor and verdict are never the same
+     *       day there.</li>
      *   <li><b>{@code log_id_ref} keys on the signal</b> ({@code "skip:" + signal_id} or
      *       {@code "expired:" + signal_id}), so a re-sent submit_decision, or a re-run of the
      *       sweep's finder, upserts this row instead of adding one.</li>
-     *   <li><b>The ACCEPTED guard lives here, not duplicated per caller.</b> On the
-     *       {@code LLM_SKIP} path it is unreachable today — a SKIP row's signal is
-     *       {@code SKIPPED} in the same block, and {@code place_entry} on a non-PENDING signal
-     *       answers {@code DUPLICATE} — but the swept path can genuinely race a later
-     *       {@code place_entry} that books the position, so the check has to be evaluated for
-     *       both callers rather than assumed true for one of them.</li>
+     *   <li><b>The ACCEPTED guard lives here, not in {@link #processReject}.</b> Both walks would
+     *       otherwise duplicate a real trade's outcome next to a hypothetical one, but only here is
+     *       it safe to skip the write outright: this population feeds no metric the batch owes an
+     *       ACCEPTED-signal row for. {@code processReject}'s REJECT rows are different — they are
+     *       {@code findHunterBrierPoints}' only source for an entered signal's hunter-Brier
+     *       contribution (TRADE rows carry no {@code hunter_label}), so that guard was removed
+     *       there; {@code findVetoRows}' read-side filter alone keeps such rows out of
+     *       {@code veto_precision}. On the {@code LLM_SKIP} path this guard is unreachable today —
+     *       a SKIP row's signal is {@code SKIPPED} in the same block, and {@code place_entry} on a
+     *       non-PENDING signal answers {@code DUPLICATE} — but the swept path can genuinely race a
+     *       later {@code place_entry} that books the position, so the check still has to run for
+     *       both callers of this method.</li>
      * </ol>
      *
      * <p>Two limitations are shared with the REJECT path and not fixed here (§9 of the spec):
