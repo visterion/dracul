@@ -629,4 +629,130 @@ class OutcomeBatchJobTest {
         verify(outcomeLog).upsert(captor.capture());
         assertThat(captor.getValue().logIdRef()).isEqualTo("skip:sig-ok");
     }
+
+    // =========================================================================
+    // SP2b — the ACCEPTED guard and the SIGNAL_EXPIRED_UNEVALUATED loop.
+    // =========================================================================
+
+    private de.visterion.dracul.executor.ExecutorDecision sweepDecision(String signalId, String symbol) {
+        return new de.visterion.dracul.executor.ExecutorDecision(2L, signalId, symbol, false,
+                "SIGNAL_EXPIRED", List.of("SIGNAL_EXPIRED:FAIL (6 > 5 days)"),
+                de.visterion.dracul.executor.PendingSignalSweeper.RATIONALE_PREFIX
+                        + "6 > 5 trading days",
+                null, "run-1", "2026-09-16 05:00:00.0",
+                de.visterion.dracul.executor.PendingSignalSweeper.ACTION);
+    }
+
+    private ExecutorSignal sweptSignal(String signalId, String symbol, String status,
+            LocalDate anchor) {
+        return new ExecutorSignal(signalId, "strigoi-spin", "v1", symbol, "BUY", 0.7, "SPINOFF",
+                List.of(), "3m", bd("100"), status, null, null, null, anchor, bd("2"));
+    }
+
+    private void wireSwept(String signalId, String symbol, ExecutorSignal signal, List<OhlcBar> bars) {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog()).thenReturn(List.of());
+        when(executorDecisions.findSweptWithoutDecisionLog())
+                .thenReturn(List.of(sweepDecision(signalId, symbol)));
+        when(signals.findById(signalId)).thenReturn(signal);
+        when(outcomeLog.isComplete("expired:" + signalId)).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+        when(marketData.dailyOhlcHistory(eq(symbol), anyInt())).thenReturn(bars);
+    }
+
+    /** (a) A decision_log REJECT row whose signal later reached ACCEPTED: the book answers the
+     *  question, so nothing is fetched and nothing is written. */
+    @Test
+    void processReject_forAnAcceptedSignal_fetchesNothingAndWritesNothing() {
+        DecisionLog reject = rejectFor("ACCA", "reject-acc", "sig-acc");
+        wireReject(reject, "sig-acc");
+        when(signals.findById("sig-acc")).thenReturn(new ExecutorSignal("sig-acc", "strigoi-spin",
+                "v1", "ACCA", "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "ACCEPTED", null));
+
+        job.run();
+
+        verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
+        verify(marketData, org.mockito.Mockito.never()).dailyOhlcHistory(anyString(), anyInt());
+    }
+
+    /** (a2) The same guard on the signal-anchored path: the sweep marked REJECTED while an
+     *  in-flight place_entry booked the position (status ACCEPTED). The SWEEP row still satisfies
+     *  the finder, and this guard is what keeps a hypothetical away from the real trade. */
+    @Test
+    void processSignalAnchored_forAnAcceptedSignal_fetchesNothingAndWritesNothing() {
+        String signalId = "sig-swept-acc";
+        wireSwept(signalId, "ACCB",
+                sweptSignal(signalId, "ACCB", "ACCEPTED", LocalDate.parse("2026-09-04")),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
+        verify(marketData, org.mockito.Mockito.never()).dailyOhlcHistory(anyString(), anyInt());
+    }
+
+    /** (b) The swept loop writes its own reason code, keyed expired:<signal_id>, walked from the
+     *  signal anchors. With only 6 bars after the anchor the 20-day window is not filled, so
+     *  r_after_20d is null WITHOUT a skipped_reason and the row stays incomplete — exactly the
+     *  shape the post-deploy verification expects after the first nightly batch. */
+    @Test
+    void sweptSignal_writesAnEmissionAnchoredCounterfactualUnderItsOwnReasonCode() {
+        String signalId = "sig-swept-1";
+        LocalDate anchor = LocalDate.parse("2026-09-04");
+        wireSwept(signalId, "SWEEPCO", sweptSignal(signalId, "SWEEPCO", "REJECTED", anchor),
+                risingBarsFrom(anchor, 6));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+
+        assertThat(row.kind()).isEqualTo("COUNTERFACTUAL");
+        assertThat(row.logIdRef()).isEqualTo("expired:" + signalId);
+        assertThat(row.reasonCode()).isEqualTo("SIGNAL_EXPIRED_UNEVALUATED");
+        assertThat(row.symbol()).isEqualTo("SWEEPCO");
+        assertThat(row.sourceAgent()).isEqualTo("strigoi-spin");
+        assertThat(row.agentVersion()).isEqualTo("v1");
+        assertThat(row.ruleVersion()).isEqualTo("exec-v0.6");
+        assertThat(row.hypothetical().path("r_after_20d").isNull()).isTrue();
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
+        assertThat(row.complete()).isFalse();
+    }
+
+    /** (c) Regression guard for the generalisation: an LLM_SKIP row must still be written exactly
+     *  as before, same key, same reason code, same exact R. */
+    @Test
+    void llmSkip_isUnchangedByTheGeneralisation() {
+        String signalId = "sig-skip-regress";
+        wireSkip(signalId, "SKIPCO", skippedSignal(signalId, "SKIPCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.logIdRef()).isEqualTo("skip:" + signalId);
+        assertThat(row.reasonCode()).isEqualTo("LLM_SKIP");
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.0);
+        assertThat(row.complete()).isTrue();
+    }
+
+    /** (d) An already-complete swept row is not re-walked (the isComplete short-circuit, shared
+     *  with the LLM_SKIP path). */
+    @Test
+    void sweptSignal_alreadyComplete_isNotReWalked() {
+        String signalId = "sig-swept-done";
+        LocalDate anchor = LocalDate.parse("2026-09-04");
+        wireSwept(signalId, "DONECO", sweptSignal(signalId, "DONECO", "REJECTED", anchor),
+                risingBarsFrom(anchor, 70));
+        when(outcomeLog.isComplete("expired:" + signalId)).thenReturn(true);
+
+        job.run();
+
+        verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
+        verify(marketData, org.mockito.Mockito.never()).dailyOhlcHistory(anyString(), anyInt());
+    }
 }

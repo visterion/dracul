@@ -331,10 +331,25 @@ public class OutcomeBatchJob {
         for (ExecutorDecision skip : executorDecisions.findSkipsWithoutDecisionLog()) {
             seen++;
             try {
-                processSkip(skip);
+                processSignalAnchored(skip, "skip:" + skip.signalId(), "LLM_SKIP");
             } catch (Exception e) {
                 log.warn("outcome batch: LLM_SKIP counterfactual failed for signal {} ({}): {}",
                         skip.signalId(), skip.symbol(), e.getMessage(), e);
+            }
+        }
+        // Signals the PendingSignalSweeper retired without anyone evaluating them. Their own
+        // reason code, NOT SIGNAL_EXPIRED: processReject anchors on the decision day, this walk on
+        // the emission bar, and for a swept signal those are apart by construction (at least
+        // max-signal-age-days + 1 trading days, unbounded above). Pooling the two would silently
+        // redefine today's SIGNAL_EXPIRED datum.
+        for (ExecutorDecision swept : executorDecisions.findSweptWithoutDecisionLog()) {
+            seen++;
+            try {
+                processSignalAnchored(swept, "expired:" + swept.signalId(),
+                        "SIGNAL_EXPIRED_UNEVALUATED");
+            } catch (Exception e) {
+                log.warn("outcome batch: SIGNAL_EXPIRED_UNEVALUATED counterfactual failed for "
+                        + "signal {} ({}): {}", swept.signalId(), swept.symbol(), e.getMessage(), e);
             }
         }
         // Countable loss: without this line a batch in which every symbol came back empty looks
@@ -355,6 +370,10 @@ public class OutcomeBatchJob {
         BigDecimal atr = bigDecimalOrNull(snap, "atr");
 
         ExecutorSignal signal = reject.signalId() != null ? signals.findById(reject.signalId()) : null;
+        // Same rule as processSignalAnchored: a signal that reached ACCEPTED is answered by its
+        // TRADE row, so nothing is fetched and nothing is written here. Null-tolerant — an
+        // unresolved signal keeps falling into the side == null skip below.
+        if (signal != null && "ACCEPTED".equals(signal.status())) return;
         String side = signal != null ? signal.direction() : null;
 
         HypotheticalOutcome outcome;
@@ -437,20 +456,29 @@ public class OutcomeBatchJob {
     }
 
     /**
-     * Counterfactual for a signal the LLM skipped outright. Structurally the same walk as
-     * {@link #processReject}, with three deliberate differences:
+     * Counterfactual for a signal that has no {@code decision_log} row of its own — the LLM's
+     * outright SKIP ({@code LLM_SKIP}) and the sweeper's unevaluated expiry
+     * ({@code SIGNAL_EXPIRED_UNEVALUATED}). Structurally the same walk as {@link #processReject},
+     * with three deliberate differences:
      *
      * <ol>
-     *   <li><b>The inputs come from the SIGNAL, not from an inputs_snapshot</b> — a SKIP without a
-     *       place_entry has no decision_log row at all. {@code reference_atr} is the ATR22 window,
+     *   <li><b>The inputs come from the SIGNAL, not from an inputs_snapshot</b> — neither of these
+     *       populations has a decision_log row at all. {@code reference_atr} is the ATR22 window,
      *       the same definition the REJECT path stores as {@code inputs_snapshot.atr}.</li>
      *   <li><b>The anchor is EMISSION, not the decision.</b> The REJECT counterfactual anchors on
      *       the day place_entry recomputed price and ATR; this one anchors on the bar the persisted
      *       price actually belongs to. For a decision taken on the emission day — 186 of 202 in the
      *       current population — that is the same day; the rest are anchored earlier than their
      *       verdict, which is stated in documentation/api.md rather than papered over.</li>
-     *   <li><b>{@code log_id_ref} keys on the signal</b> ({@code "skip:" + signal_id}), so a re-sent
-     *       submit_decision upserts this row instead of adding one.</li>
+     *   <li><b>{@code log_id_ref} keys on the signal</b> ({@code "skip:" + signal_id} or
+     *       {@code "expired:" + signal_id}), so a re-sent submit_decision, or a re-run of the
+     *       sweep's finder, upserts this row instead of adding one.</li>
+     *   <li><b>The ACCEPTED guard lives here, not duplicated per caller.</b> On the
+     *       {@code LLM_SKIP} path it is unreachable today — a SKIP row's signal is
+     *       {@code SKIPPED} in the same block, and {@code place_entry} on a non-PENDING signal
+     *       answers {@code DUPLICATE} — but the swept path can genuinely race a later
+     *       {@code place_entry} that books the position, so the check has to be evaluated for
+     *       both callers rather than assumed true for one of them.</li>
      * </ol>
      *
      * <p>Two limitations are shared with the REJECT path and not fixed here (§9 of the spec):
@@ -458,11 +486,16 @@ public class OutcomeBatchJob {
      * includes that bar, and neither path checks the walked series against the stored price, so a
      * split between emission and walk yields a wrong R-multiple with {@code skipped = 0}.
      */
-    private void processSkip(ExecutorDecision skip) {
-        String logIdRef = "skip:" + skip.signalId();
+    private void processSignalAnchored(ExecutorDecision d, String logIdRef, String reasonCode) {
         if (outcomeLog.isComplete(logIdRef)) return;
 
-        ExecutorSignal signal = signals.findById(skip.signalId());
+        ExecutorSignal signal = signals.findById(d.signalId());
+        // A signal that reached ACCEPTED has an executor_position, and its "what if" is answered
+        // by the trade. Returning here writes nothing and marks nothing complete, so if the status
+        // is ever corrected the next batch walks it for real. Null-tolerant on purpose: an
+        // unresolvable signal falls through to the side == null branch below, exactly as before.
+        if (signal != null && "ACCEPTED".equals(signal.status())) return;
+
         String side = signal != null ? signal.direction() : null;
         BigDecimal referencePrice = signal != null ? signal.referencePrice() : null;
         BigDecimal referenceAtr = signal != null ? signal.referenceAtr() : null;
@@ -481,12 +514,12 @@ public class OutcomeBatchJob {
         } else {
             BarsAfter fetched;
             try {
-                fetched = fetchBarsAfter(skip.symbol(), anchor);
+                fetched = fetchBarsAfter(d.symbol(), anchor);
             } catch (MarketDataException e) {
                 // Transient provider outage, not a permanent skip: leave the row untouched so the
                 // next nightly run retries. Same contract as processReject.
-                log.warn("outcome batch: OHLC unavailable for {} (skip {}): {}",
-                        skip.symbol(), logIdRef, e.getMessage());
+                log.warn("outcome batch: OHLC unavailable for {} (counterfactual {}): {}",
+                        d.symbol(), logIdRef, e.getMessage());
                 return;
             }
             if (fetched.sourceEmpty()) {
@@ -494,9 +527,9 @@ public class OutcomeBatchJob {
                         "no OHLC bars available for symbol over the whole lookback");
                 complete = false;   // a data blackout is not a verdict on the signal
                 noDataSymbols++;
-                log.warn("outcome batch: no OHLC bars at all for {} (skip {}) — writing an "
-                        + "explicitly skipped counterfactual, not a stopped-out=false verdict",
-                        skip.symbol(), logIdRef);
+                log.warn("outcome batch: no OHLC bars at all for {} (counterfactual {}) — writing "
+                        + "an explicitly skipped counterfactual, not a stopped-out=false verdict",
+                        d.symbol(), logIdRef);
             } else {
                 List<OhlcBar> bars = fetched.after();
                 outcome = engine.walk(side, referencePrice, referenceAtr, null, bars,
@@ -517,7 +550,7 @@ public class OutcomeBatchJob {
         else hypo.putNull("skipped_reason");
 
         outcomeLog.upsert(new OutcomeLogRow(
-                "COUNTERFACTUAL", logIdRef, null, skip.symbol(), "LLM_SKIP",
+                "COUNTERFACTUAL", logIdRef, null, d.symbol(), reasonCode,
                 null, null, null, null,
                 null, null, null,
                 null, null, null,

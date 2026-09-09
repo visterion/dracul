@@ -226,4 +226,14 @@ class CalibrationServiceTest {
         assertThat(result.getFirst().reasonCode()).isEqualTo("LLM_SKIP");
         assertThat(result.getFirst().n()).isEqualTo(3);
     }
+
+    /** The caveat list is a documented API contract: documentation/api.md and
+     *  documentation/chronicle.md both state the exact count, and Chronicle renders them as a
+     *  footnote list. SP2b adds the anchor caveat for the two signal-anchored populations. */
+    @Test
+    void behaviorCaveatsHasFourEntriesIncludingTheAnchorNote() {
+        assertThat(CalibrationService.BEHAVIOR_CAVEATS).hasSize(4);
+        assertThat(CalibrationService.BEHAVIOR_CAVEATS).last().isEqualTo(
+                "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day");
+    }
 }

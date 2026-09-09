@@ -90,7 +90,8 @@ public class CalibrationService {
     public static final List<String> BEHAVIOR_CAVEATS = List.of(
             "counterfactuals assume reference-price fills (optimistic)",
             "PACE_LIMIT/BUDGET rejects are opportunity-cost questions",
-            "reason_code is the first failed check; stats are conditional on earlier checks passing");
+            "reason_code is the first failed check; stats are conditional on earlier checks passing",
+            "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day");
 
     /** Brier score = mean squared error of (predicted probability − realized 0/1 outcome). */
     public double brier(List<BrierPoint> points) {
