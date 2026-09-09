@@ -172,7 +172,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-per-sector:2}") int maxPerSector,
             @Value("${dracul.executor.min-price:5}") java.math.BigDecimal minPrice,
             @Value("${dracul.executor.adv-multiple:200}") int advMultiple,
-            @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays,
+            SignalAgePolicy signalAgePolicy,
             @Value("${dracul.executor.chase-atr-mult:1.0}") double chaseAtrMult,
             @Value("${dracul.executor.drift-anchor-atr-mult:0.0}") double driftAnchorAtrMult,
             @Value("${dracul.executor.value-anchor-atr-mult:3.0}") double valueAnchorAtrMult,
@@ -192,7 +192,7 @@ public class ExecutorWebhookController {
                 pipeline, decisionLogRepo, cooldownRepo, ruleVersions, mapper, assembler, sizer, ranker,
                 tranche2Detector, telegram, executorNotifier, positionContextRepo, patternRepo, webhookToken, connection, minConfidence,
                 maxPositions, atrPeriod, swingPeriod, cooldownDays, totalBudget, trancheCount, heatPct,
-                maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek, maxTranche,
+                maxPerSector, minPrice, advMultiple, signalAgePolicy.maxSignalAgeDays(), chaseAtrMult, pacePerWeek, maxTranche,
                 entryGtdDays, maxBrokerAttempts, brokerAttemptWindowHours, maxBrokerCallsPerRun,
                 driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency,
                 brokerStopBufferAtr, maxBrokerStopPct, riskPct, atrShortPeriod, mechanismBudget,
@@ -295,6 +295,13 @@ public class ExecutorWebhookController {
         this.vetoConfig = new VetoConfig(minConfidence, maxPositions, totalBudget, heatPct,
                 maxPerSector, minPrice, advMultiple, maxSignalAgeDays, chaseAtrMult, pacePerWeek,
                 trancheCount, driftAnchorAtrMult, valueAnchorAtrMult, instrumentCurrency, mechanismBudget);
+    }
+
+    /** The veto thresholds this controller was wired with. Package-private and test-only:
+     *  {@code SignalAgePolicyWiringIT} asserts that veto #3's bound and the {@link SignalAgePolicy}
+     *  bean read the same configuration key. */
+    VetoConfig vetoConfig() {
+        return vetoConfig;
     }
 
     // -------------------------------------------------------------------

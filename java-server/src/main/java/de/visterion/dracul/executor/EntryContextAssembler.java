@@ -333,22 +333,12 @@ public class EntryContextAssembler {
         return sector;
     }
 
+    /** Delegates to the shared {@link TradingDays} counter and keeps the veto path's side effect
+     *  (naming the missing input) here, where {@code missing} lives. */
     private long tradingDayAge(String createdAt, List<String> missing) {
-        LocalDate entry;
-        try {
-            if (createdAt == null || createdAt.isBlank()) throw new IllegalArgumentException("blank");
-            entry = LocalDate.parse(createdAt.length() > 10 ? createdAt.substring(0, 10) : createdAt);
-        } catch (RuntimeException e) {
-            missing.add("signal_age");
-            return -1L;
-        }
-        LocalDate today = LocalDate.now(clock);
-        long days = 0;
-        for (LocalDate d = entry.plusDays(1); !d.isAfter(today); d = d.plusDays(1)) {
-            DayOfWeek dow = d.getDayOfWeek();
-            if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) days++;
-        }
-        return days;
+        long age = TradingDays.ageOf(createdAt, clock);
+        if (age < 0) missing.add("signal_age");
+        return age;
     }
 
     private java.time.Instant startOfIsoWeek() {

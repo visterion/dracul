@@ -31,6 +31,14 @@ class ExecutorDefaults {
         return new MechanismBudget(spec);
     }
 
+    /** Parsed once; injected into ExecutorWebhookController (VetoConfig, veto #3) and
+     *  PendingSignalSweeper so the key is read exactly once and the two cannot drift. */
+    @Bean
+    SignalAgePolicy signalAgePolicy(
+            @Value("${dracul.executor.max-signal-age-days:5}") int maxSignalAgeDays) {
+        return new SignalAgePolicy(maxSignalAgeDays);
+    }
+
     @Bean
     AgentDefaultProvider executorAgentDefaults(
             ObjectMapper mapper,
