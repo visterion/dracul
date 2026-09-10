@@ -84,6 +84,22 @@ public class ExecutorPositionLegRepository {
     }
 
     /**
+     * True when any leg row — any position, any status — records {@code orderId} as its protective
+     * stop. Leg rows outlive the position columns that seeded them, so a leg alone can be the only
+     * record that an order is already someone's stop. The SP4 symbol-bound stop binding refuses to
+     * bind an order either this or
+     * {@code ExecutorPositionRepository#stopOrderIdClaimed} reports as taken.
+     */
+    public boolean existsByStopOrderId(String orderId) {
+        if (orderId == null) return false;
+        return Boolean.TRUE.equals(jdbc.sql(
+                "SELECT EXISTS (SELECT 1 FROM executor_position_leg WHERE stop_order_id = :id)")
+                .param("id", orderId)
+                .query(Boolean.class)
+                .single());
+    }
+
+    /**
      * Repoints one leg's protective stop order id, for a leg the broker re-issued during a
      * flatten rollback. {@code newStopOrderId} may be null: an id the broker no longer reports as
      * live is dead, and a null column is a visible protection gap, whereas a stale id looks live

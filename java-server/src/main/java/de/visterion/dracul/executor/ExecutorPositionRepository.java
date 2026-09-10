@@ -534,6 +534,48 @@ public class ExecutorPositionRepository {
                 .orElse(null);
     }
 
+    /**
+     * The OPEN row for this connection whose symbol matches case-insensitively, or {@code null}.
+     *
+     * <p>{@link #findOpenBySymbol} compares {@code symbol = :symbol} exactly, which is NARROWER
+     * than the index that actually enforces uniqueness
+     * ({@code uq_executor_position_open = UNIQUE (connection, lower(symbol)) WHERE status='OPEN'}).
+     * A guard that has to answer "is this book slot free?" must use the index's own definition, or
+     * it reports "free" for a slot the INSERT will then bounce off. Kept as a separate method so
+     * the existing display/drilldown caller of {@link #findOpenBySymbol} keeps its exact semantics.
+     */
+    public ExecutorPosition findOpenBySymbolIgnoreCase(String connection, String symbol) {
+        return jdbc.sql("""
+                SELECT * FROM executor_position
+                WHERE status = 'OPEN' AND connection = :conn AND lower(symbol) = lower(:symbol)
+                ORDER BY entry_date DESC LIMIT 1
+                """)
+                .param("conn", connection)
+                .param("symbol", symbol)
+                .query(this::mapRow)
+                .optional()
+                .orElse(null);
+    }
+
+    /**
+     * True when ANY position row — any connection, any status — already records {@code orderId} as
+     * one of its protective stop legs.
+     *
+     * <p>Deliberately unfiltered by status: a CLOSED row's {@code stop_order_id} is the record of
+     * which broker order protected it, and binding that same order to a new position would point
+     * two book rows at one leg. A stale claim is still a claim.
+     */
+    public boolean stopOrderIdClaimed(String orderId) {
+        if (orderId == null) return false;
+        return Boolean.TRUE.equals(jdbc.sql("""
+                SELECT EXISTS (SELECT 1 FROM executor_position
+                               WHERE stop_order_id = :id OR tranche2_stop_order_id = :id)
+                """)
+                .param("id", orderId)
+                .query(Boolean.class)
+                .single());
+    }
+
     public List<ExecutorPosition> findOpen() {
         return jdbc.sql("""
                 SELECT * FROM executor_position WHERE status = 'OPEN'
