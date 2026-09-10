@@ -800,6 +800,32 @@ class AgoraExecutionGatewayTest {
         assertThat(o.status()).isEqualTo(OrderStatus.FILLED);
     }
 
+    /** Fixture shaped exactly like the real get_orders wire (GetOrdersTool, camelCase only):
+     *  an open stopiftraded leg carrying stopPrice, and a history finalfill row carrying
+     *  filledAt with Saxo's 6-digit fractional-second instant. Synthetic ids/values only. */
+    @Test void toBrokerOrder_parsesRealWireShapeForStopPriceAndFilledAt() {
+        CapturingGateway openGw = new CapturingGateway(mapper);
+        openGw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-3","clientRef":"sig-1","symbol":"ACME","side":"sell",
+                   "qty":"10","type":"stopiftraded","status":"working","role":"other",
+                   "stopPrice":"90"}
+                ]}}""");
+        BrokerOrder open = openGw.orders("depot-1").getFirst();
+        assertThat(open.stopPrice()).isEqualByComparingTo("90");
+
+        CapturingGateway historyGw = new CapturingGateway(mapper);
+        historyGw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-4","clientRef":"sig-1","symbol":"ACME","side":"buy",
+                   "qty":"10","filledQty":"10","avgFillPrice":"100","type":"limit",
+                   "status":"finalfill","role":"other","filledAt":"2026-09-01T23:00:37.400000Z"}
+                ]}}""");
+        BrokerOrder history = historyGw.filledOrdersSince("depot-1", java.time.Instant.parse("2026-09-01T00:00:00Z"))
+                .getFirst();
+        assertThat(history.filledAt()).isEqualTo(java.time.Instant.parse("2026-09-01T23:00:37.400000Z"));
+    }
+
     @Test void theNineArgConstructorNullsTheSevenNewFields() {
         BrokerOrder o = new BrokerOrder("ord-1", "sig-1", "ACME", OrderRole.ENTRY,
                 OrderStatus.WORKING, new BigDecimal("10"), BigDecimal.ZERO, null, null);

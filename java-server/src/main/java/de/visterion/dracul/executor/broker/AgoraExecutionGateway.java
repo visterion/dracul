@@ -219,10 +219,12 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         return Optional.of(toBrokerOrder(order, "open"));
     }
 
-    // Live Saxo working orders carry NO parentId and NO filledQty/avgFillPrice at the top level;
-    // the audit history carries fills but no bracket-leg structure and reports role "other" on
-    // every row. That is why side/type/rawStatus/source are carried through raw: they are what
-    // lets a caller tell a bracket parent from its stop leg under the same clientRef.
+    // The get_orders wire shape (Agora's GetOrdersTool) is camelCase: brokerOrderId, clientRef,
+    // symbol, side, qty, type, status, role, and when non-null filledQty, avgFillPrice,
+    // limitPrice, stopPrice, parentId, submittedAt, filledAt. Open rows carry limitPrice/
+    // stopPrice and no fill data; history rows carry filledAt — the order's LAST ACTIVITY time,
+    // equal to the actual fill only on a "finalfill" row — and no prices. The snake_case keys
+    // read alongside every camelCase field here are tolerated legacy aliases, not a wire reality.
     private BrokerOrder toBrokerOrder(JsonNode o, String source) {
         return new BrokerOrder(
                 textOrNull(o, "brokerOrderId", "broker_order_id"),
