@@ -472,8 +472,22 @@ public class ReconcileService {
     private BrokerOrder asStopLegIfKnown(ExecutorPosition p, BrokerOrder o) {
         if (o.role() == OrderRole.STOP_LOSS || o.role() == OrderRole.TAKE_PROFIT) return o;
         if (!matchesKnownStopLeg(p, o)) return o;
+        return relabelAsStopLeg(o);
+    }
+
+    /** Canonical copy: EVERY component is carried over and only {@code role} changes. Rebuilt
+     *  through the 9-arg convenience constructor this silently truncated side/type/rawStatus/
+     *  source/limitPrice/stopPrice/filledAt. Package-private for {@code ReconcileServiceTest}. */
+    static BrokerOrder relabelAsStopLeg(BrokerOrder o) {
         return new BrokerOrder(o.orderId(), o.clientRef(), o.symbol(), OrderRole.STOP_LOSS,
-                o.status(), o.qty(), o.filledQty(), o.avgFillPrice(), o.parentId());
+                o.status(), o.qty(), o.filledQty(), o.avgFillPrice(), o.parentId(),
+                o.side(), o.type(), o.rawStatus(), o.source(),
+                o.limitPrice(), o.stopPrice(), o.filledAt());
+    }
+
+    /** Test-only alias with a name that says what the test is about. */
+    static BrokerOrder asStopLegForTest(BrokerOrder o) {
+        return relabelAsStopLeg(o);
     }
 
     /** True when the order IS one of the two stop legs this position recorded at placement. */

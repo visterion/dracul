@@ -34,6 +34,8 @@ public class FakeExecutionGateway implements ExecutionGateway {
 
     /** Every {@code since} argument {@link #filledOrdersSince} was called with. */
     public final List<java.time.Instant> filledOrdersSinceArgs = new ArrayList<>();
+    /** Every {@code ref} argument {@link #ordersByRef} was called with. */
+    public final List<String> ordersByRefArgs = new ArrayList<>();
     /** When true, only the filled-order history call fails — lets a test drive the fail-soft
      *  degradation to position-gone detection without taking the whole broker down. */
     public boolean filledOrdersUnavailable = false;
@@ -148,11 +150,34 @@ public class FakeExecutionGateway implements ExecutionGateway {
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
     }
 
+    /** Mirrors the real gateway's assembly: seeded NON-filled orders under the ref first (the
+     *  "open" half), then seeded FILLED ones whose id is not already in the open half (the
+     *  "history" half). {@code source} on a seeded order is whatever the test set; the fake does
+     *  not rewrite it, so a test that cares seeds it explicitly. */
+    @Override
+    public List<BrokerOrder> ordersByRef(String connection, String ref) {
+        checkAvailable();
+        ordersByRefArgs.add(ref);
+        List<BrokerOrder> result = new ArrayList<>();
+        java.util.Set<String> openIds = new java.util.HashSet<>();
+        for (BrokerOrder o : orders) {
+            if (!ref.equals(o.clientRef()) || o.status() == OrderStatus.FILLED) continue;
+            result.add(o);
+            if (o.orderId() != null) openIds.add(o.orderId());
+        }
+        for (BrokerOrder o : orders) {
+            if (!ref.equals(o.clientRef()) || o.status() != OrderStatus.FILLED) continue;
+            if (o.orderId() != null && openIds.contains(o.orderId())) continue;
+            result.add(o);
+        }
+        return result;
+    }
+
     @Override
     public Optional<BrokerOrder> orderByRef(String connection, String ref) {
         checkAvailable();
         return orders.stream()
-                .filter(o -> o.orderId().equals(ref) || o.clientRef().equals(ref))
+                .filter(o -> ref.equals(o.orderId()) || ref.equals(o.clientRef()))
                 .findFirst();
     }
 

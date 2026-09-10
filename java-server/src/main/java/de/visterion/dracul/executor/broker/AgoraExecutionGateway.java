@@ -2,6 +2,7 @@ package de.visterion.dracul.executor.broker;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -13,6 +14,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,10 +42,18 @@ public class AgoraExecutionGateway implements ExecutionGateway {
     private static final java.util.Set<String> WRITE_TOOLS =
             java.util.Set.of("place_bracket", "flatten", "modify_bracket", "cancel_order");
 
+    /** Default adoption history window, in days. Named so the wiring IT and the back-compat
+     *  constructors express it exactly once. See {@link #ordersByRef} for why 14 is enough:
+     *  a fill Dracul can still be retrying against is at most broker-attempt-window-hours (72 h)
+     *  plus max-signal-age-days (5 trading days) old, and a fill's last activity IS the fill. */
+    static final int DEFAULT_ADOPTION_HISTORY_DAYS = 14;
+
     private final String token;
     private final ObjectMapper mapper;
     private final RestClient http;
     private final RestClient writeHttp;
+    private final int adoptionHistoryDays;
+    private final Clock clock;
 
     @org.springframework.beans.factory.annotation.Autowired
     public AgoraExecutionGateway(
@@ -51,9 +61,17 @@ public class AgoraExecutionGateway implements ExecutionGateway {
             @Value("${dracul.executor.agora-trading-token:}") String token,
             ObjectMapper mapper,
             @Value("${dracul.executor.agora-timeout-ms:8000}") long timeoutMs,
-            @Value("${dracul.executor.agora-write-timeout-ms:30000}") long writeTimeoutMs) {
+            @Value("${dracul.executor.agora-write-timeout-ms:30000}") long writeTimeoutMs,
+            @Value("${dracul.executor.adoption-history-days:14}") int adoptionHistoryDays,
+            @Qualifier("executorClock") Clock clock) {
+        if (adoptionHistoryDays < 1) {
+            throw new IllegalArgumentException(
+                    "dracul.executor.adoption-history-days must be >= 1, got " + adoptionHistoryDays);
+        }
         this.token = token;
         this.mapper = mapper;
+        this.adoptionHistoryDays = adoptionHistoryDays;
+        this.clock = clock;
         this.http = client(baseUrl, timeoutMs, timeoutMs);
         // Connect stays on the SHARED knob: a refused connection says nothing about how long
         // the pacer will hold the request, and a 30 s connect timeout would only delay the
@@ -65,7 +83,28 @@ public class AgoraExecutionGateway implements ExecutionGateway {
      *  every existing 4-arg construction (tests, CapturingGateway) keeps its old read behaviour
      *  and gains the write budget. */
     public AgoraExecutionGateway(String baseUrl, String token, ObjectMapper mapper, long timeoutMs) {
-        this(baseUrl, token, mapper, timeoutMs, 30000L);
+        this(baseUrl, token, mapper, timeoutMs, 30000L, DEFAULT_ADOPTION_HISTORY_DAYS,
+                Clock.systemUTC());
+    }
+
+    /** Back-compat: an explicit write-timeout construction (tests exercising the two-client
+     *  split) still works without naming an adoption window or clock. */
+    public AgoraExecutionGateway(String baseUrl, String token, ObjectMapper mapper, long timeoutMs,
+            long writeTimeoutMs) {
+        this(baseUrl, token, mapper, timeoutMs, writeTimeoutMs, DEFAULT_ADOPTION_HISTORY_DAYS,
+                Clock.systemUTC());
+    }
+
+    /** Test seam: pins the adoption window and the clock so the history {@code from} argument is
+     *  deterministic. */
+    AgoraExecutionGateway(String baseUrl, String token, ObjectMapper mapper, long timeoutMs,
+            int adoptionHistoryDays, Clock clock) {
+        this(baseUrl, token, mapper, timeoutMs, 30000L, adoptionHistoryDays, clock);
+    }
+
+    /** For the wiring IT only. */
+    int adoptionHistoryDays() {
+        return adoptionHistoryDays;
     }
 
     private static RestClient client(String baseUrl, long connectMs, long readMs) {
@@ -217,6 +256,36 @@ public class AgoraExecutionGateway implements ExecutionGateway {
             return Optional.empty();
         }
         return Optional.of(toBrokerOrder(order, "open"));
+    }
+
+    /**
+     * Assembled Dracul-side from the two reads that already exist — no Agora change, no new tool
+     * field, no degraded mode against an older Agora. Both are on the 8 s read client, so either
+     * one failing surfaces as the same {@link BrokerUnavailableException} the caller already
+     * handles.
+     *
+     * <p>Open rows come first because {@code source} alone decides whether a row is still resting
+     * at the broker, and a caller scanning for a live leg should not have to sort. The history half
+     * is de-duplicated against the open half by order id: an order that is BOTH open and recently
+     * modified appears in both endpoints, and the open copy is the truthful one.
+     */
+    @Override
+    public List<BrokerOrder> ordersByRef(String connection, String ref) {
+        List<BrokerOrder> result = new ArrayList<>();
+        java.util.Set<String> openIds = new java.util.HashSet<>();
+        for (BrokerOrder o : orders(connection)) {
+            if (!ref.equals(o.clientRef())) continue;
+            result.add(o);
+            if (o.orderId() != null) openIds.add(o.orderId());
+        }
+        java.time.Instant since = clock.instant()
+                .minus(adoptionHistoryDays, java.time.temporal.ChronoUnit.DAYS);
+        for (BrokerOrder o : filledOrdersSince(connection, since)) {
+            if (!ref.equals(o.clientRef())) continue;
+            if (o.orderId() != null && openIds.contains(o.orderId())) continue;
+            result.add(o);
+        }
+        return result;
     }
 
     // The get_orders wire shape (Agora's GetOrdersTool) is camelCase: brokerOrderId, clientRef,

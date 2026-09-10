@@ -929,4 +929,116 @@ class AgoraExecutionGatewayTest {
         ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraExecutionGateway.class))
                 .setLevel(null);
     }
+
+    /** Two-call seam: ordersByRef issues get_orders twice (open view, then closed history).
+     *  Answers are keyed on whether the args carry "status", and every call is recorded. */
+    private static class ScriptedGateway extends AgoraExecutionGateway {
+        final List<JsonNode> calls = new java.util.ArrayList<>();
+        JsonNode openResponse;
+        JsonNode closedResponse;
+        RuntimeException openThrows;
+        RuntimeException closedThrows;
+
+        ScriptedGateway(ObjectMapper mapper, java.time.Clock clock, int historyDays) {
+            super("http://x", "tkn", mapper, 8000, historyDays, clock);
+        }
+
+        @Override
+        protected JsonNode call(String tool, JsonNode args) {
+            calls.add(args);
+            boolean history = !args.path("status").isMissingNode();
+            if (history) {
+                if (closedThrows != null) throw closedThrows;
+                return closedResponse;
+            }
+            if (openThrows != null) throw openThrows;
+            return openResponse;
+        }
+    }
+
+    private static final java.time.Clock FIXED_CLOCK =
+            java.time.Clock.fixed(java.time.Instant.parse("2026-09-10T12:00:00Z"),
+                    java.time.ZoneOffset.UTC);
+
+    @Test void ordersByRef_openRowsFirstThenFilledHistoryMinusDuplicates() {
+        ScriptedGateway gw = new ScriptedGateway(mapper, FIXED_CLOCK,
+                AgoraExecutionGateway.DEFAULT_ADOPTION_HISTORY_DAYS);
+        gw.openResponse = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-stop","clientRef":"sig-1","symbol":"ACME","side":"sell",
+                   "qty":"10","type":"stopiftraded","status":"working","role":"other",
+                   "stopPrice":"90"},
+                  {"brokerOrderId":"ord-other","clientRef":"sig-9","symbol":"ZZCO","side":"buy",
+                   "qty":"1","type":"limit","status":"working","role":"other"}
+                ]}}""");
+        gw.closedResponse = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-entry","clientRef":"sig-1","symbol":"ACME","side":"buy",
+                   "qty":"10","filledQty":"10","avgFillPrice":"100","type":"limit",
+                   "status":"finalfill","role":"other","filledAt":"2026-09-08T14:00:00Z"},
+                  {"brokerOrderId":"ord-stop","clientRef":"sig-1","symbol":"ACME","side":"sell",
+                   "qty":"10","filledQty":"10","avgFillPrice":"90","type":"stopiftraded",
+                   "status":"finalfill","role":"other"},
+                  {"brokerOrderId":"ord-dead","clientRef":"sig-1","symbol":"ACME","side":"buy",
+                   "qty":"10","type":"limit","status":"placed","role":"other"}
+                ]}}""");
+
+        List<BrokerOrder> result = gw.ordersByRef("depot-1", "sig-1");
+
+        // ord-other carries a different ref; ord-dead is "placed" (WORKING) and never reaches the
+        // history list, which keeps FILLED only; ord-stop is already in the open part.
+        assertThat(result).extracting(BrokerOrder::orderId)
+                .containsExactly("ord-stop", "ord-entry");
+        assertThat(result.get(0).source()).isEqualTo("open");
+        assertThat(result.get(1).source()).isEqualTo("history");
+        assertThat(result.get(1).filledAt())
+                .isEqualTo(java.time.Instant.parse("2026-09-08T14:00:00Z"));
+    }
+
+    @Test void ordersByRef_historyWindowIsExactlyTheConfiguredNumberOfDays() {
+        ScriptedGateway gw = new ScriptedGateway(mapper, FIXED_CLOCK, 21);
+        gw.openResponse = json("{\"output\":{\"orders\":[]}}");
+        gw.closedResponse = json("{\"output\":{\"orders\":[]}}");
+
+        gw.ordersByRef("depot-1", "sig-1");
+
+        JsonNode historyArgs = gw.calls.get(1);
+        assertThat(historyArgs.path("status").asString()).isEqualTo("closed");
+        assertThat(historyArgs.path("from").asString()).isEqualTo("2026-08-20T12:00:00Z");
+    }
+
+    @Test void ordersByRef_defaultWindowIsFourteenDays() {
+        ScriptedGateway gw = new ScriptedGateway(mapper, FIXED_CLOCK,
+                AgoraExecutionGateway.DEFAULT_ADOPTION_HISTORY_DAYS);
+        gw.openResponse = json("{\"output\":{\"orders\":[]}}");
+        gw.closedResponse = json("{\"output\":{\"orders\":[]}}");
+
+        gw.ordersByRef("depot-1", "sig-1");
+
+        assertThat(gw.calls.get(1).path("from").asString()).isEqualTo("2026-08-27T12:00:00Z");
+    }
+
+    @Test void ordersByRef_openReadFailingIsBrokerUnavailable() {
+        ScriptedGateway gw = new ScriptedGateway(mapper, FIXED_CLOCK, 14);
+        gw.openThrows = new BrokerUnavailableException("agora down");
+        gw.closedResponse = json("{\"output\":{\"orders\":[]}}");
+
+        assertThatThrownBy(() -> gw.ordersByRef("depot-1", "sig-1"))
+                .isInstanceOf(BrokerUnavailableException.class);
+    }
+
+    @Test void ordersByRef_historyReadFailingIsBrokerUnavailable() {
+        ScriptedGateway gw = new ScriptedGateway(mapper, FIXED_CLOCK, 14);
+        gw.openResponse = json("{\"output\":{\"orders\":[]}}");
+        gw.closedThrows = new BrokerUnavailableException("agora down");
+
+        assertThatThrownBy(() -> gw.ordersByRef("depot-1", "sig-1"))
+                .isInstanceOf(BrokerUnavailableException.class);
+    }
+
+    @Test void constructorRejectsAnAdoptionWindowBelowOneDay() {
+        assertThatThrownBy(() -> new ScriptedGateway(mapper, FIXED_CLOCK, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("adoption-history-days");
+    }
 }

@@ -23,6 +23,26 @@ public interface ExecutionGateway {
      * missing {@code parentId} and a best-effort {@code role}, and match by order id.
      */
     List<BrokerOrder> filledOrdersSince(String connection, java.time.Instant since);
+
+    /**
+     * EVERY order the broker reports under {@code ref}, open rows first, then filled history rows.
+     *
+     * <p>One clientRef routinely carries several orders at once: the bracket parent, its protective
+     * stop, its take-profit and any dead earlier placement. {@link #orderByRef} returns only the
+     * FIRST OPEN one, which on a held position is the surviving stop leg — adopting that as the
+     * entry sets the position's broker order id to the stop and lets the GTD expiry cancel the
+     * protection. This method exists so a caller can see the whole set and classify it.
+     *
+     * <p>Rows carry {@code source = "open"} or {@code "history"}; the history half is bounded by
+     * {@code dracul.executor.adoption-history-days} and, like {@link #filledOrdersSince}, contains
+     * fills only. Either underlying read failing is a {@link BrokerUnavailableException}.
+     */
+    List<BrokerOrder> ordersByRef(String connection, String ref);
+
+    /** @deprecated Returns only the first OPEN order under the ref, which is the stop leg on a
+     *  held position. Kept for compatibility; no production caller remains. Use
+     *  {@link #ordersByRef}. */
+    @Deprecated
     Optional<BrokerOrder> orderByRef(String connection, String ref);
     PlacedBracket placeBracket(String connection, BracketRequest req);
     /** fraction in (0,1]; 1.0 = full close. */

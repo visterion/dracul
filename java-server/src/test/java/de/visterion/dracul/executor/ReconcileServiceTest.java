@@ -2723,4 +2723,27 @@ class ReconcileServiceTest {
 
         assertThat(reasonCodes().stream().filter("PRICE_IMPLAUSIBLE"::equals).count()).isEqualTo(2);
     }
+
+    /** asStopLegIfKnown rebuilds the order to relabel its role. Rebuilt through the 9-arg
+     *  constructor it silently dropped stopPrice/source/rawStatus — invisible today, poison the
+     *  moment anything downstream reads them. */
+    @Test
+    void asStopLegIfKnown_relabelledCopyKeepsTheWidenedFields() {
+        BrokerOrder history = new BrokerOrder("ord-stop", "sig-1", "ACME", OrderRole.OTHER,
+                OrderStatus.FILLED, new BigDecimal("10"), new BigDecimal("10"),
+                new BigDecimal("90"), null,
+                "sell", "stopiftraded", "finalfill", "history",
+                null, new BigDecimal("90"), java.time.Instant.parse("2026-09-08T14:00:00Z"));
+
+        BrokerOrder relabelled = ReconcileService.asStopLegForTest(history);
+
+        assertThat(relabelled.role()).isEqualTo(OrderRole.STOP_LOSS);
+        assertThat(relabelled.stopPrice()).isEqualByComparingTo("90");
+        assertThat(relabelled.rawStatus()).isEqualTo("finalfill");
+        assertThat(relabelled.source()).isEqualTo("history");
+        assertThat(relabelled.side()).isEqualTo("sell");
+        assertThat(relabelled.type()).isEqualTo("stopiftraded");
+        assertThat(relabelled.filledAt())
+                .isEqualTo(java.time.Instant.parse("2026-09-08T14:00:00Z"));
+    }
 }
