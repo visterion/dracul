@@ -45,7 +45,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * The 7 tool webhooks + completion callback for the Dracul executor agent.
@@ -477,17 +476,6 @@ public class ExecutorWebhookController {
     private static String abbreviate(String s) {
         if (s == null) return "null";
         return s.length() <= 300 ? s : s.substring(0, 300) + "…";
-    }
-
-    /**
-     * Whether an existing broker order (found via orderByRef on a retry) represents a live order
-     * that should be adopted instead of re-placed. A terminal order (CANCELLED/REJECTED) means no
-     * real order exists under this clientRef, so it must fall through to normal placement instead
-     * of being booked as a phantom position.
-     */
-    private static boolean isLiveOrder(OrderStatus status) {
-        return status == OrderStatus.WORKING || status == OrderStatus.PARTIALLY_FILLED
-                || status == OrderStatus.FILLED;
     }
 
     /**
@@ -2271,12 +2259,24 @@ public class ExecutorWebhookController {
             int priorBrokerErrors = signalId != null
                     ? decisionRepo.countByReason(signalId, "BROKER_ERROR")
                     : 0;
-            Optional<BrokerOrder> existing = priorBrokerErrors > 0
-                    ? gateway.orderByRef(connection, clientRef)
-                    : Optional.empty();
-            boolean adoptable = existing.isPresent() && isLiveOrder(existing.get().status());
-            if (adoptable) {
-                BrokerOrder eo = existing.get();
+            // Only a still-resting, same-side, non-stop, non-take-profit order counts as the
+            // tranche this retry would otherwise duplicate. Under a t2- ref production shows dead
+            // 'placed' rows (four under one ref), and a bracket's own stop and take-profit legs
+            // carry the ref too — none of those is the tranche order.
+            AdoptionCandidates trancheCandidates = priorBrokerErrors > 0
+                    ? AdoptionCandidates.classify(gateway.ordersByRef(connection, clientRef),
+                            position.side())
+                    : AdoptionCandidates.classify(List.of(), position.side());
+            BrokerOrder filledTranche = trancheCandidates.filledEntry() != null
+                    ? trancheCandidates.filledEntry() : trancheCandidates.filledUnverifiable();
+            if (filledTranche != null) {
+                // Adopting a FILLED tranche needs the holding/stop reconciliation the entry path
+                // does, and a second bracket's legs to bind — deliberately out of SP4's scope.
+                log.warn("filled tranche-2 order {} under ref {} not adopted (SP4 scope)",
+                        filledTranche.orderId(), clientRef);
+            }
+            BrokerOrder eo = trancheCandidates.working();
+            if (eo != null) {
                 // Book the live order's actual qty, not the freshly re-computed sizer qty — a
                 // later-run retry can produce a different qty from the sizer, which would diverge
                 // the DB position from the real broker order.

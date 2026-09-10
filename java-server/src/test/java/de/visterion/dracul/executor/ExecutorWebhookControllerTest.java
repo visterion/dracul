@@ -28,7 +28,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -4895,9 +4894,8 @@ class ExecutorWebhookControllerTest {
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.of(
-                new BrokerOrder("brk-existing", "t2-sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
-                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(gateway.ordersByRef("depot-1", "t2-sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "t2-sig-1", "ACME", "buy", "7")));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"tranche-2 add"}
@@ -4945,7 +4943,7 @@ class ExecutorWebhookControllerTest {
         ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", body);
 
         assertThat(outputOf(resp).get("placed")).isEqualTo(true);
-        verify(gateway, never()).orderByRef(any(), any());
+        verify(gateway, never()).ordersByRef(any(), any());
         verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
     }
 
@@ -4961,7 +4959,7 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
         when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
                 .thenReturn(3);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of());
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"tranche-2 add"}
@@ -4996,7 +4994,7 @@ class ExecutorWebhookControllerTest {
         // Lifetime count > 0 sends the adoption guard to the broker; nothing to adopt.
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(8);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(0);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of());
         when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
 
@@ -5020,7 +5018,7 @@ class ExecutorWebhookControllerTest {
                 .thenReturn(3);
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(3);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(0);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of());
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"tranche-2 add"}
@@ -5047,7 +5045,7 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
                 .thenReturn(2);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(0);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of());
         when(gateway.placeBracket(eq("depot-1"), any()))
                 .thenReturn(new PlacedBracket("brk-2", "stop-2", null, "t2-sig-1", OrderStatus.WORKING));
 
@@ -5071,7 +5069,7 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
         when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
                 .thenReturn(1);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of());
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"tranche-2 add"}
@@ -5103,9 +5101,8 @@ class ExecutorWebhookControllerTest {
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-1")).thenReturn(2);
-        when(gateway.orderByRef("depot-1", "t2-sig-1")).thenReturn(Optional.of(
-                new BrokerOrder("brk-existing", "t2-sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
-                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(gateway.ordersByRef("depot-1", "t2-sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "t2-sig-1", "ACME", "buy", "7")));
 
         JsonNode body = json("""
                 {"symbol":"ACME","reason":"tranche-2 add"}
@@ -6650,5 +6647,96 @@ class ExecutorWebhookControllerTest {
         assertThat(logCaptor.getAllValues())
                 .anyMatch(l -> "ESCALATE".equals(l.action())
                         && "ADOPTED_WITHOUT_STOP".equals(l.reasonCode()));
+    }
+
+    // -------------------------------------------------------------------
+    // add-tranche: ordersByRef + AdoptionCandidates classification (SP4 task 6).
+    // -------------------------------------------------------------------
+
+    /** A t2- ref can carry several dead 'placed' rows (prod: four under one ref). None of them is
+     *  an order that still exists, so the tranche must be placed. */
+    @Test
+    void addTranche_retryDeadPlacedT2Rows_placesTranche() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
+                deadPlacedOrder("ord-dead-1", "t2-sig-1", "ACME", "buy"),
+                deadPlacedOrder("ord-dead-2", "t2-sig-1", "ACME", "buy")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-t2", "stop-t2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(gateway).placeBracket(any(), any());
+        verify(decisionRepo, never()).insert(argThat(d -> d != null
+                && "DUPLICATE".equals(d.rejectReason())));
+    }
+
+    /** A working stop leg under the t2- ref is not the tranche order. */
+    @Test
+    void addTranche_retryStopLegUnderT2Ref_placesTranche() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-t2-stop", "t2-sig-1", "ACME", "sell", "93")));
+        when(gateway.placeBracket(eq("depot-1"), any()))
+                .thenReturn(new PlacedBracket("brk-t2", "stop-t2", null, "t2-sig-1", OrderStatus.WORKING));
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(gateway).placeBracket(any(), any());
+    }
+
+    /** Filled tranche-2 adoption is deliberately out of scope: log it so it is visible, then
+     *  behave exactly as before. */
+    @Test
+    void addTranche_retryFilledT2Order_logsAndStillPlaces() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ExecutorWebhookController.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<
+                ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                    new BigDecimal("95"));
+            when(positionRepo.findOpen()).thenReturn(List.of(open));
+            when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                    .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+            when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+            when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
+                    filledOrder("ord-t2-fill", "t2-sig-1", "ACME", "buy", "limit", "5", "101",
+                            "2026-09-08T14:00:00Z")));
+            when(gateway.placeBracket(eq("depot-1"), any()))
+                    .thenReturn(new PlacedBracket("brk-t2", "stop-t2", null, "t2-sig-1", OrderStatus.WORKING));
+
+            ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
+                    {"symbol":"ACME","reason":"tranche-2 add"}
+                    """));
+
+            assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+            verify(gateway).ordersByRef("depot-1", "t2-sig-1");
+            verify(gateway).placeBracket(any(), any());
+            assertThat(appender.list).anyMatch(e ->
+                    e.getLevel() == ch.qos.logback.classic.Level.WARN
+                            && e.getFormattedMessage().contains("ord-t2-fill")
+                            && e.getFormattedMessage().contains("SP4 scope"));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 }
