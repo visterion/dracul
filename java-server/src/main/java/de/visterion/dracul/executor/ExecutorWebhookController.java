@@ -573,6 +573,77 @@ public class ExecutorWebhookController {
     }
 
     /**
+     * The logical stop must sit on the RISK side of the fill — below it for a BUY, above for a
+     * SELL. A fill that already passed its own stop would be booked with {@code initial_stop} on
+     * the wrong side of {@code entry_price}, and {@code ReconcileService.computeR} guards only a
+     * zero denominator: the sign of {@code realized_r} would flip.
+     */
+    private static boolean stopOnRiskSide(String entrySide, BigDecimal stopPrice, BigDecimal fill) {
+        if (stopPrice == null || fill == null) return false;
+        return "buy".equalsIgnoreCase(entrySide)
+                ? stopPrice.compareTo(fill) < 0
+                : stopPrice.compareTo(fill) > 0;
+    }
+
+    /**
+     * Live protective stop legs on {@code symbol} that could belong to this position — the
+     * fallback for a leg whose {@code ExternalReference} the broker dropped. Row 0 has already
+     * established that no other OPEN book row holds this symbol, so an UNCLAIMED live stop on it
+     * cannot belong to anyone else. Both claim checks are needed: the columns and the leg table
+     * outlive each other.
+     *
+     * <p>Returned as a list on purpose — the caller binds only when there is EXACTLY one, and the
+     * count goes into the escalation when there is not.
+     */
+    private List<BrokerOrder> findStopLegsBySymbol(String connection, String symbol,
+            String exitSide, String signalId) {
+        List<BrokerOrder> candidates = new ArrayList<>();
+        for (BrokerOrder o : gateway.orders(connection)) {
+            if (o.symbol() == null || !o.symbol().equalsIgnoreCase(symbol)) continue;
+            if (!AdoptionCandidates.isStop(o) || !AdoptionCandidates.isLive(o)) continue;
+            if (!AdoptionCandidates.strictSide(o, exitSide)) continue;
+            if (o.stopPrice() == null) continue;
+            if (o.clientRef() != null && !signalId.equals(o.clientRef())) continue;
+            if (positionRepo.stopOrderIdClaimed(o.orderId())) continue;
+            if (legRepo.existsByStopOrderId(o.orderId())) continue;
+            candidates.add(o);
+        }
+        return candidates;
+    }
+
+    /**
+     * Case C (row 2): the history carries an entry fill AND an exit fill under this ref, nothing
+     * under it is open, and the broker holds nothing. A real round trip happened that the book
+     * never saw. No booking (it would create an OPEN row for a position that no longer exists) and
+     * no placement (the thesis already exited). Terminal for the signal, and escalated: only an
+     * operator can decide what the trade was worth.
+     */
+    private ResponseEntity<Map<String, Object>> staleFill(String runId, ExecutorSignal signal,
+            EntryContext ctx, BigDecimal orderPrice, BigDecimal orderPriceRounded,
+            VetoService.Outcome veto, Double confidence, List<String> vetoTrace,
+            AdoptionCandidates c) {
+        String signalId = signal.signalId();
+        BrokerOrder fill = c.filledEntry();
+        String text = "broker order " + fill.orderId() + " for clientRef " + signalId
+                + " filled and already exited via " + c.terminalExit().orderId()
+                + " — round trip never booked";
+        decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                "STALE_FILL", vetoTrace, text, fill.orderId(), runId, null));
+        logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
+                "STALE_FILL", null, confidence, clock.instant(), null);
+        signalRepo.markStatus(signalId, "REJECTED");
+
+        ObjectNode inputs = mapper.createObjectNode();
+        inputs.put("broker_order_id", fill.orderId());
+        inputs.put("filled_at", fill.filledAt() == null ? null : fill.filledAt().toString());
+        inputs.put("exit_order_id", c.terminalExit().orderId());
+        escalateAdoption(runId, signal, "UNBOOKED_ROUND_TRIP", inputs, text);
+
+        return ResponseEntity.ok(Map.of("output",
+                Map.of("placed", false, "reason", "STALE_FILL")));
+    }
+
+    /**
      * Case A′ (row 0a): the book is already right — this signal's own OPEN row exists — and only
      * the tail of a previous run's booking was lost (the {@code ORPHANED_ORDER} catch leaves rows
      * whose expiry and signal status may both be missing). Repair the statuses and answer
@@ -1065,6 +1136,9 @@ public class ExecutorWebhookController {
         // Case-B state, filled in only by the filled-entry adoption below.
         BrokerOrder adoptedFill = null;
         BrokerPosition adoptedHolding = null;
+        BrokerOrder adoptedStopLeg = null;
+        String adoptedStopBoundBy = null;
+        int adoptedStopCandidates = 0;
         String entrySide = side.toLowerCase(java.util.Locale.ROOT);
         try {
             int priorBrokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
@@ -1119,23 +1193,67 @@ public class ExecutorWebhookController {
                                         + " carries no usable fill price/quantity");
                     }
                     if (c.filledEntry() != null) {
-                        // Row 3 — a fill exists but nothing here can prove the broker still holds
-                        // it against an empty book slot.
-                        return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
-                                veto, confidence, vetoTrace,
-                                adoptionInputs("3", c, null, holding, null),
-                                "filled order " + c.filledEntry().orderId() + " under clientRef "
-                                        + signalId + " cannot be reconciled to a holding");
-                    }
-                    if (c.stopLeg() != null || holding != null) {
+                        BrokerOrder fill = c.filledEntry();
+                        if (holding == null && c.stopLeg() == null && c.unclaimedOpen().isEmpty()
+                                && c.terminalExit() != null) {
+                            // Row 2, case C — a whole round trip nobody booked.
+                            return staleFill(runId, signal, ctx, orderPrice, orderPriceRounded,
+                                    veto, confidence, vetoTrace, c);
+                        }
+                        if (holding == null || c.terminalExit() != null) {
+                            // Row 3 — a fill that cannot be reconciled to what the broker holds.
+                            return ambiguousAdoption(runId, signal, ctx, orderPrice,
+                                    orderPriceRounded, veto, confidence, vetoTrace,
+                                    adoptionInputs("3", c, null, holding, null),
+                                    "filled order " + fill.orderId() + " under clientRef "
+                                            + signalId + " cannot be reconciled to a holding");
+                        }
+                        if (!stopOnRiskSide(entrySide, stopPrice, fill.avgFillPrice())) {
+                            // Row 4 — the fill already passed this run's logical stop.
+                            return ambiguousAdoption(runId, signal, ctx, orderPrice,
+                                    orderPriceRounded, veto, confidence, vetoTrace,
+                                    adoptionInputs("4", c, null, holding, false),
+                                    "logical stop " + stopPrice + " is not on the risk side of fill "
+                                            + fill.avgFillPrice() + " for a " + side);
+                        }
+
+                        // Row 5, case B — the entry really filled and the broker really holds it.
+                        adoptedFill = fill;
+                        adoptedHolding = holding;
+                        adoptedStopLeg = c.stopLeg();
+                        adoptedStopBoundBy = adoptedStopLeg != null ? "ref" : null;
+                        if (adoptedStopLeg == null) {
+                            List<BrokerOrder> bySymbol = findStopLegsBySymbol(connection,
+                                    signal.symbol(), AdoptionCandidates.oppositeSide(entrySide),
+                                    signalId);
+                            adoptedStopCandidates = bySymbol.size();
+                            if (bySymbol.size() == 1) {
+                                adoptedStopLeg = bySymbol.getFirst();
+                                adoptedStopBoundBy = "symbol";
+                            }
+                        }
+                        // qty means shares actually HELD: a partial exit between the fill and this
+                        // adoption must not book shares the broker no longer has. Reconcile's
+                        // QTY_SYNC would correct it a pass later, but not before the vetos and the
+                        // exit sizing have already used the wrong number.
+                        qty = fill.filledQty().min(adoptedHolding.qty().abs());
+                        placed = new PlacedBracket(fill.orderId(),
+                                adoptedStopLeg == null ? null : adoptedStopLeg.orderId(), null,
+                                fill.clientRef(), OrderStatus.FILLED);
+                        decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(),
+                                false, "DUPLICATE", vetoTrace,
+                                "idempotent retry: filled broker order " + fill.orderId()
+                                        + " for clientRef " + signalId
+                                        + " adopted as position, not re-placed",
+                                fill.orderId(), runId, null));
+                    } else if (c.stopLeg() != null || holding != null) {
                         // Row 6 — a live protective leg, or a holding, with no fill to attach it to.
                         return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
                                 veto, confidence, vetoTrace,
                                 adoptionInputs("6", c, null, holding, null),
                                 "clientRef " + signalId + " has a live stop leg or the broker holds "
                                         + signal.symbol() + ", but no adoptable entry");
-                    }
-                    if (!c.unclaimedOpen().isEmpty()) {
+                    } else if (!c.unclaimedOpen().isEmpty()) {
                         // Row 6b — something is open and non-terminal under this ref that fits no
                         // classification. Never place next to an order the broker may be working.
                         return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
@@ -1206,22 +1324,63 @@ public class ExecutorWebhookController {
         String stopOrderId = placed.stopLegId();
 
         try {
-            long positionId = positionRepo.insert(new ExecutorPosition(null, connection,
-                    signal.symbol(), side, qty, orderPriceRounded, stopPrice, stopPrice, 1,
-                    null, signal.killCriteria(), signalId, signal.source(), null, null,
-                    "OPEN", brokerOrderId,
-                    orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
-                    ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
-                    orderPriceRounded, null, null, null, false,
-                    brokerStopResult.price(), null));
+            long positionId;
+            if (adoptedFill != null) {
+                BigDecimal fillPrice = adoptedFill.avgFillPrice();
+                // broker_stop means "where the protective leg actually rests". With no bound leg
+                // there is no such place, so it stays NULL and every consumer falls back to
+                // active_stop (StopRatchetService, ReconcileService).
+                BigDecimal legPrice = adoptedStopLeg == null ? null : adoptedStopLeg.stopPrice();
+                // highest_price MUST be non-null or StopRatchetService skips the row forever.
+                // entry_date is the DB default now() — the ADOPTION day, not the fill day;
+                // entry_filled_at carries the fill time. That is intended: do not "fix" it.
+                positionId = positionRepo.insert(new ExecutorPosition(null, connection,
+                        signal.symbol(), side, qty, fillPrice, stopPrice, stopPrice, 1,
+                        null, signal.killCriteria(), signalId, signal.source(), null, null,
+                        "OPEN", brokerOrderId,
+                        fillPrice, null, 0, null, null, null, null, stopOrderId,
+                        ctx.candidateSector(), null, null, null, 0, fillPrice, null,
+                        null, null, null, null, false,
+                        legPrice,
+                        (adoptedFill.filledAt() != null ? adoptedFill.filledAt() : clock.instant())
+                                .toString()));
+                // No setEntryExpiresAt: the entry is already filled, and
+                // findOpenUnfilledPastExpiry filters on entry_expires_at IS NOT NULL only.
+                if (adoptedStopLeg == null) {
+                    ObjectNode inputs = mapper.createObjectNode();
+                    inputs.put("position_id", positionId);
+                    inputs.put("broker_order_id", brokerOrderId);
+                    inputs.put("adopted_fill_price", fillPrice);
+                    inputs.put("candidates", adoptedStopCandidates);
+                    // Load-bearing for OUTCOME QUALITY, not only for protection: with
+                    // stop_order_id and broker_stop both NULL a later stop fill cannot be matched
+                    // (matchesPosition needs a parentId), and the row closes through the gone
+                    // branch at active_stop labelled MARK. An operator must bind the leg.
+                    escalateAdoption(runId, signal, "ADOPTED_WITHOUT_STOP", inputs,
+                            "position " + positionId + " adopted from filled order " + brokerOrderId
+                                    + " without a bound protective leg (" + adoptedStopCandidates
+                                    + " symbol candidates) — bind it by hand before the position exits");
+                }
+            } else {
+                positionId = positionRepo.insert(new ExecutorPosition(null, connection,
+                        signal.symbol(), side, qty, orderPriceRounded, stopPrice, stopPrice, 1,
+                        null, signal.killCriteria(), signalId, signal.source(), null, null,
+                        "OPEN", brokerOrderId,
+                        orderPriceRounded, null, 0, null, null, null, null, stopOrderId,
+                        ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
+                        orderPriceRounded, null, null, null, false,
+                        brokerStopResult.price(), null));
 
-            positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
+                positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
+            }
 
             signalRepo.markStatus(signalId, "ACCEPTED");
 
             try {
                 decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), true,
-                        null, vetoTrace, "entry placed", brokerOrderId, runId, null));
+                        null, vetoTrace,
+                        adoptedFill != null ? "entry adopted (filled)" : "entry placed",
+                        brokerOrderId, runId, null));
 
                 ObjectNode orderJson = mapper.createObjectNode();
                 orderJson.put("type", "limit_bracket");
@@ -1276,6 +1435,29 @@ public class ExecutorWebhookController {
                 orderJson.put("atr_effective", ctx.atrEff());
                 orderJson.put("position_risk_broker", positionRiskBroker(side, qty,
                         orderPriceRounded, brokerStopResult.price(), ctx.fxToAccount()));
+                if (adoptedFill != null) {
+                    boolean stopMismatch = adoptedStopLeg != null
+                            && adoptedStopLeg.stopPrice() != null
+                            && ("buy".equalsIgnoreCase(entrySide)
+                                ? adoptedStopLeg.stopPrice().compareTo(stopPrice) > 0
+                                : adoptedStopLeg.stopPrice().compareTo(stopPrice) < 0);
+                    if (stopMismatch) {
+                        log.warn("adopted position on {} has a protective leg at {} tighter than "
+                                        + "the logical stop {} — the ratchet will not loosen it",
+                                signal.symbol(), adoptedStopLeg.stopPrice(), stopPrice);
+                    }
+                    orderJson.put("adopted", true);
+                    orderJson.put("adopted_status", "FILLED");
+                    orderJson.put("adopted_fill_price", adoptedFill.avgFillPrice());
+                    orderJson.put("adopted_fill_qty", adoptedFill.filledQty());
+                    orderJson.put("adopted_holding_qty", adoptedHolding.qty());
+                    orderJson.put("adopted_filled_at",
+                            adoptedFill.filledAt() == null ? null : adoptedFill.filledAt().toString());
+                    orderJson.put("adopted_stop_leg",
+                            adoptedStopLeg == null ? null : adoptedStopLeg.orderId());
+                    orderJson.put("adopted_stop_bound_by", adoptedStopBoundBy);
+                    orderJson.put("adopted_stop_mismatch", stopMismatch);
+                }
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
                         confidence, clock.instant(), null);
             } catch (RuntimeException e) {
@@ -1287,7 +1469,9 @@ public class ExecutorWebhookController {
                         signalId, positionId, brokerOrderId, e.getMessage(), e);
             }
 
-            executorNotifier.notifyEntryPlaced(signal, side, qty, orderPriceRounded, stopPrice, connection);
+            executorNotifier.notifyEntryPlaced(signal, side, qty,
+                    adoptedFill != null ? adoptedFill.avgFillPrice() : orderPriceRounded,
+                    stopPrice, connection);
 
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "placed", true,

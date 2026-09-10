@@ -6124,4 +6124,459 @@ class ExecutorWebhookControllerTest {
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
         verify(decisionLogRepo, never()).insert(any());
     }
+
+    /** Row 2, case C — the whole round trip is in the history and the broker holds nothing.
+     *  Booking from the entry row alone would create an OPEN row for a position that no longer
+     *  exists, and the next reconcile pass would close it with a fabricated RECONCILE_GONE exit. */
+    @Test
+    void placeEntry_retryStoppedOut_rejectsStaleFill() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z"),
+                filledOrder("ord-stop", "sig-1", "ACME", "sell", "stopiftraded", "10", "90",
+                        "2026-09-09T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("STALE_FILL");
+
+        verify(positionRepo, never()).insert(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+        verify(telegram).notifyAlert(eq("ACME"), eq("UNBOOKED_ROUND_TRIP"), eq("CRITICAL"), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues())
+                .anyMatch(d -> "STALE_FILL".equals(d.rejectReason())
+                        && "ord-fill".equals(d.brokerOrderId()));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        assertThat(logCaptor.getAllValues())
+                .anyMatch(l -> "REJECT".equals(l.action()) && "STALE_FILL".equals(l.reasonCode()));
+        assertThat(logCaptor.getAllValues())
+                .anyMatch(l -> "ESCALATE".equals(l.action())
+                        && "UNBOOKED_ROUND_TRIP".equals(l.reasonCode()));
+    }
+
+    /** Row 2 — the same shape when the exit was the take-profit leg instead of the stop. */
+    @Test
+    void placeEntry_retryTookProfit_rejectsStaleFill() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z"),
+                new BrokerOrder("ord-tp", "sig-1", "ACME", OrderRole.TAKE_PROFIT, OrderStatus.FILLED,
+                        new BigDecimal("10"), new BigDecimal("10"), new BigDecimal("120"), null,
+                        "", "limit", "finalfill", "history", null, null,
+                        Instant.parse("2026-09-09T14:00:00Z"))));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+
+        assertThat(outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """))).get("reason")).isEqualTo("STALE_FILL");
+    }
+
+    /** Row 3 — a terminal exit under the ref AND a live holding is not a stale fill; it is a book
+     *  nobody can reconcile automatically. */
+    @Test
+    void placeEntry_retryTerminalExitButStillHeld_isAmbiguous() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z"),
+                filledOrder("ord-stop", "sig-1", "ACME", "sell", "stopiftraded", "4", "90",
+                        "2026-09-09T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("6"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """)));
+
+        assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+        assertThat(escalationInputs().path("row").asString()).isEqualTo("3");
+    }
+
+    /** Row 4 — the fill is already through this run's logical stop. Booking it would put
+     *  initial_stop on the wrong side of entry_price and flip the sign of realized_r. */
+    @Test
+    void placeEntry_retryFillAlreadyThroughLogicalStop_isAmbiguousNotBooked() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "94",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("94"),
+                new BigDecimal("94"), 1)));
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """)));
+
+        // fill 94 is already BELOW the logical stop 95 on a BUY.
+        assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(positionRepo, never()).insert(any());
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").asString()).isEqualTo("4");
+        assertThat(inputs.path("stop_side_ok").asBoolean()).isFalse();
+    }
+
+    /** Row 5, case B — the entry really filled and the broker really still holds it. */
+    @Test
+    void placeEntry_retryFilledEntryWithHolding_adoptsFilledPosition() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("broker_order_id")).isEqualTo("ord-fill");
+        assertThat(output.get("position_id")).isEqualTo(77L);
+
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).setEntryExpiresAt(anyLong(), any());
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        ExecutorPosition booked = posCaptor.getValue();
+        assertThat(booked.qty()).isEqualByComparingTo("10");
+        assertThat(booked.entryPrice()).isEqualByComparingTo("100");   // the FILL, not the limit
+        assertThat(booked.initialStop()).isEqualByComparingTo("95");   // the LOGICAL stop
+        assertThat(booked.activeStop()).isEqualByComparingTo("95");
+        assertThat(booked.brokerStop()).isEqualByComparingTo("93");    // where the LEG rests
+        assertThat(booked.highestPrice()).isEqualByComparingTo("100");
+        assertThat(booked.lowestPrice()).isEqualByComparingTo("100");
+        assertThat(booked.entryFilledAt()).isEqualTo("2026-09-08T14:00:00Z");
+        assertThat(booked.entryExpiresAt()).isNull();
+        assertThat(booked.submittedLimitPrice()).isNull();
+        assertThat(booked.entryDayHigh()).isNull();
+        assertThat(booked.stopOrderId()).isEqualTo("ord-stop");
+        assertThat(booked.brokerOrderId()).isEqualTo("ord-fill");
+        assertThat(booked.status()).isEqualTo("OPEN");
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason())
+                && d.rationale().contains("filled broker order ord-fill"));
+        assertThat(decCaptor.getAllValues())
+                .anyMatch(d -> d.accepted() && "entry adopted (filled)".equals(d.rationale()));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog enter = logCaptor.getAllValues().stream()
+                .filter(l -> "ENTER".equals(l.action())).findFirst().orElseThrow();
+        assertThat(enter.orderJson().path("adopted").asBoolean()).isTrue();
+        assertThat(enter.orderJson().path("adopted_status").asString()).isEqualTo("FILLED");
+        assertThat(enter.orderJson().path("adopted_fill_price").asDouble()).isEqualTo(100.0);
+        assertThat(enter.orderJson().path("adopted_fill_qty").asDouble()).isEqualTo(10.0);
+        assertThat(enter.orderJson().path("adopted_holding_qty").asDouble()).isEqualTo(10.0);
+        assertThat(enter.orderJson().path("adopted_filled_at").asString())
+                .isEqualTo("2026-09-08T14:00:00Z");
+        assertThat(enter.orderJson().path("adopted_stop_leg").asString()).isEqualTo("ord-stop");
+        assertThat(enter.orderJson().path("adopted_stop_bound_by").asString()).isEqualTo("ref");
+        assertThat(enter.orderJson().path("adopted_stop_mismatch").asBoolean()).isFalse();
+
+        verify(executorNotifier).notifyEntryPlaced(any(), eq("BUY"),
+                argThat(q -> q.compareTo(new BigDecimal("10")) == 0),
+                argThat(p -> p.compareTo(new BigDecimal("100")) == 0),
+                argThat(s -> s.compareTo(new BigDecimal("95")) == 0), eq("depot-1"));
+    }
+
+    /** qty means shares actually HELD: a partial exit between the fill and the adoption must not
+     *  book shares the broker no longer has. */
+    @Test
+    void placeEntry_retryHoldingSmallerThanFill_booksTheHeldQuantity() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("6"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("6");
+    }
+
+    /** SELL mirror: broker side "SELL", NEGATIVE qty, stop above the fill, leg above the stop. */
+    @Test
+    void placeEntry_retryFilledShortEntryWithHolding_adoptsFilledPosition() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "buy", "107"),
+                filledOrder("ord-fill", "sig-1", "ACME", "sell", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "SELL", new BigDecimal("-10"), new BigDecimal("100"),
+                new BigDecimal("99"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"SELL","stop_price":105}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("10");
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("100");
+        assertThat(posCaptor.getValue().activeStop()).isEqualByComparingTo("105");
+        assertThat(posCaptor.getValue().brokerStop()).isEqualByComparingTo("107");
+        assertThat(posCaptor.getValue().stopOrderId()).isEqualTo("ord-stop");
+    }
+
+    /** An adopted filled row is immediately tranche-2 eligible — Tranche2Detector requires a
+     *  non-null entry_filled_at and gets one here, deliberately. */
+    @Test
+    void placeEntry_adoptedFilledRow_isTranche2Eligible() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().entryFilledAt()).isNotNull();
+        assertThat(posCaptor.getValue().tranche()).isEqualTo(1);
+        assertThat(posCaptor.getValue().qty()).isPositive();
+    }
+
+    /** A fill whose broker timestamp never arrived still books — with the adoption time. */
+    @Test
+    void placeEntry_retryFilledEntryWithoutFilledAt_booksTheAdoptionTime() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100", null)));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().entryFilledAt()).isEqualTo(FIXED_NOW.toString());
+    }
+
+    /** A bound leg tighter than the logical stop is flagged, not "fixed". The ratchet will not
+     *  loosen it; it converges once the chandelier passes the leg. */
+    @Test
+    void placeEntry_retryBoundLegTighterThanLogicalStop_flagsMismatch() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "97"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog enter = logCaptor.getAllValues().stream()
+                .filter(l -> "ENTER".equals(l.action())).findFirst().orElseThrow();
+        assertThat(enter.orderJson().path("adopted_stop_mismatch").asBoolean()).isTrue();
+    }
+
+    /** IMAX shape (E4): the live protective leg lost its ExternalReference, so it is not under the
+     *  ref — but row 0 already proved no other OPEN book row holds the symbol, so exactly one
+     *  unclaimed live stop on it can only be ours. */
+    @Test
+    void placeEntry_retryLegWithoutRef_bindsBySymbol() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(gateway.orders("depot-1")).thenReturn(List.of(
+                stopLegOrder("ord-loose", null, "ACME", "sell", "93")));
+        when(positionRepo.stopOrderIdClaimed("ord-loose")).thenReturn(false);
+        when(legRepo.existsByStopOrderId("ord-loose")).thenReturn(false);
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().stopOrderId()).isEqualTo("ord-loose");
+        assertThat(posCaptor.getValue().brokerStop()).isEqualByComparingTo("93");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog enter = logCaptor.getAllValues().stream()
+                .filter(l -> "ENTER".equals(l.action())).findFirst().orElseThrow();
+        assertThat(enter.orderJson().path("adopted_stop_bound_by").asString()).isEqualTo("symbol");
+        verify(telegram, never()).notifyAlert(any(), eq("ADOPTED_WITHOUT_STOP"), any(), any());
+    }
+
+    /** A leg an executor_position_leg row already claims is not ours to bind. */
+    @Test
+    void placeEntry_retryLegClaimedByPositionLegTable_notBound() {
+        stubUnboundAdoption();
+        when(legRepo.existsByStopOrderId("ord-loose")).thenReturn(true);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertAdoptedWithoutStop();
+    }
+
+    /** A CLOSED position row's stop_order_id is still a claim. */
+    @Test
+    void placeEntry_retryLegClaimedByClosedRow_notBound() {
+        stubUnboundAdoption();
+        when(positionRepo.stopOrderIdClaimed("ord-loose")).thenReturn(true);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertAdoptedWithoutStop();
+    }
+
+    /** A "notworking" embedded OCO child is not a resting order and must never be bound. */
+    @Test
+    void placeEntry_retryNotworkingChild_notBound() {
+        stubUnboundAdoption();
+        when(gateway.orders("depot-1")).thenReturn(List.of(
+                new BrokerOrder("ord-loose", null, "ACME", OrderRole.STOP_LOSS, OrderStatus.WORKING,
+                        new BigDecimal("10"), BigDecimal.ZERO, null, "ord-parent",
+                        "sell", "stopiftraded", "notworking", "open", null,
+                        new BigDecimal("93"), null)));
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertAdoptedWithoutStop();
+    }
+
+    /** A blank-side candidate is unknown, and unknown is never enough to BIND. */
+    @Test
+    void placeEntry_retryBlankSideCandidate_notBound() {
+        stubUnboundAdoption();
+        when(gateway.orders("depot-1")).thenReturn(List.of(
+                stopLegOrder("ord-loose", null, "ACME", "", "93")));
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertAdoptedWithoutStop();
+    }
+
+    /** Two unclaimed candidates on the symbol: which one is ours is a guess, so neither binds. */
+    @Test
+    void placeEntry_retryTwoSymbolCandidates_notBound() {
+        stubUnboundAdoption();
+        when(gateway.orders("depot-1")).thenReturn(List.of(
+                stopLegOrder("ord-loose", null, "ACME", "sell", "93"),
+                stopLegOrder("ord-loose-2", null, "ACME", "sell", "92")));
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertAdoptedWithoutStop();
+    }
+
+    /** Case B with a bindable-looking leg on the symbol; individual tests break one condition. */
+    private void stubUnboundAdoption() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+        when(gateway.orders("depot-1")).thenReturn(List.of(
+                stopLegOrder("ord-loose", null, "ACME", "sell", "93")));
+        when(positionRepo.insert(any())).thenReturn(77L);
+    }
+
+    /** The position IS booked (it is real and held) but carries no protective binding: both
+     *  stop_order_id and broker_stop are NULL, and an operator is paged to bind the leg. */
+    private void assertAdoptedWithoutStop() {
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().stopOrderId()).isNull();
+        assertThat(posCaptor.getValue().brokerStop()).isNull();
+        assertThat(posCaptor.getValue().activeStop()).isEqualByComparingTo("95");
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTED_WITHOUT_STOP"), eq("CRITICAL"), any());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        assertThat(logCaptor.getAllValues())
+                .anyMatch(l -> "ESCALATE".equals(l.action())
+                        && "ADOPTED_WITHOUT_STOP".equals(l.reasonCode()));
+    }
 }
