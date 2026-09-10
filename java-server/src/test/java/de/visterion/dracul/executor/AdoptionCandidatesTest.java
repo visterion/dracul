@@ -1,0 +1,285 @@
+package de.visterion.dracul.executor;
+
+import de.visterion.dracul.executor.broker.BrokerOrder;
+import de.visterion.dracul.executor.broker.OrderRole;
+import de.visterion.dracul.executor.broker.OrderStatus;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Table-driven: every case is one row built by {@link #row}, whose {@code role} and {@code status}
+ * are derived from the raw {@code role}/{@code type}/{@code status} strings by the SAME rules
+ * {@code AgoraExecutionGateway.roleOf}/{@code toStatus} apply, so a fixture here cannot describe an
+ * order the gateway could never produce.
+ */
+class AdoptionCandidatesTest {
+
+    private static OrderRole roleFor(String role, String type) {
+        if (role != null && !"other".equalsIgnoreCase(role)) {
+            return switch (role) {
+                case "entry" -> OrderRole.ENTRY;
+                case "stop_loss" -> OrderRole.STOP_LOSS;
+                case "take_profit" -> OrderRole.TAKE_PROFIT;
+                default -> OrderRole.OTHER;
+            };
+        }
+        if (type == null) return OrderRole.OTHER;
+        return switch (type) {
+            case "stopiftraded", "stop" -> OrderRole.STOP_LOSS;
+            default -> OrderRole.OTHER;
+        };
+    }
+
+    private static OrderStatus statusFor(String rawStatus) {
+        if (rawStatus == null) return OrderStatus.WORKING;
+        return switch (rawStatus) {
+            case "filled", "finalfill" -> OrderStatus.FILLED;
+            case "partially_filled", "partial", "partialfill" -> OrderStatus.PARTIALLY_FILLED;
+            case "cancelled", "canceled" -> OrderStatus.CANCELLED;
+            case "rejected" -> OrderStatus.REJECTED;
+            default -> OrderStatus.WORKING; // incl. working/placed/changed/notworking/unknown
+        };
+    }
+
+    private static BrokerOrder row(String id, String side, String type, String rawStatus,
+            String source, String role, String filledQty, String avgFillPrice, String stopPrice,
+            String filledAt) {
+        return new BrokerOrder(id, "sig-1", "ACME", roleFor(role, type), statusFor(rawStatus),
+                new BigDecimal("10"),
+                filledQty == null ? null : new BigDecimal(filledQty),
+                avgFillPrice == null ? null : new BigDecimal(avgFillPrice),
+                null, side, type, rawStatus, source,
+                null,
+                stopPrice == null ? null : new BigDecimal(stopPrice),
+                filledAt == null ? null : Instant.parse(filledAt));
+    }
+
+    private static BrokerOrder openRow(String id, String side, String type, String rawStatus) {
+        return row(id, side, type, rawStatus, "open", "other", null, null, null, null);
+    }
+
+    private static BrokerOrder fill(String id, String side, String type, String filledAt) {
+        return row(id, side, type, "finalfill", "history", "other", "10", "100", null, filledAt);
+    }
+
+    @Test void emptyListYieldsAllEmpty() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.filledEntry()).isNull();
+        assertThat(c.filledUnverifiable()).isNull();
+        assertThat(c.terminalExit()).isNull();
+        assertThat(c.stopLeg()).isNull();
+        assertThat(c.unclaimedOpen()).isEmpty();
+    }
+
+    @Test void aWorkingSameSideEntryIsTheWorkingCandidateAndBeatsAFill() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                openRow("ord-working", "buy", "limit", "working"),
+                fill("ord-fill", "buy", "limit", "2026-09-08T14:00:00Z")), "buy");
+
+        assertThat(c.working().orderId()).isEqualTo("ord-working");
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-fill");
+    }
+
+    @Test void aDeadPlacedHistoryRowIsNeverWorking() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-dead", "buy", "limit", "placed", "history", "other",
+                        null, null, null, null)), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.filledEntry()).isNull();
+        assertThat(c.unclaimedOpen()).isEmpty();
+    }
+
+    @Test void aWorkingStopLegIsNeverTheWorkingEntry() {
+        // E2 shape 1: MFP's surviving protective stop under the entry's own clientRef.
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-stop", "sell", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null)), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.stopLeg().orderId()).isEqualTo("ord-stop");
+    }
+
+    @Test void aWorkingTakeProfitLegIsNeverTheWorkingEntry() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-tp-blank", "", "limit", "working", "open", "take_profit",
+                        null, null, null, null),
+                row("ord-tp-exit", "sell", "limit", "working", "open", "take_profit",
+                        null, null, null, null)), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.stopLeg()).isNull();
+        assertThat(c.unclaimedOpen()).extracting(BrokerOrder::orderId)
+                .containsExactly("ord-tp-blank", "ord-tp-exit");
+    }
+
+    @Test void aBlankSideFinalfillLimitIsNeverTheFilledEntry() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-blank", "", "limit", "finalfill", "history", "other",
+                        "10", "100", null, "2026-09-08T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry()).isNull();
+        assertThat(c.filledUnverifiable()).isNull();
+        // A blank side matches looseSide(exitSide), so it counts as a terminal exit — the
+        // refusing classification, which is the safe reading of an unattributable fill.
+        assertThat(c.terminalExit().orderId()).isEqualTo("ord-blank");
+    }
+
+    @Test void aNotworkingChildIsNeitherWorkingNorStopLeg() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-child", "", "stopiftraded", "notworking", "open", "stop_loss",
+                        null, null, "90", null)), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.stopLeg()).isNull();
+        assertThat(c.unclaimedOpen()).extracting(BrokerOrder::orderId).containsExactly("ord-child");
+    }
+
+    @Test void aFilledEntryWithoutAFillPriceIsUnverifiable() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-fill", "buy", "limit", "finalfill", "history", "other",
+                        "10", null, null, "2026-09-08T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry()).isNull();
+        assertThat(c.filledUnverifiable().orderId()).isEqualTo("ord-fill");
+    }
+
+    @Test void aFilledEntryWithoutAFilledQtyIsUnverifiable() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-fill", "buy", "limit", "finalfill", "history", "other",
+                        null, "100", null, "2026-09-08T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry()).isNull();
+        assertThat(c.filledUnverifiable().orderId()).isEqualTo("ord-fill");
+    }
+
+    @Test void theFilledEntryIsTheEarliestSameSideNonStopFillAndNeverTheTakeProfit() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                fill("ord-late", "buy", "limit", "2026-09-09T14:00:00Z"),
+                fill("ord-early", "buy", "limit", "2026-09-08T14:00:00Z"),
+                row("ord-tp", "buy", "limit", "finalfill", "history", "take_profit",
+                        "10", "120", null, "2026-09-07T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-early");
+    }
+
+    @Test void fillsWithNoTimestampSortLastAndThenByOrderId() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                fill("ord-b", "buy", "limit", null),
+                fill("ord-a", "buy", "limit", null)), "buy");
+
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-a");
+    }
+
+    @Test void aTimestampedFillBeatsAnUntimestampedOne() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                fill("ord-a", "buy", "limit", null),
+                fill("ord-z", "buy", "limit", "2026-09-09T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-z");
+    }
+
+    @Test void aMarketEntryFillIsAFilledEntry() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                fill("ord-mkt", "buy", "market", "2026-09-08T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-mkt");
+    }
+
+    @Test void sellMirror() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                openRow("ord-working", "sell", "limit", "working"),
+                fill("ord-fill", "sell", "limit", "2026-09-08T14:00:00Z"),
+                row("ord-stop", "buy", "stopiftraded", "working", "open", "other",
+                        null, null, "110", null),
+                fill("ord-exit", "buy", "stopiftraded", "2026-09-09T14:00:00Z")), "sell");
+
+        assertThat(c.working().orderId()).isEqualTo("ord-working");
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-fill");
+        assertThat(c.stopLeg().orderId()).isEqualTo("ord-stop");
+        assertThat(c.terminalExit().orderId()).isEqualTo("ord-exit");
+    }
+
+    @Test void aFilledStopAndAFilledTakeProfitAreBothTerminalExits() {
+        AdoptionCandidates stopped = AdoptionCandidates.classify(List.of(
+                fill("ord-entry", "buy", "limit", "2026-09-08T14:00:00Z"),
+                fill("ord-stop", "sell", "stopiftraded", "2026-09-09T14:00:00Z")), "buy");
+        assertThat(stopped.terminalExit().orderId()).isEqualTo("ord-stop");
+
+        AdoptionCandidates tookProfit = AdoptionCandidates.classify(List.of(
+                fill("ord-entry", "buy", "limit", "2026-09-08T14:00:00Z"),
+                row("ord-tp", "", "limit", "finalfill", "history", "take_profit",
+                        "10", "120", null, "2026-09-09T14:00:00Z")), "buy");
+        assertThat(tookProfit.terminalExit().orderId()).isEqualTo("ord-tp");
+    }
+
+    @Test void theStopLegNeedsOpenLiveAndAStopPrice() {
+        // A history "changed stopiftraded" row is not open, so it is not a bindable leg.
+        assertThat(AdoptionCandidates.classify(List.of(
+                row("ord-hist", "sell", "stopiftraded", "changed", "history", "other",
+                        null, null, "90", null)), "buy").stopLeg()).isNull();
+
+        // Open and live but no stopPrice -> not bindable, and therefore unclaimed.
+        AdoptionCandidates noPrice = AdoptionCandidates.classify(List.of(
+                row("ord-nopx", "sell", "stopiftraded", "working", "open", "other",
+                        null, null, null, null)), "buy");
+        assertThat(noPrice.stopLeg()).isNull();
+        assertThat(noPrice.unclaimedOpen()).extracting(BrokerOrder::orderId)
+                .containsExactly("ord-nopx");
+
+        // Blank side is allowed for the refusing classifications.
+        assertThat(AdoptionCandidates.classify(List.of(
+                row("ord-blank", "", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null)), "buy").stopLeg().orderId())
+                .isEqualTo("ord-blank");
+    }
+
+    @Test void aWrongNonBlankSideIsRejectedEverywhere() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                openRow("ord-working", "sell", "limit", "working"),
+                fill("ord-fill", "sell", "limit", "2026-09-08T14:00:00Z"),
+                row("ord-stop", "buy", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null)), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.filledEntry()).isNull();
+        assertThat(c.filledUnverifiable()).isNull();
+        assertThat(c.stopLeg()).isNull();          // wrong side for the exit
+        assertThat(c.terminalExit().orderId()).isEqualTo("ord-fill");
+    }
+
+    @Test void roleOtherWithAStopTypeIsAStop() {
+        assertThat(AdoptionCandidates.isStop(
+                row("ord-stop", "sell", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null))).isTrue();
+        assertThat(AdoptionCandidates.isStop(
+                row("ord-entry", "buy", "limit", "working", "open", "other",
+                        null, null, null, null))).isFalse();
+    }
+
+    @Test void unclaimedOpenCatchesAnOpenRowWithAnUnknownRawStatus() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-weird", "buy", "limit", "teleported", "open", "other",
+                        null, null, null, null)), "buy");
+
+        assertThat(c.working()).isNull();          // rawStatus is not in LIVE_RAW
+        assertThat(c.unclaimedOpen()).extracting(BrokerOrder::orderId)
+                .containsExactly("ord-weird");
+    }
+
+    @Test void theChosenWorkingAndStopLegAreNotAlsoUnclaimed() {
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                openRow("ord-working", "buy", "limit", "working"),
+                row("ord-stop", "sell", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null)), "buy");
+
+        assertThat(c.unclaimedOpen()).isEmpty();
+    }
+}
