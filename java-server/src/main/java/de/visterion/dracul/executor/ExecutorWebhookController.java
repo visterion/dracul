@@ -490,6 +490,118 @@ public class ExecutorWebhookController {
                 || status == OrderStatus.FILLED;
     }
 
+    /**
+     * The broker holding that backs an entry on {@code symbol}, or null when none can be
+     * established. Live Saxo reports {@code side} UPPERCASE and keeps the broker's sign on
+     * {@code qty}, and both fields are nullable — so the comparison is case-insensitive, a null or
+     * blank side is "unknown" (never a match), and a BUY needs a positive quantity while a SELL
+     * needs a negative one.
+     */
+    private BrokerPosition holdingFor(String connection, String symbol, String entrySide) {
+        for (BrokerPosition bp : gateway.positions(connection)) {
+            if (bp.symbol() == null || !bp.symbol().equalsIgnoreCase(symbol)) continue;
+            if (bp.side() == null || bp.side().isBlank()) continue;
+            if (!bp.side().equalsIgnoreCase(entrySide)) continue;
+            if (bp.qty() == null) continue;
+            boolean signOk = "buy".equalsIgnoreCase(entrySide)
+                    ? bp.qty().signum() > 0 : bp.qty().signum() < 0;
+            if (signOk) return bp;
+        }
+        return null;
+    }
+
+    /** The observed state an escalation reader needs to reconstruct the verdict. Every value is
+     *  derived from what the broker and the book actually reported — nothing is asserted. */
+    private ObjectNode adoptionInputs(String row, AdoptionCandidates c, ExecutorPosition bookRow,
+            BrokerPosition holding, Boolean stopSideOk) {
+        ObjectNode inputs = mapper.createObjectNode();
+        Long bookRowId = bookRow == null ? null : bookRow.id();
+        String stopLegId = c == null || c.stopLeg() == null ? null : c.stopLeg().orderId();
+        String terminalExitId = c == null || c.terminalExit() == null
+                ? null : c.terminalExit().orderId();
+        inputs.put("row", row);
+        inputs.put("book_row_id", bookRowId);
+        inputs.put("stop_leg_id", stopLegId);
+        inputs.put("terminal_exit_id", terminalExitId);
+        inputs.put("holding_qty", holding == null ? null : holding.qty());
+        inputs.put("stop_side_ok", stopSideOk);
+        ArrayNode unclaimed = inputs.putArray("unclaimed_open_ids");
+        if (c != null) {
+            for (BrokerOrder o : c.unclaimedOpen()) unclaimed.add(o.orderId());
+        }
+        return inputs;
+    }
+
+    /** One {@code decision_log} ESCALATE row plus one CRITICAL Telegram alert.
+     *  {@code action = "ESCALATE"}, never {@code "REJECT"}, so the counterfactual walk
+     *  ({@code OutcomeBatchJob}, which selects {@code trigger_type='SIGNAL' AND action='REJECT'})
+     *  picks up only the ordinary reject row and never doubles it. */
+    private void escalateAdoption(String runId, ExecutorSignal signal, String code,
+            ObjectNode inputs, String text) {
+        decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
+                signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
+                inputs, null, "ESCALATE", code, null, text, null, null, null));
+        telegram.notifyAlert(signal.symbol(), code, "CRITICAL", text);
+    }
+
+    /**
+     * Case D: something is live under this signal that the book cannot reconcile automatically.
+     * No booking, no placement.
+     *
+     * <p>Deliberately NOT reason {@code BROKER_ERROR}: this is not a broker failure, it must not
+     * feed the attempt cap, and the signal stays PENDING so a book an operator repairs can still
+     * be entered on the next run. The SP2b sweeper retires it after {@code max-signal-age-days} if
+     * nobody does. The escalation fires ONCE per signal — the gate is read before this run's row
+     * is written — because the same unresolved book would otherwise page an operator every night.
+     */
+    private ResponseEntity<Map<String, Object>> ambiguousAdoption(String runId,
+            ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
+            BigDecimal orderPriceRounded, VetoService.Outcome veto, Double confidence,
+            List<String> vetoTrace, ObjectNode inputs, String text) {
+        String signalId = signal.signalId();
+        boolean firstForThisSignal =
+                decisionRepo.countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0;
+        decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                "ADOPTION_AMBIGUOUS", vetoTrace, text, null, runId, null));
+        if (firstForThisSignal) {
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
+                    "ADOPTION_AMBIGUOUS", null, confidence, clock.instant(), null);
+            escalateAdoption(runId, signal, "ADOPTION_AMBIGUOUS", inputs, text);
+        }
+        return ResponseEntity.ok(Map.of("output",
+                Map.of("placed", false, "reason", "ADOPTION_AMBIGUOUS")));
+    }
+
+    /**
+     * Case A′ (row 0a): the book is already right — this signal's own OPEN row exists — and only
+     * the tail of a previous run's booking was lost (the {@code ORPHANED_ORDER} catch leaves rows
+     * whose expiry and signal status may both be missing). Repair the statuses and answer
+     * {@code placed:true}. No broker read, no alert: nothing at the broker can change this answer.
+     *
+     * <p>The GTD expiry is only restored for a row that is neither expiring nor filled. Handing a
+     * fresh expiry to a FILLED row would tell {@code EntryExpiryService} to cancel a live
+     * position's orders.
+     */
+    private ResponseEntity<Map<String, Object>> repairBookRow(ExecutorPosition bookRow,
+            ExecutorSignal signal, List<String> vetoTrace, String runId) {
+        String signalId = signal.signalId();
+        String text = "book row " + bookRow.id() + " already exists for this signal — status repaired";
+        signalRepo.markStatus(signalId, "ACCEPTED");
+        if (bookRow.entryExpiresAt() == null && bookRow.entryFilledAt() == null) {
+            positionRepo.setEntryExpiresAt(bookRow.id(), entryExpiry(clock.instant(), entryGtdDays));
+        }
+        decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                "DUPLICATE", vetoTrace, text, bookRow.brokerOrderId(), runId, null));
+        // LinkedHashMap, not Map.of: broker_order_id is nullable and Map.of rejects nulls.
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("placed", true);
+        output.put("position_id", bookRow.id());
+        if (bookRow.brokerOrderId() != null) {
+            output.put("broker_order_id", bookRow.brokerOrderId());
+        }
+        return ResponseEntity.ok(Map.of("output", output));
+    }
+
     // -------------------------------------------------------------------
     // rich decision_log construction — inputs snapshot, measured vetos, latency.
     // Mirrors HardTriggerService's decision-log idiom; every place-entry outcome (accept or
@@ -927,63 +1039,130 @@ public class ExecutorWebhookController {
         // target, so nothing is lost. An explicit take_profit from the LLM is still honoured and
         // passed through unchanged — only the invention is gone. Do NOT reintroduce a default.
 
-        // Idempotency guard: only relevant on a retry after a prior broker error. If the previous
-        // attempt actually reached the broker (committed but reported unavailable), an order
-        // already exists for this clientRef (=signalId). Adopt it instead of placing a second
-        // order. Agora does not dedupe on clientRef, so this check is the only double-order
-        // protection on the PENDING-retry path. The whole guard + placement is wrapped in one try
-        // so an orderByRef outage (broker down) degrades to the same retriable BROKER_ERROR path
-        // as a placement failure, rather than crashing the handler.
-        PlacedBracket placed;
+        // Idempotency guard, only on the retry path (a prior BROKER_ERROR exists). An earlier
+        // attempt may have reached the broker and been reported as unavailable, so an order — or a
+        // whole round trip — can already exist under this clientRef. The decision table below is
+        // ORDERED and EXHAUSTIVE; every branch either books exactly what the broker really has,
+        // refuses, or falls through to a normal placement. The whole guard + placement stays inside
+        // one try so a broker read failing degrades to the same retriable BROKER_ERROR path as a
+        // placement failure.
+        PlacedBracket placed = null;
+        // Case-B state, filled in only by the filled-entry adoption below.
+        BrokerOrder adoptedFill = null;
+        BrokerPosition adoptedHolding = null;
+        String entrySide = side.toLowerCase(java.util.Locale.ROOT);
         try {
             int priorBrokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
-            Optional<BrokerOrder> existing = priorBrokerErrors > 0
-                    ? gateway.orderByRef(connection, signalId)
-                    : Optional.empty();
-            boolean adoptable = existing.isPresent() && isLiveOrder(existing.get().status());
-            if (adoptable) {
-                BrokerOrder eo = existing.get();
-                // Book the live order's actual qty, not the freshly re-computed sizer qty — a
-                // later-run retry can produce a different qty from the sizer, which would diverge
-                // the DB position from the real broker order. Price cannot be reliably
-                // reconstructed from a working order, so the price recompute is left as-is.
-                if (eo.qty() != null) {
-                    qty = eo.qty();
+            if (priorBrokerErrors > 0) {
+                // Rows 0a/0b — the book answers first and needs no broker read at all.
+                ExecutorPosition bookRow =
+                        positionRepo.findOpenBySymbolIgnoreCase(connection, signal.symbol());
+                if (bookRow != null && signalId.equals(bookRow.sourceSignalId())) {
+                    return repairBookRow(bookRow, signal, vetoTrace, runId);            // row 0a, A'
                 }
-                // Saxo/live brackets expose no leg ids — null is expected and matches a fresh
-                // placement.
-                placed = new PlacedBracket(eo.orderId(), null, null, eo.clientRef(), eo.status());
-                decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
-                        "DUPLICATE", vetoTrace,
-                        "idempotent retry: existing broker order " + eo.orderId()
-                                + " for clientRef " + signalId + " adopted, not re-placed",
-                        eo.orderId(), runId, null));
-            } else if (decisionRepo.countByReasonInRun(signalId, "BROKER_ERROR", runId)
-                    >= maxBrokerCallsPerRun) {
-                // In-run throttle. Without it a retry storm inside one night (429 → duplicate →
-                // 429) hammers the broker AND — before 2026-07-26, when the cap still counted
-                // rows — burned the signal's entire lifetime attempt budget in a single run.
-                //
-                // Deliberately NOT reason "BROKER_ERROR": this row must not feed the attempt cap,
-                // or the throttle would inflate the very counter it exists to protect.
-                // Non-terminal — the next run starts with a fresh per-run budget.
-                //
-                // Order matters: adoption is checked FIRST. An already-existing broker order must
-                // be adopted even when the call budget is spent, or it stays open without a DB
-                // counterpart.
-                decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
-                        "BROKER_RETRY_EXHAUSTED", vetoTrace,
-                        "broker retry budget for this run exhausted: " + maxBrokerCallsPerRun
-                                + "/" + maxBrokerCallsPerRun,
-                        null, runId, null));
-                logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
-                        "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant(), null);
-                return ResponseEntity.ok(Map.of("output",
-                        Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
-            } else {
-                BracketRequest req = new BracketRequest(signal.symbol(), side, qty, orderPriceRounded,
-                        brokerStopResult.price(), takeProfit, signalId, null);
-                placed = gateway.placeBracket(connection, req);
+                if (bookRow != null) {
+                    return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
+                            veto, confidence, vetoTrace,
+                            adoptionInputs("0b", null, bookRow, null, null),
+                            "open book row " + bookRow.id() + " on " + signal.symbol()
+                                    + " belongs to signal " + bookRow.sourceSignalId());  // row 0b, D
+                }
+
+                List<BrokerOrder> matches = gateway.ordersByRef(connection, signalId);
+                AdoptionCandidates c = AdoptionCandidates.classify(matches, entrySide);
+
+                if (c.working() != null) {
+                    // Row 1, case A — unchanged behaviour. Book the live order's actual qty, not
+                    // the freshly re-computed sizer qty: a later-run retry can produce a different
+                    // qty, which would diverge the DB position from the real broker order. Price
+                    // cannot be reliably reconstructed from a working order, so the price
+                    // recompute is left as-is. Saxo/live brackets expose no leg ids — null is
+                    // expected and matches a fresh placement.
+                    BrokerOrder eo = c.working();
+                    if (eo.qty() != null) {
+                        qty = eo.qty();
+                    }
+                    placed = new PlacedBracket(eo.orderId(), null, null, eo.clientRef(), eo.status());
+                    decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                            "DUPLICATE", vetoTrace,
+                            "idempotent retry: existing broker order " + eo.orderId()
+                                    + " for clientRef " + signalId + " adopted, not re-placed",
+                            eo.orderId(), runId, null));
+                } else {
+                    BrokerPosition holding = holdingFor(connection, signal.symbol(), entrySide);
+
+                    if (c.filledUnverifiable() != null) {
+                        // Row 2a — a fill without both fill fields. Knowing that a trade happened
+                        // is not knowing at what price or in what size.
+                        return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
+                                veto, confidence, vetoTrace,
+                                adoptionInputs("2a", c, null, holding, null),
+                                "filled order " + c.filledUnverifiable().orderId()
+                                        + " under clientRef " + signalId
+                                        + " carries no usable fill price/quantity");
+                    }
+                    if (c.filledEntry() != null) {
+                        // Row 3 — a fill exists but nothing here can prove the broker still holds
+                        // it against an empty book slot.
+                        return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
+                                veto, confidence, vetoTrace,
+                                adoptionInputs("3", c, null, holding, null),
+                                "filled order " + c.filledEntry().orderId() + " under clientRef "
+                                        + signalId + " cannot be reconciled to a holding");
+                    }
+                    if (c.stopLeg() != null || holding != null) {
+                        // Row 6 — a live protective leg, or a holding, with no fill to attach it to.
+                        return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
+                                veto, confidence, vetoTrace,
+                                adoptionInputs("6", c, null, holding, null),
+                                "clientRef " + signalId + " has a live stop leg or the broker holds "
+                                        + signal.symbol() + ", but no adoptable entry");
+                    }
+                    if (!c.unclaimedOpen().isEmpty()) {
+                        // Row 6b — something is open and non-terminal under this ref that fits no
+                        // classification. Never place next to an order the broker may be working.
+                        return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
+                                veto, confidence, vetoTrace,
+                                adoptionInputs("6b", c, null, holding, null),
+                                "clientRef " + signalId + " carries "
+                                        + c.unclaimedOpen().size()
+                                        + " open order(s) that fit no adoption classification");
+                    }
+                    // Row 7 — nothing open under the ref, no holding, nothing filled. Case E:
+                    // fall through to the throttle and a fresh placement, exactly as today.
+                }
+            }
+
+            if (placed == null) {
+                if (decisionRepo.countByReasonInRun(signalId, "BROKER_ERROR", runId)
+                        >= maxBrokerCallsPerRun) {
+                    // In-run throttle. Without it a retry storm inside one night (429 →
+                    // duplicate → 429) hammers the broker AND — before 2026-07-26, when the cap
+                    // still counted rows — burned the signal's entire lifetime attempt budget in
+                    // a single run.
+                    //
+                    // Deliberately NOT reason "BROKER_ERROR": this row must not feed the attempt
+                    // cap, or the throttle would inflate the very counter it exists to protect.
+                    // Non-terminal — the next run starts with a fresh per-run budget.
+                    //
+                    // Order matters: adoption is checked FIRST. An already-existing broker order
+                    // must be adopted even when the call budget is spent, or it stays open without
+                    // a DB counterpart.
+                    decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                            "BROKER_RETRY_EXHAUSTED", vetoTrace,
+                            "broker retry budget for this run exhausted: " + maxBrokerCallsPerRun
+                                    + "/" + maxBrokerCallsPerRun,
+                            null, runId, null));
+                    logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto,
+                            "REJECT", "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant(),
+                            null);
+                    return ResponseEntity.ok(Map.of("output",
+                            Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
+                } else {
+                    BracketRequest req = new BracketRequest(signal.symbol(), side, qty,
+                            orderPriceRounded, brokerStopResult.price(), takeProfit, signalId, null);
+                    placed = gateway.placeBracket(connection, req);
+                }
             }
         } catch (BrokerUnavailableException e) {
             decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,

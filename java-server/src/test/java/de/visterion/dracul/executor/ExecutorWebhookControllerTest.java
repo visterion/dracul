@@ -3,6 +3,7 @@ package de.visterion.dracul.executor;
 import de.visterion.dracul.executor.broker.AccountSnapshot;
 import de.visterion.dracul.executor.broker.BracketRequest;
 import de.visterion.dracul.executor.broker.BrokerOrder;
+import de.visterion.dracul.executor.broker.BrokerPosition;
 import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
@@ -478,6 +479,55 @@ class ExecutorWebhookControllerTest {
                 /* lowestPrice */ null, /* entryExpiresAt */ null, /* submittedLimitPrice */ null,
                 /* pendingExitReason */ null, /* exitOrderId */ null, /* pendingExitFillPrice */ null, false, null,
                 "2026-07-02T00:00:00Z");
+    }
+
+    /** A live, resting, same-side entry order under the signal's ref -- the case-A adoption target.
+     *  rawStatus and source are load-bearing: AdoptionCandidates refuses to call an order live
+     *  without a raw status it recognises, and refuses to call it open without the "open" tag. */
+    private static BrokerOrder workingEntry(String orderId, String ref, String symbol,
+            String side, String qty) {
+        return new BrokerOrder(orderId, ref, symbol, OrderRole.OTHER, OrderStatus.WORKING,
+                new BigDecimal(qty), BigDecimal.ZERO, null, null,
+                side, "limit", "working", "open", null, null, null);
+    }
+
+    /** The surviving protective stop leg under the entry's own clientRef (prod shape E2/E4). */
+    private static BrokerOrder stopLegOrder(String orderId, String ref, String symbol,
+            String side, String stopPrice) {
+        return new BrokerOrder(orderId, ref, symbol, OrderRole.STOP_LOSS, OrderStatus.WORKING,
+                new BigDecimal("10"), BigDecimal.ZERO, null, null,
+                side, "stopiftraded", "working", "open", null, new BigDecimal(stopPrice), null);
+    }
+
+    /** A history row that is over: submitted, never filled, never cancelled by us. */
+    private static BrokerOrder deadPlacedOrder(String orderId, String ref, String symbol,
+            String side) {
+        return new BrokerOrder(orderId, ref, symbol, OrderRole.OTHER, OrderStatus.WORKING,
+                new BigDecimal("10"), BigDecimal.ZERO, null, null,
+                side, "limit", "placed", "history", null, null, null);
+    }
+
+    /** A terminal fill from the audit history. Type drives the role exactly as the gateway's
+     *  roleOf does, so a "stopiftraded" fill really reads as a stop leg. */
+    private static BrokerOrder filledOrder(String orderId, String ref, String symbol, String side,
+            String type, String filledQty, String avgFillPrice, String filledAt) {
+        return new BrokerOrder(orderId, ref, symbol,
+                "stopiftraded".equals(type) || "stop".equals(type)
+                        ? OrderRole.STOP_LOSS : OrderRole.OTHER,
+                OrderStatus.FILLED, new BigDecimal(filledQty), new BigDecimal(filledQty),
+                new BigDecimal(avgFillPrice), null, side, type, "finalfill", "history",
+                null, null, filledAt == null ? null : Instant.parse(filledAt));
+    }
+
+    /** An open book row. 39 components; everything not named is null/zero/false. */
+    private static ExecutorPosition bookRow(long id, String symbol, String sourceSignalId,
+            String entryExpiresAt, String entryFilledAt, String brokerOrderId) {
+        return new ExecutorPosition(id, "depot-1", symbol, "buy", new BigDecimal("10"),
+                new BigDecimal("100"), new BigDecimal("95"), new BigDecimal("95"), 1,
+                new BigDecimal("1"), List.of(), sourceSignalId, "index-strigoi", null, null,
+                "OPEN", brokerOrderId, new BigDecimal("100"), null, 0, null, null, null, null,
+                null, null, null, null, null, 0, null, entryExpiresAt, null, null, null, null,
+                false, null, entryFilledAt);
     }
 
     @SuppressWarnings("unchecked")
@@ -1570,7 +1620,7 @@ class ExecutorWebhookControllerTest {
                 .thenReturn(1);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(0);
         // Lifetime count > 0 sends the adoption guard to the broker; nothing to adopt.
-        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of());
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -1612,7 +1662,7 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(2);
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
-        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.empty());
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of());
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -1642,9 +1692,8 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(decisionRepo.countDistinctRunsByReasonSince(eq("sig-1"), eq("BROKER_ERROR"), any()))
                 .thenReturn(0);
-        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
-                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
-                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "sig-1", "ACME", "buy", "7")));
         when(positionRepo.insert(any())).thenReturn(77L);
 
         JsonNode body = json("""
@@ -1657,7 +1706,7 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(true);
         assertThat(output.get("broker_order_id")).isEqualTo("brk-existing");
 
-        verify(gateway).orderByRef("depot-1", "sig-1");
+        verify(gateway).ordersByRef("depot-1", "sig-1");
         verify(gateway, never()).placeBracket(any(), any());
 
         ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
@@ -1672,9 +1721,8 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(2);
         when(decisionRepo.countByReasonInRun("sig-1", "BROKER_ERROR", "run-7")).thenReturn(2);
-        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
-                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
-                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "sig-1", "ACME", "buy", "7")));
         when(positionRepo.insert(any())).thenReturn(77L);
 
         JsonNode body = json("""
@@ -1760,9 +1808,8 @@ class ExecutorWebhookControllerTest {
     void placeEntry_retryWithExistingBrokerOrder_adoptsNotReplaces() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
-                new BrokerOrder("brk-existing", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
-                        new BigDecimal("7"), BigDecimal.ZERO, null, null)));
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "sig-1", "ACME", "buy", "7")));
         when(positionRepo.insert(any())).thenReturn(77L);
 
         JsonNode body = json("""
@@ -1789,9 +1836,10 @@ class ExecutorWebhookControllerTest {
     void placeEntry_retryWithTerminalBrokerOrder_replaces() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(gateway.orderByRef("depot-1", "sig-1")).thenReturn(Optional.of(
-                new BrokerOrder("brk-cancelled", "sig-1", "ACME", OrderRole.ENTRY, OrderStatus.CANCELLED,
-                        new BigDecimal("10"), BigDecimal.ZERO, null, null)));
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                new BrokerOrder("brk-cancelled", "sig-1", "ACME", OrderRole.OTHER,
+                        OrderStatus.CANCELLED, new BigDecimal("10"), BigDecimal.ZERO, null, null,
+                        "buy", "limit", "cancelled", "history", null, null, null)));
         when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
                 .thenReturn(new PlacedBracket("brk-fresh", "stop-1", "tp-1", "sig-1", OrderStatus.WORKING));
         when(positionRepo.insert(any())).thenReturn(78L);
@@ -1833,7 +1881,8 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(true);
         assertThat(output.get("broker_order_id")).isEqualTo("brk-1");
 
-        verify(gateway, never()).orderByRef(any(), any());
+        verify(gateway, never()).ordersByRef(any(), any());
+        verify(positionRepo, never()).findOpenBySymbolIgnoreCase(any(), any());
         verify(gateway, times(1)).placeBracket(eq("depot-1"), any(BracketRequest.class));
     }
 
@@ -5608,5 +5657,364 @@ class ExecutorWebhookControllerTest {
         // stop_price stays the position's own (tick-rounded) logical stop.
         assertThat(oj.path("stop_price").decimalValue())
                 .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("82.00"));
+    }
+    // -------------------------------------------------------------------
+    // place-entry adoption decision table (SP4). Each test names the row it pins.
+    // -------------------------------------------------------------------
+
+    /** Row 0a -- the book already carries THIS signal's row; only the tail of a previous run's
+     *  booking was lost. Repair the statuses, touch no broker. */
+    @Test
+    void placeEntry_retryBookHasThisSignalsRow_repairsStatusAndExpiry() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME"))
+                .thenReturn(bookRow(77L, "ACME", "sig-1", null, null, "brk-existing"));
+
+        JsonNode body = json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        assertThat(output.get("position_id")).isEqualTo(77L);
+        assertThat(output.get("broker_order_id")).isEqualTo("brk-existing");
+
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+        verify(positionRepo).setEntryExpiresAt(eq(77L), any());
+        verify(positionRepo, never()).insert(any());
+        verify(gateway, never()).ordersByRef(any(), any());
+        verify(gateway, never()).positions(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+    }
+
+    /** Row 0a -- a row whose entry already filled must NOT get a fresh GTD expiry: that would tell
+     *  EntryExpiryService to cancel a live position's orders. */
+    @Test
+    void placeEntry_retryBookHasThisSignalsFilledRow_doesNotResetTheExpiry() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME")).thenReturn(
+                bookRow(77L, "ACME", "sig-1", null, "2026-09-08T14:00:00Z", null));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(true);
+        // Map.of would have thrown on the null broker order id.
+        assertThat(output).doesNotContainKey("broker_order_id");
+        verify(positionRepo, never()).setEntryExpiresAt(anyLong(), any());
+    }
+
+    /** Row 0a vs 0b -- a book row with a NULL source_signal_id is not this signal's row. */
+    @Test
+    void placeEntry_retryBookRowSourceSignalIdNull_isNotThisSignal() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME"))
+                .thenReturn(bookRow(77L, "ACME", null, null, null, "brk-manual"));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(signalRepo, never()).markStatus(eq("sig-1"), any());
+    }
+
+    /** Row 0b -- another signal's OPEN row holds the symbol's only book slot. Refuse BEFORE any
+     *  broker read: the unique index would bounce the insert anyway, and there is nothing to look
+     *  up at the broker that could change the answer. */
+    @Test
+    void placeEntry_retryBookHasOtherSignalsOpenRow_isAmbiguousBeforeAnyBrokerRead() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME"))
+                .thenReturn(bookRow(88L, "ACME", "sig-other", null, null, "brk-other"));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+
+        verify(gateway, never()).ordersByRef(any(), any());
+        verify(gateway, never()).positions(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTION_AMBIGUOUS"), eq("CRITICAL"), any());
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        assertThat(logCaptor.getAllValues())
+                .anyMatch(l -> "ESCALATE".equals(l.action())
+                        && "ADOPTION_AMBIGUOUS".equals(l.reasonCode())
+                        && "SIGNAL".equals(l.triggerType()));
+        assertThat(logCaptor.getAllValues())
+                .anyMatch(l -> "REJECT".equals(l.action())
+                        && "ADOPTION_AMBIGUOUS".equals(l.reasonCode()));
+    }
+
+    /** The book lookup runs BEFORE the broker read, always. */
+    @Test
+    void placeEntry_retryBookLookupPrecedesTheBrokerRead() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "sig-1", "ACME", "buy", "7")));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        var inOrder = inOrder(positionRepo, gateway);
+        inOrder.verify(positionRepo).findOpenBySymbolIgnoreCase("depot-1", "ACME");
+        inOrder.verify(gateway).ordersByRef("depot-1", "sig-1");
+    }
+
+    /** The book slot is keyed on lower(symbol) at the DB, so the guard must be too. */
+    @Test
+    void placeEntry_retrySymbolCaseDiffers_rowZeroStillFires() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        // The repository does the lower()-matching; the controller must call THIS method.
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME"))
+                .thenReturn(bookRow(77L, "acme", "sig-1", null, null, "brk-existing"));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(positionRepo).findOpenBySymbolIgnoreCase("depot-1", "ACME");
+        verify(positionRepo, never()).findOpenBySymbol(any(), any());
+    }
+
+    /** E2 shape 1 regression -- MFP: the only thing under the ref is the protective stop leg.
+     *  Adopting it as the entry would point broker_order_id at the stop and let the GTD expiry
+     *  sweeper cancel the protection. */
+    @Test
+    void placeEntry_retryStopLegUnderRef_isNotAdoptedAsEntry() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90")));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(positionRepo, never()).insert(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).setEntryExpiresAt(anyLong(), any());
+    }
+
+    /** Row 6 mirror -- a working take-profit leg under the ref is not an entry either. */
+    @Test
+    void placeEntry_retryTakeProfitLegUnderRef_isNotAdoptedAsEntry() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                new BrokerOrder("ord-tp", "sig-1", "ACME", OrderRole.TAKE_PROFIT,
+                        OrderStatus.WORKING, new BigDecimal("10"), BigDecimal.ZERO, null, null,
+                        "sell", "limit", "working", "open", new BigDecimal("120"), null, null)));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+    }
+
+    /** Row 6 -- nothing under the ref, but the broker holds the symbol. Not ours to guess at. */
+    @Test
+    void placeEntry_retryBrokerHoldsSymbolWithoutRefRows_isAmbiguous() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of());
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                new BigDecimal("101"), 1)));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** Row 6b -- an open row under the ref that fits no classification (unknown raw status).
+     *  Never place next to an order the broker may still be working. */
+    @Test
+    void placeEntry_retryOpenRowWithUnknownRawStatus_isAmbiguousNotPlaced() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                new BrokerOrder("ord-weird", "sig-1", "ACME", OrderRole.OTHER, OrderStatus.WORKING,
+                        new BigDecimal("10"), BigDecimal.ZERO, null, null,
+                        "buy", "limit", "teleported", "open", null, null, null)));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+    }
+
+    /** Row 2a -- a fill we cannot verify. Knowing a trade happened is not knowing at what price. */
+    @Test
+    void placeEntry_retryFilledEntryWithoutFillPrice_isAmbiguous() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                new BrokerOrder("ord-fill", "sig-1", "ACME", OrderRole.OTHER, OrderStatus.FILLED,
+                        new BigDecimal("10"), new BigDecimal("10"), null, null,
+                        "buy", "limit", "finalfill", "history", null, null,
+                        Instant.parse("2026-09-08T14:00:00Z"))));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(positionRepo, never()).insert(any());
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** Row 3 -- a filled entry with a live stop leg but no holding. Ambiguous, NOT rejected: the
+     *  signal stays PENDING so a resolved book can still be entered. */
+    @Test
+    void placeEntry_retryFilledEntryWorkingLegNoHolding_isAmbiguousNotRejected() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("ACCEPTED"));
+        verify(positionRepo, never()).insert(any());
+    }
+
+    /** Row 3 -- a filled entry, no terminal exit, no holding. */
+    @Test
+    void placeEntry_retryNoTerminalRowNoHolding_isAmbiguous() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(positionRepo, never()).insert(any());
+    }
+
+    /** A broker position row with a null qty says nothing about a holding -- and must not NPE. */
+    @Test
+    void placeEntry_retryPositionRowWithNullQty_isUnknownNotNpe() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of());
+        when(gateway.positions("depot-1")).thenReturn(List.of(
+                new BrokerPosition("ACME", "BUY", null, new BigDecimal("100"),
+                        new BigDecimal("101"), 1)));
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-fresh", "stop-1", "tp-1", "sig-1",
+                        OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(79L);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        // No holding could be established and nothing is open under the ref -> row 7, case E.
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        verify(gateway).placeBracket(any(), any());
+    }
+
+    /** Row 7 -- the ref carries only a dead 'placed' history row. Place fresh, no DUPLICATE. */
+    @Test
+    void placeEntry_retryDeadPlacedHistoryRow_placesFresh() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(deadPlacedOrder("ord-dead", "sig-1", "ACME", "buy")));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-fresh", "stop-1", "tp-1", "sig-1",
+                        OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(78L);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        assertThat(outputOf(resp).get("broker_order_id")).isEqualTo("brk-fresh");
+        verify(gateway).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).noneMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+    }
+
+    /** Case D escalates ONCE per signal. Every later run still writes its audit row, but the
+     *  operator is not paged nightly for the same unresolved book. */
+    @Test
+    void placeEntry_retrySecondAmbiguousRun_addsDecisionRowOnly() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(decisionRepo.countByReason("sig-1", "ADOPTION_AMBIGUOUS")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90")));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues())
+                .anyMatch(d -> "ADOPTION_AMBIGUOUS".equals(d.rejectReason()));
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+        verify(decisionLogRepo, never()).insert(any());
     }
 }
