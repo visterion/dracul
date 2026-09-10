@@ -127,8 +127,14 @@ public record AdoptionCandidates(
         BrokerOrder filledEntry = sameSideFills.stream()
                 .filter(o -> o.filledQty() != null && o.avgFillPrice() != null)
                 .findFirst().orElse(null);
-        BrokerOrder filledUnverifiable = filledEntry != null ? null
-                : sameSideFills.stream().findFirst().orElse(null);
+        // Independent of filledEntry: a same-side non-stop fill missing a fill field is
+        // filledUnverifiable regardless of whether some OTHER row already qualified as
+        // filledEntry. Both can be non-null at once; the decision table only consults
+        // filledUnverifiable when filledEntry is null (row 2a), so keeping both populated
+        // is harmless and keeps the classification honest about what the broker actually sent.
+        BrokerOrder filledUnverifiable = sameSideFills.stream()
+                .filter(o -> o.filledQty() == null || o.avgFillPrice() == null)
+                .findFirst().orElse(null);
 
         BrokerOrder chosenFill = filledEntry;
         BrokerOrder terminalExit = matches.stream()

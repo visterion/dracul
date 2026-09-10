@@ -107,6 +107,20 @@ class AdoptionCandidatesTest {
         assertThat(c.stopLeg().orderId()).isEqualTo("ord-stop");
     }
 
+    @Test void aWorkingSameSideStopIsNeverTheWorkingEntry() {
+        // Open, live, entry-side (strictSide true) — but it is a stop, so it must not be
+        // adopted as the working entry. It also cannot be the stopLeg (stopLeg needs the
+        // EXIT side), so it lands in unclaimedOpen: something the guard must not place next to.
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                row("ord-same-side-stop", "buy", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null)), "buy");
+
+        assertThat(c.working()).isNull();
+        assertThat(c.stopLeg()).isNull();
+        assertThat(c.unclaimedOpen()).extracting(BrokerOrder::orderId)
+                .containsExactly("ord-same-side-stop");
+    }
+
     @Test void aWorkingTakeProfitLegIsNeverTheWorkingEntry() {
         AdoptionCandidates c = AdoptionCandidates.classify(List.of(
                 row("ord-tp-blank", "", "limit", "working", "open", "take_profit",
@@ -158,6 +172,19 @@ class AdoptionCandidatesTest {
 
         assertThat(c.filledEntry()).isNull();
         assertThat(c.filledUnverifiable().orderId()).isEqualTo("ord-fill");
+    }
+
+    @Test void filledUnverifiableCoexistsWithAFilledEntryFromAnotherRow() {
+        // One complete fill (qualifies as filledEntry) and one incomplete same-side fill
+        // (qualifies as filledUnverifiable) under the same ref: both must be populated
+        // independently, not just whichever one is found first.
+        AdoptionCandidates c = AdoptionCandidates.classify(List.of(
+                fill("ord-complete", "buy", "limit", "2026-09-08T14:00:00Z"),
+                row("ord-incomplete", "buy", "limit", "finalfill", "history", "other",
+                        "10", null, null, "2026-09-09T14:00:00Z")), "buy");
+
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-complete");
+        assertThat(c.filledUnverifiable().orderId()).isEqualTo("ord-incomplete");
     }
 
     @Test void theFilledEntryIsTheEarliestSameSideNonStopFillAndNeverTheTakeProfit() {
@@ -261,6 +288,28 @@ class AdoptionCandidatesTest {
                         null, null, "90", null))).isTrue();
         assertThat(AdoptionCandidates.isStop(
                 row("ord-entry", "buy", "limit", "working", "open", "other",
+                        null, null, null, null))).isFalse();
+    }
+
+    @Test void isStopRoleClauseFiresEvenWithANonStopType() {
+        // role STOP_LOSS with a type that is not in the stop-type set: the role clause alone
+        // must be enough.
+        assertThat(AdoptionCandidates.isStop(
+                row("ord-stop-role", "sell", "limit", "working", "open", "stop_loss",
+                        null, null, "90", null))).isTrue();
+    }
+
+    @Test void isStopTypeClauseFiresEvenWithRoleOther() {
+        // role OTHER with a stop-shaped type: the type clause alone must be enough, and both
+        // recognised stop type strings must be covered individually.
+        assertThat(AdoptionCandidates.isStop(
+                row("ord-stopiftraded", "sell", "stopiftraded", "working", "open", "other",
+                        null, null, "90", null))).isTrue();
+        assertThat(AdoptionCandidates.isStop(
+                row("ord-stop-type", "sell", "stop", "working", "open", "other",
+                        null, null, "90", null))).isTrue();
+        assertThat(AdoptionCandidates.isStop(
+                row("ord-limit", "sell", "limit", "working", "open", "other",
                         null, null, null, null))).isFalse();
     }
 
