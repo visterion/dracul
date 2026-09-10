@@ -91,4 +91,17 @@ class FakeExecutionGatewayTest {
 
         assertThatThrownBy(() -> gateway.account("c")).isInstanceOf(BrokerUnavailableException.class);
     }
+
+    /** ordersByRef's history half is, on the real gateway, a second filledOrdersSince call — the
+     *  fake must fail the same way when that call would fail, or a test driving this failure path
+     *  (Task 5a) would pass against the fake and throw against the real adapter. */
+    @Test
+    void ordersByRef_throwsWhenFilledOrderHistoryIsUnavailable() {
+        gateway.seedOrder(new BrokerOrder("ord-1", "r1", "ACME", OrderRole.ENTRY, OrderStatus.WORKING,
+                new BigDecimal("10"), BigDecimal.ZERO, null, null));
+        gateway.filledOrdersUnavailable = true;
+
+        assertThatThrownBy(() -> gateway.ordersByRef("c", "r1"))
+                .isInstanceOf(BrokerUnavailableException.class);
+    }
 }

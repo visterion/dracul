@@ -153,7 +153,11 @@ public class FakeExecutionGateway implements ExecutionGateway {
     /** Mirrors the real gateway's assembly: seeded NON-filled orders under the ref first (the
      *  "open" half), then seeded FILLED ones whose id is not already in the open half (the
      *  "history" half). {@code source} on a seeded order is whatever the test set; the fake does
-     *  not rewrite it, so a test that cares seeds it explicitly. */
+     *  not rewrite it, so a test that cares seeds it explicitly. The real gateway's history read
+     *  is a second {@code filledOrdersSince} call, so {@link #filledOrdersThrows} and
+     *  {@link #filledOrdersUnavailable} apply here exactly as they do to
+     *  {@link #filledOrdersSince} — a test driving the failure path does not have to know which
+     *  method it is exercising. */
     @Override
     public List<BrokerOrder> ordersByRef(String connection, String ref) {
         checkAvailable();
@@ -164,6 +168,12 @@ public class FakeExecutionGateway implements ExecutionGateway {
             if (!ref.equals(o.clientRef()) || o.status() == OrderStatus.FILLED) continue;
             result.add(o);
             if (o.orderId() != null) openIds.add(o.orderId());
+        }
+        if (filledOrdersThrows != null) {
+            throw filledOrdersThrows;
+        }
+        if (filledOrdersUnavailable) {
+            throw new BrokerUnavailableException("fake filled-order history unavailable");
         }
         for (BrokerOrder o : orders) {
             if (!ref.equals(o.clientRef()) || o.status() != OrderStatus.FILLED) continue;

@@ -485,11 +485,6 @@ public class ReconcileService {
                 o.limitPrice(), o.stopPrice(), o.filledAt());
     }
 
-    /** Test-only alias with a name that says what the test is about. */
-    static BrokerOrder asStopLegForTest(BrokerOrder o) {
-        return relabelAsStopLeg(o);
-    }
-
     /** True when the order IS one of the two stop legs this position recorded at placement. */
     private boolean matchesKnownStopLeg(ExecutorPosition p, BrokerOrder o) {
         boolean stopIdMatch = p.stopOrderId() != null && p.stopOrderId().equals(o.orderId());

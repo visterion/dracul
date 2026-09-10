@@ -2735,7 +2735,7 @@ class ReconcileServiceTest {
                 "sell", "stopiftraded", "finalfill", "history",
                 null, new BigDecimal("90"), java.time.Instant.parse("2026-09-08T14:00:00Z"));
 
-        BrokerOrder relabelled = ReconcileService.asStopLegForTest(history);
+        BrokerOrder relabelled = ReconcileService.relabelAsStopLeg(history);
 
         assertThat(relabelled.role()).isEqualTo(OrderRole.STOP_LOSS);
         assertThat(relabelled.stopPrice()).isEqualByComparingTo("90");
