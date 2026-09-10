@@ -583,7 +583,9 @@ public class ExecutorWebhookController {
      * position's orders.
      */
     private ResponseEntity<Map<String, Object>> repairBookRow(ExecutorPosition bookRow,
-            ExecutorSignal signal, List<String> vetoTrace, String runId) {
+            ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
+            BigDecimal orderPriceRounded, VetoService.Outcome veto, Double confidence,
+            List<String> vetoTrace, String runId) {
         String signalId = signal.signalId();
         String text = "book row " + bookRow.id() + " already exists for this signal — status repaired";
         signalRepo.markStatus(signalId, "ACCEPTED");
@@ -592,6 +594,19 @@ public class ExecutorWebhookController {
         }
         decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                 "DUPLICATE", vetoTrace, text, bookRow.brokerOrderId(), runId, null));
+        // Spec addition (§2.2 A′): the repair also supplies the ENTER decision_log row. The run
+        // that originally booked this position may have died before writing its own — that is
+        // exactly the tail this row repairs — so without this insert row 0a would be the only
+        // terminal place-entry outcome leaving no decision_log trace at all.
+        ObjectNode orderJson = mapper.createObjectNode();
+        orderJson.put("adopted", true);
+        orderJson.put("adopted_status", "REPAIRED");
+        orderJson.put("position_id", bookRow.id());
+        if (bookRow.brokerOrderId() != null) {
+            orderJson.put("broker_order_id", bookRow.brokerOrderId());
+        }
+        logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null,
+                orderJson, confidence, clock.instant(), null);
         // LinkedHashMap, not Map.of: broker_order_id is nullable and Map.of rejects nulls.
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("placed", true);
@@ -1058,7 +1073,9 @@ public class ExecutorWebhookController {
                 ExecutorPosition bookRow =
                         positionRepo.findOpenBySymbolIgnoreCase(connection, signal.symbol());
                 if (bookRow != null && signalId.equals(bookRow.sourceSignalId())) {
-                    return repairBookRow(bookRow, signal, vetoTrace, runId);            // row 0a, A'
+                    // row 0a, case A'
+                    return repairBookRow(bookRow, signal, ctx, orderPrice, orderPriceRounded,
+                            veto, confidence, vetoTrace, runId);
                 }
                 if (bookRow != null) {
                     return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,

@@ -530,6 +530,20 @@ class ExecutorWebhookControllerTest {
                 false, null, entryFilledAt);
     }
 
+    /** The {@code inputs_snapshot} of the single ESCALATE decision_log row a case-D run writes.
+     *  Asserting it is what keeps two decision-table rows from being swapped unnoticed: the row
+     *  label and the distinguishing field are the only externally visible difference between,
+     *  say, row 2a and row 3. */
+    private JsonNode escalationInputs() {
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        return logCaptor.getAllValues().stream()
+                .filter(l -> "ESCALATE".equals(l.action()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no ESCALATE decision_log row was written"))
+                .inputsSnapshot();
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> outputOf(ResponseEntity<?> resp) {
         return (Map<String, Object>) ((Map<?, ?>) resp.getBody()).get("output");
@@ -5693,6 +5707,22 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
         assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+
+        // Spec addition (2.2 A'): the repair supplies the ENTER decision_log row the original
+        // booking run may have died before writing. Without it, row 0a would be the only terminal
+        // place-entry outcome with no decision_log trace at all.
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog enter = logCaptor.getAllValues().stream()
+                .filter(l -> "ENTER".equals(l.action()))
+                .findFirst().orElseThrow(() -> new AssertionError("no ENTER decision_log row"));
+        assertThat(enter.triggerType()).isEqualTo("SIGNAL");
+        assertThat(enter.signalId()).isEqualTo("sig-1");
+        assertThat(enter.orderJson().path("adopted").booleanValue()).isTrue();
+        assertThat(enter.orderJson().path("adopted_status").stringValue()).isEqualTo("REPAIRED");
+        assertThat(enter.orderJson().path("position_id").asLong()).isEqualTo(77L);
+        assertThat(enter.orderJson().path("broker_order_id").stringValue())
+                .isEqualTo("brk-existing");
     }
 
     /** Row 0a -- a row whose entry already filled must NOT get a fresh GTD expiry: that would tell
@@ -5713,6 +5743,15 @@ class ExecutorWebhookControllerTest {
         // Map.of would have thrown on the null broker order id.
         assertThat(output).doesNotContainKey("broker_order_id");
         verify(positionRepo, never()).setEntryExpiresAt(anyLong(), any());
+
+        // The ENTER row omits the key rather than carrying an explicit null.
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        DecisionLog enter = logCaptor.getAllValues().stream()
+                .filter(l -> "ENTER".equals(l.action()))
+                .findFirst().orElseThrow(() -> new AssertionError("no ENTER decision_log row"));
+        assertThat(enter.orderJson().path("adopted_status").stringValue()).isEqualTo("REPAIRED");
+        assertThat(enter.orderJson().has("broker_order_id")).isFalse();
     }
 
     /** Row 0a vs 0b -- a book row with a NULL source_signal_id is not this signal's row. */
@@ -5731,6 +5770,15 @@ class ExecutorWebhookControllerTest {
         assertThat(output.get("placed")).isEqualTo(false);
         assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
         verify(signalRepo, never()).markStatus(eq("sig-1"), any());
+
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("0b");
+        assertThat(inputs.path("book_row_id").asLong()).isEqualTo(77L);
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("terminal_exit_id").isNull()).isTrue();
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
+        assertThat(inputs.path("stop_side_ok").isNull()).isTrue();
+        assertThat(inputs.path("unclaimed_open_ids")).isEmpty();
     }
 
     /** Row 0b -- another signal's OPEN row holds the symbol's only book slot. Refuse BEFORE any
@@ -5767,6 +5815,14 @@ class ExecutorWebhookControllerTest {
         assertThat(logCaptor.getAllValues())
                 .anyMatch(l -> "REJECT".equals(l.action())
                         && "ADOPTION_AMBIGUOUS".equals(l.reasonCode()));
+
+        // The book row is the ONLY evidence row 0b has — no broker read happened at all.
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("0b");
+        assertThat(inputs.path("book_row_id").asLong()).isEqualTo(88L);
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
+        assertThat(inputs.path("unclaimed_open_ids")).isEmpty();
     }
 
     /** The book lookup runs BEFORE the broker read, always. */
@@ -5825,6 +5881,14 @@ class ExecutorWebhookControllerTest {
         verify(positionRepo, never()).insert(any());
         verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).setEntryExpiresAt(anyLong(), any());
+
+        // Row 6, not 6b: the stop leg is CLASSIFIED as the stop leg, never left unclaimed.
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("6");
+        assertThat(inputs.path("stop_leg_id").stringValue()).isEqualTo("ord-stop");
+        assertThat(inputs.path("book_row_id").isNull()).isTrue();
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
+        assertThat(inputs.path("unclaimed_open_ids")).isEmpty();
     }
 
     /** Row 6 mirror -- a working take-profit leg under the ref is not an entry either. */
@@ -5844,6 +5908,13 @@ class ExecutorWebhookControllerTest {
         assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
         verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
+
+        // A take-profit leg is neither the entry nor the stop leg -> it falls to row 6b.
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("6b");
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("unclaimed_open_ids").size()).isEqualTo(1);
+        assertThat(inputs.path("unclaimed_open_ids").path(0).stringValue()).isEqualTo("ord-tp");
     }
 
     /** Row 6 -- nothing under the ref, but the broker holds the symbol. Not ours to guess at. */
@@ -5862,6 +5933,14 @@ class ExecutorWebhookControllerTest {
 
         assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
         verify(gateway, never()).placeBracket(any(), any());
+
+        // Row 6 reached through the holding arm: nothing is open under the ref at all.
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("6");
+        assertThat(inputs.path("holding_qty").decimalValue())
+                .usingComparator(BigDecimal::compareTo).isEqualTo(new BigDecimal("10"));
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("unclaimed_open_ids")).isEmpty();
     }
 
     /** Row 6b -- an open row under the ref that fits no classification (unknown raw status).
@@ -5882,6 +5961,13 @@ class ExecutorWebhookControllerTest {
         assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
         verify(gateway, never()).placeBracket(any(), any());
         verify(positionRepo, never()).insert(any());
+
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("6b");
+        assertThat(inputs.path("unclaimed_open_ids").size()).isEqualTo(1);
+        assertThat(inputs.path("unclaimed_open_ids").path(0).stringValue()).isEqualTo("ord-weird");
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
     }
 
     /** Row 2a -- a fill we cannot verify. Knowing a trade happened is not knowing at what price. */
@@ -5902,6 +5988,15 @@ class ExecutorWebhookControllerTest {
         assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
         verify(positionRepo, never()).insert(any());
         verify(gateway, never()).placeBracket(any(), any());
+
+        // Row 2a, NOT row 3: the fill is unverifiable, so it never becomes a filledEntry. Swapping
+        // the two rows would change which fill Task 5b is allowed to book.
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("2a");
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("terminal_exit_id").isNull()).isTrue();
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
+        assertThat(inputs.path("unclaimed_open_ids")).isEmpty();
     }
 
     /** Row 3 -- a filled entry with a live stop leg but no holding. Ambiguous, NOT rejected: the
@@ -5924,6 +6019,12 @@ class ExecutorWebhookControllerTest {
         verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
         verify(signalRepo, never()).markStatus(eq("sig-1"), eq("ACCEPTED"));
         verify(positionRepo, never()).insert(any());
+
+        // Row 3, NOT row 2a: this fill carries both fill fields, so it is the filledEntry.
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("3");
+        assertThat(inputs.path("stop_leg_id").stringValue()).isEqualTo("ord-stop");
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
     }
 
     /** Row 3 -- a filled entry, no terminal exit, no holding. */
@@ -5942,6 +6043,12 @@ class ExecutorWebhookControllerTest {
 
         assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
         verify(positionRepo, never()).insert(any());
+
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").stringValue()).isEqualTo("3");
+        assertThat(inputs.path("stop_leg_id").isNull()).isTrue();
+        assertThat(inputs.path("terminal_exit_id").isNull()).isTrue();
+        assertThat(inputs.path("holding_qty").isNull()).isTrue();
     }
 
     /** A broker position row with a null qty says nothing about a holding -- and must not NPE. */
