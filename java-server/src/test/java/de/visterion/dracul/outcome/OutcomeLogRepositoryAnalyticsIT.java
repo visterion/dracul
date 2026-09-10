@@ -249,4 +249,65 @@ class OutcomeLogRepositoryAnalyticsIT {
 
         assertThat(repo.findVetoRows()).extracting("reasonCode").containsExactly("LLM_SKIP");
     }
+
+    /** A hunter-Brier-visible counterfactual: source_agent + hunter_label on the outcome row and
+     *  a signal_confidence in the decision row's inputs_snapshot are what findHunterBrierPoints
+     *  joins on. */
+    private void seedDecisionLogWithConfidence(String logId, String signalId, String symbol,
+            String reason) {
+        jdbc.sql("""
+                INSERT INTO decision_log (log_id, run_id, rule_version, trigger_type, signal_id,
+                                          source_agent, symbol, action, reason_code,
+                                          inputs_snapshot)
+                VALUES (CAST(:logId AS uuid), 'run-1', 'exec-v0.6', 'SIGNAL', :signalId,
+                        'strigoi-spin', :symbol, 'REJECT', :reason,
+                        CAST('{"signal_confidence":0.7}' AS jsonb))
+                """)
+                .param("logId", logId).param("signalId", signalId)
+                .param("symbol", symbol).param("reason", reason)
+                .update();
+    }
+
+    private void seedLabelledCounterfactual(String logIdRef, String symbol, String reason) {
+        jdbc.sql("""
+                INSERT INTO outcome_log (kind, log_id_ref, symbol, reason_code, hypothetical,
+                                         source_agent, hunter_label, complete, computed_at)
+                VALUES ('COUNTERFACTUAL', :ref, :symbol, :reason,
+                        CAST('{"r_after_20d":1.0,"r_after_60d":null,
+                               "would_have_stopped_out":false,"skipped_reason":null}' AS jsonb),
+                        'strigoi-spin', true, false, now())
+                """)
+                .param("ref", logIdRef).param("symbol", symbol).param("reason", reason)
+                .update();
+    }
+
+    /**
+     * STALE_FILL and ADOPTION_AMBIGUOUS are not vetos — nothing was judged and rejected on merit,
+     * so they must not appear in veto_precision or its skipped counts. They MUST stay in the
+     * hunter Brier: it asks whether the SIGNAL was good, and for a STALE_FILL a real trade is
+     * known to have happened.
+     */
+    @Test
+    void theAdoptionReasonCodesLeaveVetoPrecisionButStayInTheHunterBrier() {
+        String staleLog = java.util.UUID.randomUUID().toString();
+        String ambiguousLog = java.util.UUID.randomUUID().toString();
+        String pacedLog = java.util.UUID.randomUUID().toString();
+        seedSignal("sig-stale", "STALECO", "REJECTED");
+        seedSignal("sig-ambiguous", "AMBCO", "PENDING");
+        seedSignal("sig-paced", "PACECO", "REJECTED");
+        seedDecisionLogWithConfidence(staleLog, "sig-stale", "STALECO", "STALE_FILL");
+        seedDecisionLogWithConfidence(ambiguousLog, "sig-ambiguous", "AMBCO", "ADOPTION_AMBIGUOUS");
+        seedDecisionLogWithConfidence(pacedLog, "sig-paced", "PACECO", "PACE_LIMIT");
+        seedLabelledCounterfactual(staleLog, "STALECO", "STALE_FILL");
+        seedLabelledCounterfactual(ambiguousLog, "AMBCO", "ADOPTION_AMBIGUOUS");
+        seedLabelledCounterfactual(pacedLog, "PACECO", "PACE_LIMIT");
+
+        assertThat(repo.findVetoRows()).extracting(CalibrationService.VetoRow::reasonCode)
+                .containsExactly("PACE_LIMIT");
+        assertThat(calibration.vetoPrecision(repo.findVetoRows()))
+                .extracting(CalibrationService.VetoPrecision::reasonCode)
+                .doesNotContain("STALE_FILL", "ADOPTION_AMBIGUOUS");
+
+        assertThat(repo.findHunterBrierPoints()).hasSize(3);
+    }
 }

@@ -209,6 +209,19 @@ public class OutcomeLogRepository {
      * longer resolves exactly as before. The exclusion is {@code veto_precision} ONLY — the hunter
      * Brier ({@link #findHunterBrierPoints}) deliberately keeps these rows, because it asks whether
      * the SIGNAL was good, which a hypothetical answers even when the executor entered.
+     *
+     * <p><b>Why STALE_FILL and ADOPTION_AMBIGUOUS are excluded too.</b> Neither is a veto: nothing
+     * about the signal was judged and rejected on merit. {@code STALE_FILL} says a trade already
+     * happened and the book never saw it; {@code ADOPTION_AMBIGUOUS} says the book could not be
+     * reconciled to the broker. Counting either as "a veto that turned out right/wrong" measures
+     * the executor's bookkeeping, not its judgement, and would move {@code veto_precision} and its
+     * per-reason {@code skipped} counts on {@code GET /api/executor/behavior} for reasons a reader
+     * of that report cannot act on. Like the ACCEPTED exclusion, this is {@code veto_precision}
+     * ONLY: {@link #findHunterBrierPoints} keeps both, because the hunter's question — was the
+     * SIGNAL good? — still has an answer, and for a {@code STALE_FILL} it is the one class where a
+     * real trade is KNOWN to have happened. {@code OutcomeBatchJob} is unchanged: cases C and D
+     * write ordinary {@code SIGNAL}/{@code REJECT} decision rows and become counterfactuals exactly
+     * like {@code BROKER_ERROR} ones.
      */
     public List<CalibrationService.VetoRow> findVetoRows() {
         return jdbc.sql("""
@@ -226,6 +239,7 @@ public class OutcomeLogRepository {
                                                       WHEN ol.log_id_ref LIKE 'expired:%' THEN substr(ol.log_id_ref, 9) END)
                 WHERE ol.kind='COUNTERFACTUAL' AND ol.reason_code IS NOT NULL
                   AND (s.status IS NULL OR s.status <> 'ACCEPTED')
+                  AND ol.reason_code NOT IN ('STALE_FILL','ADOPTION_AMBIGUOUS')
                 ORDER BY COALESCE(dl.signal_id, ol.log_id_ref), ol.reason_code,
                          ol.complete DESC, ol.computed_at DESC, ol.id DESC
                 """)

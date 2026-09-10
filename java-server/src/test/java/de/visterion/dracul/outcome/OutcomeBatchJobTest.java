@@ -353,6 +353,40 @@ class OutcomeBatchJobTest {
         assertThat(row.complete()).isFalse(); // fewer than 60 bars
     }
 
+    /** SP4: OutcomeBatchJob is deliberately NOT changed. A SIGNAL/REJECT row carrying STALE_FILL
+     *  walks into a COUNTERFACTUAL exactly like every other reject reason — the exclusion lives in
+     *  OutcomeLogRepository.findVetoRows and nowhere else. */
+    @Test
+    void counterfactual_staleFillRejectStillProducesACounterfactualRow() {
+        String symbol = "CFT9";
+        var inputsSnapshot = mapper.readTree("{\"order_price\":100,\"atr\":2}");
+        DecisionLog reject = decisionRow("reject-log-9", "sig-9", symbol, "REJECT", "STALE_FILL",
+                inputsSnapshot, null, "strigoi-spin", "v1");
+
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of(reject));
+        when(outcomeLog.isComplete("reject-log-9")).thenReturn(false);
+        when(signals.findById("sig-9")).thenReturn(new ExecutorSignal("sig-9", "strigoi-spin", "v1",
+                symbol, "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "REJECTED", null));
+
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        List<OhlcBar> bars = new ArrayList<>();
+        for (int i = 1; i <= 20; i++) {
+            BigDecimal close = bd("100").add(bd("0.5").multiply(BigDecimal.valueOf(i)));
+            bars.add(new OhlcBar(start.plusDays(i), close.add(bd("0.5")), close.add(bd("0.5")),
+                    close.subtract(bd("0.5")), close, 1000L));
+        }
+        when(marketData.dailyOhlcHistory(anyString(), anyInt())).thenReturn(bars);
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        assertThat(captor.getValue().kind()).isEqualTo("COUNTERFACTUAL");
+        assertThat(captor.getValue().reasonCode()).isEqualTo("STALE_FILL");
+        assertThat(captor.getValue().hunterLabel()).isTrue();
+    }
+
     @Test
     void counterfactual_missingAtrOrderPrice_skippedAndComplete() {
         String symbol = "CFT2";
