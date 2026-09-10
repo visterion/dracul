@@ -124,7 +124,9 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                 JsonNode ooc = p.path("openOrdersCount");
                 result.add(new BrokerPosition(
                         textOrNull(p, "symbol"),
-                        // Live Saxo returns no "side" field — leave it null rather than invent one.
+                        // Live Saxo DOES return "side", UPPERCASE ("BUY"/"SELL"), and qty keeps
+                        // the broker's sign. Both are passed through verbatim; every consumer
+                        // compares side case-insensitively and reads qty sign- and null-aware.
                         textOrNull(p, "side"),
                         qty,
                         decimalField(p, "avgEntryPrice", "avg_entry_price"),
@@ -168,7 +170,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         List<BrokerOrder> result = new ArrayList<>();
         if (array.isArray()) {
             for (JsonNode o : array) {
-                result.add(toBrokerOrder(o));
+                result.add(toBrokerOrder(o, "open"));
             }
         }
         return result;
@@ -195,7 +197,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         List<BrokerOrder> result = new ArrayList<>();
         if (array.isArray()) {
             for (JsonNode o : array) {
-                BrokerOrder order = toBrokerOrder(o);
+                BrokerOrder order = toBrokerOrder(o, "history");
                 if (order.status() == OrderStatus.FILLED) result.add(order);
             }
         }
@@ -214,16 +216,14 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         if (order.path("brokerOrderId").isMissingNode() && order.path("broker_order_id").isMissingNode()) {
             return Optional.empty();
         }
-        return Optional.of(toBrokerOrder(order));
+        return Optional.of(toBrokerOrder(order, "open"));
     }
 
-    // KNOWN LIMITATION: live Saxo working orders carry NO role, NO parentId, and NO
-    // filledQty/avgFillPrice — the real get_orders shape is
-    // {brokerOrderId, clientRef, symbol, side, qty, type, status}. We derive a best-effort
-    // role hint from the order "type" (see roleOf), but this means reconcile CANNOT reliably
-    // match exit legs to their bracket by role/parentId. A future fix must either group by
-    // clientRef or have Agora expose an explicit role/parentId per order.
-    private BrokerOrder toBrokerOrder(JsonNode o) {
+    // Live Saxo working orders carry NO parentId and NO filledQty/avgFillPrice at the top level;
+    // the audit history carries fills but no bracket-leg structure and reports role "other" on
+    // every row. That is why side/type/rawStatus/source are carried through raw: they are what
+    // lets a caller tell a bracket parent from its stop leg under the same clientRef.
+    private BrokerOrder toBrokerOrder(JsonNode o, String source) {
         return new BrokerOrder(
                 textOrNull(o, "brokerOrderId", "broker_order_id"),
                 textOrNull(o, "clientRef", "client_ref"),
@@ -233,7 +233,31 @@ public class AgoraExecutionGateway implements ExecutionGateway {
                 decimalField(o, "qty", "qty"),
                 decimalField(o, "filledQty", "filled_qty"),
                 decimalField(o, "avgFillPrice", "avg_fill_price"),
-                textOrNull(o, "parentId", "parent_id"));
+                textOrNull(o, "parentId", "parent_id"),
+                lower(textOrNull(o, "side")),
+                lower(textOrNull(o, "type")),
+                lower(textOrNull(o, "status")),
+                source,
+                decimalField(o, "limitPrice", "limit_price"),
+                decimalField(o, "stopPrice", "stop_price"),
+                instantOrNull(textOrNull(o, "filledAt", "filled_at")));
+    }
+
+    private static String lower(String s) {
+        return s == null ? null : s.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** A broker timestamp we could not parse is worth strictly less than a wrong one: an adoption
+     *  orders its fill candidates by this field, so a fabricated value would pick the wrong entry.
+     *  DEBUG, not WARN — Saxo's audit rows legitimately omit it on non-final activities. */
+    private java.time.Instant instantOrNull(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return java.time.Instant.parse(raw);
+        } catch (java.time.format.DateTimeParseException e) {
+            log.debug("unparseable broker order timestamp '{}' — carried as null", raw);
+            return null;
+        }
     }
 
     /**
@@ -241,11 +265,14 @@ public class AgoraExecutionGateway implements ExecutionGateway {
      * entry|stop_loss|take_profit|other) if a broker/Agora ever supplies one; otherwise falls
      * back to the live Saxo {@code type}: stopiftraded/stop -> STOP_LOSS, everything else
      * (incl. plain "limit", which is ambiguous between entry and take-profit) -> OTHER.
+     * Saxo emits role "other" on EVERY audit-history row and on top-level working orders, so
+     * "other" is treated as "no role reported" and falls through to the type hint — otherwise
+     * a protective stop leg looks exactly like an entry.
      */
     private OrderRole roleOf(JsonNode o) {
         String role = textOrNull(o, "role");
-        if (role != null) {
-            return switch (role.toLowerCase()) {
+        if (role != null && !"other".equalsIgnoreCase(role)) {
+            return switch (role.toLowerCase(java.util.Locale.ROOT)) {
                 case "entry" -> OrderRole.ENTRY;
                 case "stop_loss" -> OrderRole.STOP_LOSS;
                 case "take_profit" -> OrderRole.TAKE_PROFIT;
@@ -266,9 +293,10 @@ public class AgoraExecutionGateway implements ExecutionGateway {
      * <p>The Saxo values arrive lower-cased straight off the wire (Agora passes
      * {@code Status} through verbatim), so the terminal names have to be listed
      * here explicitly. Observed in production: {@code working}, {@code open},
-     * {@code changed}, {@code finalfill}. {@code notworking} seen once, as an
-     * embedded OCO child copy under a Working parent. {@code partialfill}
-     * comes from the Saxo docs and has not been seen on our account yet.
+     * {@code changed}, {@code finalfill}, {@code placed}, {@code notworking}.
+     * {@code placed} is the dominant audit-history status on our account.
+     * {@code notworking} is an embedded OCO child copy under a Working parent.
+     * {@code partialfill} comes from the Saxo docs and has not been seen on our account yet.
      *
      * <p>An unrecognised status stays WORKING — the conservative choice, because a
      * non-terminal guess can never fabricate a close, but it can fabricate a
@@ -283,7 +311,19 @@ public class AgoraExecutionGateway implements ExecutionGateway {
             case "partially_filled", "partial", "partialfill" -> OrderStatus.PARTIALLY_FILLED;
             case "cancelled", "canceled" -> OrderStatus.CANCELLED;
             case "rejected" -> OrderStatus.REJECTED;
-            case "working", "open", "changed", "new", "accepted", "pending_new", "held" -> OrderStatus.WORKING;
+            // "placed" is Saxo's audit word for "this order was submitted", the dominant history
+            // status on our account; it never meant anything was wrong and its WARN was pure noise.
+            case "working", "open", "changed", "new", "accepted", "pending_new", "held", "placed"
+                    -> OrderStatus.WORKING;
+            // "notworking" is an embedded OCO child copy under a Working parent, NOT a resting
+            // order. The mapped value stays WORKING (nothing downstream may treat it as terminal),
+            // but callers deciding liveness read rawStatus, which excludes it. DEBUG, not WARN:
+            // it is expected, not a gap.
+            case "notworking" -> {
+                log.debug("broker order status 'notworking' — embedded OCO child, mapped WORKING "
+                        + "but not treated as live by the adoption path");
+                yield OrderStatus.WORKING;
+            }
             default -> {
                 log.warn("unmapped broker order status '{}' — treating it as WORKING; "
                         + "a terminal status hiding here makes fills unobservable", status);

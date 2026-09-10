@@ -553,29 +553,9 @@ class AgoraExecutionGatewayTest {
                         .contains("terminal status hiding here makes fills unobservable"));
     }
 
-    @Test void notworkingStatusMapsToWorkingAndLogsWarning() {
-        // notworking is deliberately unmapped so it falls through to the logged default.
-        // This test ensures the warning is preserved and someone cannot accidentally
-        // add a case for notworking without being caught.
-        CapturingGateway gw = new CapturingGateway(mapper);
-        gw.canned = json("""
-                {"output":{"orders":[
-                    {"brokerOrderId":"ord-notworking","clientRef":"r","symbol":"ACME","role":"other",
-                     "status":"notworking","qty":"10","filledQty":"0","avgFillPrice":null,"parentId":null}
-                ]}}
-                """);
-        var appender = attachAppender();
-
-        List<BrokerOrder> result = gw.orders("depot-1");
-
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).status()).isEqualTo(OrderStatus.WORKING);
-        assertThat(logLines(appender))
-                .anySatisfy(l -> assertThat(l)
-                        .contains("unmapped broker order status 'notworking'")
-                        .contains("treating it as WORKING")
-                        .contains("terminal status hiding here makes fills unobservable"));
-    }
+    // notworkingStatusMapsToWorkingAndLogsWarning removed: superseded by
+    // toStatus_notworking_mapsWorkingAtDebugNotWarn below, which asserts the Task 1-mandated
+    // behavior (notworking is an embedded OCO child, logged at DEBUG, not WARN).
 
     @Test void partialfillMapsToPartiallyFilled() {
         // partialfill is documented in Saxo docs but never observed on our account.
@@ -766,5 +746,161 @@ class AgoraExecutionGatewayTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test void toBrokerOrder_carriesSideTypeRawStatusPricesFilledAt() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-1","clientRef":"sig-1","symbol":"ACME","side":"buy",
+                   "qty":"10","type":"limit","status":"working","role":"other",
+                   "limitPrice":"100","stopPrice":null,"parentId":null,
+                   "filledAt":"2026-09-01T10:00:00Z"}
+                ]}}""");
+
+        BrokerOrder o = gw.orders("depot-1").getFirst();
+
+        assertThat(o.side()).isEqualTo("buy");
+        assertThat(o.type()).isEqualTo("limit");
+        assertThat(o.rawStatus()).isEqualTo("working");
+        assertThat(o.source()).isEqualTo("open");
+        assertThat(o.limitPrice()).isEqualByComparingTo("100");
+        assertThat(o.stopPrice()).isNull();
+        assertThat(o.filledAt()).isEqualTo(java.time.Instant.parse("2026-09-01T10:00:00Z"));
+    }
+
+    @Test void toBrokerOrder_unparseableFilledAtBecomesNullNotAThrow() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-1","clientRef":"sig-1","symbol":"ACME","side":"sell",
+                   "qty":"10","type":"stopiftraded","status":"working","role":"other",
+                   "stopPrice":"90","filledAt":"not-a-timestamp"}
+                ]}}""");
+
+        BrokerOrder o = gw.orders("depot-1").getFirst();
+
+        assertThat(o.filledAt()).isNull();
+        assertThat(o.stopPrice()).isEqualByComparingTo("90");
+    }
+
+    @Test void toBrokerOrder_historyRowsAreTaggedHistory() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-2","clientRef":"sig-1","symbol":"ACME","side":"buy",
+                   "qty":"10","filledQty":"10","avgFillPrice":"100","type":"limit",
+                   "status":"finalfill","role":"other"}
+                ]}}""");
+
+        BrokerOrder o = gw.filledOrdersSince("depot-1", java.time.Instant.parse("2026-09-01T00:00:00Z"))
+                .getFirst();
+
+        assertThat(o.source()).isEqualTo("history");
+        assertThat(o.status()).isEqualTo(OrderStatus.FILLED);
+    }
+
+    @Test void theNineArgConstructorNullsTheSevenNewFields() {
+        BrokerOrder o = new BrokerOrder("ord-1", "sig-1", "ACME", OrderRole.ENTRY,
+                OrderStatus.WORKING, new BigDecimal("10"), BigDecimal.ZERO, null, null);
+
+        assertThat(o.side()).isNull();
+        assertThat(o.type()).isNull();
+        assertThat(o.rawStatus()).isNull();
+        assertThat(o.source()).isNull();
+        assertThat(o.limitPrice()).isNull();
+        assertThat(o.stopPrice()).isNull();
+        assertThat(o.filledAt()).isNull();
+    }
+
+    /** DEBUG-level lines only; logLines() above filters to WARN. */
+    private static java.util.List<String> debugLines(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> a) {
+        return a.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.DEBUG)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
+    }
+
+    private CapturingGateway gatewayReturningStatus(String status) {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("{\"output\":{\"orders\":[{\"brokerOrderId\":\"ord-1\","
+                + "\"clientRef\":\"sig-1\",\"symbol\":\"ACME\",\"side\":\"buy\",\"qty\":\"10\","
+                + "\"type\":\"limit\",\"status\":\"" + status + "\",\"role\":\"other\"}]}}");
+        return gw;
+    }
+
+    @Test void toStatus_placed_mapsWorkingWithoutWarn() {
+        var appender = attachAppender();
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraExecutionGateway.class))
+                .setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        BrokerOrder o = gatewayReturningStatus("placed").orders("depot-1").getFirst();
+
+        assertThat(o.status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(o.rawStatus()).isEqualTo("placed");
+        assertThat(logLines(appender)).isEmpty();
+        assertThat(debugLines(appender)).noneMatch(l -> l.contains("placed"));
+    }
+
+    @Test void toStatus_notworking_mapsWorkingAtDebugNotWarn() {
+        var appender = attachAppender();
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraExecutionGateway.class))
+                .setLevel(ch.qos.logback.classic.Level.DEBUG);
+
+        BrokerOrder o = gatewayReturningStatus("notworking").orders("depot-1").getFirst();
+
+        assertThat(o.status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(o.rawStatus()).isEqualTo("notworking");
+        assertThat(logLines(appender)).isEmpty();
+        assertThat(debugLines(appender)).anyMatch(l -> l.contains("notworking"));
+    }
+
+    @Test void toStatus_unknownValue_stillWarnsAndMapsWorking() {
+        var appender = attachAppender();
+
+        BrokerOrder o = gatewayReturningStatus("teleported").orders("depot-1").getFirst();
+
+        assertThat(o.status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(logLines(appender)).anyMatch(l -> l.contains("unmapped broker order status"));
+    }
+
+    @Test void roleOf_fallsThroughToTypeWhenRoleIsOther() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-1","clientRef":"sig-1","symbol":"ACME","side":"sell",
+                   "qty":"10","type":"stopiftraded","status":"working","role":"other",
+                   "stopPrice":"90"},
+                  {"brokerOrderId":"ord-2","clientRef":"sig-1","symbol":"ACME","side":"buy",
+                   "qty":"10","type":"limit","status":"working","role":"other"}
+                ]}}""");
+
+        List<BrokerOrder> orders = gw.orders("depot-1");
+
+        assertThat(orders.get(0).role()).isEqualTo(OrderRole.STOP_LOSS);
+        assertThat(orders.get(1).role()).isEqualTo(OrderRole.OTHER);
+    }
+
+    @Test void roleOf_explicitStopLossAndTakeProfitStillWin() {
+        CapturingGateway gw = new CapturingGateway(mapper);
+        gw.canned = json("""
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-1","symbol":"ACME","type":"limit","status":"working",
+                   "role":"take_profit"},
+                  {"brokerOrderId":"ord-2","symbol":"ACME","type":"limit","status":"working",
+                   "role":"stop_loss"}
+                ]}}""");
+
+        List<BrokerOrder> orders = gw.orders("depot-1");
+
+        assertThat(orders.get(0).role()).isEqualTo(OrderRole.TAKE_PROFIT);
+        assertThat(orders.get(1).role()).isEqualTo(OrderRole.STOP_LOSS);
+    }
+
+    @AfterEach
+    void restoreLogLevel() {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(AgoraExecutionGateway.class))
+                .setLevel(null);
     }
 }
