@@ -6242,12 +6242,15 @@ class ExecutorWebhookControllerTest {
     void placeEntry_retryFilledEntryWithHolding_adoptsFilledPosition() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        // Every booked number is deliberately DISTINCT from the signal's own reference price
+        // (100) and from the sizer's qty for it (10): a value silently taken from the limit or
+        // from the sizer instead of from the fill fails here instead of passing by coincidence.
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -6268,13 +6271,13 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
         verify(positionRepo).insert(posCaptor.capture());
         ExecutorPosition booked = posCaptor.getValue();
-        assertThat(booked.qty()).isEqualByComparingTo("10");
-        assertThat(booked.entryPrice()).isEqualByComparingTo("100");   // the FILL, not the limit
+        assertThat(booked.qty()).isEqualByComparingTo("7");            // the FILL, not the sizer
+        assertThat(booked.entryPrice()).isEqualByComparingTo("98.50"); // the FILL, not the limit
         assertThat(booked.initialStop()).isEqualByComparingTo("95");   // the LOGICAL stop
         assertThat(booked.activeStop()).isEqualByComparingTo("95");
         assertThat(booked.brokerStop()).isEqualByComparingTo("93");    // where the LEG rests
-        assertThat(booked.highestPrice()).isEqualByComparingTo("100");
-        assertThat(booked.lowestPrice()).isEqualByComparingTo("100");
+        assertThat(booked.highestPrice()).isEqualByComparingTo("98.50");
+        assertThat(booked.lowestPrice()).isEqualByComparingTo("98.50");
         assertThat(booked.entryFilledAt()).isEqualTo("2026-09-08T14:00:00Z");
         assertThat(booked.entryExpiresAt()).isNull();
         assertThat(booked.submittedLimitPrice()).isNull();
@@ -6296,9 +6299,9 @@ class ExecutorWebhookControllerTest {
                 .filter(l -> "ENTER".equals(l.action())).findFirst().orElseThrow();
         assertThat(enter.orderJson().path("adopted").asBoolean()).isTrue();
         assertThat(enter.orderJson().path("adopted_status").asString()).isEqualTo("FILLED");
-        assertThat(enter.orderJson().path("adopted_fill_price").asDouble()).isEqualTo(100.0);
-        assertThat(enter.orderJson().path("adopted_fill_qty").asDouble()).isEqualTo(10.0);
-        assertThat(enter.orderJson().path("adopted_holding_qty").asDouble()).isEqualTo(10.0);
+        assertThat(enter.orderJson().path("adopted_fill_price").asDouble()).isEqualTo(98.50);
+        assertThat(enter.orderJson().path("adopted_fill_qty").asDouble()).isEqualTo(7.0);
+        assertThat(enter.orderJson().path("adopted_holding_qty").asDouble()).isEqualTo(7.0);
         assertThat(enter.orderJson().path("adopted_filled_at").asString())
                 .isEqualTo("2026-09-08T14:00:00Z");
         assertThat(enter.orderJson().path("adopted_stop_leg").asString()).isEqualTo("ord-stop");
@@ -6306,9 +6309,69 @@ class ExecutorWebhookControllerTest {
         assertThat(enter.orderJson().path("adopted_stop_mismatch").asBoolean()).isFalse();
 
         verify(executorNotifier).notifyEntryPlaced(any(), eq("BUY"),
-                argThat(q -> q.compareTo(new BigDecimal("10")) == 0),
-                argThat(p -> p.compareTo(new BigDecimal("100")) == 0),
+                argThat(q -> q.compareTo(new BigDecimal("7")) == 0),
+                argThat(p -> p.compareTo(new BigDecimal("98.50")) == 0),
                 argThat(s -> s.compareTo(new BigDecimal("95")) == 0), eq("depot-1"));
+    }
+
+    /** Spec addition (§2.3): case B keeps the table's ordering and books — the fill and the
+     *  holding are both real — but an unclassified open order resting under the same clientRef
+     *  must leave a trace. Not an escalation (nothing here is wrong enough to page anyone), yet
+     *  the operator who later finds that stray order has to be able to see the adoption knew. */
+    @Test
+    void placeEntry_retryFilledEntryWithUnclaimedOpenOrder_booksAndRecordsTheTrace() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ExecutorWebhookController.class);
+        var appender =
+                new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+            when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+            when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                    stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                    // blank side: neither an entry candidate nor a leg — it lands in unclaimedOpen
+                    workingEntry("ord-mystery", "sig-1", "ACME", "", "3"),
+                    filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
+                            "2026-09-08T14:00:00Z")));
+            when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                    "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
+                    new BigDecimal("101"), 1)));
+            when(positionRepo.insert(any())).thenReturn(77L);
+
+            ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                    {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                    """));
+
+            assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+            ArgumentCaptor<ExecutorPosition> posCaptor =
+                    ArgumentCaptor.forClass(ExecutorPosition.class);
+            verify(positionRepo).insert(posCaptor.capture());
+            assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("7");
+            assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("98.50");
+
+            ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+            verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+            DecisionLog enter = logCaptor.getAllValues().stream()
+                    .filter(l -> "ENTER".equals(l.action())).findFirst().orElseThrow();
+            JsonNode stray = enter.orderJson().path("adopted_unclaimed_open");
+            assertThat(stray.isArray()).isTrue();
+            assertThat(stray.toString()).contains("ord-mystery");
+
+            assertThat(appender.list.stream()
+                    .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage))
+                    .anyMatch(m -> m.contains("unclassified open order")
+                            && m.contains("ACME") && m.contains("sig-1")
+                            && m.contains("ord-mystery"));
+
+            // A trace, not an alarm.
+            verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+            assertThat(logCaptor.getAllValues()).noneMatch(l -> "ESCALATE".equals(l.action()));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     /** qty means shares actually HELD: a partial exit between the fill and the adoption must not
@@ -6319,10 +6382,10 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "9", "98.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("6"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("6"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -6330,9 +6393,11 @@ class ExecutorWebhookControllerTest {
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
                 """));
 
+        // 6 held < 9 filled < 10 sized: the held quantity is the only one that can pass.
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
         verify(positionRepo).insert(posCaptor.capture());
         assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("6");
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("98.50");
     }
 
     /** SELL mirror: broker side "SELL", NEGATIVE qty, stop above the fill, leg above the stop. */
@@ -6342,10 +6407,10 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "buy", "107"),
-                filledOrder("ord-fill", "sig-1", "ACME", "sell", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "sell", "limit", "7", "101.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "SELL", new BigDecimal("-10"), new BigDecimal("100"),
+                "ACME", "SELL", new BigDecimal("-7"), new BigDecimal("101.50"),
                 new BigDecimal("99"), 1)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -6357,8 +6422,10 @@ class ExecutorWebhookControllerTest {
 
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
         verify(positionRepo).insert(posCaptor.capture());
-        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("10");
-        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("100");
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("7");
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("101.50");
+        assertThat(posCaptor.getValue().highestPrice()).isEqualByComparingTo("101.50");
+        assertThat(posCaptor.getValue().lowestPrice()).isEqualByComparingTo("101.50");
         assertThat(posCaptor.getValue().activeStop()).isEqualByComparingTo("105");
         assertThat(posCaptor.getValue().brokerStop()).isEqualByComparingTo("107");
         assertThat(posCaptor.getValue().stopOrderId()).isEqualTo("ord-stop");
@@ -6372,10 +6439,10 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -6397,9 +6464,9 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100", null)));
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50", null)));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -6410,6 +6477,8 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
         verify(positionRepo).insert(posCaptor.capture());
         assertThat(posCaptor.getValue().entryFilledAt()).isEqualTo(FIXED_NOW.toString());
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("98.50");
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("7");
     }
 
     /** A bound leg tighter than the logical stop is flagged, not "fixed". The ratchet will not
@@ -6420,10 +6489,10 @@ class ExecutorWebhookControllerTest {
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
                 stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "97"),
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(positionRepo.insert(any())).thenReturn(77L);
 
@@ -6446,10 +6515,10 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(gateway.orders("depot-1")).thenReturn(List.of(
                 stopLegOrder("ord-loose", null, "ACME", "sell", "93")));
@@ -6467,6 +6536,8 @@ class ExecutorWebhookControllerTest {
         verify(positionRepo).insert(posCaptor.capture());
         assertThat(posCaptor.getValue().stopOrderId()).isEqualTo("ord-loose");
         assertThat(posCaptor.getValue().brokerStop()).isEqualByComparingTo("93");
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("98.50");
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("7");
 
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
         verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
@@ -6553,10 +6624,10 @@ class ExecutorWebhookControllerTest {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
-                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "10", "100",
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
                         "2026-09-08T14:00:00Z")));
         when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
-                "ACME", "BUY", new BigDecimal("10"), new BigDecimal("100"),
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
                 new BigDecimal("101"), 1)));
         when(gateway.orders("depot-1")).thenReturn(List.of(
                 stopLegOrder("ord-loose", null, "ACME", "sell", "93")));
@@ -6571,6 +6642,7 @@ class ExecutorWebhookControllerTest {
         assertThat(posCaptor.getValue().stopOrderId()).isNull();
         assertThat(posCaptor.getValue().brokerStop()).isNull();
         assertThat(posCaptor.getValue().activeStop()).isEqualByComparingTo("95");
+        assertThat(posCaptor.getValue().entryPrice()).isEqualByComparingTo("98.50");
 
         verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTED_WITHOUT_STOP"), eq("CRITICAL"), any());
         ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);

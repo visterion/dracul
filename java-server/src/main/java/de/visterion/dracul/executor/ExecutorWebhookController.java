@@ -1139,6 +1139,7 @@ public class ExecutorWebhookController {
         BrokerOrder adoptedStopLeg = null;
         String adoptedStopBoundBy = null;
         int adoptedStopCandidates = 0;
+        List<String> adoptedUnclaimedOpen = List.of();
         String entrySide = side.toLowerCase(java.util.Locale.ROOT);
         try {
             int priorBrokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
@@ -1232,6 +1233,12 @@ public class ExecutorWebhookController {
                                 adoptedStopBoundBy = "symbol";
                             }
                         }
+                        // Spec addition (§2.3): the table books here even when something
+                        // unclassified is still open under the same ref — but it must not do so
+                        // silently. The ids ride into order_json and a WARN, so the operator who
+                        // later finds a stray order can see the adoption knew about it.
+                        adoptedUnclaimedOpen = c.unclaimedOpen().stream()
+                                .map(BrokerOrder::orderId).toList();
                         // qty means shares actually HELD: a partial exit between the fill and this
                         // adoption must not book shares the broker no longer has. Reconcile's
                         // QTY_SYNC would correct it a pass later, but not before the vetos and the
@@ -1457,6 +1464,14 @@ public class ExecutorWebhookController {
                             adoptedStopLeg == null ? null : adoptedStopLeg.orderId());
                     orderJson.put("adopted_stop_bound_by", adoptedStopBoundBy);
                     orderJson.put("adopted_stop_mismatch", stopMismatch);
+                    if (!adoptedUnclaimedOpen.isEmpty()) {
+                        log.warn("filled entry adopted while {} unclassified open order(s) rest "
+                                        + "under the same clientRef: symbol={} signal={} orders={}",
+                                adoptedUnclaimedOpen.size(), signal.symbol(), signalId,
+                                adoptedUnclaimedOpen);
+                        ArrayNode stray = orderJson.putArray("adopted_unclaimed_open");
+                        for (String id : adoptedUnclaimedOpen) stray.add(id);
+                    }
                 }
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
                         confidence, clock.instant(), null);
