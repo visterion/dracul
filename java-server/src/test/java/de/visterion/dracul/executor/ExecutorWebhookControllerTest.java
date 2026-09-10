@@ -6701,10 +6701,11 @@ class ExecutorWebhookControllerTest {
         verify(gateway).placeBracket(any(), any());
     }
 
-    /** Filled tranche-2 adoption is deliberately out of scope: log it so it is visible, then
-     *  behave exactly as before. */
+    /** Spec change SP4 §2.6: a FILLED tranche-2 order under the ref means the position already
+     *  grew at the broker. Placing a second bracket next to it is real double exposure -- refuse
+     *  instead of place, and page an operator. The WARN trace stays, but now nothing is placed. */
     @Test
-    void addTranche_retryFilledT2Order_logsAndStillPlaces() {
+    void addTranche_retryFilledT2Order_refusesAndEscalates() {
         var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(ExecutorWebhookController.class);
         var appender = new ch.qos.logback.core.read.ListAppender<
@@ -6721,22 +6722,78 @@ class ExecutorWebhookControllerTest {
             when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
                     filledOrder("ord-t2-fill", "t2-sig-1", "ACME", "buy", "limit", "5", "101",
                             "2026-09-08T14:00:00Z")));
-            when(gateway.placeBracket(eq("depot-1"), any()))
-                    .thenReturn(new PlacedBracket("brk-t2", "stop-t2", null, "t2-sig-1", OrderStatus.WORKING));
 
             ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
                     {"symbol":"ACME","reason":"tranche-2 add"}
                     """));
 
-            assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+            assertThat(outputOf(resp).get("placed")).isEqualTo(false);
+            assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
             verify(gateway).ordersByRef("depot-1", "t2-sig-1");
-            verify(gateway).placeBracket(any(), any());
+            verify(gateway, never()).placeBracket(any(), any());
+
             assertThat(appender.list).anyMatch(e ->
                     e.getLevel() == ch.qos.logback.classic.Level.WARN
                             && e.getFormattedMessage().contains("ord-t2-fill")
                             && e.getFormattedMessage().contains("SP4 scope"));
+
+            ArgumentCaptor<ExecutorDecision> decisionCaptor =
+                    ArgumentCaptor.forClass(ExecutorDecision.class);
+            verify(decisionRepo, atLeastOnce()).insert(decisionCaptor.capture());
+            assertThat(decisionCaptor.getAllValues())
+                    .anyMatch(d -> "ADOPTION_AMBIGUOUS".equals(d.rejectReason())
+                            && "sig-1".equals(d.signalId()));
+
+            verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTION_AMBIGUOUS"), eq("CRITICAL"), any());
+            ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+            verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+            assertThat(logCaptor.getAllValues())
+                    .anyMatch(l -> "ESCALATE".equals(l.action())
+                            && "ADOPTION_AMBIGUOUS".equals(l.reasonCode())
+                            && "SIGNAL".equals(l.triggerType()));
+
+            JsonNode inputs = escalationInputs();
+            assertThat(inputs.path("position_id").asLong()).isEqualTo(7L);
+            assertThat(inputs.path("t2_ref").stringValue()).isEqualTo("t2-sig-1");
+            assertThat(inputs.path("filled_order_id").stringValue()).isEqualTo("ord-t2-fill");
+            assertThat(inputs.path("filled_qty").decimalValue()).isEqualByComparingTo("5");
+            assertThat(inputs.path("avg_fill_price").decimalValue()).isEqualByComparingTo("101");
         } finally {
             logger.detachAppender(appender);
         }
+    }
+
+    /** The ESCALATE row and the Telegram alert fire once per ref -- a later run that finds the
+     *  same filled order still refuses, but does not page again. */
+    @Test
+    void addTranche_secondRunAfterFilledT2_refusesWithoutNewAlert() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(decisionRepo.countByReason("sig-1", "ADOPTION_AMBIGUOUS")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
+                filledOrder("ord-t2-fill", "t2-sig-1", "ACME", "buy", "limit", "5", "101",
+                        "2026-09-08T14:00:00Z")));
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-2", json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(false);
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(gateway, never()).placeBracket(any(), any());
+
+        ArgumentCaptor<ExecutorDecision> decisionCaptor =
+                ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decisionCaptor.capture());
+        assertThat(decisionCaptor.getAllValues())
+                .anyMatch(d -> "ADOPTION_AMBIGUOUS".equals(d.rejectReason()));
+
+        verify(telegram, never()).notifyAlert(any(), any(), any(), any());
+        verify(decisionLogRepo, never()).insert(argThat(l ->
+                "ESCALATE".equals(l.action()) && "ADOPTION_AMBIGUOUS".equals(l.reasonCode())));
     }
 }

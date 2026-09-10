@@ -2291,6 +2291,34 @@ public class ExecutorWebhookController {
                         "idempotent retry: existing broker order " + eo.orderId()
                                 + " for clientRef " + clientRef + " adopted, not re-placed",
                         eo.orderId(), runId, null));
+            } else if (filledTranche != null) {
+                // Spec change SP4 §2.6: a FILLED tranche-2 order under this ref means the
+                // position already grew at the broker. Placing a second bracket next to it is
+                // real double exposure — refuse instead of place, and page an operator once per
+                // ref. Non-terminal: the position and signal states are untouched, so a later run
+                // can retry once the book is reconciled.
+                String reasoning = "filled tranche-2 order " + filledTranche.orderId()
+                        + " under ref " + clientRef
+                        + " is not booked (SP4 scope) — refusing to place a second tranche";
+                boolean firstForThisRef =
+                        decisionRepo.countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0;
+                decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
+                        "ADOPTION_AMBIGUOUS", List.of(), reasoning, null, runId, null));
+                if (firstForThisRef) {
+                    ObjectNode ambiguousInputs = mapper.createObjectNode();
+                    ambiguousInputs.put("position_id", position.id());
+                    ambiguousInputs.put("t2_ref", clientRef);
+                    ambiguousInputs.put("filled_order_id", filledTranche.orderId());
+                    ambiguousInputs.put("filled_qty", filledTranche.filledQty());
+                    ambiguousInputs.put("avg_fill_price", filledTranche.avgFillPrice());
+                    decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                            "SIGNAL", signalId, position.sourceAgent(), null, symbol,
+                            ambiguousInputs, null, "ESCALATE", "ADOPTION_AMBIGUOUS", null,
+                            reasoning, null, null, null));
+                    telegram.notifyAlert(symbol, "ADOPTION_AMBIGUOUS", "CRITICAL", reasoning);
+                }
+                return ResponseEntity.ok(Map.of("output",
+                        Map.of("placed", false, "reason", "ADOPTION_AMBIGUOUS")));
             } else {
                 // Both counting queries live inside this branch on purpose: an adoptable order is
                 // taken regardless of any budget (see the ordering invariant on the entry path),
