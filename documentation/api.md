@@ -161,7 +161,12 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   reached `ACCEPTED` are excluded from `veto_precision` **only** (the hunter
   Brier keeps them): that signal's question is answered by its TRADE row
   once the position closes; until then the counterfactual is withheld, so an
-  `n` drop need not be matched by an `n` gain elsewhere.
+  `n` drop need not be matched by an `n` gain elsewhere. `STALE_FILL` and
+  `ADOPTION_AMBIGUOUS` are excluded from `veto_precision` and from its
+  per-reason `skipped` counts the same way: neither is a veto — nothing about
+  the signal was judged and rejected on merit — so counting them would
+  measure the executor's bookkeeping rather than its judgement. Both stay in
+  the hunter Brier, which asks whether the signal was good.
 - **`LLM_SKIP`** is the reason code for signals the executor's LLM skipped
   outright, without a `place_entry` (they write no `decision_log` row, so they
   were invisible to the batch before SP3). **Overlap rule:** when
@@ -2273,9 +2278,17 @@ and for order-guard rejections it is the veto trace plus an
 | `RISK_TOO_WIDE` | `ExecutorWebhookController` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so `PositionSizer` computed a zero risk-capped quantity. Terminal — a fresh signal with a tighter stop is a new signal |
 | `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
-| `DUPLICATE` | `ExecutorWebhookController` | The signal is no longer `PENDING` (already `ACCEPTED`/`REJECTED`/`SKIPPED`) — idempotency guard, checked before vetos/order guard; no broker call, no signal-status change |
+| `DUPLICATE` | `ExecutorWebhookController` | Four distinct uses, all idempotency: (a) the signal is no longer `PENDING` — checked before vetos/order guard, no broker call, no signal-status change; (b) a **working** broker order already exists under the signal's clientRef and is adopted instead of re-placed; (c) a **filled** broker order under the clientRef is adopted as a position (see the adoption decision table below); (d) the book already carries this signal's OPEN row and only its statuses are repaired |
+| `STALE_FILL` | `ExecutorWebhookController` | The broker's history shows this signal's entry **and** its exit under the same clientRef, nothing under the ref is open and the broker holds nothing: a real round trip the book never saw. Terminal — the signal is marked `REJECTED`, nothing is booked and nothing is placed, and `UNBOOKED_ROUND_TRIP` escalates (decision log + Telegram CRITICAL) |
+| `ADOPTION_AMBIGUOUS` | `ExecutorWebhookController` | On a retry, something under this signal is live or filled that the book cannot reconcile automatically. **Non-terminal** — like `BROKER_RETRY_EXHAUSTED` it is not a `BROKER_ERROR`, it does not feed the attempt cap, and the signal stays `PENDING`; the sweeper retires it after `max-signal-age-days`. Every run writes the decision row; the `ADOPTION_AMBIGUOUS` escalation fires once per signal |
 | `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
 | `UNKNOWN_VERSION` | `PreySignalEmitter` (intake, not a `VetoService` entry) | The mapped signal's `agent_version` is neither a `PromptRegistry`-known prompt-body hash nor the emitting agent's current live DB version (`AgentVersionResolver.versionFor`) — the signal is dropped before it is ever inserted as `executor_signal`, so it produces no audit row and no `veto_trace` entry; `operator`-sourced (manual) signals are exempt since they carry no prompt hash |
+
+Neither `STALE_FILL` nor `ADOPTION_AMBIGUOUS` is a `RejectReason` enum
+member — like `ORPHANED_ORDER` and `BROKER_RETRY_EXHAUSTED` they are decision
+reason strings written directly by `ExecutorWebhookController`, not entries in
+the veto catalog. `RejectReason`'s `TRANSIENT` set stays exactly eight
+members.
 
 Every outcome (accepted or rejected) writes one `executor_decision` audit
 row; accepted entries also insert an `executor_position` row and mark the
@@ -2284,6 +2297,59 @@ source signal `ACCEPTED` (rejections mark it `REJECTED`).
 On the `BROKER_ERROR` path, the matching `decision_log` row's `reasoning`
 carries `broker call failed: <message>` (the broker's own error text). Every
 other entry decision — accepted or rejected — still writes `reasoning=null`.
+
+**Idempotency guard — the adoption decision table.** Only on a retry (the signal
+already has at least one `BROKER_ERROR` decision row). One clientRef can carry
+several broker orders at once — the bracket parent, its protective stop, its
+take-profit, and dead earlier placements — so the controller reads *all* of them
+(`ExecutionGateway.ordersByRef`, assembled from the open-orders view plus the
+fill history over `dracul.executor.adoption-history-days`) and evaluates an
+ordered, exhaustive table. The first row that holds wins:
+
+| # | Condition | Outcome |
+|---|---|---|
+| 0a | An OPEN book row on this symbol carries **this** signal's id | **A′** repair: mark the signal `ACCEPTED`, restore `entry_expires_at` if the row is neither expiring nor filled, `DUPLICATE` row, `{"placed": true, "position_id": …}`. No broker read; also writes a `decision_log` `ENTER` row with `order_json {adopted: true, adopted_status: "REPAIRED", position_id, broker_order_id?}`. No alert |
+| 0b | An OPEN book row on this symbol belongs to **another** signal | **D** `ADOPTION_AMBIGUOUS` (before any broker read — the unique index would bounce the insert anyway) |
+| 1 | A still-resting, same-side, non-stop, non-take-profit order exists under the ref | **A** adopt the working order (the pre-SP4 behaviour), booking the broker's own quantity |
+| 2a | A same-side fill exists but carries no usable fill price/quantity | **D** |
+| 2 | A same-side fill **and** an exit fill exist, nothing under the ref is open, the broker holds nothing | **C** `STALE_FILL` |
+| 3 | A same-side fill exists, but the broker holds nothing, **or** an exit fill exists as well | **D** |
+| 4 | A same-side fill with a holding, but the logical stop is not strictly on the risk side of the fill price | **D** |
+| 5 | A same-side fill, a matching holding, no exit fill, stop on the risk side | **B** adopt the filled entry as a position |
+| 6 | No usable fill, but a live stop leg under the ref or a broker holding on the symbol | **D** |
+| 6b | Something under the ref is open and non-terminal but fits no classification | **D** — never place next to an order the broker may be working |
+| 7 | Nothing open under the ref, no holding, nothing filled | **E** throttle + fresh placement, exactly as without a retry |
+
+**Case B, what gets booked.** `qty` = min(fill quantity, held quantity) — `qty`
+means shares actually HELD. `entry_price` = the average fill price;
+`initial_stop` = `active_stop` = this run's logical stop; `broker_stop` = the
+bound protective leg's price, or NULL when no leg could be bound (every consumer
+falls back to `active_stop`). `highest_price` = `lowest_price` = the fill price;
+`entry_filled_at` = the broker's fill timestamp, or the adoption time when the
+broker sent none. **No `entry_expires_at`** — the entry is already filled.
+`entry_date` is the DB default `now()`, i.e. the **adoption** day, not the fill
+day; the fill time lives in `entry_filled_at`. `order_json` records
+`adopted`, `adopted_status`, `adopted_fill_price`, `adopted_fill_qty`,
+`adopted_holding_qty`, `adopted_filled_at`, `adopted_stop_leg`,
+`adopted_stop_bound_by` (`"ref"` | `"symbol"` | null) and
+`adopted_stop_mismatch`. When the entry books while an unclassified open order
+still rests under the same clientRef (row 6b would otherwise sit below row 5),
+`order_json.adopted_unclaimed_open` records those order ids and a WARN is
+logged — no alert; the book is right, but an operator scanning strays later
+should be able to see the adoption knew about it. An adopted filled row is
+immediately tranche-2 eligible.
+
+**Stop binding in case B.** The protective leg under the ref binds directly
+(`adopted_stop_bound_by = "ref"`). If none is under the ref, the controller looks
+for a live, exit-side, unclaimed stop leg on the **symbol** (row 0 has already
+proved no other OPEN book row holds it); exactly one candidate binds as
+`"symbol"`, zero or several leave `stop_order_id` and `broker_stop` NULL and
+escalate `ADOPTED_WITHOUT_STOP`.
+
+**Escalations this path can raise:** `UNBOOKED_ROUND_TRIP` (case C),
+`ADOPTION_AMBIGUOUS` (case D, once per signal) and `ADOPTED_WITHOUT_STOP`
+(case B without a bound leg). All three are `decision_log` rows with
+`trigger_type = 'SIGNAL'`, `action = 'ESCALATE'` plus a Telegram CRITICAL alert.
 
 ### `POST /api/executor/tools/submit-decision`
 
@@ -2573,6 +2639,7 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | `BUDGET` | Remaining cash or budget headroom can't cover the tranche |
 | `BROKER_ERROR` | The Agora trading webhook call failed. Also writes one `decision_log` row with `trigger_type=SIGNAL`, `action=ADD_TRANCHE_REJECT`, `reason_code=BROKER_ERROR`, the broker's message in `reasoning`, `order_json=null` and `inputs_snapshot={position_id, tranche}`. The action is deliberately not `REJECT` — the counterfactual batch selects `action='REJECT'` and would otherwise write a permanently skipped counterfactual for every tranche failure. |
 | `MAX_BROKER_ATTEMPTS` | The signal already has `dracul.executor.max-broker-attempts` (default 3) `BROKER_ERROR` decisions — no further tranche is placed |
+| `ADOPTION_AMBIGUOUS` | A **filled** tranche-2 order already exists under the `t2-` ref — see below. Nothing is placed, nothing is booked; non-terminal, the position and signal state are untouched so a later run can retry once the book is reconciled by hand |
 
 Every outcome writes one `executor_decision` audit row (no `submit-decision`
 call needed for tranche-2 adds).
@@ -2586,12 +2653,26 @@ on the second tranche.
 **Idempotency guard and attempt cap**, mirroring `place-entry` on the
 tranche's own client ref `t2-<signal_id>` (distinct from the entry ref, so the
 two adoptions can never collide): if the signal has prior `BROKER_ERROR`
-decisions, the controller first asks the broker for an order under that ref.
-A live one is **adopted** — booked with the broker's own quantity, so
-`updateTranche2` (summed qty, re-weighted entry price, Telegram push,
-response) cannot diverge from the real order — and audited as a `DUPLICATE`
-decision row rather than reported as a rejection. Past
-`max-broker-attempts`, nothing is placed at all and the call answers
+decisions, the controller reads every order under that ref (`ordersByRef`) and
+adopts only a still-resting, same-side, non-stop, non-take-profit one. A `t2-`
+ref routinely carries dead `placed` rows and the bracket's own stop and
+take-profit legs; none of those is the tranche order. A live match is
+**adopted** — booked with the broker's own quantity, so `updateTranche2`
+(summed qty, re-weighted entry price, Telegram push, response) cannot diverge
+from the real order — and audited as a `DUPLICATE` decision row rather than
+reported as a rejection.
+
+A **filled** tranche-2 order under the ref is deliberately not adopted (out of
+SP4's scope — adopting it would need the same holding/stop reconciliation the
+entry path does, and a second bracket's legs to bind). It is **refused**, not
+placed next to: every run writes an `ADOPTION_AMBIGUOUS` `executor_decision`
+row, the first such row for the signal also writes a `decision_log`
+`ESCALATE`/`ADOPTION_AMBIGUOUS` row plus a Telegram CRITICAL alert, and the
+call answers `{"placed": false, "reason": "ADOPTION_AMBIGUOUS"}`. Non-terminal
+— the position and signal state are untouched, so a later run can retry once
+the book is reconciled by hand.
+
+Past `max-broker-attempts`, nothing is placed at all and the call answers
 `MAX_BROKER_ATTEMPTS`. A position without a `source_signal_id`
 (manual/imported) has no counting axis and places unconditionally.
 

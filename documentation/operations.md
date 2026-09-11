@@ -810,6 +810,56 @@ once the sweeper has retired a signal that carries V49 anchors, and
   decision — so `reasoning IS NOT NULL` on a `SIGNAL` row means "the broker
   said something".
 
+### SP4 filled-entry adoption (2026-09) — new alerts and log changes
+
+Three new escalation codes on the place-entry/add-tranche adoption path (see
+`documentation/architecture.md` and `documentation/api.md`'s adoption decision
+table). Each is a `decision_log` row (`action='ESCALATE'`) plus a Telegram
+CRITICAL alert.
+
+### `UNBOOKED_ROUND_TRIP`
+
+A signal's clientRef carries both an entry fill and an exit fill, the broker holds
+nothing, and no book row was ever written — a real trade happened outside the
+book. Nothing was placed and nothing was booked; the signal is `REJECTED`. Read
+`broker_order_id`, `filled_at` and `exit_order_id` from the escalation's
+`inputs_snapshot`, reconstruct the trade at the broker, and decide by hand
+whether to record it. Do **not** re-run `place-entry` for that signal.
+
+### `ADOPTION_AMBIGUOUS`
+
+On a retry, something under the signal is live or filled that the book cannot
+reconcile. Nothing was placed, nothing was booked, and the signal stays `PENDING`
+— the sweeper retires it after `max-signal-age-days`. The escalation's
+`inputs_snapshot` names the decision-table `row` and whichever of `book_row_id`,
+`stop_leg_id`, `terminal_exit_id`, `holding_qty`, `stop_side_ok` and
+`unclaimed_open_ids` applied. Resolve the book by hand (book the position, or
+cancel the stray order); it is raised only once per signal, so later runs are
+silent while the decision rows keep accumulating. `add-tranche` raises the same
+code, once per ref, when a filled tranche-2 order sits under the `t2-` ref and
+is refused rather than placed next to.
+
+### `ADOPTED_WITHOUT_STOP`
+
+A filled entry was adopted into the book, but no protective leg could be bound —
+`stop_order_id` and `broker_stop` are both NULL. **Bind the leg by hand before
+the position exits.** Until then the position is not only unprotected on paper:
+a later stop fill cannot be matched to the row, and it would close through the
+RECONCILE_GONE branch at `active_stop` labelled `MARK`, poisoning its outcome
+row. `ReconcileService.warnNothingSeedable` keeps reporting the null
+`stop_order_id` until it is fixed. The escalation's `inputs_snapshot` carries
+`position_id`, `broker_order_id`, `adopted_fill_price` and `candidates` (how many
+symbol-bound candidates were found: `0` means none, `2`+ means the binding was
+ambiguous).
+
+**Log-expectation notes updated by SP4:** the `unmapped broker order status`
+WARN no longer fires for `placed` — that value is mapped silently to WORKING,
+the same as `working`/`open`/`changed` — and `notworking` (an embedded OCO
+child copy, not a resting order) now logs at DEBUG rather than WARN. A
+maintenance pass with only `placed`/`notworking` traffic should show **zero**
+`unmapped broker order status` WARNs; any remaining line names a status the
+mapper still does not know.
+
 ## Agent budget guard
 
 A scheduled agent without a Vistierie budget silently never runs: Vistierie

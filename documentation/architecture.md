@@ -497,8 +497,21 @@ the fill price stamped at exit submit (`pending_exit_fill_price`, source
 `FILL`) → the position's `activeStop` as a last resort (source `MARK`, no
 fill data available). A partial unique index `uq_executor_position_open
 (connection, lower(symbol)) WHERE status='OPEN'` enforces at most one OPEN
-position per (connection, symbol), guaranteeing no duplicate booking. If a
-pending exit never confirms after `dracul.executor.pending-exit-stale-hours`
+position per (connection, symbol), guaranteeing no duplicate booking.
+
+Three escalation codes guard the place-entry adoption path (`decision_log`
+`trigger_type='SIGNAL'`, `action='ESCALATE'`, plus Telegram CRITICAL):
+`UNBOOKED_ROUND_TRIP` — the broker's history shows a full entry-and-exit round
+trip under a signal's clientRef that the book never saw; `ADOPTION_AMBIGUOUS` —
+something is live or filled under the signal that the book cannot reconcile
+automatically, raised once per signal while the signal stays PENDING; and
+`ADOPTED_WITHOUT_STOP` — a filled entry was booked but no protective leg could be
+bound to it. The last one is load-bearing for **outcome quality**, not only for
+protection: with `stop_order_id` and `broker_stop` both NULL a later stop fill
+cannot be matched to the row (leg matching needs a `parentId`), so the position
+would close through the RECONCILE_GONE branch at `active_stop` labelled `MARK`.
+
+If a pending exit never confirms after `dracul.executor.pending-exit-stale-hours`
 (config default 24, env `DRACUL_EXECUTOR_PENDING_EXIT_STALE_HOURS`), the
 position escalates once per symbol as `PENDING_EXIT_STALE` (decision log +
 Telegram CRITICAL alert) — no auto-retry, no auto-close (operator-in-the-loop
