@@ -31,6 +31,8 @@ public enum RejectReason {
     HEAT_LIMIT,
     CONCENTRATION,
     CONTRADICTION,
+    /** An open position already exists on the signal's symbol — any mechanism (SP5; before SP5
+     *  only the same mechanism counted). */
     REDUNDANCY,
     LIQUIDITY,
     SIGNAL_EXPIRED,

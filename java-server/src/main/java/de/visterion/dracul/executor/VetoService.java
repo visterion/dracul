@@ -14,6 +14,7 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -296,12 +297,31 @@ public class VetoService {
         results.add(new VetoResult("CONTRADICTION", contradictionOk, contradictionMeasured));
         if (!contradictionOk && firstFailure == null) firstFailure = RejectReason.CONTRADICTION;
 
-        // 11 REDUNDANCY — same mechanism already open on the same symbol
-        boolean redundancyOk = !(schemaOk
-                && signal.mechanism().equals(ctx.openMechanisms().get(signal.symbol())));
-        String redundancyMeasured = redundancyOk
-                ? "no open position with same mechanism on symbol"
-                : "mechanism " + signal.mechanism() + " already open on " + signal.symbol();
+        // 11 REDUNDANCY — an open position already exists on the symbol (any mechanism).
+        // Source of truth is the book (openPositions), not openMechanisms: a position whose
+        // source signal is unknown must still block, and the match is case-insensitive like
+        // uq_executor_position_open. Producers already skip held symbols; this is the
+        // in-catalog invariant that stops an operator inject or a stray producer from placing
+        // a live bracket the unique index would then orphan (SP5).
+        Optional<ExecutorPosition> openOnSymbol = schemaOk
+                ? ctx.openPositions().stream()
+                        .filter(p -> p.symbol() != null && p.symbol().equalsIgnoreCase(signal.symbol()))
+                        .findFirst()
+                : Optional.empty();
+        boolean redundancyOk = openOnSymbol.isEmpty();
+        String redundancyMeasured;
+        if (redundancyOk) {
+            redundancyMeasured = "no open position on symbol";
+        } else {
+            String openMech = ctx.openMechanisms().get(openOnSymbol.get().symbol());
+            if (openMech != null && signal.mechanism() != null
+                    && openMech.equalsIgnoreCase(signal.mechanism())) {
+                redundancyMeasured = "mechanism " + signal.mechanism() + " already open on " + signal.symbol();
+            } else {
+                redundancyMeasured = "position already open on " + signal.symbol()
+                        + " (mechanism " + (openMech != null ? openMech : "unknown") + ")";
+            }
+        }
         results.add(new VetoResult("REDUNDANCY", redundancyOk, redundancyMeasured));
         if (!redundancyOk && firstFailure == null) firstFailure = RejectReason.REDUNDANCY;
 

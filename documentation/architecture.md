@@ -718,7 +718,7 @@ pre-veto:**
 | 9 | `CONCENTRATION` | Sector already at `max-per-sector` open positions |
 | 10 | `CORRELATED` | Same sector *and* same mechanism as an existing open position (blocks piling into one correlated bet even under the sector cap) |
 | 11 | `CONTRADICTION` | `MERGER_ARB` vs. a drift-style mechanism (`PEAD`/`SPINOFF`/`INSIDER_CLUSTER`/`INDEX_INCLUSION`/`QUALITY_52W_LOW`) on the same symbol, either direction |
-| 12 | `REDUNDANCY` | Same mechanism already open on the symbol |
+| 12 | `REDUNDANCY` | Any open position on the symbol |
 | 13 | `PATTERN_GATE` | Candidate signal matches an `ACTIVE` curated pattern's enforced gate |
 | 14 | `LIQUIDITY` | Price below `min-price`, or ADV20 notional below `adv-multiple` × tranche |
 | 15 | `CHASED_AWAY` | Price moved beyond `chase-atr-mult` × ATR past the signal's reference price |

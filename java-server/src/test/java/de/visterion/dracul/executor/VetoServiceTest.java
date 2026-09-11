@@ -622,7 +622,8 @@ class VetoServiceTest {
 
     @Test
     void redundancy_sameMechanismSameSymbol_fails() {
-        EntryContext ctx = ctx().openMechanisms(Map.of("ACME", "PEAD")).build();
+        EntryContext ctx = ctx().openPositions(List.of(position("ACME", null)))
+                .openMechanisms(Map.of("ACME", "PEAD")).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
         assertThat(outcome.passed()).isFalse();
@@ -630,19 +631,42 @@ class VetoServiceTest {
     }
 
     @Test
-    void redundancy_differentMechanism_passes() {
-        EntryContext ctx = ctx().openMechanisms(Map.of("ACME", "SPINOFF")).build();
+    void redundancy_failsWhenAnotherMechanismIsOpenOnTheSymbol() {
+        EntryContext ctx = ctx().openPositions(List.of(position("ACME", null)))
+                .openMechanisms(Map.of("ACME", "MERGER_ARB")).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
-        assertThat(result(outcome, "REDUNDANCY").passed()).isTrue();
+        assertThat(result(outcome, "REDUNDANCY").passed()).isFalse();
+        assertThat(result(outcome, "REDUNDANCY").measured())
+                .isEqualTo("position already open on ACME (mechanism MERGER_ARB)");
     }
 
     @Test
-    void redundancy_noOpenMechanismForSymbol_passes() {
-        EntryContext ctx = ctx().openMechanisms(Map.of("OTHER", "PEAD")).build();
+    void redundancy_failsWhenTheOpenPositionsMechanismIsUnknown() {
+        EntryContext ctx = ctx().openPositions(List.of(position("ACME", null))).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "REDUNDANCY").passed()).isFalse();
+        assertThat(result(outcome, "REDUNDANCY").measured())
+                .isEqualTo("position already open on ACME (mechanism unknown)");
+    }
+
+    @Test
+    void redundancy_matchesSymbolCaseInsensitively() {
+        EntryContext ctx = ctx().openPositions(List.of(position("acme", null))).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(result(outcome, "REDUNDANCY").passed()).isFalse();
+    }
+
+    @Test
+    void redundancy_passesWhenTheSameMechanismIsOpenOnAnotherSymbol() {
+        EntryContext ctx = ctx().openPositions(List.of(position("OTHR", null)))
+                .openMechanisms(Map.of("OTHR", "PEAD")).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
         assertThat(result(outcome, "REDUNDANCY").passed()).isTrue();
+        assertThat(result(outcome, "REDUNDANCY").measured()).isEqualTo("no open position on symbol");
     }
 
     // ---- 11 LIQUIDITY ----
@@ -1113,7 +1137,8 @@ class VetoServiceTest {
 
     @Test
     void redundancyMeasuredNamesMechanismAndSymbol() {
-        EntryContext ctx = ctx().openMechanisms(Map.of("ACME", "PEAD")).build();
+        EntryContext ctx = ctx().openPositions(List.of(position("ACME", null)))
+                .openMechanisms(Map.of("ACME", "PEAD")).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
         assertThat(result(outcome, "REDUNDANCY").measured())
