@@ -810,12 +810,10 @@ once the sweeper has retired a signal that carries V49 anchors, and
   decision — so `reasoning IS NOT NULL` on a `SIGNAL` row means "the broker
   said something".
 
-### SP4 filled-entry adoption (2026-09) — new alerts and log changes
-
-Three new escalation codes on the place-entry/add-tranche adoption path (see
-`documentation/architecture.md` and `documentation/api.md`'s adoption decision
-table). Each is a `decision_log` row (`action='ESCALATE'`) plus a Telegram
-CRITICAL alert.
+SP4 (2026-09) adds three new escalation codes on the place-entry/add-tranche
+adoption path (see `documentation/architecture.md` and
+`documentation/api.md`'s adoption decision table). Each is a `decision_log`
+row (`action='ESCALATE'`) plus a Telegram CRITICAL alert.
 
 ### `UNBOOKED_ROUND_TRIP`
 
@@ -834,10 +832,16 @@ reconcile. Nothing was placed, nothing was booked, and the signal stays `PENDING
 `inputs_snapshot` names the decision-table `row` and whichever of `book_row_id`,
 `stop_leg_id`, `terminal_exit_id`, `holding_qty`, `stop_side_ok` and
 `unclaimed_open_ids` applied. Resolve the book by hand (book the position, or
-cancel the stray order); it is raised only once per signal, so later runs are
-silent while the decision rows keep accumulating. `add-tranche` raises the same
-code, once per ref, when a filled tranche-2 order sits under the `t2-` ref and
-is refused rather than placed next to.
+cancel the stray order). The gate is **per signal**, not per code path:
+`countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0`, read before this run's
+row is written, and place-entry and add-tranche share the exact same counter —
+so whichever path escalates first for a signal silences the other for the rest
+of that signal's life, and later runs on either path stay silent while the
+`executor_decision` rows keep accumulating. `add-tranche` raises this code when
+a filled (or fill-unverifiable) tranche-2 order sits under the `t2-` ref *and*
+no still-working tranche order takes precedence — a working order under the
+same ref is adopted instead, and the filled one is only WARN-logged, not
+escalated.
 
 ### `ADOPTED_WITHOUT_STOP`
 
@@ -852,13 +856,14 @@ row. `ReconcileService.warnNothingSeedable` keeps reporting the null
 symbol-bound candidates were found: `0` means none, `2`+ means the binding was
 ambiguous).
 
-**Log-expectation notes updated by SP4:** the `unmapped broker order status`
-WARN no longer fires for `placed` — that value is mapped silently to WORKING,
-the same as `working`/`open`/`changed` — and `notworking` (an embedded OCO
-child copy, not a resting order) now logs at DEBUG rather than WARN. A
-maintenance pass with only `placed`/`notworking` traffic should show **zero**
-`unmapped broker order status` WARNs; any remaining line names a status the
-mapper still does not know.
+### SP4 log-expectation changes
+
+The `unmapped broker order status` WARN no longer fires for `placed` — that
+value is mapped silently to WORKING, the same as `working`/`open`/`changed` —
+and `notworking` (an embedded OCO child copy, not a resting order) now logs at
+DEBUG rather than WARN. A maintenance pass with only `placed`/`notworking`
+traffic should show **zero** `unmapped broker order status` WARNs; any
+remaining line names a status the mapper still does not know.
 
 ## Agent budget guard
 

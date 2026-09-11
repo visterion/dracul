@@ -2308,10 +2308,10 @@ ordered, exhaustive table. The first row that holds wins:
 
 | # | Condition | Outcome |
 |---|---|---|
-| 0a | An OPEN book row on this symbol carries **this** signal's id | **A′** repair: mark the signal `ACCEPTED`, restore `entry_expires_at` if the row is neither expiring nor filled, `DUPLICATE` row, `{"placed": true, "position_id": …}`. No broker read; also writes a `decision_log` `ENTER` row with `order_json {adopted: true, adopted_status: "REPAIRED", position_id, broker_order_id?}`. No alert |
+| 0a | An OPEN book row on this symbol carries **this** signal's id | **A′** repair: mark the signal `ACCEPTED`, restore `entry_expires_at` if the row is neither expiring nor filled, `DUPLICATE` row, `{"placed": true, "position_id": …, "broker_order_id": …}` (`broker_order_id` present only when the book row carries one). No broker read; also writes a `decision_log` `ENTER` row with `order_json {adopted: true, adopted_status: "REPAIRED", position_id, broker_order_id?}`. No alert |
 | 0b | An OPEN book row on this symbol belongs to **another** signal | **D** `ADOPTION_AMBIGUOUS` (before any broker read — the unique index would bounce the insert anyway) |
 | 1 | A still-resting, same-side, non-stop, non-take-profit order exists under the ref | **A** adopt the working order (the pre-SP4 behaviour), booking the broker's own quantity |
-| 2a | A same-side fill exists but carries no usable fill price/quantity | **D** |
+| 2a | A same-side fill exists that carries no usable fill price/quantity | **D** — checked before row 2/3/4/5, so it fires even when a separate same-side fill on the ref *is* fully verifiable; the controller's ruling is that any unverifiable fill under the ref is reason enough to refuse, regardless of what else is there |
 | 2 | A same-side fill **and** an exit fill exist, nothing under the ref is open, the broker holds nothing | **C** `STALE_FILL` |
 | 3 | A same-side fill exists, but the broker holds nothing, **or** an exit fill exists as well | **D** |
 | 4 | A same-side fill with a holding, but the logical stop is not strictly on the risk side of the fill price | **D** |
@@ -2639,7 +2639,7 @@ On rejection: `{ "output": { "placed": false, "reason": "<REASON>" } }`, where
 | `BUDGET` | Remaining cash or budget headroom can't cover the tranche |
 | `BROKER_ERROR` | The Agora trading webhook call failed. Also writes one `decision_log` row with `trigger_type=SIGNAL`, `action=ADD_TRANCHE_REJECT`, `reason_code=BROKER_ERROR`, the broker's message in `reasoning`, `order_json=null` and `inputs_snapshot={position_id, tranche}`. The action is deliberately not `REJECT` — the counterfactual batch selects `action='REJECT'` and would otherwise write a permanently skipped counterfactual for every tranche failure. |
 | `MAX_BROKER_ATTEMPTS` | The signal already has `dracul.executor.max-broker-attempts` (default 3) `BROKER_ERROR` decisions — no further tranche is placed |
-| `ADOPTION_AMBIGUOUS` | A **filled** tranche-2 order already exists under the `t2-` ref — see below. Nothing is placed, nothing is booked; non-terminal, the position and signal state are untouched so a later run can retry once the book is reconciled by hand |
+| `ADOPTION_AMBIGUOUS` | A **filled** (or fill-unverifiable) tranche-2 order exists under the `t2-` ref and no still-working tranche order takes precedence — see below. Nothing is placed, nothing is booked; non-terminal, the position and signal state are untouched so a later run can retry once the book is reconciled by hand |
 
 Every outcome writes one `executor_decision` audit row (no `submit-decision`
 call needed for tranche-2 adds).
@@ -2662,15 +2662,27 @@ take-profit legs; none of those is the tranche order. A live match is
 from the real order — and audited as a `DUPLICATE` decision row rather than
 reported as a rejection.
 
-A **filled** tranche-2 order under the ref is deliberately not adopted (out of
-SP4's scope — adopting it would need the same holding/stop reconciliation the
-entry path does, and a second bracket's legs to bind). It is **refused**, not
-placed next to: every run writes an `ADOPTION_AMBIGUOUS` `executor_decision`
-row, the first such row for the signal also writes a `decision_log`
-`ESCALATE`/`ADOPTION_AMBIGUOUS` row plus a Telegram CRITICAL alert, and the
-call answers `{"placed": false, "reason": "ADOPTION_AMBIGUOUS"}`. Non-terminal
-— the position and signal state are untouched, so a later run can retry once
-the book is reconciled by hand.
+A **filled** tranche-2 order under the ref — or one whose fill is present but
+not fully verifiable (missing `filledQty`/`avgFillPrice`) — is deliberately not
+adopted (out of SP4's scope — adopting it would need the same holding/stop
+reconciliation the entry path does, and a second bracket's legs to bind). It is
+**refused**, not placed next to: every run writes an `ADOPTION_AMBIGUOUS`
+`executor_decision` row, and the first such row for the *signal* also writes a
+`decision_log` `ESCALATE`/`ADOPTION_AMBIGUOUS` row plus a Telegram CRITICAL
+alert (the gate is `countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0` — the
+same counter place-entry's row-0b/D escalations use, so an escalation already
+raised on either path silences the other for the rest of that signal's life).
+The call answers `{"placed": false, "reason": "ADOPTION_AMBIGUOUS"}`.
+Non-terminal — the position and signal state are untouched, so a later run can
+retry once the book is reconciled by hand.
+
+**Precedence: a still-working tranche order always wins.** The controller reads
+the tranche's `working` and `filled` classifications independently and checks
+`working` first — if the ref carries *both* a still-resting same-side order
+**and** a filled (or unverifiable) one under it, the working order is adopted
+exactly as above and the filled one is only noted with a `log.warn(...)`: no
+`executor_decision` row, no escalation, no Telegram push. The refusal path
+above only triggers when there is no working order to adopt.
 
 Past `max-broker-attempts`, nothing is placed at all and the call answers
 `MAX_BROKER_ATTEMPTS`. A position without a `source_signal_id`
