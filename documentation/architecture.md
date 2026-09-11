@@ -504,7 +504,9 @@ Three escalation codes guard the place-entry adoption path (`decision_log`
 `UNBOOKED_ROUND_TRIP` — the broker's history shows a full entry-and-exit round
 trip under a signal's clientRef that the book never saw; `ADOPTION_AMBIGUOUS` —
 something is live or filled under the signal that the book cannot reconcile
-automatically, raised once per signal while the signal stays PENDING; and
+automatically, raised once per signal on the place-entry path and once per
+filled tranche order on the add-tranche path (two separate counters), while the
+signal stays PENDING; and
 `ADOPTED_WITHOUT_STOP` — a filled entry was booked but no protective leg could be
 bound to it. The last one is load-bearing for **outcome quality**, not only for
 protection: with `stop_order_id` and `broker_stop` both NULL a later stop fill

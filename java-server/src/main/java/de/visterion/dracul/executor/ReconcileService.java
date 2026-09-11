@@ -454,8 +454,13 @@ public class ReconcileService {
      * from the order type, and an order that came back as OTHER would otherwise be dropped and
      * the fill silently missed. Only orders matched purely by {@code parentId} still need a
      * STOP_LOSS/TAKE_PROFIT role, since a parent match alone does not say which leg this is.
+     *
+     * <p>Package-private so {@code ReconcileServiceTest} can characterise the second arm directly:
+     * it needs a non-null {@code parentId}, and history rows (the only rows that can be FILLED
+     * here) never carry one — Agora's {@code ordersHistory} mapping leaves it null. That makes the
+     * arm inert for history-only input today, whatever role the type hint derives.
      */
-    private BrokerOrder findFilledExitLeg(ExecutorPosition p, List<BrokerOrder> filledOrders) {
+    BrokerOrder findFilledExitLeg(ExecutorPosition p, List<BrokerOrder> filledOrders) {
         return filledOrders.stream()
                 .filter(o -> o.status() == OrderStatus.FILLED)
                 .filter(o -> matchesKnownStopLeg(p, o)

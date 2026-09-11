@@ -198,4 +198,40 @@ class ExecutorDecisionRepositoryIT {
         assertThat(repo.findSweptWithoutDecisionLog())
                 .extracting(ExecutorDecision::signalId).containsExactly(id);
     }
+
+    /**
+     * The two halves of the {@code ADOPTION_AMBIGUOUS} once-per gate. Place-entry (case D) writes
+     * rows with a NULL {@code broker_order_id}; the add-tranche refusal writes rows naming the
+     * filled tranche order. Each counter must see only its own rows, or one refusal silences the
+     * other's CRITICAL (a place-entry ambiguity used to silence the double-exposure alert).
+     */
+    @Test
+    void theTwoAdoptionAmbiguousCountersDoNotSeeEachOthersRows() {
+        String signalId = seedSignal("GATECO", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+        String other = seedSignal("OTHERCO", LocalDate.parse("2026-09-04"), new BigDecimal("3.1"));
+
+        // one place-entry row (no broker order), two tranche rows on two different orders
+        repo.insert(new ExecutorDecision(null, signalId, "GATECO", false, "ADOPTION_AMBIGUOUS",
+                List.of(), "case D", null, "run-1", null));
+        repo.insert(new ExecutorDecision(null, signalId, "GATECO", false, "ADOPTION_AMBIGUOUS",
+                List.of(), "tranche refusal", "ord-t2-a", "run-1", null));
+        repo.insert(new ExecutorDecision(null, signalId, "GATECO", false, "ADOPTION_AMBIGUOUS",
+                List.of(), "tranche refusal", "ord-t2-b", "run-2", null));
+        // a row of a DIFFERENT signal and a row with a different reason must not be counted
+        repo.insert(new ExecutorDecision(null, other, "OTHERCO", false, "ADOPTION_AMBIGUOUS",
+                List.of(), "case D", null, "run-1", null));
+        repo.insert(new ExecutorDecision(null, signalId, "GATECO", false, "BROKER_ERROR",
+                List.of(), "broker down", "ord-t2-a", "run-1", null));
+
+        assertThat(repo.countPlaceEntryAmbiguities(signalId)).isEqualTo(1);
+        assertThat(repo.countByReasonAndBrokerOrder(signalId, "ADOPTION_AMBIGUOUS", "ord-t2-a"))
+                .isEqualTo(1);
+        assertThat(repo.countByReasonAndBrokerOrder(signalId, "ADOPTION_AMBIGUOUS", "ord-t2-b"))
+                .isEqualTo(1);
+        // the order nobody refused yet -- the gate is open, so the next refusal alerts
+        assertThat(repo.countByReasonAndBrokerOrder(signalId, "ADOPTION_AMBIGUOUS", "ord-t2-c"))
+                .isZero();
+        // and the shared counter is what used to conflate all three
+        assertThat(repo.countByReason(signalId, "ADOPTION_AMBIGUOUS")).isEqualTo(3);
+    }
 }

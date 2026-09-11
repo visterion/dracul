@@ -98,7 +98,7 @@ class AdoptionCandidatesTest {
     }
 
     @Test void aWorkingStopLegIsNeverTheWorkingEntry() {
-        // E2 shape 1: MFP's surviving protective stop under the entry's own clientRef.
+        // E2 shape 1: a surviving protective stop under the entry's own clientRef.
         AdoptionCandidates c = AdoptionCandidates.classify(List.of(
                 row("ord-stop", "sell", "stopiftraded", "working", "open", "other",
                         null, null, "90", null)), "buy");
@@ -330,5 +330,79 @@ class AdoptionCandidatesTest {
                         null, null, "90", null)), "buy");
 
         assertThat(c.unclaimedOpen()).isEmpty();
+    }
+
+    /**
+     * Anchors the private {@link #roleFor}/{@link #statusFor} mirrors above to the REAL mapping.
+     * Every other test here builds its {@link BrokerOrder}s by hand; nothing proved that the
+     * gateway can actually produce such a row, so a mapping change would leave ~25 tests green on
+     * impossible fixtures.
+     *
+     * <p>The two JSON fixtures are shaped like the live wire (E2/E3): an OPEN protective leg
+     * reported as {@code role "other"}, {@code type "stopiftraded"}, {@code status "working"}, and
+     * a history fill reported as {@code status "finalfill"} -- the two rows the whole guard has to
+     * tell apart. They go through {@code AgoraExecutionGateway.orders}/{@code filledOrdersSince},
+     * i.e. through {@code toBrokerOrder} -> {@code roleOf}/{@code toStatus}, and the resulting
+     * orders are classified.
+     */
+    @Test
+    void theGatewaysOwnMappingProducesTheStopLegAndFillThisSuiteAssumes() {
+        ScriptedGateway gw = new ScriptedGateway();
+        gw.openOrders = """
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-stop","clientRef":"sig-1","symbol":"ACME","side":"Sell",
+                   "qty":"10","type":"StopIfTraded","status":"Working","role":"other",
+                   "stopPrice":"90"}
+                ]}}
+                """;
+        gw.historyOrders = """
+                {"output":{"orders":[
+                  {"brokerOrderId":"ord-fill","clientRef":"sig-1","symbol":"ACME","side":"Buy",
+                   "qty":"10","type":"Limit","status":"FinalFill","role":"other",
+                   "filledQty":"10","avgFillPrice":"98.50","filledAt":"2026-09-08T14:00:00Z"}
+                ]}}
+                """;
+
+        List<BrokerOrder> matches = new java.util.ArrayList<>(gw.orders("depot-1"));
+        matches.addAll(gw.filledOrdersSince("depot-1", Instant.parse("2026-09-01T00:00:00Z")));
+
+        // The mapping the mirrors claim: "other" + stopiftraded -> STOP_LOSS, finalfill -> FILLED,
+        // side/type/rawStatus carried lower-cased, source tagged by the read.
+        assertThat(matches).hasSize(2);
+        assertThat(matches.get(0).role()).isEqualTo(OrderRole.STOP_LOSS);
+        assertThat(matches.get(0).status()).isEqualTo(OrderStatus.WORKING);
+        assertThat(matches.get(0).rawStatus()).isEqualTo("working");
+        assertThat(matches.get(0).type()).isEqualTo("stopiftraded");
+        assertThat(matches.get(0).side()).isEqualTo("sell");
+        assertThat(matches.get(0).source()).isEqualTo("open");
+        assertThat(matches.get(1).status()).isEqualTo(OrderStatus.FILLED);
+        assertThat(matches.get(1).source()).isEqualTo("history");
+
+        AdoptionCandidates c = AdoptionCandidates.classify(matches, "buy");
+
+        assertThat(c.stopLeg().orderId()).isEqualTo("ord-stop");
+        assertThat(c.filledEntry().orderId()).isEqualTo("ord-fill");
+        assertThat(c.working()).isNull();
+        assertThat(c.terminalExit()).isNull();
+        assertThat(c.unclaimedOpen()).isEmpty();
+    }
+
+    /** The real gateway with its HTTP seam stubbed: {@code get_orders} answers from
+     *  {@link #openOrders} or {@link #historyOrders}, depending on the {@code status} argument the
+     *  gateway itself sends. */
+    private static class ScriptedGateway extends de.visterion.dracul.executor.broker.AgoraExecutionGateway {
+        String openOrders = "{\"output\":{\"orders\":[]}}";
+        String historyOrders = "{\"output\":{\"orders\":[]}}";
+        private final tools.jackson.databind.ObjectMapper om = new tools.jackson.databind.ObjectMapper();
+
+        ScriptedGateway() {
+            super("http://x", "tkn", new tools.jackson.databind.ObjectMapper(), 8000);
+        }
+
+        @Override
+        protected tools.jackson.databind.JsonNode call(String tool, tools.jackson.databind.JsonNode args) {
+            return om.readTree("closed".equals(args.path("status").asString(""))
+                    ? historyOrders : openOrders);
+        }
     }
 }

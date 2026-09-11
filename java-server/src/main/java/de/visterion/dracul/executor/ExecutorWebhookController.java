@@ -539,23 +539,42 @@ public class ExecutorWebhookController {
      * <p>Deliberately NOT reason {@code BROKER_ERROR}: this is not a broker failure, it must not
      * feed the attempt cap, and the signal stays PENDING so a book an operator repairs can still
      * be entered on the next run. The SP2b sweeper retires it after {@code max-signal-age-days} if
-     * nobody does. The escalation fires ONCE per signal — the gate is read before this run's row
-     * is written — because the same unresolved book would otherwise page an operator every night.
+     * nobody does. The escalation fires ONCE per signal — because the same unresolved book would
+     * otherwise page an operator every night.
+     *
+     * <p><b>Write order is load-bearing.</b> The gating {@code executor_decision} row is inserted
+     * LAST, after the audit row and the alert. Written first it would burn the gate even when the
+     * escalation that follows fails — every later run would then read the count as 1 and stay
+     * silent, and no operator would ever hear about this signal. And the audit/alert writes are
+     * wrapped: a {@code decision_log} or Telegram failure must not turn a refusal into a 500
+     * (the enclosing try in {@code placeEntry} catches only {@code BrokerUnavailableException}),
+     * and it must not consume the gate — with the gate row unwritten, the next run re-alerts.
+     *
+     * <p>The gate counts only place-entry rows ({@code broker_order_id IS NULL}); the add-tranche
+     * refusal has its own counter keyed on the filled tranche order id. See
+     * {@link ExecutorDecisionRepository#countPlaceEntryAmbiguities}.
      */
     private ResponseEntity<Map<String, Object>> ambiguousAdoption(String runId,
             ExecutorSignal signal, EntryContext ctx, BigDecimal orderPrice,
             BigDecimal orderPriceRounded, VetoService.Outcome veto, Double confidence,
             List<String> vetoTrace, ObjectNode inputs, String text) {
         String signalId = signal.signalId();
-        boolean firstForThisSignal =
-                decisionRepo.countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0;
+        boolean firstForThisSignal = decisionRepo.countPlaceEntryAmbiguities(signalId) == 0;
+        if (firstForThisSignal) {
+            try {
+                logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
+                        "ADOPTION_AMBIGUOUS", null, confidence, clock.instant(), null);
+                escalateAdoption(runId, signal, "ADOPTION_AMBIGUOUS", inputs, text);
+            } catch (RuntimeException e) {
+                log.error("ADOPTION_AMBIGUOUS audit/alert failed for signal {} ({}): {} — the "
+                                + "gate row is not written, so the next run alerts again",
+                        signalId, text, e.getMessage(), e);
+                return ResponseEntity.ok(Map.of("output",
+                        Map.of("placed", false, "reason", "ADOPTION_AMBIGUOUS")));
+            }
+        }
         decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
                 "ADOPTION_AMBIGUOUS", vetoTrace, text, null, runId, null));
-        if (firstForThisSignal) {
-            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
-                    "ADOPTION_AMBIGUOUS", null, confidence, clock.instant(), null);
-            escalateAdoption(runId, signal, "ADOPTION_AMBIGUOUS", inputs, text);
-        }
         return ResponseEntity.ok(Map.of("output",
                 Map.of("placed", false, "reason", "ADOPTION_AMBIGUOUS")));
     }
@@ -615,17 +634,32 @@ public class ExecutorWebhookController {
         String text = "broker order " + fill.orderId() + " for clientRef " + signalId
                 + " filled and already exited via " + c.terminalExit().orderId()
                 + " — round trip never booked";
-        decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
-                "STALE_FILL", vetoTrace, text, fill.orderId(), runId, null));
-        logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
-                "STALE_FILL", null, confidence, clock.instant(), null);
-        signalRepo.markStatus(signalId, "REJECTED");
 
+        // Audit row and alert FIRST, and wrapped. markStatus("REJECTED") is this path's gate: the
+        // next run returns DUPLICATE long before the table, so a failure between the status flip
+        // and the CRITICAL would lose the alert for good. And a decision_log/Telegram failure must
+        // not escape as a 500 — the enclosing try in placeEntry catches only
+        // BrokerUnavailableException. Nothing is persisted on that branch, so the next run repeats
+        // the whole refusal, alert included.
         ObjectNode inputs = mapper.createObjectNode();
         inputs.put("broker_order_id", fill.orderId());
         inputs.put("filled_at", fill.filledAt() == null ? null : fill.filledAt().toString());
         inputs.put("exit_order_id", c.terminalExit().orderId());
-        escalateAdoption(runId, signal, "UNBOOKED_ROUND_TRIP", inputs, text);
+        try {
+            logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
+                    "STALE_FILL", null, confidence, clock.instant(), null);
+            escalateAdoption(runId, signal, "UNBOOKED_ROUND_TRIP", inputs, text);
+        } catch (RuntimeException e) {
+            log.error("STALE_FILL audit/alert failed for signal {} ({}): {} — signal left PENDING "
+                            + "so the next run refuses and alerts again",
+                    signalId, text, e.getMessage(), e);
+            return ResponseEntity.ok(Map.of("output",
+                    Map.of("placed", false, "reason", "STALE_FILL")));
+        }
+
+        decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                "STALE_FILL", vetoTrace, text, fill.orderId(), runId, null));
+        signalRepo.markStatus(signalId, "REJECTED");
 
         return ResponseEntity.ok(Map.of("output",
                 Map.of("placed", false, "reason", "STALE_FILL")));
@@ -800,14 +834,19 @@ public class ExecutorWebhookController {
      *  persisted as {@code confidence_in_decision} — the executor-side Brier/calibration input.
      *  {@code reasoning} is free text explaining the verdict; only the BROKER_ERROR path has one
      *  today (the broker's own message), every other call site passes null so that
-     *  {@code reasoning IS NOT NULL} keeps meaning "the broker said something". */
+     *  {@code reasoning IS NOT NULL} keeps meaning "the broker said something".
+     *
+     *  <p>{@code veto} may be null: row 0a (the A′ book repair) answers BEFORE the veto pass runs
+     *  — see {@link #placeEntry} — so there is no veto outcome to report. An empty
+     *  {@code veto_results} array is the honest record of "no checks ran", never a fabricated
+     *  pass list. */
     private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
             BigDecimal orderPrice, BigDecimal orderPriceRounded, VetoService.Outcome veto, String action,
             String reasonCode, ObjectNode orderJson, Double confidence, Instant now, String reasoning) {
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
                 signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
                 inputsSnapshotNode(signal, ctx, orderPrice, orderPriceRounded, veto),
-                vetoResultsNode(veto.results()),
+                veto == null ? mapper.createArrayNode() : vetoResultsNode(veto.results()),
                 action, reasonCode, orderJson, reasoning, confidence,
                 latencyNode(signal.createdAt(), now), null));
     }
@@ -924,6 +963,31 @@ public class ExecutorWebhookController {
         }
 
         EntryContext ctx = assembler.assemble(signal);
+
+        // -----------------------------------------------------------------
+        // Row 0a (case A′) — BEFORE the veto pass, deliberately.
+        //
+        // A′ repairs exactly the state in which this signal's OWN book row is already OPEN on this
+        // symbol. In that state EntryContextAssembler puts `symbol -> this signal's mechanism`
+        // into openMechanisms (it resolves the mechanism through the row's source_signal_id, which
+        // IS this signal), so VetoService fails CORRELATED (same sector + mechanism) and
+        // REDUNDANCY (same mechanism already open on the symbol). Neither is TRANSIENT, so the
+        // veto block below would mark the signal REJECTED and return — and the repair this branch
+        // exists for would never run in production, leaving the orphaned row with
+        // entry_expires_at NULL and its still-resting GTD entry outside the expiry sweeper's
+        // reach. Evaluating the repair first is correct on its own terms too: there is nothing to
+        // veto, the position already exists. No broker read, no sizing, no veto.
+        //
+        // Row 0b (another signal's OPEN row) deliberately stays inside the decision table: it is a
+        // refusal, not a repair, and the veto verdict on it is meaningful.
+        int priorBrokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
+        ExecutorPosition bookRow = priorBrokerErrors > 0
+                ? positionRepo.findOpenBySymbolIgnoreCase(connection, signal.symbol())
+                : null;
+        if (bookRow != null && signalId.equals(bookRow.sourceSignalId())) {
+            return repairBookRow(bookRow, signal, ctx, null, null, null, confidence,
+                    List.of(), runId);
+        }
 
         // Single order-price basis for all order mechanics (sizing, guard, take-profit, booking):
         // the LLM's limit price when given, otherwise the freshly assembled current close. This
@@ -1130,16 +1194,10 @@ public class ExecutorWebhookController {
         List<String> adoptedUnclaimedOpen = List.of();
         String entrySide = side.toLowerCase(java.util.Locale.ROOT);
         try {
-            int priorBrokerErrors = decisionRepo.countByReason(signalId, "BROKER_ERROR");
             if (priorBrokerErrors > 0) {
-                // Rows 0a/0b — the book answers first and needs no broker read at all.
-                ExecutorPosition bookRow =
-                        positionRepo.findOpenBySymbolIgnoreCase(connection, signal.symbol());
-                if (bookRow != null && signalId.equals(bookRow.sourceSignalId())) {
-                    // row 0a, case A'
-                    return repairBookRow(bookRow, signal, ctx, orderPrice, orderPriceRounded,
-                            veto, confidence, vetoTrace, runId);
-                }
+                // Row 0b — the book answers first and needs no broker read at all. `bookRow` was
+                // read above the veto block together with row 0a; row 0a has already returned if
+                // it applied, so anything still here belongs to another signal.
                 if (bookRow != null) {
                     return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
                             veto, confidence, vetoTrace,
@@ -1257,6 +1315,22 @@ public class ExecutorWebhookController {
                                 "clientRef " + signalId + " carries "
                                         + c.unclaimedOpen().size()
                                         + " open order(s) that fit no adoption classification");
+                    } else if (c.terminalExit() != null) {
+                        // Row 6c — an exit under this ref already filled, but no entry fill is
+                        // left to pair it with. That is an entry fill that aged out of the
+                        // adoption history window while its later-modified exit leg stayed inside
+                        // it (spec E9), or a window configured too short for
+                        // broker-attempt-window-hours + max-signal-age-days. Without this row the
+                        // state falls to row 7 and places a FRESH bracket on a thesis that has
+                        // already exited — E2 shape 2 verbatim. Refusing here makes the window
+                        // arithmetic non-load-bearing: a lone terminal exit is never placed next
+                        // to, whatever the config says.
+                        return ambiguousAdoption(runId, signal, ctx, orderPrice, orderPriceRounded,
+                                veto, confidence, vetoTrace,
+                                adoptionInputs("6c", c, null, holding, null),
+                                "clientRef " + signalId + " carries a filled exit order "
+                                        + c.terminalExit().orderId()
+                                        + " with no adoptable entry fill — the thesis already left");
                     }
                     // Row 7 — nothing open under the ref, no holding, nothing filled. Case E:
                     // fall through to the throttle and a fresh placement, exactly as today.
@@ -1351,10 +1425,21 @@ public class ExecutorWebhookController {
                     // stop_order_id and broker_stop both NULL a later stop fill cannot be matched
                     // (matchesPosition needs a parentId), and the row closes through the gone
                     // branch at active_stop labelled MARK. An operator must bind the leg.
-                    escalateAdoption(runId, signal, "ADOPTED_WITHOUT_STOP", inputs,
-                            "position " + positionId + " adopted from filled order " + brokerOrderId
-                                    + " without a bound protective leg (" + adoptedStopCandidates
-                                    + " symbol candidates) — bind it by hand before the position exits");
+                    // Wrapped like every other audit tail on this path: the position row is
+                    // already durably persisted, so a decision_log or Telegram failure must not
+                    // unwind the booking into a 500. ReconcileService.warnNothingSeedable keeps
+                    // reporting the null stop_order_id every pass until an operator binds the leg,
+                    // so the condition stays visible even if this one alert is lost.
+                    try {
+                        escalateAdoption(runId, signal, "ADOPTED_WITHOUT_STOP", inputs,
+                                "position " + positionId + " adopted from filled order " + brokerOrderId
+                                        + " without a bound protective leg (" + adoptedStopCandidates
+                                        + " symbol candidates) — bind it by hand before the position exits");
+                    } catch (RuntimeException e) {
+                        log.error("ADOPTED_WITHOUT_STOP escalation failed for signal {} position "
+                                        + "{}: {} — the position IS booked without a bound leg",
+                                signalId, positionId, e.getMessage(), e);
+                    }
                 }
             } else {
                 positionId = positionRepo.insert(new ExecutorPosition(null, connection,
@@ -2300,23 +2385,44 @@ public class ExecutorWebhookController {
                 String reasoning = "filled tranche-2 order " + filledTranche.orderId()
                         + " under ref " + clientRef
                         + " is not booked (SP4 scope) — refusing to place a second tranche";
-                boolean firstForThisRef =
-                        decisionRepo.countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0;
-                decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
-                        "ADOPTION_AMBIGUOUS", List.of(), reasoning, null, runId, null));
-                if (firstForThisRef) {
+                // Gated on THIS filled order, not on the signal: place-entry's case-D rows carry
+                // broker_order_id NULL and are counted separately
+                // (ExecutorDecisionRepository.countPlaceEntryAmbiguities), so an earlier
+                // place-entry ambiguity can no longer silence this alert — the loudest one on the
+                // path, because what it refuses is real double exposure.
+                boolean firstForThisOrder = signalId == null
+                        || decisionRepo.countByReasonAndBrokerOrder(signalId,
+                                "ADOPTION_AMBIGUOUS", filledTranche.orderId()) == 0;
+                if (firstForThisOrder) {
+                    // Alert BEFORE the gating row, and wrapped: written first, the gating row
+                    // would burn the gate even when the escalation below fails, and every later
+                    // run would stay silent. A decision_log/Telegram failure also must not escape
+                    // as a 500 — nothing is persisted on that branch, so the next run refuses and
+                    // alerts again.
                     ObjectNode ambiguousInputs = mapper.createObjectNode();
                     ambiguousInputs.put("position_id", position.id());
                     ambiguousInputs.put("t2_ref", clientRef);
                     ambiguousInputs.put("filled_order_id", filledTranche.orderId());
                     ambiguousInputs.put("filled_qty", filledTranche.filledQty());
                     ambiguousInputs.put("avg_fill_price", filledTranche.avgFillPrice());
-                    decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
-                            "SIGNAL", signalId, position.sourceAgent(), null, symbol,
-                            ambiguousInputs, null, "ESCALATE", "ADOPTION_AMBIGUOUS", null,
-                            reasoning, null, null, null));
-                    telegram.notifyAlert(symbol, "ADOPTION_AMBIGUOUS", "CRITICAL", reasoning);
+                    try {
+                        decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
+                                "SIGNAL", signalId, position.sourceAgent(), null, symbol,
+                                ambiguousInputs, null, "ESCALATE", "ADOPTION_AMBIGUOUS", null,
+                                reasoning, null, null, null));
+                        telegram.notifyAlert(symbol, "ADOPTION_AMBIGUOUS", "CRITICAL", reasoning);
+                    } catch (RuntimeException e) {
+                        log.error("tranche ADOPTION_AMBIGUOUS audit/alert failed for signal {} "
+                                        + "order {}: {} — the gate row is not written, so the "
+                                        + "next run alerts again",
+                                signalId, filledTranche.orderId(), e.getMessage(), e);
+                        return ResponseEntity.ok(Map.of("output",
+                                Map.of("placed", false, "reason", "ADOPTION_AMBIGUOUS")));
+                    }
                 }
+                decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
+                        "ADOPTION_AMBIGUOUS", List.of(), reasoning, filledTranche.orderId(),
+                        runId, null));
                 return ResponseEntity.ok(Map.of("output",
                         Map.of("placed", false, "reason", "ADOPTION_AMBIGUOUS")));
             } else {

@@ -65,6 +65,49 @@ public class ExecutorDecisionRepository {
     }
 
     /**
+     * The place-entry half of the {@code ADOPTION_AMBIGUOUS} once-per gate.
+     *
+     * <p>Two different refusals write {@code ADOPTION_AMBIGUOUS} rows under the SAME signal id:
+     * the place-entry decision table (case D) and the add-tranche refusal that will not place a
+     * second tranche next to a FILLED {@code t2-} order. They are told apart by
+     * {@code broker_order_id}: place-entry rows carry NULL (case D refuses a whole observed state,
+     * not one order), the tranche refusal carries the filled tranche order id. So this read gates
+     * only place-entry and {@link #countByReasonAndBrokerOrder} gates only the tranche refusal —
+     * an earlier place-entry ambiguity can no longer silence the double-exposure CRITICAL, and
+     * vice versa.
+     */
+    public int countPlaceEntryAmbiguities(String signalId) {
+        return jdbc.sql("""
+                SELECT count(*) FROM executor_decision
+                WHERE signal_id = :signalId AND reject_reason = 'ADOPTION_AMBIGUOUS'
+                  AND broker_order_id IS NULL
+                """)
+                .param("signalId", signalId)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
+     * Rows of this signal with this reason that name ONE specific broker order — the add-tranche
+     * half of the gate described on {@link #countPlaceEntryAmbiguities}. A null
+     * {@code brokerOrderId} never matches here; that case belongs to
+     * {@link #countPlaceEntryAmbiguities}.
+     */
+    public int countByReasonAndBrokerOrder(String signalId, String rejectReason,
+            String brokerOrderId) {
+        return jdbc.sql("""
+                SELECT count(*) FROM executor_decision
+                WHERE signal_id = :signalId AND reject_reason = :reason
+                  AND broker_order_id = :brokerOrderId
+                """)
+                .param("signalId", signalId)
+                .param("reason", rejectReason)
+                .param("brokerOrderId", brokerOrderId)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
      * Broker errors of this signal inside ONE run — the short-term throttle axis.
      *
      * <p>Distinct from {@link #countDistinctRunsByReasonSince}: that one answers "on how many

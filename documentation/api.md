@@ -2280,7 +2280,7 @@ and for order-guard rejections it is the veto trace plus an
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | Four distinct uses, all idempotency: (a) the signal is no longer `PENDING` — checked before vetos/order guard, no broker call, no signal-status change; (b) a **working** broker order already exists under the signal's clientRef and is adopted instead of re-placed; (c) a **filled** broker order under the clientRef is adopted as a position (see the adoption decision table below); (d) the book already carries this signal's OPEN row and only its statuses are repaired |
 | `STALE_FILL` | `ExecutorWebhookController` | The broker's history shows this signal's entry **and** its exit under the same clientRef, nothing under the ref is open and the broker holds nothing: a real round trip the book never saw. Terminal — the signal is marked `REJECTED`, nothing is booked and nothing is placed, and `UNBOOKED_ROUND_TRIP` escalates (decision log + Telegram CRITICAL) |
-| `ADOPTION_AMBIGUOUS` | `ExecutorWebhookController` | On a retry, something under this signal is live or filled that the book cannot reconcile automatically. **Non-terminal** — like `BROKER_RETRY_EXHAUSTED` it is not a `BROKER_ERROR`, it does not feed the attempt cap, and the signal stays `PENDING`; the sweeper retires it after `max-signal-age-days`. Every run writes the decision row; the `ADOPTION_AMBIGUOUS` escalation fires once per signal |
+| `ADOPTION_AMBIGUOUS` | `ExecutorWebhookController` | On a retry, something under this signal is live or filled that the book cannot reconcile automatically. **Non-terminal** — like `BROKER_RETRY_EXHAUSTED` it is not a `BROKER_ERROR`, it does not feed the attempt cap, and the signal stays `PENDING`; the sweeper retires it after `max-signal-age-days`. Every run writes the decision row; the escalation fires once per signal on the place-entry path (rows with `broker_order_id` NULL) and once per filled tranche order on the add-tranche path (rows naming that order), counted separately |
 | `BROKER_ERROR` | `AgoraTrading` call | The Agora trading webhook call failed or returned `available:false` |
 | `UNKNOWN_VERSION` | `PreySignalEmitter` (intake, not a `VetoService` entry) | The mapped signal's `agent_version` is neither a `PromptRegistry`-known prompt-body hash nor the emitting agent's current live DB version (`AgentVersionResolver.versionFor`) — the signal is dropped before it is ever inserted as `executor_signal`, so it produces no audit row and no `veto_trace` entry; `operator`-sourced (manual) signals are exempt since they carry no prompt hash |
 
@@ -2308,7 +2308,7 @@ ordered, exhaustive table. The first row that holds wins:
 
 | # | Condition | Outcome |
 |---|---|---|
-| 0a | An OPEN book row on this symbol carries **this** signal's id | **A′** repair: mark the signal `ACCEPTED`, restore `entry_expires_at` if the row is neither expiring nor filled, `DUPLICATE` row, `{"placed": true, "position_id": …, "broker_order_id": …}` (`broker_order_id` present only when the book row carries one). No broker read; also writes a `decision_log` `ENTER` row with `order_json {adopted: true, adopted_status: "REPAIRED", position_id, broker_order_id?}`. No alert |
+| 0a | An OPEN book row on this symbol carries **this** signal's id | **A′** repair: mark the signal `ACCEPTED`, restore `entry_expires_at` if the row is neither expiring nor filled, `DUPLICATE` row, `{"placed": true, "position_id": …, "broker_order_id": …}` (`broker_order_id` present only when the book row carries one). No broker read; also writes a `decision_log` `ENTER` row with `order_json {adopted: true, adopted_status: "REPAIRED", position_id, broker_order_id?}`. No alert. **Evaluated before the veto pass** — see below |
 | 0b | An OPEN book row on this symbol belongs to **another** signal | **D** `ADOPTION_AMBIGUOUS` (before any broker read — the unique index would bounce the insert anyway) |
 | 1 | A still-resting, same-side, non-stop, non-take-profit order exists under the ref | **A** adopt the working order (the pre-SP4 behaviour), booking the broker's own quantity |
 | 2a | A same-side fill exists that carries no usable fill price/quantity | **D** — checked before row 2/3/4/5, so it fires even when a separate same-side fill on the ref *is* fully verifiable; the controller's ruling is that any unverifiable fill under the ref is reason enough to refuse, regardless of what else is there |
@@ -2318,7 +2318,18 @@ ordered, exhaustive table. The first row that holds wins:
 | 5 | A same-side fill, a matching holding, no exit fill, stop on the risk side | **B** adopt the filled entry as a position |
 | 6 | No usable fill, but a live stop leg under the ref or a broker holding on the symbol | **D** |
 | 6b | Something under the ref is open and non-terminal but fits no classification | **D** — never place next to an order the broker may be working |
+| 6c | No usable fill, nothing open, nothing held — but an **exit fill** exists under the ref | **D** — the thesis already left. Reachable when the entry fill aged out of `adoption-history-days` while its later-modified exit leg stayed inside the window; without this row the state would fall to row 7 and place a fresh bracket on an exited thesis |
 | 7 | Nothing open under the ref, no holding, nothing filled | **E** throttle + fresh placement, exactly as without a retry |
+
+**Row 0a runs before the veto catalog.** In exactly the state A′ repairs, the
+entry context carries this signal's own OPEN row and maps the symbol to its
+mechanism, so `REDUNDANCY` (and, on a sector match, `CORRELATED`) fails and the
+signal would be marked `REJECTED` long before the table — the repair could never
+run. It therefore answers right after the signal's `PENDING` status is confirmed:
+no broker read, no sizing, no veto (there is nothing to veto — the position
+already exists). Its `decision_log` `ENTER` row consequently carries an empty
+`veto_results` array. Row 0b stays inside the table: it is a refusal, not a
+repair.
 
 **Case B, what gets booked.** `qty` = min(fill quantity, held quantity) — `qty`
 means shares actually HELD. `entry_price` = the average fill price;
@@ -2669,9 +2680,12 @@ reconciliation the entry path does, and a second bracket's legs to bind). It is
 **refused**, not placed next to: every run writes an `ADOPTION_AMBIGUOUS`
 `executor_decision` row, and the first such row for the *signal* also writes a
 `decision_log` `ESCALATE`/`ADOPTION_AMBIGUOUS` row plus a Telegram CRITICAL
-alert (the gate is `countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0` — the
-same counter place-entry's row-0b/D escalations use, so an escalation already
-raised on either path silences the other for the rest of that signal's life).
+alert. The gate is `countByReasonAndBrokerOrder(signalId, "ADOPTION_AMBIGUOUS",
+<filled order id>) == 0`: the tranche row records the filled tranche order in
+`broker_order_id`, while place-entry's case-D rows leave it NULL and are counted
+by `countPlaceEntryAmbiguities`. The two paths therefore no longer share a
+counter — an earlier place-entry ambiguity can no longer silence this
+double-exposure alert, which is the loudest one on the path.
 The call answers `{"placed": false, "reason": "ADOPTION_AMBIGUOUS"}`.
 Non-terminal — the position and signal state are untouched, so a later run can
 retry once the book is reconciled by hand.

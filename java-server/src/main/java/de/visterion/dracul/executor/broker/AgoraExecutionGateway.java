@@ -352,7 +352,7 @@ public class AgoraExecutionGateway implements ExecutionGateway {
         }
         String type = textOrNull(o, "type");
         if (type == null) return OrderRole.OTHER;
-        return switch (type.toLowerCase()) {
+        return switch (type.toLowerCase(java.util.Locale.ROOT)) {
             case "stopiftraded", "stop" -> OrderRole.STOP_LOSS;
             default -> OrderRole.OTHER;
         };

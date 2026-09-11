@@ -832,12 +832,26 @@ reconcile. Nothing was placed, nothing was booked, and the signal stays `PENDING
 `inputs_snapshot` names the decision-table `row` and whichever of `book_row_id`,
 `stop_leg_id`, `terminal_exit_id`, `holding_qty`, `stop_side_ok` and
 `unclaimed_open_ids` applied. Resolve the book by hand (book the position, or
-cancel the stray order). The gate is **per signal**, not per code path:
-`countByReason(signalId, "ADOPTION_AMBIGUOUS") == 0`, read before this run's
-row is written, and place-entry and add-tranche share the exact same counter —
-so whichever path escalates first for a signal silences the other for the rest
-of that signal's life, and later runs on either path stay silent while the
-`executor_decision` rows keep accumulating. `add-tranche` raises this code when
+cancel the stray order). The two code paths have **separate** gates, told apart
+by `executor_decision.broker_order_id`: place-entry (case D) writes rows with a
+NULL `broker_order_id` and gates on `countPlaceEntryAmbiguities(signalId) == 0`;
+`add-tranche` records the filled tranche order and gates on
+`countByReasonAndBrokerOrder(signalId, "ADOPTION_AMBIGUOUS", <order id>) == 0`.
+So an ambiguity on one path never silences the other, and a second filled
+tranche order raises its own alert. Within a path the alert still fires only
+once, while the `executor_decision` rows keep accumulating every run.
+
+The escalation is written **before** the gating `executor_decision` row, and the
+audit/alert writes are wrapped: if `decision_log` or Telegram fails, the failure
+is logged at ERROR (`ADOPTION_AMBIGUOUS audit/alert failed` / `tranche
+ADOPTION_AMBIGUOUS audit/alert failed`), the call still answers
+`{"placed": false, "reason": "ADOPTION_AMBIGUOUS"}`, and **no** gate row is
+written — so the next run refuses and alerts again instead of going silent with
+a half-written audit trail. `STALE_FILL` behaves the same way: its gate is the
+signal's `REJECTED` status, which is only set once the audit row and the
+`UNBOOKED_ROUND_TRIP` alert are through.
+
+`add-tranche` raises this code when
 a filled (or fill-unverifiable) tranche-2 order sits under the `t2-` ref *and*
 no still-working tranche order takes precedence — a working order under the
 same ref is adopted instead, and the filled one is only WARN-logged, not

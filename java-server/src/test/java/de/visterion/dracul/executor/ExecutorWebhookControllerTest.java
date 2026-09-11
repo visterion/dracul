@@ -223,6 +223,28 @@ class ExecutorWebhookControllerTest {
                 c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(), c.openExposureByMechanism());
     }
 
+    /**
+     * The entry context {@link EntryContextAssembler} REALLY builds while this signal's own row is
+     * OPEN on the symbol: the row sits in {@code openPositions} and {@code openMechanisms} maps the
+     * symbol to that row's source signal's mechanism -- and that source signal IS this signal (the
+     * assembler resolves it through {@code source_signal_id}).
+     *
+     * <p>That is the state case A' repairs, and in it the veto catalog fails REDUNDANCY ("same
+     * mechanism already open on the same symbol"), which is not TRANSIENT. Any A' test built on the
+     * empty {@code happyContext()} therefore asserts about a state production cannot produce -- the
+     * blind spot that let row 0a be unreachable while its tests stayed green.
+     */
+    private static EntryContext ownRowOpenContext(ExecutorPosition own) {
+        EntryContext c = happyContext();
+        return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
+                c.dayHigh(), c.candidateSector(), List.of(own), c.activeCooldowns(),
+                c.pendingSignals(), c.entriesThisWeek(), c.signalAgeTradingDays(), c.trancheAmount(),
+                c.totalBudget(), c.openExposure(), c.openHeat(),
+                Map.of(own.symbol(), "mechanism"), c.fxToAccount(),
+                c.missing(), c.quoteCurrency(), c.atrShort(), c.atrEff(),
+                c.openExposureByMechanism());
+    }
+
     private static EntryContext withEntriesThisWeek(EntryContext c, int entriesThisWeek) {
         return new EntryContext(c.account(), c.price(), c.atr(), c.swingLow(), c.adv20Notional(),
                 c.dayHigh(), c.candidateSector(), c.openPositions(), c.activeCooldowns(),
@@ -5677,10 +5699,13 @@ class ExecutorWebhookControllerTest {
      *  booking was lost. Repair the statuses, touch no broker. */
     @Test
     void placeEntry_retryBookHasThisSignalsRow_repairsStatusAndExpiry() {
+        ExecutorPosition own = bookRow(77L, "ACME", "sig-1", null, null, "brk-existing");
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME"))
-                .thenReturn(bookRow(77L, "ACME", "sig-1", null, null, "brk-existing"));
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME")).thenReturn(own);
+        // The context the assembler really builds in this state (see ownRowOpenContext): the row
+        // and its mechanism are present, so the veto pass would reject this retry as REDUNDANCY.
+        when(assembler.assemble(any())).thenReturn(ownRowOpenContext(own));
 
         JsonNode body = json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -5726,10 +5751,11 @@ class ExecutorWebhookControllerTest {
      *  EntryExpiryService to cancel a live position's orders. */
     @Test
     void placeEntry_retryBookHasThisSignalsFilledRow_doesNotResetTheExpiry() {
+        ExecutorPosition own = bookRow(77L, "ACME", "sig-1", null, "2026-09-08T14:00:00Z", null);
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME")).thenReturn(
-                bookRow(77L, "ACME", "sig-1", null, "2026-09-08T14:00:00Z", null));
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME")).thenReturn(own);
+        when(assembler.assemble(any())).thenReturn(ownRowOpenContext(own));
 
         ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
                 {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
@@ -5858,7 +5884,7 @@ class ExecutorWebhookControllerTest {
         verify(positionRepo, never()).findOpenBySymbol(any(), any());
     }
 
-    /** E2 shape 1 regression -- MFP: the only thing under the ref is the protective stop leg.
+    /** E2 shape 1 regression: the only thing under the ref is the protective stop leg.
      *  Adopting it as the entry would point broker_order_id at the stop and let the GTD expiry
      *  sweeper cancel the protection. */
     @Test
@@ -6103,7 +6129,7 @@ class ExecutorWebhookControllerTest {
     void placeEntry_retrySecondAmbiguousRun_addsDecisionRowOnly() {
         when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(decisionRepo.countByReason("sig-1", "ADOPTION_AMBIGUOUS")).thenReturn(1);
+        when(decisionRepo.countPlaceEntryAmbiguities("sig-1")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "sig-1"))
                 .thenReturn(List.of(stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90")));
 
@@ -6504,7 +6530,7 @@ class ExecutorWebhookControllerTest {
         assertThat(enter.orderJson().path("adopted_stop_mismatch").asBoolean()).isTrue();
     }
 
-    /** IMAX shape (E4): the live protective leg lost its ExternalReference, so it is not under the
+    /** E4 shape: the live protective leg lost its ExternalReference, so it is not under the
      *  ref — but row 0 already proved no other OPEN book row holds the symbol, so exactly one
      *  unclaimed live stop on it can only be ours. */
     @Test
@@ -6649,6 +6675,275 @@ class ExecutorWebhookControllerTest {
                         && "ADOPTED_WITHOUT_STOP".equals(l.reasonCode()));
     }
 
+    /**
+     * C1 regression -- row 0a must be decided BEFORE the veto pass, or the repair it exists for
+     * can never run in production. The context here is the one the assembler really builds while
+     * this signal's own row is OPEN on the symbol; the companion test below shows the veto verdict
+     * on exactly that context.
+     */
+    @Test
+    void placeEntry_retryOwnBookRowWhileItsMechanismIsOpen_repairsInsteadOfBeingVetoed() {
+        ExecutorPosition own = bookRow(77L, "ACME", "sig-1", null, null, "brk-existing");
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(ownRowOpenContext(own));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(positionRepo.findOpenBySymbolIgnoreCase("depot-1", "ACME")).thenReturn(own);
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(true);
+        assertThat(outputOf(resp).get("position_id")).isEqualTo(77L);
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+        verify(signalRepo, never()).markStatus("sig-1", "REJECTED");
+        verify(positionRepo).setEntryExpiresAt(eq(77L), any());
+
+        // No veto decision row at all: the veto pass never ran. Before the move this run wrote a
+        // REDUNDANCY row and returned.
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).noneMatch(d ->
+                "REDUNDANCY".equals(d.rejectReason()) || "CORRELATED".equals(d.rejectReason()));
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "DUPLICATE".equals(d.rejectReason()));
+
+        // And the repair still needs neither the broker nor a placement.
+        verify(gateway, never()).ordersByRef(any(), any());
+        verify(gateway, never()).positions(any());
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /** The other half of the C1 proof: the SAME signal and the SAME entry context, only without a
+     *  prior BROKER_ERROR, go the ordinary way -- and the veto catalog rejects them. That is the
+     *  verdict row 0a used to receive before it was moved ahead of the veto pass. */
+    @Test
+    void placeEntry_ownRowOpenWithoutAPriorBrokerError_isVetoedNotRepaired() {
+        ExecutorPosition own = bookRow(77L, "ACME", "sig-1", null, null, "brk-existing");
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(assembler.assemble(any())).thenReturn(ownRowOpenContext(own));
+
+        ResponseEntity<?> resp = controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertThat(outputOf(resp).get("placed")).isEqualTo(false);
+        assertThat(outputOf(resp).get("reason")).isEqualTo("REDUNDANCY");
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+        verify(gateway, never()).placeBracket(any(), any());
+    }
+
+    /**
+     * I4 -- row 6c. The entry fill aged out of the adoption history window while its later-modified
+     * exit leg stayed inside it (spec E9), so all that is left under the ref is a filled EXIT.
+     * Without row 6c this falls to row 7 and places a fresh bracket on a thesis that already
+     * exited -- E2 shape 2 verbatim.
+     */
+    @Test
+    void placeEntry_retryOnlyAFilledExitUnderTheRef_isAmbiguousNotPlaced() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-exit", "sig-1", "ACME", "sell", "stopiftraded", "7", "93",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """)));
+
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+
+        JsonNode inputs = escalationInputs();
+        assertThat(inputs.path("row").asString()).isEqualTo("6c");
+        assertThat(inputs.path("terminal_exit_id").stringValue()).isEqualTo("ord-exit");
+    }
+
+    /**
+     * I2 -- the once-per-signal gate must not be consumed by an escalation that failed. A
+     * decision_log failure is logged at ERROR and swallowed: the refusal still answers (no 500 --
+     * the enclosing try catches only BrokerUnavailableException), and NO gating executor_decision
+     * row is written, so the next run alerts again.
+     */
+    @Test
+    void placeEntry_ambiguousAuditFails_stillRefusesAndLeavesTheGateUnburned() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ExecutorWebhookController.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<
+                ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+            when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+            when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                    stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90")));
+            doThrow(new RuntimeException("decision_log write timed out"))
+                    .when(decisionLogRepo).insert(any());
+
+            Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                    {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                    """)));
+
+            assertThat(output.get("placed")).isEqualTo(false);
+            assertThat(output.get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+
+            verify(decisionRepo, never()).insert(argThat(d ->
+                    "ADOPTION_AMBIGUOUS".equals(d.rejectReason())));
+            assertThat(appender.list).anyMatch(e ->
+                    e.getLevel() == ch.qos.logback.classic.Level.ERROR
+                            && e.getFormattedMessage().contains("ADOPTION_AMBIGUOUS audit/alert failed"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /** The STALE_FILL mirror of the test above: a failing audit write must not flip the signal to
+     *  REJECTED, because that status is this path's gate -- the next run would return DUPLICATE
+     *  before the table and the CRITICAL would be lost for good. */
+    @Test
+    void placeEntry_staleFillAuditFails_leavesTheSignalPendingForTheNextRun() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
+                        "2026-09-08T14:00:00Z"),
+                filledOrder("ord-exit", "sig-1", "ACME", "sell", "stopiftraded", "7", "93",
+                        "2026-09-08T15:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of());
+        doThrow(new RuntimeException("decision_log write timed out"))
+                .when(decisionLogRepo).insert(any());
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """)));
+
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("STALE_FILL");
+        verify(signalRepo, never()).markStatus(eq("sig-1"), eq("REJECTED"));
+        verify(decisionRepo, never()).insert(argThat(d -> "STALE_FILL".equals(d.rejectReason())));
+    }
+
+    /** I1 -- the place-entry gate counts only place-entry rows. A tranche refusal already on the
+     *  signal (the old shared {@code countByReason} counter) must not silence this alert. */
+    @Test
+    void placeEntry_ambiguousAfterATrancheRefusal_stillAlerts() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        // The signal already carries an ADOPTION_AMBIGUOUS row -- but it is the tranche path's,
+        // and it names a broker order, so countPlaceEntryAmbiguities (broker_order_id IS NULL)
+        // still reads 0.
+        when(decisionRepo.countByReason("sig-1", "ADOPTION_AMBIGUOUS")).thenReturn(1);
+        when(decisionRepo.countPlaceEntryAmbiguities("sig-1")).thenReturn(0);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "90")));
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTION_AMBIGUOUS"), eq("CRITICAL"), any());
+    }
+
+    /** I5(a) -- the clientRef exclusion in the symbol-bound fallback. A live stop on the symbol
+     *  that carries ANOTHER signal's ref is somebody else's protection; binding it would hand this
+     *  position a leg the ratchet would then move. Deleting that clause must fail here. */
+    @Test
+    void placeEntry_retrySymbolLegCarriesAnotherSignalsRef_notBound() {
+        stubUnboundAdoption();
+        when(gateway.orders("depot-1")).thenReturn(List.of(
+                stopLegOrder("ord-loose", "sig-other", "ACME", "sell", "93")));
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        assertAdoptedWithoutStop();
+        // 0, not 1: the candidate was excluded, not merely out-counted by a second one.
+        assertThat(escalationInputs().path("candidates").asInt()).isZero();
+    }
+
+    /** I5(c) -- min(fill, holding) in the OTHER direction: the fill is the smaller number here, so
+     *  an implementation that always booked the holding quantity fails. */
+    @Test
+    void placeEntry_retryFillSmallerThanHolding_booksTheFilledQuantity() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "4", "98.50",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("9"), new BigDecimal("98.50"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """));
+
+        // 4 filled < 9 held, and 10 is the sizer's own qty: only the fill quantity can pass.
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        assertThat(posCaptor.getValue().qty()).isEqualByComparingTo("4");
+    }
+
+    /** I5(b) -- the three broker reads INSIDE the guard. Each one failing must degrade to the
+     *  retriable BROKER_ERROR path, not to a 500 and not to a placement. */
+    @Test
+    void placeEntry_retryOrdersByRefUnavailable_isBrokerError() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenThrow(new BrokerUnavailableException("order history endpoint down"));
+
+        assertBrokerErrorInsideTheGuard();
+    }
+
+    @Test
+    void placeEntry_retryPositionsUnavailable_isBrokerError() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.9, new BigDecimal("100")));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1"))
+                .thenThrow(new BrokerUnavailableException("positions endpoint down"));
+
+        assertBrokerErrorInsideTheGuard();
+    }
+
+    /** {@code gateway.orders()} in the symbol-bound stop fallback is a NEW broker read inside the
+     *  guard; it is reached only on the case-B path with no ref-bound leg. */
+    @Test
+    void placeEntry_retrySymbolLegLookupUnavailable_isBrokerError() {
+        stubUnboundAdoption();
+        when(gateway.orders("depot-1"))
+                .thenThrow(new BrokerUnavailableException("open orders endpoint down"));
+
+        assertBrokerErrorInsideTheGuard();
+    }
+
+    /** The shared verdict of the three tests above: BROKER_ERROR, no booking, no placement, and an
+     *  ordinary 200 response rather than an escaped exception. */
+    private void assertBrokerErrorInsideTheGuard() {
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json("""
+                {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+                """)));
+
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("BROKER_ERROR");
+        verify(positionRepo, never()).insert(any());
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo, never()).markStatus("sig-1", "ACCEPTED");
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo, atLeastOnce()).insert(decCaptor.capture());
+        assertThat(decCaptor.getAllValues()).anyMatch(d -> "BROKER_ERROR".equals(d.rejectReason()));
+    }
+
     // -------------------------------------------------------------------
     // add-tranche: ordersByRef + AdoptionCandidates classification (SP4 task 6).
     // -------------------------------------------------------------------
@@ -6740,9 +7035,13 @@ class ExecutorWebhookControllerTest {
             ArgumentCaptor<ExecutorDecision> decisionCaptor =
                     ArgumentCaptor.forClass(ExecutorDecision.class);
             verify(decisionRepo, atLeastOnce()).insert(decisionCaptor.capture());
+            // broker_order_id is what separates this row from a place-entry case-D row: it is the
+            // counting axis of the tranche gate (countByReasonAndBrokerOrder), and a NULL here
+            // would put the row back on the place-entry counter.
             assertThat(decisionCaptor.getAllValues())
                     .anyMatch(d -> "ADOPTION_AMBIGUOUS".equals(d.rejectReason())
-                            && "sig-1".equals(d.signalId()));
+                            && "sig-1".equals(d.signalId())
+                            && "ord-t2-fill".equals(d.brokerOrderId()));
 
             verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTION_AMBIGUOUS"), eq("CRITICAL"), any());
             ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
@@ -6763,8 +7062,8 @@ class ExecutorWebhookControllerTest {
         }
     }
 
-    /** The ESCALATE row and the Telegram alert fire once per ref -- a later run that finds the
-     *  same filled order still refuses, but does not page again. */
+    /** The ESCALATE row and the Telegram alert fire once per FILLED TRANCHE ORDER -- a later run
+     *  that finds the same filled order still refuses, but does not page again. */
     @Test
     void addTranche_secondRunAfterFilledT2_refusesWithoutNewAlert() {
         ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
@@ -6773,7 +7072,8 @@ class ExecutorWebhookControllerTest {
         when(tranche2Detector.detect(eq(open), any(), any(), any()))
                 .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
         when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
-        when(decisionRepo.countByReason("sig-1", "ADOPTION_AMBIGUOUS")).thenReturn(1);
+        when(decisionRepo.countByReasonAndBrokerOrder("sig-1", "ADOPTION_AMBIGUOUS",
+                "ord-t2-fill")).thenReturn(1);
         when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
                 filledOrder("ord-t2-fill", "t2-sig-1", "ACME", "buy", "limit", "5", "101",
                         "2026-09-08T14:00:00Z")));
@@ -6795,5 +7095,77 @@ class ExecutorWebhookControllerTest {
         verify(telegram, never()).notifyAlert(any(), any(), any(), any());
         verify(decisionLogRepo, never()).insert(argThat(l ->
                 "ESCALATE".equals(l.action()) && "ADOPTION_AMBIGUOUS".equals(l.reasonCode())));
+    }
+
+    /**
+     * I1 -- the double-exposure CRITICAL has its own counting axis. An earlier place-entry
+     * ambiguity on the SAME signal used to share the counter and silenced this alert permanently;
+     * now it is gated on the filled tranche order id, so both alerts fire.
+     */
+    @Test
+    void addTranche_filledT2AfterAnEarlierPlaceEntryAmbiguity_stillAlerts() {
+        ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(open));
+        when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        // The old shared counter: a place-entry case-D row already exists for this signal.
+        when(decisionRepo.countByReason("sig-1", "ADOPTION_AMBIGUOUS")).thenReturn(1);
+        when(decisionRepo.countPlaceEntryAmbiguities("sig-1")).thenReturn(1);
+        when(decisionRepo.countByReasonAndBrokerOrder("sig-1", "ADOPTION_AMBIGUOUS", "ord-t2-fill"))
+                .thenReturn(0);
+        when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
+                filledOrder("ord-t2-fill", "t2-sig-1", "ACME", "buy", "limit", "5", "101",
+                        "2026-09-08T14:00:00Z")));
+
+        ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
+                {"symbol":"ACME","reason":"tranche-2 add"}
+                """));
+
+        assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(telegram).notifyAlert(eq("ACME"), eq("ADOPTION_AMBIGUOUS"), eq("CRITICAL"), any());
+    }
+
+    /** I2 on the tranche path: a failing escalation must not burn the gate and must not escape as
+     *  a 500. Nothing is persisted, so the next run refuses and pages again. */
+    @Test
+    void addTranche_filledT2AuditFails_stillRefusesAndLeavesTheGateUnburned() {
+        var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ExecutorWebhookController.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<
+                ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            ExecutorPosition open = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                    new BigDecimal("95"));
+            when(positionRepo.findOpen()).thenReturn(List.of(open));
+            when(tranche2Detector.detect(eq(open), any(), any(), any()))
+                    .thenReturn(new Tranche2Detector.Tranche2Status(true, "R_CONFIRMED"));
+            when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+            when(gateway.ordersByRef("depot-1", "t2-sig-1")).thenReturn(List.of(
+                    filledOrder("ord-t2-fill", "t2-sig-1", "ACME", "buy", "limit", "5", "101",
+                            "2026-09-08T14:00:00Z")));
+            doThrow(new RuntimeException("decision_log write timed out"))
+                    .when(decisionLogRepo).insert(any());
+
+            ResponseEntity<?> resp = controller.addTranche(BEARER, "run-1", json("""
+                    {"symbol":"ACME","reason":"tranche-2 add"}
+                    """));
+
+            assertThat(outputOf(resp).get("placed")).isEqualTo(false);
+            assertThat(outputOf(resp).get("reason")).isEqualTo("ADOPTION_AMBIGUOUS");
+            verify(gateway, never()).placeBracket(any(), any());
+            verify(decisionRepo, never()).insert(argThat(d ->
+                    "ADOPTION_AMBIGUOUS".equals(d.rejectReason())));
+            assertThat(appender.list).anyMatch(e ->
+                    e.getLevel() == ch.qos.logback.classic.Level.ERROR
+                            && e.getFormattedMessage()
+                                    .contains("tranche ADOPTION_AMBIGUOUS audit/alert failed"));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 }

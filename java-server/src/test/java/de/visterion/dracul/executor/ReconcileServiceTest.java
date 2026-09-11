@@ -2746,4 +2746,31 @@ class ReconcileServiceTest {
         assertThat(relabelled.filledAt())
                 .isEqualTo(java.time.Instant.parse("2026-09-08T14:00:00Z"));
     }
+
+    /**
+     * I3 characterisation (no behaviour change intended, and none observed). {@code roleOf}'s
+     * "other" fallthrough now derives STOP_LOSS from {@code type = stopiftraded}, which makes a
+     * history row eligible for the SECOND arm of {@code findFilledExitLeg}. That arm still needs
+     * {@code matchesPosition}, i.e. a {@code parentId} equal to one of the position's broker order
+     * ids -- and history rows never carry one: Agora's {@code ordersHistory} mapping leaves
+     * {@code parentId} null (prod E3). So the arm stays inert for history-only input, whatever
+     * role the type hint derives, and the fallthrough changes nothing here.
+     *
+     * <p>This test exists to fail the day a history row DOES arrive with a parentId, because that
+     * is the day the fallthrough starts closing positions reconcile used to leave open.
+     */
+    @Test
+    void findFilledExitLeg_historyStopWithoutParentId_isNotMatchedByTheRoleArm() {
+        ExecutorPosition p = openPosition(9L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), "brk-1", "stop-1", null, null);
+        // role STOP_LOSS (derived from the type hint), FILLED, but parentId null and an id that is
+        // neither stop_order_id nor tranche2_stop_order_id.
+        BrokerOrder historyStop = new BrokerOrder("ord-unknown", "sig-1", "ACME",
+                OrderRole.STOP_LOSS, OrderStatus.FILLED, new BigDecimal("10"),
+                new BigDecimal("10"), new BigDecimal("90"), /* parentId */ null,
+                "sell", "stopiftraded", "finalfill", "history",
+                null, new BigDecimal("90"), java.time.Instant.parse("2026-09-08T14:00:00Z"));
+
+        assertThat(service.findFilledExitLeg(p, List.of(historyStop))).isNull();
+    }
 }
