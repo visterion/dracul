@@ -633,9 +633,22 @@ class VetoServiceTest {
     @Test
     void redundancy_failsWhenAnotherMechanismIsOpenOnTheSymbol() {
         EntryContext ctx = ctx().openPositions(List.of(position("ACME", null)))
+                .openMechanisms(Map.of("ACME", "SPINOFF")).build();
+        VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
+
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.REDUNDANCY);
+        assertThat(result(outcome, "REDUNDANCY").passed()).isFalse();
+        assertThat(result(outcome, "REDUNDANCY").measured())
+                .isEqualTo("position already open on ACME (mechanism SPINOFF)");
+    }
+
+    @Test
+    void redundancy_contradictionFiresFirstButRedundancyStillRecordsFailure() {
+        EntryContext ctx = ctx().openPositions(List.of(position("ACME", null)))
                 .openMechanisms(Map.of("ACME", "MERGER_ARB")).build();
         VetoService.Outcome outcome = vetoService.evaluate(signal(), ctx, sizing(), cfg());
 
+        assertThat(outcome.firstFailure()).isEqualTo(RejectReason.CONTRADICTION);
         assertThat(result(outcome, "REDUNDANCY").passed()).isFalse();
         assertThat(result(outcome, "REDUNDANCY").measured())
                 .isEqualTo("position already open on ACME (mechanism MERGER_ARB)");
