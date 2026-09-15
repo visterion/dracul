@@ -159,24 +159,60 @@ public class OutcomeLogRepository {
                 .list();
     }
 
-    /** (hunter agent, predicted signal_confidence, hunter_label) triples for every outcome_log
-     *  row (TRADE or COUNTERFACTUAL) whose ENTER/REJECT decision row carries a signal
-     *  confidence. Feeds the per-hunter Brier score. */
+    /**
+     * (hunter agent, predicted confidence, hunter_label) triples feeding the per-hunter Brier —
+     * one point per SIGNAL, over every labelled {@code COUNTERFACTUAL} row.
+     *
+     * <p><b>Prediction and agent come from {@code executor_signal}</b>, not from the
+     * {@code decision_log} row and not from {@code outcome_log.source_agent}. The confidence is
+     * the same number either way (it is copied into {@code inputs_snapshot} at decision time),
+     * but reading it from the signal removes the {@code decision_log} dependency — so
+     * {@code LLM_SKIP} ({@code "skip:" + signal_id}) and {@code SIGNAL_EXPIRED_UNEVALUATED}
+     * ({@code "expired:" + signal_id}) rows, which have no decision partner at all, finally enter
+     * the score (SP7). Reading the agent from {@code s.source} keeps the grouping key independent
+     * of which duplicate row wins the dedupe below. A ref with neither prefix and no decision
+     * partner resolves to NULL and drops out of the inner join; so does a signal with a NULL
+     * confidence — no point, no error, exactly as the old query dropped rows without a
+     * {@code signal_confidence}.
+     *
+     * <p><b>Why DISTINCT ON.</b> {@code place_entry} retries of one signal each wrote their own
+     * counterfactual; the hunter made ONE prediction per signal, so the executor's retry count
+     * must not weight it. {@code n} therefore counts signals, like {@code veto_precision} already
+     * does.
+     *
+     * <p><b>The tiebreak is load-bearing: the attempt closest to emission wins.</b> The prediction
+     * is emission-time confidence, so the label closest to emission is the fairest pair — a later
+     * retry's window starts after price already moved. {@code dl.created_at ASC NULLS FIRST} puts
+     * an emission-anchored {@code skip:}/{@code expired:} row (no decision partner, hence NULL)
+     * first, then the earliest {@code place_entry} attempt; {@code ol.computed_at DESC, ol.id DESC}
+     * only break exact ties. {@code ol.complete} is deliberately NOT a key: it is inert for
+     * labelled rows (a skipped walk carries no label) and would otherwise prefer an old late
+     * attempt over an earlier one for no reason.
+     *
+     * <p>The LABEL keeps its two anchors — REJECT rows walk from the decision day,
+     * {@code skip:}/{@code expired:} rows from the emission bar. That difference is documented in
+     * {@code documentation/api.md} and in {@link CalibrationService#BEHAVIOR_CAVEATS}; it is not
+     * changed here.
+     */
     public List<CalibrationService.AgentBrierPoint> findHunterBrierPoints() {
         return jdbc.sql("""
-                SELECT ol.source_agent AS agent,
-                       (dl.inputs_snapshot ->> 'signal_confidence') AS predicted,
+                SELECT DISTINCT ON (s.signal_id)
+                       s.source        AS agent,
+                       s.confidence    AS predicted,
                        ol.hunter_label AS hunter_label
                 FROM outcome_log ol
-                JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
-                WHERE dl.trigger_type = 'SIGNAL'
-                  AND ol.source_agent IS NOT NULL
+                LEFT JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
+                JOIN executor_signal s ON s.signal_id = COALESCE(dl.signal_id,
+                     CASE WHEN ol.log_id_ref LIKE 'skip:%'    THEN substr(ol.log_id_ref, 6)
+                          WHEN ol.log_id_ref LIKE 'expired:%' THEN substr(ol.log_id_ref, 9) END)
+                WHERE ol.kind = 'COUNTERFACTUAL'
                   AND ol.hunter_label IS NOT NULL
-                  AND dl.inputs_snapshot ->> 'signal_confidence' IS NOT NULL
+                  AND s.confidence IS NOT NULL
+                ORDER BY s.signal_id, dl.created_at ASC NULLS FIRST, ol.computed_at DESC, ol.id DESC
                 """)
                 .query((rs, n) -> new CalibrationService.AgentBrierPoint(
                         rs.getString("agent"),
-                        Double.parseDouble(rs.getString("predicted")),
+                        rs.getBigDecimal("predicted").doubleValue(),
                         rs.getBoolean("hunter_label")))
                 .list();
     }

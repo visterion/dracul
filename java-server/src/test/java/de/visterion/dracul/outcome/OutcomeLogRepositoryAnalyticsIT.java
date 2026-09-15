@@ -156,25 +156,48 @@ class OutcomeLogRepositoryAnalyticsIT {
     }
 
     @Test
-    void brierAndStopBasisQueriesAreUnaffectedBySkipRows() {
+    void anUnlabelledSkipRowStillYieldsNoHunterBrierPoint() {
+        seedSignal("sig-c", "SKIPCO", "SKIPPED");
         seedCounterfactual("skip:sig-c", "SKIPCO", "LLM_SKIP", "0.7", true, "2026-09-06T21:00:00Z");
 
-        // Both inner-join decision_log, which a "skip:" ref has no partner in.
+        // The row carries no hunter_label; a labelled one counts since SP7 -- see test
+        // aLabelledLlmSkipRowIsOneHunterBrierPoint. Its executor_signal row IS seeded, so the
+        // missing label is the only thing keeping it out of the hunter Brier.
         assertThat(repo.findHunterBrierPoints()).isEmpty();
         assertThat(repo.findStopBasisRows()).isEmpty();
         assertThat(repo.findExecutorBrierPoints()).isEmpty();
     }
 
     private void seedSignal(String signalId, String symbol, String status) {
+        seedSignalRow(signalId, symbol, status, "strigoi-spin", "0.7");
+    }
+
+    /** Same row with an explicit hunter, for the assertion that the agent comes from
+     *  {@code executor_signal.source} and not from {@code outcome_log.source_agent}. */
+    private void seedSignalWithSource(String signalId, String symbol, String status, String source) {
+        seedSignalRow(signalId, symbol, status, source, "0.7");
+    }
+
+    /** Same row with an explicit confidence, for the bucket-edge assertion. */
+    private void seedSignalWithConfidence(String signalId, String symbol, String status,
+            String confidence) {
+        seedSignalRow(signalId, symbol, status, "strigoi-spin", confidence);
+    }
+
+    private void seedSignalRow(String signalId, String symbol, String status, String source,
+            String confidence) {
         jdbc.sql("""
                 INSERT INTO executor_signal
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
                    horizon, reference_price, status)
-                VALUES (:id, 'strigoi-spin', 'v1', :symbol, 'BUY', 0.7, 'SPINOFF',
+                VALUES (:id, :source, 'v1', :symbol, 'BUY', CAST(:confidence AS numeric), 'SPINOFF',
                         '3m', 100, :status)
-                ON CONFLICT (signal_id) DO UPDATE SET status = EXCLUDED.status
+                ON CONFLICT (signal_id) DO UPDATE SET status = EXCLUDED.status,
+                                                      source = EXCLUDED.source,
+                                                      confidence = EXCLUDED.confidence
                 """)
                 .param("id", signalId).param("symbol", symbol).param("status", status)
+                .param("source", source).param("confidence", confidence)
                 .update();
     }
 
@@ -250,34 +273,69 @@ class OutcomeLogRepositoryAnalyticsIT {
         assertThat(repo.findVetoRows()).extracting("reasonCode").containsExactly("LLM_SKIP");
     }
 
-    /** A hunter-Brier-visible counterfactual: source_agent + hunter_label on the outcome row and
-     *  a signal_confidence in the decision row's inputs_snapshot are what findHunterBrierPoints
-     *  joins on. */
+    /** A hunter-Brier-visible decision row. Since SP7 the hunter Brier joins
+     *  {@code executor_signal} for the confidence; the snapshot confidence here is deliberately a
+     *  <i>different</i> number (0.9 vs the signal's 0.7) so
+     *  {@code predictedComesFromTheSignalNotTheDecisionRow} can tell the two sources apart. */
     private void seedDecisionLogWithConfidence(String logId, String signalId, String symbol,
             String reason) {
+        seedDecisionLogWithConfidence(logId, signalId, symbol, reason, "0.9",
+                java.time.Instant.now().toString());
+    }
+
+    /** Explicit {@code created_at}: it is the primary tiebreak of the SP7 hunter-Brier query
+     *  (the attempt closest to emission wins). */
+    private void seedDecisionLogWithConfidence(String logId, String signalId, String symbol,
+            String reason, String snapshotConfidence, String createdAt) {
         jdbc.sql("""
                 INSERT INTO decision_log (log_id, run_id, rule_version, trigger_type, signal_id,
                                           source_agent, symbol, action, reason_code,
-                                          inputs_snapshot)
+                                          inputs_snapshot, created_at)
                 VALUES (CAST(:logId AS uuid), 'run-1', 'exec-v0.6', 'SIGNAL', :signalId,
                         'strigoi-spin', :symbol, 'REJECT', :reason,
-                        CAST('{"signal_confidence":0.7}' AS jsonb))
+                        CAST(('{"signal_confidence":' || :confidence || '}') AS jsonb),
+                        CAST(:createdAt AS timestamptz))
                 """)
                 .param("logId", logId).param("signalId", signalId)
                 .param("symbol", symbol).param("reason", reason)
+                .param("confidence", snapshotConfidence).param("createdAt", createdAt)
                 .update();
     }
 
     private void seedLabelledCounterfactual(String logIdRef, String symbol, String reason) {
+        seedLabelledCounterfactual(logIdRef, symbol, reason, true,
+                java.time.Instant.now().toString(), "strigoi-spin");
+    }
+
+    /** Explicit label, {@code computed_at} and {@code source_agent}: the label drives the
+     *  win/loss assertions, {@code computed_at} is the secondary tiebreak, and
+     *  {@code source_agent} must be allowed to DISAGREE with {@code executor_signal.source}
+     *  so the agent column can be pinned to the signal (SP7). */
+    private void seedLabelledCounterfactual(String logIdRef, String symbol, String reason,
+            boolean hunterLabel, String computedAt, String sourceAgent) {
         jdbc.sql("""
                 INSERT INTO outcome_log (kind, log_id_ref, symbol, reason_code, hypothetical,
                                          source_agent, hunter_label, complete, computed_at)
                 VALUES ('COUNTERFACTUAL', :ref, :symbol, :reason,
                         CAST('{"r_after_20d":1.0,"r_after_60d":null,
                                "would_have_stopped_out":false,"skipped_reason":null}' AS jsonb),
-                        'strigoi-spin', true, false, now())
+                        :sourceAgent, :hunterLabel, false, CAST(:computedAt AS timestamptz))
                 """)
                 .param("ref", logIdRef).param("symbol", symbol).param("reason", reason)
+                .param("sourceAgent", sourceAgent).param("hunterLabel", hunterLabel)
+                .param("computedAt", computedAt)
+                .update();
+    }
+
+    /** A TRADE outcome row: no {@code hunter_label}, so it must never reach the hunter Brier.
+     *  No other helper here writes a TRADE row. */
+    private void seedTradeRow(String logIdRef, String symbol) {
+        jdbc.sql("""
+                INSERT INTO outcome_log (kind, log_id_ref, symbol, source_agent, complete,
+                                         computed_at)
+                VALUES ('TRADE', :ref, :symbol, 'strigoi-spin', true, now())
+                """)
+                .param("ref", logIdRef).param("symbol", symbol)
                 .update();
     }
 
@@ -309,5 +367,175 @@ class OutcomeLogRepositoryAnalyticsIT {
                 .doesNotContain("STALE_FILL", "ADOPTION_AMBIGUOUS");
 
         assertThat(repo.findHunterBrierPoints()).hasSize(3);
+    }
+
+    /** P1 -- an LLM_SKIP counterfactual has no decision_log partner at all. Before SP7 the inner
+     *  join dropped it; now the signal id comes out of the "skip:" prefix. */
+    @Test
+    void aLabelledLlmSkipRowIsOneHunterBrierPoint() {
+        seedSignal("sig-skip", "SKIPCO", "SKIPPED");
+        seedLabelledCounterfactual("skip:sig-skip", "SKIPCO", "LLM_SKIP");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().agent()).isEqualTo("strigoi-spin");
+        assertThat(points.getFirst().predicted()).isEqualTo(0.7);
+        assertThat(points.getFirst().won()).isTrue();
+    }
+
+    /** P1 -- the same for a swept signal, whose ref carries the "expired:" prefix (substr offset
+     *  9, not 6). A wrong offset resolves to no signal and the point disappears. */
+    @Test
+    void aLabelledSweptRowIsOneHunterBrierPoint() {
+        seedSignal("sig-swept-brier", "SWPCO", "REJECTED");
+        seedLabelledCounterfactual("expired:sig-swept-brier", "SWPCO",
+                "SIGNAL_EXPIRED_UNEVALUATED");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().agent()).isEqualTo("strigoi-spin");
+        assertThat(points.getFirst().predicted()).isEqualTo(0.7);
+        assertThat(points.getFirst().won()).isTrue();
+    }
+
+    /** P1 -- the prediction is the emission-time confidence on executor_signal (0.7), not the
+     *  decision row's inputs_snapshot.signal_confidence (0.9). The two numbers differ on purpose. */
+    @Test
+    void predictedComesFromTheSignalNotTheDecisionRow() {
+        String logId = java.util.UUID.randomUUID().toString();
+        seedSignal("sig-src", "SRCCO", "REJECTED");
+        seedDecisionLogWithConfidence(logId, "sig-src", "SRCCO", "PACE_LIMIT");
+        seedLabelledCounterfactual(logId, "SRCCO", "PACE_LIMIT");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().predicted()).isEqualTo(0.7);
+    }
+
+    /** P1 -- place_entry retries wrote one counterfactual each. The hunter made ONE prediction
+     *  for the signal, so the retries must collapse to one point. Both outcome rows are needed:
+     *  with only one, the test would pass with or without DISTINCT ON. */
+    @Test
+    void retriesOfOneSignalCollapseToOnePoint() {
+        String first = java.util.UUID.randomUUID().toString();
+        String second = java.util.UUID.randomUUID().toString();
+        seedSignal("sig-retry", "RETCO", "REJECTED");
+        seedDecisionLogWithConfidence(first, "sig-retry", "RETCO", "COOLDOWN");
+        seedDecisionLogWithConfidence(second, "sig-retry", "RETCO", "COOLDOWN");
+        seedLabelledCounterfactual(first, "RETCO", "COOLDOWN");
+        seedLabelledCounterfactual(second, "RETCO", "COOLDOWN");
+
+        assertThat(repo.findHunterBrierPoints()).hasSize(1);
+    }
+
+    /** P1 -- a ref whose signal id resolves to nothing drops out of the inner join: no point,
+     *  no error. (Deliberately seeds NO executor_signal row.) */
+    @Test
+    void aSkipRowWhoseSignalIsUnknownYieldsNoPoint() {
+        seedLabelledCounterfactual("skip:sig-nonexistent", "GHOSTCO", "LLM_SKIP");
+
+        assertThat(repo.findHunterBrierPoints()).isEmpty();
+    }
+
+    /** P1 -- hunter_label = false is a loss, not an absence. Pins that the label is read, not
+     *  assumed true. */
+    @Test
+    void aLabelledFalseRowIsCountedAsALoss() {
+        seedSignal("sig-loss", "LOSSCO", "SKIPPED");
+        seedLabelledCounterfactual("skip:sig-loss", "LOSSCO", "LLM_SKIP", false,
+                "2026-09-01T00:00:00Z", "strigoi-spin");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().won()).isFalse();
+    }
+
+    /** P1 -- the agent is executor_signal.source, so the grouping key cannot depend on which
+     *  duplicate outcome row wins. The outcome row deliberately names a different agent. */
+    @Test
+    void theAgentComesFromTheSignalNotTheOutcomeRow() {
+        seedSignalWithSource("sig-agent", "AGTCO", "SKIPPED", "strigoi-echo");
+        seedLabelledCounterfactual("skip:sig-agent", "AGTCO", "LLM_SKIP", true,
+                "2026-09-01T00:00:00Z", "strigoi-spin");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().agent()).isEqualTo("strigoi-echo");
+    }
+
+    /** P2 -- the tiebreak is load-bearing: the prediction is emission-time confidence, so the
+     *  label of the attempt CLOSEST TO EMISSION is the fairest pair. The later attempt has the
+     *  newer computed_at and the opposite label, so a computed_at-first order would flip this. */
+    @Test
+    void theRetainedPointIsTheAttemptClosestToEmission() {
+        String early = java.util.UUID.randomUUID().toString();
+        String late = java.util.UUID.randomUUID().toString();
+        seedSignal("sig-tie", "TIECO", "REJECTED");
+        seedDecisionLogWithConfidence(early, "sig-tie", "TIECO", "COOLDOWN", "0.9",
+                "2026-07-17T14:00:00Z");
+        seedDecisionLogWithConfidence(late, "sig-tie", "TIECO", "COOLDOWN", "0.9",
+                "2026-07-27T14:00:00Z");
+        seedLabelledCounterfactual(early, "TIECO", "COOLDOWN", true,
+                "2026-08-01T00:00:00Z", "strigoi-spin");
+        seedLabelledCounterfactual(late, "TIECO", "COOLDOWN", false,
+                "2026-09-01T00:00:00Z", "strigoi-spin");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().won()).isTrue();
+    }
+
+    /** P2 -- mixed-shape signal: an emission-anchored skip row plus a later place_entry REJECT.
+     *  NULLS FIRST puts the skip row (no decision partner, so a NULL created_at) ahead of every
+     *  attempt, so the skip row's label wins even though it is the older computed_at. */
+    @Test
+    void aSignalWithBothASkipRowAndARejectRowYieldsThePointOfTheSkipRow() {
+        String logId = java.util.UUID.randomUUID().toString();
+        seedSignal("sig-both", "BOTHCO", "REJECTED");
+        seedLabelledCounterfactual("skip:sig-both", "BOTHCO", "LLM_SKIP", false,
+                "2026-08-01T00:00:00Z", "strigoi-spin");
+        seedDecisionLogWithConfidence(logId, "sig-both", "BOTHCO", "COOLDOWN", "0.9",
+                "2026-08-15T14:00:00Z");
+        seedLabelledCounterfactual(logId, "BOTHCO", "COOLDOWN", true,
+                "2026-09-01T00:00:00Z", "strigoi-spin");
+
+        var points = repo.findHunterBrierPoints();
+
+        assertThat(points).hasSize(1);
+        assertThat(points.getFirst().won()).isFalse();
+    }
+
+    /** P3 -- regression guard only: a TRADE row carries no hunter_label, so it is excluded with
+     *  or without the explicit kind = 'COUNTERFACTUAL' clause. The clause keeps the population
+     *  readable and independent of that incidental fact. */
+    @Test
+    void aTradeRowNeverReachesTheHunterBrier() {
+        String logId = java.util.UUID.randomUUID().toString();
+        seedSignal("sig-trade", "TRDCO", "ACCEPTED");
+        seedDecisionLogWithConfidence(logId, "sig-trade", "TRDCO", "PACE_LIMIT");
+        seedTradeRow(logId, "TRDCO");
+
+        assertThat(repo.findHunterBrierPoints()).isEmpty();
+    }
+
+    /** P3 -- NUMERIC(4,3) -> BigDecimal.doubleValue() must land in the same bucket the old
+     *  Double.parseDouble of the JSON string did: 0.700 is the LOWER edge of "0.7-0.8". */
+    @Test
+    void aConfidenceOnABucketEdgeLandsInTheSameBucketAsBefore() {
+        seedSignalWithConfidence("sig-edge", "EDGECO", "SKIPPED", "0.700");
+        seedLabelledCounterfactual("skip:sig-edge", "EDGECO", "LLM_SKIP");
+
+        var results = calibration.hunterBrierResults(repo.findHunterBrierPoints());
+
+        assertThat(results).hasSize(1);
+        assertThat(results.getFirst().buckets())
+                .extracting(CalibrationService.Bucket::range)
+                .containsExactly("0.7-0.8");
     }
 }

@@ -112,20 +112,30 @@ Triggers an ad-hoc Vistierie run of the `executor` agent (same mechanism as
 
 ### `GET /api/executor/calibration`
 
-Read-only analytics over `decision_log` + `outcome_log` (Task 10, executor sim
-completion): how well the executor's and each hunter's confidence scores
-predicted realized outcomes (Brier score). No LLM calls, no writes.
+Read-only analytics over `decision_log` + `outcome_log` + `executor_signal`
+(Task 10, executor sim completion): how well the executor's and each hunter's
+confidence scores predicted realized outcomes (Brier score). No LLM calls, no
+writes.
 
 - **Executor Brier**: `confidence_in_decision` of `ENTER` decision rows vs.
   `realized_r > 0` of the joined, completed `TRADE` outcome row.
-- **Hunter Brier**: `inputs_snapshot.signal_confidence` of the `ENTER`/`REJECT`
-  decision row vs. `outcome_log.hunter_label` (triple-barrier label), grouped
-  by `outcome_log.source_agent`.
-  **Scope limit (SP3):** `LLM_SKIP` counterfactuals are *not* in the
-  per-hunter Brier score. The query inner-joins `decision_log` for the signal
-  confidence and a `skip:` row has no `decision_log` partner. Bringing LLM
-  skips into the hunter score needs the confidence from `executor_signal` and
-  belongs to the learning-loop slice, not to this one. The executor Brier and
+- **Hunter Brier**: `executor_signal.confidence` — the hunter's **emission-time**
+  confidence — vs. `outcome_log.hunter_label` (triple-barrier label), grouped by
+  `executor_signal.source`. The population is every `COUNTERFACTUAL` row with a
+  `hunter_label` whose signal resolves: `REJECT` rows through their
+  `decision_log` partner, `LLM_SKIP` (`skip:<signal_id>`) and
+  `SIGNAL_EXPIRED_UNEVALUATED` (`expired:<signal_id>`) rows through their
+  `log_id_ref` prefix; `STALE_FILL` and `ADOPTION_AMBIGUOUS` are in it too.
+  **One point per signal:** where a signal produced several rows (`place_entry`
+  retries, or a skip row plus a later reject) the attempt **closest to
+  emission** wins — the `skip:`/`expired:` row first, otherwise the earliest
+  `place_entry` attempt — so `n` counts **signals**, not attempts.
+  **Anchor caveat:** `REJECT` rows anchor the label's walk on the **decision
+  day**, `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` rows on the **emission bar**;
+  the prediction is the emission-time confidence in both cases.
+  Since SP7 (2026-09-13) `LLM_SKIP` and `SIGNAL_EXPIRED_UNEVALUATED` rows are
+  in the hunter Brier; the confidence comes from `executor_signal`, so no
+  `decision_log` row is needed. The executor Brier and
   the stop-basis table are TRADE/ENTER-scoped and unaffected.
 - Buckets are fixed predicted-confidence deciles `[0-0.5)`, `[0.5-0.6)`,
   `[0.6-0.7)`, `[0.7-0.8)`, `[0.8-0.9)`, `[0.9-1.0]`; only non-empty buckets
@@ -157,7 +167,8 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   `hypothetical.skipped_reason` set (e.g. missing reference price); means
   (`mean_hypothetical_r_20d`, `mean_hypothetical_r_60d`, `stopped_out_pct`)
   are computed over the remaining, non-skipped rows only. `n` counts
-  **signals**, not attempts — see the dedupe note below. Rows whose signal
+  **signals**, not attempts — see the dedupe note below; the hunter Brier's `n`
+  counts signals the same way since SP7. Rows whose signal
   reached `ACCEPTED` are excluded from `veto_precision` **only** (the hunter
   Brier keeps them): that signal's question is answered by its TRADE row
   once the position closes; until then the counterfactual is withheld, so an
@@ -177,7 +188,8 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   `reference_atr`, which `PreySignalEmitter` only began persisting then, and
   the ~202 historical skips are deliberately not backfilled. Signals injected
   through `POST /api/executor/signals` carry neither field and therefore never
-  produce an `LLM_SKIP` row.
+  produce an `LLM_SKIP` row. Both feed `veto_precision` and, once labelled, the
+  hunter Brier (SP7).
 - **`SIGNAL_EXPIRED_UNEVALUATED`** is the reason code for a PENDING signal
   `PendingSignalSweeper` retired without anyone evaluating it
   (`executor_decision.action = SWEEP`; `outcome_log.log_id_ref` is
