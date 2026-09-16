@@ -17,9 +17,13 @@ import java.util.List;
  * confidence calibration (did the signal hit +1R before -1R within a horizon). No LLM calls, no
  * repository/network access — deterministic arithmetic over an already-fetched bar list.
  *
- * <p>Entry is assumed to be a limit-at-reference fill (the reference price is used verbatim as
- * the assumed entry). The stop is derived via {@link PositionSizer#deriveStopAnchor}, the same
- * anchor formula used for real position sizing, so hypothetical and real stops never diverge.
+ * <p>Entry is whatever price the caller passes as {@code assumedEntry}: the engine uses it
+ * verbatim and takes no view on which price it ought to be. The two callers deliberately differ
+ * — the signal-anchored counterfactual passes the open of the first bar after the emission
+ * anchor (the first price actually reachable after the decision), the REJECT path passes the
+ * decision day's order price. The stop is derived via {@link PositionSizer#deriveStopAnchor}
+ * from that same price, the same anchor formula used for real position sizing, so hypothetical
+ * and real stops never diverge.
  */
 @Component
 public class HypotheticalREngine {
@@ -31,7 +35,8 @@ public class HypotheticalREngine {
      * signal) and computes the hypothetical R outcome.
      *
      * @param side "BUY" or "SELL"
-     * @param referencePrice signal reference price, used as the assumed entry; null -> skipped
+     * @param assumedEntry the assumed entry price — the caller decides which price that is;
+     *        null -> skipped
      * @param atr average true range at signal time; null -> skipped
      * @param swingLow recent swing low, nullable; widens the stop when further from entry than
      *                 the ATR-only anchor
@@ -42,16 +47,18 @@ public class HypotheticalREngine {
      * @return the hypothetical outcome, or {@link HypotheticalOutcome#skipped} when inputs are
      *         insufficient to derive a stop
      */
-    public HypotheticalOutcome walk(String side, BigDecimal referencePrice, BigDecimal atr,
+    public HypotheticalOutcome walk(String side, BigDecimal assumedEntry, BigDecimal atr,
             BigDecimal swingLow, List<OhlcBar> barsAfterSignal, int horizonTradingDays) {
 
-        if (referencePrice == null || atr == null) {
+        if (assumedEntry == null || atr == null) {
+            // The reason string is PERSISTED (outcome_log.hypothetical.skipped_reason) and read
+            // by existing rows and queries, so it stays byte-identical across this rename.
             return HypotheticalOutcome.skipped("missing reference_price/atr");
         }
 
         boolean buy = "BUY".equalsIgnoreCase(side);
-        BigDecimal entry = referencePrice;
-        BigDecimal stop = PositionSizer.deriveStopAnchor(side, referencePrice, atr, swingLow);
+        BigDecimal entry = assumedEntry;
+        BigDecimal stop = PositionSizer.deriveStopAnchor(side, assumedEntry, atr, swingLow);
         BigDecimal rPerShare = entry.subtract(stop).abs();
         if (rPerShare.signum() <= 0) {
             // Garbage upstream data (e.g. atr=0 with no wider swing low): no risk unit exists,
