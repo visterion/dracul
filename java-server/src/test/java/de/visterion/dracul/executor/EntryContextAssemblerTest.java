@@ -78,6 +78,15 @@ class EntryContextAssemblerTest {
         return root;
     }
 
+    /** The same body plus Agora's live-bar high (SP8's {@code currentHigh}), which the assembler
+     *  must prefer over the completed-bar {@code day_high} indicator value. */
+    private JsonNode indicatorsResponseWithCurrentHigh(BigDecimal atr, BigDecimal swingLow,
+            BigDecimal adv20, BigDecimal dayHigh, BigDecimal currentClose, BigDecimal currentHigh) {
+        ObjectNode root = (ObjectNode) indicatorsResponse(atr, swingLow, adv20, dayHigh, currentClose);
+        root.put("currentHigh", currentHigh.toPlainString());
+        return root;
+    }
+
     private void addValue(ArrayNode values, String label, BigDecimal value) {
         ObjectNode v = values.addObject();
         v.put("label", label);
@@ -119,6 +128,41 @@ class EntryContextAssemblerTest {
         assertThat(ctx.trancheAmount()).isEqualByComparingTo(new BigDecimal("10000").divide(new BigDecimal("10")));
         assertThat(ctx.account()).isNotNull();
         assertThat(ctx.signalAgeTradingDays()).isGreaterThanOrEqualTo(0);
+    }
+
+    /** SP8: once Agora computes indicator values over COMPLETED bars only, the {@code day_high}
+     *  indicator is the previous session's high while an exchange is open. {@code entry_day_high}
+     *  must keep meaning the LIVE day's high (Tranche2Detector compares against it), so the
+     *  assembler prefers Agora's {@code currentHigh}, which is read off the live last bar. */
+    @Test
+    void dayHighPrefersCurrentHighWhenAgoraProvidesIt() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponseWithCurrentHigh(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00"), new BigDecimal("103.50")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+
+        EntryContext ctx = assembler.assemble(
+                signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.dayHigh()).isEqualByComparingTo("103.50");
+        assertThat(ctx.missing()).isEmpty();
+    }
+
+    /** (regression) An Agora that has not shipped the completed-bar guard yet sends no
+     *  {@code currentHigh}, and the assembler must fall back to the {@code day_high} indicator
+     *  value exactly as before -- Agora deploys first, Dracul second, and the window between the
+     *  two deploys runs on this branch. */
+    @Test
+    void dayHighFallsBackToTheDayHighIndicator() {
+        when(agora.callTool(eq("get_indicators"), any())).thenReturn(indicatorsResponse(
+                new BigDecimal("2.50"), new BigDecimal("95.00"), new BigDecimal("1000000"),
+                new BigDecimal("101.00"), new BigDecimal("100.00")));
+        when(sectorCascade.resolve("ACME")).thenReturn("Technology");
+
+        EntryContext ctx = assembler.assemble(
+                signal("ACME", new BigDecimal("100.00"), "2026-07-10T00:00:00Z"));
+
+        assertThat(ctx.dayHigh()).isEqualByComparingTo("101.00");
     }
 
     @Test

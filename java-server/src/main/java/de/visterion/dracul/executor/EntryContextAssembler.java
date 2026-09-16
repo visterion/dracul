@@ -274,6 +274,11 @@ public class EntryContextAssembler {
         adv20Spec.put("of", "volume");
         adv20Spec.put("label", "adv20");
 
+        // Still asked for, and still the fallback: since SP8 Agora computes indicator values over
+        // COMPLETED bars only, so while an exchange is open this label is the PREVIOUS session's
+        // high. The live day's high arrives as the top-level currentHigh instead (see below); an
+        // Agora that predates SP8 sends no currentHigh and this value is the live high, exactly as
+        // it always was.
         ObjectNode dayHighSpec = indicators.addObject();
         dayHighSpec.put("name", "highest");
         dayHighSpec.putObject("params").put("period", 1);
@@ -305,6 +310,11 @@ public class EntryContextAssembler {
                 default -> { /* ignore unknown labels */ }
             }
         }
+
+        // entry_day_high must stay the LIVE day's high (Tranche2Detector reads it that way), so
+        // Agora's live-bar high wins over the completed-bar indicator value whenever it is there.
+        BigDecimal currentHigh = decimal(r, "currentHigh");
+        if (currentHigh != null) dayHigh = currentHigh;
 
         if (price == null) missing.add("price");
         if (atr == null) missing.add("atr");

@@ -22,10 +22,12 @@ public class ExecutorIndicators {
      *        few bars simply has none, which must NOT make the bundle unavailable (see
      *        {@code available} below). Appended last so existing positional constructions of this
      *        record only gain one argument.
-     * @param asOfDate the date of the LAST COMPLETED BAR the reference price came from (Agora's
-     *        {@code asOf}), nullable, and — like {@code atrShort} — deliberately NOT part of
-     *        {@code available}: a symbol whose bundle lacks it must keep its hard trigger and its
-     *        ratchet for the run. Appended last for the same positional reason.
+     * @param asOfDate the date of the LAST COMPLETED BAR (Agora's {@code asOf});
+     *        {@code referencePrice} is the live print and may belong to a later, in-progress bar,
+     *        so the two are deliberately of different vintages. Nullable, and — like
+     *        {@code atrShort} — deliberately NOT part of {@code available}: a symbol whose bundle
+     *        lacks it must keep its hard trigger and its ratchet for the run. Appended last for
+     *        the same positional reason.
      */
     public record Levels(boolean available, BigDecimal atr, BigDecimal swingLow,
             BigDecimal referencePrice, BigDecimal atrShort, java.time.LocalDate asOfDate) {

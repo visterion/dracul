@@ -237,6 +237,11 @@ class PreySignalEmitterTest {
         assertThat(captor.getValue().referenceAtr()).isEqualByComparingTo("3.1");
     }
 
+    /** Since SP8 there is one more way to land here: a symbol whose only daily bar is the
+     *  in-progress one. Agora drops that bar, has nothing completed left, and answers
+     *  {@code available:false} — the same shape as a symbol without history, so the signal carries
+     *  null reference_* and place_entry answers DATA_UNAVAILABLE. Nothing about this test changes;
+     *  the comment records the second cause so a future reader does not assume "no history". */
     @Test
     void unavailableLevelsPersistNeitherReferenceField() {
         stubNoOpenOrPending();
