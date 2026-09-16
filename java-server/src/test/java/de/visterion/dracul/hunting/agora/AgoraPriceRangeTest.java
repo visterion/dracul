@@ -42,10 +42,45 @@ class AgoraPriceRangeTest {
         assertThat(p.kind()).isEqualTo(RangeProbe.Kind.OK);
         PriceRange r = p.range();
         assertThat(r).isNotNull();
-        Assertions.assertThat(r.currentClose()).isEqualByComparingTo("11.00");
+        Assertions.assertThat(r.lastClose()).isEqualByComparingTo("11.00");
         Assertions.assertThat(r.low52()).isEqualByComparingTo("10.00");
         Assertions.assertThat(r.high52()).isEqualByComparingTo("40.00");
         assertThat(r.pctAboveLow()).isEqualTo(0.10, org.assertj.core.data.Offset.offset(1e-9));
+    }
+
+    /** SP8: Agora's 52-week window is computed over COMPLETED bars only, so the close it is
+     *  compared against must be of the same vintage. Otherwise a live close on a fresh intraday
+     *  low sits BELOW a window that no longer contains it and pctAboveLow goes negative -- the
+     *  lazarus ranking would then rank a symbol by an artefact of when in the session it was
+     *  probed. lastCompletedClose is preferred whenever Agora sends it. */
+    @Test
+    void lastCloseIsTheLastCompletedCloseWhenPresent() {
+        RangeProbe p = probeOf("""
+                {"symbol":"SYNTH","currentClose":"11.00","lastCompletedClose":"10.50",
+                 "partialBar":true,"values":[
+                  {"label":"52w_range","available":true,"value":{"low":"10.00","high":"40.00"}}]}
+                """).range52w("SYNTH");
+
+        assertThat(p.kind()).isEqualTo(RangeProbe.Kind.OK);
+        PriceRange r = p.range();
+        assertThat(r).isNotNull();
+        Assertions.assertThat(r.lastClose()).isEqualByComparingTo("10.50");
+        assertThat(r.pctAboveLow()).isEqualTo(0.05, org.assertj.core.data.Offset.offset(1e-9));
+    }
+
+    /** (regression) An Agora that has not shipped the completed-bar guard yet sends no
+     *  lastCompletedClose, and currentClose must still be used -- Agora deploys first, Dracul
+     *  second, and every lazarus run in between takes this branch. */
+    @Test
+    void lastCloseFallsBackToCurrentClose() {
+        RangeProbe p = probeOf("""
+                {"symbol":"SYNTH","currentClose":"11.00","values":[
+                  {"label":"52w_range","available":true,"value":{"low":"10.00","high":"40.00"}}]}
+                """).range52w("SYNTH");
+
+        assertThat(p.kind()).isEqualTo(RangeProbe.Kind.OK);
+        Assertions.assertThat(p.range().lastClose()).isEqualByComparingTo("11.00");
+        assertThat(p.range().pctAboveLow()).isEqualTo(0.10, org.assertj.core.data.Offset.offset(1e-9));
     }
 
     /** The production shape of a symbol younger than 52 weeks (FDXF, HONA, Q on 2026-08-05):

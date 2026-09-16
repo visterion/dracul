@@ -64,6 +64,26 @@ class LazarusUniverseServiceTest {
         assertThat(scan.sourceDown()).isFalse();
     }
 
+    /** The shortlist price the lazarus hunter is shown is {@link PriceRange#lastClose()} -- since
+     *  SP8 the last COMPLETED daily close while a session runs, the same vintage the pctAboveLow
+     *  ranking is computed from. A live print here would put a different price next to the ratio
+     *  that ordered the list. */
+    @Test
+    void preScreenedCurrentPriceIsTheLastCompletedClose() {
+        AgoraPriceRange probe = PriceRangeMocks.batching();
+        when(probe.range52w("NEAR")).thenReturn(RangeProbe.of(new PriceRange("NEAR",
+                new BigDecimal("10.50"), new BigDecimal("10"), new BigDecimal("99"))));
+        var service = new LazarusUniverseService(probe);
+
+        var scan = service.preScreen(universe("NEAR"), 0.25, 60_000L, 10, 0);
+
+        assertThat(scan.shortlist()).extracting(LazarusUniverseService.PreScreened::symbol)
+                .containsExactly("NEAR");
+        assertThat(scan.shortlist().getFirst().currentPrice()).isEqualTo(10.5);
+        assertThat(scan.shortlist().getFirst().pctAboveLow())
+                .isEqualTo(0.05, org.assertj.core.data.Offset.offset(1e-9));
+    }
+
     @Test
     void countsPerSymbolFailuresWithoutDroppingTheRest() {
         AgoraPriceRange probe = PriceRangeMocks.batching();

@@ -254,7 +254,10 @@ public class LazarusUniverseService {
                             PriceRange r = probe.range();
                             if (r.pctAboveLow() <= margin) {
                                 shortlist.add(new PreScreened(c.symbol(), c.companyName(),
-                                        r.currentClose().doubleValue(), r.pctAboveLow()));
+                                        // The shortlist price shares the ranking's bar vintage
+                                        // (SP8): while a session runs this is the last COMPLETED
+                                        // close, not the live print.
+                                        r.lastClose().doubleValue(), r.pctAboveLow()));
                             }
                         }
                         // A symbol too young for a 52-week window: counted, but neither a degradation

@@ -144,7 +144,12 @@ public class AgoraPriceRange {
             // not-eligible whatever else the body does or does not carry, and that verdict must not
             // be shadowed by a missing close into a "degraded source" the operator then chases.
             if (!v.path("available").asBoolean(false)) return RangeProbe.notEligible();
-            BigDecimal close = bd(body.path("currentClose"));
+            // Same bar vintage on both sides of the ratio: the 52-week window is computed over
+            // completed bars, so the close it is measured against is the last COMPLETED close
+            // whenever Agora sends one. currentClose (the live print) is the fallback for an
+            // Agora that predates the completed-bar guard, where the two are the same thing.
+            BigDecimal close = bd(body.path("lastCompletedClose"));
+            if (close == null) close = bd(body.path("currentClose"));
             if (close == null || close.signum() <= 0) return RangeProbe.unusable();
             BigDecimal low = bd(v.path("value").path("low"));
             BigDecimal high = bd(v.path("value").path("high"));
