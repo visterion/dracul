@@ -538,6 +538,33 @@ class OutcomeBatchJobTest {
         return bars;
     }
 
+    /** Like {@link #risingBarsFrom}, but the FIRST bar after the anchor gaps DOWN to an open of 99
+     *  and closes at 104, so the open and the close of that bar are far apart and the entry the
+     *  implementation picks is observable in the R. Bar i >= 2 is flat at 104 + (i - 1). */
+    private static List<OhlcBar> gapOpenBarsFrom(LocalDate anchor, int n) {
+        List<OhlcBar> bars = new ArrayList<>();
+        bars.add(new OhlcBar(anchor, bd("100"), bd("100"), bd("100"), bd("100"), 1000L));
+        bars.add(new OhlcBar(anchor.plusDays(1), bd("99"), bd("104"), bd("99"), bd("104"), 1000L));
+        for (int i = 2; i <= n; i++) {
+            BigDecimal px = bd("104").add(BigDecimal.valueOf(i - 1));
+            bars.add(new OhlcBar(anchor.plusDays(i), px, px, px, px, 1000L));
+        }
+        return bars;
+    }
+
+    /** Like {@link #risingBarsFrom}, but the ANCHOR bar dips to a low of 90 -- below any stop this
+     *  fixture can produce. If the anchor bar were ever walked, would_have_stopped_out would flip
+     *  to true; fetchBarsAfter's strict date filter is what keeps it false. */
+    private static List<OhlcBar> anchorBarDipsFrom(LocalDate anchor, int n) {
+        List<OhlcBar> bars = new ArrayList<>();
+        bars.add(new OhlcBar(anchor, bd("100"), bd("100"), bd("90"), bd("100"), 1000L));
+        for (int i = 1; i <= n; i++) {
+            BigDecimal px = bd("100").add(BigDecimal.valueOf(i));
+            bars.add(new OhlcBar(anchor.plusDays(i), px, px, px, px, 1000L));
+        }
+        return bars;
+    }
+
     @Test
     void llmSkip_writesCounterfactualKeyedOnTheSignal() {
         String signalId = "sig-skip-1";
@@ -559,13 +586,22 @@ class OutcomeBatchJobTest {
         assertThat(row.sourceAgent()).isEqualTo("strigoi-spin");
         assertThat(row.agentVersion()).isEqualTo("v1");
         assertThat(row.ruleVersion()).isEqualTo("exec-v0.6");
-        // Stop = deriveStopAnchor("BUY", 100, referenceAtr=2, null) = 100 - 2.5*2 = 95,
-        // rPerShare = 5. The walk starts at the bar AFTER reference_bar_date (2026-09-04): the
-        // anchor-date bar itself (price 100) is excluded, so the 20th walked bar is trading day
-        // 20 after the anchor, price 100+20=120. No bar's low (>= 101) ever reaches the stop
-        // (95), so r_after_20d = (120 - 100) / 5 = 4.0 exactly -- pinning both the ATR used and
-        // the day the walk actually starts on, not just "some non-null number".
-        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.0);
+        // SP8: the counterfactual enters at the OPEN OF THE FIRST WALKED BAR -- the first price
+        // reachable after the emission -- not at reference_price (which stays the live print at
+        // emission and is what the drift vetoes compare against). The walk starts at the bar
+        // AFTER reference_bar_date (2026-09-04), so the anchor-date bar (price 100) is excluded
+        // and after[0] is the 09-05 bar with open 101.
+        //   entry      = after[0].open()                    = 101
+        //   stop       = deriveStopAnchor(BUY, 101, atr 2, null) = 101 - 2.5*2 = 96
+        //   rPerShare  = |101 - 96|                          = 5
+        //   after[19]  = the 20th walked bar, price 100 + 20 = 120 (no low ever reaches 96)
+        //   r_after_20d = (120 - 101) / 5                    = 3.8
+        // The value discriminates all three candidate implementations: entry+stop from the next
+        // open -> 3.8; entry from the next open with the stop still from reference_price 100 ->
+        // (120-101)/6 = 3.1667; both from reference_price -> (120-100)/5 = 4.0 (pre-SP8).
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(3.8);
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("next_bar_open");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
         assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
         assertThat(row.complete()).isTrue();
     }
@@ -574,11 +610,13 @@ class OutcomeBatchJobTest {
     void llmSkip_walksFromReferenceBarDate_notADifferentAnchor() {
         // Same fixture as llmSkip_writesCounterfactualKeyedOnTheSignal, but reference_bar_date is
         // shifted ONE DAY LATER. fetchBarsAfter's filter is strict (date > anchor), so the bar
-        // dated on the (now excluded) old anchor day is dropped too, and the 20th walked bar
-        // becomes trading day 21 after the true 2026-09-04 anchor: price 100+21=121, so
-        // r_after_20d = (121 - 100) / 5 = 4.2 -- a DIFFERENT exact value from the 4.0 above. If
-        // processSkip ever anchored on something other than signal.referenceBarDate() (e.g. the
-        // executor_decision's created_at), this fixture would silently keep producing 4.0.
+        // dated on the (now excluded) old anchor day is dropped too and the walk starts at the
+        // 09-06 bar: entry = 102, stop = 102 - 2.5*2 = 97, rPerShare = 5, after[19] = the bar
+        // priced 121, r_after_20d = (121 - 102) / 5 = 3.8 -- the SAME R as the un-shifted case,
+        // because the SP8 entry moves with the anchor. The anchor is therefore detected through
+        // entry_price (102 here vs 101 there), not through the R. If processSignalAnchored ever
+        // anchored on something other than signal.referenceBarDate() (e.g. the
+        // executor_decision's created_at), this fixture would silently keep producing 101.
         String signalId = "sig-skip-anchor";
         LocalDate trueAnchor = LocalDate.parse("2026-09-04");
         ExecutorSignal shiftedAnchor = new ExecutorSignal(signalId, "strigoi-spin", "v1",
@@ -590,7 +628,8 @@ class OutcomeBatchJobTest {
 
         ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
         verify(outcomeLog).upsert(captor.capture());
-        assertThat(captor.getValue().hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.2);
+        assertThat(captor.getValue().hypothetical().path("entry_price").asDouble()).isEqualTo(102.0);
+        assertThat(captor.getValue().hypothetical().path("r_after_20d").asDouble()).isEqualTo(3.8);
     }
 
     @Test
@@ -768,8 +807,11 @@ class OutcomeBatchJobTest {
         assertThat(row.complete()).isFalse();
     }
 
-    /** (c) Regression guard for the generalisation: an LLM_SKIP row must still be written exactly
-     *  as before, same key, same reason code, same exact R. */
+    /** (c) Regression guard for the generalisation: an LLM_SKIP row must still be written with the
+     *  same key, the same reason code, the same entry convention and the same exact R as the
+     *  dedicated skip-path test above. The asserted R moved from 4.0 to 3.8 with SP8 (entry is the
+     *  101 open of the first walked bar, not the 100 reference price) -- the claim this test makes
+     *  is "both paths agree", not "the number never changes". */
     @Test
     void llmSkip_isUnchangedByTheGeneralisation() {
         String signalId = "sig-skip-regress";
@@ -783,8 +825,155 @@ class OutcomeBatchJobTest {
         OutcomeLogRow row = captor.getValue();
         assertThat(row.logIdRef()).isEqualTo("skip:" + signalId);
         assertThat(row.reasonCode()).isEqualTo("LLM_SKIP");
-        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.0);
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(3.8);
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("next_bar_open");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
         assertThat(row.complete()).isTrue();
+    }
+
+    /** SP8: the entry is the first walked bar's OPEN, not its close and not reference_price.
+     *  Fixture: anchor bar 100, then a bar that opens at 99 and closes at 104, then 105, 106, ...
+     *    entry       = 99                  (the open, not the 104 close, not the 100 reference)
+     *    stop        = 99 - 2.5*2          = 94
+     *    rPerShare   = 5
+     *    after[19]   = the bar priced 104 + 19 = 123   (no low ever reaches 94)
+     *    r_after_20d = (123 - 99) / 5      = 4.8
+     *  Entry from reference_price 100 would give (123 - 100) / 5 = 4.6, and the next open with a
+     *  reference-price stop would give (123 - 99) / 4 = 6.0 -- three distinct values. */
+    @Test
+    void signalAnchoredEntryIsTheFirstWalkedBarsOpen() {
+        String signalId = "sig-skip-gap";
+        wireSkip(signalId, "GAPCO", skippedSignal(signalId, "GAPCO"),
+                gapOpenBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("next_bar_open");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(99.0);
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.8);
+    }
+
+    /** A signal too fresh to have a bar after its anchor: the walk still runs (with an empty bar
+     *  list) and must say so honestly -- entry_source = reference_price, entry_price = the
+     *  reference price. The next night, once a bar exists, the same row is re-walked under
+     *  next_bar_open. This is NOT a data blackout: the source served bars, just none after the
+     *  anchor, so the row stays incomplete and retryable rather than skipped. */
+    @Test
+    void signalAnchoredWithNoBarsYetWritesReferencePriceAsEntrySource() {
+        String signalId = "sig-skip-fresh";
+        wireSkip(signalId, "FRESHCO", skippedSignal(signalId, "FRESHCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 0));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("reference_price");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(100.0);
+        assertThat(row.hypothetical().path("r_after_20d").isNull()).isTrue();
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
+        assertThat(row.complete()).isFalse();
+    }
+
+    /** The walk itself can skip (atr 0 -> stop == entry -> non-positive rPerShare). That row still
+     *  reached engine.walk with a chosen entry, so it carries the entry keys: without them an
+     *  operator reading a skipped row could not tell which price the engine was handed. */
+    @Test
+    void walkThatItselfSkipsStillCarriesEntrySource() {
+        String signalId = "sig-skip-zeroatr";
+        ExecutorSignal zeroAtr = new ExecutorSignal(signalId, "strigoi-spin", "v1", "ZEROCO", "BUY",
+                0.7, "SPINOFF", List.of(), "3m", bd("100"), "SKIPPED", null, null, null,
+                LocalDate.parse("2026-09-04"), bd("0"));
+        wireSkip(signalId, "ZEROCO", zeroAtr, risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isFalse();
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("next_bar_open");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
+    }
+
+    /** (regression) The three branches that return BEFORE engine.walk never chose an entry, so
+     *  they must not pretend they did: no entry_source, no entry_price. One run, three decisions,
+     *  one per branch -- signal unresolvable, reference fields missing, and the source serving no
+     *  bars at all. Passes on a no-op implementation and pins the absence after SP8. */
+    @Test
+    void skippedBranchesCarryNoEntrySource() {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog()).thenReturn(List.of(
+                skipDecision("sig-noside", "NOSIDECO"),
+                skipDecision("sig-noref", "NOREFCO"),
+                skipDecision("sig-nodata", "NODATACO")));
+        when(signals.findById("sig-noside")).thenReturn(null);
+        when(signals.findById("sig-noref")).thenReturn(new ExecutorSignal("sig-noref",
+                "strigoi-spin", "v1", "NOREFCO", "BUY", 0.7, "SPINOFF", List.of(), "3m", null,
+                "SKIPPED", null, null, null, LocalDate.parse("2026-09-04"), bd("2")));
+        when(signals.findById("sig-nodata")).thenReturn(skippedSignal("sig-nodata", "NODATACO"));
+        when(outcomeLog.isComplete(anyString())).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+        when(marketData.dailyOhlcHistory(eq("NODATACO"), anyInt())).thenReturn(List.of());
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(3)).upsert(captor.capture());
+        assertThat(captor.getAllValues()).hasSize(3);
+        for (OutcomeLogRow row : captor.getAllValues()) {
+            assertThat(row.hypothetical().has("entry_source"))
+                    .as("entry_source on %s", row.logIdRef()).isFalse();
+            assertThat(row.hypothetical().has("entry_price"))
+                    .as("entry_price on %s", row.logIdRef()).isFalse();
+            assertThat(row.hypothetical().path("skipped_reason").isNull())
+                    .as("skipped_reason on %s", row.logIdRef()).isFalse();
+        }
+    }
+
+    /** The swept path shares processSignalAnchored, so a SIGNAL_EXPIRED_UNEVALUATED row must carry
+     *  exactly the same entry convention -- otherwise the two counterfactual populations would be
+     *  measured from different prices and could not be pooled. */
+    @Test
+    void sweptSignalUsesTheSameEntryConvention() {
+        String signalId = "sig-swept-entry";
+        LocalDate anchor = LocalDate.parse("2026-09-04");
+        wireSwept(signalId, "SWEEPCO", sweptSignal(signalId, "SWEEPCO", "REJECTED", anchor),
+                risingBarsFrom(anchor, 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.reasonCode()).isEqualTo("SIGNAL_EXPIRED_UNEVALUATED");
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("next_bar_open");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(3.8);
+    }
+
+    /** (regression) fetchBarsAfter's date filter is STRICT, so the anchor bar is never walked.
+     *  The fixture's anchor bar dips to a low of 90, below every stop this fixture can produce
+     *  (95 pre-SP8, 96 after), while no bar after it goes below 101. would_have_stopped_out is
+     *  therefore false only as long as the anchor bar stays out of the walk -- true before and
+     *  after SP8, which is what makes this a regression guard rather than a new assertion. */
+    @Test
+    void anchorBarIsNotPartOfTheWalkedBars() {
+        String signalId = "sig-skip-anchorbar";
+        wireSkip(signalId, "DIPCO", skippedSignal(signalId, "DIPCO"),
+                anchorBarDipsFrom(LocalDate.parse("2026-09-04"), 25));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("would_have_stopped_out").asBoolean())
+                .isFalse();
     }
 
     /** (d) An already-complete swept row is not re-walked (the isComplete short-circuit, shared

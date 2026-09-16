@@ -494,10 +494,21 @@ public class OutcomeBatchJob {
      *       both callers of this method.</li>
      * </ol>
      *
-     * <p>Two limitations are shared with the REJECT path and not fixed here (§9 of the spec):
-     * a signal emitted while its exchange is in session carries a partial-bar price and an ATR that
-     * includes that bar, and neither path checks the walked series against the stored price, so a
-     * split between emission and walk yields a wrong R-multiple with {@code skipped = 0}.
+     * <p><b>Entry convention (SP8).</b> The walk enters at the open of the first bar after
+     * {@code reference_bar_date} — the first price reachable after the emission — and records it
+     * as {@code hypothetical.entry_source = "next_bar_open"} with {@code entry_price}. A signal
+     * too fresh to have such a bar is walked with {@code reference_price} under
+     * {@code entry_source = "reference_price"} and re-walked the next night. {@code
+     * reference_price} itself is unchanged in meaning: it is the live print at emission, which is
+     * what the drift vetoes, {@code OrderGuard} and the LLM signal context consume. The 20-day
+     * datum is therefore "open of the first walked bar -> close of the 20th walked bar", a clean
+     * 20-session hold. {@link #processReject} keeps its decision-day anchor on purpose.
+     *
+     * <p>One limitation is shared with the REJECT path and not fixed here (§9 of the spec):
+     * neither path checks the walked series against the stored price, so a split between emission
+     * and walk yields a wrong R-multiple with {@code skipped = 0}. The partial-bar
+     * {@code reference_atr} that used to be the other one is gone: since SP8 Agora computes
+     * indicator values over completed bars only.
      */
     private void processSignalAnchored(ExecutorDecision d, String logIdRef, String reasonCode) {
         if (outcomeLog.isComplete(logIdRef)) return;
@@ -516,6 +527,12 @@ public class OutcomeBatchJob {
 
         HypotheticalOutcome outcome;
         boolean complete;
+        // Which price the counterfactual was entered at, and where it came from. Both stay null
+        // on every branch that returns before engine.walk -- a row that chose no entry must not
+        // claim one -- and both are written on every branch that reaches it, a walk that itself
+        // returns skipped included.
+        String entrySource = null;
+        BigDecimal entryPrice = null;
 
         if (side == null) {
             outcome = HypotheticalOutcome.skipped("signal direction unresolvable (no signal_id match)");
@@ -545,7 +562,24 @@ public class OutcomeBatchJob {
                         d.symbol(), logIdRef);
             } else {
                 List<OhlcBar> bars = fetched.after();
-                outcome = engine.walk(side, referencePrice, referenceAtr, null, bars,
+                // SP8: the counterfactual enters at the OPEN OF THE FIRST BAR AFTER THE ANCHOR --
+                // the first price actually reachable after the emission. reference_price is the
+                // LIVE PRINT at emission (possibly mid-bar) and stays exactly that: it is what
+                // CHASED_AWAY/BELOW_ANCHOR, OrderGuard and the LLM signal context compare against,
+                // and entering at it would credit the counterfactual with a pre-emission move no
+                // executor could ever have captured. Passing the chosen price as walk()'s
+                // assumedEntry keeps the stop (entry - 2.5 x atr) and rPerShare derived from the
+                // same price. When no bar exists yet -- a signal too fresh, NOT a data blackout --
+                // the walk still runs with reference_price, and the next night's batch re-walks
+                // the same row under next_bar_open once a bar has appeared.
+                if (bars.isEmpty()) {
+                    entryPrice = referencePrice;
+                    entrySource = "reference_price";
+                } else {
+                    entryPrice = bars.getFirst().open();
+                    entrySource = "next_bar_open";
+                }
+                outcome = engine.walk(side, entryPrice, referenceAtr, null, bars,
                         resolveHorizon(signal));
                 complete = outcome.skippedReason() != null || bars.size() >= 60;
             }
@@ -561,6 +595,12 @@ public class OutcomeBatchJob {
         else hypo.put("would_have_stopped_out", outcome.wouldHaveStoppedOut());
         if (outcome.skippedReason() != null) hypo.put("skipped_reason", outcome.skippedReason());
         else hypo.putNull("skipped_reason");
+        // Absent, not null, on the three branches that never reached the walk: an absent key says
+        // "no entry was ever chosen", while a null one would read as "chosen and unknown".
+        if (entrySource != null) {
+            hypo.put("entry_source", entrySource);
+            hypo.put("entry_price", entryPrice);
+        }
 
         outcomeLog.upsert(new OutcomeLogRow(
                 "COUNTERFACTUAL", logIdRef, null, d.symbol(), reasonCode,
