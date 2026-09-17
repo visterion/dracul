@@ -507,8 +507,14 @@ public class OutcomeBatchJob {
      * <p>One limitation is shared with the REJECT path and not fixed here (§9 of the spec):
      * neither path checks the walked series against the stored price, so a split between emission
      * and walk yields a wrong R-multiple with {@code skipped = 0}. The partial-bar
-     * {@code reference_atr} that used to be the other one is gone: since SP8 Agora computes
-     * indicator values over completed bars only.
+     * {@code reference_atr} that used to be the other one is gone: once Agora's completed-bar
+     * guard (SP8) is deployed, indicator values come from completed bars only; until then, or
+     * after an Agora rollback, the partial-bar {@code reference_atr} limitation is still live.
+     *
+     * <p>The first bar's open is guarded against a non-positive value (a provider that emits
+     * {@code BigDecimal.ZERO} for a missing open): a zero or negative open falls back to
+     * {@code reference_price} under {@code entry_source = "reference_price"} instead of walking
+     * from a garbage entry, exactly as the "no bar yet" branch above does.
      */
     private void processSignalAnchored(ExecutorDecision d, String logIdRef, String reasonCode) {
         if (outcomeLog.isComplete(logIdRef)) return;
@@ -576,8 +582,16 @@ public class OutcomeBatchJob {
                     entryPrice = referencePrice;
                     entrySource = "reference_price";
                 } else {
-                    entryPrice = bars.getFirst().open();
-                    entrySource = "next_bar_open";
+                    BigDecimal open = bars.getFirst().open();
+                    if (open != null && open.signum() > 0) {
+                        entryPrice = open;
+                        entrySource = "next_bar_open";
+                    } else {
+                        entryPrice = referencePrice;
+                        entrySource = "reference_price";
+                        log.warn("outcome batch: first bar after {} for {} has no usable open ({}) "
+                                + "— walking from reference_price instead", anchor, d.symbol(), open);
+                    }
                 }
                 outcome = engine.walk(side, entryPrice, referenceAtr, null, bars,
                         resolveHorizon(signal));

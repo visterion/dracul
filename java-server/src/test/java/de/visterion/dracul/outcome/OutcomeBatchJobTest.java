@@ -552,6 +552,22 @@ class OutcomeBatchJobTest {
         return bars;
     }
 
+    /** Like {@link #risingBarsFrom}, but the FIRST bar after the anchor has a non-positive open
+     *  (a provider that emits {@code BigDecimal.ZERO} for a missing open) while every other field
+     *  on that bar, and every later bar, is valid. Closes for the first 20 walked bars ramp
+     *  101..120, matching {@link #risingBarsFrom}'s ramp, so entry_source is the only thing that
+     *  moves. */
+    private static List<OhlcBar> zeroOpenBarsFrom(LocalDate anchor, int n) {
+        List<OhlcBar> bars = new ArrayList<>();
+        bars.add(new OhlcBar(anchor, bd("100"), bd("100"), bd("100"), bd("100"), 1000L));
+        bars.add(new OhlcBar(anchor.plusDays(1), bd("0"), bd("101"), bd("101"), bd("101"), 1000L));
+        for (int i = 2; i <= n; i++) {
+            BigDecimal px = bd("100").add(BigDecimal.valueOf(i));
+            bars.add(new OhlcBar(anchor.plusDays(i), px, px, px, px, 1000L));
+        }
+        return bars;
+    }
+
     /** Like {@link #risingBarsFrom}, but the ANCHOR bar dips to a low of 90 -- below any stop this
      *  fixture can produce. If the anchor bar were ever walked, would_have_stopped_out would flip
      *  to true; fetchBarsAfter's strict date filter is what keeps it false. */
@@ -877,6 +893,33 @@ class OutcomeBatchJobTest {
         assertThat(row.hypothetical().path("r_after_20d").isNull()).isTrue();
         assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
         assertThat(row.complete()).isFalse();
+    }
+
+    /** A first-after bar with a non-positive open (some providers emit {@code BigDecimal.ZERO}
+     *  for a missing open) must not be walked as if it were a real entry -- the guard falls back
+     *  to reference_price, exactly like the "no bar yet" branch, rather than handing engine.walk
+     *  a zero entry that would produce a garbage R marked complete. */
+    @Test
+    void aNonPositiveFirstBarOpenFallsBackToReferencePrice() {
+        String signalId = "sig-skip-zeroopen";
+        wireSkip(signalId, "ZEROOPENCO", skippedSignal(signalId, "ZEROOPENCO"),
+                zeroOpenBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        // entry     = reference_price                     = 100 (the zero open is rejected)
+        // stop      = deriveStopAnchor(BUY, 100, atr 2, null) = 100 - 2.5*2 = 95
+        // rPerShare = |100 - 95|                           = 5
+        // after[19] = the 20th walked bar, closes ramp 101..120, so price = 120
+        // r_after_20d = (120 - 100) / 5                    = 4.0
+        assertThat(row.hypothetical().path("entry_source").asString()).isEqualTo("reference_price");
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(100.0);
+        assertThat(row.hypothetical().path("r_after_20d").asDouble()).isEqualTo(4.0);
+        assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
+        assertThat(row.complete()).isTrue();
     }
 
     /** The walk itself can skip (atr 0 -> stop == entry -> non-positive rPerShare). That row still

@@ -171,7 +171,7 @@ const en: ExplainerTable = {
       { anchor: 'paceLimit', heading: 'PACE_LIMIT', body: 'The weekly limit on new entries was reached.' },
       { anchor: 'cooldown', heading: 'COOLDOWN', body: 'Cooldown period after the last trade in the same name.' },
       { anchor: 'belowAnchor', heading: 'BELOW_ANCHOR', body: 'The price was on the invalidating side of the anchor/reference level.' },
-      { anchor: 'avgR', heading: 'Avg R 20d / 60d', body: 'The average hypothetical result of rejected signals in "R" (a multiple of the risked amount) after 20 or 60 trading days — computed optimistically (assuming fills at the reference price).' },
+      { anchor: 'avgR', heading: 'Avg R 20d / 60d', body: 'The average hypothetical result of rejected signals in "R" (a multiple of the risked amount) after 20 or 60 trading days — computed optimistically (veto rows fill at the reference price; skipped and swept signals at the next bar\'s open).' },
       { anchor: 'stoppedOut', heading: 'Stopped out', body: 'The share of cases that would have been closed at a loss by the stop.' },
       { anchor: 'slippage', heading: 'Slippage', body: 'The difference between the expected and the actual fill price.' },
       { anchor: 'hardExitLatency', heading: 'Hard-exit latency', body: 'The time from detecting an emergency exit to submitting the order to the broker.' },

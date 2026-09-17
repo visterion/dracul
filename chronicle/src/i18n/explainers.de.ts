@@ -171,7 +171,7 @@ const de: ExplainerTable = {
       { anchor: 'paceLimit', heading: 'PACE_LIMIT', body: 'Das wöchentliche Limit an neuen Einstiegen war erreicht.' },
       { anchor: 'cooldown', heading: 'COOLDOWN', body: 'Abklingzeit nach dem letzten Handel im selben Namen.' },
       { anchor: 'belowAnchor', heading: 'BELOW_ANCHOR', body: 'Der Kurs stand auf der ungültig machenden Seite des Anker-/Referenzniveaus.' },
-      { anchor: 'avgR', heading: 'Ø R 20T / 60T', body: 'Das durchschnittliche hypothetische Ergebnis abgelehnter Signale in „R" (Vielfaches des riskierten Betrags) nach 20 bzw. 60 Handelstagen — optimistisch gerechnet (Ausführung zum Referenzpreis unterstellt).' },
+      { anchor: 'avgR', heading: 'Ø R 20T / 60T', body: 'Das durchschnittliche hypothetische Ergebnis abgelehnter Signale in „R" (Vielfaches des riskierten Betrags) nach 20 bzw. 60 Handelstagen — optimistisch gerechnet (Veto-Zeilen zum Referenzpreis, übersprungene und gesweepte Signale zur Eröffnung des Folgebalkens).' },
       { anchor: 'stoppedOut', heading: 'Ausgestoppt', body: 'Der Anteil der Fälle, die per Stop mit Verlust geschlossen worden wären.' },
       { anchor: 'slippage', heading: 'Slippage', body: 'Die Differenz zwischen erwartetem und tatsächlichem Ausführungspreis.' },
       { anchor: 'hardExitLatency', heading: 'Hard-Exit-Latenz', body: 'Die Zeit von der Erkennung eines Notausstiegs bis zur Aufgabe der Order beim Broker.' },
