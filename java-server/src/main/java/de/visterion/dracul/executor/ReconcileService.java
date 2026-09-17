@@ -975,10 +975,12 @@ public class ReconcileService {
                 .filter(o -> stopOrderId.equals(o.orderId()))
                 .filter(o -> p.symbol().equals(o.symbol()))
                 .filter(o -> o.status() == OrderStatus.WORKING && AdoptionCandidates.isLive(o))
+                // isLive also admits PARTIALLY_FILLED; a stop's qty there is its ordered total,
+                // not shares held -- keep the WORKING check, don't fold it into isLive alone.
                 .map(BrokerOrder::qty)
                 .findFirst().orElse(null);
 
-        // No working stop -> the tranche has not filled (or its stop is gone). Either way there is
+        // No live stop -> the tranche has not filled (or its stop is gone). Either way there is
         // no confirmed holding to write, and guessing one is the failure this method exists to
         // prevent. CHECK (qty > 0) also makes a non-positive quantity unwritable by construction.
         if (heldQty == null || heldQty.signum() <= 0) return;
@@ -1100,6 +1102,8 @@ public class ReconcileService {
             BigDecimal brokerQty = leg.stopOrderId() == null ? null : openOrders.stream()
                     .filter(o -> leg.stopOrderId().equals(o.orderId()))
                     .filter(o -> o.status() == OrderStatus.WORKING && AdoptionCandidates.isLive(o))
+                    // isLive also admits PARTIALLY_FILLED; a stop's qty there is its ordered
+                    // total, not shares held -- keep the WORKING check, don't fold it into isLive alone.
                     .map(BrokerOrder::qty)
                     .findFirst().orElse(null);
 

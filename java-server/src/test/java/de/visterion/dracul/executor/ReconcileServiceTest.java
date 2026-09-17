@@ -1347,7 +1347,8 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("10"),
                 new BigDecimal("100"), new BigDecimal("104"), null));
         gateway.seedOrder(new BrokerOrder("stop-1", "ref-stop-1", "ACME", OrderRole.STOP_LOSS,
-                OrderStatus.PARTIALLY_FILLED, new BigDecimal("10"), new BigDecimal("6"), null, null));
+                OrderStatus.PARTIALLY_FILLED, new BigDecimal("10"), new BigDecimal("6"), null, null,
+                "", "stopiftraded", "partially_filled", "open", null, null, null));
 
         service.reconcile("c", "run1");
 
@@ -1855,7 +1856,8 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
                 new BigDecimal("100"), new BigDecimal("104"), null));
         gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
-                OrderStatus.WORKING, new BigDecimal("6"), BigDecimal.ZERO, null, "ord-1"));
+                OrderStatus.WORKING, new BigDecimal("6"), BigDecimal.ZERO, null, "ord-1",
+                "", "stopiftraded", "working", "open", null, null, null));
         gateway.filledOrdersThrows = new RuntimeException("history endpoint down");
 
         List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
@@ -1899,7 +1901,8 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("20"),
                 new BigDecimal("100"), new BigDecimal("98"), null));
         gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
-                OrderStatus.WORKING, BigDecimal.ZERO, BigDecimal.ZERO, null, "ord-1"));
+                OrderStatus.WORKING, BigDecimal.ZERO, BigDecimal.ZERO, null, "ord-1",
+                "", "stopiftraded", "working", "open", null, null, null));
 
         service.reconcile("c", "run-1");
 
