@@ -500,7 +500,7 @@ public class OutcomeBatchJob {
      * too fresh to have such a bar is walked with {@code reference_price} under
      * {@code entry_source = "reference_price"} and re-walked the next night. {@code
      * reference_price} itself is unchanged in meaning: it is the live print at emission, which is
-     * what the drift vetoes, {@code OrderGuard} and the LLM signal context consume. The 20-day
+     * what the drift vetoes and the LLM signal context consume. The 20-day
      * datum is therefore "open of the first walked bar -> close of the 20th walked bar", a clean
      * 20-session hold. {@link #processReject} keeps its decision-day anchor on purpose.
      *
@@ -565,7 +565,7 @@ public class OutcomeBatchJob {
                 // SP8: the counterfactual enters at the OPEN OF THE FIRST BAR AFTER THE ANCHOR --
                 // the first price actually reachable after the emission. reference_price is the
                 // LIVE PRINT at emission (possibly mid-bar) and stays exactly that: it is what
-                // CHASED_AWAY/BELOW_ANCHOR, OrderGuard and the LLM signal context compare against,
+                // CHASED_AWAY/BELOW_ANCHOR and the LLM signal context compare against,
                 // and entering at it would credit the counterfactual with a pre-emission move no
                 // executor could ever have captured. Passing the chosen price as walk()'s
                 // assumedEntry keeps the stop (entry - 2.5 x atr) and rPerShare derived from the

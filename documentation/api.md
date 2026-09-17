@@ -195,18 +195,19 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   anchor** — `hypothetical.entry_source = "next_bar_open"` with
   `hypothetical.entry_price` — the first price reachable after the emission.
   It is deliberately *not* `reference_price`, which remains the **live print**
-  at emission and is what the drift vetoes (`CHASED_AWAY`, `BELOW_ANCHOR`),
-  `OrderGuard` and the LLM signal context compare against; entering at it
+  at emission and is what the drift vetoes (`CHASED_AWAY`, `BELOW_ANCHOR`)
+  and the LLM signal context compare against; entering at it
   would credit the walk with a pre-emission move no executor could have
   captured. A row too fresh to have such a bar carries
   `entry_source = "reference_price"` and is re-walked under `next_bar_open`
-  by the next nightly batch. The 20-day datum is consequently measured from
-  that open to the close of the 20th bar after the anchor (a clean 20-session
-  hold). Existing incomplete rows were re-walked on this basis on the first
-  22:30 UTC batch after the SP8 deploy: measured on 2026-09-16 over 39
-  incomplete rows, 6 flipped a persisted `would_have_stopped_out` and/or
-  `hunter_label` verdict and four labels reset to null until their windows
-  resolve — so a smaller hunter-Brier `n` and a moved `LLM_SKIP` bucket in
+  by the next nightly batch (unless the walk itself was skipped, e.g. a zero
+  ATR, which marks the row complete). The 20-day datum is consequently
+  measured from that open to the close of the 20th bar after the anchor (a
+  clean 20-session hold). Existing incomplete rows are re-walked on this
+  basis by the first 22:30 UTC batch after the SP8 deploy; the spec
+  predicted 6 verdict flips and 4 hunter-Brier points temporarily lost on the
+  39 rows open on 2026-09-16 — re-measure after the first batch — so a
+  smaller hunter-Brier `n` and a moved `LLM_SKIP` bucket in
   that week are the correction, not a regression.
 - **`SIGNAL_EXPIRED_UNEVALUATED`** is the reason code for a PENDING signal
   `PendingSignalSweeper` retired without anyone evaluating it
