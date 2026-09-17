@@ -717,7 +717,9 @@ the universe, i.e. reproduce the bug with a bigger number. So
 `52w_range` probe per symbol — served by Agora's OHLC provider
 chain (Alpaca first for US symbols, Yahoo only as last resort), a different and
 far less throttled source than the fundamentals path (`AgoraPriceRange`, returns both the
-52-week low and the current close), keeping everything within
+52-week low and the last completed close — since SP8 the same bar vintage as
+the 52-week window itself, so the ratio stays well-defined while a session
+runs), keeping everything within
 `LAZARUS_PRE_FILTER_MARGIN` (default 0.25 — deliberately wider than the 0.10
 screen, since the two lows come from different definitions); only the survivors,
 capped by `LAZARUS_FUNDAMENTALS_MAX` (default 60) and ranked by `pctAboveLow`

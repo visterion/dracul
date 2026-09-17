@@ -15,7 +15,7 @@ import java.util.Map;
 
 /**
  * The CHEAP half of the quality-at-52-week-low screen: one {@code 52w_range} spec returns both the
- * 52-week low and the current close of a symbol, from ONE daily-OHLC fetch inside Agora, served by
+ * 52-week low and the last completed close of a symbol, from ONE daily-OHLC fetch inside Agora, served by
  * Agora's provider chain — Alpaca first for US symbols, then Saxo, TwelveData, Finnhub and Yahoo
  * as the last-resort fallback. (Until 2026-08-04 this javadoc named Yahoo as the route; it never
  * was one. Measured that day, 616 of the pre-filter's daily-bar fetches went to Alpaca.)
@@ -63,7 +63,7 @@ public class AgoraPriceRange {
     }
 
     /**
-     * 52-week range + current close of {@code symbol}, or the reason there is none. Never null.
+     * 52-week range + last completed close of {@code symbol}, or the reason there is none. Never null.
      *
      * @throws de.visterion.dracul.marketdata.AgoraUnavailableException when the call itself failed
      */

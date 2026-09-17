@@ -29,7 +29,7 @@ public record RangeProbe(PriceRange range, RangeProbe.Kind kind) {
          */
         NOT_ELIGIBLE,
         /**
-         * Agora answered, but with something the screen cannot use: no current close, a
+         * Agora answered, but with something the screen cannot use: no usable close, a
          * non-positive low, or a body that does not carry the spec that was asked for. Something
          * IS wrong upstream, so this counts as a degradation.
          */

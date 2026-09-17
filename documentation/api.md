@@ -189,7 +189,25 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   the ~202 historical skips are deliberately not backfilled. Signals injected
   through `POST /api/executor/signals` carry neither field and therefore never
   produce an `LLM_SKIP` row. Both feed `veto_precision` and, once labelled, the
-  hunter Brier (SP7).
+  hunter Brier (SP7). **Entry convention (SP8).** `reference_bar_date` and
+  `reference_atr` are the last **completed** bar's date and ATR at emission,
+  and the counterfactual enters at the **open of the first bar after the
+  anchor** — `hypothetical.entry_source = "next_bar_open"` with
+  `hypothetical.entry_price` — the first price reachable after the emission.
+  It is deliberately *not* `reference_price`, which remains the **live print**
+  at emission and is what the drift vetoes (`CHASED_AWAY`, `BELOW_ANCHOR`),
+  `OrderGuard` and the LLM signal context compare against; entering at it
+  would credit the walk with a pre-emission move no executor could have
+  captured. A row too fresh to have such a bar carries
+  `entry_source = "reference_price"` and is re-walked under `next_bar_open`
+  by the next nightly batch. The 20-day datum is consequently measured from
+  that open to the close of the 20th bar after the anchor (a clean 20-session
+  hold). Existing incomplete rows were re-walked on this basis on the first
+  22:30 UTC batch after the SP8 deploy: measured on 2026-09-16 over 39
+  incomplete rows, 6 flipped a persisted `would_have_stopped_out` and/or
+  `hunter_label` verdict and four labels reset to null until their windows
+  resolve — so a smaller hunter-Brier `n` and a moved `LLM_SKIP` bucket in
+  that week are the correction, not a regression.
 - **`SIGNAL_EXPIRED_UNEVALUATED`** is the reason code for a PENDING signal
   `PendingSignalSweeper` retired without anyone evaluating it
   (`executor_decision.action = SWEEP`; `outcome_log.log_id_ref` is
@@ -204,7 +222,11 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   wins. The bucket counts **signals**, not symbols: a symbol re-emitted and
   never entered yields one swept signal per `max-signal-age-days + 1` trading
   days, each anchored a few bars apart on nearly the same path, so read the
-  first month per symbol rather than as a mean.
+  first month per symbol rather than as a mean. It shares `LLM_SKIP`'s SP8
+  entry convention exactly — the walk enters at the **open of the first bar
+  after the emission anchor** (`hypothetical.entry_source = "next_bar_open"`,
+  `hypothetical.entry_price`), not at `reference_price` — which is what lets
+  the two counterfactual populations be read side by side.
 - **Anchor semantics differ between the two counterfactual populations, on
   purpose.** A veto-reason row anchors at the **decision** (the price and ATR
   `place_entry` recomputed that day, stored in `inputs_snapshot`); an
@@ -2186,8 +2208,12 @@ Each signal is enriched server-side with `atr`/`swing_low` (via
 swing-period`, default 22/20) and `reference_price`. When indicators are
 unavailable (e.g. insufficient price history or Agora unreachable), `atr`
 and `swing_low` are `null` and `reference_price` falls back to the signal's
-stored value. The LLM is not expected to call any market-data tool itself
-for this context — it is fetched once per signal by the controller.
+stored value. `reference_price` is the **live print** at that moment: while
+the exchange is open it may belong to an in-progress bar. That is exactly
+what the drift vetoes are meant to compare against, and it is why it is
+deliberately *not* the counterfactual's entry price (see `LLM_SKIP` above).
+The LLM is not expected to call any market-data tool itself for this context
+— it is fetched once per signal by the controller.
 
 Response:
 ```json

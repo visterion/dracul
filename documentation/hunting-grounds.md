@@ -267,8 +267,12 @@ consumed through five neutral domain facades in
   change.
 - **`AgoraPriceRange`** (2026-08-04) — `range52w(symbol)` / `range52wBatch(symbols)`:
   a single `52w_range` spec returns both the 52-week low/high and the
-  current close, from one daily-OHLC fetch inside Agora, served by Agora's
-  OHLC provider chain (Alpaca → Saxo → TwelveData → Finnhub → Yahoo). Since
+  last completed close (`PriceRange.lastClose`; since SP8 Agora's
+  `lastCompletedClose`, falling back to `currentClose`), from one daily-OHLC
+  fetch inside Agora, served by Agora's OHLC provider chain
+  (Alpaca → Saxo → TwelveData → Finnhub → Yahoo). Close and window share one
+  bar vintage on purpose: the window is computed over completed bars, so a
+  live intraday print would make `pctAboveLow` negative on a fresh low. Since
   2026-08-06 the universe pre-filter uses the batch route (`get_indicators_batch`,
   ≤ 600 symbols per call, chunked at `LAZARUS_PROBE_CHUNK_SIZE` = 100), which
   turned ~490 Agora calls per lazarus run into ~5 and ended the Alpaca 429 storm
