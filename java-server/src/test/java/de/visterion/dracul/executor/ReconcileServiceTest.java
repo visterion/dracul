@@ -1202,10 +1202,14 @@ class ReconcileServiceTest {
     // is an IfDone child and therefore only works once its entry has filled.
     // ---------------------------------------------------------------------------------------
 
-    /** A protective stop as the OPEN-orders view reports it while it is live on a filled tranche. */
+    /** A protective stop as the OPEN-orders view reports it while it is live on a filled tranche.
+     *  Carries a live {@code rawStatus} (SP9): {@link AdoptionCandidates#isLive} also checks the
+     *  raw string, and a null one (the 9-arg {@link BrokerOrder} constructor's default) is not
+     *  live, so a fixture standing in for a genuinely resting stop has to set it explicitly. */
     private BrokerOrder workingStop(String orderId, String symbol, BigDecimal qty) {
         return new BrokerOrder(orderId, "ref-" + orderId, symbol, OrderRole.STOP_LOSS,
-                OrderStatus.WORKING, qty, BigDecimal.ZERO, null, null);
+                OrderStatus.WORKING, qty, BigDecimal.ZERO, null, null,
+                "", "stopiftraded", "working", "open", null, null, null);
     }
 
     private ArgumentCaptor<ExecutorPositionLeg> captureSeededLegs() {
@@ -1247,8 +1251,10 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
                 new BigDecimal("100"), new BigDecimal("104"), null));
         gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("6")));
-        // The tranche-2 ENTRY is working with 15 ordered shares. Its stop is an IfDone child, so
-        // pre-fill it is not a top-level order at all and cannot appear in this view.
+        // The tranche-2 ENTRY is working with 15 ordered shares. No stop is seeded for it here at
+        // all (SP9: the real broker DOES list an unfilled tranche's IfDone stop child top-level,
+        // with raw status "notworking" -- see seedIgnoresAnUnfilledTranche2StopReportedNotworking
+        // for that case), so this test's absence-of-a-stop path is what refuses the seed.
         gateway.seedOrder(new BrokerOrder("ord-2", "ref-ord-2", "ACME", OrderRole.ENTRY,
                 OrderStatus.WORKING, new BigDecimal("15"), BigDecimal.ZERO, null, null));
 
@@ -1348,6 +1354,55 @@ class ReconcileServiceTest {
         verify(legRepo, never()).insertIfAbsent(any());
         // ... and not because seeding was refused for a different reason.
         verify(decisionRepo, never()).insert(argThatReasonCodeIs("LEG_SEED_EXCEEDS_HOLDING"));
+    }
+
+    @Test
+    void seedIgnoresAnUnfilledTranche2StopReportedNotworking() {
+        // Prod 2026-09-16 (SP9): the tranche-2 IfDone stop child DOES appear in the top-level
+        // open-orders view before its entry fills -- with the broker's raw status "notworking"
+        // (AgoraExecutionGateway.toStatus maps that to WORKING on purpose) and the ORDERED size,
+        // not a held one. AdoptionCandidates.isLive refuses "notworking"; seeding must too, or
+        // this fires LEG_SEED_EXCEEDS_HOLDING every nightly run for the ordinary case of a booked
+        // tranche 1 plus a merely-unfilled tranche 2.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("3"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("3")));
+        gateway.seedOrder(new BrokerOrder("stop-2", "ref-stop-2", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.WORKING, new BigDecimal("3"), BigDecimal.ZERO, null, null,
+                "", "stopiftraded", "notworking", "open", null, null, null));
+
+        service.reconcile("c", "run1");
+
+        List<ExecutorPositionLeg> seeded = captureSeededLegs().getAllValues();
+        assertThat(seeded).hasSize(1);
+        assertThat(seeded.getFirst().tranche()).isEqualTo(1);
+        assertThat(seeded.getFirst().qty()).isEqualByComparingTo("3");
+        assertThat(reasonCodes()).doesNotContain("LEG_SEED_EXCEEDS_HOLDING");
+    }
+
+    @Test
+    void seedBooksTranche2OnceItsStopIsLive() {
+        // Regression guard for the fix above: once the tranche-2 stop actually goes live (its
+        // entry filled), the leg must still be seeded normally.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("6"),
+                new BigDecimal("100"), new BigDecimal("104"), null));
+        gateway.seedOrder(workingStop("stop-1", "ACME", new BigDecimal("3")));
+        gateway.seedOrder(workingStop("stop-2", "ACME", new BigDecimal("3")));
+        when(legRepo.insertIfAbsent(any())).thenReturn(true);
+
+        service.reconcile("c", "run1");
+
+        List<ExecutorPositionLeg> seeded = captureSeededLegs().getAllValues();
+        assertThat(seeded).hasSize(2);
+        assertThat(seeded).anyMatch(l -> l.tranche() == 2 && l.qty().compareTo(new BigDecimal("3")) == 0
+                && "stop-2".equals(l.stopOrderId()));
+        assertThat(reasonCodes()).filteredOn("LEG_SEEDED"::equals).hasSize(2);
     }
 
     @Test
@@ -1701,9 +1756,11 @@ class ReconcileServiceTest {
         gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("18"),
                 new BigDecimal("100"), new BigDecimal("98"), null));
         gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
-                OrderStatus.WORKING, new BigDecimal("8"), BigDecimal.ZERO, null, "ord-1"));
+                OrderStatus.WORKING, new BigDecimal("8"), BigDecimal.ZERO, null, "ord-1",
+                "", "stopiftraded", "working", "open", null, null, null));
         gateway.seedOrder(new BrokerOrder("stop-2", "ref-2", "ACME", OrderRole.STOP_LOSS,
-                OrderStatus.WORKING, new BigDecimal("10"), BigDecimal.ZERO, null, "ord-2"));
+                OrderStatus.WORKING, new BigDecimal("10"), BigDecimal.ZERO, null, "ord-2",
+                "", "stopiftraded", "working", "open", null, null, null));
 
         service.reconcile("c", "run-1");
 
@@ -1847,6 +1904,28 @@ class ReconcileServiceTest {
         service.reconcile("c", "run-1");
 
         verify(legRepo, never()).syncLegQty(anyLong(), any());
+    }
+
+    @Test
+    void syncLegQuantitiesIgnoresANotworkingStop() {
+        // Same SP9 defect on the sync side: a stop the broker reports with raw status
+        // "notworking" must not converge an OPEN leg to its (ordered, not held) quantity.
+        ExecutorPosition p = twoTranchePosition(1L, "ACME", new BigDecimal("3"),
+                new BigDecimal("100"), new BigDecimal("95"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+        when(legRepo.findOpenByPosition(1L)).thenReturn(List.of(
+                leg(10L, 1L, 1, "ord-1", "stop-1", new BigDecimal("3"))));
+        gateway.seedPosition(new BrokerPosition("ACME", "BUY", new BigDecimal("3"),
+                new BigDecimal("100"), new BigDecimal("98"), null));
+        gateway.seedOrder(new BrokerOrder("stop-1", "ref-1", "ACME", OrderRole.STOP_LOSS,
+                OrderStatus.WORKING, new BigDecimal("5"), BigDecimal.ZERO, null, "ord-1",
+                "", "stopiftraded", "notworking", "open", null, null, null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run-1").survivors();
+
+        verify(legRepo, never()).syncLegQty(anyLong(), any());
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.getFirst().qty()).isEqualByComparingTo("3");
     }
 
     @Test

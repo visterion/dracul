@@ -952,11 +952,13 @@ public class ReconcileService {
      * had requested while summing to the same total -- so no sum-based check could have caught it.
      *
      * <p>That a WORKING stop measures filled shares is structural, not merely observed: the stop
-     * is an IfDone child, and pre-fill it is not a top-level order at all but lives inside its
-     * parent's embedded RelatedOpenOrders (see {@link StopRatchetService}'s note on Agora's leg
-     * resolution). {@code openOrders} is the top-level OPEN-orders view, so an unfilled tranche's
-     * stop cannot appear in it and that tranche contributes NO leg -- rather than a leg carrying
-     * shares the broker does not hold.
+     * is an IfDone child, and pre-fill it DOES appear in {@code openOrders} (the top-level
+     * OPEN-orders view) -- Agora lists it there with its raw status {@code notworking} and its
+     * ORDERED size, not a held one (confirmed against the live account 2026-09-17; see
+     * {@link StopRatchetService}'s note on Agora's leg resolution). Only a stop whose raw status
+     * is actually live ({@link AdoptionCandidates#isLive}) measures filled shares; a non-live
+     * stop's tranche contributes NO leg -- rather than a leg carrying shares the broker does not
+     * hold.
      *
      * <p>Matched by order id AND symbol. The id alone is our own record and is normally enough,
      * but a stale or mis-booked id would otherwise import a quantity from an unrelated
@@ -972,7 +974,7 @@ public class ReconcileService {
         BigDecimal heldQty = openOrders.stream()
                 .filter(o -> stopOrderId.equals(o.orderId()))
                 .filter(o -> p.symbol().equals(o.symbol()))
-                .filter(o -> o.status() == OrderStatus.WORKING)
+                .filter(o -> o.status() == OrderStatus.WORKING && AdoptionCandidates.isLive(o))
                 .map(BrokerOrder::qty)
                 .findFirst().orElse(null);
 
@@ -1059,14 +1061,16 @@ public class ReconcileService {
      * exactly the way the position's did (prod 2026-08-06), and every downstream figure computed
      * from them — the trim remainder below, the desync check — would inherit the drift.
      *
-     * <p>Only a WORKING stop counts, and its {@code qty} really is shares HELD. The structural
-     * reason is that the stop is an IfDone child: pre-fill it is not a top-level order at all but
-     * lives inside its parent's embedded RelatedOpenOrders (see {@link StopRatchetService}'s note
-     * on Agora's leg resolution), so an order in this OPEN-orders view can only ever measure
-     * filled shares, never ordered ones. Confirmed against the live account on 2026-08-25, where
-     * every live position's working stop quantities summed exactly to the shares the broker
-     * reported holding. The measured figures live in §1.6 of the design spec under {@code docs/}
-     * (gitignored) rather than here: a holding is account data and this repository is public.
+     * <p>Only a live stop ({@link AdoptionCandidates#isLive}) counts, and its {@code qty} really
+     * is shares HELD. The structural reason is that the stop is an IfDone child: pre-fill it
+     * DOES appear in this OPEN-orders view, but with raw status {@code notworking} and its
+     * ORDERED size rather than a held one (confirmed against the live account 2026-09-17; see
+     * {@link StopRatchetService}'s note on Agora's leg resolution) -- {@code isLive} is what tells
+     * that apart from a stop whose quantity really is filled shares. Confirmed against the live
+     * account on 2026-08-25, where every live position's working stop quantities summed exactly
+     * to the shares the broker reported holding. The measured figures live in §1.6 of the design
+     * spec under {@code docs/} (gitignored) rather than here: a holding is account data and this
+     * repository is public.
      *
      * <p>A PARTIALLY_FILLED stop does not count. There part of the tranche has already exited and
      * the order's {@code qty} is its total, not the shares still held; reading it as a holding
@@ -1095,7 +1099,7 @@ public class ReconcileService {
         for (ExecutorPositionLeg leg : legs) {
             BigDecimal brokerQty = leg.stopOrderId() == null ? null : openOrders.stream()
                     .filter(o -> leg.stopOrderId().equals(o.orderId()))
-                    .filter(o -> o.status() == OrderStatus.WORKING)
+                    .filter(o -> o.status() == OrderStatus.WORKING && AdoptionCandidates.isLive(o))
                     .map(BrokerOrder::qty)
                     .findFirst().orElse(null);
 
