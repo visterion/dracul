@@ -83,8 +83,8 @@ class VetoServiceTest {
      *  maxPositions and maxPerSector are set high here so this cfg isolates the BUDGET gate --
      *  MAX_POSITIONS/MAX_PER_SECTOR are exercised by their own tests above with their own cfg(). */
     private VetoConfig cfgAtProdDefaults() {
-        return new VetoConfig(0.6, 100, BigDecimal.valueOf(100000), 0.06, 100,
-                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 25, 0.0, 3.0, "USD", MechanismBudget.none());
+        return new VetoConfig(0.6, 100, BigDecimal.valueOf(100000), 0.15, 100,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 10, 25, 0.0, 3.0, "USD", MechanismBudget.none());
     }
 
     private VetoConfig cfgWithBudget(String spec, int maxPositions) {
