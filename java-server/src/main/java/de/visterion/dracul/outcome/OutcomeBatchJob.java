@@ -526,6 +526,16 @@ public class OutcomeBatchJob {
         // unresolvable signal falls through to the side == null branch below, exactly as before.
         if (signal != null && "ACCEPTED".equals(signal.status())) return;
 
+        // 2026-09-11 prod defect: a crossed signal_id/symbol pair in a submitted SKIP persisted
+        // the wrong instrument's symbol on the decision row. Walk the SIGNAL's symbol instead --
+        // the row heals on the next batch even if the stored decision row is still wrong.
+        String symbol = signal != null && signal.symbol() != null ? signal.symbol() : d.symbol();
+        if (signal != null && signal.symbol() != null && !signal.symbol().equals(d.symbol())) {
+            log.warn("outcome batch: decision row for signal {} names symbol '{}' but the signal "
+                            + "is '{}' — walking the signal's symbol",
+                    d.signalId(), d.symbol(), signal.symbol());
+        }
+
         String side = signal != null ? signal.direction() : null;
         BigDecimal referencePrice = signal != null ? signal.referencePrice() : null;
         BigDecimal referenceAtr = signal != null ? signal.referenceAtr() : null;
@@ -550,12 +560,12 @@ public class OutcomeBatchJob {
         } else {
             BarsAfter fetched;
             try {
-                fetched = fetchBarsAfter(d.symbol(), anchor);
+                fetched = fetchBarsAfter(symbol, anchor);
             } catch (MarketDataException e) {
                 // Transient provider outage, not a permanent skip: leave the row untouched so the
                 // next nightly run retries. Same contract as processReject.
                 log.warn("outcome batch: OHLC unavailable for {} (counterfactual {}): {}",
-                        d.symbol(), logIdRef, e.getMessage());
+                        symbol, logIdRef, e.getMessage());
                 return;
             }
             if (fetched.sourceEmpty()) {
@@ -565,7 +575,7 @@ public class OutcomeBatchJob {
                 noDataSymbols++;
                 log.warn("outcome batch: no OHLC bars at all for {} (counterfactual {}) — writing "
                         + "an explicitly skipped counterfactual, not a stopped-out=false verdict",
-                        d.symbol(), logIdRef);
+                        symbol, logIdRef);
             } else {
                 List<OhlcBar> bars = fetched.after();
                 // SP8: the counterfactual enters at the OPEN OF THE FIRST BAR AFTER THE ANCHOR --
@@ -590,7 +600,7 @@ public class OutcomeBatchJob {
                         entryPrice = referencePrice;
                         entrySource = "reference_price";
                         log.warn("outcome batch: first bar after {} for {} has no usable open ({}) "
-                                + "— walking from reference_price instead", anchor, d.symbol(), open);
+                                + "— walking from reference_price instead", anchor, symbol, open);
                     }
                 }
                 outcome = engine.walk(side, entryPrice, referenceAtr, null, bars,
@@ -617,7 +627,7 @@ public class OutcomeBatchJob {
         }
 
         outcomeLog.upsert(new OutcomeLogRow(
-                "COUNTERFACTUAL", logIdRef, null, d.symbol(), reasonCode,
+                "COUNTERFACTUAL", logIdRef, null, symbol, reasonCode,
                 null, null, null, null,
                 null, null, null,
                 null, null, null,

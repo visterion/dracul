@@ -1616,16 +1616,20 @@ public class ExecutorWebhookController {
             return ResponseEntity.ok(Map.of("output", Map.of(
                     "recorded", 0,
                     "unknown_actions", 0,
+                    "symbol_corrected", 0,
                     "error", "the 'decisions' argument could not be read as a list of decision "
                             + "objects — resend it as a JSON array of objects with signal_id, "
                             + "symbol, action and rationale")));
         }
+        int symbolCorrected = 0;
         if (!decisions.isEmpty()) {
             for (JsonNode d : decisions) {
                 String action = d.path("action").asString("");
                 String signalId = d.path("signal_id").asString("");
-                // NOTE (slice-2): symbol is trusted from the request body and not cross-checked
-                // against the stored signal's actual symbol — deferred per final review item #5.
+                // The payload symbol is cross-checked against the signal it names: a prod run on
+                // 2026-09-11 submitted two SKIP decisions with signal_id and symbol crossed
+                // between two signals, so the wrong instrument's symbol was persisted on the
+                // decision row. Prefer the signal's symbol when the two disagree.
                 String symbol = d.path("symbol").asString("");
                 String rationale = d.path("rationale").asString(null);
 
@@ -1659,6 +1663,18 @@ public class ExecutorWebhookController {
                     continue;
                 }
 
+                ExecutorSignal signal = signalRepo.findById(signalId);
+                if (signal == null) {
+                    log.warn("submit-decision: signal {} not found for action {} in run {} — "
+                            + "symbol '{}' persisted unchecked", signalId, action, runId, symbol);
+                } else if (signal.symbol() != null && !signal.symbol().trim().equals(symbol.trim())) {
+                    log.warn("submit-decision: symbol '{}' in the payload disagrees with signal "
+                                    + "{}'s symbol '{}' in run {} — persisted with the signal's symbol",
+                            symbol, signalId, signal.symbol(), runId);
+                    symbol = signal.symbol();
+                    symbolCorrected++;
+                }
+
                 decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
                         null, List.of(), rationale, null, runId, null, action));
                 if ("SKIP".equals(action)) {
@@ -1668,7 +1684,8 @@ public class ExecutorWebhookController {
             }
         }
         return ResponseEntity.ok(Map.of("output",
-                Map.of("recorded", recorded, "unknown_actions", unknownActions)));
+                Map.of("recorded", recorded, "unknown_actions", unknownActions,
+                        "symbol_corrected", symbolCorrected)));
     }
 
     // -------------------------------------------------------------------

@@ -3083,6 +3083,75 @@ class ExecutorWebhookControllerTest {
         verify(decisionRepo, never()).insert(any());
     }
 
+    /**
+     * Prod, 2026-09-11 23:02 UTC: an operator run submitted two SKIP decisions with signal_id
+     * and symbol crossed (signal A's id paired with signal B's symbol and rationale, and vice
+     * versa). The stored {@code executor_decision} row then carried the wrong instrument, and
+     * the nightly outcome batch walked the wrong bars from it. Cross-check the payload symbol
+     * against the signal it names and persist the signal's symbol when they disagree.
+     */
+    @Test
+    void submitDecision_correctsASymbolThatDisagreesWithTheSignal() {
+        when(signalRepo.findById("sig-1")).thenReturn(
+                new ExecutorSignal("sig-1", "hunter", "v1", "RIGHTCO", "LONG",
+                        0.5, "mechanism", List.of("X"), "3m", new BigDecimal("10"),
+                        "PENDING", "2026-07-01T00:00:00Z"));
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-1","symbol":"WRONGCO","action":"SKIP","rationale":"thin"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(1);
+        assertThat(output.get("symbol_corrected")).isEqualTo(1);
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().symbol()).isEqualTo("RIGHTCO");
+        verify(signalRepo).markStatus("sig-1", "SKIPPED");
+    }
+
+    /** Regression: matching symbols must not be flagged or altered. */
+    @Test
+    void submitDecision_keepsAMatchingSymbolAndReportsZeroCorrections() {
+        when(signalRepo.findById("sig-1")).thenReturn(
+                new ExecutorSignal("sig-1", "hunter", "v1", "ACME", "LONG",
+                        0.5, "mechanism", List.of("X"), "3m", new BigDecimal("10"),
+                        "PENDING", "2026-07-01T00:00:00Z"));
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-1","symbol":"ACME","action":"SKIP","rationale":"thin"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("symbol_corrected")).isEqualTo(0);
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().symbol()).isEqualTo("ACME");
+    }
+
+    /** An unknown signal_id must not block persistence — behave exactly as before, unchecked. */
+    @Test
+    void submitDecision_persistsUncheckedWhenTheSignalIsUnknown() {
+        when(signalRepo.findById("sig-9")).thenReturn(null);
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-9","symbol":"ZZZ","action":"SKIP","rationale":"thin"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(1);
+        assertThat(output.get("symbol_corrected")).isEqualTo(0);
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().symbol()).isEqualTo("ZZZ");
+    }
+
     // -------------------------------------------------------------------
     // fetch-open-positions
     // -------------------------------------------------------------------

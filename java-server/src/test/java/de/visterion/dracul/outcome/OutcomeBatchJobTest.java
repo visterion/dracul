@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -526,6 +527,22 @@ class OutcomeBatchJobTest {
         when(marketData.dailyOhlcHistory(eq(symbol), anyInt())).thenReturn(bars);
     }
 
+    /** Like {@link #wireSkip}, but the decision row's symbol disagrees with the signal's own
+     *  symbol -- the 2026-09-11 prod defect where a crossed signal_id/symbol pair persisted the
+     *  wrong instrument on the decision row. Bars are stubbed ONLY for the SIGNAL's symbol: the
+     *  batch must walk that one, not the decision row's. */
+    private void wireSkipMismatchedSymbol(String signalId, String decisionSymbol,
+            ExecutorSignal signal, List<OhlcBar> bars) {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog())
+                .thenReturn(List.of(skipDecision(signalId, decisionSymbol)));
+        when(signals.findById(signalId)).thenReturn(signal);
+        when(outcomeLog.isComplete("skip:" + signalId)).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+        when(marketData.dailyOhlcHistory(eq(signal.symbol()), anyInt())).thenReturn(bars);
+    }
+
     /** Rising series starting the day AFTER the anchor bar. */
     private static List<OhlcBar> risingBarsFrom(LocalDate anchor, int n) {
         List<OhlcBar> bars = new ArrayList<>();
@@ -620,6 +637,27 @@ class OutcomeBatchJobTest {
         assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
         assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
         assertThat(row.complete()).isTrue();
+    }
+
+    /** Prod, 2026-09-11: a crossed signal_id/symbol pair in a submitted SKIP persisted the wrong
+     *  instrument's symbol on the decision row. The batch must walk the SIGNAL's symbol, not the
+     *  decision row's, so the outcome row heals on the next run. */
+    @Test
+    void llmSkip_walksTheSignalsSymbolWhenTheDecisionRowDisagrees() {
+        String signalId = "sig-skip-mismatch";
+        wireSkipMismatchedSymbol(signalId, "WRONGCO", skippedSignal(signalId, "RIGHTCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+
+        job.run();
+
+        verify(marketData, never()).dailyOhlcHistory(eq("WRONGCO"), anyInt());
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.symbol()).isEqualTo("RIGHTCO");
+        // Same ramp as llmSkip_writesCounterfactualKeyedOnTheSignal: entry = after[0].open() = 101.
+        assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
     }
 
     @Test

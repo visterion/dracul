@@ -2438,17 +2438,21 @@ object where an array was declared. An **absent** argument yields an empty array
 | `ENTER` | nothing — `place-entry` already wrote the row, the veto trace and the status transition | untouched here |
 | anything else | nothing; logged at WARN and counted | untouched |
 
-Response: `{ "output": { "recorded": <count>, "unknown_actions": <count> } }`.
+Response: `{ "output": { "recorded": <count>, "unknown_actions": <count>, "symbol_corrected": <count> } }`.
 A non-zero `unknown_actions` means the agent emitted an action verb outside
 the four above and those decisions were dropped — a prompt/schema drift
-signal, never silent.
+signal, never silent. For every `SKIP`/`HOLD` item, the payload's `symbol` is
+cross-checked against the `symbol` of the signal named by `signal_id`; when
+they disagree (after trimming) the row is persisted with the **signal's**
+symbol instead of the payload's, and `symbol_corrected` counts how many rows
+this happened to.
 
 When `decisions` is **present but unreadable** as a list of decision objects,
 the response carries an additional `error` field and the call is logged at WARN
 instead of answering a bare `recorded: 0`:
 
 ```json
-{ "output": { "recorded": 0, "unknown_actions": 0,
+{ "output": { "recorded": 0, "unknown_actions": 0, "symbol_corrected": 0,
   "error": "the 'decisions' argument could not be read as a list of decision objects — resend it as a JSON array of objects with signal_id, symbol, action and rationale" } }
 ```
 
