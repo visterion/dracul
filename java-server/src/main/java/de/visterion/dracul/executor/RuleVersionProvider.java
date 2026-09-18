@@ -37,10 +37,11 @@ public class RuleVersionProvider {
     private final double heatPct;
     private final int pacePerWeek;
     private final int maxPerSector;
+    private final int cooldownDays;
     private final MechanismBudget mechanismBudget;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.7}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.8}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -54,6 +55,7 @@ public class RuleVersionProvider {
             @Value("${dracul.executor.heat-pct:0.15}") double heatPct,
             @Value("${dracul.executor.pace-per-week:10}") int pacePerWeek,
             @Value("${dracul.executor.max-per-sector:5}") int maxPerSector,
+            @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
             MechanismBudget mechanismBudget) {
         this.active = active;
         this.repo = repo;
@@ -69,6 +71,7 @@ public class RuleVersionProvider {
         this.heatPct = heatPct;
         this.pacePerWeek = pacePerWeek;
         this.maxPerSector = maxPerSector;
+        this.cooldownDays = cooldownDays;
         this.mechanismBudget = mechanismBudget;
     }
 
@@ -79,7 +82,7 @@ public class RuleVersionProvider {
                     .put("chandelier_mult", 3.0)
                     .put("giveback_pct", 0.35)
                     .put("giveback_active_from_r", 1.5)
-                    .put("cooldown_days", 10)
+                    .put("cooldown_days", cooldownDays)
                     .put("atr_period", 22)
                     .put("soft_confirm_min", 2)
                     .put("confidence_min", minConfidence)
@@ -101,15 +104,19 @@ public class RuleVersionProvider {
             // is then permanent for the version it describes -- it is the audit record of what
             // that version changed, and prod verification asserts it verbatim.
             //
+            // exec-v0.7 history (no longer seeded): "paper capital scale-up for learning
+            // throughput: total_budget 100000, tranche_count 25 (tranche 4000), risk_pct 0.005,
+            // heat_pct 0.15, max_positions 25, pace_per_week 10, max_per_sector 5; mechanism
+            // budgets unchanged in pct"
+            //
             // exec-v0.6 history (no longer seeded): "confidence floor 0.40; confidence withheld
             // from the LLM queue and dropped from ranking (freshness first); MECHANISM_BUDGET
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "paper capital scale-up for learning throughput: total_budget 100000, "
-                            + "tranche_count 25 (tranche 4000), risk_pct 0.005, heat_pct 0.15, "
-                            + "max_positions 25, pace_per_week 10, max_per_sector 5; mechanism "
-                            + "budgets unchanged in pct",
+                    "cooldown after exit shortened from 10 to 3 days: COOLDOWN-vetoed signals "
+                            + "averaged +1.17 R after 20 days (16/16 positive, n=16); all other "
+                            + "gates unchanged from exec-v0.7",
                     null, params));
         }
     }

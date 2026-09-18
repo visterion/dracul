@@ -164,7 +164,7 @@ public class ReconcileService {
             ObjectMapper mapper,
             TelegramNotifier telegram,
             ExecutorNotifier executorNotifier,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
+            @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
             @Value("${dracul.executor.pending-exit-stale-hours:24}") int pendingExitStaleHours,
             ExecutorPositionLegRepository legRepo,
             @Value("${dracul.executor.price-sanity-pct:0.50}") BigDecimal priceSanityPct) {

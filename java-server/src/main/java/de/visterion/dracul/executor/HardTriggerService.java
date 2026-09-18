@@ -95,7 +95,7 @@ public class HardTriggerService {
             KillCriteriaEvaluator killCriteriaEvaluator,
             @Value("${dracul.executor.giveback-pct:0.35}") double givebackPct,
             @Value("${dracul.executor.giveback-active-from-r:1.5}") double givebackActiveFromR,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays) {
+            @Value("${dracul.executor.cooldown-days:3}") int cooldownDays) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper,
                 killCriteriaEvaluator, givebackPct, givebackActiveFromR, cooldownDays, Clock.systemUTC());
     }

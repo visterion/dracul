@@ -24,9 +24,9 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "paper capital scale-up for learning throughput: total_budget 100000, "
-            + "tranche_count 25 (tranche 4000), risk_pct 0.005, heat_pct 0.15, max_positions 25, "
-            + "pace_per_week 10, max_per_sector 5; mechanism budgets unchanged in pct";
+    static final String CHANGES = "cooldown after exit shortened from 10 to 3 days: COOLDOWN-vetoed "
+            + "signals averaged +1.17 R after 20 days (16/16 positive, n=16); all other gates "
+            + "unchanged from exec-v0.7";
 
     @Nested
     @SpringBootTest
@@ -62,6 +62,8 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("heat_pct").asDouble()).isEqualTo(0.15);
             assertThat(v.params().path("pace_per_week").asInt()).isEqualTo(10);
             assertThat(v.params().path("max_per_sector").asInt()).isEqualTo(5);
+            // Cooldown shortened (exec-v0.8) params
+            assertThat(v.params().path("cooldown_days").asInt()).isEqualTo(3);
         }
     }
 

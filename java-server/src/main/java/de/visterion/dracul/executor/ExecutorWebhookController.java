@@ -164,7 +164,7 @@ public class ExecutorWebhookController {
             @Value("${dracul.executor.max-positions:25}") int maxPositions,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
-            @Value("${dracul.executor.cooldown-days:10}") int cooldownDays,
+            @Value("${dracul.executor.cooldown-days:3}") int cooldownDays,
             @Value("${dracul.executor.total-budget:100000}") java.math.BigDecimal totalBudget,
             @Value("${dracul.executor.tranche-count:25}") int trancheCount,
             @Value("${dracul.executor.heat-pct:0.15}") double heatPct,
