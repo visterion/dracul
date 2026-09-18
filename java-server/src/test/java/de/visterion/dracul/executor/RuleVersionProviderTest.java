@@ -75,7 +75,8 @@ class RuleVersionProviderTest {
             "dracul.executor.enabled=true",
             "dracul.executor.min-confidence=0.55",
             "dracul.executor.max-positions=3",
-            "dracul.executor.mechanism-budget-pct=X:0.5"})
+            "dracul.executor.mechanism-budget-pct=X:0.5",
+            "dracul.executor.cooldown-days=7"})
     class Overrides {
         @DynamicPropertySource
         static void version(DynamicPropertyRegistry r) {
@@ -91,6 +92,7 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("confidence_min").asDouble()).isEqualTo(0.55);
             assertThat(v.params().path("max_positions").asInt()).isEqualTo(3);
             assertThat(v.params().path("mechanism_budget_pct").asString()).isEqualTo("X:0.5");
+            assertThat(v.params().path("cooldown_days").asInt()).isEqualTo(7);
             assertThat(budget.spec()).isEqualTo("X:0.5");   // the single bean feeds both consumers
         }
     }
