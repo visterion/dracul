@@ -2855,6 +2855,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void submitDecision_recordsSkips() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.5, new BigDecimal("10")));
         JsonNode body = json("""
                 {
                   "decisions": [
@@ -2876,6 +2877,7 @@ class ExecutorWebhookControllerTest {
 
     @Test
     void submitDecision_vistierieEnvelope_recordsSkips() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.5, new BigDecimal("10")));
         JsonNode body = json("""
                 {"run_id":"r1","tool_name":"submit_decision",
                  "input":{"decisions":[
@@ -2904,6 +2906,11 @@ class ExecutorWebhookControllerTest {
      */
     @Test
     void submitDecision_persistsHold_withoutTouchingSignalStatus() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.5, new BigDecimal("10")));
+        when(signalRepo.findById("sig-2")).thenReturn(
+                new ExecutorSignal("sig-2", "hunter", "v1", "BBB", "LONG",
+                        0.5, "mechanism", List.of("X"), "3m", new BigDecimal("10"),
+                        "ACCEPTED", "2026-07-01T00:00:00Z"));
         JsonNode body = json("""
                 {
                   "decisions": [
@@ -2985,6 +2992,7 @@ class ExecutorWebhookControllerTest {
      */
     @Test
     void submitDecision_acceptsAStringifiedDecisionsArray() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.5, new BigDecimal("10")));
         JsonNode body = json("""
                 {"input":{"decisions":"[{\\"signal_id\\":\\"sig-1\\",\\"symbol\\":\\"ACME\\",\\"action\\":\\"SKIP\\",\\"rationale\\":\\"thin\\"}]"}}
                 """);
@@ -3000,6 +3008,7 @@ class ExecutorWebhookControllerTest {
      *  bridge behaviour; recover it rather than dropping the run's whole decision set. */
     @Test
     void submitDecision_acceptsADoublyStringifiedDecisionsArray() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.5, new BigDecimal("10")));
         JsonNode body = json("""
                 {"decisions":"\\"[{\\\\\\"signal_id\\\\\\":\\\\\\"sig-1\\\\\\",\\\\\\"symbol\\\\\\":\\\\\\"ACME\\\\\\",\\\\\\"action\\\\\\":\\\\\\"SKIP\\\\\\",\\\\\\"rationale\\\\\\":\\\\\\"thin\\\\\\"}]\\""}
                 """);
@@ -3013,6 +3022,7 @@ class ExecutorWebhookControllerTest {
      *  produces; accept it rather than answering a silent {@code recorded: 0}. */
     @Test
     void submitDecision_acceptsASingleDecisionObject() {
+        when(signalRepo.findById("sig-1")).thenReturn(signal("sig-1", 0.5, new BigDecimal("10")));
         JsonNode body = json("""
                 {"decisions":{"signal_id":"sig-1","symbol":"ACME","action":"SKIP","rationale":"thin"}}
                 """);
@@ -3150,6 +3160,30 @@ class ExecutorWebhookControllerTest {
         ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
         verify(decisionRepo).insert(captor.capture());
         assertThat(captor.getValue().symbol()).isEqualTo("ZZZ");
+    }
+
+    /** A blank/absent payload symbol is not a disagreement to correct -- there is nothing to
+     *  cross-check against -- so it is filled from the signal's symbol WITHOUT counting as a
+     *  correction. */
+    @Test
+    void submitDecision_fillsABlankSymbolFromTheSignalWithoutCountingIt() {
+        when(signalRepo.findById("sig-1")).thenReturn(
+                new ExecutorSignal("sig-1", "hunter", "v1", "RIGHTCO", "LONG",
+                        0.5, "mechanism", List.of("X"), "3m", new BigDecimal("10"),
+                        "PENDING", "2026-07-01T00:00:00Z"));
+        JsonNode body = json("""
+                {"decisions":[{"signal_id":"sig-1","symbol":"","action":"SKIP","rationale":"thin"}]}
+                """);
+
+        ResponseEntity<?> resp = controller.submitDecision(BEARER, "r1", body);
+
+        Map<String, Object> output = outputOf(resp);
+        assertThat(output.get("recorded")).isEqualTo(1);
+        assertThat(output.get("symbol_corrected")).isEqualTo(0);
+
+        ArgumentCaptor<ExecutorDecision> captor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(captor.capture());
+        assertThat(captor.getValue().symbol()).isEqualTo("RIGHTCO");
     }
 
     // -------------------------------------------------------------------

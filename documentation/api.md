@@ -2445,7 +2445,10 @@ signal, never silent. For every `SKIP`/`HOLD` item, the payload's `symbol` is
 cross-checked against the `symbol` of the signal named by `signal_id`; when
 they disagree (after trimming) the row is persisted with the **signal's**
 symbol instead of the payload's, and `symbol_corrected` counts how many rows
-this happened to.
+this happened to. A blank/absent payload `symbol` is filled from the
+signal's without counting as a correction. If `signal_id` does not resolve
+to a known signal, the payload's `symbol` is persisted unchecked and is
+never counted in `symbol_corrected`.
 
 When `decisions` is **present but unreadable** as a list of decision objects,
 the response carries an additional `error` field and the call is logged at WARN

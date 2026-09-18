@@ -528,9 +528,14 @@ public class OutcomeBatchJob {
 
         // 2026-09-11 prod defect: a crossed signal_id/symbol pair in a submitted SKIP persisted
         // the wrong instrument's symbol on the decision row. Walk the SIGNAL's symbol instead --
-        // the row heals on the next batch even if the stored decision row is still wrong.
-        String symbol = signal != null && signal.symbol() != null ? signal.symbol() : d.symbol();
-        if (signal != null && signal.symbol() != null && !signal.symbol().equals(d.symbol())) {
+        // the row heals on the next batch even if the stored decision row is still wrong. Trimmed
+        // symmetrically with the webhook's cross-check; a blank signal symbol is treated like a
+        // missing one and falls back to the decision row's symbol.
+        String signalSymbol = signal != null && signal.symbol() != null
+                ? signal.symbol().trim() : "";
+        String decisionSymbol = d.symbol() != null ? d.symbol().trim() : "";
+        String symbol = !signalSymbol.isEmpty() ? signalSymbol : d.symbol();
+        if (!signalSymbol.isEmpty() && !signalSymbol.equals(decisionSymbol)) {
             log.warn("outcome batch: decision row for signal {} names symbol '{}' but the signal "
                             + "is '{}' — walking the signal's symbol",
                     d.signalId(), d.symbol(), signal.symbol());

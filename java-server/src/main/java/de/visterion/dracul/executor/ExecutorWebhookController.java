@@ -1629,8 +1629,9 @@ public class ExecutorWebhookController {
                 // The payload symbol is cross-checked against the signal it names: a prod run on
                 // 2026-09-11 submitted two SKIP decisions with signal_id and symbol crossed
                 // between two signals, so the wrong instrument's symbol was persisted on the
-                // decision row. Prefer the signal's symbol when the two disagree.
-                String symbol = d.path("symbol").asString("");
+                // decision row. Prefer the signal's symbol when the two disagree. Normalised
+                // (trimmed) once here so a whitespace-padded match is persisted trimmed.
+                String symbol = d.path("symbol").asString("").trim();
                 String rationale = d.path("rationale").asString(null);
 
                 // ENTER is written by /tools/place-entry (with the veto trace, the broker order id
@@ -1667,12 +1668,26 @@ public class ExecutorWebhookController {
                 if (signal == null) {
                     log.warn("submit-decision: signal {} not found for action {} in run {} — "
                             + "symbol '{}' persisted unchecked", signalId, action, runId, symbol);
-                } else if (signal.symbol() != null && !signal.symbol().trim().equals(symbol.trim())) {
-                    log.warn("submit-decision: symbol '{}' in the payload disagrees with signal "
-                                    + "{}'s symbol '{}' in run {} — persisted with the signal's symbol",
-                            symbol, signalId, signal.symbol(), runId);
-                    symbol = signal.symbol();
-                    symbolCorrected++;
+                } else {
+                    String signalSymbol = signal.symbol() != null ? signal.symbol().trim() : "";
+                    if (!signalSymbol.isEmpty()) {
+                        if (symbol.isEmpty()) {
+                            // A blank/absent payload symbol is not a disagreement to correct --
+                            // there is nothing to cross-check against -- so it is filled silently
+                            // (aside from this WARN) and NOT counted in symbol_corrected.
+                            log.warn("submit-decision: symbol missing in payload for signal {} "
+                                    + "in run {} — filled from signal's symbol '{}'",
+                                    signalId, runId, signalSymbol);
+                            symbol = signalSymbol;
+                        } else if (!signalSymbol.equals(symbol)) {
+                            log.warn("submit-decision: symbol '{}' in the payload disagrees with "
+                                            + "signal {}'s symbol '{}' in run {} — persisted with "
+                                            + "the signal's symbol",
+                                    symbol, signalId, signalSymbol, runId);
+                            symbol = signalSymbol;
+                            symbolCorrected++;
+                        }
+                    }
                 }
 
                 decisionRepo.insert(new ExecutorDecision(null, signalId, symbol, false,
