@@ -24,9 +24,9 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "confidence floor 0.40; confidence withheld from the LLM queue and dropped "
-            + "from ranking (freshness first); MECHANISM_BUDGET entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% "
-            + "of budget), transient like MAX_POSITIONS; max_positions 8";
+    static final String CHANGES = "paper capital scale-up for learning throughput: total_budget 100000, "
+            + "tranche_count 25 (tranche 4000), risk_pct 0.005, heat_pct 0.15, max_positions 25, "
+            + "pace_per_week 10, max_per_sector 5; mechanism budgets unchanged in pct";
 
     @Nested
     @SpringBootTest
@@ -50,12 +50,18 @@ class RuleVersionProviderTest {
             assertThat(v.validFrom()).isEqualTo(LocalDate.now().toString());
             assertThat(v.changes()).isEqualTo(CHANGES);
             assertThat(v.params().path("confidence_min").asDouble()).isEqualTo(0.4);
-            assertThat(v.params().path("max_positions").asInt()).isEqualTo(8);
+            assertThat(v.params().path("max_positions").asInt()).isEqualTo(25);
             assertThat(v.params().path("mechanism_budget_pct").asString())
                     .isEqualTo("MERGER_ARB:0.20,QUALITY_52W_LOW:0.15");
             // SP1 parameters still recorded
             assertThat(v.params().path("broker_stop_buffer_atr").asDouble()).isEqualTo(1.0);
-            assertThat(v.params().path("risk_pct").asDouble()).isEqualTo(0.01);
+            assertThat(v.params().path("risk_pct").asDouble()).isEqualTo(0.005);
+            // Paper capital scale-up (exec-v0.7) params
+            assertThat(v.params().path("total_budget").asDouble()).isEqualTo(100000.0);
+            assertThat(v.params().path("tranche_count").asInt()).isEqualTo(25);
+            assertThat(v.params().path("heat_pct").asDouble()).isEqualTo(0.15);
+            assertThat(v.params().path("pace_per_week").asInt()).isEqualTo(10);
+            assertThat(v.params().path("max_per_sector").asInt()).isEqualTo(5);
         }
     }
 

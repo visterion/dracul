@@ -32,18 +32,28 @@ public class RuleVersionProvider {
     private final double riskPct;
     private final double minConfidence;
     private final int maxPositions;
+    private final BigDecimal totalBudget;
+    private final int trancheCount;
+    private final double heatPct;
+    private final int pacePerWeek;
+    private final int maxPerSector;
     private final MechanismBudget mechanismBudget;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.6}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.7}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
             @Value("${dracul.executor.max-broker-stop-pct:0.20}") BigDecimal maxBrokerStopPct,
             @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
-            @Value("${dracul.executor.risk-pct:0.01}") double riskPct,
+            @Value("${dracul.executor.risk-pct:0.005}") double riskPct,
             @Value("${dracul.executor.min-confidence:0.40}") double minConfidence,
-            @Value("${dracul.executor.max-positions:8}") int maxPositions,
+            @Value("${dracul.executor.max-positions:25}") int maxPositions,
+            @Value("${dracul.executor.total-budget:100000}") BigDecimal totalBudget,
+            @Value("${dracul.executor.tranche-count:25}") int trancheCount,
+            @Value("${dracul.executor.heat-pct:0.15}") double heatPct,
+            @Value("${dracul.executor.pace-per-week:10}") int pacePerWeek,
+            @Value("${dracul.executor.max-per-sector:5}") int maxPerSector,
             MechanismBudget mechanismBudget) {
         this.active = active;
         this.repo = repo;
@@ -54,6 +64,11 @@ public class RuleVersionProvider {
         this.riskPct = riskPct;
         this.minConfidence = minConfidence;
         this.maxPositions = maxPositions;
+        this.totalBudget = totalBudget;
+        this.trancheCount = trancheCount;
+        this.heatPct = heatPct;
+        this.pacePerWeek = pacePerWeek;
+        this.maxPerSector = maxPerSector;
         this.mechanismBudget = mechanismBudget;
     }
 
@@ -76,14 +91,25 @@ public class RuleVersionProvider {
                     .put("max_broker_stop_pct", maxBrokerStopPct)
                     .put("atr_short_period", atrShortPeriod)
                     .put("risk_pct", riskPct)
-                    .put("mechanism_budget_pct", mechanismBudget.spec());
+                    .put("mechanism_budget_pct", mechanismBudget.spec())
+                    .put("total_budget", totalBudget)
+                    .put("tranche_count", trancheCount)
+                    .put("heat_pct", heatPct)
+                    .put("pace_per_week", pacePerWeek)
+                    .put("max_per_sector", maxPerSector);
             // seed() only inserts when the version string is NEW, so this text is written once and
-            // is then permanent for exec-v0.6 -- it is the audit record of what this version
-            // changed, and prod verification asserts it verbatim.
+            // is then permanent for the version it describes -- it is the audit record of what
+            // that version changed, and prod verification asserts it verbatim.
+            //
+            // exec-v0.6 history (no longer seeded): "confidence floor 0.40; confidence withheld
+            // from the LLM queue and dropped from ranking (freshness first); MECHANISM_BUDGET
+            // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
+            // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "confidence floor 0.40; confidence withheld from the LLM queue and dropped "
-                            + "from ranking (freshness first); MECHANISM_BUDGET entry cap (MERGER_ARB 20%, "
-                            + "QUALITY_52W_LOW 15% of budget), transient like MAX_POSITIONS; max_positions 8",
+                    "paper capital scale-up for learning throughput: total_budget 100000, "
+                            + "tranche_count 25 (tranche 4000), risk_pct 0.005, heat_pct 0.15, "
+                            + "max_positions 25, pace_per_week 10, max_per_sector 5; mechanism "
+                            + "budgets unchanged in pct",
                     null, params));
         }
     }

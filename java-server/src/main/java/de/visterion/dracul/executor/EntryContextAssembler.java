@@ -68,8 +68,8 @@ public class EntryContextAssembler {
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod,
             @Value("${dracul.executor.atr-short-period:5}") int atrShortPeriod,
-            @Value("${dracul.executor.total-budget:10000}") BigDecimal totalBudget,
-            @Value("${dracul.executor.tranche-count:10}") int trancheCount,
+            @Value("${dracul.executor.total-budget:100000}") BigDecimal totalBudget,
+            @Value("${dracul.executor.tranche-count:25}") int trancheCount,
             @Value("${dracul.executor.instrument-currency:USD}") String instrumentCurrency,
             @Qualifier("executorClock") Clock clock) {
         this.agora = agora;

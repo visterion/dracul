@@ -79,6 +79,14 @@ class VetoServiceTest {
                 BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0, "USD", MechanismBudget.none());
     }
 
+    /** Production defaults as of exec-v0.7 (totalBudget 100000, trancheCount 25 -> tranche 4000).
+     *  maxPositions and maxPerSector are set high here so this cfg isolates the BUDGET gate --
+     *  MAX_POSITIONS/MAX_PER_SECTOR are exercised by their own tests above with their own cfg(). */
+    private VetoConfig cfgAtProdDefaults() {
+        return new VetoConfig(0.6, 100, BigDecimal.valueOf(100000), 0.06, 100,
+                BigDecimal.valueOf(5), 20, 5, 2.0, 3, 25, 0.0, 3.0, "USD", MechanismBudget.none());
+    }
+
     private VetoConfig cfgWithBudget(String spec, int maxPositions) {
         return new VetoConfig(0.6, maxPositions, BigDecimal.valueOf(10000), 0.06, 3,
                 BigDecimal.valueOf(5), 20, 5, 2.0, 3, 10, 0.0, 3.0, "USD", new MechanismBudget(spec));
@@ -445,6 +453,22 @@ class VetoServiceTest {
         VetoService.Outcome outcomeTranche5 = vetoService.evaluate(signal(), ctx, sizing(), cfg(5));
         assertThat(outcomeTranche5.passed()).isFalse();
         assertThat(outcomeTranche5.firstFailure()).isEqualTo(RejectReason.BUDGET);
+    }
+
+    @Test
+    void budget_prodDefaults_25TranchesFillBudgetExactly_26thViolates() {
+        // exec-v0.7 defaults: totalBudget 100000, trancheCount 25 -> tranche 100000/25 = 4000.
+        // 24 tranches already open (96000) + this entry's tranche (4000) = 100000, exactly at
+        // budget -> passes (BUDGET is a <=, not a strict <).
+        EntryContext ctxAt24Tranches = ctx().openExposure(BigDecimal.valueOf(96000)).build();
+        VetoService.Outcome atLimit = vetoService.evaluate(signal(), ctxAt24Tranches, sizing(), cfgAtProdDefaults());
+        assertThat(result(atLimit, "BUDGET").passed()).isTrue();
+
+        // 25 tranches already open (100000) + a 26th tranche (4000) = 104000 > 100000 -> BUDGET fails.
+        EntryContext ctxAt25Tranches = ctx().openExposure(BigDecimal.valueOf(100000)).build();
+        VetoService.Outcome overLimit = vetoService.evaluate(signal(), ctxAt25Tranches, sizing(), cfgAtProdDefaults());
+        assertThat(overLimit.passed()).isFalse();
+        assertThat(overLimit.firstFailure()).isEqualTo(RejectReason.BUDGET);
     }
 
     // ---- 6 HEAT_LIMIT ----
