@@ -79,10 +79,12 @@ class VetoServiceTest {
                 BigDecimal.valueOf(5), 20, 5, 2.0, 3, trancheCount, 0.0, 3.0, "USD", MechanismBudget.none());
     }
 
-    /** Production defaults as of exec-v0.7 (totalBudget 100000, trancheCount 25 -> tranche 4000).
-     *  maxPositions and maxPerSector are set high here so this cfg isolates the BUDGET gate --
-     *  MAX_POSITIONS/MAX_PER_SECTOR are exercised by their own tests above with their own cfg(). */
-    private VetoConfig cfgAtProdDefaults() {
+    /** The four capital knobs (totalBudget, trancheCount, heatPct, pacePerWeek) are at their
+     *  exec-v0.7 production defaults (100000 / 25 -> tranche 4000, 0.15, 10); every other field
+     *  is the {@link #cfg()} test baseline. maxPositions and maxPerSector are set high here so
+     *  this cfg isolates the BUDGET gate -- MAX_POSITIONS/MAX_PER_SECTOR are exercised by their
+     *  own tests above with their own cfg(). */
+    private VetoConfig cfgWithProdCapital() {
         return new VetoConfig(0.6, 100, BigDecimal.valueOf(100000), 0.15, 100,
                 BigDecimal.valueOf(5), 20, 5, 2.0, 10, 25, 0.0, 3.0, "USD", MechanismBudget.none());
     }
@@ -461,12 +463,12 @@ class VetoServiceTest {
         // 24 tranches already open (96000) + this entry's tranche (4000) = 100000, exactly at
         // budget -> passes (BUDGET is a <=, not a strict <).
         EntryContext ctxAt24Tranches = ctx().openExposure(BigDecimal.valueOf(96000)).build();
-        VetoService.Outcome atLimit = vetoService.evaluate(signal(), ctxAt24Tranches, sizing(), cfgAtProdDefaults());
+        VetoService.Outcome atLimit = vetoService.evaluate(signal(), ctxAt24Tranches, sizing(), cfgWithProdCapital());
         assertThat(result(atLimit, "BUDGET").passed()).isTrue();
 
         // 25 tranches already open (100000) + a 26th tranche (4000) = 104000 > 100000 -> BUDGET fails.
         EntryContext ctxAt25Tranches = ctx().openExposure(BigDecimal.valueOf(100000)).build();
-        VetoService.Outcome overLimit = vetoService.evaluate(signal(), ctxAt25Tranches, sizing(), cfgAtProdDefaults());
+        VetoService.Outcome overLimit = vetoService.evaluate(signal(), ctxAt25Tranches, sizing(), cfgWithProdCapital());
         assertThat(overLimit.passed()).isFalse();
         assertThat(overLimit.firstFailure()).isEqualTo(RejectReason.BUDGET);
     }
