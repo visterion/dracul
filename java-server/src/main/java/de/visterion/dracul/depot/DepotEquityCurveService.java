@@ -118,14 +118,20 @@ public class DepotEquityCurveService {
      * to scale 2, HALF_UP.
      *
      * <p>Null below two points: a single point has nothing to be relative to.
+     *
+     * <p>{@code points} and {@code rows} are always the same size and order -- both are
+     * derived from the same {@code rows} list in {@link #curve}. {@code rows.size()} is the
+     * single size this method reads: it drives both the null-guard and the loop bound, so the
+     * two lists cannot silently disagree on how far to iterate.
      */
     private List<RelativePoint> relative(List<CurvePoint> points, List<DepotEquitySnapshot> rows) {
-        if (points.size() < 2) return null;
-        List<RelativePoint> out = new ArrayList<>(points.size());
+        int n = rows.size();
+        if (n < 2) return null;
+        List<RelativePoint> out = new ArrayList<>(n);
         out.add(new RelativePoint(points.getFirst().t(), BigDecimal.ZERO.setScale(SCALE, RoundingMode.HALF_UP)));
 
         BigDecimal cumulative = BigDecimal.ONE.setScale(10, RoundingMode.HALF_UP);
-        for (int i = 1; i < rows.size(); i++) {
+        for (int i = 1; i < n; i++) {
             BigDecimal previousEquity = rows.get(i - 1).equity();
             BigDecimal factor;
             if (previousEquity.compareTo(BigDecimal.ZERO) == 0) {

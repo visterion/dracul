@@ -843,7 +843,7 @@ redirects here): one `DepotSection` per connected broker
       net of the external cash flow booked on that row, so a deposit or withdrawal between two
       snapshots no longer reads as investment gain or loss. Formula: for `i >= 1`,
       `r_i = (E_i - F_i) / E_{i-1} - 1` (`F_i` = `depot_equity_snapshot.external_flow` on row
-      `i`), chained as `pct_i = (prod_{k<=i}(1 + r_i) - 1) * 100`; `pct_0 = 0`. A flow on row 0
+      `i`), chained as `pct_i = (prod_{k<=i}(1 + r_k) - 1) * 100`; `pct_0 = 0`. A flow on row 0
       is never read (no prior interval to net it out of); if `E_{i-1} = 0`, `r_i = 0` by
       definition (no division by zero, no spurious jump).
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)

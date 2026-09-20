@@ -147,30 +147,31 @@ class DepotEquityCurveServiceTest {
 
     // Time-weighted return: a deposit must not appear as investment gain. Formula (see
     // DepotEquityCurveService.relative): r_i = (E_i - F_i) / E_{i-1} - 1, chain-linked;
-    // pct_i = (prod_{k<=i}(1+r_k) - 1) * 100.
+    // pct_i = (prod_{k<=i}(1+r_k) - 1) * 100. All values here are invented round numbers,
+    // not production data (CLAUDE.md: committed fixtures must be synthetic).
     @Test
     void depositIsExcludedFromTheReturnByNettingItOutOfItsInterval() {
         var repo = mock(DepotEquitySnapshotRepository.class);
         when(repo.series(any(), any(), any())).thenReturn(List.of(
-                dailyWithFlow("2026-09-15", "9000.00", "0.00"),
-                dailyWithFlow("2026-09-16", "9100.00", "0.00"),
-                dailyWithFlow("2026-09-17", "110000.00", "100956.96"),
-                dailyWithFlow("2026-09-18", "110500.00", "0.00")));
+                dailyWithFlow("2026-01-01", "1000.00", "0.00"),
+                dailyWithFlow("2026-01-02", "1100.00", "0.00"),
+                dailyWithFlow("2026-01-03", "21000.00", "20000.00"),
+                dailyWithFlow("2026-01-04", "21210.00", "0.00")));
 
         var relative = service(repo).curve("conn-1", "1m").relative();
 
-        // r_1 = (9100 - 0) / 9000 - 1 = 1/90 = 0.0111111111 -> pct_1 = 1.11111111 -> 1.11
-        // r_2 = (110000 - 100956.96) / 9100 - 1 = 9043.04/9100 - 1 = -0.0062593407 (the 57 EUR
-        //       flatten difference on top of the deposit)
-        //       cumulative = (91/90) * (9043.04/9100) = 1.0047822222 -> pct_2 = 0.48
-        // r_3 = 110500/110000 - 1 = 0.0045454545
-        //       cumulative = 1.0047822222 * 1.0045454545 = 1.0093494141 -> pct_3 = 0.93
+        // r_1 = (1100 - 0) / 1000 - 1 = 0.10 -> pct_1 = 10.00
+        // r_2 = (21000 - 20000) / 1100 - 1 = 1000/1100 - 1 = 10/11 - 1 = -0.0909090909
+        //       (a -9.09% residual on top of the 20 000 deposit, which is fully netted out)
+        //       cumulative = 1.10 * (10/11) = 1.0 exactly -> pct_2 = 0.00
+        // r_3 = 21210/21000 - 1 = 0.01
+        //       cumulative = 1.0 * 1.01 = 1.01 -> pct_3 = 1.00
         assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
                 .containsExactly(
                         new BigDecimal("0.00"),
-                        new BigDecimal("1.11"),
-                        new BigDecimal("0.48"),
-                        new BigDecimal("0.93"));
+                        new BigDecimal("10.00"),
+                        new BigDecimal("0.00"),
+                        new BigDecimal("1.00"));
     }
 
     @Test
@@ -251,6 +252,30 @@ class DepotEquityCurveServiceTest {
                         new BigDecimal("0.00"),
                         new BigDecimal("-100.00"),
                         new BigDecimal("-100.00"));
+    }
+
+    // Symmetric case: a zero baseline equity re-anchors the chain rather than dividing by
+    // zero. The interval immediately after E_{i-1} = 0 counts as 0% by the r_i = 0 rule, and
+    // the next interval then resumes normal computation from the new (nonzero) baseline.
+    @Test
+    void zeroBaselineEquityReanchorsTheChainInsteadOfDividingByZero() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of(
+                daily("2026-09-15", "0.00"),
+                daily("2026-09-16", "100.00"),
+                daily("2026-09-17", "200.00")));
+
+        var relative = service(repo).curve("conn-1", "1m").relative();
+
+        // E_0 = 0 -> r_1 = 0 by definition -> cumulative_1 = 1 -> pct_1 = 0.00 (re-anchored,
+        // not a division-by-zero crash and not a spurious jump to the raw 100 EUR gain).
+        // r_2 = 200/100 - 1 = 1.0, computed normally from the now-nonzero E_1 = 100 ->
+        // cumulative_2 = 1 * 2 = 2 -> pct_2 = 100.00.
+        assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
+                .containsExactly(
+                        new BigDecimal("0.00"),
+                        new BigDecimal("0.00"),
+                        new BigDecimal("100.00"));
     }
 
     @Test

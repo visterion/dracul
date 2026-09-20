@@ -946,7 +946,10 @@ never reads as investment gain or loss: for `i >= 1`,
 on point 0 is never read (no prior interval to net it out of); if
 `E_{i−1} = 0`, `r_i = 0` by definition (no division by zero, no
 spurious jump). Intermediate arithmetic is scale 10, the returned
-percentage scale 2 HALF_UP.
+percentage scale 2 HALF_UP. By construction of that rule, a zero
+equity re-anchors the chain: the interval right after `E_{i−1} = 0`
+always counts as `0%`, and once equity reaches `0` the cumulative
+return stays pinned at `−100%` for that following interval.
 
 ```json
 {
