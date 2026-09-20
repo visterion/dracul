@@ -839,10 +839,13 @@ redirects here): one `DepotSection` per connected broker
        large negative gap.
     3. Otherwise no hint: the series is either gap-free or long enough that a few missing days
        don't need calling out.
-    - **Percent-series caveat**: the `%` mode plots a *raw* equity delta (`relative[i].pct`),
-      not a time-weighted return — a deposit or withdrawal between two snapshots reads as a
-      gain or loss. Time-weighted return arrives with the planned cash-flow work; until then,
-      treat the percent curve as directional only, not as a performance figure.
+    - **Percent series is time-weighted**: `relative[i].pct` chain-links per-interval returns
+      net of the external cash flow booked on that row, so a deposit or withdrawal between two
+      snapshots no longer reads as investment gain or loss. Formula: for `i >= 1`,
+      `r_i = (E_i - F_i) / E_{i-1} - 1` (`F_i` = `depot_equity_snapshot.external_flow` on row
+      `i`), chained as `pct_i = (prod_{k<=i}(1 + r_i) - 1) * 100`; `pct_0 = 0`. A flow on row 0
+      is never read (no prior interval to net it out of); if `E_{i-1} = 0`, `r_i = 0` by
+      definition (no division by zero, no spurious jump).
 - **Abs/% toggle**: `useDisplayMode()` (`src/composables/useDisplayMode.ts`)
   is a module-level singleton ref persisted to
   `localStorage('dracul.depots.displayMode')`. Clicking *any* P&L/day-change

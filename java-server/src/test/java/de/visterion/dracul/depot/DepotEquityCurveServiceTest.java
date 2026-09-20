@@ -27,10 +27,18 @@ class DepotEquityCurveServiceTest {
     }
 
     private DepotEquitySnapshot daily(String isoDay, String equity, String currency) {
+        return dailyWithFlow(isoDay, equity, currency, "0.00");
+    }
+
+    private DepotEquitySnapshot dailyWithFlow(String isoDay, String equity, String flow) {
+        return dailyWithFlow(isoDay, equity, "EUR", flow);
+    }
+
+    private DepotEquitySnapshot dailyWithFlow(String isoDay, String equity, String currency, String flow) {
         return new DepotEquitySnapshot(1L, "conn-1", Instant.parse(isoDay + "T00:00:00Z"),
                 "DAILY", new BigDecimal(equity), new BigDecimal("10.00"),
                 new BigDecimal(equity).subtract(new BigDecimal("10.00")),
-                currency, BigDecimal.ZERO, "MEASURED");
+                currency, new BigDecimal(flow), "MEASURED");
     }
 
     private DepotEquitySnapshot intraday(String iso, String equity) {
@@ -135,6 +143,114 @@ class DepotEquityCurveServiceTest {
 
         assertThat(curve.relative()).extracting(DepotEquityCurveService.RelativePoint::pct)
                 .containsExactly(new BigDecimal("0.00"), new BigDecimal("10.00"));
+    }
+
+    // Time-weighted return: a deposit must not appear as investment gain. Formula (see
+    // DepotEquityCurveService.relative): r_i = (E_i - F_i) / E_{i-1} - 1, chain-linked;
+    // pct_i = (prod_{k<=i}(1+r_k) - 1) * 100.
+    @Test
+    void depositIsExcludedFromTheReturnByNettingItOutOfItsInterval() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of(
+                dailyWithFlow("2026-09-15", "9000.00", "0.00"),
+                dailyWithFlow("2026-09-16", "9100.00", "0.00"),
+                dailyWithFlow("2026-09-17", "110000.00", "100956.96"),
+                dailyWithFlow("2026-09-18", "110500.00", "0.00")));
+
+        var relative = service(repo).curve("conn-1", "1m").relative();
+
+        // r_1 = (9100 - 0) / 9000 - 1 = 1/90 = 0.0111111111 -> pct_1 = 1.11111111 -> 1.11
+        // r_2 = (110000 - 100956.96) / 9100 - 1 = 9043.04/9100 - 1 = -0.0062593407 (the 57 EUR
+        //       flatten difference on top of the deposit)
+        //       cumulative = (91/90) * (9043.04/9100) = 1.0047822222 -> pct_2 = 0.48
+        // r_3 = 110500/110000 - 1 = 0.0045454545
+        //       cumulative = 1.0047822222 * 1.0045454545 = 1.0093494141 -> pct_3 = 0.93
+        assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
+                .containsExactly(
+                        new BigDecimal("0.00"),
+                        new BigDecimal("1.11"),
+                        new BigDecimal("0.48"),
+                        new BigDecimal("0.93"));
+    }
+
+    @Test
+    void withdrawalIsExcludedFromTheReturnSymmetricallyToADeposit() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of(
+                dailyWithFlow("2026-09-15", "1000.00", "0.00"),
+                dailyWithFlow("2026-09-16", "1100.00", "0.00"),
+                dailyWithFlow("2026-09-17", "1000.00", "-200.00")));
+
+        var relative = service(repo).curve("conn-1", "1m").relative();
+
+        // r_1 = 1100/1000 - 1 = 0.10 -> pct_1 = 10.00
+        // r_2 = (1000 - (-200)) / 1100 - 1 = 1200/1100 - 1 = 2/22 = 0.0909090909
+        //       cumulative = 1.10 * 1.0909090909 = 1.2 (11/10 * 12/11 = 12/10) -> pct_2 = 20.00
+        assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
+                .containsExactly(
+                        new BigDecimal("0.00"),
+                        new BigDecimal("10.00"),
+                        new BigDecimal("20.00"));
+    }
+
+    @Test
+    void flowOnTheFirstPointIsIgnoredBecauseThereIsNoPriorInterval() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of(
+                dailyWithFlow("2026-09-15", "1000.00", "500.00"),
+                dailyWithFlow("2026-09-16", "1100.00", "0.00")));
+
+        var relative = service(repo).curve("conn-1", "1m").relative();
+
+        // F_0 = 500 is never read: the loop starts at i = 1 and only ever looks at F_i for
+        // i >= 1. r_1 = (1100 - 0) / 1000 - 1 = 0.10 -> pct_1 = 10.00, as if F_0 were 0.
+        assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
+                .containsExactly(new BigDecimal("0.00"), new BigDecimal("10.00"));
+    }
+
+    // Regression: with every flow at 0, chain-linking telescopes to the old plain formula
+    // (E_i / E_0 - 1) x 100. relativeIsPercentAgainstTheFirstReturnedPoint above already
+    // covers this since daily(...) defaults external_flow to 0; this test adds a third point
+    // to demonstrate the telescoping explicitly.
+    @Test
+    void allZeroFlowsTelescopeToTheOldPlainReturnFormula() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of(
+                daily("2026-09-15", "100.00"),
+                daily("2026-09-16", "110.00"),
+                daily("2026-09-17", "90.00")));
+
+        var relative = service(repo).curve("conn-1", "1m").relative();
+
+        // r_1 = 110/100 - 1 = 0.10; r_2 = 90/110 - 1 = -0.181818...
+        // cumulative_1 = 1.10 -> pct_1 = 10.00 = 110/100 - 1, matches the old formula.
+        // cumulative_2 = 1.10 * (90/110) = 90/100 = 0.90 -> pct_2 = -10.00 = 90/100 - 1.
+        assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
+                .containsExactly(
+                        new BigDecimal("0.00"),
+                        new BigDecimal("10.00"),
+                        new BigDecimal("-10.00"));
+    }
+
+    @Test
+    void intervalEquityOfZeroYieldsNoReturnJumpInsteadOfDividingByZero() {
+        var repo = mock(DepotEquitySnapshotRepository.class);
+        when(repo.series(any(), any(), any())).thenReturn(List.of(
+                daily("2026-09-15", "100.00"),
+                daily("2026-09-16", "0.00"),
+                daily("2026-09-17", "50.00")));
+
+        var relative = service(repo).curve("conn-1", "1m").relative();
+
+        // r_1 = 0/100 - 1 = -1 -> cumulative_1 = 0 -> pct_1 = -100.00.
+        // E_1 = 0 is the previous equity for interval 2 -> by definition r_2 = 0 (no
+        // division by zero, no spurious jump): cumulative_2 = 0 * 1 = 0 -> pct_2 = -100.00,
+        // even though equity actually recovered to 50 (there is nothing to be relative to).
+        assertThat(relative).extracting(DepotEquityCurveService.RelativePoint::pct)
+                .containsExactly(
+                        new BigDecimal("0.00"),
+                        new BigDecimal("-100.00"),
+                        new BigDecimal("-100.00"));
     }
 
     @Test

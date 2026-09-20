@@ -937,9 +937,16 @@ point's `source` is `MEASURED` or `RECONSTRUCTED`, per the underlying
 snapshot's currency, or `null` if the connection has no snapshot yet.
 A day with no snapshot row is a gap — never filled or interpolated
 from another granularity. `relative` is `null` below two points (a
-single point has nothing to be relative to); otherwise
-`relative[].pct` is `(value/points[0].value − 1) × 100`, scale 2
-HALF_UP (so the first point's `pct` is always `0.00`).
+single point has nothing to be relative to); otherwise `relative[].pct`
+is a time-weighted return, chain-linked per interval so a deposit or
+withdrawal (`depot_equity_snapshot.external_flow`) is netted out and
+never reads as investment gain or loss: for `i >= 1`,
+`r_i = (E_i − F_i) / E_{i−1} − 1`, chained as
+`pct_i = (Π_{k≤i}(1 + r_k) − 1) × 100`; `pct_0` is always `0.00`. A flow
+on point 0 is never read (no prior interval to net it out of); if
+`E_{i−1} = 0`, `r_i = 0` by definition (no division by zero, no
+spurious jump). Intermediate arithmetic is scale 10, the returned
+percentage scale 2 HALF_UP.
 
 ```json
 {

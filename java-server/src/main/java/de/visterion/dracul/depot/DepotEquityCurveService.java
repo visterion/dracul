@@ -71,7 +71,7 @@ public class DepotEquityCurveService {
         }
 
         String currency = rows.isEmpty() ? null : rows.getLast().currency();
-        return new EquityCurve(granularity, points, relative(points), currency);
+        return new EquityCurve(granularity, points, relative(points, rows), currency);
     }
 
     private String granularityFor(String range) {
@@ -101,19 +101,44 @@ public class DepotEquityCurveService {
                 : DateTimeFormatter.ISO_INSTANT.format(asOf);
     }
 
-    /** Null below two points: a single point has nothing to be relative to. */
-    private List<RelativePoint> relative(List<CurvePoint> points) {
+    /**
+     * Time-weighted return, chain-linked per interval so that an external cash flow (a
+     * deposit or withdrawal booked on {@code depot_equity_snapshot.external_flow}) never
+     * reads as investment performance.
+     *
+     * <p>For interval {@code i >= 1}: {@code r_i = (E_i - F_i) / E_{i-1} - 1}, where {@code F_i}
+     * is the flow booked on row {@code i}. The series is then chain-linked:
+     * {@code pct_i = (prod_{k<=i}(1 + r_k) - 1) * 100}, with {@code pct_0 = 0}. A flow on row 0
+     * ({@code F_0}) is never read -- there is no prior interval to net it out of.
+     *
+     * <p>If {@code E_{i-1} = 0}, {@code r_i} is defined as 0 (no division by zero, no spurious
+     * jump) -- the same fail-soft convention the plain formula used for {@code E_0 = 0}.
+     *
+     * <p>Intermediate arithmetic is kept at scale 10; only the returned percentage is rounded
+     * to scale 2, HALF_UP.
+     *
+     * <p>Null below two points: a single point has nothing to be relative to.
+     */
+    private List<RelativePoint> relative(List<CurvePoint> points, List<DepotEquitySnapshot> rows) {
         if (points.size() < 2) return null;
-        BigDecimal first = points.getFirst().value();
         List<RelativePoint> out = new ArrayList<>(points.size());
-        for (CurvePoint p : points) {
-            BigDecimal pct = first.compareTo(BigDecimal.ZERO) == 0
-                    ? BigDecimal.ZERO.setScale(SCALE, RoundingMode.HALF_UP)
-                    : p.value().divide(first, 10, RoundingMode.HALF_UP)
-                            .subtract(BigDecimal.ONE)
-                            .multiply(HUNDRED)
-                            .setScale(SCALE, RoundingMode.HALF_UP);
-            out.add(new RelativePoint(p.t(), pct));
+        out.add(new RelativePoint(points.getFirst().t(), BigDecimal.ZERO.setScale(SCALE, RoundingMode.HALF_UP)));
+
+        BigDecimal cumulative = BigDecimal.ONE.setScale(10, RoundingMode.HALF_UP);
+        for (int i = 1; i < rows.size(); i++) {
+            BigDecimal previousEquity = rows.get(i - 1).equity();
+            BigDecimal factor;
+            if (previousEquity.compareTo(BigDecimal.ZERO) == 0) {
+                factor = BigDecimal.ONE;
+            } else {
+                BigDecimal net = rows.get(i).equity().subtract(rows.get(i).externalFlow());
+                factor = net.divide(previousEquity, 10, RoundingMode.HALF_UP);
+            }
+            cumulative = cumulative.multiply(factor).setScale(10, RoundingMode.HALF_UP);
+            BigDecimal pct = cumulative.subtract(BigDecimal.ONE)
+                    .multiply(HUNDRED)
+                    .setScale(SCALE, RoundingMode.HALF_UP);
+            out.add(new RelativePoint(points.get(i).t(), pct));
         }
         return out;
     }
