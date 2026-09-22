@@ -100,10 +100,13 @@ payload deliberately does **not** carry:
 
 Both are written by `PreySignalEmitter` only, under the same availability
 condition as `referencePrice`, and only from migration V49 onward. Signals
-injected by an operator through `POST /api/executor/signals` carry neither, and
-so do all rows written before V49 — which is exactly why neither ever produces
-an `LLM_SKIP` counterfactual — except a verification probe whose anchors were
-set by hand (SP2b, 2026-09).
+injected by an operator through `POST /api/executor/signals` carry neither.
+Rows written before V49 originally had neither field either, but **since
+SP12** the nightly outcome batch reconstructs both for eligible pre-V49 rows
+from daily history before the counterfactual walk runs — see `LLM_SKIP`
+below and `executor_signal.reference_source` in architecture.md. A
+verification probe's anchors were set by hand (SP2b, 2026-09) and are
+tracked as `reference_source = 'manual'`.
 
 ### `POST /api/executor/run`
 
@@ -152,7 +155,8 @@ Response (200):
 {
   "executor": {"brier": 0.18, "n": 42, "insufficient": false,
                "buckets": [{"range": "0.6-0.7", "n": 10, "predicted": 0.65, "observed": 0.5}]},
-  "hunters": [{"agent": "strigoi-echo", "brier": 0.21, "n": 17, "insufficient": true, "buckets": []}]
+  "hunters": [{"agent": "strigoi-echo", "brier": 0.21, "n": 17, "insufficient": true, "buckets": [],
+               "reconstructed": 9}]
 }
 ```
 
@@ -183,13 +187,26 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   were invisible to the batch before SP3). **Overlap rule:** when
   `place_entry` already vetoed the signal in the same run, the **veto reason
   wins** and the SKIP is not counted a second time — `LLM_SKIP` never
-  double-counts a vetoed signal. The series **starts at the V49 deploy date**:
-  the counterfactual needs `executor_signal.reference_bar_date` and
-  `reference_atr`, which `PreySignalEmitter` only began persisting then, and
-  the ~202 historical skips are deliberately not backfilled. Signals injected
-  through `POST /api/executor/signals` carry neither field and therefore never
-  produce an `LLM_SKIP` row. Both feed `veto_precision` and, once labelled, the
-  hunter Brier (SP7). **Entry convention (SP8).** `reference_bar_date` and
+  double-counts a vetoed signal. The counterfactual needs
+  `executor_signal.reference_bar_date` and `reference_atr`; `PreySignalEmitter`
+  only began persisting them at V49. **Since SP12** the nightly outcome batch
+  (`AnchorReconstructionStep`, runs before the counterfactual walk) reconstructs
+  both for eligible pre-V49 `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` signals from
+  daily OHLC history, so the series is no longer forward-only from the V49
+  deploy date. Reconstruction mirrors Agora's completed-bar rule (venue session
+  cutoff, no suffix = New York, `.HK` = Hong Kong only — any other venue or an
+  ISIN fails permanently) and Agora's `atr` (simple mean of True Range over the
+  22 bars ending at the anchor bar, scale 4). A successfully reconstructed row
+  is written with `executor_signal.reference_source = 'reconstructed'`; a
+  permanent failure (unsupported venue, stale history, malformed bar, or
+  genuinely insufficient provider history) is marked `'unreconstructable'` and
+  not retried until an operator resets it (see operations.md). Signals injected
+  through `POST /api/executor/signals` and any signal without a
+  `reference_price` are never reconstructed — no price is invented. Both feed
+  `veto_precision` and, once labelled, the hunter Brier (SP7); every
+  reconstructed row is pooled into both but stays distinguishable — see
+  `hypothetical.anchor_source` below and the `reconstructed`/`reconstructed_r20`
+  fields. **Entry convention (SP8).** `reference_bar_date` and
   `reference_atr` are the last **completed** bar's date and ATR at emission,
   and the counterfactual enters at the **open of the first bar after the
   anchor** — `hypothetical.entry_source = "next_bar_open"` with
@@ -217,7 +234,8 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   `place_entry`'s veto #3 and anchors on the **decision day**); for a swept
   signal the two are apart by at least `max-signal-age-days` + 1 trading days
   and unbounded above, so pooling them would redefine the existing datum.
-  Same forward-only limitation as `LLM_SKIP` (needs the V49 anchors). A
+  Needs the same `reference_bar_date`/`reference_atr` anchors as `LLM_SKIP`
+  and is reconstructed by the same SP12 nightly step for pre-V49 rows. A
   signal stranded by a *transient* `place_entry` reject never appears here —
   it already has a counterfactual under that veto reason, and the veto reason
   wins. The bucket counts **signals**, not symbols: a symbol re-emitted and
@@ -235,6 +253,49 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   signal, which is the bar that price actually belongs to). For a decision
   taken on the emission day these coincide; a small minority of signals are
   decided later and are therefore anchored earlier than their verdict.
+- **`hypothetical.anchor_source`** (SP12) records where the anchors a
+  `COUNTERFACTUAL` row was walked from came from: `"emission"` (persisted by
+  `PreySignalEmitter` at signal time), `"reconstructed"` (SP12 nightly
+  reconstruction from daily history), `"manual"` (anchors present but dated
+  after emission — hand-written, no code path produces this), or `"unknown"`
+  (an anchored row with `reference_source IS NULL`, e.g. manual SQL applied
+  after the V50 migration). It is written on every branch that reaches the
+  walk and is **absent** on the early-return branches (same rule as
+  `hypothetical.entry_source`).
+- **`veto_precision[].reconstructed`** and **`.reconstructed_r20`** (SP12):
+  `reconstructed` counts the non-skipped rows in that reason code's population
+  (the same population behind `mean_hypothetical_r_60d`/`stopped_out_pct`)
+  whose `anchor_source = "reconstructed"`; `reconstructed_r20` counts, of the
+  rows actually contributing a value to `mean_hypothetical_r_20d`, how many of
+  those have `anchor_source = "reconstructed"` — a separate count because for
+  weeks after a fresh reconstruction the `LLM_SKIP` r20 mean can be close to
+  100% reconstructed, which a single combined count would hide.
+- **`hunters[].reconstructed`** (SP12): of that hunter's `n` labelled points,
+  how many were walked from a reconstructed anchor. Reconstructed rows are
+  pooled into the hunter Brier like any other point (the SP12 shadow check
+  verifies the reconstruction rule reproduces stored emission anchors) — this
+  field is what makes the reconstructed share visible per hunter.
+- **Known limitations of SP12 reconstruction** (documented, not fixed):
+  - **HK in-session entry convention.** For a signal emitted while the
+    Hong Kong venue is in session, the anchor is the *previous* trading day
+    (Agora's completed-bar rule), so the walk still enters at that emission
+    day's 09:30 local open — hours before the signal existed. This is the
+    same convention every post-SP8 forward `.HK` row already uses; it also
+    applies unchanged to reconstructed `.HK` rows.
+  - **Pre-SP8 HK partial-bar rows stay `emission`.** Ten `.HK` rows emitted
+    before SP8 (2026-09-17) carry an anchor taken from a still-partial bar
+    (Agora's completed-bar guard didn't exist yet); SP12 does not re-anchor
+    them, they remain classified `reference_source = 'emission'`.
+  - **12-month horizon vs. the walk's lookback cap.** A counterfactual row
+    only completes once `bars.size() >= max(60, horizonTradingDays)`
+    (3m = 64, 6m = 129, 12m = 257 trading bars). The walk fetches
+    `daysSince + 90` calendar days of bars, capped at 400 — enough for the
+    12-month horizon only while ~257 trading bars still fit inside that
+    400-calendar-day cap; a 12m row that falls behind this ratio (e.g. after
+    a long gap with few trading days) can stay incomplete indefinitely.
+  - 21 pre-V49 `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` signals have no
+    `reference_price` at all and are never reconstructed — no price is
+    invented for them.
 - **Dedupe:** one row per (signal, reason). `place_entry` retries of the same
   signal used to write one counterfactual per attempt and inflate these
   counts; `n` is now signals, not attempts.
@@ -261,7 +322,8 @@ Response (200):
 ```json
 {
   "veto_precision": [{"reason_code": "PACE_LIMIT", "n": 12, "skipped": 3, "mean_hypothetical_r_20d": 0.4,
-                       "mean_hypothetical_r_60d": 1.1, "stopped_out_pct": 25.0}],
+                       "mean_hypothetical_r_60d": 1.1, "stopped_out_pct": 25.0,
+                       "reconstructed": 5, "reconstructed_r20": 3}],
   "caveats": ["counterfactuals assume reference-price fills (optimistic)",
               "PACE_LIMIT/BUDGET rejects are opportunity-cost questions",
               "reason_code is the first failed check; stats are conditional on earlier checks passing",

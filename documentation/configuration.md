@@ -657,6 +657,13 @@ Dracul's read-only design.
 | `DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_MAX_PER_RUN` | `dracul.outcome.reconstruct-anchors.max-per-run` | `100` | Cap on how many anchor-missing signals `ExecutorSignalRepository.findAnchorCandidates` returns per nightly run. |
 | `DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_SHADOW_SAMPLE` | `dracul.outcome.reconstruct-anchors.shadow-sample` | `10` | Size of the read-only shadow sample: recently emitted signals that already carry a real emission-time anchor (`reference_source = 'emission'`), against which the reconstruction rule is silently re-run and compared (never written) to continuously validate the rule against ground truth. `0` disables the shadow check without disabling reconstruction itself. |
 
+The three `DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_*` variables default to their
+prod values in `application.yaml`, so overriding one (e.g. as a kill-switch
+via `DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_ENABLED=false`) on the running
+deployment only takes effect once the variable is added to the container's
+compose environment list — the value has to be passed through, not just set
+somewhere the process can't see it.
+
 **Safety notes:**
 - `place-entry` and `exit-position` are the only write paths to the broker;
   every other tool (`fetch-pending-signals`, `fetch-open-positions`,

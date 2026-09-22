@@ -781,14 +781,12 @@ once the sweeper has retired a signal that carries V49 anchors, and
 
 **After the deploy:**
 
-- **`LLM_SKIP` counterfactuals** start accruing from the deploy date, not
-  before: the walk needs `executor_signal.reference_bar_date` and
-  `reference_atr`, which the emitter only began persisting with V49, and the
-  historical skips are deliberately not backfilled. Expect **zero rows on the
-  first night**, then roughly the daily skip flow, with `r_after_20d`
-  populated from the fourth week on. Check after the third nightly batch:
-  `SELECT source_agent, count(*), count(hypothetical->>'r_after_20d') FROM
-  outcome_log WHERE reason_code='LLM_SKIP' GROUP BY 1;`
+- **`LLM_SKIP` counterfactuals** originally only accrued from the V49 deploy
+  date forward, because the walk needs `executor_signal.reference_bar_date`
+  and `reference_atr`, which the emitter only began persisting with V49.
+  **Superseded by SP12** (see below): the nightly batch now reconstructs
+  those anchors for eligible pre-V49 rows too, so the historical skip
+  population is no longer stranded.
 - **Reference inputs are populated** on every emitter-produced signal whose
   `reference_price` is set. Operator injects via `POST /api/executor/signals`
   carry neither field by design and never produce an `LLM_SKIP` row — except
@@ -809,6 +807,57 @@ once the sweeper has retired a signal that carries V49 anchors, and
   `place-entry` `BROKER_ERROR` path and stays `null` on every other entry
   decision — so `reasoning IS NOT NULL` on a `SIGNAL` row means "the broker
   said something".
+
+### SP12 retroactive anchor reconstruction (2026-09) — what to watch after the deploy
+
+Flyway V50 adds `executor_signal.reference_source` (nullable, CHECK-constrained)
+and backfills it (`emission`/`manual`) on rows that already carried both
+anchors — additive, rollback is a redeploy of the previous image. No config
+change is required: `dracul.outcome.reconstruct-anchors.*` (`enabled=true`,
+`max-per-run=100`, `shadow-sample=10`) default on; see configuration.md for the
+env vars and the compose-env-list note if a kill-switch is ever needed.
+
+**After the deploy**, `AnchorReconstructionStep` runs inside every nightly
+`OutcomeBatchJob`, right before the counterfactual walk, and reconstructs up
+to `max-per-run` pre-V49 anchors per night from daily OHLC history — expect
+the backlog to clear over roughly two nights at the default cap. Verify:
+
+1. **Reconstruction summary + population split.** The nightly log carries one
+   INFO line per run: `outcome batch: anchor reconstruction: candidates=N
+   reconstructed=R unreconstructable=U deferred=D raced=X (reasons: …)`
+   (an appended ` OUTAGE` marks a run where every fetched symbol came back
+   empty — a provider outage, nothing written that night). Cross-check
+   against the table:
+   `SELECT reference_source, count(*) FROM executor_signal GROUP BY 1;`
+2. **Shadow check.** Every run also emits one INFO line, read-only, comparing
+   the reconstruction rule against recently emitted `emission`-anchored rows:
+   `anchor shadow check: n=… dateMatch=… atrMatch=… expectedDivergence=…
+   mismatch=… skipped=…` — `dateMatch`/`atrMatch` should equal
+   `n − expectedDivergence`; any `mismatch > 0`, or a WARN that "every sampled
+   emission row diverged as 'expected'", means the reconstruction rule no
+   longer reproduces real anchors and needs investigation before trusting new
+   `reconstructed` rows.
+3. **Counterfactuals actually walking.** `SELECT reason_code, anchor_source,
+   count(*), count(hypothetical->>'r_after_20d') FROM outcome_log ol
+   JOIN decision_log dl ON ol.log_id_ref = dl.log_id
+   WHERE reason_code IN ('LLM_SKIP','SIGNAL_EXPIRED_UNEVALUATED')
+   GROUP BY 1, 2;` (adjust the join to however `reason_code` is derived in
+   your query tooling) — reconstructed rows should start producing
+   `r_after_20d` once enough bars have accumulated after their anchor.
+4. **API surfaces the new counts.** `GET /api/executor/behavior`'s
+   `veto_precision[]` and `GET /api/executor/calibration`'s `hunters[]` show
+   non-zero `reconstructed`/`reconstructed_r20` once reconstruction has run.
+5. **Labelled hunter-Brier points grow gradually, not in one jump.** A
+   reconstructed row only becomes a hunter-Brier point once its
+   `hunter_label` is set, which needs `bars.size() >= max(60, horizon)` bars
+   past the anchor (see architecture.md) — expect growth over the following
+   weeks, not all reconstructed candidates becoming points on the same night.
+6. **Reset a permanent failure after a code fix.** A row marked
+   `unreconstructable` is never retried automatically; to re-queue it (e.g.
+   after fixing a bug in the reconstruction rule):
+   `UPDATE executor_signal SET reference_source = NULL WHERE reference_source
+   = 'unreconstructable';` — the next nightly run picks it back up as a
+   candidate.
 
 SP4 (2026-09) adds three new escalation codes on the place-entry/add-tranche
 adoption path (see `documentation/architecture.md` and
