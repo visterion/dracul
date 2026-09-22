@@ -35,11 +35,11 @@ public class ExecutorSignalRepository {
                 INSERT INTO executor_signal
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
                    kill_criteria, horizon, reference_price, status, thesis, prey_id,
-                   reference_bar_date, reference_atr)
+                   reference_bar_date, reference_atr, reference_source)
                 VALUES (:signalId, :source, :agentVersion, :symbol, :direction, :confidence, :mechanism,
                         CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status,
                         CAST(:thesis AS jsonb), CAST(:preyId AS uuid),
-                        :referenceBarDate, :referenceAtr)
+                        :referenceBarDate, :referenceAtr, :referenceSource)
                 ON CONFLICT (signal_id) DO NOTHING
                 """)
                 .param("signalId", s.signalId())
@@ -57,6 +57,8 @@ public class ExecutorSignalRepository {
                 .param("preyId", s.preyId())
                 .param("referenceBarDate", s.referenceBarDate())
                 .param("referenceAtr", s.referenceAtr())
+                .param("referenceSource",
+                        s.referenceBarDate() != null && s.referenceAtr() != null ? "emission" : null)
                 .update();
     }
 
@@ -88,6 +90,83 @@ public class ExecutorSignalRepository {
                 WHERE es.signal_id = :signalId
                 """)
                 .param("signalId", signalId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
+    /** Signals whose LLM SKIP / unevaluated sweep would be walked by OutcomeBatchJob if they had
+     *  anchors — the exact populations of ExecutorDecisionRepository.findSkipsWithoutDecisionLog and
+     *  findSweptWithoutDecisionLog with the anchor predicate inverted. created_at is the EMISSION
+     *  instant, read zone-free; the decision's created_at would move 82 of 191 prod anchors. */
+    public List<AnchorCandidate> findAnchorCandidates(int limit) {
+        return jdbc.sql("""
+                SELECT s.signal_id, s.symbol, s.created_at
+                FROM executor_signal s
+                WHERE (s.reference_bar_date IS NULL OR s.reference_atr IS NULL)
+                  AND s.reference_source IS NULL
+                  AND s.reference_price > 0
+                  AND s.status <> 'ACCEPTED'
+                  AND EXISTS (SELECT 1 FROM executor_decision d
+                              WHERE d.signal_id = s.signal_id
+                                AND ((d.action = 'SKIP' AND d.reject_reason IS NULL)
+                                  OR (d.action = :sweepAction AND d.reject_reason = 'SIGNAL_EXPIRED')))
+                  AND NOT EXISTS (SELECT 1 FROM decision_log l
+                                  WHERE l.signal_id = s.signal_id
+                                    AND l.trigger_type = 'SIGNAL' AND l.action = 'REJECT')
+                ORDER BY s.created_at ASC, s.signal_id ASC
+                LIMIT :limit
+                """)
+                .param("sweepAction", PendingSignalSweeper.ACTION)
+                .param("limit", limit)
+                .query((rs, n) -> new AnchorCandidate(
+                        rs.getString("signal_id"), rs.getString("symbol"),
+                        rs.getObject("created_at", java.time.OffsetDateTime.class).toInstant()))
+                .list();
+    }
+
+    public List<AnchorShadowRow> findShadowSample(int limit, java.time.Instant emittedAfter) {
+        return jdbc.sql("""
+                SELECT signal_id, symbol, created_at, reference_bar_date, reference_atr
+                FROM executor_signal
+                WHERE reference_source = 'emission' AND created_at > :after
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """)
+                .param("after", java.time.OffsetDateTime.ofInstant(emittedAfter, java.time.ZoneOffset.UTC))
+                .param("limit", limit)
+                .query((rs, n) -> new AnchorShadowRow(
+                        rs.getString("signal_id"), rs.getString("symbol"),
+                        rs.getObject("created_at", java.time.OffsetDateTime.class).toInstant(),
+                        rs.getObject("reference_bar_date", java.time.LocalDate.class),
+                        rs.getBigDecimal("reference_atr")))
+                .list();
+    }
+
+    /** Never touches emission anchors; a half-anchored row gets BOTH values from one source. */
+    public int writeReconstructedAnchor(String signalId, java.time.LocalDate barDate, BigDecimal atr) {
+        return jdbc.sql("""
+                UPDATE executor_signal
+                   SET reference_bar_date = :d, reference_atr = :a, reference_source = 'reconstructed'
+                 WHERE signal_id = :id AND reference_source IS NULL
+                   AND (reference_bar_date IS NULL OR reference_atr IS NULL)
+                """)
+                .param("d", barDate).param("a", atr).param("id", signalId)
+                .update();
+    }
+
+    public int markUnreconstructable(String signalId) {
+        return jdbc.sql("""
+                UPDATE executor_signal SET reference_source = 'unreconstructable'
+                 WHERE signal_id = :id AND reference_source IS NULL
+                """)
+                .param("id", signalId)
+                .update();
+    }
+
+    public String findReferenceSource(String signalId) {
+        return jdbc.sql("SELECT reference_source FROM executor_signal WHERE signal_id = :id")
+                .param("id", signalId)
                 .query(String.class)
                 .optional()
                 .orElse(null);
