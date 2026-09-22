@@ -1182,6 +1182,99 @@ class OutcomeBatchJobTest {
     }
 
     // =========================================================================
+    // Task 5: hypothetical.anchor_source -- where the walked anchors came from
+    // (signals.findReferenceSource), reported on processSignalAnchored's walk branch only.
+    // =========================================================================
+
+    @Test
+    void anchorSource_reconstructedIsCapturedOnTheHypothetical() {
+        String signalId = "sig-anchor-recon";
+        wireSkip(signalId, "RECONCO", skippedSignal(signalId, "RECONCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+        when(signals.findReferenceSource(signalId)).thenReturn("reconstructed");
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("anchor_source").asString())
+                .isEqualTo("reconstructed");
+    }
+
+    @Test
+    void anchorSource_emissionIsCapturedOnTheHypothetical() {
+        String signalId = "sig-anchor-emission";
+        wireSkip(signalId, "EMITCO", skippedSignal(signalId, "EMITCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+        when(signals.findReferenceSource(signalId)).thenReturn("emission");
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("anchor_source").asString())
+                .isEqualTo("emission");
+    }
+
+    @Test
+    void anchorSource_manualIsCapturedOnTheHypothetical() {
+        String signalId = "sig-anchor-manual";
+        wireSkip(signalId, "MANCO", skippedSignal(signalId, "MANCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+        when(signals.findReferenceSource(signalId)).thenReturn("manual");
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("anchor_source").asString())
+                .isEqualTo("manual");
+    }
+
+    /** A NULL reference_source on an anchored row (manual SQL predating V50, or any other gap) is
+     *  reported as "unknown", never guessed at. */
+    @Test
+    void anchorSource_nullReferenceSourceIsReportedAsUnknown() {
+        String signalId = "sig-anchor-null";
+        wireSkip(signalId, "NULLCO", skippedSignal(signalId, "NULLCO"),
+                risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
+        when(signals.findReferenceSource(signalId)).thenReturn(null);
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        assertThat(captor.getValue().hypothetical().path("anchor_source").asString())
+                .isEqualTo("unknown");
+    }
+
+    /** Same rule as entry_source: the branches that never reach engine.walk (unresolvable signal,
+     *  missing reference fields) chose no anchor either, so the key must be ABSENT, not null. */
+    @Test
+    void anchorSource_absentOnBranchesThatNeverWalk() {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(executorDecisions.findSkipsWithoutDecisionLog()).thenReturn(List.of(
+                skipDecision("sig-anchor-noside", "NOSIDECO3"),
+                skipDecision("sig-anchor-noref", "NOREFCO3")));
+        when(signals.findById("sig-anchor-noside")).thenReturn(null);
+        when(signals.findById("sig-anchor-noref")).thenReturn(new ExecutorSignal("sig-anchor-noref",
+                "strigoi-spin", "v1", "NOREFCO3", "BUY", 0.7, "SPINOFF", List.of(), "3m", null,
+                "SKIPPED", null, null, null, LocalDate.parse("2026-09-04"), bd("2")));
+        when(outcomeLog.isComplete(anyString())).thenReturn(false);
+        when(ruleVersions.active()).thenReturn("exec-v0.6");
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(2)).upsert(captor.capture());
+        for (OutcomeLogRow row : captor.getAllValues()) {
+            assertThat(row.hypothetical().has("anchor_source"))
+                    .as("anchor_source on %s", row.logIdRef()).isFalse();
+        }
+    }
+
+    // =========================================================================
     // SP12: AnchorReconstructionStep wiring (before the counterfactual walk).
     // =========================================================================
 

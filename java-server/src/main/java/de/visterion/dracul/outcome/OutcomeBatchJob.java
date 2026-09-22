@@ -567,6 +567,9 @@ public class OutcomeBatchJob {
         // returns skipped included.
         String entrySource = null;
         BigDecimal entryPrice = null;
+        // Absent, not null, on every branch that never reaches engine.walk -- same rule as
+        // entrySource: a row that chose no entry must not claim an anchor either.
+        String anchorSource = null;
 
         if (side == null) {
             outcome = HypotheticalOutcome.skipped("signal direction unresolvable (no signal_id match)");
@@ -622,6 +625,7 @@ public class OutcomeBatchJob {
                     }
                 }
                 int horizon = resolveHorizon(signal);
+                anchorSource = anchorSourceOf(signals.findReferenceSource(d.signalId()));
                 outcome = engine.walk(side, entryPrice, referenceAtr, null, bars, horizon);
                 // A row is final only once BOTH the 60-bar R figures and the label horizon are filled:
                 // tripleBarrierLabel answers "neither barrier hit" (false) only at bars >= horizon, and a row
@@ -646,6 +650,9 @@ public class OutcomeBatchJob {
             hypo.put("entry_source", entrySource);
             hypo.put("entry_price", entryPrice);
         }
+        // Absent, not null, on the branches that never reached the walk -- same rule as
+        // entry_source above.
+        if (anchorSource != null) hypo.put("anchor_source", anchorSource);
 
         outcomeLog.upsert(new OutcomeLogRow(
                 "COUNTERFACTUAL", logIdRef, null, symbol, reasonCode,
@@ -658,6 +665,16 @@ public class OutcomeBatchJob {
                 signal != null ? signal.agentVersion() : null,
                 ruleVersions.active(),
                 complete));
+    }
+
+    /** hypothetical.anchor_source: where the walked anchors came from. NULL reference_source on
+     *  an anchored row (manual SQL after V50) is reported as "unknown", never guessed. */
+    private static String anchorSourceOf(String referenceSource) {
+        if (referenceSource == null) return "unknown";
+        return switch (referenceSource) {
+            case "emission", "reconstructed", "manual" -> referenceSource;
+            default -> "unknown";
+        };
     }
 
     /** Bars after the signal date, plus whether the SOURCE served nothing at all.

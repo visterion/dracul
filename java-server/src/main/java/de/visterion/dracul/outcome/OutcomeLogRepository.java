@@ -199,7 +199,8 @@ public class OutcomeLogRepository {
                 SELECT DISTINCT ON (s.signal_id)
                        s.source        AS agent,
                        s.confidence    AS predicted,
-                       ol.hunter_label AS hunter_label
+                       ol.hunter_label AS hunter_label,
+                       ol.hypothetical->>'anchor_source' AS anchor_source
                 FROM outcome_log ol
                 LEFT JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
                 JOIN executor_signal s ON s.signal_id = COALESCE(dl.signal_id,
@@ -213,7 +214,8 @@ public class OutcomeLogRepository {
                 .query((rs, n) -> new CalibrationService.AgentBrierPoint(
                         rs.getString("agent"),
                         rs.getBigDecimal("predicted").doubleValue(),
-                        rs.getBoolean("hunter_label")))
+                        rs.getBoolean("hunter_label"),
+                        "reconstructed".equals(rs.getString("anchor_source"))))
                 .list();
     }
 
@@ -266,7 +268,8 @@ public class OutcomeLogRepository {
                        (ol.hypothetical->>'skipped_reason') IS NOT NULL AS skipped,
                        ol.hypothetical->>'r_after_20d' AS r_after_20d,
                        ol.hypothetical->>'r_after_60d' AS r_after_60d,
-                       ol.hypothetical->>'would_have_stopped_out' AS would_have_stopped_out
+                       ol.hypothetical->>'would_have_stopped_out' AS would_have_stopped_out,
+                       ol.hypothetical->>'anchor_source' AS anchor_source
                 FROM outcome_log ol
                 LEFT JOIN decision_log dl ON dl.log_id::text = ol.log_id_ref
                 LEFT JOIN executor_signal s
@@ -284,7 +287,8 @@ public class OutcomeLogRepository {
                         rs.getBoolean("skipped"),
                         parseDouble(rs.getString("r_after_20d")),
                         parseDouble(rs.getString("r_after_60d")),
-                        parseBoolean(rs.getString("would_have_stopped_out"))))
+                        parseBoolean(rs.getString("would_have_stopped_out")),
+                        rs.getString("anchor_source")))
                 .list();
     }
 

@@ -483,6 +483,7 @@ export interface CalibrationUnit {
 
 export interface HunterCalibration extends CalibrationUnit {
   agent: string
+  reconstructed?: number // how many of n were walked from reconstructed (not emission) anchors
 }
 
 export interface ExecutorCalibration {
@@ -497,6 +498,8 @@ export interface VetoPrecisionRow {
   mean_hypothetical_r_20d: number
   mean_hypothetical_r_60d: number
   stopped_out_pct: number
+  reconstructed?: number // non-skipped rows walked from reconstructed (not emission) anchors
+  reconstructed_r20?: number // of those, how many contributed to mean_hypothetical_r_20d
 }
 
 export interface HardExitLatency {

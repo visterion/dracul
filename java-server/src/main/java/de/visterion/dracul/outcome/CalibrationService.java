@@ -36,19 +36,24 @@ public class CalibrationService {
     }
 
     /** Flat per-hunter Brier result — {@code agent} alongside the same fields as
-     *  {@link BrierResult} (flattened, not nested, to match the API response shape). */
-    public record HunterBrier(String agent, double brier, int n, boolean insufficient, List<Bucket> buckets) {
+     *  {@link BrierResult} (flattened, not nested, to match the API response shape).
+     *  {@code reconstructed}: how many of the {@code n} points were walked from anchors
+     *  reconstructed by SP12's {@code AnchorReconstructionStep}, not the original emission. */
+    public record HunterBrier(String agent, double brier, int n, boolean insufficient, List<Bucket> buckets,
+            int reconstructed) {
     }
 
     /** One (hunter agent, predicted confidence, realized triple-barrier label) triple feeding
-     *  a per-hunter Brier computation. */
-    public record AgentBrierPoint(String agent, double predicted, boolean won) {
+     *  a per-hunter Brier computation. {@code reconstructed}: this point's counterfactual was
+     *  walked from a reconstructed anchor (see {@code hypothetical.anchor_source}). */
+    public record AgentBrierPoint(String agent, double predicted, boolean won, boolean reconstructed) {
     }
 
     /** One counterfactual row: reason_code, whether it was skipped, and (if not) the
-     *  hypothetical outcome. */
+     *  hypothetical outcome. {@code anchorSource} mirrors {@code hypothetical.anchor_source}
+     *  ("emission"/"reconstructed"/"manual"/"unknown", or {@code null} on a skipped row). */
     public record VetoRow(String reasonCode, boolean skipped, Double rAfter20d, Double rAfter60d,
-            Boolean wouldHaveStoppedOut) {
+            Boolean wouldHaveStoppedOut, String anchorSource) {
     }
 
     public record VetoPrecision(
@@ -56,7 +61,12 @@ public class CalibrationService {
             int n, int skipped,
             @JsonProperty("mean_hypothetical_r_20d") double meanHypotheticalR20d,
             @JsonProperty("mean_hypothetical_r_60d") double meanHypotheticalR60d,
-            @JsonProperty("stopped_out_pct") double stoppedOutPct) {
+            @JsonProperty("stopped_out_pct") double stoppedOutPct,
+            /** non-skipped rows walked from reconstructed anchors */
+            int reconstructed,
+            /** rows contributing to mean_hypothetical_r_20d that were walked from reconstructed
+             *  anchors */
+            @JsonProperty("reconstructed_r20") int reconstructedR20) {
     }
 
     public record LatencyStats(
@@ -91,7 +101,9 @@ public class CalibrationService {
             "counterfactuals assume reference-price fills (optimistic)",
             "PACE_LIMIT/BUDGET rejects are opportunity-cost questions",
             "reason_code is the first failed check; stats are conditional on earlier checks passing",
-            "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day");
+            "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day",
+            "counterfactuals of pre-V49 signals walk anchors reconstructed from today's daily history "
+                    + "(see reconstructed counts)");
 
     /** Brier score = mean squared error of (predicted probability − realized 0/1 outcome). */
     public double brier(List<BrierPoint> points) {
@@ -114,15 +126,18 @@ public class CalibrationService {
     /** Groups per-hunter points by agent and computes an independent {@link BrierResult} for
      *  each, sorted by agent name for a deterministic response order. */
     public List<HunterBrier> hunterBrierResults(List<AgentBrierPoint> points) {
-        Map<String, List<BrierPoint>> byAgent = new java.util.TreeMap<>();
+        Map<String, List<AgentBrierPoint>> byAgent = new java.util.TreeMap<>();
         for (AgentBrierPoint p : points) {
-            byAgent.computeIfAbsent(p.agent(), k -> new ArrayList<>())
-                    .add(new BrierPoint(p.predicted(), p.won()));
+            byAgent.computeIfAbsent(p.agent(), k -> new ArrayList<>()).add(p);
         }
         List<HunterBrier> result = new ArrayList<>();
         for (var entry : byAgent.entrySet()) {
-            BrierResult r = brierResult(entry.getValue());
-            result.add(new HunterBrier(entry.getKey(), r.brier(), r.n(), r.insufficient(), r.buckets()));
+            List<AgentBrierPoint> group = entry.getValue();
+            List<BrierPoint> brierPoints = group.stream()
+                    .map(p -> new BrierPoint(p.predicted(), p.won())).toList();
+            BrierResult r = brierResult(brierPoints);
+            int rec = (int) group.stream().filter(AgentBrierPoint::reconstructed).count();
+            result.add(new HunterBrier(entry.getKey(), r.brier(), r.n(), r.insufficient(), r.buckets(), rec));
         }
         return result;
     }
@@ -183,8 +198,12 @@ public class CalibrationService {
             long stoppedOutTrue = counted.stream()
                     .filter(r -> Boolean.TRUE.equals(r.wouldHaveStoppedOut())).count();
             double stoppedOutPct = stoppedOutKnown == 0 ? 0.0 : (100.0 * stoppedOutTrue / stoppedOutKnown);
+            int reconstructed = (int) counted.stream()
+                    .filter(r -> "reconstructed".equals(r.anchorSource())).count();
+            int reconstructedR20 = (int) counted.stream()
+                    .filter(r -> r.rAfter20d() != null && "reconstructed".equals(r.anchorSource())).count();
             result.add(new VetoPrecision(entry.getKey(), n, skipped, round(meanR20, 4), round(meanR60, 4),
-                    round(stoppedOutPct, 2)));
+                    round(stoppedOutPct, 2), reconstructed, reconstructedR20));
         }
         return result;
     }
