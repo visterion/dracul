@@ -190,7 +190,7 @@ class OutcomeBatchJobIT {
     }
 
     @Test
-    void counterfactualRecord_incompleteUntil60Bars_thenComplete() {
+    void counterfactualRecord_incompleteUntilHorizonBars_thenComplete() {
         String symbol = "OCFT" + System.nanoTime();
         String signalId = "sig-" + symbol;
 
@@ -217,9 +217,11 @@ class OutcomeBatchJobIT {
         assertThat(first.hunterLabel()).isTrue();
         assertThat(first.complete()).isFalse();
 
-        // Re-run with 60 bars now available -> idempotent update (still one row), now complete.
+        // Re-run with 64 bars now available (signal horizon "3m" -> 64 trading days, SP12: the
+        // completion check waits on max(60, horizon), not the old fixed 60) -> idempotent update
+        // (still one row), now complete.
         when(marketData.dailyOhlcHistory(anyString(), anyInt()))
-                .thenReturn(driftUpBars(LocalDate.now(), 60));
+                .thenReturn(driftUpBars(LocalDate.now(), 64));
 
         job.run();
 

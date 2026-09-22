@@ -427,7 +427,10 @@ public class OutcomeBatchJob {
                     int horizon = resolveHorizon(signal);
                     List<OhlcBar> bars = fetched.after();
                     outcome = engine.walk(side, orderPrice, atr, null, bars, horizon);
-                    complete = outcome.skippedReason() != null || bars.size() >= 60;
+                    // A row is final only once BOTH the 60-bar R figures and the label horizon are filled:
+                    // tripleBarrierLabel answers "neither barrier hit" (false) only at bars >= horizon, and a row
+                    // completed earlier would freeze a null label forever (isComplete early return).
+                    complete = outcome.skippedReason() != null || bars.size() >= Math.max(60, horizon);
                 }
             }
         }
@@ -608,9 +611,12 @@ public class OutcomeBatchJob {
                                 + "— walking from reference_price instead", anchor, symbol, open);
                     }
                 }
-                outcome = engine.walk(side, entryPrice, referenceAtr, null, bars,
-                        resolveHorizon(signal));
-                complete = outcome.skippedReason() != null || bars.size() >= 60;
+                int horizon = resolveHorizon(signal);
+                outcome = engine.walk(side, entryPrice, referenceAtr, null, bars, horizon);
+                // A row is final only once BOTH the 60-bar R figures and the label horizon are filled:
+                // tripleBarrierLabel answers "neither barrier hit" (false) only at bars >= horizon, and a row
+                // completed earlier would freeze a null label forever (isComplete early return).
+                complete = outcome.skippedReason() != null || bars.size() >= Math.max(60, horizon);
             }
         }
 

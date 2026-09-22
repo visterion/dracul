@@ -354,6 +354,42 @@ class OutcomeBatchJobTest {
         assertThat(row.complete()).isFalse(); // fewer than 60 bars
     }
 
+    /** SP12: a "3m" horizon resolves to 64 trading days (resolveHorizon), which is MORE than the
+     *  60-bar floor the completion check used to be fixed at. 61 flat bars (never touching either
+     *  barrier) must NOT complete the row -- tripleBarrierLabel only answers "neither barrier hit"
+     *  once bars.size() >= horizonTradingDays, so completing early would freeze hunter_label at
+     *  NULL forever (isComplete's early return in OutcomeBatchJob skips a completed row). */
+    @Test
+    void reject_3mHorizon_61BarsNoTouch_staysIncomplete() {
+        String symbol = "CFT3M";
+        var inputsSnapshot = mapper.readTree("{\"order_price\":100,\"atr\":2}");
+        DecisionLog reject = decisionRow("reject-log-3m", "sig-3m", symbol, "REJECT", "PACE_LIMIT",
+                inputsSnapshot, null, "strigoi-spin", "v1");
+
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of(reject));
+        when(outcomeLog.isComplete("reject-log-3m")).thenReturn(false);
+        when(signals.findById("sig-3m")).thenReturn(new ExecutorSignal("sig-3m", "strigoi-spin", "v1",
+                symbol, "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "REJECTED", null));
+
+        // 61 flat bars at the entry price (100): stop = 100 - 2.5*2 = 95, target = 105, neither is
+        // ever touched.
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        List<OhlcBar> bars = new ArrayList<>();
+        for (int i = 1; i <= 61; i++) {
+            bars.add(new OhlcBar(start.plusDays(i), bd("100"), bd("100"), bd("100"), bd("100"), 1000L));
+        }
+        when(marketData.dailyOhlcHistory(anyString(), anyInt())).thenReturn(bars);
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog, times(1)).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.complete()).isFalse();
+        assertThat(row.hunterLabel()).isNull();
+    }
+
     /** SP4: OutcomeBatchJob is deliberately NOT changed. A SIGNAL/REJECT row carrying STALE_FILL
      *  walks into a COUNTERFACTUAL exactly like every other reject reason — the exclusion lives in
      *  OutcomeLogRepository.findVetoRows and nowhere else. */
@@ -637,6 +673,77 @@ class OutcomeBatchJobTest {
         assertThat(row.hypothetical().path("entry_price").asDouble()).isEqualTo(101.0);
         assertThat(row.hypothetical().path("skipped_reason").isNull()).isTrue();
         assertThat(row.complete()).isTrue();
+    }
+
+    /** Like {@link #skippedSignal}, but with a caller-chosen horizon string. */
+    private ExecutorSignal skippedSignalWithHorizon(String signalId, String symbol, String horizon) {
+        return new ExecutorSignal(signalId, "strigoi-spin", "v1", symbol, "BUY", 0.7, "SPINOFF",
+                List.of(), horizon, bd("100"), "SKIPPED", null, null, null,
+                LocalDate.parse("2026-09-04"), bd("2"));
+    }
+
+    /** {@code n} flat bars after the anchor, all OHLC pinned to {@code price} -- entry (the first
+     *  bar's open) equals stop-anchor and target forever, so neither barrier of the triple-barrier
+     *  walk is ever touched. */
+    private static List<OhlcBar> flatBarsFrom(LocalDate anchor, BigDecimal price, int n) {
+        List<OhlcBar> bars = new ArrayList<>();
+        bars.add(new OhlcBar(anchor, price, price, price, price, 1000L)); // anchor bar, excluded
+        for (int i = 1; i <= n; i++) {
+            bars.add(new OhlcBar(anchor.plusDays(i), price, price, price, price, 1000L));
+        }
+        return bars;
+    }
+
+    /** SP12: "3m" resolves to 64 trading days (resolveHorizon). 61 never-touching bars is short of
+     *  that horizon, so tripleBarrierLabel is still undecided (null) -- the row must stay
+     *  incomplete, not freeze a null hunter_label under the old fixed 60-bar completion check. */
+    @Test
+    void llmSkip_3mHorizon_61BarsNoTouch_staysIncomplete() {
+        String signalId = "sig-skip-3m-61";
+        wireSkip(signalId, "SKIP3M61", skippedSignalWithHorizon(signalId, "SKIP3M61", "3m"),
+                flatBarsFrom(LocalDate.parse("2026-09-04"), bd("100"), 61));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.complete()).isFalse();
+        assertThat(row.hunterLabel()).isNull();
+    }
+
+    /** Same fixture as above, but with the 64th bar reached -- the label horizon is now filled,
+     *  tripleBarrierLabel answers "neither barrier hit" (false), and the row completes. */
+    @Test
+    void llmSkip_3mHorizon_64BarsNoTouch_completesWithFalseLabel() {
+        String signalId = "sig-skip-3m-64";
+        wireSkip(signalId, "SKIP3M64", skippedSignalWithHorizon(signalId, "SKIP3M64", "3m"),
+                flatBarsFrom(LocalDate.parse("2026-09-04"), bd("100"), 64));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.complete()).isTrue();
+        assertThat(row.hunterLabel()).isFalse();
+    }
+
+    /** Regression guard: a short horizon ("1m" -> ~21 trading days) must still complete at 60
+     *  bars, exactly as the old fixed-60 check did -- Math.max(60, horizon) keeps the floor. */
+    @Test
+    void llmSkip_1mHorizon_60BarsCompletes() {
+        String signalId = "sig-skip-1m-60";
+        wireSkip(signalId, "SKIP1M60", skippedSignalWithHorizon(signalId, "SKIP1M60", "1m"),
+                flatBarsFrom(LocalDate.parse("2026-09-04"), bd("100"), 60));
+
+        job.run();
+
+        ArgumentCaptor<OutcomeLogRow> captor = ArgumentCaptor.forClass(OutcomeLogRow.class);
+        verify(outcomeLog).upsert(captor.capture());
+        OutcomeLogRow row = captor.getValue();
+        assertThat(row.complete()).isTrue();
+        assertThat(row.hunterLabel()).isFalse();
     }
 
     /** Prod, 2026-09-11: a crossed signal_id/symbol pair in a submitted SKIP persisted the wrong
