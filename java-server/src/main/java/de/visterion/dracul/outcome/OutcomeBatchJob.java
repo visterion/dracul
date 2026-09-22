@@ -66,6 +66,7 @@ public class OutcomeBatchJob {
     private final ObjectMapper mapper;
     private final ExecutorDecisionRepository executorDecisions;
     private final RuleVersionProvider ruleVersions;
+    private final AnchorReconstructionStep anchorReconstruction;
 
     /** Per-run tally of counterfactuals whose symbol served no OHLC data at all. Only ever
      *  touched from the single-threaded {@code @Scheduled} run. */
@@ -74,7 +75,8 @@ public class OutcomeBatchJob {
     public OutcomeBatchJob(ExecutorPositionRepository positions, DecisionLogRepository decisionLog,
             ExecutorSignalRepository signals, OutcomeLogRepository outcomeLog,
             HypotheticalREngine engine, AgoraMarketData marketData, ObjectMapper mapper,
-            ExecutorDecisionRepository executorDecisions, RuleVersionProvider ruleVersions) {
+            ExecutorDecisionRepository executorDecisions, RuleVersionProvider ruleVersions,
+            AnchorReconstructionStep anchorReconstruction) {
         this.positions = positions;
         this.decisionLog = decisionLog;
         this.signals = signals;
@@ -84,12 +86,20 @@ public class OutcomeBatchJob {
         this.mapper = mapper;
         this.executorDecisions = executorDecisions;
         this.ruleVersions = ruleVersions;
+        this.anchorReconstruction = anchorReconstruction;
     }
 
     @Scheduled(cron = "${dracul.outcome.cron:0 30 22 * * 2-6}")
     public void run() {
         try {
             processTrades();
+            // SP12: before the walk, so a reconstructed signal is walked tonight. Own try/catch:
+            // a reconstruction failure must never cost the night's counterfactuals.
+            try {
+                anchorReconstruction.run();
+            } catch (Exception e) {
+                log.warn("outcome batch: anchor reconstruction failed: {}", e.getMessage(), e);
+            }
             processCounterfactuals();
         } catch (Exception e) {
             log.error("outcome batch job failed", e);

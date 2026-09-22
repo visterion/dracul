@@ -51,10 +51,11 @@ class OutcomeBatchJobTest {
             mock(de.visterion.dracul.executor.ExecutorDecisionRepository.class);
     private final de.visterion.dracul.executor.RuleVersionProvider ruleVersions =
             mock(de.visterion.dracul.executor.RuleVersionProvider.class);
+    private final AnchorReconstructionStep anchorReconstruction = mock(AnchorReconstructionStep.class);
 
     private final OutcomeBatchJob job = new OutcomeBatchJob(
             positions, decisionLog, signals, outcomeLog, engine, marketData, mapper,
-            executorDecisions, ruleVersions);
+            executorDecisions, ruleVersions, anchorReconstruction);
 
     private static BigDecimal bd(String v) { return new BigDecimal(v); }
 
@@ -458,7 +459,7 @@ class OutcomeBatchJobTest {
         when(client.callTool(eq("get_ohlc"), any()))
                 .thenReturn(mapper.readTree(ohlcPayload));
         return new OutcomeBatchJob(positions, decisionLog, signals, outcomeLog, engine,
-                new AgoraMarketData(client), mapper, executorDecisions, ruleVersions);
+                new AgoraMarketData(client), mapper, executorDecisions, ruleVersions, anchorReconstruction);
     }
 
     private DecisionLog rejectFor(String symbol, String logId, String signalId) {
@@ -1178,5 +1179,33 @@ class OutcomeBatchJobTest {
 
         verify(outcomeLog, org.mockito.Mockito.never()).upsert(any());
         verify(marketData, org.mockito.Mockito.never()).dailyOhlcHistory(anyString(), anyInt());
+    }
+
+    // =========================================================================
+    // SP12: AnchorReconstructionStep wiring (before the counterfactual walk).
+    // =========================================================================
+
+    @Test
+    void reconstructionRunsBetweenTradesAndCounterfactuals() {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+
+        job.run();
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(positions, anchorReconstruction, decisionLog);
+        inOrder.verify(positions).findClosed();
+        inOrder.verify(anchorReconstruction).run();
+        inOrder.verify(decisionLog).findSignalRowsByAction("REJECT");
+    }
+
+    @Test
+    void reconstructionFailureStillRunsCounterfactuals() {
+        when(positions.findClosed()).thenReturn(List.of());
+        when(decisionLog.findSignalRowsByAction("REJECT")).thenReturn(List.of());
+        when(anchorReconstruction.run()).thenThrow(new RuntimeException("boom"));
+
+        job.run();
+
+        verify(decisionLog).findSignalRowsByAction("REJECT");
     }
 }

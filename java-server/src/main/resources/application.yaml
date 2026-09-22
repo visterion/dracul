@@ -395,6 +395,11 @@ dracul:
     # Terminal scan-bound: a never-traded research_memory_link older than this (max(horizon)+
     # reentry window) is marked excluded so the unwritten candidate set doesn't grow unboundedly.
     memory-scan-max-age-days: ${DRACUL_OUTCOME_MEMORY_SCAN_MAX_AGE_DAYS:120}
+    # SP12: nightly reconstruction of pre-V49 counterfactual anchors (runs before the walk).
+    reconstruct-anchors:
+      enabled: ${DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_ENABLED:true}
+      max-per-run: ${DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_MAX_PER_RUN:100}
+      shadow-sample: ${DRACUL_OUTCOME_RECONSTRUCT_ANCHORS_SHADOW_SAMPLE:10}
   pattern-scorer:
     enabled: ${DRACUL_PATTERN_SCORER_ENABLED:true}
     # Weekly, one hour before the Saturday voievod-outcome run (default 0 0 7 * * 6).
