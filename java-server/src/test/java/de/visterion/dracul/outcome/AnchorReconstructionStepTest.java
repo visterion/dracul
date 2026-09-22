@@ -170,12 +170,34 @@ class AnchorReconstructionStepTest {
         assertThat(summary.reasons()).containsEntry("unsupported venue", 1);
     }
 
+    @Test
+    void permanentFailureMarkRaceCountsAsRaced() {
+        when(signals.findAnchorCandidates(100)).thenReturn(List.of(
+                new AnchorCandidate("sig-1", "TESTCO.L", Instant.parse("2026-09-15T04:01:00Z"))));
+        when(marketData.dailyOhlcHistory(eq("TESTCO.L"), anyInt())).thenReturn(FULL_BARS);
+        when(signals.markUnreconstructable("sig-1")).thenReturn(0);
+
+        AnchorReconstructionStep.Summary summary = step(true, 100, 0).run();
+
+        assertThat(summary.raced()).isEqualTo(1);
+        assertThat(summary.unreconstructable()).isEqualTo(0);
+        // the counters must add up: exactly one candidate, and it landed in raced, not lost
+        assertThat(summary.reconstructed() + summary.unreconstructable() + summary.deferred()
+                + summary.raced()).isEqualTo(summary.candidates());
+    }
+
     // --- 7: outage guard -----------------------------------------------------------------------
 
     @Test
     void outageGuardDefersEverything() {
+        // A second candidate whose OWN reconstruction would otherwise be a PERMANENT failure
+        // (unsupported venue) is what makes this test non-vacuous: without the "|| outage"
+        // short-circuit in the candidate loop, TESTCO.L would reach reconstruct() and be marked
+        // unreconstructable regardless of the outage, since UNSUPPORTED_VENUE never even looks at
+        // the (empty) bars. With the guard, EVERY candidate defers during an outage.
         when(signals.findAnchorCandidates(100)).thenReturn(List.of(
-                new AnchorCandidate("sig-1", "TESTCO", Instant.parse("2026-09-15T04:01:00Z"))));
+                new AnchorCandidate("sig-1", "TESTCO", Instant.parse("2026-09-15T04:01:00Z")),
+                new AnchorCandidate("sig-2", "TESTCO.L", Instant.parse("2026-09-15T04:01:00Z"))));
         when(signals.findShadowSample(eq(5), any())).thenReturn(List.of(
                 new AnchorShadowRow("sig-shadow", "SHADCO", Instant.parse("2026-09-18T21:00:00Z"),
                         LocalDate.parse("2026-09-17"), bd("5.0000"))));
@@ -185,7 +207,7 @@ class AnchorReconstructionStepTest {
 
         verify(signals, never()).writeReconstructedAnchor(any(), any(), any());
         verify(signals, never()).markUnreconstructable(any());
-        assertThat(summary.deferred()).isEqualTo(1);
+        assertThat(summary.deferred()).isEqualTo(2);
     }
 
     // --- 8: empty-symbol escalation, healthy peer among candidates -----------------------------
@@ -296,6 +318,8 @@ class AnchorReconstructionStepTest {
         assertThat(summary.shadowN()).isEqualTo(1);
         assertThat(summary.shadowDateMatch()).isEqualTo(1);
         assertThat(summary.shadowAtrMatch()).isEqualTo(1);
+        assertThat(summary.shadowMismatch()).isEqualTo(0);
+        assertThat(summary.shadowSkipped()).isEqualTo(0);
         verify(signals, never()).writeReconstructedAnchor(any(), any(), any());
         verify(signals, never()).markUnreconstructable(any());
     }
@@ -333,6 +357,33 @@ class AnchorReconstructionStepTest {
         assertThat(summary.shadowExpectedDivergence()).isEqualTo(1);
         assertThat(summary.shadowDateMatch()).isEqualTo(0);
         assertThat(summary.shadowAtrMatch()).isEqualTo(0);
+        // the STALE row is an expected divergence, not a mismatch; the unsupported-venue row is
+        // neither STALE nor a match -> exactly one mismatch
+        assertThat(summary.shadowMismatch()).isEqualTo(1);
+        assertThat(summary.shadowSkipped()).isEqualTo(0);
+    }
+
+    // --- shadow row whose fetch itself failed: skipped, never compared, never written/marked ------
+
+    @Test
+    void shadowRowWithFailedFetchIsSkipped() {
+        when(signals.findAnchorCandidates(100)).thenReturn(List.of());
+        when(signals.findShadowSample(eq(5), any())).thenReturn(List.of(
+                new AnchorShadowRow("sig-shad-down", "DOWNCO", Instant.parse("2026-09-15T04:01:00Z"),
+                        LocalDate.parse("2026-09-14"), bd("12.0000"))));
+        when(marketData.dailyOhlcHistory(eq("DOWNCO"), anyInt()))
+                .thenThrow(new MarketDataException(MarketDataException.Kind.UNAVAILABLE, "down", null));
+
+        AnchorReconstructionStep.Summary summary = step(true, 100, 5).run();
+
+        assertThat(summary.shadowN()).isEqualTo(1);
+        assertThat(summary.shadowSkipped()).isEqualTo(1);
+        assertThat(summary.shadowDateMatch()).isEqualTo(0);
+        assertThat(summary.shadowAtrMatch()).isEqualTo(0);
+        assertThat(summary.shadowMismatch()).isEqualTo(0);
+        assertThat(summary.shadowExpectedDivergence()).isEqualTo(0);
+        verify(signals, never()).writeReconstructedAnchor(any(), any(), any());
+        verify(signals, never()).markUnreconstructable(any());
     }
 
     // --- 16: shadowNeverWrites is covered by the assertions in 13-15 above -------------------------

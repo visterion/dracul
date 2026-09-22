@@ -45,8 +45,8 @@ public class AnchorReconstructionStep {
 
     public record Summary(int candidates, int reconstructed, int unreconstructable, int deferred,
             int raced, Map<String, Integer> reasons, int shadowN, int shadowDateMatch,
-            int shadowAtrMatch, int shadowExpectedDivergence) {
-        static Summary disabled() { return new Summary(0, 0, 0, 0, 0, Map.of(), 0, 0, 0, 0); }
+            int shadowAtrMatch, int shadowExpectedDivergence, int shadowMismatch, int shadowSkipped) {
+        static Summary disabled() { return new Summary(0, 0, 0, 0, 0, Map.of(), 0, 0, 0, 0, 0, 0); }
     }
 
     private record Fetch(List<OhlcBar> bars, LocalDate windowStart, boolean failed) {}
@@ -99,7 +99,7 @@ public class AnchorReconstructionStep {
         for (AnchorCandidate c : candidates) {
             Fetch f = fetched.get(sym(c.symbol()));
             if (f == null || f.failed() || outage) { deferred++; continue; }
-            AnchorReconstructor.Result r = reconstructor.reconstruct(c.symbol(), c.emittedAt(), f.bars(), f.windowStart());
+            AnchorReconstructor.Result r = reconstructor.reconstruct(sym(c.symbol()), c.emittedAt(), f.bars(), f.windowStart());
             if (r instanceof AnchorReconstructor.Anchor a) {
                 if (signals.writeReconstructedAnchor(c.signalId(), a.barDate(), a.atr()) == 1) {
                     reconstructed++;
@@ -121,20 +121,27 @@ public class AnchorReconstructionStep {
             }
             reasons.merge(reason, 1, Integer::sum);
             if (permanent) {
-                if (signals.markUnreconstructable(c.signalId()) == 1) unreconstructable++;
-                log.info("outcome batch: signal {} ({}) not reconstructable: {}", c.signalId(), c.symbol(), reason);
+                if (signals.markUnreconstructable(c.signalId()) == 1) {
+                    unreconstructable++;
+                    log.info("outcome batch: signal {} ({}) not reconstructable: {}", c.signalId(), c.symbol(), reason);
+                } else {
+                    raced++;
+                    log.warn("outcome batch: markUnreconstructable for signal {} ({}) updated no row "
+                            + "(reference_source changed concurrently)", c.signalId(), c.symbol());
+                }
             } else {
                 deferred++;
             }
         }
 
-        int dateMatch = 0, atrMatch = 0, expected = 0;
+        int dateMatch = 0, atrMatch = 0, expected = 0, mismatch = 0, skipped = 0;
         for (AnchorShadowRow s : shadow) {
             Fetch f = fetched.get(sym(s.symbol()));
-            if (f == null || f.failed()) continue;          // not comparable tonight
-            AnchorReconstructor.Result r = reconstructor.reconstruct(s.symbol(), s.emittedAt(), f.bars(), f.windowStart());
+            if (f == null || f.failed()) { skipped++; continue; }          // not comparable tonight
+            AnchorReconstructor.Result r = reconstructor.reconstruct(sym(s.symbol()), s.emittedAt(), f.bars(), f.windowStart());
             if (r instanceof AnchorReconstructor.Failure fail) {
                 if (fail.permanent() && AnchorReconstructor.STALE.equals(fail.reason())) { expected++; continue; }
+                mismatch++;
                 log.warn("anchor shadow check: signal {} ({}) stored {} / {} but reconstruction failed: {}",
                         s.signalId(), s.symbol(), s.storedBarDate(), s.storedAtr(), fail.reason());
                 continue;
@@ -145,21 +152,22 @@ public class AnchorReconstructionStep {
             if (dOk) dateMatch++;
             if (aOk) atrMatch++;
             if (!dOk || !aOk) {
+                mismatch++;
                 log.warn("anchor shadow check: signal {} ({}) stored {} / {} reconstructed {} / {}",
                         s.signalId(), s.symbol(), s.storedBarDate(), s.storedAtr(), a.barDate(), a.atr());
             }
         }
         int shadowN = shadow.size();
         if (shadowN > 0) {
-            log.info("anchor shadow check: n={} dateMatch={} atrMatch={} expectedDivergence={}",
-                    shadowN, dateMatch, atrMatch, expected);
+            log.info("anchor shadow check: n={} dateMatch={} atrMatch={} expectedDivergence={} mismatch={} skipped={}",
+                    shadowN, dateMatch, atrMatch, expected, mismatch, skipped);
             if (expected == shadowN) {
                 log.warn("anchor shadow check: every sampled emission row diverged as 'expected' — "
                         + "the check compared nothing tonight");
             }
         }
         Summary summary = new Summary(candidates.size(), reconstructed, unreconstructable, deferred,
-                raced, reasons, shadowN, dateMatch, atrMatch, expected);
+                raced, reasons, shadowN, dateMatch, atrMatch, expected, mismatch, skipped);
         log.info("outcome batch: anchor reconstruction: candidates={} reconstructed={} "
                         + "unreconstructable={} deferred={} raced={}{} (reasons: {})",
                 summary.candidates(), reconstructed, unreconstructable, deferred, raced,
