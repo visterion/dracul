@@ -200,9 +200,12 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   is written with `executor_signal.reference_source = 'reconstructed'`; a
   permanent failure (unsupported venue, stale history, malformed bar, or
   genuinely insufficient provider history) is marked `'unreconstructable'` and
-  not retried until an operator resets it (see operations.md). Signals injected
-  through `POST /api/executor/signals` and any signal without a
-  `reference_price` are never reconstructed — no price is invented. Both feed
+  not retried until an operator resets it (see operations.md).
+  `findAnchorCandidates` has no source filter — an operator-injected signal
+  (`POST /api/executor/signals`) that was assigned a `reference_price` and
+  then SKIPped/swept **is** a candidate like any other. The only exclusion is
+  a signal with no `reference_price` at all (`reference_price > 0` in the
+  candidate query) — no price is invented for those. Both feed
   `veto_precision` and, once labelled, the hunter Brier (SP7); every
   reconstructed row is pooled into both but stays distinguishable — see
   `hypothetical.anchor_source` below and the `reconstructed`/`reconstructed_r20`
@@ -259,9 +262,13 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   reconstruction from daily history), `"manual"` (anchors present but dated
   after emission — hand-written, no code path produces this), or `"unknown"`
   (an anchored row with `reference_source IS NULL`, e.g. manual SQL applied
-  after the V50 migration). It is written on every branch that reaches the
-  walk and is **absent** on the early-return branches (same rule as
-  `hypothetical.entry_source`).
+  after the V50 migration). It is written only by `processSignalAnchored`
+  (the `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` walk) on every branch that
+  reaches the walk, and is **absent** on that walk's early-return branches
+  (same rule as `hypothetical.entry_source`). **`REJECT` counterfactual rows
+  never carry `anchor_source`** — they walk from `inputs_snapshot`, not
+  `executor_signal`'s anchor columns — so their `reconstructed` count below
+  is always `0`.
 - **`veto_precision[].reconstructed`** and **`.reconstructed_r20`** (SP12):
   `reconstructed` counts the non-skipped rows in that reason code's population
   (the same population behind `mean_hypothetical_r_60d`/`stopped_out_pct`)
@@ -269,7 +276,10 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   rows actually contributing a value to `mean_hypothetical_r_20d`, how many of
   those have `anchor_source = "reconstructed"` — a separate count because for
   weeks after a fresh reconstruction the `LLM_SKIP` r20 mean can be close to
-  100% reconstructed, which a single combined count would hide.
+  100% reconstructed, which a single combined count would hide. Only the
+  `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` reason codes can have a non-zero
+  `reconstructed`/`reconstructed_r20` — every veto-reason code's row is
+  always `0` (see the `anchor_source` note above).
 - **`hunters[].reconstructed`** (SP12): of that hunter's `n` labelled points,
   how many were walked from a reconstructed anchor. Reconstructed rows are
   pooled into the hunter Brier like any other point (the SP12 shadow check
@@ -289,21 +299,27 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
   - **12-month horizon vs. the walk's lookback cap.** A counterfactual row
     only completes once `bars.size() >= max(60, horizonTradingDays)`
     (3m = 64, 6m = 129, 12m = 257 trading bars). The walk fetches
-    `daysSince + 90` calendar days of bars, capped at 400 — enough for the
-    12-month horizon only while ~257 trading bars still fit inside that
-    400-calendar-day cap; a 12m row that falls behind this ratio (e.g. after
-    a long gap with few trading days) can stay incomplete indefinitely.
+    `min(400, max(90, daysSince + 90))` calendar days of history back from
+    today (`fetchBarsAfter`), then keeps only the bars after the anchor. The
+    risk is not "few trading days" but the 400-calendar-day cap itself: once
+    a signal's age passes ~310 days, `daysSince + 90` exceeds the 400 cap and
+    the fetch window starts (today − 400d) later than the anchor — the
+    window then no longer reaches all the way back to the anchor, so it
+    stops covering the full run of bars a 12m horizon (~257 trading days)
+    needs, and the row can stay incomplete indefinitely.
   - 21 pre-V49 `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` signals have no
     `reference_price` at all and are never reconstructed — no price is
     invented for them.
 - **Dedupe:** one row per (signal, reason). `place_entry` retries of the same
   signal used to write one counterfactual per attempt and inflate these
   counts; `n` is now signals, not attempts.
-- **`caveats`**: four fixed strings, always present, calling out the
-  optimistic-fill assumption, the opportunity-cost nature of
+- **`caveats`**: five fixed strings (SP12 added the fifth), always present,
+  calling out the optimistic-fill assumption, the opportunity-cost nature of
   `PACE_LIMIT`/`BUDGET` rejects, that `reason_code` stats are conditional
-  on earlier checks having passed, and that `SIGNAL_EXPIRED_UNEVALUATED`/
-  `LLM_SKIP` anchor on the emission bar rather than the decision day.
+  on earlier checks having passed, that `SIGNAL_EXPIRED_UNEVALUATED`/
+  `LLM_SKIP` anchor on the emission bar rather than the decision day, and
+  that counterfactuals of pre-V49 signals walk anchors reconstructed from
+  today's daily history (see the `reconstructed` counts).
 - **`hard_exit_latency`**: `n`/`max_seconds`/`p95_seconds` over
   `decision_log.latency.trigger_to_order_seconds` of `HARD_TRIGGER` rows.
 - **`whipsaw`**: counts of `TRADE` outcome rows with `reentry_within_10d` /
@@ -327,7 +343,8 @@ Response (200):
   "caveats": ["counterfactuals assume reference-price fills (optimistic)",
               "PACE_LIMIT/BUDGET rejects are opportunity-cost questions",
               "reason_code is the first failed check; stats are conditional on earlier checks passing",
-              "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day"],
+              "SIGNAL_EXPIRED_UNEVALUATED and LLM_SKIP anchor on the emission bar, not the decision day",
+              "counterfactuals of pre-V49 signals walk anchors reconstructed from today's daily history (see reconstructed counts)"],
   "hard_exit_latency": {"n": 5, "max_seconds": 3, "p95_seconds": 2},
   "whipsaw": {"reentry_within_10d": 0, "roundtrip_under_5d": 1},
   "stop_basis": [{"basis": "ATR", "n": 8, "mean_realized_r": 0.9, "mean_mae_r": -0.5},

@@ -787,10 +787,18 @@ once the sweeper has retired a signal that carries V49 anchors, and
   **Superseded by SP12** (see below): the nightly batch now reconstructs
   those anchors for eligible pre-V49 rows too, so the historical skip
   population is no longer stranded.
-- **Reference inputs are populated** on every emitter-produced signal whose
-  `reference_price` is set. Operator injects via `POST /api/executor/signals`
-  carry neither field by design and never produce an `LLM_SKIP` row — except
-  a verification probe whose anchors were set by hand (SP2b, 2026-09).
+- **Reference inputs are populated at emission** on every emitter-produced
+  signal whose `reference_price` is set. Operator injects via
+  `POST /api/executor/signals` carry neither `reference_bar_date` nor
+  `reference_atr` at emission by design — but **since SP12** that no longer
+  keeps them out of `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED`: an operator
+  inject that was given a `reference_price` and later SKIPped/swept is a
+  reconstruction candidate like any emitter-produced signal
+  (`findAnchorCandidates` has no source filter, only
+  `reference_price > 0`). Only an inject with no `reference_price` at all is
+  permanently excluded — no price is invented. A verification probe's
+  anchors were set by hand (SP2b, 2026-09) and are classified
+  `reference_source = 'manual'`.
 - **`PRICE_IMPLAUSIBLE`** (`decision_log`, `trigger_type=MAINTENANCE`,
   `action=ESCALATE`) means the broker reported a market price beyond
   `price-sanity-pct` on the favourable side of the recorded extreme. The
@@ -833,16 +841,15 @@ the backlog to clear over roughly two nights at the default cap. Verify:
    the reconstruction rule against recently emitted `emission`-anchored rows:
    `anchor shadow check: n=… dateMatch=… atrMatch=… expectedDivergence=…
    mismatch=… skipped=…` — `dateMatch`/`atrMatch` should equal
-   `n − expectedDivergence`; any `mismatch > 0`, or a WARN that "every sampled
-   emission row diverged as 'expected'", means the reconstruction rule no
-   longer reproduces real anchors and needs investigation before trusting new
-   `reconstructed` rows.
-3. **Counterfactuals actually walking.** `SELECT reason_code, anchor_source,
-   count(*), count(hypothetical->>'r_after_20d') FROM outcome_log ol
-   JOIN decision_log dl ON ol.log_id_ref = dl.log_id
+   `n − expectedDivergence − skipped`; any `mismatch > 0`, or a WARN that
+   "every sampled emission row diverged as 'expected'", means the
+   reconstruction rule no longer reproduces real anchors and needs
+   investigation before trusting new `reconstructed` rows.
+3. **Counterfactuals actually walking.** `SELECT reason_code,
+   hypothetical->>'anchor_source' AS anchor_source, count(*),
+   count(hypothetical->>'r_after_20d') AS with_r20 FROM outcome_log
    WHERE reason_code IN ('LLM_SKIP','SIGNAL_EXPIRED_UNEVALUATED')
-   GROUP BY 1, 2;` (adjust the join to however `reason_code` is derived in
-   your query tooling) — reconstructed rows should start producing
+   GROUP BY 1, 2;` — reconstructed rows should start producing
    `r_after_20d` once enough bars have accumulated after their anchor.
 4. **API surfaces the new counts.** `GET /api/executor/behavior`'s
    `veto_precision[]` and `GET /api/executor/calibration`'s `hunters[]` show

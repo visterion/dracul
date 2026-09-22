@@ -835,9 +835,15 @@ wrapped so one bad symbol/position never aborts the rest.
   no code path produces that). The V50 backfill migration set `emission` vs
   `manual` on rows that already carried both anchor columns at migration
   time, by comparing `reference_bar_date` against the emission day. Every
-  `outcome_log.hypothetical` row written for a walk branch also carries
-  `anchor_source` (mirroring `reference_source`, with `NULL` reported as
-  `"unknown"` rather than guessed) — see `documentation/api.md`.
+  `outcome_log.hypothetical` row written by the anchored
+  (`processSignalAnchored`, i.e. `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED`)
+  walk also carries `anchor_source` (mirroring `reference_source`, with
+  `NULL` reported as `"unknown"` rather than guessed) — see
+  `documentation/api.md`. The `REJECT` counterfactual walk
+  (`processCounterfactuals`) never writes `anchor_source`: it derives its
+  entry/ATR from `decision_log.inputs_snapshot`, not from
+  `executor_signal`'s anchor columns, so `REJECT` rows have no
+  reconstruction concept at all.
 
 **Spin-off lifecycle table (V26): `spin_candidate`.** Backs strigoi-spin's full
 lifecycle persistence (see `documentation/strigoi.md`, "Strigoi-Spin: lifecycle

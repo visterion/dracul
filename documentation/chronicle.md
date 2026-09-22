@@ -530,7 +530,7 @@ tables and stat chips only — no charts:
   is sufficient and at least one bucket is non-empty; per-hunter buckets are
   intentionally not rendered to keep the card compact.
 - **Veto precision**: one row per veto `reason_code` — n, skipped count, mean
-  hypothetical R at 20d/60d, and stopped-out % — followed by the four fixed
+  hypothetical R at 20d/60d, and stopped-out % — followed by the five fixed
   `caveats` strings as a footnote list (`data-testid="calibration-caveats"`).
 - **Behavior**: a stat-tile grid for hard-exit latency (max/p95), whipsaw
   counts (re-entry within 10d, roundtrip under 5d), and slippage (mean/worst).
