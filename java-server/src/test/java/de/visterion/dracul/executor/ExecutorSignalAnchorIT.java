@@ -63,6 +63,16 @@ class ExecutorSignalAnchorIT {
                 .update();
     }
 
+    private BigDecimal fetchAtr(String signalId) {
+        return jdbc.sql("SELECT reference_atr FROM executor_signal WHERE signal_id = :id")
+                .param("id", signalId).query(BigDecimal.class).optional().orElse(null);
+    }
+
+    private LocalDate fetchBarDate(String signalId) {
+        return jdbc.sql("SELECT reference_bar_date FROM executor_signal WHERE signal_id = :id")
+                .param("id", signalId).query(LocalDate.class).optional().orElse(null);
+    }
+
     private void seedDecision(String signalId, String symbol, String action, String rejectReason) {
         decisions.insert(new ExecutorDecision(null, signalId, symbol, false, rejectReason, List.of(),
                 "rationale", null, "run-1", null, action));
@@ -99,6 +109,20 @@ class ExecutorSignalAnchorIT {
         seedRejectDecisionLog("x-reject", "RJCO");
         seedSignal("x-hold", "HDCO", "PENDING", "2026-08-04 04:01:00+00", "10", null, null, null);
         seedDecision("x-hold", "HDCO", "HOLD", null);
+        // fully anchored but reference_source NULL: the `(bar IS NULL OR atr IS NULL)` predicate
+        // must exclude it on its own, independent of the reference_source IS NULL predicate.
+        seedSignal("x-fullanch-nullsrc", "FACO", "SKIPPED", "2026-08-04 04:01:00+00", "10",
+                "2026-08-03", "1.2", null);
+        seedDecision("x-fullanch-nullsrc", "FACO", "SKIP", null);
+        // a SKIP carrying a reject_reason is a code-gate row, not an LLM SKIP verdict.
+        seedSignal("x-skip-gated", "SGCO", "SKIPPED", "2026-08-04 04:01:00+00", "10", null, null, null);
+        seedDecision("x-skip-gated", "SGCO", "SKIP", "COOLDOWN");
+        // a SWEEP with a reject_reason other than SIGNAL_EXPIRED must not match.
+        seedSignal("x-sweep-otherreason", "SOCO", "EXPIRED", "2026-08-04 04:01:00+00", "10", null, null, null);
+        seedDecision("x-sweep-otherreason", "SOCO", PendingSignalSweeper.ACTION, "OTHER_REASON");
+        // reference_price = 0 must not qualify (price predicate is `> 0`, not `IS NOT NULL`).
+        seedSignal("x-zeroprice", "ZPCO", "SKIPPED", "2026-08-04 04:01:00+00", "0", null, null, null);
+        seedDecision("x-zeroprice", "ZPCO", "SKIP", null);
 
         assertThat(repo.findAnchorCandidates(100)).extracting(AnchorCandidate::signalId)
                 .containsExactly("c-skip", "c-sweep", "c-half");     // oldest emission first
@@ -163,6 +187,10 @@ class ExecutorSignalAnchorIT {
         // both rows: bar 2026-08-03, atr as written (h1's 7.7 replaced), source 'reconstructed'
         assertThat(repo.findReferenceSource("a1")).isEqualTo("reconstructed");
         assertThat(repo.findReferenceSource("h1")).isEqualTo("reconstructed");
+        assertThat(fetchBarDate("a1")).isEqualTo(LocalDate.parse("2026-08-03"));
+        assertThat(fetchAtr("a1")).isEqualByComparingTo("1.2345");
+        assertThat(fetchBarDate("h1")).isEqualTo(LocalDate.parse("2026-08-03"));
+        assertThat(fetchAtr("h1")).isEqualByComparingTo("2.0000");   // h1's original 7.7 replaced, not merged
     }
 
     @Test
@@ -196,12 +224,18 @@ class ExecutorSignalAnchorIT {
 
     @Test
     void shadowSampleIsNewestEmissionRowsAfterCutoff() {
+        Instant cutoff = Instant.parse("2026-09-17T04:00:00Z");
+        // exactly AT the cutoff: the predicate is strict `>`, so this must be excluded even
+        // though it would otherwise rank in the top N if the limit weren't the only filter.
+        seedSignal("sh-0", "SHCO0", "SKIPPED", "2026-09-17 04:00:00+00", "10", "2026-09-16", "1.05", "emission");
         seedSignal("sh-1", "SHCO1", "SKIPPED", "2026-09-16 04:01:00+00", "10", "2026-09-15", "1.1", "emission");
         seedSignal("sh-2", "SHCO2", "SKIPPED", "2026-09-18 04:01:00+00", "10", "2026-09-17", "1.2", "emission");
         seedSignal("sh-3", "SHCO3", "SKIPPED", "2026-09-19 04:01:00+00", "10", "2026-09-18", "1.3", "emission");
         seedSignal("sh-4", "SHCO4", "SKIPPED", "2026-09-20 04:01:00+00", "10", "2026-09-19", "1.4", "reconstructed");
 
-        List<AnchorShadowRow> sample = repo.findShadowSample(2, Instant.parse("2026-09-17T04:00:00Z"));
+        // limit >= total row count, so the cutoff — not the limit — is what has to do the
+        // filtering here: a broken `>=`/off-by-one predicate would leak sh-0 into the result.
+        List<AnchorShadowRow> sample = repo.findShadowSample(10, cutoff);
 
         assertThat(sample).extracting(AnchorShadowRow::signalId).containsExactly("sh-3", "sh-2");
         assertThat(sample.getFirst().storedBarDate()).isEqualTo(LocalDate.parse("2026-09-18"));
@@ -210,13 +244,10 @@ class ExecutorSignalAnchorIT {
         assertThat(sample.get(1).storedAtr()).isEqualByComparingTo("1.2");
     }
 
-    /** V50 has already run in this container's schema; re-execute its two UPDATE statements
-     *  verbatim (read from the migration file) to pin their SQL effect against seeded rows. */
-    @Test
-    void v50BackfillClassifiesEmissionVsManual() throws IOException {
-        seedSignal("bf-emission", "BFCO1", "SKIPPED", "2026-08-04 04:01:00+00", "10", "2026-08-03", "1.2", null);
-        seedSignal("bf-manual", "BFCO2", "SKIPPED", "2026-08-28 04:01:00+00", "10", "2026-09-08", "1.2", null);
-
+    /** Reads V50's two backfill UPDATEs from the migration file text (after the ALTER lines) and
+     *  re-executes them verbatim, since V50 already ran once when the Testcontainers schema was
+     *  built and this pins their SQL effect independently against freshly seeded rows. */
+    private void runV50Backfill() throws IOException {
         String sql = new String(Files.readAllBytes(
                 new ClassPathResource("db/migration/V50__executor_signal_reference_source.sql").getFile().toPath()),
                 StandardCharsets.UTF_8);
@@ -227,9 +258,39 @@ class ExecutorSignalAnchorIT {
                 jdbc.sql(trimmed).update();
             }
         }
+    }
+
+    @Test
+    void v50BackfillClassifiesEmissionVsManual() throws IOException {
+        seedSignal("bf-emission", "BFCO1", "SKIPPED", "2026-08-04 04:01:00+00", "10", "2026-08-03", "1.2", null);
+        seedSignal("bf-manual", "BFCO2", "SKIPPED", "2026-08-28 04:01:00+00", "10", "2026-09-08", "1.2", null);
+
+        runV50Backfill();
 
         assertThat(repo.findReferenceSource("bf-emission")).isEqualTo("emission");
         assertThat(repo.findReferenceSource("bf-manual")).isEqualTo("manual");
+    }
+
+    @Test
+    void v50BackfillBoundaries() throws IOException {
+        // bar date exactly equal to the emission UTC date: predicate is `<=`, so this must be
+        // 'emission', not 'manual'.
+        seedSignal("bf-boundary-eq", "BQCO1", "SKIPPED", "2026-08-04 04:01:00+00", "10",
+                "2026-08-04", "1.2", null);
+        // created_at is late in the UTC day (23:30) but still 2026-08-04 in UTC; bar dated the
+        // NEXT day is strictly after -> 'manual'. Pins the `AT TIME ZONE 'UTC'` conversion, not
+        // just a naive date truncation of a non-UTC-normalized timestamp.
+        seedSignal("bf-boundary-utc", "BQCO2", "SKIPPED", "2026-08-04 23:30:00+00", "10",
+                "2026-08-05", "1.2", null);
+        // half-anchored (atr missing): neither UPDATE's WHERE clause matches (both require BOTH
+        // columns NOT NULL), so reference_source stays NULL after backfill.
+        seedSignal("bf-half", "BQCO3", "SKIPPED", "2026-08-04 04:01:00+00", "10", "2026-08-03", null, null);
+
+        runV50Backfill();
+
+        assertThat(repo.findReferenceSource("bf-boundary-eq")).isEqualTo("emission");
+        assertThat(repo.findReferenceSource("bf-boundary-utc")).isEqualTo("manual");
+        assertThat(repo.findReferenceSource("bf-half")).isNull();
     }
 
     @Test
