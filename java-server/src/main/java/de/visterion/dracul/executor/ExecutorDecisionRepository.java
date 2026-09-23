@@ -173,7 +173,12 @@ public class ExecutorDecisionRepository {
      * <ul>
      *   <li>{@code reject_reason IS NULL} — a row WITH one is a code-gate reject, not an LLM verdict.</li>
      *   <li>{@code reference_bar_date/reference_atr IS NOT NULL} — the walk has no anchor without
-     *       them, and pre-V49 rows have neither. Forward-only by decision; no backfill.</li>
+     *       them. Pre-V49 rows started with neither, but {@code AnchorReconstructionStep} now
+     *       backfills them nightly, before this finder runs in the same batch ({@code
+     *       reference_source = 'reconstructed'}); this predicate is unchanged and still requires both
+     *       anchors non-null regardless of source — a formerly-excluded row simply starts satisfying
+     *       it, and hence starts being walked by {@code processSignalAnchored}, the first night
+     *       reconstruction fills it in.</li>
      *   <li>The {@code NOT EXISTS} matches {@code action = 'REJECT'} SPECIFICALLY, mirroring exactly
      *       what {@code processCounterfactuals} consumes: when place_entry already vetoed the signal
      *       in the same run, the VETO REASON WINS and the LLM's SKIP is not counted a second time;
@@ -210,7 +215,11 @@ public class ExecutorDecisionRepository {
      *       positive row from that constant, so a drift breaks a test rather than silently
      *       emptying this finder (whose empty result is also its steady state on most nights).</li>
      *   <li>{@code reference_bar_date/reference_atr IS NOT NULL} — the walk has no anchor without
-     *       them, and pre-V49 rows have neither. Forward-only by decision; no backfill.</li>
+     *       them. Pre-V49 rows started with neither, but {@code AnchorReconstructionStep} now
+     *       backfills them nightly, before this finder runs in the same batch ({@code
+     *       reference_source = 'reconstructed'}); this predicate is unchanged and still requires both
+     *       anchors non-null regardless of source — a formerly-excluded row simply starts satisfying
+     *       it once reconstruction fills it in.</li>
      *   <li>The {@code NOT EXISTS} matches {@code trigger_type='SIGNAL'} AND {@code action='REJECT'}
      *       SPECIFICALLY: a signal stranded by a transient {@code place_entry} reject already has a
      *       {@code processReject} counterfactual under that veto reason, and the VETO REASON WINS —

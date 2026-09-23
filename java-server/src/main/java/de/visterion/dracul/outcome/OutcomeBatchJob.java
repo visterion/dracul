@@ -373,7 +373,7 @@ public class OutcomeBatchJob {
 
     private void processReject(DecisionLog reject) {
         String logIdRef = reject.logId();
-        if (outcomeLog.isComplete(logIdRef)) return; // already finished (skipped or 60-bar window filled)
+        if (outcomeLog.isComplete(logIdRef)) return; // already finished (skipped or max(60, horizon)-bar window filled)
 
         JsonNode snap = reject.inputsSnapshot();
         BigDecimal orderPrice = bigDecimalOrNull(snap, "order_price");

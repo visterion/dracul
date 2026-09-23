@@ -840,11 +840,16 @@ the backlog to clear over roughly two nights at the default cap. Verify:
 2. **Shadow check.** Every run also emits one INFO line, read-only, comparing
    the reconstruction rule against recently emitted `emission`-anchored rows:
    `anchor shadow check: n=… dateMatch=… atrMatch=… expectedDivergence=…
-   mismatch=… skipped=…` — `dateMatch`/`atrMatch` should equal
-   `n − expectedDivergence − skipped`; any `mismatch > 0`, or a WARN that
-   "every sampled emission row diverged as 'expected'", means the
-   reconstruction rule no longer reproduces real anchors and needs
-   investigation before trusting new `reconstructed` rows.
+   mismatch=… skipped=…` — `skipped` counts a row whose fetch failed, whose
+   fetch succeeded but returned no bars at all, or whose processing itself
+   threw (one bad row must never abort the rest of the check). `dateMatch`/
+   `atrMatch` should equal `n − expectedDivergence − skipped`; any
+   `mismatch > 0`, or a WARN that "every sampled emission row diverged as
+   'expected'", means the reconstruction rule no longer reproduces real
+   anchors and needs investigation before trusting new `reconstructed` rows.
+   A WARN that "every sampled row was skipped" means the check compared
+   nothing that night (empty/failing fetches or exceptions across the whole
+   sample) — a data problem, not a rule regression.
 3. **Counterfactuals actually walking.** `SELECT reason_code,
    hypothetical->>'anchor_source' AS anchor_source, count(*),
    count(hypothetical->>'r_after_20d') AS with_r20 FROM outcome_log

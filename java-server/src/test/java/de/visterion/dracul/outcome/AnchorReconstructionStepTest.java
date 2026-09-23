@@ -1,12 +1,19 @@
 package de.visterion.dracul.outcome;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.visterion.dracul.executor.AnchorCandidate;
 import de.visterion.dracul.executor.AnchorShadowRow;
 import de.visterion.dracul.executor.ExecutorSignalRepository;
 import de.visterion.dracul.marketdata.AgoraMarketData;
 import de.visterion.dracul.marketdata.MarketDataException;
 import de.visterion.dracul.marketdata.OhlcBar;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -40,6 +47,22 @@ class AnchorReconstructionStepTest {
 
     private final ExecutorSignalRepository signals = mock(ExecutorSignalRepository.class);
     private final AgoraMarketData marketData = mock(AgoraMarketData.class);
+
+    private ListAppender<ILoggingEvent> appender;
+    private Logger stepLogger;
+
+    @BeforeEach
+    void attachAppender() {
+        appender = new ListAppender<>();
+        appender.start();
+        stepLogger = (Logger) LoggerFactory.getLogger(AnchorReconstructionStep.class);
+        stepLogger.addAppender(appender);
+    }
+
+    @AfterEach
+    void detachAppender() {
+        stepLogger.detachAppender(appender);
+    }
 
     private static BigDecimal bd(String v) { return new BigDecimal(v); }
 
@@ -387,4 +410,95 @@ class AnchorReconstructionStepTest {
     }
 
     // --- 16: shadowNeverWrites is covered by the assertions in 13-15 above -------------------------
+
+    // --- 17: a candidate whose write throws is deferred, the next candidate still writes -----------
+
+    @Test
+    void candidateWriteExceptionIsDeferredAndNextCandidateStillWrites() {
+        when(signals.findAnchorCandidates(100)).thenReturn(List.of(
+                new AnchorCandidate("sig-bad", "TESTCO", Instant.parse("2026-09-15T04:01:00Z")),
+                new AnchorCandidate("sig-good", "TESTCO", Instant.parse("2026-09-15T04:01:00Z"))));
+        when(marketData.dailyOhlcHistory(eq("TESTCO"), anyInt())).thenReturn(FULL_BARS);
+        when(signals.writeReconstructedAnchor(eq("sig-bad"), any(), any()))
+                .thenThrow(new RuntimeException("boom"));
+        when(signals.writeReconstructedAnchor(eq("sig-good"), any(), any())).thenReturn(1);
+
+        AnchorReconstructionStep.Summary summary = step(true, 100, 0).run();
+
+        verify(signals).writeReconstructedAnchor(eq("sig-good"), any(), any());
+        assertThat(summary.candidates()).isEqualTo(2);
+        assertThat(summary.deferred()).isEqualTo(1);
+        assertThat(summary.reconstructed()).isEqualTo(1);
+        assertThat(appender.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("sig-bad") && e.getFormattedMessage().contains("TESTCO")
+                && e.getFormattedMessage().contains("boom"));
+    }
+
+    // --- 18: a shadow row whose processing throws is skipped, other shadow rows still compared -----
+
+    @Test
+    void shadowRowProcessingExceptionIsSkippedAndOtherRowsStillCompared() {
+        // sig-1's normal 2026-09-15 emission keeps TESTCO's "oldest" (and hence the fetch's
+        // lookback) sane; sig-shad-bad's own Instant.MAX only reaches AnchorReconstructor.cutoff()
+        // inside the per-shadow-row try, which is exactly the seam this test exercises.
+        when(signals.findAnchorCandidates(100)).thenReturn(List.of(
+                new AnchorCandidate("sig-1", "TESTCO", Instant.parse("2026-09-15T04:01:00Z"))));
+        when(signals.findShadowSample(eq(5), any())).thenReturn(List.of(
+                new AnchorShadowRow("sig-shad-bad", "TESTCO", Instant.MAX,
+                        LocalDate.parse("2026-09-14"), bd("12.0000")),
+                new AnchorShadowRow("sig-shad-good", "TESTCO", Instant.parse("2026-09-15T04:01:00Z"),
+                        LocalDate.parse("2026-09-14"), bd("12.0000"))));
+        when(marketData.dailyOhlcHistory(eq("TESTCO"), anyInt())).thenReturn(FULL_BARS);
+        when(signals.writeReconstructedAnchor(any(), any(), any())).thenReturn(1);
+
+        AnchorReconstructionStep.Summary summary = step(true, 100, 5).run();
+
+        assertThat(summary.shadowN()).isEqualTo(2);
+        assertThat(summary.shadowSkipped()).isEqualTo(1);
+        assertThat(summary.shadowDateMatch()).isEqualTo(1);
+        assertThat(summary.shadowAtrMatch()).isEqualTo(1);
+        assertThat(summary.shadowMismatch()).isEqualTo(0);
+        assertThat(appender.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("sig-shad-bad") && e.getFormattedMessage().contains("TESTCO"));
+    }
+
+    // --- 19: shadow row whose fetch succeeded but served an EMPTY series: skipped, not a mismatch --
+
+    @Test
+    void shadowRowWithEmptySeriesIsSkippedNotMismatch() {
+        when(signals.findAnchorCandidates(100)).thenReturn(List.of());
+        when(signals.findShadowSample(eq(5), any())).thenReturn(List.of(
+                new AnchorShadowRow("sig-shad-empty", "EMPTYCO", Instant.parse("2026-09-15T04:01:00Z"),
+                        LocalDate.parse("2026-09-14"), bd("12.0000"))));
+        when(marketData.dailyOhlcHistory(eq("EMPTYCO"), anyInt())).thenReturn(List.of());
+
+        AnchorReconstructionStep.Summary summary = step(true, 100, 5).run();
+
+        assertThat(summary.shadowN()).isEqualTo(1);
+        assertThat(summary.shadowSkipped()).isEqualTo(1);
+        assertThat(summary.shadowMismatch()).isEqualTo(0);
+        assertThat(summary.shadowDateMatch()).isEqualTo(0);
+        assertThat(summary.shadowAtrMatch()).isEqualTo(0);
+        // no rule-regression WARN for an empty series -- only INFO/DEBUG lines are expected
+        assertThat(appender.list).noneMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("sig-shad-empty"));
+    }
+
+    // --- 20: every sampled row skipped -> its own WARN, distinct from the "expected" WARN -----------
+
+    @Test
+    void everySampledRowSkippedLogsItsOwnWarn() {
+        when(signals.findAnchorCandidates(100)).thenReturn(List.of());
+        when(signals.findShadowSample(eq(5), any())).thenReturn(List.of(
+                new AnchorShadowRow("sig-shad-empty", "EMPTYCO", Instant.parse("2026-09-15T04:01:00Z"),
+                        LocalDate.parse("2026-09-14"), bd("12.0000"))));
+        when(marketData.dailyOhlcHistory(eq("EMPTYCO"), anyInt())).thenReturn(List.of());
+
+        step(true, 100, 5).run();
+
+        assertThat(appender.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("every sampled row was skipped"));
+        assertThat(appender.list).noneMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("diverged as 'expected'"));
+    }
 }

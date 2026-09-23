@@ -97,64 +97,88 @@ public class AnchorReconstructionStep {
         int reconstructed = 0, unreconstructable = 0, deferred = 0, raced = 0;
         Map<String, Integer> reasons = new TreeMap<>();
         for (AnchorCandidate c : candidates) {
-            Fetch f = fetched.get(sym(c.symbol()));
-            if (f == null || f.failed() || outage) { deferred++; continue; }
-            AnchorReconstructor.Result r = reconstructor.reconstruct(sym(c.symbol()), c.emittedAt(), f.bars(), f.windowStart());
-            if (r instanceof AnchorReconstructor.Anchor a) {
-                if (signals.writeReconstructedAnchor(c.signalId(), a.barDate(), a.atr()) == 1) {
-                    reconstructed++;
-                } else {
-                    raced++;
-                    log.warn("outcome batch: anchor reconstruction for signal {} ({}) updated no row "
-                            + "(anchors or reference_source changed concurrently)", c.signalId(), c.symbol());
+            try {
+                Fetch f = fetched.get(sym(c.symbol()));
+                if (f == null || f.failed() || outage) { deferred++; continue; }
+                AnchorReconstructor.Result r = reconstructor.reconstruct(sym(c.symbol()), c.emittedAt(), f.bars(), f.windowStart());
+                if (r instanceof AnchorReconstructor.Anchor a) {
+                    if (signals.writeReconstructedAnchor(c.signalId(), a.barDate(), a.atr()) == 1) {
+                        reconstructed++;
+                    } else {
+                        raced++;
+                        log.warn("outcome batch: anchor reconstruction for signal {} ({}) updated no row "
+                                + "(anchors or reference_source changed concurrently)", c.signalId(), c.symbol());
+                    }
+                    continue;
                 }
-                continue;
-            }
-            AnchorReconstructor.Failure fail = (AnchorReconstructor.Failure) r;
-            String reason = fail.reason();
-            boolean permanent = fail.permanent();
-            if (!permanent && AnchorReconstructor.NO_DATA.equals(reason) && anyHealthy
-                    && ChronoUnit.DAYS.between(c.emittedAt().atZone(ZoneOffset.UTC).toLocalDate(), today)
-                       > PERMANENT_EMPTY_AGE_DAYS) {
-                permanent = true;
-                reason = NO_HISTORY;
-            }
-            reasons.merge(reason, 1, Integer::sum);
-            if (permanent) {
-                if (signals.markUnreconstructable(c.signalId()) == 1) {
-                    unreconstructable++;
-                    log.info("outcome batch: signal {} ({}) not reconstructable: {}", c.signalId(), c.symbol(), reason);
-                } else {
-                    raced++;
-                    log.warn("outcome batch: markUnreconstructable for signal {} ({}) updated no row "
-                            + "(reference_source changed concurrently)", c.signalId(), c.symbol());
+                AnchorReconstructor.Failure fail = (AnchorReconstructor.Failure) r;
+                String reason = fail.reason();
+                boolean permanent = fail.permanent();
+                if (!permanent && AnchorReconstructor.NO_DATA.equals(reason) && anyHealthy
+                        && ChronoUnit.DAYS.between(c.emittedAt().atZone(ZoneOffset.UTC).toLocalDate(), today)
+                           > PERMANENT_EMPTY_AGE_DAYS) {
+                    permanent = true;
+                    reason = NO_HISTORY;
                 }
-            } else {
+                reasons.merge(reason, 1, Integer::sum);
+                if (permanent) {
+                    if (signals.markUnreconstructable(c.signalId()) == 1) {
+                        unreconstructable++;
+                        log.info("outcome batch: signal {} ({}) not reconstructable: {}", c.signalId(), c.symbol(), reason);
+                    } else {
+                        raced++;
+                        log.warn("outcome batch: markUnreconstructable for signal {} ({}) updated no row "
+                                + "(reference_source changed concurrently)", c.signalId(), c.symbol());
+                    }
+                } else {
+                    deferred++;
+                }
+            } catch (RuntimeException e) {
+                // One bad candidate must never abort the rest of the batch or the shadow check
+                // that runs after this loop.
                 deferred++;
+                log.warn("outcome batch: anchor reconstruction for signal {} ({}) threw: {}",
+                        c.signalId(), c.symbol(), e.getMessage(), e);
             }
         }
 
         int dateMatch = 0, atrMatch = 0, expected = 0, mismatch = 0, skipped = 0;
         for (AnchorShadowRow s : shadow) {
-            Fetch f = fetched.get(sym(s.symbol()));
-            if (f == null || f.failed()) { skipped++; continue; }          // not comparable tonight
-            AnchorReconstructor.Result r = reconstructor.reconstruct(sym(s.symbol()), s.emittedAt(), f.bars(), f.windowStart());
-            if (r instanceof AnchorReconstructor.Failure fail) {
-                if (fail.permanent() && AnchorReconstructor.STALE.equals(fail.reason())) { expected++; continue; }
-                mismatch++;
-                log.warn("anchor shadow check: signal {} ({}) stored {} / {} but reconstruction failed: {}",
-                        s.signalId(), s.symbol(), s.storedBarDate(), s.storedAtr(), fail.reason());
-                continue;
-            }
-            AnchorReconstructor.Anchor a = (AnchorReconstructor.Anchor) r;
-            boolean dOk = a.barDate().equals(s.storedBarDate());
-            boolean aOk = atrWithinTolerance(a.atr(), s.storedAtr());
-            if (dOk) dateMatch++;
-            if (aOk) atrMatch++;
-            if (!dOk || !aOk) {
-                mismatch++;
-                log.warn("anchor shadow check: signal {} ({}) stored {} / {} reconstructed {} / {}",
-                        s.signalId(), s.symbol(), s.storedBarDate(), s.storedAtr(), a.barDate(), a.atr());
+            try {
+                Fetch f = fetched.get(sym(s.symbol()));
+                if (f == null || f.failed()) { skipped++; continue; }          // not comparable tonight
+                if (f.bars().isEmpty()) {
+                    // The source answered (no failure), but served nothing at all over the whole
+                    // lookback -- not comparable either, and not the reconstruction rule's fault,
+                    // so it must not count as a mismatch or trigger a rule-regression WARN.
+                    skipped++;
+                    log.debug("anchor shadow check: signal {} ({}) skipped — fetch served no bars "
+                            + "over the whole lookback", s.signalId(), s.symbol());
+                    continue;
+                }
+                AnchorReconstructor.Result r = reconstructor.reconstruct(sym(s.symbol()), s.emittedAt(), f.bars(), f.windowStart());
+                if (r instanceof AnchorReconstructor.Failure fail) {
+                    if (fail.permanent() && AnchorReconstructor.STALE.equals(fail.reason())) { expected++; continue; }
+                    mismatch++;
+                    log.warn("anchor shadow check: signal {} ({}) stored {} / {} but reconstruction failed: {}",
+                            s.signalId(), s.symbol(), s.storedBarDate(), s.storedAtr(), fail.reason());
+                    continue;
+                }
+                AnchorReconstructor.Anchor a = (AnchorReconstructor.Anchor) r;
+                boolean dOk = a.barDate().equals(s.storedBarDate());
+                boolean aOk = atrWithinTolerance(a.atr(), s.storedAtr());
+                if (dOk) dateMatch++;
+                if (aOk) atrMatch++;
+                if (!dOk || !aOk) {
+                    mismatch++;
+                    log.warn("anchor shadow check: signal {} ({}) stored {} / {} reconstructed {} / {}",
+                            s.signalId(), s.symbol(), s.storedBarDate(), s.storedAtr(), a.barDate(), a.atr());
+                }
+            } catch (RuntimeException e) {
+                // One bad shadow row must never abort the rest of the shadow check.
+                skipped++;
+                log.warn("anchor shadow check: signal {} ({}) processing threw: {}",
+                        s.signalId(), s.symbol(), e.getMessage(), e);
             }
         }
         int shadowN = shadow.size();
@@ -163,6 +187,10 @@ public class AnchorReconstructionStep {
                     shadowN, dateMatch, atrMatch, expected, mismatch, skipped);
             if (expected == shadowN) {
                 log.warn("anchor shadow check: every sampled emission row diverged as 'expected' — "
+                        + "the check compared nothing tonight");
+            }
+            if (skipped == shadowN) {
+                log.warn("anchor shadow check: every sampled row was skipped — "
                         + "the check compared nothing tonight");
             }
         }

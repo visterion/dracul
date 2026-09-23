@@ -96,7 +96,8 @@ public class OutcomeLogRepository {
 
     /** True when a row already exists for {@code logIdRef} AND is marked complete — the batch
      *  job skips re-processing in that case (closed-position TRADE rows never change again;
-     *  COUNTERFACTUAL rows stay incomplete until skipped or the 60-bar window is filled). */
+     *  COUNTERFACTUAL rows stay incomplete until skipped or the max(60, horizon)-bar window is
+     *  filled). */
     public boolean isComplete(String logIdRef) {
         return Boolean.TRUE.equals(jdbc.sql("SELECT complete FROM outcome_log WHERE log_id_ref = :ref")
                 .param("ref", logIdRef)

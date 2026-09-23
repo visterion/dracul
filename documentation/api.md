@@ -298,15 +298,22 @@ stop-basis comparison (ATR vs. swing-low), and slippage vs. limit price.
     them, they remain classified `reference_source = 'emission'`.
   - **12-month horizon vs. the walk's lookback cap.** A counterfactual row
     only completes once `bars.size() >= max(60, horizonTradingDays)`
-    (3m = 64, 6m = 129, 12m = 257 trading bars). The walk fetches
-    `min(400, max(90, daysSince + 90))` calendar days of history back from
-    today (`fetchBarsAfter`), then keeps only the bars after the anchor. The
-    risk is not "few trading days" but the 400-calendar-day cap itself: once
-    a signal's age passes ~310 days, `daysSince + 90` exceeds the 400 cap and
-    the fetch window starts (today − 400d) later than the anchor — the
-    window then no longer reaches all the way back to the anchor, so it
-    stops covering the full run of bars a 12m horizon (~257 trading days)
-    needs, and the row can stay incomplete indefinitely.
+    (3m = 64, 6m = 129, 12m = 257 trading bars). `fetchBarsAfter` requests
+    `min(400, max(90, daysSince + 90))` from `dailyOhlcHistory` — a count
+    Agora's `get_ohlc` returns as **bars/trading days, not calendar days**,
+    so the fetched window reaches further back in calendar time than the
+    raw number suggests. The requested count itself is capped once
+    `daysSince + 90 > 400`, i.e. once a signal is older than ~310 calendar
+    days; from there it stays pinned at 400 instead of growing with the
+    signal's age. Because that 400 is bars, not calendar days, a pinned
+    window still reaches back well over a year in calendar time — enough to
+    cover the anchor of a 12-month-old signal (`daysSince` ≈ 365) and the
+    257 trading bars a `12m` row needs after it. So in practice a normal
+    12m row reaches completion before the cap becomes a problem. The
+    residual risk is only for a signal old enough that even the pinned,
+    bars-denominated window no longer reaches back to its anchor at all —
+    at that point the row simply stops gaining bars and can stay incomplete
+    indefinitely.
   - 21 pre-V49 `LLM_SKIP`/`SIGNAL_EXPIRED_UNEVALUATED` signals have no
     `reference_price` at all and are never reconstructed — no price is
     invented for them.
