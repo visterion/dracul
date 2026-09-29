@@ -21,6 +21,7 @@ const router = createRouter({
     { path: '/watchlist', name: 'watchlist', component: stub },
     { path: '/depots', name: 'depots', component: stub },
     { path: '/report', name: 'morning-report', component: stub },
+    { path: '/proposals', name: 'proposals', component: stub },
     { path: '/patterns', name: 'pattern-library', component: stub },
     { path: '/backtest', name: 'backtest', component: stub },
     { path: '/settings', name: 'settings', component: stub },
