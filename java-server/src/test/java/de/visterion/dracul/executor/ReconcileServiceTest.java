@@ -463,6 +463,185 @@ class ReconcileServiceTest {
         verify(decisionRepo, never()).insert(any());
     }
 
+    /** Builds a position exactly as {@code ExecutorWebhookController} places it: both
+     *  {@code entryPrice} and {@code highestPrice} seeded to the submitted limit, and
+     *  {@code entryExpiresAt} still set (the GTD marker that {@code entryJustFilled} reads). */
+    private ExecutorPosition firstFillPendingPosition(long id, String symbol, String side,
+            BigDecimal limit, BigDecimal stop) {
+        return new ExecutorPosition(id, "c", symbol, side, BigDecimal.TEN, limit, stop, stop, 1,
+                null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-" + id,
+                limit, BigDecimal.ZERO, 0, null, null, null, null, "stop-" + id,
+                null, null, null, null, 0, null, "2026-07-15T00:00:00Z", limit,
+                null, null, null, false, null, null);
+    }
+
+    @Test
+    void firstFillBelowLimit_reseedsHighestToFillThenMaxesWithLowerClose() {
+        // Prod bug: highest_price stayed at the submitted limit (100.00) forever, even though
+        // the broker filled at 99.50 -- the chandelier ratchet then computed off a phantom high.
+        ExecutorPosition p = firstFillPendingPosition(30L, "TST", "BUY",
+                new BigDecimal("100.00"), new BigDecimal("95.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Fill below the limit, and the close afterwards is below the fill too -- highest must
+        // land on the fill (99.50), not stay on the limit (100.00) and not drop below the fill.
+        gateway.seedPosition(new BrokerPosition("TST", "BUY", BigDecimal.TEN,
+                new BigDecimal("99.50"), new BigDecimal("99.00"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncEntryPrice(30L, new BigDecimal("99.50"));
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(30L), highestCaptor.capture(), any(), eq(0),
+                any(), isNull(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("99.50");
+
+        assertThat(survivors).hasSize(1);
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("99.50");
+    }
+
+    @Test
+    void firstFillBelowLimit_reseedsHighestToFillThenMaxesWithHigherClose() {
+        ExecutorPosition p = firstFillPendingPosition(31L, "TST", "BUY",
+                new BigDecimal("100.00"), new BigDecimal("95.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Fill below the limit, but the close afterwards runs above the fill -- the ordinary
+        // high-water max then takes over from the re-seeded basis.
+        gateway.seedPosition(new BrokerPosition("TST", "BUY", BigDecimal.TEN,
+                new BigDecimal("99.50"), new BigDecimal("101.00"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(31L), highestCaptor.capture(), any(), eq(0),
+                any(), isNull(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("101.00");
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("101.00");
+    }
+
+    @Test
+    void firstFillAboveLimitShort_reseedsLowestToFillThenMinsWithHigherClose() {
+        // Short mirror: highest_price holds the LOW for a SELL. A short filled worse than the
+        // limit (i.e. at a higher price) must re-seed to that fill, not stay on the limit.
+        ExecutorPosition p = firstFillPendingPosition(32L, "TST", "SELL",
+                new BigDecimal("100.00"), new BigDecimal("105.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("TST", "SELL", BigDecimal.TEN,
+                new BigDecimal("100.50"), new BigDecimal("101.00"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncEntryPrice(32L, new BigDecimal("100.50"));
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(32L), highestCaptor.capture(), any(), eq(0),
+                any(), isNull(), any());
+        // close (101.00) is above the re-seeded fill (100.50) -> min keeps the fill.
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("100.50");
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("100.50");
+    }
+
+    @Test
+    void firstFillAtLimit_leavesHighestUnchanged() {
+        // Fill exactly at the limit: entry_price already equals the broker basis, so
+        // ENTRY_PRICE_SYNC never fires and there is nothing to re-seed.
+        ExecutorPosition p = firstFillPendingPosition(33L, "TST", "BUY",
+                new BigDecimal("100.00"), new BigDecimal("95.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("TST", "BUY", BigDecimal.TEN,
+                new BigDecimal("100.00"), new BigDecimal("99.00"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(33L), highestCaptor.capture(), any(), eq(0),
+                any(), isNull(), any());
+        // Close (99.00) is below the limit (100.00) -- the high-water max keeps the old extreme,
+        // proving no re-seed happened (a re-seed to 100.00 would look identical here by accident,
+        // which is why syncEntryPrice/never above is the load-bearing assertion).
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("100.00");
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void tranche2Fill_doesNotResetRunningHighest() {
+        // NOT the first fill: entryExpiresAt is already null (entry was filled earlier), so
+        // entryJustFilled is false even though avgEntryPrice changes again (tranche-2 fill).
+        // The running highest_price (108, built up since entry) must survive untouched.
+        ExecutorPosition p = new ExecutorPosition(34L, "c", "TST", "BUY", BigDecimal.TEN,
+                new BigDecimal("100.00"), new BigDecimal("95.00"), new BigDecimal("95.00"), 2,
+                null, List.of(), "sig-1", "agent", "2026-07-01", null, "OPEN", "brk-34",
+                new BigDecimal("108.00"), BigDecimal.ZERO, 0, null, null, null, null, "stop-34",
+                null, null, "ord-t2", "stop-t2", 0, null, null, new BigDecimal("100.00"),
+                null, null, null, false, null, "2026-07-01T00:00:00Z");
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Tranche-2 fills at a worse price than tranche-1, moving the blended avgEntryPrice.
+        gateway.seedPosition(new BrokerPosition("TST", "BUY", BigDecimal.TEN,
+                new BigDecimal("101.00"), new BigDecimal("103.00"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo).syncEntryPrice(34L, new BigDecimal("101.00"));
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(34L), highestCaptor.capture(), any(), eq(0),
+                any(), isNull(), any());
+        // max(108, 103) = 108 -- the running high, never reset to the new basis.
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("108.00");
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("108.00");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        // The tranche-2 ENTRY_PRICE_SYNC row must NOT carry re-seed fields -- this is not a
+        // first fill, so no re-seed happened to log.
+        assertThat(logCaptor.getValue().inputsSnapshot().has("old_highest_price")).isFalse();
+    }
+
+    @Test
+    void firstFillWithNullAvgEntryPrice_leavesHighestUnchangedAndDoesNotCrash() {
+        ExecutorPosition p = firstFillPendingPosition(35L, "TST", "BUY",
+                new BigDecimal("100.00"), new BigDecimal("95.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        // Broker reports the holding but no basis at all (avgEntryPrice null) -- must not crash
+        // and must not touch highest_price.
+        gateway.seedPosition(new BrokerPosition("TST", "BUY", BigDecimal.TEN, null,
+                new BigDecimal("99.00"), null));
+
+        List<ExecutorPosition> survivors = service.reconcile("c", "run1").survivors();
+
+        verify(positionRepo, never()).syncEntryPrice(anyLong(), any());
+        ArgumentCaptor<BigDecimal> highestCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        verify(positionRepo).updateMaintenance(eq(35L), highestCaptor.capture(), any(), eq(0),
+                any(), isNull(), any());
+        assertThat(highestCaptor.getValue()).isEqualByComparingTo("100.00");
+        assertThat(survivors.get(0).highestPrice()).isEqualByComparingTo("100.00");
+    }
+
+    @Test
+    void firstFillReseed_writesOldAndNewHighestOnTheEntryPriceSyncRow() {
+        ExecutorPosition p = firstFillPendingPosition(36L, "TST", "BUY",
+                new BigDecimal("100.00"), new BigDecimal("95.00"));
+        when(positionRepo.findOpen()).thenReturn(List.of(p));
+
+        gateway.seedPosition(new BrokerPosition("TST", "BUY", BigDecimal.TEN,
+                new BigDecimal("99.50"), new BigDecimal("99.00"), null));
+
+        service.reconcile("c", "run1");
+
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionRepo).insert(logCaptor.capture());
+        DecisionLog log = logCaptor.getValue();
+        assertThat(log.reasonCode()).isEqualTo("ENTRY_PRICE_SYNC");
+        assertThat(log.inputsSnapshot().get("old_highest_price").decimalValue())
+                .isEqualByComparingTo("100.00");
+        assertThat(log.inputsSnapshot().get("new_highest_price").decimalValue())
+                .isEqualByComparingTo("99.50");
+    }
+
     @Test
     void stillOpen_pinsSectorEntryDayHighAndTranche2FieldsThroughReconcile() {
         // Task-1 review carry-over: ReconcileService's still-open position-copy must not drop

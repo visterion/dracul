@@ -1770,6 +1770,16 @@ public class ReconcileService {
             ObjectNode inputs = mapper.createObjectNode();
             inputs.put("old_entry_price", p.entryPrice());
             inputs.put("new_entry_price", brokerBasis);
+            // On the FIRST fill only, highest_price still holds the placement-time placeholder
+            // (the submitted limit -- see ExecutorWebhookController, which seeds entry_price and
+            // highest_price to the same value). Re-seed it to the real fill here too, in the same
+            // pass, so the high-water max/min below starts from the truth instead of the limit.
+            // Never on a later pass (tranche-2 also moves avgEntryPrice via this same block) --
+            // that would reset a running high built up since entry.
+            if (entryJustFilled) {
+                inputs.put("old_highest_price", p.highestPrice());
+                inputs.put("new_highest_price", brokerBasis);
+            }
             ObjectNode orderJson = mapper.createObjectNode();
             orderJson.put("position_id", p.id());
             decisionRepo.insert(new DecisionLog(null, runId, ruleVersions.active(),
@@ -1778,7 +1788,8 @@ public class ReconcileService {
             p = new ExecutorPosition(p.id(), p.connection(), p.symbol(), p.side(), p.qty(),
                     brokerBasis, p.initialStop(), p.activeStop(), p.tranche(), p.rValue(),
                     p.killCriteria(), p.sourceSignalId(), p.sourceAgent(), p.entryDate(), p.mfe(),
-                    p.status(), p.brokerOrderId(), p.highestPrice(), p.mfeR(), p.softConfirmCount(),
+                    p.status(), p.brokerOrderId(), entryJustFilled ? brokerBasis : p.highestPrice(),
+                    p.mfeR(), p.softConfirmCount(),
                     p.exitPrice(), p.realizedR(), p.exitReason(), p.closedAt(), p.stopOrderId(),
                     p.sector(), p.entryDayHigh(), p.tranche2OrderId(), p.tranche2StopOrderId(),
                     p.trimCount(), p.lowestPrice(), p.entryExpiresAt(), p.submittedLimitPrice(),
