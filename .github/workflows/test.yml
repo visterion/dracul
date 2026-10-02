@@ -38,6 +38,6 @@ jobs:
         if: always()
         uses: mikepenz/action-junit-report@v6
         with:
-          report_paths: 'java-server/target/surefire-reports/TEST-*.xml'
+          report_paths: 'java-server/target/{surefire,failsafe}-reports/TEST-*.xml'
           fail_on_failure: true
           require_tests: true
