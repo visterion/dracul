@@ -47,5 +47,10 @@ public record EnrichedPeadCandidate(
         // Seit 2026-07-27 ein schlanker Index ohne summary; newsCount nennt die UNGEKAPPTE
         // Gesamtzahl, damit der Agent sieht, wann sich fetch_candidate_news lohnt.
         List<EchoNewsIndexItem> recentNews,
-        int newsCount
+        int newsCount,
+        // 2026-10-02 (structured kill level): CAR over the [0,+1] event window — the confirmation
+        // signal that does not depend on knowing whether the report came before the open or after
+        // the close — and the last close before the report day, echo's kill_close_below level.
+        BigDecimal announcementCar2d,
+        BigDecimal preReportClose
 ) {}

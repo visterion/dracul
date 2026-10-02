@@ -48,18 +48,23 @@ class EnrichedPeadCandidateSerializationTest {
                 2_500_000.0, 1.1, "Technology", true,
                 new BigDecimal("0.040000"), true, 5, "up", true,
                 LocalDate.now().plusDays(40), 40, 12, true,
-                List.of(new EchoNewsIndexItem("Acme beats and raises", "src", 0.8, Instant.now())), 1);
+                List.of(new EchoNewsIndexItem("Acme beats and raises", "src", 0.8, Instant.now())), 1,
+                new BigDecimal("0.052000"), new BigDecimal("185.40"));
 
         JsonNode node = new ObjectMapper().valueToTree(candidate);
         List<String> actualKeys = new ArrayList<>(node.propertyNames());
 
         assertThat(actualKeys).containsAll(PRE_EXISTING_KEYS);
         assertThat(actualKeys)
-                .as("only recentNews and newsCount may be NEW keys beyond the pre-existing field set")
+                .as("only recentNews/newsCount (T1.5) and announcementCar2d/preReportClose "
+                        + "(2026-10-02) may be NEW keys beyond the pre-existing field set")
                 .containsExactlyInAnyOrderElementsOf(
                         java.util.stream.Stream.concat(PRE_EXISTING_KEYS.stream(),
-                                        java.util.stream.Stream.of("recentNews", "newsCount"))
+                                        java.util.stream.Stream.of("recentNews", "newsCount",
+                                                "announcementCar2d", "preReportClose"))
                                 .toList());
+        assertThat(node.path("announcementCar2d").decimalValue()).isEqualByComparingTo("0.052");
+        assertThat(node.path("preReportClose").decimalValue()).isEqualByComparingTo("185.40");
 
         JsonNode recentNews = node.path("recentNews").get(0);
         assertThat(recentNews.path("headline").asText()).isEqualTo("Acme beats and raises");

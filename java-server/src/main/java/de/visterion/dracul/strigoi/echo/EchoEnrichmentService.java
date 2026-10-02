@@ -90,7 +90,25 @@ public class EchoEnrichmentService {
         this.recentNewsCap = recentNewsCap;
     }
 
+    /** {@link #enrichCounted} without the skip count — kept for callers that only need the list. */
     public List<EnrichedPeadCandidate> enrich(List<PeadCandidate> candidates) {
+        return enrichCounted(candidates).candidates();
+    }
+
+    /** The enriched candidates plus how many were deferred because the market has not reacted
+     *  yet (see {@link #enrichCounted}). */
+    public record Enriched(List<EnrichedPeadCandidate> candidates, int skippedNoPostReportBar) {}
+
+    /**
+     * Enriches every candidate, except one whose daily series is non-empty and ends on or before
+     * its report date: echo runs at 22:00 UTC on the report day, and for an after-close reporter
+     * the market has not reacted yet — the report-day close is the PRE-announcement price, so
+     * flagging it would buy before the reaction (spec 2026-10-02 §3.7). Such a candidate is
+     * deferred to a later run (lookback is 7 days) and counted. An EMPTY series (OHLC failed or
+     * missing) is NOT skipped: it keeps today's behavior (reaches the LLM with
+     * {@code carAvailable=false}), so an Agora OHLC outage cannot turn into a silent quiet night.
+     */
+    public Enriched enrichCounted(List<PeadCandidate> candidates) {
         record Partial(PeadCandidate c, Sue sue, List<QuarterlyEps> hist) {}
         List<Partial> partials = new ArrayList<>();
         List<Double> sueValues = new ArrayList<>();
@@ -112,8 +130,17 @@ public class EchoEnrichmentService {
         List<OhlcBar> marketBars = ohlc(marketProxy);
 
         List<EnrichedPeadCandidate> out = new ArrayList<>();
+        int skippedNoPostReportBar = 0;
         for (Partial p : partials) {
             PeadCandidate c = p.c();
+
+            List<OhlcBar> stockBars = ohlc(c.symbol());
+            if (noPostReportBar(stockBars, c.reportDate())) {
+                skippedNoPostReportBar++;
+                log.debug("echo: deferring {} — no trading day after its report date {} yet",
+                        c.symbol(), c.reportDate());
+                continue;
+            }
 
             Integer decile = null;
             boolean approximate = p.sue().approximate();
@@ -129,7 +156,6 @@ public class EchoEnrichmentService {
             Integer consecutive = p.hist().isEmpty() ? null : sueEngine.seasonalBeatStreak(p.hist());
 
             EquityMetrics em = safeMetrics(c.symbol());
-            List<OhlcBar> stockBars = ohlc(c.symbol());
             MarketSignals ms = marketSignals.compute(stockBars, marketBars, c.reportDate(), em.beta());
 
             AccrualMetrics accr = safeAccruals(c.symbol());
@@ -163,9 +189,17 @@ public class EchoEnrichmentService {
                     accr.accrualRatio(), accr.available(),
                     rev.netProxy(), rev.direction(), rev.available(),
                     nextEarn.orElse(null), daysToNext,
-                    cov.coverage(), cov.available(), recentNews, scan.newsCount()));
+                    cov.coverage(), cov.available(), recentNews, scan.newsCount(),
+                    ms.announcementCar2d(), ms.preReportClose()));
         }
-        return out;
+        return new Enriched(out, skippedNoPostReportBar);
+    }
+
+    /** True only for a NON-EMPTY series whose last bar is dated on or before the report date. */
+    static boolean noPostReportBar(List<OhlcBar> bars, LocalDate reportDate) {
+        if (bars == null || bars.isEmpty() || reportDate == null) return false;
+        LocalDate last = bars.getLast().date();
+        return last != null && !last.isAfter(reportDate);
     }
 
     private List<OhlcBar> ohlc(String symbol) {

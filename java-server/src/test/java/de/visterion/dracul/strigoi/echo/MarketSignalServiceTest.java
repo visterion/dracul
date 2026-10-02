@@ -126,4 +126,58 @@ class MarketSignalServiceTest {
         assertThat(MarketSignalService.residualReturns(stock, null, null)).isEmpty();
         assertThat(MarketSignalService.residualReturns(stock, List.of(), null)).isEmpty();
     }
+
+    // --- 2026-10-02: CAR over [0,+1] and the pre-report close ---
+
+    /** After-close shape: d0 (the report day) is flat — the release came after the bell — and the
+     *  reaction lands on d0+1 (-10 %). car1d sees nothing; car2d sees the reaction. */
+    @Test
+    void car2dCapturesAnAfterCloseReactionThatCar1dMisses() {
+        double[] s = flat(23, 100); s[20] = 100; s[21] = 90; s[22] = 90;
+        double[] m = flat(23, 200);
+        LocalDate report = START.plusDays(20);
+
+        MarketSignals sig = svc.compute(bars(s, flatVol(23, 1_000)), bars(m, flatVol(23, 1)),
+                report, null);
+
+        assertThat(sig.announcementCar1d()).isEqualByComparingTo("0");
+        assertThat(sig.announcementCar2d()).isEqualByComparingTo("-0.1");
+        assertThat(sig.announcementCar2d().signum()).isNegative();
+    }
+
+    @Test
+    void car2dIsNullWithoutABarAfterTheReportDay() {
+        double[] s = flat(21, 100); s[20] = 105;
+        LocalDate report = START.plusDays(20);           // d0 is the LAST bar
+
+        MarketSignals sig = svc.compute(bars(s, flatVol(21, 1_000)), bars(flat(21, 200),
+                flatVol(21, 1)), report, null);
+
+        assertThat(sig.announcementCar1d()).isNotNull();
+        assertThat(sig.announcementCar2d()).isNull();
+        // d0 == last bar: the pre-report close is still the close of d0-1 (documented).
+        assertThat(sig.preReportClose()).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void preReportCloseIsTheCloseOfTheBarBeforeTheReportDay() {
+        double[] s = flat(23, 100); s[19] = 97.25; s[20] = 105;
+        LocalDate report = START.plusDays(20);
+
+        MarketSignals sig = svc.compute(bars(s, flatVol(23, 1_000)), bars(flat(23, 200),
+                flatVol(23, 1)), report, null);
+
+        assertThat(sig.preReportClose()).isEqualByComparingTo("97.25");
+    }
+
+    @Test
+    void preReportCloseIsNullWhenTheReportIsTheFirstBarOrHasNoBarAtAll() {
+        double[] s = flat(23, 100);
+        // d0 == 0: the report day is the first bar, nothing before it.
+        assertThat(svc.compute(bars(s, flatVol(23, 1_000)), null, START, null).preReportClose())
+                .isNull();
+        // d0 == -1: no bar on or after the report date.
+        assertThat(svc.compute(bars(s, flatVol(23, 1_000)), null, START.plusDays(40), null)
+                .preReportClose()).isNull();
+    }
 }

@@ -96,4 +96,38 @@ class EchoHealthMergeTest {
                 .contains("max-candidates")
                 .contains("price source unavailable");
     }
+
+    // --- 2026-10-02: day-0 deferral count, informational only ---
+
+    @Test
+    void zeroSkipsLeavesTheHealthUntouched() {
+        var agora = DataSourceHealth.healthy("agora");
+        assertThat(StrigoiEchoWebhookController.mergeHealth(agora, screened(false, false), 0))
+                .isSameAs(agora);
+    }
+
+    @Test
+    void skipsAreANoteInDetailThatDegradesNothing() {
+        var merged = StrigoiEchoWebhookController.mergeHealth(
+                DataSourceHealth.healthy("agora"), screened(false, false), 3);
+        assertThat(merged.status()).isEqualTo("healthy");
+        assertThat(merged.partial()).isFalse();
+        assertThat(merged.truncated()).isFalse();
+        assertThat(merged.detail()).isEqualTo("skipped_no_post_report_bar=3");
+    }
+
+    @Test
+    void skipNoteIsAppendedToAnExistingDetail() {
+        var merged = StrigoiEchoWebhookController.mergeHealth(
+                DataSourceHealth.healthy("agora"), screened(true, false), 2);
+        assertThat(merged.truncated()).isTrue();
+        assertThat(merged.detail()).endsWith("; skipped_no_post_report_bar=2");
+    }
+
+    @Test
+    void anOutageIsNeverAnnotated() {
+        var outage = DataSourceHealth.unavailable("agora", "down");
+        assertThat(StrigoiEchoWebhookController.mergeHealth(outage, screened(false, false), 5))
+                .isSameAs(outage);
+    }
 }

@@ -320,4 +320,74 @@ class EchoEnrichmentServiceTest {
         assertThat(out.get(0).recentNews()).isEmpty();
         assertThat(out.get(1).recentNews()).isEmpty(); // both share the same mocked, always-throwing screen
     }
+
+    // --- 2026-10-02 §3.7: no candidate before the market has reacted ---
+
+    private EchoEnrichmentService serviceWith(AgoraMarketData md) {
+        var cd = companyData(trend(1, 8), cleanHeadlines(1));
+        return new EchoEnrichmentService(new SueEngine(), filings(), shaper(historyFor(REPORT)), md,
+                new MarketSignalService(), equityMetrics(), "SPY", 320,
+                accruals(new BigDecimal("0.03")), new RevisionsProxy(), cd, nextEarnings(40),
+                new ConfounderScreen(cd), new EchoDeterministicGate(new BigDecimal("0.10"), 10), 10);
+    }
+
+    /** A stock series whose last bar is {@code lastBar}; SPY keeps the default series. */
+    private AgoraMarketData stockEndingOn(LocalDate lastBar) {
+        return new AgoraMarketData(null) {
+            @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
+            @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+                if ("SPY".equals(symbol)) return spyBars();
+                List<OhlcBar> out = new ArrayList<>();
+                for (int i = 24; i >= 0; i--) {
+                    BigDecimal c = BigDecimal.valueOf(190.0);
+                    out.add(new OhlcBar(lastBar.minusDays(i), c, c, c, c, 1_000L));
+                }
+                return out;
+            }
+        };
+    }
+
+    @Test
+    void candidateWhoseSeriesEndsOnTheReportDayIsDeferredAndCounted() {
+        var result = serviceWith(stockEndingOn(REPORT)).enrichCounted(List.of(cand("SYNDZ", 1.80)));
+
+        assertThat(result.candidates()).isEmpty();
+        assertThat(result.skippedNoPostReportBar()).isEqualTo(1);
+    }
+
+    @Test
+    void oneBarAfterTheReportDayIsEnough() {
+        var result = serviceWith(stockEndingOn(REPORT.plusDays(1)))
+                .enrichCounted(List.of(cand("SYNDO", 1.80)));
+
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.skippedNoPostReportBar()).isZero();
+        assertThat(result.candidates().getFirst().preReportClose()).isNotNull();
+    }
+
+    /** An OHLC outage must not masquerade as "market has not reacted": the candidate still reaches
+     *  the LLM, with carAvailable=false, exactly as before. */
+    @Test
+    void emptyOrFailingOhlcIsNeverSkipped() {
+        var throwing = new AgoraMarketData(null) {
+            @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
+            @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+                if ("SPY".equals(symbol)) return spyBars();
+                throw new RuntimeException("agora ohlc down");
+            }
+        };
+        var empty = new AgoraMarketData(null) {
+            @Override public MarketData resolve(String symbol) { throw new UnsupportedOperationException(); }
+            @Override public List<OhlcBar> dailyOhlcHistory(String symbol, int days) {
+                return "SPY".equals(symbol) ? spyBars() : List.of();
+            }
+        };
+
+        for (AgoraMarketData md : List.of(throwing, empty)) {
+            var result = serviceWith(md).enrichCounted(List.of(cand("SYNEM", 1.80)));
+            assertThat(result.candidates()).hasSize(1);
+            assertThat(result.candidates().getFirst().carAvailable()).isFalse();
+            assertThat(result.skippedNoPostReportBar()).isZero();
+        }
+    }
 }

@@ -80,6 +80,25 @@ public class MarketSignalService {
             }
         }
 
+        // --- CAR over [0,+1] ---
+        // car1d reads bar d0 only; for an after-close reporter that is the pre-release day, so the
+        // reaction is in d0+1. Summing both is timing-agnostic (spec 2026-10-02 §3.7).
+        BigDecimal car2d = null;
+        if (d0 > 0 && d0 + 1 < stockBars.size()) {
+            BigDecimal abn0 = abnormalReturn(stockBars, marketBars, mIdx, d0, effBeta);
+            BigDecimal abn1 = abnormalReturn(stockBars, marketBars, mIdx, d0 + 1, effBeta);
+            if (abn0 != null && abn1 != null) {
+                car2d = abn0.add(abn1).setScale(SCALE, RoundingMode.HALF_UP);
+            }
+        }
+
+        // --- pre-report close ---
+        // The last close before the report-day bar: the level at which the announcement reaction
+        // is fully given back (echo's kill_close_below). d0 == -1 (no bar on/after the report
+        // date) and d0 == 0 (no bar before it) both leave it null. When d0 is the LAST bar this
+        // is still the close of d0-1 — deliberate: it does not need a post-report bar.
+        BigDecimal preReportClose = d0 > 0 ? stockBars.get(d0 - 1).close() : null;
+
         // --- abnormal volume ---
         BigDecimal abnormalVolume = null;
         if (d0 >= VOLUME_LOOKBACK) {
@@ -114,7 +133,8 @@ public class MarketSignalService {
             adv = sum.divide(BigDecimal.valueOf(ADV_LOOKBACK), MC).setScale(2, RoundingMode.HALF_UP);
         }
 
-        return new MarketSignals(car1d, car3d, carAvailable, abnormalVolume, momentum, adv);
+        return new MarketSignals(car1d, car3d, carAvailable, abnormalVolume, momentum, adv,
+                car2d, preReportClose);
     }
 
     /**

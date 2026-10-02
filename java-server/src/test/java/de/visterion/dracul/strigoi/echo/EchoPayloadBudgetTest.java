@@ -180,7 +180,9 @@ class EchoPayloadBudgetTest {
                 2_500_000.0, 1.1234, "Professional Services", true,
                 new BigDecimal("0.040000"), true, 5, "up", true,
                 LocalDate.parse("2026-04-20"), 86, 12, true,
-                index, 14);
+                index, 14,
+                // Worst-case width for the two 2026-10-02 fields: both always populated.
+                new BigDecimal("-0.043100"), new BigDecimal("189.330000"));
     }
 
     /** Stand-ins for the 3 ACTIVE {@code strigoi-echo} patterns {@code V2__seed.sql} ships on a

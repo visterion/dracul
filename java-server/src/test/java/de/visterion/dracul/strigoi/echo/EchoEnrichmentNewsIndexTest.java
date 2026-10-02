@@ -48,7 +48,7 @@ class EchoEnrichmentNewsIndexTest {
                 null, null, null, false,
                 null, false, null, null, false,
                 null, null, null, false,
-                index, 12);
+                index, 12, null, null);
 
         assertThat(candidate.recentNews()).hasSize(1);
         assertThat(candidate.newsCount()).isEqualTo(12);
