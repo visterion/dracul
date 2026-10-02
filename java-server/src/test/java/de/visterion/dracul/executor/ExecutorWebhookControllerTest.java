@@ -7271,4 +7271,180 @@ class ExecutorWebhookControllerTest {
             logger.detachAppender(appender);
         }
     }
+
+    // -------------------------------------------------------------------
+    // place-entry: structured kill level (KillLevelGuard, spec 2026-10-02 §3.4).
+    // happyContext(): order price 100 (no limit_price), atr_effective 2 -> 0.5 ATR = 1.
+    // -------------------------------------------------------------------
+
+    private ExecutorSignal killSignal(String signalId, String killCloseBelow) {
+        return new ExecutorSignal(signalId, "hunter", "v1", "ACME", "LONG", 0.9, "mechanism",
+                List.of("X"), "3m", new BigDecimal("100"), "PENDING", "2026-07-01T00:00:00Z",
+                null, null, null, null,
+                killCloseBelow == null ? null : new BigDecimal(killCloseBelow));
+    }
+
+    private static final String BUY_BODY = """
+            {"signal_id":"sig-1","symbol":"ACME","side":"BUY","stop_price":95}
+            """;
+
+    private void stubFreshPlacement() {
+        when(gateway.placeBracket(eq("depot-1"), any(BracketRequest.class)))
+                .thenReturn(new PlacedBracket("brk-1", "stop-1", null, "sig-1", OrderStatus.WORKING));
+        when(positionRepo.insert(any())).thenReturn(77L);
+    }
+
+    private ExecutorPosition bookedPosition() {
+        ArgumentCaptor<ExecutorPosition> posCaptor = ArgumentCaptor.forClass(ExecutorPosition.class);
+        verify(positionRepo).insert(posCaptor.capture());
+        return posCaptor.getValue();
+    }
+
+    private DecisionLog signalRow(String action) {
+        ArgumentCaptor<DecisionLog> logCaptor = ArgumentCaptor.forClass(DecisionLog.class);
+        verify(decisionLogRepo, atLeastOnce()).insert(logCaptor.capture());
+        return logCaptor.getAllValues().stream()
+                .filter(l -> "SIGNAL".equals(l.triggerType()) && action.equals(l.action()))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
+    void placeEntry_killLevelAtTheOrderPrice_rejectsBeforeTheBroker() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", "100"));
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json(BUY_BODY)));
+
+        assertThat(output.get("placed")).isEqualTo(false);
+        assertThat(output.get("reason")).isEqualTo("KILL_LEVEL_BREACHED");
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(positionRepo, never()).insert(any());
+        verify(signalRepo).markStatus("sig-1", "REJECTED");
+
+        ArgumentCaptor<ExecutorDecision> decCaptor = ArgumentCaptor.forClass(ExecutorDecision.class);
+        verify(decisionRepo).insert(decCaptor.capture());
+        assertThat(decCaptor.getValue().accepted()).isFalse();
+        assertThat(decCaptor.getValue().rejectReason()).isEqualTo("KILL_LEVEL_BREACHED");
+        assertThat(decCaptor.getValue().vetoTrace()).last().isEqualTo("KILL_LEVEL_GUARD:KILL_LEVEL_BREACHED");
+
+        DecisionLog reject = signalRow("REJECT");
+        assertThat(reject.reasonCode()).isEqualTo("KILL_LEVEL_BREACHED");
+        assertThat(reject.inputsSnapshot().path("kill_close_below").decimalValue())
+                .isEqualByComparingTo("100");
+        assertThat(reject.inputsSnapshot().path("kill_close_below_dropped").isNull()).isTrue();
+    }
+
+    @Test
+    void placeEntry_killLevelCloserThanHalfAnAtr_placesAndDropsTheLevel() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", "99.50"));
+        stubFreshPlacement();
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json(BUY_BODY)));
+
+        assertThat(output.get("placed")).isEqualTo(true);
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.killCloseBelow()).isNull();
+        assertThat(booked.killCloseBelowDropped()).isEqualTo("too_tight");
+        DecisionLog enter = signalRow("ENTER");
+        assertThat(enter.inputsSnapshot().path("kill_close_below").isNull()).isTrue();
+        assertThat(enter.inputsSnapshot().path("kill_close_below_dropped").asString())
+                .isEqualTo("too_tight");
+    }
+
+    @Test
+    void placeEntry_killLevelAtExactlyHalfAnAtr_isArmed() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", "99"));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-7", json(BUY_BODY));
+
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.killCloseBelow()).isEqualByComparingTo("99");
+        assertThat(booked.killCloseBelowDropped()).isNull();
+        assertThat(signalRow("ENTER").inputsSnapshot().path("kill_close_below").decimalValue())
+                .isEqualByComparingTo("99");
+    }
+
+    @Test
+    void placeEntry_withoutAKillLevel_booksNone() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", null));
+        stubFreshPlacement();
+
+        controller.placeEntry(BEARER, "run-7", json(BUY_BODY));
+
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.killCloseBelow()).isNull();
+        assertThat(booked.killCloseBelowDropped()).isNull();
+        assertThat(signalRow("ENTER").inputsSnapshot().has("kill_close_below")).isTrue();
+    }
+
+    /** Spec §3.4 row 1: a working order under the clientRef is adopted, never rejected — the
+     *  broker already has it. A breached level is dropped instead, and nothing is re-placed. */
+    @Test
+    void placeEntry_retryAdoptsAWorkingOrderEvenWhenTheLevelIsBreached() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", "100"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1"))
+                .thenReturn(List.of(workingEntry("brk-existing", "sig-1", "ACME", "buy", "7")));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json(BUY_BODY)));
+
+        assertThat(output.get("placed")).isEqualTo(true);
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo).markStatus("sig-1", "ACCEPTED");
+        verify(signalRepo, never()).markStatus("sig-1", "REJECTED");
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.killCloseBelow()).isNull();
+        assertThat(booked.killCloseBelowDropped()).isEqualTo("breached_at_adoption");
+    }
+
+    /** Spec §3.4 filled adoption: the basis is the FILL price. Level 99 is below the re-computed
+     *  order price (100, where the 1.00 distance would arm it) but above the 98.50 fill, so only a
+     *  fill-price basis drops it as breached. */
+    @Test
+    void placeEntry_retryAdoptsAFilledEntryAndComparesTheLevelAgainstTheFillPrice() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", "99"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        Map<String, Object> output = outputOf(controller.placeEntry(BEARER, "run-7", json(BUY_BODY)));
+
+        assertThat(output.get("placed")).isEqualTo(true);
+        verify(gateway, never()).placeBracket(any(), any());
+        verify(signalRepo, never()).markStatus("sig-1", "REJECTED");
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.entryPrice()).isEqualByComparingTo("98.50");
+        assertThat(booked.killCloseBelow()).isNull();
+        assertThat(booked.killCloseBelowDropped()).isEqualTo("breached_at_adoption");
+        assertThat(signalRow("ENTER").inputsSnapshot().path("kill_close_below_dropped").asString())
+                .isEqualTo("breached_at_adoption");
+    }
+
+    /** The adopted-fill booking forwards an armed level (both insert branches carry it). */
+    @Test
+    void placeEntry_retryAdoptsAFilledEntryAndArmsAComfortableLevel() {
+        when(signalRepo.findById("sig-1")).thenReturn(killSignal("sig-1", "90"));
+        when(decisionRepo.countByReason("sig-1", "BROKER_ERROR")).thenReturn(1);
+        when(gateway.ordersByRef("depot-1", "sig-1")).thenReturn(List.of(
+                stopLegOrder("ord-stop", "sig-1", "ACME", "sell", "93"),
+                filledOrder("ord-fill", "sig-1", "ACME", "buy", "limit", "7", "98.50",
+                        "2026-09-08T14:00:00Z")));
+        when(gateway.positions("depot-1")).thenReturn(List.of(new BrokerPosition(
+                "ACME", "BUY", new BigDecimal("7"), new BigDecimal("98.50"),
+                new BigDecimal("101"), 1)));
+        when(positionRepo.insert(any())).thenReturn(77L);
+
+        controller.placeEntry(BEARER, "run-7", json(BUY_BODY));
+
+        ExecutorPosition booked = bookedPosition();
+        assertThat(booked.killCloseBelow()).isEqualByComparingTo("90");
+        assertThat(booked.killCloseBelowDropped()).isNull();
+    }
 }

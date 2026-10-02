@@ -67,7 +67,13 @@ public enum RejectReason {
      *  T3.3) matched this signal. Transient by design: with approve = enforce and no
      *  shadow mode, a mistranslated gate must be recoverable — the operator deactivates
      *  the pattern and the still-PENDING signals flow again, capped by SIGNAL_EXPIRED. */
-    PATTERN_GATE;
+    PATTERN_GATE,
+    /** The signal's structured {@code kill_close_below} sits at or above the fresh entry's order
+     *  price: the thesis would be dead on arrival (spec 2026-10-02 §3.4). Enforced by
+     *  {@link KillLevelGuard} inside place-entry, after the adoption decision and before the
+     *  broker call — never on an adopted working order or fill, where it drops the level instead.
+     *  TERMINAL: waiting a run does not move a level the hunter authored. */
+    KILL_LEVEL_BREACHED;
 
     /**
      * Transient = temporary rate/capacity caps, plus the data outage. Transient means: <b>this

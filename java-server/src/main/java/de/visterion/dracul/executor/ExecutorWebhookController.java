@@ -563,7 +563,7 @@ public class ExecutorWebhookController {
         if (firstForThisSignal) {
             try {
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
-                        "ADOPTION_AMBIGUOUS", null, confidence, clock.instant(), null);
+                        "ADOPTION_AMBIGUOUS", null, confidence, clock.instant(), null, null);
                 escalateAdoption(runId, signal, "ADOPTION_AMBIGUOUS", inputs, text);
             } catch (RuntimeException e) {
                 log.error("ADOPTION_AMBIGUOUS audit/alert failed for signal {} ({}): {} — the "
@@ -647,7 +647,7 @@ public class ExecutorWebhookController {
         inputs.put("exit_order_id", c.terminalExit().orderId());
         try {
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT",
-                    "STALE_FILL", null, confidence, clock.instant(), null);
+                    "STALE_FILL", null, confidence, clock.instant(), null, null);
             escalateAdoption(runId, signal, "UNBOOKED_ROUND_TRIP", inputs, text);
         } catch (RuntimeException e) {
             log.error("STALE_FILL audit/alert failed for signal {} ({}): {} — signal left PENDING "
@@ -699,7 +699,7 @@ public class ExecutorWebhookController {
             orderJson.put("broker_order_id", bookRow.brokerOrderId());
         }
         logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null,
-                orderJson, confidence, clock.instant(), null);
+                orderJson, confidence, clock.instant(), null, null);
         // LinkedHashMap, not Map.of: broker_order_id is nullable and Map.of rejects nulls.
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("placed", true);
@@ -842,13 +842,35 @@ public class ExecutorWebhookController {
      *  pass list. */
     private void logEntryDecision(String runId, ExecutorSignal signal, EntryContext ctx,
             BigDecimal orderPrice, BigDecimal orderPriceRounded, VetoService.Outcome veto, String action,
-            String reasonCode, ObjectNode orderJson, Double confidence, Instant now, String reasoning) {
+            String reasonCode, ObjectNode orderJson, Double confidence, Instant now, String reasoning,
+            KillLevelGuard.Result killLevel) {
+        ObjectNode inputs = inputsSnapshotNode(signal, ctx, orderPrice, orderPriceRounded, veto);
+        putKillLevel(inputs, signal, killLevel);
         decisionLogRepo.insert(new DecisionLog(null, runId, ruleVersions.active(), "SIGNAL",
                 signal.signalId(), signal.source(), signal.agentVersion(), signal.symbol(),
-                inputsSnapshotNode(signal, ctx, orderPrice, orderPriceRounded, veto),
+                inputs,
                 veto == null ? mapper.createArrayNode() : vetoResultsNode(veto.results()),
                 action, reasonCode, orderJson, reasoning, confidence,
                 latencyNode(signal.createdAt(), now), null));
+    }
+
+    /**
+     * The kill-level outcome of this place-entry call, on the SIGNAL row's inputs_snapshot.
+     * {@code killLevel} null means the guard was not reached (an earlier reject, or an adoption
+     * refusal): the snapshot then records the signal's raw level and no drop reason. Otherwise
+     * {@code kill_close_below} is the level the position enforces (null when dropped; the raw
+     * level on a KILL_LEVEL_BREACHED reject) and {@code kill_close_below_dropped} says why it was
+     * dropped. Written here and not in {@link #inputsSnapshotNode}, which tranche-2 shares.
+     */
+    private static void putKillLevel(ObjectNode inputs, ExecutorSignal signal,
+            KillLevelGuard.Result killLevel) {
+        if (killLevel == null) {
+            inputs.put("kill_close_below", signal.killCloseBelow());
+            inputs.putNull("kill_close_below_dropped");
+        } else {
+            inputs.put("kill_close_below", killLevel.effectiveLevel());
+            inputs.put("kill_close_below_dropped", killLevel.droppedReason());
+        }
     }
 
     /**
@@ -1098,7 +1120,7 @@ public class ExecutorWebhookController {
             // lassen, damit der nächste Executor-Lauf es erneut prüft (Obergrenze: SIGNAL_EXPIRED).
             signalRepo.markStatus(signalId, firstFailure.isTransient() ? "PENDING" : "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
-                    clock.instant(), null);
+                    clock.instant(), null, null);
 
             // A detected contradiction co-rejects the pending peer — but only when the entering
             // signal is itself terminally out (!isTransient). SIGNAL_EXPIRED (catalog #3) and
@@ -1137,7 +1159,7 @@ public class ExecutorWebhookController {
                     reason, vetoTrace, "rejected: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
-                    clock.instant(), null);
+                    clock.instant(), null, null);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason, "veto_trace", vetoTrace)));
         }
@@ -1160,7 +1182,7 @@ public class ExecutorWebhookController {
                     reason, trace, "rejected by order guard: " + reason, null, runId, null));
             signalRepo.markStatus(signalId, "REJECTED");
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", reason, null, confidence,
-                    clock.instant(), null);
+                    clock.instant(), null, null);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", reason)));
         }
@@ -1193,6 +1215,9 @@ public class ExecutorWebhookController {
         int adoptedStopCandidates = 0;
         List<String> adoptedUnclaimedOpen = List.of();
         String entrySide = side.toLowerCase(java.util.Locale.ROOT);
+        // The kill-level outcome (spec 2026-10-02 §3.4). Set by the fresh-placement guard below;
+        // stays null on the two adoption paths until the booking step evaluates them.
+        KillLevelGuard.Result killResult = null;
         try {
             if (priorBrokerErrors > 0) {
                 // Row 0b — the book answers first and needs no broker read at all. `bookRow` was
@@ -1338,6 +1363,27 @@ public class ExecutorWebhookController {
             }
 
             if (placed == null) {
+                // Fresh placement (adoption row 7, or no prior broker error at all). Runs AFTER
+                // the adoption table on purpose: an adopted order/fill must never be rejected —
+                // that would orphan what the broker already has — and BEFORE the throttle and
+                // the broker call, so a dead-on-arrival thesis never costs a broker request.
+                killResult = KillLevelGuard.evaluate(signal.killCloseBelow(), orderPriceRounded,
+                        ctx.atrEff(), side, KillLevelGuard.Mode.FRESH);
+                if (killResult.outcome() == KillLevelGuard.Outcome.REJECT) {
+                    String reason = RejectReason.KILL_LEVEL_BREACHED.name();
+                    List<String> trace = new ArrayList<>(vetoTrace);
+                    trace.add("KILL_LEVEL_GUARD:" + reason);
+                    decisionRepo.insert(new ExecutorDecision(null, signalId, signal.symbol(), false,
+                            reason, trace, "rejected by kill-level guard: kill_close_below "
+                                    + killResult.requestedLevel().toPlainString()
+                                    + " >= order price " + orderPriceRounded.toPlainString(),
+                            null, runId, null));
+                    signalRepo.markStatus(signalId, "REJECTED");
+                    logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto,
+                            "REJECT", reason, null, confidence, clock.instant(), null, killResult);
+                    return ResponseEntity.ok(Map.of("output",
+                            Map.of("placed", false, "reason", reason)));
+                }
                 if (decisionRepo.countByReasonInRun(signalId, "BROKER_ERROR", runId)
                         >= maxBrokerCallsPerRun) {
                     // In-run throttle. Without it a retry storm inside one night (429 →
@@ -1359,7 +1405,7 @@ public class ExecutorWebhookController {
                             null, runId, null));
                     logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto,
                             "REJECT", "BROKER_RETRY_EXHAUSTED", null, confidence, clock.instant(),
-                            null);
+                            null, killResult);
                     return ResponseEntity.ok(Map.of("output",
                             Map.of("placed", false, "reason", "BROKER_RETRY_EXHAUSTED")));
                 } else {
@@ -1384,13 +1430,27 @@ public class ExecutorWebhookController {
             }
             // else: leave PENDING so a corrected retry (this run or a later run) can succeed
             logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "REJECT", "BROKER_ERROR", null,
-                    confidence, clock.instant(), "broker call failed: " + e.getMessage());
+                    confidence, clock.instant(), "broker call failed: " + e.getMessage(), killResult);
             return ResponseEntity.ok(Map.of("output",
                     Map.of("placed", false, "reason", "BROKER_ERROR", "error", e.getMessage())));
         }
 
         String brokerOrderId = placed.bracketId();
         String stopOrderId = placed.stopLegId();
+
+        if (killResult == null) {
+            // Adopted order (row 1: a working order under the clientRef) or adopted fill (row 5).
+            // Never a reject — the broker already holds an order or shares. The basis is what was
+            // really bought: the fill price when there is one, else the (re-computed) order price.
+            BigDecimal killBasis = adoptedFill != null ? adoptedFill.avgFillPrice() : orderPriceRounded;
+            killResult = KillLevelGuard.evaluate(signal.killCloseBelow(), killBasis, ctx.atrEff(),
+                    side, KillLevelGuard.Mode.ADOPTED);
+        }
+        if (killResult.droppedReason() != null) {
+            log.info("kill level {} for signal {} on {} not armed: {} (basis {})",
+                    killResult.requestedLevel(), signalId, signal.symbol(),
+                    killResult.droppedReason(), killResult.basis());
+        }
 
         try {
             long positionId;
@@ -1413,7 +1473,7 @@ public class ExecutorWebhookController {
                         legPrice,
                         (adoptedFill.filledAt() != null ? adoptedFill.filledAt() : clock.instant())
                                 .toString(),
-                        signal.killCloseBelow(), null));
+                        killResult.effectiveLevel(), killResult.droppedReason()));
                 // No setEntryExpiresAt: the entry is already filled, and
                 // findOpenUnfilledPastExpiry filters on entry_expires_at IS NOT NULL only.
                 if (adoptedStopLeg == null) {
@@ -1451,7 +1511,7 @@ public class ExecutorWebhookController {
                         ctx.candidateSector(), ctx.dayHigh(), null, null, 0, null, null,
                         orderPriceRounded, null, null, null, false,
                         brokerStopResult.price(), null,
-                        signal.killCloseBelow(), null));
+                        killResult.effectiveLevel(), killResult.droppedReason()));
 
                 positionRepo.setEntryExpiresAt(positionId, entryExpiry(clock.instant(), entryGtdDays));
             }
@@ -1549,7 +1609,7 @@ public class ExecutorWebhookController {
                     }
                 }
                 logEntryDecision(runId, signal, ctx, orderPrice, orderPriceRounded, veto, "ENTER", null, orderJson,
-                        confidence, clock.instant(), null);
+                        confidence, clock.instant(), null, killResult);
             } catch (RuntimeException e) {
                 // Position and signal status are durably persisted — the order is managed.
                 // Only the accepted-audit row(s) are missing; log it, but do not flip the response

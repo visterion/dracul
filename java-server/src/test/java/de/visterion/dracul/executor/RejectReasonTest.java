@@ -72,4 +72,12 @@ class RejectReasonTest {
     void transientSetHasExactlyEightMembers() {
         assertThat(EXPECTED_TRANSIENT).hasSize(8);
     }
+
+    /** KILL_LEVEL_BREACHED is TERMINAL: the hunter's level does not move by waiting a run.
+     *  Mutation: add it to the TRANSIENT set. */
+    @Test
+    void killLevelBreachedIsTerminal() {
+        assertThat(RejectReason.KILL_LEVEL_BREACHED.isTransient()).isFalse();
+        assertThat(EXPECTED_TRANSIENT).doesNotContain(RejectReason.KILL_LEVEL_BREACHED);
+    }
 }
