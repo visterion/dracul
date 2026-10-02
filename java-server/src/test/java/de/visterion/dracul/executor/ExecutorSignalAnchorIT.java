@@ -208,17 +208,17 @@ class ExecutorSignalAnchorIT {
     void insertDerivesReferenceSource() {
         repo.insert(new ExecutorSignal("ins-1", "strigoi-echo", "v1", "INSCO", "BUY", 0.6,
                 "NEWS", List.of(), "3m", new BigDecimal("10"), "SKIPPED", null,
-                null, null, LocalDate.parse("2026-08-03"), new BigDecimal("1.2")));
+                null, null, LocalDate.parse("2026-08-03"), new BigDecimal("1.2"), null));
         assertThat(repo.findReferenceSource("ins-1")).isEqualTo("emission");
 
         repo.insert(new ExecutorSignal("ins-2", "strigoi-echo", "v1", "INSCO2", "BUY", 0.6,
                 "NEWS", List.of(), "3m", new BigDecimal("10"), "SKIPPED", null,
-                null, null, null, null));
+                null, null, null, null, null));
         assertThat(repo.findReferenceSource("ins-2")).isNull();
 
         repo.insert(new ExecutorSignal("ins-3", "strigoi-echo", "v1", "INSCO3", "BUY", 0.6,
                 "NEWS", List.of(), "3m", new BigDecimal("10"), "SKIPPED", null,
-                null, null, LocalDate.parse("2026-08-03"), null));
+                null, null, LocalDate.parse("2026-08-03"), null, null));
         assertThat(repo.findReferenceSource("ins-3")).isNull();
     }
 

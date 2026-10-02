@@ -550,7 +550,7 @@ class OutcomeBatchJobTest {
     private ExecutorSignal skippedSignal(String signalId, String symbol) {
         return new ExecutorSignal(signalId, "strigoi-spin", "v1", symbol, "BUY", 0.7, "SPINOFF",
                 List.of(), "3m", bd("100"), "SKIPPED", null, null, null,
-                LocalDate.parse("2026-09-04"), bd("2"));
+                LocalDate.parse("2026-09-04"), bd("2"), null);
     }
 
     private void wireSkip(String signalId, String symbol, ExecutorSignal signal, List<OhlcBar> bars) {
@@ -680,7 +680,7 @@ class OutcomeBatchJobTest {
     private ExecutorSignal skippedSignalWithHorizon(String signalId, String symbol, String horizon) {
         return new ExecutorSignal(signalId, "strigoi-spin", "v1", symbol, "BUY", 0.7, "SPINOFF",
                 List.of(), horizon, bd("100"), "SKIPPED", null, null, null,
-                LocalDate.parse("2026-09-04"), bd("2"));
+                LocalDate.parse("2026-09-04"), bd("2"), null);
     }
 
     /** {@code n} flat bars after the anchor, all OHLC pinned to {@code price} -- entry (the first
@@ -783,7 +783,7 @@ class OutcomeBatchJobTest {
         LocalDate trueAnchor = LocalDate.parse("2026-09-04");
         ExecutorSignal shiftedAnchor = new ExecutorSignal(signalId, "strigoi-spin", "v1",
                 "ANCHORCO", "BUY", 0.7, "SPINOFF", List.of(), "3m", bd("100"), "SKIPPED", null,
-                null, null, trueAnchor.plusDays(1), bd("2"));
+                null, null, trueAnchor.plusDays(1), bd("2"), null);
         wireSkip(signalId, "ANCHORCO", shiftedAnchor, risingBarsFrom(trueAnchor, 70));
 
         job.run();
@@ -799,7 +799,7 @@ class OutcomeBatchJobTest {
         String signalId = "sig-skip-2";
         ExecutorSignal noPrice = new ExecutorSignal(signalId, "strigoi-spin", "v1", "NOPXCO", "BUY",
                 0.7, "SPINOFF", List.of(), "3m", null, "SKIPPED", null, null, null,
-                LocalDate.parse("2026-09-04"), bd("2"));
+                LocalDate.parse("2026-09-04"), bd("2"), null);
         wireSkip(signalId, "NOPXCO", noPrice, risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
 
         job.run();
@@ -881,7 +881,7 @@ class OutcomeBatchJobTest {
     private ExecutorSignal sweptSignal(String signalId, String symbol, String status,
             LocalDate anchor) {
         return new ExecutorSignal(signalId, "strigoi-spin", "v1", symbol, "BUY", 0.7, "SPINOFF",
-                List.of(), "3m", bd("100"), status, null, null, null, anchor, bd("2"));
+                List.of(), "3m", bd("100"), status, null, null, null, anchor, bd("2"), null);
     }
 
     private void wireSwept(String signalId, String symbol, ExecutorSignal signal, List<OhlcBar> bars) {
@@ -1076,7 +1076,7 @@ class OutcomeBatchJobTest {
         String signalId = "sig-skip-zeroatr";
         ExecutorSignal zeroAtr = new ExecutorSignal(signalId, "strigoi-spin", "v1", "ZEROCO", "BUY",
                 0.7, "SPINOFF", List.of(), "3m", bd("100"), "SKIPPED", null, null, null,
-                LocalDate.parse("2026-09-04"), bd("0"));
+                LocalDate.parse("2026-09-04"), bd("0"), null);
         wireSkip(signalId, "ZEROCO", zeroAtr, risingBarsFrom(LocalDate.parse("2026-09-04"), 70));
 
         job.run();
@@ -1104,7 +1104,7 @@ class OutcomeBatchJobTest {
         when(signals.findById("sig-noside")).thenReturn(null);
         when(signals.findById("sig-noref")).thenReturn(new ExecutorSignal("sig-noref",
                 "strigoi-spin", "v1", "NOREFCO", "BUY", 0.7, "SPINOFF", List.of(), "3m", null,
-                "SKIPPED", null, null, null, LocalDate.parse("2026-09-04"), bd("2")));
+                "SKIPPED", null, null, null, LocalDate.parse("2026-09-04"), bd("2"), null));
         when(signals.findById("sig-nodata")).thenReturn(skippedSignal("sig-nodata", "NODATACO"));
         when(outcomeLog.isComplete(anyString())).thenReturn(false);
         when(ruleVersions.active()).thenReturn("exec-v0.6");
@@ -1260,7 +1260,7 @@ class OutcomeBatchJobTest {
         when(signals.findById("sig-anchor-noside")).thenReturn(null);
         when(signals.findById("sig-anchor-noref")).thenReturn(new ExecutorSignal("sig-anchor-noref",
                 "strigoi-spin", "v1", "NOREFCO3", "BUY", 0.7, "SPINOFF", List.of(), "3m", null,
-                "SKIPPED", null, null, null, LocalDate.parse("2026-09-04"), bd("2")));
+                "SKIPPED", null, null, null, LocalDate.parse("2026-09-04"), bd("2"), null));
         when(outcomeLog.isComplete(anyString())).thenReturn(false);
         when(ruleVersions.active()).thenReturn("exec-v0.6");
 

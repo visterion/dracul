@@ -127,7 +127,7 @@ class ExecutorSignalRepositoryTest {
         String id = UUID.randomUUID().toString();
         repo.insert(new ExecutorSignal(id, "strigoi-spin", "v1", "SKIPCO", "BUY", 0.7,
                 "SPINOFF", List.of(), "3m", new java.math.BigDecimal("101.5"), "PENDING", null,
-                null, null, java.time.LocalDate.parse("2026-09-04"), new java.math.BigDecimal("3.100000")));
+                null, null, java.time.LocalDate.parse("2026-09-04"), new java.math.BigDecimal("3.100000"), null));
 
         var found = repo.findById(id);
         // Read via getObject(LocalDate.class), never through a Timestamp -- a Timestamp read
@@ -145,5 +145,23 @@ class ExecutorSignalRepositoryTest {
         var found = repo.findById(id);
         assertThat(found.referenceBarDate()).isNull();
         assertThat(found.referenceAtr()).isNull();
+    }
+
+    /** V51: the structured kill level round-trips; a signal without one reads back null. */
+    @Test
+    void killCloseBelowRoundTrips() {
+        String id = UUID.randomUUID().toString();
+        repo.insert(new ExecutorSignal(id, "strigoi-echo", "v1", "KLSIG", "BUY", 0.7,
+                "PEAD", List.of(), "3m", null, "PENDING", null,
+                null, null, null, null, new java.math.BigDecimal("48.2")));
+        String none = UUID.randomUUID().toString();
+        repo.insert(new ExecutorSignal(none, "strigoi-echo", "v1", "KLSIGN", "BUY", 0.7,
+                "PEAD", List.of(), "3m", null, "PENDING", null));
+
+        assertThat(repo.findById(id).killCloseBelow()).isEqualByComparingTo("48.2");
+        assertThat(repo.findById(none).killCloseBelow()).isNull();
+        assertThat(repo.findPending(Integer.MAX_VALUE)).filteredOn(s -> s.signalId().equals(id))
+                .singleElement()
+                .satisfies(s -> assertThat(s.killCloseBelow()).isEqualByComparingTo("48.2"));
     }
 }

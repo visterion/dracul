@@ -275,4 +275,28 @@ class PreySignalEmitterTest {
         assertThat(captor.getValue().referenceBarDate()).isNull();
         assertThat(captor.getValue().referenceAtr()).isEqualByComparingTo("3.1");
     }
+
+    /** V51: the emitter REBUILDS the signal positionally (to add the reference inputs); the level
+     *  must survive that rebuild. Asserted on the record actually handed to signalRepo.insert. */
+    @Test
+    void killCloseBelowSurvivesTheEmitterRebuild() {
+        stubNoOpenOrPending();
+        ExecutorSignal m = mapperSignal();
+        ExecutorSignal mapped = new ExecutorSignal(m.signalId(), m.source(), m.agentVersion(),
+                m.symbol(), m.direction(), m.confidence(), m.mechanism(), m.killCriteria(),
+                m.horizon(), m.referencePrice(), m.status(), m.createdAt(), m.thesis(), m.preyId(),
+                null, null, new BigDecimal("88.5"));
+        when(mapper.map(any(Prey.class))).thenReturn(mapped);
+        when(registry.knownHashes()).thenReturn(Set.of("p-abc"));
+        when(indicators.levels(anyString(), anyInt(), anyInt()))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("3.1"),
+                        new BigDecimal("95"), new BigDecimal("101.5"), null));
+
+        emitter.emit(List.of(samplePrey()));
+
+        ArgumentCaptor<ExecutorSignal> captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(signalRepo).insert(captor.capture());
+        assertThat(captor.getValue().killCloseBelow()).isEqualByComparingTo("88.5");
+        assertThat(captor.getValue().referencePrice()).isEqualByComparingTo("101.5");
+    }
 }

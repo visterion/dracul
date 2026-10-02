@@ -22,7 +22,11 @@ public record ExecutorSignal(
         JsonNode thesis,
         String preyId,
         java.time.LocalDate referenceBarDate,
-        BigDecimal referenceAtr) {
+        BigDecimal referenceAtr,
+        /** The hunter's structured kill level, verbatim (V51). Never defaulted on the emitter
+         *  path: PreySignalMapper, PreySignalEmitter, the repository and the inject seam all use
+         *  this canonical constructor. The back-compat constructors below are for tests. */
+        BigDecimal killCloseBelow) {
 
     /** Back-compat: thesis + preyId default to null. */
     public ExecutorSignal(String signalId, String source, String agentVersion, String symbol, String direction,
@@ -50,6 +54,6 @@ public record ExecutorSignal(
             Double confidence, String mechanism, List<String> killCriteria, String horizon,
             BigDecimal referencePrice, String status, String createdAt, JsonNode thesis, String preyId) {
         this(signalId, source, agentVersion, symbol, direction, confidence, mechanism, killCriteria, horizon,
-                referencePrice, status, createdAt, thesis, preyId, null, null);
+                referencePrice, status, createdAt, thesis, preyId, null, null, null);
     }
 }

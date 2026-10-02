@@ -53,7 +53,10 @@ public class PreySignalMapper {
                 "PENDING",                     // matches the inject seam's literal status
                 null,                          // createdAt — DB defaults to now(), like inject
                 thesisSnapshot(p),
-                p.id());                       // prey_id — provenance FK (Schicht 1)
+                p.id(),                        // prey_id — provenance FK (Schicht 1)
+                null,                          // referenceBarDate — set by PreySignalEmitter
+                null,                          // referenceAtr — set by PreySignalEmitter
+                p.killCloseBelow());           // structured kill level, verbatim (V51)
     }
 
     /** Prey → the same snapshot shape the reconciler builds from a verdict

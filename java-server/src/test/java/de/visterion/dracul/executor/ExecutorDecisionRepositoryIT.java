@@ -43,7 +43,7 @@ class ExecutorDecisionRepositoryIT {
         String id = UUID.randomUUID().toString();
         signals.insert(new ExecutorSignal(id, "strigoi-spin", "v1", symbol, "BUY", 0.7,
                 "SPINOFF", List.of(), "3m", new BigDecimal("101.5"), "SKIPPED", null,
-                null, null, barDate, atr));
+                null, null, barDate, atr, null));
         return id;
     }
 
@@ -119,7 +119,7 @@ class ExecutorDecisionRepositoryIT {
         String id = UUID.randomUUID().toString();
         signals.insert(new ExecutorSignal(id, "strigoi-spin", "v1", symbol, "BUY", 0.7,
                 "SPINOFF", List.of(), "3m", new BigDecimal("101.5"), "REJECTED", null,
-                null, null, barDate, atr));
+                null, null, barDate, atr, null));
         return id;
     }
 

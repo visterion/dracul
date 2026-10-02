@@ -102,4 +102,17 @@ class PreySignalMapperTest {
         assertThat(s.preyId()).isEqualTo(p.id());
         assertThat(s.signalId()).isNotEqualTo(p.id()); // signalId stays the broker clientRef (random)
     }
+
+    /** V51: the hunter's structured kill level rides onto the signal verbatim (the signal row is
+     *  the audit record of the raw value; place-entry decides what the position enforces). */
+    @Test
+    void killCloseBelowIsCopiedFromThePrey() {
+        Prey p = samplePrey();
+        Prey withLevel = new Prey(p.id(), p.symbol(), p.companyName(), p.anomalyType(),
+                p.confidence(), p.thesis(), p.signals(), p.risks(), p.killCriteria(), p.horizon(),
+                p.discoveredBy(), p.discoveredAt(), new java.math.BigDecimal("88.5"));
+
+        assertThat(mapper.map(withLevel).killCloseBelow()).isEqualByComparingTo("88.5");
+        assertThat(mapper.map(p).killCloseBelow()).isNull();
+    }
 }

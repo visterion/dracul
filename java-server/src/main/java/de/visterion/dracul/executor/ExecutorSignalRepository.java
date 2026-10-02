@@ -35,11 +35,11 @@ public class ExecutorSignalRepository {
                 INSERT INTO executor_signal
                   (signal_id, source, agent_version, symbol, direction, confidence, mechanism,
                    kill_criteria, horizon, reference_price, status, thesis, prey_id,
-                   reference_bar_date, reference_atr, reference_source)
+                   reference_bar_date, reference_atr, reference_source, kill_close_below)
                 VALUES (:signalId, :source, :agentVersion, :symbol, :direction, :confidence, :mechanism,
                         CAST(:killCriteria AS jsonb), :horizon, :referencePrice, :status,
                         CAST(:thesis AS jsonb), CAST(:preyId AS uuid),
-                        :referenceBarDate, :referenceAtr, :referenceSource)
+                        :referenceBarDate, :referenceAtr, :referenceSource, :killCloseBelow)
                 ON CONFLICT (signal_id) DO NOTHING
                 """)
                 .param("signalId", s.signalId())
@@ -59,6 +59,7 @@ public class ExecutorSignalRepository {
                 .param("referenceAtr", s.referenceAtr())
                 .param("referenceSource",
                         s.referenceBarDate() != null && s.referenceAtr() != null ? "emission" : null)
+                .param("killCloseBelow", s.killCloseBelow())
                 .update();
     }
 
@@ -204,7 +205,8 @@ public class ExecutorSignalRepository {
                 // getObject(..., LocalDate.class), never a Timestamp: a Timestamp read would shift
                 // the day in a non-UTC JVM, and this date is what the counterfactual walk anchors on.
                 rs.getObject("reference_bar_date", java.time.LocalDate.class),
-                rs.getBigDecimal("reference_atr"));
+                rs.getBigDecimal("reference_atr"),
+                rs.getBigDecimal("kill_close_below"));
     }
 
     private String writeJson(List<String> v) {

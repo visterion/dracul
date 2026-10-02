@@ -159,4 +159,41 @@ class ExecutorSignalControllerTest {
         assertThat(result).containsExactly(s);
         verify(repo).findPending(50);
     }
+
+    @Test
+    void injectAcceptsAnOptionalKillCloseBelow() throws Exception {
+        var repo = mock(ExecutorSignalRepository.class);
+        var controller = new ExecutorSignalController(repo);
+
+        controller.inject(JsonMapper.builder().build().readTree("""
+                {"symbol": "SYNKL", "direction": "LONG", "confidence": 0.8,
+                 "kill_criteria": ["X"], "kill_close_below": 48.2}
+                """));
+
+        var captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(repo).insert(captor.capture());
+        assertThat(captor.getValue().killCloseBelow()).isEqualByComparingTo("48.2");
+    }
+
+    @Test
+    void injectIgnoresAnUnusableKillCloseBelow() throws Exception {
+        var repo = mock(ExecutorSignalRepository.class);
+        var controller = new ExecutorSignalController(repo);
+        var mapper = JsonMapper.builder().build();
+
+        controller.inject(mapper.readTree("""
+                {"symbol": "SYNKL", "direction": "LONG", "kill_close_below": "48,20"}
+                """));
+        controller.inject(mapper.readTree("""
+                {"symbol": "SYNKL", "direction": "LONG", "kill_close_below": -1}
+                """));
+        controller.inject(mapper.readTree("""
+                {"symbol": "SYNKL", "direction": "LONG"}
+                """));
+
+        var captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(repo, times(3)).insert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(ExecutorSignal::killCloseBelow)
+                .containsOnlyNulls();
+    }
 }

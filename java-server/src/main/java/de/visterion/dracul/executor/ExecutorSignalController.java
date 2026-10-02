@@ -45,6 +45,14 @@ public class ExecutorSignalController {
                 ? new BigDecimal(referencePriceNode.asString())
                 : null;
 
+        // Optional structured kill level (V51). Same posture as the hunters' PreyMapper: only a
+        // strictly positive JSON number is kept, anything else means "no level".
+        JsonNode killCloseBelowNode = body.path("kill_close_below");
+        BigDecimal killCloseBelow = killCloseBelowNode.isNumber()
+                ? new BigDecimal(killCloseBelowNode.asString())
+                : null;
+        if (killCloseBelow != null && killCloseBelow.signum() <= 0) killCloseBelow = null;
+
         String source = body.path("source").asString("injected");
         String agentVersion = body.path("agent_version").asString("");
         if (agentVersion.isBlank()) agentVersion = "operator";
@@ -54,7 +62,8 @@ public class ExecutorSignalController {
         String horizon = nullableString(body, "horizon");
 
         var signal = new ExecutorSignal(signalId, source, agentVersion, symbol, direction,
-                confidence, mechanism, killCriteria, horizon, referencePrice, "PENDING", null, null);
+                confidence, mechanism, killCriteria, horizon, referencePrice, "PENDING", null, null,
+                null, null, null, killCloseBelow);
         repo.insert(signal);
 
         return ResponseEntity.ok(Map.of("signal_id", signalId, "status", "PENDING"));

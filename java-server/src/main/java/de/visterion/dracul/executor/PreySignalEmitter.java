@@ -94,7 +94,7 @@ public class PreySignalEmitter {
             signalRepo.insert(new ExecutorSignal(s.signalId(), s.source(), s.agentVersion(),
                     s.symbol(), s.direction(), s.confidence(), s.mechanism(), s.killCriteria(),
                     s.horizon(), ref, s.status(), s.createdAt(), s.thesis(), s.preyId(),
-                    refBarDate, refAtr));
+                    refBarDate, refAtr, s.killCloseBelow()));
             pendingSymbols.add(symbol); // guard against duplicate symbols within this batch
             emitted++;
         }
