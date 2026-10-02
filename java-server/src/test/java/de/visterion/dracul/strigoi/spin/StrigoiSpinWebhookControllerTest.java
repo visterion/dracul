@@ -416,7 +416,7 @@ the Acme Spinco board of directors."}
         when(spinRepo.findById(anyLong())).thenThrow(new RuntimeException("transient db hiccup"));
         var inserted = new Prey("id-1", "ACME", "Acme Spinco", "SPINOFF", 0.7, "thesis",
                 List.of(), List.of(), List.of("kill"), "6m", "strigoi-spin",
-                java.time.Instant.now().toString());
+                java.time.Instant.now().toString(), null);
         when(preyRepo.insertAll(anyList(), anyString())).thenReturn(List.of(inserted));
 
         controller.complete(BEARER, "run-13", json("""

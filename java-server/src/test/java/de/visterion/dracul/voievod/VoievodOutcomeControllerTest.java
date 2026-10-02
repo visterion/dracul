@@ -46,7 +46,7 @@ class VoievodOutcomeControllerTest {
     private Prey prey(String id, String symbol, String discoveredAt, String horizon) {
         return new Prey(id, symbol, symbol + " Corp", "SPINOFF",
                 0.8, "thesis text", List.of("signal"), List.of("risk"),
-                List.of("Close below 42"), horizon, "strigoi-spin", discoveredAt);
+                List.of("Close below 42"), horizon, "strigoi-spin", discoveredAt, null);
     }
 
     private List<OhlcBar> bars(double... closes) {

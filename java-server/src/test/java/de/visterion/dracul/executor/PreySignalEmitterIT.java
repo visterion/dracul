@@ -41,7 +41,7 @@ class PreySignalEmitterIT {
                 preyId, symbol, symbol + " Corp", "SPINOFF",
                 0.7, "thesis", List.of("signal"), List.of("risk"),
                 List.of("kill"),
-                "6m", "strigoi-spin", "2026-07-08T10:00:00Z");
+                "6m", "strigoi-spin", "2026-07-08T10:00:00Z", null);
     }
 
     private ExecutorPosition openPosition(String symbol) {
@@ -94,7 +94,7 @@ class PreySignalEmitterIT {
         Prey p = new Prey(
                 java.util.UUID.randomUUID().toString(), symbol, symbol + " Corp", "PEAD",
                 0.7, "big beat", List.of("s"), List.of("r"),
-                List.of("k"), "1M", "strigoi-spin", "2026-07-08T10:00:00Z");
+                List.of("k"), "1M", "strigoi-spin", "2026-07-08T10:00:00Z", null);
 
         emitter.emit(List.of(p));
 

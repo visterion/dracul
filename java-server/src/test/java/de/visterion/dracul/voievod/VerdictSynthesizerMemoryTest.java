@@ -32,7 +32,7 @@ class VerdictSynthesizerMemoryTest {
     private static Prey prey(String symbol, String discoveredBy, double confidence) {
         return new Prey("prey-" + symbol + "-" + discoveredBy, symbol, symbol + " Inc", "TEST",
                 confidence, "thesis for " + symbol, List.of("sig"), List.of("risk"), List.of(),
-                "3m", discoveredBy, "2026-01-01T00:00:00Z");
+                "3m", discoveredBy, "2026-01-01T00:00:00Z", null);
     }
 
     @Test

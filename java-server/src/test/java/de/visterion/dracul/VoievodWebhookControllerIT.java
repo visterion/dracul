@@ -78,7 +78,7 @@ class VoievodWebhookControllerIT {
                 confidence, "thesis for " + discoveredBy,
                 List.of("signal-" + discoveredBy), List.of("risk-" + discoveredBy),
                 List.of(),
-                "6m", discoveredBy, now)));
+                "6m", discoveredBy, now, null)));
     }
 
     private void complete(String runId, String symbol, String summary) {

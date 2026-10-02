@@ -1,8 +1,11 @@
 package de.visterion.dracul.webhook;
 
 import de.visterion.dracul.prey.Prey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -10,6 +13,12 @@ import java.util.UUID;
 
 /** Shared output.prey[] → List<Prey> mapping for prey-producing hunters. */
 public class PreyMapper {
+
+    private static final Logger log = LoggerFactory.getLogger(PreyMapper.class);
+
+    /** JSON key of the structured, code-enforced kill level. The output schemas
+     *  (prey-list-pead.json, prey-list-lazarus.json) declare exactly this property name. */
+    public static final String KILL_CLOSE_BELOW = "kill_close_below";
 
     public List<Prey> map(JsonNode preyArray, String discoveredBy,
                           String defaultAnomalyType, String defaultHorizon, boolean skipBlankSymbol) {
@@ -34,8 +43,27 @@ public class PreyMapper {
                     signals, risks,
                     killCriteria,
                     p.path("horizon").asText(defaultHorizon),
-                    discoveredBy, now));
+                    discoveredBy, now,
+                    killCloseBelow(p.path(KILL_CLOSE_BELOW), symbol)));
         }
         return out;
+    }
+
+    /**
+     * The schema accepts number, string and null for {@code kill_close_below} on purpose: a schema
+     * violation fails the whole Vistierie run, which would lose every prey for one bad optional
+     * field. All value checks therefore live here. Only a strictly positive JSON number survives;
+     * absent / JSON null mean "no level" (silently); anything else present (a string such as a
+     * decimal-comma slip, zero, a negative, a boolean, an array) is dropped with a WARN naming the
+     * prey symbol and the raw value.
+     */
+    static BigDecimal killCloseBelow(JsonNode v, String symbol) {
+        if (v == null || v.isMissingNode() || v.isNull()) return null;
+        if (v.isNumber()) {
+            BigDecimal level = new BigDecimal(v.asString());
+            if (level.signum() > 0) return level;
+        }
+        log.warn("prey {}: {} ignored, unusable value {}", symbol, KILL_CLOSE_BELOW, v);
+        return null;
     }
 }

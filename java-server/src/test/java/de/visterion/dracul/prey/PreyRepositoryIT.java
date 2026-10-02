@@ -25,7 +25,7 @@ class PreyRepositoryIT {
         return new Prey(
                 UUID.randomUUID().toString(), symbol, symbol + " Corp", anomalyType,
                 0.7, "thesis", List.of("signal"), List.of("risk"),
-                List.of(), "6m", discoveredBy, discoveredAt);
+                List.of(), "6m", discoveredBy, discoveredAt, null);
     }
 
     @Test
@@ -50,7 +50,7 @@ class PreyRepositoryIT {
                 UUID.randomUUID().toString(), symbol, symbol + " Corp", "SPINOFF",
                 0.7, "thesis", List.of("signal"), List.of("risk"),
                 List.of("Close below 42.50", "No approval by 2026-10-15"),
-                "6m", "strigoi-spin", "2026-07-09T10:00:00Z");
+                "6m", "strigoi-spin", "2026-07-09T10:00:00Z", null);
 
         repo.insertAll(List.of(p));
 
@@ -66,7 +66,7 @@ class PreyRepositoryIT {
         Prey p1raw = preyFixture("FBID1", "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
         Prey p1 = new Prey(p1raw.id(), p1raw.symbol(), p1raw.companyName(), p1raw.anomalyType(), p1raw.confidence(),
                 p1raw.thesis(), p1raw.signals(), p1raw.risks(), List.of("Close below 42.50"),
-                p1raw.horizon(), p1raw.discoveredBy(), p1raw.discoveredAt());
+                p1raw.horizon(), p1raw.discoveredBy(), p1raw.discoveredAt(), null);
         Prey p2 = preyFixture("FBID2", "SPINOFF", "strigoi-spin", "2026-07-09T10:00:00Z");
 
         List<Prey> inserted = repo.insertAll(List.of(p1, p2));
@@ -160,5 +160,31 @@ class PreyRepositoryIT {
 
         assertThat(repo.runExistsForUser(runId, "someone-else")).isFalse();
         assertThat(repo.runExistsForUser("run-does-not-exist", "default")).isFalse();
+    }
+
+    /** V51: kill_close_below survives the INSERT and EVERY explicit SELECT column list. The four
+     *  readers each spell their own column list, so a column missing from one of them would read
+     *  as null only through that one path. */
+    @Test
+    void killCloseBelowRoundTripsThroughEverySelect() {
+        String symbol = "KLIT" + System.nanoTime();
+        Prey raw = preyFixture(symbol, "PEAD", "strigoi-echo", java.time.Instant.now().toString());
+        Prey p = new Prey(raw.id(), raw.symbol(), raw.companyName(), raw.anomalyType(),
+                raw.confidence(), raw.thesis(), raw.signals(), raw.risks(), raw.killCriteria(),
+                raw.horizon(), raw.discoveredBy(), raw.discoveredAt(), new java.math.BigDecimal("48.2"));
+        Prey none = preyFixture(symbol + "N", "PEAD", "strigoi-echo", java.time.Instant.now().toString());
+
+        assertThat(repo.insertAll(List.of(p, none))).hasSize(2);
+
+        java.util.function.Consumer<List<Prey>> levelSurvives = rows -> {
+            assertThat(rows).filteredOn(x -> x.symbol().equals(symbol)).singleElement()
+                    .satisfies(x -> assertThat(x.killCloseBelow()).isEqualByComparingTo("48.2"));
+            assertThat(rows).filteredOn(x -> x.symbol().equals(symbol + "N")).singleElement()
+                    .satisfies(x -> assertThat(x.killCloseBelow()).isNull());
+        };
+        levelSurvives.accept(repo.findAllByUser("default"));
+        levelSurvives.accept(repo.findByDiscoveredBy("strigoi-echo", "default"));
+        levelSurvives.accept(repo.findByIds(List.of(p.id(), none.id())));
+        levelSurvives.accept(repo.findElapsedUnreviewed("default", 5));
     }
 }

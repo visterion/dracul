@@ -68,7 +68,7 @@ class PositionReconcilerTest {
         when(preyRepo.findByIds(List.of("prey-1"))).thenReturn(List.of(
                 new Prey("prey-1", "AAA", "Acme Corp", "spinoff", 0.8, "thesis text",
                         List.of("signal-1"), List.of("risk-1"),
-                        List.of("close below 50dma"), "3-6m", "strigoi-spin", "2026-07-01T00:00:00Z")));
+                        List.of("close below 50dma"), "3-6m", "strigoi-spin", "2026-07-01T00:00:00Z", null)));
 
         reconciler.reconcile();
 
@@ -112,7 +112,7 @@ class PositionReconcilerTest {
         when(preyRepo.findByIds(List.of("prey-1"))).thenReturn(List.of(
                 new Prey("prey-1", "HELE", "Heliogen Corp", "pead", 0.8, "thesis text",
                         List.of("signal-1"), List.of("risk-1"),
-                        List.of("close below 50dma"), "1M", "strigoi-pead", "2026-07-01T00:00:00Z")));
+                        List.of("close below 50dma"), "1M", "strigoi-pead", "2026-07-01T00:00:00Z", null)));
 
         reconciler.reconcile();
 

@@ -23,7 +23,7 @@ class PreySignalMapperTest {
                 0.73, "Forced index selling post-separation.",
                 List.of("Dropped from parent's index"), List.of("Thin float"),
                 List.of("Close below 90.00"),
-                "6m", "strigoi-spin", "2026-07-08T10:00:00Z");
+                "6m", "strigoi-spin", "2026-07-08T10:00:00Z", null);
     }
 
     private Prey preyWith(String symbol, String anomalyType, String thesis, List<String> signals,
@@ -31,7 +31,7 @@ class PreySignalMapperTest {
         return new Prey(
                 "prey-" + symbol, symbol, symbol + " Corp", anomalyType,
                 confidence, thesis, signals, risks, killCriteria,
-                horizon, "strigoi-spin", "2026-07-08T10:00:00Z");
+                horizon, "strigoi-spin", "2026-07-08T10:00:00Z", null);
     }
 
     @Test
@@ -97,7 +97,7 @@ class PreySignalMapperTest {
     void mapSetsPreyIdToPreyIdAndKeepsRandomSignalId() {
         Prey p = new Prey("11111111-1111-1111-1111-111111111111", "ACME", "Acme Corp", "pead",
                 0.8, "thesis", List.of(), List.of(), List.of("k1"),
-                "2w", "strigoi-echo", "2026-07-19T00:00:00Z");
+                "2w", "strigoi-echo", "2026-07-19T00:00:00Z", null);
         ExecutorSignal s = mapper.map(p);
         assertThat(s.preyId()).isEqualTo(p.id());
         assertThat(s.signalId()).isNotEqualTo(p.id()); // signalId stays the broker clientRef (random)

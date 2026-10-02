@@ -16,7 +16,7 @@ class PreyLifecycleTest {
         return new Prey(
                 UUID.randomUUID().toString(), "ACME", "Acme Corp", "SPIN",
                 0.7, "thesis", List.of("signal"), List.of("risk"),
-                List.of(), horizon, "strigoi-spin", discoveredAt);
+                List.of(), horizon, "strigoi-spin", discoveredAt, null);
     }
 
     @Test

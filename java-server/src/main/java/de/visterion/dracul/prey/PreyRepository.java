@@ -26,7 +26,8 @@ public class PreyRepository {
     public List<Prey> findAllByUser(String userId) {
         return jdbc.sql("""
                 SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
-                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at
+                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
+                       kill_close_below
                 FROM prey
                 WHERE user_id = :userId
                 ORDER BY discovered_at DESC
@@ -39,7 +40,8 @@ public class PreyRepository {
     public List<Prey> findByDiscoveredBy(String discoveredBy, String userId) {
         return jdbc.sql("""
                 SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
-                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at
+                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
+                       kill_close_below
                 FROM prey
                 WHERE discovered_by = :discoveredBy AND user_id = :userId
                 ORDER BY discovered_at DESC
@@ -55,7 +57,8 @@ public class PreyRepository {
         if (ids == null || ids.isEmpty()) return List.of();
         return jdbc.sql("""
                 SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
-                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at
+                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
+                       kill_close_below
                 FROM prey
                 WHERE id::text IN (:ids)
                 """)
@@ -74,7 +77,8 @@ public class PreyRepository {
                 : " AND discovered_at >= now() - (:lookbackDays::text || ' days')::interval ";
         var spec = jdbc.sql("""
                 SELECT id, symbol, company_name, anomaly_type, confidence, thesis,
-                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at
+                       signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
+                       kill_close_below
                 FROM prey
                 WHERE user_id = :userId
                   AND outcome_reviewed_at IS NULL
@@ -123,7 +127,8 @@ public class PreyRepository {
                 readList(rs.getString("kill_criteria")),
                 rs.getString("horizon"),
                 rs.getString("discovered_by"),
-                rs.getString("discovered_at")
+                rs.getString("discovered_at"),
+                rs.getBigDecimal("kill_close_below")
         );
     }
 
@@ -155,15 +160,16 @@ public class PreyRepository {
                     INSERT INTO prey
                       (id, symbol, company_name, anomaly_type, confidence,
                        thesis, signals, risks, kill_criteria, horizon, discovered_by, discovered_at,
-                       user_id, run_id)
-                    VALUES (?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?::timestamptz, ?, ?)
+                       user_id, run_id, kill_close_below)
+                    VALUES (?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?::timestamptz, ?, ?, ?)
                     ON CONFLICT (symbol, anomaly_type, discovered_by, user_id,
                                  ((discovered_at AT TIME ZONE 'UTC')::date)) DO NOTHING
                     """)
                     .params(p.id(), p.symbol(), p.companyName(), p.anomalyType(),
                             p.confidence(), p.thesis(),
                             signalsJson, risksJson, killCriteriaJson,
-                            p.horizon(), p.discoveredBy(), p.discoveredAt(), "default", runId)
+                            p.horizon(), p.discoveredBy(), p.discoveredAt(), "default", runId,
+                            p.killCloseBelow())
                     .update();
             if (rows > 0) inserted.add(p);
         }
