@@ -8,7 +8,7 @@ are relative to the context root of `dracul-app`.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/prey` | List recent prey; query params: `strigoi`, `anomaly`, `from`, `to`, `minConfidence`, `page`, `size` |
-| GET | `/api/prey/{id}` | Single prey detail (signals, risks, `killCriteria` (string[]), thesis, outcome if assessed) |
+| GET | `/api/prey/{id}` | Single prey detail (signals, risks, `killCriteria` (string[]), `killCloseBelow` (number or null, V51), thesis, outcome if assessed) |
 
 ## Verdicts
 
@@ -76,9 +76,12 @@ which the code-enforced `SCHEMA_INVALID` veto requires downstream):
   "mechanism": "insider cluster + PEAD",
   "kill_criteria": ["close below 20d low"],
   "horizon": "3m",
-  "reference_price": 142.50
+  "reference_price": 142.50,
+  "kill_close_below": 131.00
 }
 ```
+
+`kill_close_below` is optional: only a strictly positive JSON number is kept, anything else (missing, null, a string, ≤ 0) stores no level. It is the structured kill level place-entry evaluates (see `KILL_LEVEL_BREACHED` below).
 
 `signal_id` is generated (UUID) when absent. The signal is persisted with
 status `PENDING`. Response (200):
@@ -107,6 +110,8 @@ from daily history before the counterfactual walk runs — see `LLM_SKIP`
 below and `executor_signal.reference_source` in architecture.md. A
 verification probe's anchors were set by hand (SP2b, 2026-09) and are
 tracked as `reference_source = 'manual'`.
+
+The record also carries `killCloseBelow` (V51, number or `null`) — the webhook payload carries the same value as `kill_close_below`.
 
 ### `POST /api/executor/run`
 
@@ -2316,7 +2321,7 @@ Response:
 ```json
 { "output": { "signals": [
   { "signal_id": "...", "symbol": "ACME", "direction": "LONG",
-    "mechanism": "...", "kill_criteria": ["..."], "horizon": "3m",
+    "mechanism": "...", "kill_criteria": ["..."], "kill_close_below": 131.00, "horizon": "3m",
     "atr": 4.2, "swing_low": 138.00, "reference_price": 142.50 }
 ] } }
 ```
@@ -2411,6 +2416,7 @@ and for order-guard rejections it is the veto trace plus an
 | `PACE_LIMIT` | `VetoService` | New positions entered this ISO calendar week already ≥ `dracul.executor.pace-per-week` |
 | `TRANCHE_TOO_SMALL` | `ExecutorWebhookController` | `PositionSizer` computed a zero quantity (tranche amount doesn't buy even one share at the order price) |
 | `RISK_TOO_WIDE` | `ExecutorWebhookController` | The protective stop distance in account currency exceeds the per-trade risk budget (`dracul.executor.total-budget` × `dracul.executor.risk-pct`), so `PositionSizer` computed a zero risk-capped quantity. Terminal — a fresh signal with a tighter stop is a new signal |
+| `KILL_LEVEL_BREACHED` | `ExecutorWebhookController` (`KillLevelGuard`) | The signal's `kill_close_below` is at or above the fresh entry's order price — the thesis would be dead on arrival. Evaluated after the adoption decision and before the broker call; never on an adopted working order or fill (there the level is dropped as `breached_at_adoption`). Terminal |
 | `NO_STOP` | `OrderGuard` | `stop_price` missing/non-positive, on the wrong side of the order price for `side`, or outside the sizer-computed stop window |
 | `NON_SIM_CONNECTION` | `OrderGuard` | The configured connection is not the allowed (paper) connection — not reachable through this controller today since `place-entry` always trades on the server-fixed `dracul.executor.connection`, but enforced defensively |
 | `DUPLICATE` | `ExecutorWebhookController` | Four distinct uses, all idempotency: (a) the signal is no longer `PENDING` — checked before vetos/order guard, no broker call, no signal-status change; (b) a **working** broker order already exists under the signal's clientRef and is adopted instead of re-placed; (c) a **filled** broker order under the clientRef is adopted as a position (see the adoption decision table below); (d) the book already carries this signal's OPEN row and only its statuses are repaired |
@@ -2575,7 +2581,7 @@ pipeline. Response:
     "active_stop": 138.90, "broker_stop": 136.10, "current_price": 151.20, "atr": 4.2,
     "atr_short": 5.1,
     "chandelier_level": 138.90, "r_current": 1.98, "mfe_r": 2.30,
-    "days_held": 6, "kill_criteria": ["..."],
+    "days_held": 6, "kill_criteria": ["..."], "kill_close_below": 136.50,
     "trim_count": 0, "suggested_fraction": 0.33,
     "soft_trigger": { "chandelier_breach": false, "ma_break": false, "confirm_count": 1,
       "kill_criteria_breached": [] },
@@ -2604,11 +2610,14 @@ minimum `fraction` `exit-position` will accept for a partial exit right now.
 condition (`chandelier_breach` or `ma_break`) has held; the LLM is expected
 to act once it reaches `dracul.executor.soft-confirm-min`.
 
-`soft_trigger.kill_criteria_breached` is the subset of `kill_criteria` that
-`KillCriteriaEvaluator` deterministically matched against the current close
-— v1 recognizes only absolute price-level criteria ("close below 90",
-"rises above 120"); percent thresholds and qualitative criteria are left
-unparsed for the LLM to judge from the raw `kill_criteria` list.
+`kill_close_below` is the structured kill level the hard trigger enforces (null when
+none is armed). When the hunter's level was deliberately not armed the position also
+carries `kill_close_below_dropped` (`too_tight` or `breached_at_adoption`); the key is
+omitted otherwise.
+
+`soft_trigger.kill_criteria_breached` holds at most one entry, the structured level
+breach (`KILL_LEVEL: close X < kill_close_below Y`). The free-text `kill_criteria`
+list is never parsed by code; the LLM judges it.
 
 `tranche2` (`Tranche2Detector`, pure decision logic, no I/O) reports whether
 this tranche-1 position is eligible for a second tranche via `add-tranche`.

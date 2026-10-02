@@ -36,6 +36,12 @@ candidate is further enriched from daily OHLC and Finnhub metrics:
   report day, computed vs the market proxy (default SPY) and beta-adjusted when beta is
   known. A positive CAR with the same sign as the surprise is the strongest confirming
   signal; a negative CAR (the market already faded the beat) is a hard counter-argument.
+- `announcementCar2d` (2026-10-02) — the same abnormal return summed over the report-day bar and
+  the next bar ([0,+1]). It is the confirmation signal the prompt uses: `announcementCar1d` reads
+  only the report-day bar, which for an after-close reporter is the day before the market saw the
+  numbers.
+- `preReportClose` (2026-10-02) — the last close before the report-day bar; echo's
+  `kill_close_below` level (the announcement reaction fully given back).
 - `abnormalVolume` — report-day volume / trailing 20-day average volume.
 - `momentum6_12m` — price return over the 6-12 month window (price + earnings momentum
   compound).
@@ -44,6 +50,21 @@ candidate is further enriched from daily OHLC and Finnhub metrics:
 
 Every SP2 field carries an availability flag (`carAvailable`, `metricsAvailable`); missing
 OHLC or metrics degrade the affected field conservatively and never abort the run.
+
+**Day-0 deferral (2026-10-02).** Echo runs at 22:00 UTC on the report day; for an after-close
+reporter the market has not reacted yet. The session clock is the MARKET proxy series (the same
+SPY-proxy OHLC already fetched once per batch for the CAR denominator), never the candidate's own
+stock series: a candidate is deferred only when the MARKET series is non-empty and its last bar is
+on or before the report date; it reappears in a later run (lookback 7 days). When the market series
+is empty/unavailable, `EchoEnrichmentService` falls back to the older stock-only rule (the
+candidate's own series decides). A stale or halted stock series — its own last bar on/before the
+report date while the market has already moved on — is KEPT, not deferred, and counted separately.
+An empty or failed stock series is never skipped and never counted as stale (the candidate reaches
+the LLM with `carAvailable=false`), so an OHLC outage on one symbol — or on the whole batch — cannot
+become a silent quiet night. Both counters are logged at INFO (`echo enrichment:
+skipped_no_post_report_bar=N stale_stock_series=N …`) and added to the fetch tool's
+`data_source_health.detail` as `skipped_no_post_report_bar=N` and `stale_stock_series=N` —
+informational, they change neither `status` nor `partial`/`truncated`.
 
 ### Strigoi-Echo SP3: earnings-quality + event/timing gate
 
@@ -578,6 +599,12 @@ Every Strigoi follows the same three-step shape:
      thesis is dead. They flow through the Prey→ExecutorSignal adapter; the executor
      hard-rejects (`SCHEMA_INVALID`) any entry signal without them. Vague concerns belong
      in `risks`.
+   - `kill_close_below` (number, optional — strigoi-echo and strigoi-lazarus only, V51): the one
+     price level whose single daily close below it kills the thesis, and the only kill condition
+     the executor enforces in code. Echo uses `preReportClose`, lazarus the 52-week low that
+     defined the setup; the key is omitted when that level is not strictly below the current
+     price. The schemas accept number/string/null so a malformed value never fails the run;
+     `PreyMapper` keeps only a strictly positive number and WARNs on anything else present.
 
 3. **Persist** — the parsed `Prey` records are written to `dracul.prey`.
    Vistierie handles cost accounting and run history; Dracul handles
@@ -1389,16 +1416,16 @@ the LLM, which owns only the soft judgment call. Every call to
 1. **`ReconcileService`** — syncs broker fills against `executor_position`,
    retires positions the broker reports closed, applies `cooldown`.
 2. **`HardTriggerService`** — force-closes a position on stop-breach,
-   measurable kill-criteria breach, or giveback (fraction of peak MFE-in-R
+   a breached structured kill level, or giveback (fraction of peak MFE-in-R
    given back, active once MFE clears `dracul.executor.giveback-active-from-r`)
    — always enforced, never the LLM's call. Precedence when more than one
    condition is simultaneously breached: stop-breach first (`HARD_STOP`),
-   then measurable kill-criteria (`HARD_KILL_CRITERIA`), then giveback
-   (`GIVEBACK_BREACH`) — the first match names the `decision_log` reason
-   code and no later check runs. Kill-criteria here reuses the same
-   `KillCriteriaEvaluator` described below, so only measurable price-level
-   criteria can hard-close a position; qualitative criteria never do and
-   stay surfaced via `kill_criteria_breached` for the LLM to judge.
+   then the kill level (`HARD_KILL_CRITERIA`: BUY, close strictly below
+   `executor_position.kill_close_below`), then giveback (`GIVEBACK_BREACH`) —
+   the first match names the `decision_log` reason code and no later check
+   runs. Free-text `kill_criteria` are never parsed here (since exec-v0.9);
+   they stay LLM context. Each run logs one INFO line
+   `kill levels evaluated: n of m filled positions (breached: k)`.
 3. **`StopRatchetService`** — ratchets the active stop up to the chandelier
    level (`dracul.executor.chandelier-mult` × ATR below the highest price
    reached), never down. The broker confirms the modify before the book is
@@ -1434,16 +1461,22 @@ position derives from `highest_price` instead. This groundwork feeds the R
 distribution / backtest work that reads `mae_r` off the closed-position
 history.
 
-`kill_criteria_breached` is populated by `KillCriteriaEvaluator`
-(`de.visterion.dracul.criteria`), a deterministic, stateless, best-effort
-parser that recognizes only absolute **price-level** kill criteria (e.g.
-"Close below $90.00", "Price rises above 120") and evaluates them against
-the position's daily close. It is v1-scoped: percent thresholds (e.g.
-"widens above 12%") and qualitative criteria (e.g. "Merger terminated") are
-left unparsed — those stay in the raw `kill_criteria` list for the LLM to
-judge itself. Anything the evaluator can't confidently parse is silently
-skipped rather than raising an error, so a malformed or free-form criterion
-never blocks the pipeline.
+`kill_criteria_breached` carries at most one entry, the structured level breach
+(`KILL_LEVEL: close X < kill_close_below Y`), computed from the same rule as the
+hard trigger; it is mostly visible on positions the hard trigger could not flatten
+yet (unfilled, pending exit, failed flatten). `KillCriteriaEvaluator`
+(`de.visterion.dracul.criteria`) is no longer used by the executor; it remains
+only for `VerdictKillCriteriaWatcher`.
+
+**Kill level at entry (`KillLevelGuard`, exec-v0.9).** place-entry evaluates the
+signal's `kill_close_below` after the adoption decision. A fresh placement whose
+level is at or above the order price is rejected `KILL_LEVEL_BREACHED` (terminal)
+before any broker call. A level closer to the entry than 0.5 × `atr_effective`
+is not armed (`kill_close_below_dropped = too_tight`, the trade is kept). An
+adopted working order or filled entry is never rejected: a breached level is
+dropped as `breached_at_adoption` (basis = fill price, else the order price).
+The outcome is recorded in the SIGNAL row's `inputs_snapshot`
+(`kill_close_below`, `kill_close_below_dropped`) and on the position.
 
 Every decision point (entry, hard exit, stop-ratchet, soft exit) writes a
 `decision_log` row tagged with the active `dracul.executor.rule-version`,
