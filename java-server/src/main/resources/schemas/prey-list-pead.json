@@ -17,6 +17,7 @@
           "risks":       {"type": "array", "items": {"type": "string"}},
           "horizon":     {"type": "string", "enum": ["1m", "3m", "6m", "12m"]},
           "kill_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5},
+          "kill_close_below": {"type": ["number", "string", "null"]},
           "news_sentiment": {
             "type": "array",
             "items": {
