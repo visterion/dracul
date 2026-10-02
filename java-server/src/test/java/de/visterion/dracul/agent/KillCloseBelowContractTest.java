@@ -48,6 +48,44 @@ class KillCloseBelowContractTest {
         });
     }
 
+    /**
+     * {@link #everyPreyItemPropertyIsNamedInItsPrompt()} only checks that a backticked property
+     * name occurs ANYWHERE in the prompt — the new "Structured kill level" section heading alone
+     * would satisfy it even if the key were deleted from the agent's actual output-key allow-list
+     * (echo's "use EXACTLY these keys" list, lazarus' inline "Each Prey:" field list). That is
+     * exactly the failure this test class's javadoc names, so this test scopes the check to those
+     * two list texts specifically (spec §5 P3).
+     */
+    @Test
+    void killCloseBelowIsNamedInTheFixedKeyAllowList() {
+        String echo = AgentResources.classpath("prompts/strigoi-echo.md");
+        String echoList = between(echo, "use EXACTLY these keys", "NEVER translate", "strigoi-echo.md key allow-list");
+        assertAllPropertiesNamed(echoList, "schemas/prey-list-pead.json", "strigoi-echo.md key allow-list");
+
+        String lazarus = AgentResources.classpath("prompts/strigoi-lazarus.md");
+        String lazarusList = between(lazarus, "Each Prey:", "below). Signals", "strigoi-lazarus.md \"Each Prey:\" list");
+        assertAllPropertiesNamed(lazarusList, "schemas/prey-list-lazarus.json", "strigoi-lazarus.md \"Each Prey:\" list");
+    }
+
+    private void assertAllPropertiesNamed(String listText, String schemaPath, String description) {
+        List<String> missing = new ArrayList<>();
+        for (String property : preyItems(schemaPath).path("properties").propertyNames()) {
+            if (!listText.contains("`" + property + "`")) missing.add(property);
+        }
+        assertThat(missing).as("%s properties not named in %s", schemaPath, description).isEmpty();
+    }
+
+    /** Extracts the substring between two anchors, failing clearly if either anchor is gone. */
+    private static String between(String text, String startAnchor, String endAnchor, String description) {
+        int start = text.indexOf(startAnchor);
+        assertThat(start).as("%s: start anchor \"%s\" not found — prompt restructured?", description, startAnchor)
+                .isGreaterThanOrEqualTo(0);
+        int end = text.indexOf(endAnchor, start);
+        assertThat(end).as("%s: end anchor \"%s\" not found after start — prompt restructured?", description, endAnchor)
+                .isGreaterThanOrEqualTo(0);
+        return text.substring(start, end);
+    }
+
     @Test
     void killCloseBelowIsOptionalAndAdmitsNumberStringAndNull() {
         PROMPT_TO_SCHEMA.values().forEach(schemaPath -> {
@@ -63,7 +101,7 @@ class KillCloseBelowContractTest {
             NewsSentimentSchemaTest.assertNotRequired(items.path("required"), PreyMapper.KILL_CLOSE_BELOW);
 
             // Structural validation of the samples the field must accept without failing a run.
-            for (String sample : List.of("48.2", "null", "\"56,40\"")) {
+            for (String sample : List.of("48.2", "null", "\"48,20\"")) {
                 JsonNode value = AgentResources.parseJson(mapper, sample);
                 assertThat(types).as("%s admits %s", schemaPath, sample).contains(jsonType(value));
             }
