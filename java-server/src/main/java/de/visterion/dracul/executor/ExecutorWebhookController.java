@@ -326,6 +326,9 @@ public class ExecutorWebhookController {
             node.put("direction", s.direction());
             node.put("mechanism", s.mechanism());
             node.put("kill_criteria", s.killCriteria());
+            // The hunter's structured thesis-death level (raw; place-entry may still refuse or
+            // drop it). Null when the hunter set none.
+            node.put("kill_close_below", s.killCloseBelow());
             node.put("horizon", s.horizon());
 
             ExecutorIndicators.Levels levels = executorIndicators.levels(s.symbol(), atrPeriod, swingPeriod);
@@ -1805,6 +1808,12 @@ public class ExecutorWebhookController {
             node.put("mfe_r", p.mfeR());
             node.put("days_held", p.daysHeld());
             node.put("kill_criteria", p.killCriteria());
+            // The only code-enforced kill condition. When the hunter's level was deliberately not
+            // armed, say why — so the LLM does not soft-exit on a level the code chose to drop.
+            node.put("kill_close_below", p.killCloseBelow());
+            if (p.killCloseBelowDropped() != null) {
+                node.put("kill_close_below_dropped", p.killCloseBelowDropped());
+            }
             node.put("trim_count", p.trimCount());
             node.put("suggested_fraction", p.suggestedFraction());
 

@@ -1,6 +1,5 @@
 package de.visterion.dracul.executor;
 
-import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,7 +36,6 @@ class MaintenancePipelineTest {
     private final ExecutorSignalRepository signalRepo = mock(ExecutorSignalRepository.class);
     private final Tranche2Detector tranche2Detector = new Tranche2Detector();
     private final SoftConditionEvaluator softEval = new SoftConditionEvaluator();
-    private final KillCriteriaEvaluator killCriteriaEvaluator = new KillCriteriaEvaluator();
 
     private MaintenancePipeline pipeline;
 
@@ -46,7 +44,7 @@ class MaintenancePipelineTest {
         when(signalRepo.findPending(50)).thenReturn(List.of());
         pipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper, hardTrigger, ratchet,
                 softEval, indicators, positionRepo, signalRepo, tranche2Detector,
-                killCriteriaEvaluator, 3.0, 22, 20);
+                3.0, 22, 20);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, BigDecimal activeStop,
@@ -192,8 +190,10 @@ class MaintenancePipelineTest {
 
     @Test
     void killCriteriaBreach_surfacesInEnrichedPosition() {
-        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
-                new BigDecimal("110"), new BigDecimal("1.6"), 0, List.of("close below 90"));
+        // Structured level only (spec 2026-10-02): the free-text entry is context, not parsed.
+        ExecutorPosition bbb = ExecutorPositionFixtures.withKillLevel(openPosition(1L, "BBB",
+                new BigDecimal("95"), new BigDecimal("110"), new BigDecimal("1.6"), 0,
+                List.of("close below 90")), new BigDecimal("90"), null);
         List<ExecutorPosition> survivors = List.of(bbb);
 
         when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
@@ -207,7 +207,23 @@ class MaintenancePipelineTest {
 
         assertThat(result).hasSize(1);
         EnrichedPosition ep = result.get(0);
-        assertThat(ep.killCriteriaBreached()).containsExactly("close below 90");
+        assertThat(ep.killCriteriaBreached()).containsExactly("KILL_LEVEL: close 85 < kill_close_below 90");
+    }
+
+    @Test
+    void freeTextKillCriterionWithoutALevel_isNeverReportedAsBreached() {
+        ExecutorPosition bbb = openPosition(1L, "BBB", new BigDecimal("95"),
+                new BigDecimal("110"), new BigDecimal("1.6"), 0, List.of("close below 90"));
+        List<ExecutorPosition> survivors = List.of(bbb);
+
+        when(reconcile.reconcile("c", "r1")).thenReturn(new ReconcileService.ReconcileResult(survivors, Set.of()));
+        when(indicators.levels("BBB", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("85"), null));
+        when(hardTrigger.apply(eq(survivors), any(), eq("r1"))).thenReturn(survivors);
+        when(positionRepo.findOpen()).thenReturn(List.of(bbb));
+
+        assertThat(pipeline.run("c", "r1").get(0).killCriteriaBreached()).isEmpty();
     }
 
     @Test
@@ -310,7 +326,7 @@ class MaintenancePipelineTest {
 
     @Test
     void unfilledPosition_breachedKillCriterion_neverFlattenedOrClosed_realHardTrigger() {
-        // End-to-end gating with a REAL HardTriggerService: kill criterion "close below 40" is
+        // End-to-end gating with a REAL HardTriggerService: kill level 40 is
         // breached (close 39) on a position whose limit-buy entry never filled. Without the
         // unfilled gating this would flatten a non-existent broker position and fabricate a
         // CLOSED row + cooldown. It must survive untouched instead.
@@ -322,15 +338,16 @@ class MaintenancePipelineTest {
         when(ruleVersions.active()).thenReturn("exec-v0.4");
         HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
                 decisionRepo, cooldownRepo, ruleVersions, new tools.jackson.databind.ObjectMapper(),
-                killCriteriaEvaluator, 0.35, 1.5, 10,
+                0.35, 1.5, 10,
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
                         java.time.ZoneOffset.UTC));
         MaintenancePipeline gatedPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
                 realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
-                tranche2Detector, killCriteriaEvaluator, 3.0, 22, 20);
+                tranche2Detector, 3.0, 22, 20);
 
-        ExecutorPosition unfilled = openPosition(2L, "AAA", new BigDecimal("30"),
-                new BigDecimal("110"), null, 0, List.of("close below 40"));
+        ExecutorPosition unfilled = ExecutorPositionFixtures.withKillLevel(openPosition(2L, "AAA",
+                new BigDecimal("30"), new BigDecimal("110"), null, 0, List.of("close below 40")),
+                new BigDecimal("40"), null);
 
         when(reconcile.reconcile("c", "r1")).thenReturn(
                 new ReconcileService.ReconcileResult(List.of(unfilled), Set.of(2L)));
@@ -346,6 +363,88 @@ class MaintenancePipelineTest {
         verify(cooldownRepo, org.mockito.Mockito.never()).add(any(), any(), any(), any());
         assertThat(result).hasSize(1);
         assertThat(result.get(0).symbol()).isEqualTo("AAA");
+        // Soft-trigger context names the structured breach even though nothing was flattened.
+        assertThat(result.get(0).killCriteriaBreached())
+                .containsExactly("KILL_LEVEL: close 39 < kill_close_below 40");
+        assertThat(result.get(0).killCloseBelow()).isEqualByComparingTo("40");
+    }
+
+    /** Spec §5 P1: the survivors reconcile hands over are REBUILT records (ReconcileService copies
+     *  every OPEN row positionally each run). A level that reaches the hard trigger on such a
+     *  record must flatten the position as HARD_KILL_CRITERIA with a pending exit. */
+    @Test
+    void rebuiltSurvivorWithABreachedLevel_isFlattenedAsHardKillCriteria_realHardTrigger() {
+        de.visterion.dracul.executor.broker.FakeExecutionGateway fakeGateway =
+                new de.visterion.dracul.executor.broker.FakeExecutionGateway();
+        DecisionLogRepository decisionRepo = mock(DecisionLogRepository.class);
+        RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
+        when(ruleVersions.active()).thenReturn("exec-v0.9");
+        HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
+                decisionRepo, mock(CooldownRepository.class), ruleVersions,
+                new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
+                        java.time.ZoneOffset.UTC));
+        MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
+                realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
+                tranche2Detector, 3.0, 22, 20);
+
+        ExecutorPosition stored = ExecutorPositionFixtures.withKillLevel(openPosition(3L, "KLV",
+                new BigDecimal("30"), new BigDecimal("110"), null, 0), new BigDecimal("40"), null);
+        // What ReconcileService.updateMaintenance returns: a fresh positional copy of the row.
+        ExecutorPosition rebuilt = ExecutorPositionFixtures.withKillLevel(stored,
+                stored.killCloseBelow(), stored.killCloseBelowDropped());
+        when(reconcile.reconcile("c", "r1")).thenReturn(
+                new ReconcileService.ReconcileResult(List.of(rebuilt), Set.of()));
+        when(indicators.levels("KLV", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("39"), null));
+        when(positionRepo.findOpen()).thenReturn(List.of());
+
+        realPipeline.run("c", "r1");
+
+        assertThat(fakeGateway.flattenedSymbols).containsExactly("KLV");
+        verify(positionRepo).markPendingExit(eq(3L), eq("HARD_KILL_CRITERIA"), any(), any(), any());
+    }
+
+    /** Spec §5 P2: a row already carrying a pending exit has submitted its one flatten; a
+     *  breached kill level on it must not flatten (or log) a second time. */
+    @Test
+    void pendingExitPositionWithABreachedLevel_isNotFlattenedAgain_realHardTrigger() {
+        de.visterion.dracul.executor.broker.FakeExecutionGateway fakeGateway =
+                new de.visterion.dracul.executor.broker.FakeExecutionGateway();
+        RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
+        when(ruleVersions.active()).thenReturn("exec-v0.9");
+        HardTriggerService realHardTrigger = new HardTriggerService(fakeGateway, positionRepo,
+                mock(DecisionLogRepository.class), mock(CooldownRepository.class), ruleVersions,
+                new tools.jackson.databind.ObjectMapper(), 0.35, 1.5, 3,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T12:00:00Z"),
+                        java.time.ZoneOffset.UTC));
+        MaintenancePipeline realPipeline = new MaintenancePipeline(reconcile, entryExpiry, sweeper,
+                realHardTrigger, ratchet, softEval, indicators, positionRepo, signalRepo,
+                tranche2Detector, 3.0, 22, 20);
+
+        ExecutorPosition pending = ExecutorPositionFixtures.withKillLevel(
+                ExecutorPositionFixtures.withoutKillLevel(4L, "c", "PEX", "BUY", BigDecimal.TEN,
+                        new BigDecimal("100"), new BigDecimal("30"), new BigDecimal("30"), 1, null,
+                        List.of(), "sig-1", "agent", "2026-06-01", null, "OPEN", "brk-1",
+                        new BigDecimal("110"), null, 0, null, null, null, null, "stop-1", null,
+                        null, null, null, 0, null, null, null, "HARD_STOP", "exit-1", null, false,
+                        null, "2026-07-02T00:00:00Z"),
+                new BigDecimal("40"), null);
+        when(reconcile.reconcile("c", "r1")).thenReturn(
+                new ReconcileService.ReconcileResult(List.of(pending), Set.of()));
+        when(indicators.levels("PEX", 22, 20))
+                .thenReturn(new ExecutorIndicators.Levels(true, new BigDecimal("2.0"), null,
+                        new BigDecimal("39"), null));
+        when(positionRepo.findOpen()).thenReturn(List.of(pending));
+
+        List<EnrichedPosition> result = realPipeline.run("c", "r1");
+
+        assertThat(fakeGateway.flattenedSymbols).isEmpty();
+        verify(positionRepo, org.mockito.Mockito.never())
+                .markPendingExit(anyLong(), any(), any(), any(), any());
+        assertThat(result).singleElement().satisfies(ep -> assertThat(ep.killCriteriaBreached())
+                .containsExactly("KILL_LEVEL: close 39 < kill_close_below 40"));
     }
 
     @Test

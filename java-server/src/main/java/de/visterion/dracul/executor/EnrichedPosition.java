@@ -38,5 +38,10 @@ public record EnrichedPosition(
         BigDecimal atrShort,
         /** The price the protective leg actually rests at — the catastrophe backstop, buffered
          *  away from {@link #activeStop()}. Nullable for rows opened before V48. */
-        BigDecimal brokerStop) {
+        BigDecimal brokerStop,
+        /** The structured kill level the hard trigger enforces (V51); null when none is armed. */
+        BigDecimal killCloseBelow,
+        /** Why place-entry did not arm the hunter's level: {@code too_tight} or
+         *  {@code breached_at_adoption}; null when nothing was dropped. */
+        String killCloseBelowDropped) {
 }

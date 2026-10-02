@@ -1,6 +1,5 @@
 package de.visterion.dracul.executor;
 
-import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,7 +58,6 @@ public class MaintenancePipeline {
     private final ExecutorPositionRepository positionRepo;
     private final ExecutorSignalRepository signalRepo;
     private final Tranche2Detector tranche2Detector;
-    private final KillCriteriaEvaluator killCriteriaEvaluator;
     private final double chandelierMult;
     private final int atrPeriod;
     private final int swingPeriod;
@@ -75,7 +73,6 @@ public class MaintenancePipeline {
             ExecutorPositionRepository positionRepo,
             ExecutorSignalRepository signalRepo,
             Tranche2Detector tranche2Detector,
-            KillCriteriaEvaluator killCriteriaEvaluator,
             @Value("${dracul.executor.chandelier-mult:3.0}") double chandelierMult,
             @Value("${dracul.executor.atr-period:22}") int atrPeriod,
             @Value("${dracul.executor.swing-period:20}") int swingPeriod) {
@@ -89,7 +86,6 @@ public class MaintenancePipeline {
         this.positionRepo = positionRepo;
         this.signalRepo = signalRepo;
         this.tranche2Detector = tranche2Detector;
-        this.killCriteriaEvaluator = killCriteriaEvaluator;
         this.chandelierMult = chandelierMult;
         this.atrPeriod = atrPeriod;
         this.swingPeriod = swingPeriod;
@@ -259,7 +255,11 @@ public class MaintenancePipeline {
                         null, null, p.side(), p.softConfirmCount())
                 : new SoftConditionEvaluator.SoftState(false, false, p.softConfirmCount());
 
-        List<String> killCriteriaBreached = killCriteriaEvaluator.breached(p.killCriteria(), currentPrice);
+        // Context only: the structured kill level, never a parse of the free-text kill_criteria.
+        // For a FILLED position a breach is flattened by HardTriggerService earlier in this same
+        // pass, so this is mostly visible on unfilled / pending-exit / failed-flatten rows.
+        String killBreach = HardTriggerService.killLevelBreach(p, currentPrice);
+        List<String> killCriteriaBreached = killBreach == null ? List.of() : List.of(killBreach);
 
         positionRepo.updateMaintenance(p.id(), p.highestPrice(), p.mfeR(), ss.confirmCount(),
                 p.activeStop(), null, p.brokerStop());
@@ -281,7 +281,7 @@ public class MaintenancePipeline {
                 p.mfeR(), daysHeld(p.entryDate()), p.killCriteria(), killCriteriaBreached,
                 ss.chandelierBreach(), ss.maBreak(), ss.confirmCount(), t2.eligible(), t2.reason(),
                 p.sourceSignalId(), p.trimCount(), ExecutorWebhookController.ladderFloor(p.trimCount()),
-                entryFilled, atrShort, p.brokerStop());
+                entryFilled, atrShort, p.brokerStop(), p.killCloseBelow(), p.killCloseBelowDropped());
     }
 
     private String resolveMechanism(String sourceSignalId) {

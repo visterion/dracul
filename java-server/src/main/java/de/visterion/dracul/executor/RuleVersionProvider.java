@@ -41,7 +41,7 @@ public class RuleVersionProvider {
     private final MechanismBudget mechanismBudget;
 
     public RuleVersionProvider(
-            @Value("${dracul.executor.rule-version:exec-v0.8}") String active,
+            @Value("${dracul.executor.rule-version:exec-v0.9}") String active,
             RuleVersionRepository repo,
             ObjectMapper mapper,
             @Value("${dracul.executor.broker-stop-buffer-atr:1.0}") BigDecimal brokerStopBufferAtr,
@@ -89,7 +89,8 @@ public class RuleVersionProvider {
                     .put("max_positions", maxPositions)
                     .put("trim_fractions", "0.33,0.5,1.0")
                     .put("entry_gtd_days", 2)
-                    .put("kill_criteria_hard", "price-level only")
+                    .put("kill_criteria_hard", "structured kill_close_below, single close, "
+                            + "KILL_LEVEL_BREACHED veto, 0.5 ATR min distance")
                     .put("broker_stop_buffer_atr", brokerStopBufferAtr)
                     .put("max_broker_stop_pct", maxBrokerStopPct)
                     .put("atr_short_period", atrShortPeriod)
@@ -104,6 +105,10 @@ public class RuleVersionProvider {
             // is then permanent for the version it describes -- it is the audit record of what
             // that version changed, and prod verification asserts it verbatim.
             //
+            // exec-v0.8 history (no longer seeded): "cooldown after exit shortened from 10 to 3
+            // days: COOLDOWN-vetoed signals averaged +1.17 R after 20 days (16/16 positive, n=16);
+            // all other gates unchanged from exec-v0.7"
+            //
             // exec-v0.7 history (no longer seeded): "paper capital scale-up for learning
             // throughput: total_budget 100000, tranche_count 25 (tranche 4000), risk_pct 0.005,
             // heat_pct 0.15, max_positions 25, pace_per_week 10, max_per_sector 5; mechanism
@@ -114,9 +119,14 @@ public class RuleVersionProvider {
             // entry cap (MERGER_ARB 20%, QUALITY_52W_LOW 15% of budget), transient like
             // MAX_POSITIONS; max_positions 8"
             repo.upsert(new RuleVersion(active, LocalDate.now().toString(),
-                    "cooldown after exit shortened from 10 to 3 days: COOLDOWN-vetoed signals "
-                            + "averaged +1.17 R after 20 days (16/16 positive, n=16); all other "
-                            + "gates unchanged from exec-v0.7",
+                    "structured kill level: only the hunter-authored kill_close_below is "
+                            + "code-enforced (BUY, one daily close strictly below it -> "
+                            + "HARD_KILL_CRITERIA); free-text kill_criteria are no longer parsed by "
+                            + "the executor; place-entry rejects a fresh entry whose level is at or "
+                            + "above the order price (KILL_LEVEL_BREACHED) and drops a level closer "
+                            + "than 0.5 x atr_effective (too_tight) or breached on an adopted "
+                            + "order/fill (breached_at_adoption); all other gates unchanged from "
+                            + "exec-v0.8",
                     null, params));
         }
     }

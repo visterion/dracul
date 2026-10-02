@@ -24,9 +24,12 @@ class RuleVersionProviderTest {
     static final String DEFAULTS_VERSION = "exec-test-sp2-" + UUID.randomUUID();
     static final String OVERRIDES_VERSION = "exec-test-sp2-ovr-" + UUID.randomUUID();
 
-    static final String CHANGES = "cooldown after exit shortened from 10 to 3 days: COOLDOWN-vetoed "
-            + "signals averaged +1.17 R after 20 days (16/16 positive, n=16); all other gates "
-            + "unchanged from exec-v0.7";
+    static final String CHANGES = "structured kill level: only the hunter-authored kill_close_below "
+            + "is code-enforced (BUY, one daily close strictly below it -> HARD_KILL_CRITERIA); "
+            + "free-text kill_criteria are no longer parsed by the executor; place-entry rejects a "
+            + "fresh entry whose level is at or above the order price (KILL_LEVEL_BREACHED) and "
+            + "drops a level closer than 0.5 x atr_effective (too_tight) or breached on an adopted "
+            + "order/fill (breached_at_adoption); all other gates unchanged from exec-v0.8";
 
     @Nested
     @SpringBootTest
@@ -64,6 +67,10 @@ class RuleVersionProviderTest {
             assertThat(v.params().path("max_per_sector").asInt()).isEqualTo(5);
             // Cooldown shortened (exec-v0.8) params
             assertThat(v.params().path("cooldown_days").asInt()).isEqualTo(3);
+            // Structured kill level (exec-v0.9)
+            assertThat(v.params().path("kill_criteria_hard").asString()).isEqualTo(
+                    "structured kill_close_below, single close, KILL_LEVEL_BREACHED veto, "
+                            + "0.5 ATR min distance");
         }
     }
 

@@ -3196,7 +3196,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("104"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of("X"),
-                true, false, 1, true, "R_CONFIRMED", "sig-42", 0, 0.33, true, null, null);
+                true, false, 1, true, "R_CONFIRMED", "sig-42", 0, 0.33, true, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
@@ -3243,7 +3243,7 @@ class ExecutorWebhookControllerTest {
         EnrichedPosition ep = new EnrichedPosition(1L, "depot-1", "ACME", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 null, null, null, null, null, 0, List.of(), List.of(),
-                false, false, 0, false, null, "sig-42", 0, 0.33, false, null, null);
+                false, false, 0, false, null, "sig-42", 0, 0.33, false, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<?> resp = controller.fetchOpenPositions(BEARER, "run-1");
@@ -3263,7 +3263,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X", "Y"), List.of(),
-                false, false, 1, false, null, "sig-42", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig-42", 0, 0.33, true, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ExecutorPosition position = openPosition(1L, "ACME", "BUY", new BigDecimal("100"),
@@ -3300,7 +3300,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("99"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X", "Y"), List.of(),
-                false, false, 1, false, null, "sig-42", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig-42", 0, 0.33, true, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         // True immutable initial stop (95) differs from the already-ratcheted active stop (99).
@@ -3336,7 +3336,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
-                false, false, 1, false, null, "sig-42", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig-42", 0, 0.33, true, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
         when(signalRepo.findById("sig-42")).thenReturn(null);
         when(positionContextRepo.upsertOnOpen(any(), any(), any(), any(), any(), any(), any(), any()))
@@ -3356,7 +3356,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
                 new BigDecimal("108"), new BigDecimal("2.0"), new BigDecimal("104"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
-                false, false, 1, false, null, "sig1", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig1", 0, 0.33, true, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ExecutorPosition position = openPosition(1L, "HELE", "BUY", new BigDecimal("100"),
@@ -3390,17 +3390,17 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("10"), new BigDecimal("200"), new BigDecimal("180.50"),
                 new BigDecimal("210"), new BigDecimal("2.0"), new BigDecimal("204"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
-                false, false, 1, false, null, "sig-1", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig-1", 0, 0.33, true, null, null, null, null);
         EnrichedPosition sellWithStop = new EnrichedPosition(2L, "depot-1", "SHRT", "SELL",
                 new BigDecimal("10"), new BigDecimal("40"), new BigDecimal("50"),
                 new BigDecimal("38"), new BigDecimal("2.0"), new BigDecimal("42"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
-                false, false, 1, false, null, "sig-2", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig-2", 0, 0.33, true, null, null, null, null);
         EnrichedPosition buyWithNullStop = new EnrichedPosition(3L, "depot-1", "NOPX", "BUY",
                 new BigDecimal("10"), new BigDecimal("100"), null,
                 new BigDecimal("105"), new BigDecimal("2.0"), new BigDecimal("101"),
                 new BigDecimal("1.6"), new BigDecimal("1.6"), 5, List.of("X"), List.of(),
-                false, false, 1, false, null, "sig-3", 0, 0.33, true, null, null);
+                false, false, 1, false, null, "sig-3", 0, 0.33, true, null, null, null, null);
         when(pipeline.run(eq("depot-1"), any()))
                 .thenReturn(List.of(buyWithStop, sellWithStop, buyWithNullStop));
 
@@ -5619,7 +5619,7 @@ class ExecutorWebhookControllerTest {
                 new BigDecimal("101"), new BigDecimal("2"), new BigDecimal("95"),
                 new BigDecimal("1.0"), new BigDecimal("1.0"), 3, List.of("X"), List.of(),
                 false, false, 0, false, null, "sig-1", 0, 0.33, true,
-                new BigDecimal("4"), new BigDecimal("93.00"));
+                new BigDecimal("4"), new BigDecimal("93.00"), null, null);
         when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(ep));
 
         ResponseEntity<Map<String, Object>> res = controller.fetchOpenPositions(BEARER, "run-1");
@@ -7446,5 +7446,52 @@ class ExecutorWebhookControllerTest {
         ExecutorPosition booked = bookedPosition();
         assertThat(booked.killCloseBelow()).isEqualByComparingTo("90");
         assertThat(booked.killCloseBelowDropped()).isNull();
+    }
+
+    // -------------------------------------------------------------------
+    // LLM visibility of the structured kill level (spec 2026-10-02 §3.3)
+    // -------------------------------------------------------------------
+
+    @Test
+    void fetchPending_carriesTheRawKillCloseBelow() {
+        when(signalRepo.findPending(50)).thenReturn(List.of(killSignal("sig-1", "88.5"),
+                killSignal("sig-2", null)));
+
+        List<?> signals = (List<?>) outputOf(controller.fetchPendingSignals(BEARER, null)).get("signals");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> withLevel = (Map<String, Object>) signals.get(0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> without = (Map<String, Object>) signals.get(1);
+        assertThat((BigDecimal) withLevel.get("kill_close_below")).isEqualByComparingTo("88.5");
+        assertThat(without).containsKey("kill_close_below");
+        assertThat(without.get("kill_close_below")).isNull();
+    }
+
+    @Test
+    void fetchOpenPositions_carriesTheKillLevelAndADropReasonOnlyWhenSet() {
+        EnrichedPosition armed = new EnrichedPosition(1L, "depot-1", "ARMD", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("101"), new BigDecimal("2.0"), null, null, null, 3, List.of("X"),
+                List.of(), false, false, 0, false, null, "sig-a", 0, 0.33, true, null, null,
+                new BigDecimal("94.5"), null);
+        EnrichedPosition dropped = new EnrichedPosition(2L, "depot-1", "DROP", "BUY",
+                new BigDecimal("10"), new BigDecimal("100"), new BigDecimal("95"),
+                new BigDecimal("101"), new BigDecimal("2.0"), null, null, null, 3, List.of("X"),
+                List.of(), false, false, 0, false, null, "sig-d", 0, 0.33, true, null, null,
+                null, "too_tight");
+        when(pipeline.run(eq("depot-1"), any())).thenReturn(List.of(armed, dropped));
+
+        List<?> positions = (List<?>) outputOf(controller.fetchOpenPositions(BEARER, "run-1"))
+                .get("positions");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> a = (Map<String, Object>) positions.get(0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> d = (Map<String, Object>) positions.get(1);
+        assertThat((BigDecimal) a.get("kill_close_below")).isEqualByComparingTo("94.5");
+        assertThat(a).doesNotContainKey("kill_close_below_dropped");
+        assertThat(d.get("kill_close_below")).isNull();
+        assertThat(d.get("kill_close_below_dropped")).isEqualTo("too_tight");
     }
 }

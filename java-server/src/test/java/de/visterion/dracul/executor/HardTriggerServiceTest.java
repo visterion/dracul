@@ -1,6 +1,5 @@
 package de.visterion.dracul.executor;
 
-import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.FakeExecutionGateway;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +32,6 @@ class HardTriggerServiceTest {
     private final RuleVersionProvider ruleVersions = mock(RuleVersionProvider.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-    private final KillCriteriaEvaluator killCriteriaEvaluator = new KillCriteriaEvaluator();
 
     private HardTriggerService service;
 
@@ -41,7 +39,7 @@ class HardTriggerServiceTest {
     void setUp() {
         when(ruleVersions.active()).thenReturn("exec-v0.2");
         service = new HardTriggerService(gateway, positionRepo, decisionRepo, cooldownRepo,
-                ruleVersions, mapper, killCriteriaEvaluator, 0.35, 1.5, 10, clock);
+                ruleVersions, mapper, 0.35, 1.5, 10, clock);
     }
 
     private ExecutorPosition openPosition(long id, String symbol, String side, BigDecimal entry,
@@ -143,11 +141,15 @@ class HardTriggerServiceTest {
         verify(positionRepo, never()).close(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any());
     }
 
+    /** {@link #openPosition} carrying a structured kill level. */
+    private ExecutorPosition withLevel(ExecutorPosition p, String level) {
+        return ExecutorPositionFixtures.withKillLevel(p, new BigDecimal(level), null);
+    }
+
     @Test
-    void measurablekillCriterionBreachFlattensFully() {
-        ExecutorPosition p = openPosition(6L, "ACME", "BUY", new BigDecimal("100"),
-                new BigDecimal("10"), new BigDecimal("10"), null,
-                List.of("Close below $40 invalidates the thesis"));
+    void killLevelBreachFlattensFully() {
+        ExecutorPosition p = withLevel(openPosition(6L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null), "40");
 
         List<ExecutorPosition> survivors = service.apply(List.of(p),
                 Map.of("ACME", new BigDecimal("39.50")), "run1");
@@ -165,18 +167,16 @@ class HardTriggerServiceTest {
         DecisionLog log = logCaptor.getValue();
         assertThat(log.reasonCode()).isEqualTo("HARD_KILL_CRITERIA");
         assertThat(log.vetoResults().get(0).get("check").asString()).isEqualTo("KILL_CRITERIA");
-        String measured = log.vetoResults().get(0).get("measured").asString();
-        assertThat(measured).contains("Close below $40 invalidates the thesis");
-        assertThat(measured).contains("close 39.5");
+        assertThat(log.vetoResults().get(0).get("measured").asString())
+                .isEqualTo("KILL_LEVEL: close 39.5 < kill_close_below 40");
 
         assertThat(survivors).isEmpty();
     }
 
     @Test
-    void stopBreachWinsOverKillCriteria() {
-        ExecutorPosition p = openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
-                new BigDecimal("95"), new BigDecimal("95"), null,
-                List.of("Close below $40 invalidates the thesis"));
+    void stopBreachWinsOverKillLevel() {
+        ExecutorPosition p = withLevel(openPosition(7L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("95"), new BigDecimal("95"), null), "40");
 
         List<ExecutorPosition> survivors = service.apply(List.of(p),
                 Map.of("ACME", new BigDecimal("39.50")), "run1");
@@ -189,10 +189,9 @@ class HardTriggerServiceTest {
     }
 
     @Test
-    void killCriteriaWinsOverGiveback() {
-        ExecutorPosition p = openPosition(8L, "ACME", "BUY", new BigDecimal("100"),
-                new BigDecimal("10"), new BigDecimal("10"), new BigDecimal("2.0"),
-                List.of("Close below $95 invalidates the thesis"));
+    void killLevelWinsOverGiveback() {
+        ExecutorPosition p = withLevel(openPosition(8L, "ACME", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), new BigDecimal("2.0")), "95");
 
         List<ExecutorPosition> survivors = service.apply(List.of(p),
                 Map.of("ACME", new BigDecimal("94")), "run1");
@@ -215,6 +214,85 @@ class HardTriggerServiceTest {
 
         assertThat(gateway.flattenedSymbols).isEmpty();
         assertThat(survivors).containsExactly(p);
+    }
+
+    @Test
+    void closeExactlyAtOrAboveTheLevelDoesNotTrigger() {
+        ExecutorPosition at = withLevel(openPosition(20L, "ATCO", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null), "40");
+        ExecutorPosition above = withLevel(openPosition(21L, "ABOVE", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null), "40");
+
+        List<ExecutorPosition> survivors = service.apply(List.of(at, above),
+                Map.of("ATCO", new BigDecimal("40.00"), "ABOVE", new BigDecimal("40.01")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        assertThat(survivors).containsExactly(at, above);
+    }
+
+    @Test
+    void sellPositionIgnoresItsKillLevel() {
+        // SELL: stop 200 sits above the close, so no stop breach; a BUY would fire at 110 < 120.
+        ExecutorPosition p = withLevel(openPosition(22L, "SHRT", "SELL", new BigDecimal("100"),
+                new BigDecimal("200"), new BigDecimal("200"), null), "120");
+
+        List<ExecutorPosition> survivors = service.apply(List.of(p),
+                Map.of("SHRT", new BigDecimal("110")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        assertThat(survivors).containsExactly(p);
+    }
+
+    /** The behavior change of spec 2026-10-02: free text is never parsed — not the English shape
+     *  the old regex understood, not the German shape every producer actually writes. */
+    @Test
+    void freeTextPriceCriteriaWithoutAStructuredLevelNeverTrigger() {
+        ExecutorPosition english = openPosition(23L, "ENGL", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null,
+                List.of("Close below $40 invalidates the thesis"));
+        ExecutorPosition german = openPosition(24L, "GERM", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null,
+                List.of("Schlusskurs unter 40,00 USD"));
+
+        List<ExecutorPosition> survivors = service.apply(List.of(english, german),
+                Map.of("ENGL", new BigDecimal("39.50"), "GERM", new BigDecimal("39.50")), "run1");
+
+        assertThat(gateway.flattenedSymbols).isEmpty();
+        assertThat(survivors).containsExactly(english, german);
+    }
+
+    @Test
+    void logsOneKillLevelCounterLinePerRun() {
+        ExecutorPosition breached = withLevel(openPosition(25L, "BRCH", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null), "40");
+        ExecutorPosition holding = withLevel(openPosition(26L, "HOLD", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null), "40");
+        ExecutorPosition noLevel = openPosition(27L, "NOLV", "BUY", new BigDecimal("100"),
+                new BigDecimal("10"), new BigDecimal("10"), null);
+
+        var infos = linesWhile(HardTriggerService.class, ch.qos.logback.classic.Level.INFO,
+                () -> service.apply(List.of(breached, holding, noLevel), Map.of(
+                        "BRCH", new BigDecimal("39.50"), "HOLD", new BigDecimal("50"),
+                        "NOLV", new BigDecimal("50")), "run1"));
+
+        assertThat(infos).containsExactly("kill levels evaluated: 2 of 3 filled positions (breached: 1)");
+    }
+
+    private List<String> linesWhile(Class<?> loggerClass, ch.qos.logback.classic.Level level,
+            Runnable body) {
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            body.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == level)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
     }
 
     /** Fixed-instant clock whose time a test can move forward explicitly. */
@@ -247,7 +325,7 @@ class HardTriggerServiceTest {
             }
         };
         HardTriggerService slowService = new HardTriggerService(slowGateway, positionRepo,
-                decisionRepo, cooldownRepo, ruleVersions, mapper, killCriteriaEvaluator,
+                decisionRepo, cooldownRepo, ruleVersions, mapper,
                 0.35, 1.5, 10, steppingClock);
 
         ExecutorPosition p = openPosition(10L, "ACME", "BUY", new BigDecimal("100"),

@@ -1,6 +1,5 @@
 package de.visterion.dracul.executor;
 
-import de.visterion.dracul.criteria.KillCriteriaEvaluator;
 import de.visterion.dracul.executor.broker.BrokerRejectedException;
 import de.visterion.dracul.executor.broker.BrokerUnavailableException;
 import de.visterion.dracul.executor.broker.CloseResult;
@@ -29,10 +28,12 @@ import java.util.Map;
  * an LLM's judgment — mirrors {@link ReconcileService}'s idiom for gateway/repo wiring,
  * decision-log construction, and cooldown bookkeeping.
  *
- * <p>Precedence when multiple conditions are simultaneously breached: stop-breach, then
- * measurable kill-criteria, then MFE-giveback — the first match names the reason. Kill-criteria
- * covers only measurable, price-level free-text criteria (via {@link KillCriteriaEvaluator});
- * qualitative criteria are left to the LLM elsewhere and never trigger here.
+ * <p>Precedence when multiple conditions are simultaneously breached: stop-breach, then the
+ * structured kill level, then MFE-giveback — the first match names the reason. The kill level is
+ * ONLY the hunter-authored number {@code kill_close_below} (BUY: close strictly below it); free-text
+ * {@code kill_criteria} are never parsed here — a regex over them never matched one production
+ * criterion (German wording, decimal comma) and a naive German one fires falsely on offer prices,
+ * dated, multi-day and negated criteria (spec 2026-10-02 §1). They stay LLM context.
  *
  * <p>On {@link BrokerUnavailableException} while flattening, this deliberately does nothing
  * to the book — a transient broker outage must never be mistaken for a closed position — and
@@ -78,7 +79,6 @@ public class HardTriggerService {
     private final CooldownRepository cooldownRepo;
     private final RuleVersionProvider ruleVersions;
     private final ObjectMapper mapper;
-    private final KillCriteriaEvaluator killCriteriaEvaluator;
     private final double givebackPct;
     private final double givebackActiveFromR;
     private final int cooldownDays;
@@ -92,12 +92,11 @@ public class HardTriggerService {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
-            KillCriteriaEvaluator killCriteriaEvaluator,
             @Value("${dracul.executor.giveback-pct:0.35}") double givebackPct,
             @Value("${dracul.executor.giveback-active-from-r:1.5}") double givebackActiveFromR,
             @Value("${dracul.executor.cooldown-days:3}") int cooldownDays) {
         this(gateway, positionRepo, decisionRepo, cooldownRepo, ruleVersions, mapper,
-                killCriteriaEvaluator, givebackPct, givebackActiveFromR, cooldownDays, Clock.systemUTC());
+                givebackPct, givebackActiveFromR, cooldownDays, Clock.systemUTC());
     }
 
     HardTriggerService(
@@ -107,7 +106,6 @@ public class HardTriggerService {
             CooldownRepository cooldownRepo,
             RuleVersionProvider ruleVersions,
             ObjectMapper mapper,
-            KillCriteriaEvaluator killCriteriaEvaluator,
             double givebackPct,
             double givebackActiveFromR,
             int cooldownDays,
@@ -118,7 +116,6 @@ public class HardTriggerService {
         this.cooldownRepo = cooldownRepo;
         this.ruleVersions = ruleVersions;
         this.mapper = mapper;
-        this.killCriteriaEvaluator = killCriteriaEvaluator;
         this.givebackPct = givebackPct;
         this.givebackActiveFromR = givebackActiveFromR;
         this.cooldownDays = cooldownDays;
@@ -128,6 +125,8 @@ public class HardTriggerService {
     public List<ExecutorPosition> apply(List<ExecutorPosition> openPositions,
             Map<String, BigDecimal> currentCloseBySymbol, String runId) {
         List<ExecutorPosition> survivors = new ArrayList<>();
+        int levelsEvaluated = 0;
+        int levelsBreached = 0;
         for (ExecutorPosition p : openPositions) {
             BigDecimal close = currentCloseBySymbol.get(p.symbol());
             if (close == null) {
@@ -146,6 +145,11 @@ public class HardTriggerService {
 
             boolean sell = "SELL".equals(p.side());
             BigDecimal currentR = computeR(p, close);
+
+            if (isBuy(p) && p.killCloseBelow() != null) {
+                levelsEvaluated++;
+                if (close.compareTo(p.killCloseBelow()) < 0) levelsBreached++;
+            }
 
             Trigger trigger = detectStopBreach(p, close, sell);
             if (trigger == null) {
@@ -173,6 +177,11 @@ public class HardTriggerService {
 
             recordHardExit(p, close, currentR, trigger, runId, detectedAt, cr);
         }
+        // One line per run, always — also when no position carries a level, so "the code-enforced
+        // kill path saw nothing to enforce" is distinguishable from "the path did not run". Breached
+        // counts every close below its level, including one where HARD_STOP took precedence.
+        log.info("kill levels evaluated: {} of {} filled positions (breached: {})",
+                levelsEvaluated, openPositions.size(), levelsBreached);
         return survivors;
     }
 
@@ -290,11 +299,26 @@ public class HardTriggerService {
     }
 
     private Trigger detectKillCriteria(ExecutorPosition p, BigDecimal close) {
-        List<String> breached = killCriteriaEvaluator.breached(p.killCriteria(), close);
-        if (breached.isEmpty()) return null;
-        String measured = "KILL_CRITERIA: close " + plain(close) + " breaches: \""
-                + String.join("\"; \"", breached) + "\"";
-        return new Trigger("HARD_KILL_CRITERIA", "KILL_CRITERIA", measured);
+        String measured = killLevelBreach(p, close);
+        return measured == null ? null : new Trigger("HARD_KILL_CRITERIA", "KILL_CRITERIA", measured);
+    }
+
+    /**
+     * The structured kill-level breach of {@code p} at {@code close}, as the one human-readable
+     * line both the hard trigger ({@code veto_results.measured}) and the soft-trigger context
+     * ({@code soft_trigger.kill_criteria_breached}) carry — or null when there is none: a SELL, no
+     * level, no close, or a close at/above the level. Strictly below: a close exactly AT the level
+     * has not broken it.
+     */
+    static String killLevelBreach(ExecutorPosition p, BigDecimal close) {
+        if (close == null || p.killCloseBelow() == null || !isBuy(p)) return null;
+        if (close.compareTo(p.killCloseBelow()) >= 0) return null;
+        return "KILL_LEVEL: close " + plain(close) + " < kill_close_below "
+                + plain(p.killCloseBelow());
+    }
+
+    private static boolean isBuy(ExecutorPosition p) {
+        return "BUY".equalsIgnoreCase(p.side());
     }
 
     private Trigger detectGiveback(ExecutorPosition p, BigDecimal currentR) {
@@ -324,7 +348,7 @@ public class HardTriggerService {
         return numerator.divide(denominator, 6, RoundingMode.HALF_UP);
     }
 
-    private String plain(BigDecimal v) {
+    private static String plain(BigDecimal v) {
         return v == null ? "null" : v.stripTrailingZeros().toPlainString();
     }
 
