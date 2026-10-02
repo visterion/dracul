@@ -88,13 +88,13 @@ class KillLevelGuardTest {
         assertThat(r.basis()).isEqualByComparingTo("50.00");
     }
 
-    /** The spec's evidence case, re-expressed in synthetic numbers with the same geometry: a level
-     *  at the pre-report close, 0.62 below the entry with an atr_effective of 1.573 — i.e. a level
-     *  at ~0.39 ATR — is too tight to arm. */
+    /** Same geometry as the spec's evidence case, re-expressed with synthetic numbers: a level
+     *  at the pre-report close, 0.62 below the entry with an atr_effective of 1.60 — i.e. a level
+     *  at ~0.39 ATR (well under the 0.5 ATR floor) — is too tight to arm. */
     @Test
     void preReportCloseJustUnderTheEntryIsTooTight() {
         Result r = KillLevelGuard.evaluate(new BigDecimal("23.38"), new BigDecimal("24.00"),
-                new BigDecimal("1.573"), "BUY", Mode.FRESH);
+                new BigDecimal("1.60"), "BUY", Mode.FRESH);
         assertThat(r.outcome()).isEqualTo(Outcome.DROP_TOO_TIGHT);
     }
 

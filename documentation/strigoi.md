@@ -1477,6 +1477,10 @@ adopted working order or filled entry is never rejected: a breached level is
 dropped as `breached_at_adoption` (basis = fill price, else the order price).
 The outcome is recorded in the SIGNAL row's `inputs_snapshot`
 (`kill_close_below`, `kill_close_below_dropped`) and on the position.
+On a SIGNAL decision row, `kill_close_below_dropped` records the guard's
+outcome for that place-entry attempt and can appear on a throttle-reject,
+`BROKER_ERROR` or `BROKER_RETRY_EXHAUSTED` row just as on an `ENTER` row —
+none of those book a position.
 
 Every decision point (entry, hard exit, stop-ratchet, soft exit) writes a
 `decision_log` row tagged with the active `dracul.executor.rule-version`,

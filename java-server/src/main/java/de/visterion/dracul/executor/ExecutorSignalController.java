@@ -20,6 +20,10 @@ import java.util.UUID;
 @RequestMapping("/api/executor")
 public class ExecutorSignalController {
 
+    /** Same upper bound as {@link de.visterion.dracul.webhook.PreyMapper}: NUMERIC(18,6) in the
+     *  `prey`/signal tables overflows well before this. */
+    private static final BigDecimal MAX_KILL_CLOSE_BELOW = new BigDecimal("1e12");
+
     private final ExecutorSignalRepository repo;
 
     public ExecutorSignalController(ExecutorSignalRepository repo) {
@@ -46,12 +50,21 @@ public class ExecutorSignalController {
                 : null;
 
         // Optional structured kill level (V51). Same posture as the hunters' PreyMapper: only a
-        // strictly positive JSON number is kept, anything else means "no level".
+        // strictly positive, finite JSON number below the NUMERIC(18,6) overflow bound is kept,
+        // anything else (including a non-finite or overflowing value such as 1e400/1e13) means
+        // "no level" rather than throwing out of this seam.
         JsonNode killCloseBelowNode = body.path("kill_close_below");
-        BigDecimal killCloseBelow = killCloseBelowNode.isNumber()
-                ? new BigDecimal(killCloseBelowNode.asString())
-                : null;
-        if (killCloseBelow != null && killCloseBelow.signum() <= 0) killCloseBelow = null;
+        BigDecimal killCloseBelow = null;
+        if (killCloseBelowNode.isNumber() && Double.isFinite(killCloseBelowNode.asDouble())) {
+            try {
+                BigDecimal candidate = new BigDecimal(killCloseBelowNode.asString());
+                if (candidate.signum() > 0 && candidate.compareTo(MAX_KILL_CLOSE_BELOW) < 0) {
+                    killCloseBelow = candidate;
+                }
+            } catch (NumberFormatException ignored) {
+                // stays null, same as any other unusable value
+            }
+        }
 
         String source = body.path("source").asString("injected");
         String agentVersion = body.path("agent_version").asString("");

@@ -20,6 +20,11 @@ public class PreyMapper {
      *  (prey-list-pead.json, prey-list-lazarus.json) declare exactly this property name. */
     public static final String KILL_CLOSE_BELOW = "kill_close_below";
 
+    /** Upper bound for a usable {@code kill_close_below}: NUMERIC(18,6) in the `prey` table
+     *  overflows well before this, so any level at or above it is dropped the same way as an
+     *  unusable value rather than failing the insert and losing the whole batch. */
+    private static final BigDecimal MAX_KILL_CLOSE_BELOW = new BigDecimal("1e12");
+
     public List<Prey> map(JsonNode preyArray, String discoveredBy,
                           String defaultAnomalyType, String defaultHorizon, boolean skipBlankSymbol) {
         var out = new ArrayList<Prey>();
@@ -54,14 +59,18 @@ public class PreyMapper {
      * violation fails the whole Vistierie run, which would lose every prey for one bad optional
      * field. All value checks therefore live here. Only a strictly positive JSON number survives;
      * absent / JSON null mean "no level" (silently); anything else present (a string such as a
-     * decimal-comma slip, zero, a negative, a boolean, an array) is dropped with a WARN naming the
-     * prey symbol and the raw value.
+     * decimal-comma slip, zero, a negative, a boolean, an array, a non-finite or overflowing
+     * number) is dropped with a WARN naming the prey symbol and the raw value.
      */
     static BigDecimal killCloseBelow(JsonNode v, String symbol) {
         if (v == null || v.isMissingNode() || v.isNull()) return null;
-        if (v.isNumber()) {
-            BigDecimal level = new BigDecimal(v.asString());
-            if (level.signum() > 0) return level;
+        if (v.isNumber() && Double.isFinite(v.asDouble())) {
+            try {
+                BigDecimal level = new BigDecimal(v.asString());
+                if (level.signum() > 0 && level.compareTo(MAX_KILL_CLOSE_BELOW) < 0) return level;
+            } catch (NumberFormatException ignored) {
+                // falls through to the WARN below, same as any other unusable value
+            }
         }
         log.warn("prey {}: {} ignored, unusable value {}", symbol, KILL_CLOSE_BELOW, v);
         return null;

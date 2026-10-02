@@ -160,6 +160,8 @@ class ToolEndpointResponseRuleIT {
 
         when(earnings.recent(any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(DataSourceResult.healthy("agora", List.of()));
+        when(echoEnrichment.enrichCounted(any()))
+                .thenReturn(new EchoEnrichmentService.Enriched(List.of(), 0, 0));
         // Lazarus probes a fixed canary symbol before touching the watchlist; stubbed for EVERY
         // symbol (not just the canary) because other IT classes sharing the reused container may
         // have left watchlist rows behind for user "default" (StrigoiLazarusWebhookControllerIT

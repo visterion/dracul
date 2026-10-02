@@ -116,4 +116,27 @@ class PreyMapperTest {
                 "prey SYNKL: kill_close_below ignored, unusable value \"48,20\"",
                 "prey SYNKL: kill_close_below ignored, unusable value true");
     }
+
+    /** 2026-10-02 fix round: {@code 1e400} parses as a DoubleNode whose numeric value overflows
+     *  to {@code Infinity} — {@code asString()} then returns "Infinity", which blew up {@code new
+     *  BigDecimal(...)} with a {@link NumberFormatException} and turned the whole webhook call
+     *  into a 500, losing every prey in the batch. map() must never throw; the value is dropped
+     *  with the same WARN as any other unusable value. */
+    @Test
+    void killCloseBelow_nonFiniteNumberIsDroppedWithoutThrowing() throws Exception {
+        var warns = warnLinesWhile(() -> assertThat(mapOne("1e400").killCloseBelow()).isNull());
+        assertThat(warns).singleElement()
+                .satisfies(w -> assertThat(w).startsWith("prey SYNKL: kill_close_below ignored, unusable value "));
+    }
+
+    /** {@code 1e13} is a finite, parseable, strictly-positive BigDecimal — but it overflows
+     *  NUMERIC(18,6) in the `prey` table at insert time, which would lose the rest of the batch
+     *  on a partial-insert failure. Must be dropped here, before the insert, same as any other
+     *  unusable value. */
+    @Test
+    void killCloseBelow_valueAtOrAboveTheOverflowBoundIsDropped() throws Exception {
+        var warns = warnLinesWhile(() -> assertThat(mapOne("1e13").killCloseBelow()).isNull());
+        assertThat(warns).singleElement()
+                .satisfies(w -> assertThat(w).startsWith("prey SYNKL: kill_close_below ignored, unusable value "));
+    }
 }

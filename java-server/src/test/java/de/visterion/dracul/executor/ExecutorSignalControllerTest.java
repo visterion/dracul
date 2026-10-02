@@ -196,4 +196,42 @@ class ExecutorSignalControllerTest {
         assertThat(captor.getAllValues()).extracting(ExecutorSignal::killCloseBelow)
                 .containsOnlyNulls();
     }
+
+    /** Exact-0 boundary, same posture as {@code PreyMapperTest}: {@code kill_close_below} must be
+     *  strictly positive, so exactly {@code 0} is "no level", not a usable value. */
+    @Test
+    void injectIgnoresExactlyZeroKillCloseBelow() throws Exception {
+        var repo = mock(ExecutorSignalRepository.class);
+        var controller = new ExecutorSignalController(repo);
+
+        controller.inject(JsonMapper.builder().build().readTree("""
+                {"symbol": "SYNKL", "direction": "LONG", "kill_close_below": 0}
+                """));
+
+        var captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(repo).insert(captor.capture());
+        assertThat(captor.getValue().killCloseBelow()).isNull();
+    }
+
+    /** 2026-10-02 fix round: a non-finite value ({@code 1e400} overflows double to Infinity) and
+     *  a value that is finite but would overflow NUMERIC(18,6) at insert time ({@code 1e13}) must
+     *  both be ignored rather than throwing out of this injection seam or reaching the repo. */
+    @Test
+    void injectIgnoresNonFiniteAndOverflowingKillCloseBelow() throws Exception {
+        var repo = mock(ExecutorSignalRepository.class);
+        var controller = new ExecutorSignalController(repo);
+        var mapper = JsonMapper.builder().build();
+
+        controller.inject(mapper.readTree("""
+                {"symbol": "SYNKL", "direction": "LONG", "kill_close_below": 1e400}
+                """));
+        controller.inject(mapper.readTree("""
+                {"symbol": "SYNKL", "direction": "LONG", "kill_close_below": 1e13}
+                """));
+
+        var captor = ArgumentCaptor.forClass(ExecutorSignal.class);
+        verify(repo, times(2)).insert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(ExecutorSignal::killCloseBelow)
+                .containsOnlyNulls();
+    }
 }
